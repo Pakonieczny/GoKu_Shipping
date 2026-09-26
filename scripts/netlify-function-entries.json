@@ -170,6 +170,7 @@
     "_charmNestAgent.js",
     "_charmNestAsset.js",
     "_charmNestAuth.js",
+    "_charmNestCustomRead.js",
     "_charmNestMaster.js",
     "_charmNestPdf.js",
     "_charmNestSolver.js",

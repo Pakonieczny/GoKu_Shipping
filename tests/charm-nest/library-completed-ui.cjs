@@ -193,7 +193,10 @@ function seed(st, blobUrl) {
   ok.push('Move back: the row leaves Completed, the sheet (and its set) are current again');
 
   // a listing searched in Completed: its sheets, however old
+  // (a number shorter than 9 digits waits for Enter: every prefix of one being typed used to be looked up)
   await page.fill('#libSearch', '1719999');
+  await page.waitForFunction(() => /Enter looks up order or listing 1719999/.test((document.querySelector('#libDone .ldFound') || {}).textContent || ''), null, { timeout: 10000 });
+  await page.press('#libSearch', 'Enter');
   await page.waitForSelector('#libDone .ldFound', { timeout: 10000 });
   await page.waitForFunction(() => /1 completed sheet holds listing/.test(document.querySelector('#libDone .ldFound').textContent), null, { timeout: 10000 });
   assert.deepEqual(await page.$$eval('#libDone .ldItem', x => x.map(e => e.dataset.id)), ['old30x1']);
@@ -204,6 +207,7 @@ function seed(st, blobUrl) {
   assert.match(await page.textContent('#libBody .ldFound'), /1 in Completed/);
   // a listing bought on several current sheets: every sheet with it, lit, and the sets they are in
   await page.fill('#libSearch', '1718002');
+  await page.press('#libSearch', 'Enter');
   await page.waitForFunction(() => /sheets? holds? listing 1718002 · in \d+ sets?/.test((document.querySelector('#libBody .ldFound') || {}).textContent || ''), null, { timeout: 10000 });
   const hits = await page.$$eval('#libBody .libCard[data-id]', cs => cs.map(c => c.dataset.id));
   const want = st.list(SHEETS).filter(d => !d.laserDoneAt && (d.listings || []).includes('1718002')).map(d => d._id);

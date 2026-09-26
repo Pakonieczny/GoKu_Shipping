@@ -38,8 +38,9 @@
  *     - 3-line notes (Metal / Title / Match) **aggregated across ALL items**
  ********************************************************/
 /* A page that loads this one in a frame may ask to be told how it went by adding #notify=<nonce> to the address (the
-   Charm Sorter's Custom Orders does, to mark an order printed only once its label reached the print dialog). Loaded the
-   way sorting.html loads it, with no nonce, it posts nothing and behaves exactly as before. */
+   Charm Sorter's Custom Orders does, to mark an order printed once its label's print dialog has closed): "started" when
+   the label is made and its dialog opens, "done" when the dialog closed or the label could not be made. Loaded the way
+   sorting.html loads it, with no nonce, it posts nothing and behaves exactly as before. */
 const NOTIFY_NONCE = (/[#&]notify=([\w-]{6,40})/.exec(location.hash) || [])[1] || null;
 function notifyParent(msg) {
   if (!NOTIFY_NONCE || window.parent === window) return;
@@ -102,8 +103,8 @@ window.addEventListener("load", async () => {
     // 4) Notes block (STRICT: never include variations)
     const notes = buildAggregatedNotes(dataObj, items);
 
-    // 5) Build & print the PDF label (with notes)
-    notifyParent({ phase: "started", orderNum });
+    // 5) Build & print the PDF label (with notes); a page that asked hears "started" once the label is made and its print
+    //    dialog is about to open, and "done" when the dialog has closed (a label that cannot be made is a failure)
     await buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes);
 
   } catch (err) {
@@ -323,10 +324,13 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     notes
   );
 
-  const pdfDocGenerator = pdfMake.createPdf(docDefinition);
-  pdfDocGenerator.getBlob((blob) => {
-    const blobUrl = URL.createObjectURL(blob);
+  // the PDF is made first: an error making it reaches the caller (and the page that asked) instead of passing in silence
+  const blob = await new Promise((resolve, reject) => {
+    try { pdfMake.createPdf(docDefinition).getBlob(resolve); } catch (e) { reject(e); }
+  });
+  const blobUrl = URL.createObjectURL(blob);
 
+  await new Promise((resolve, reject) => {
     const hiddenIframe = document.createElement("iframe");
     hiddenIframe.style.position = "fixed";
     hiddenIframe.style.visibility = "hidden";
@@ -336,8 +340,13 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     document.body.appendChild(hiddenIframe);
 
     hiddenIframe.onload = function() {
-      hiddenIframe.contentWindow.print();
-      notifyParent({ phase: "done", ok: true, orderNum });
+      try {
+        notifyParent({ phase: "started", orderNum });
+        hiddenIframe.contentWindow.print();
+        // print() returns once the dialog has closed, printed or cancelled (the page cannot tell which)
+        notifyParent({ phase: "done", ok: true, orderNum });
+        resolve();
+      } catch (e) { reject(e); }
     };
 
     hiddenIframe.src = blobUrl;

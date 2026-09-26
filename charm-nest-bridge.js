@@ -758,10 +758,12 @@ const Orders = window.Orders = (() => {
   async function loadMaps(force) {
     if (!S.cloud.ok) return;
     if (!force && Date.now() - B.maps.loadedAt < 60000) return;
-    // the Custom Orders a person finished by hand (their QR label printed) come with the maps: a failed read of them
-    // keeps what was read before and never holds the maps
-    const [om, al, nd, cd] = await Promise.all([api("charmNestLibrary", { op: "optionMapGet" }), api("charmNestLibrary", { op: "aliasGet" }), api("charmNestLibrary", { op: "noDesignGet" }), api("charmNestLibrary", { op: "customGet" }, { quiet: true }).catch(() => null)]);
-    if (cd && cd.records && typeof cd.records === "object") { const s = JSON.stringify(cd.records); if (s !== customSig) { customSig = s; B.maps.customDone = cd.records; } }
+    // the Custom Orders a person finished by hand (their QR label printed) come with the maps: the lines pulled that may
+    // have one are read by their keys, and the list of recent ones (for orders that have left the pull) once a session and
+    // every 30 minutes, neither with its sticker; a failed read keeps what was read before and never holds the maps
+    const ck = customKeys(), began = Date.now(), listDue = began - customListAt > 30 * 60000;
+    const [om, al, nd, cl, cd] = await Promise.all([api("charmNestLibrary", { op: "optionMapGet" }), api("charmNestLibrary", { op: "aliasGet" }), api("charmNestLibrary", { op: "noDesignGet" }), listDue ? api("charmNestLibrary", { op: "customGet" }, { quiet: true }).catch(() => null) : null, ck.length ? api("charmNestLibrary", { op: "customGet", keys: ck }, { quiet: true }).catch(() => null) : null]);
+    mergeCustom(cl, cd, ck, began);
     // the maps are replaced only when what was read differs: a new map object is what makes interpretAll read lines again
     const next = [om.maps || {}, al.aliases || {}, nd.list || { patterns: [], skus: [], rows: [] }], sig = JSON.stringify(next);
     if (sig !== mapsSig || !mapsSame()) { mapsSig = sig; [B.maps.optionMaps, B.maps.aliases, B.maps.noDesign] = next; mapsRead = next; }
@@ -772,8 +774,30 @@ const Orders = window.Orders = (() => {
     if (cut && cut !== mapsCut) agent({ pool: true }, "warn", `The ${cut} came back cut short: the cloud sent what fits in one answer. A line the missing part would have matched is read without it.`);
     mapsCut = cut;
   }
-  let mapsSig = "", mapsRead = [], mapsCut = "", customSig = "";
+  let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0;
   if (!B.maps.customDone) B.maps.customDone = {};
+  if (!B.maps.customWrites) B.maps.customWrites = new Map();   // line key → when this page last wrote its record (CustomPrint)
+  /** The pulled lines a Custom Orders record may be kept for: special ones, and those read as completed by hand. */
+  function customKeys() {
+    const out = new Set();
+    for (const r of rowsOf()) if (r.state !== "gone" && ((r.spec && (r.spec.special || r.spec.customDone)) || B.maps.customDone[r.key])) out.add(r.key);
+    return [...out].slice(0, 1000);
+  }
+  /** What was read joins what the page holds: a line read by its key is as the cloud says (no record: not completed, or
+   *  reopened elsewhere); a whole list drops the records it no longer holds but those of lines pulled, and a list cut short
+   *  (truncated) only adds. Nothing read before this page wrote a record overrides that record. */
+  function mergeCustom(list, keyed, keys, began) {
+    const next = Object.assign({}, B.maps.customDone), mine = k => (B.maps.customWrites.get(k) || 0) >= began;
+    if (list && list.records && typeof list.records === "object") {
+      customListAt = Date.now();
+      if (!list.truncated) for (const k of Object.keys(next)) if (!(k in list.records) && !B.orders.byKey.has(k) && !mine(k)) delete next[k];
+      for (const [k, v] of Object.entries(list.records)) if (!mine(k)) next[k] = v;
+    }
+    if (keyed && keyed.records && typeof keyed.records === "object") for (const k of keys.slice(0, keyed.keys == null ? keys.length : +keyed.keys)) if (!mine(k)) { if (keyed.records[k]) next[k] = keyed.records[k]; else delete next[k]; }
+    for (const [k, t] of B.maps.customWrites) if (Date.now() - t > 30 * 60000) B.maps.customWrites.delete(k);
+    // (a new object only when it reads differently: a new one is what makes interpretAll read every line again)
+    if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) B.maps.customDone = next;
+  }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, masterEntry: sku => Master.entryFor(sku) });
   /** The pull rule (Settings → Pull orders): every open order, those due by a date, or the N most urgent by ship-by date. */
@@ -1093,7 +1117,7 @@ const Orders = window.Orders = (() => {
     if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const r of shown) {
       const date=dayOf(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} orders · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -1173,7 +1197,7 @@ const Orders = window.Orders = (() => {
     charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
     charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
     const byMetal = {}; for (const r of all) { const m = r.material || "none"; byMetal[m] = (byMetal[m] || 0) + 1; }
-    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${esc(label)}<b class="${cls}">${n}</b></button>`;
+    const chip = (on, id, label, n, cls, title) => `<button class="egTab${on ? " on" : ""}" data-pile="${esc(id)}" title="${esc(title || "")}">${label === "Open Orders" ? 'Open<span class="ordLong"> Orders</span>' : esc(label)}<b class="${cls}">${n}</b></button>`;
     const metals = ["gold", "silver", "rose", "gold10k", "gold14k", "none"].filter(m => byMetal[m] || OV.metal === m);
     /* Material, kind of jewellery and "does it get engraved" are the three ways a bench actually narrows a day's work.
        Each one appears only when the lines on screen give it more than one answer — a filter with one option is a
@@ -1826,6 +1850,8 @@ const Pool = window.Pool = (() => {
   async function preparePool(row, run) {
     const sp = row.spec;
     if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
+    // a custom line whose QR label is being printed (Custom Orders) waits: printed, it is completed by hand, not cut
+    if (window.CustomPrint && CustomPrint.printing(row.key)) return null;
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
@@ -1921,7 +1947,8 @@ const Pool = window.Pool = (() => {
     // A line a person holds waits for that person (the hold is lifted through Review.repool), and a line whose pieces
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing)
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
     const plan = await Gate.plan(rows);
     const held = [...plan.wait.values()];
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
@@ -2622,6 +2649,15 @@ const Engrave = window.Engrave = (() => {
       return done + await classifyAllOnce(run,owner);
     let plain = 0;
     for (const r of Orders.rows()) if (r.state === "pooled" && r.spec && !r.spec.engraveCandidate && !r.engrave) { r.engrave = { needed: false, state: "none", approved: true }; plain++; }
+    // a line that waited to be read and no longer has anything to read (a Team status stamp such as "QA1" or "DESIGNED :)"
+    // used to count as words to engrave) is plain now, and so is its waiting job
+    for (const r of Orders.rows()) {
+      if (!["pooled", "written"].includes(r.state) || !r.spec || r.spec.engraveCandidate || !r.engrave) continue;
+      if (!(["classify", "reclassify"].includes(r.engrave.state) || (r.engrave.state === "words" && !r.engrave.text))) continue;
+      const j = items().get(r.key);
+      if (j && ["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); else if (!j) r.engrave = { needed: false, state: "none", approved: true };
+      plain++;
+    }
     // a pass with nothing to read changes nothing: the lists and the run record are left as they are
     if (!done && !plain) return 0;
     done += plain;
@@ -4110,7 +4146,8 @@ const Sets = window.Sets = (() => {
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
-    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; const local = [...byRun().values()].find(x => x.setId === st.setId) || Object.assign({ orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, st); byRun().set(local.runId || st.setId, local); try { await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
+    // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
+    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; try { const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set; if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`); const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st); byRun().set(local.runId || st.setId, local); await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
     return card;
   }
   async function renderLibrary(body, opts) {
@@ -4860,12 +4897,12 @@ const RunCtl = window.RunCtl = (() => {
     const why = saveWarning + (r.status === "stopped" ? `<b>Stopped:</b> ${esc(r.stoppedBy || "")}${fix ? ` — <span>${esc(fix)}</span>` : ""}${finishing ? ` · ${finishing} sheet${finishing === 1 ? "" : "s"} still finishing` : ""}` : intake ? `<b>Adding new orders</b> · nesting them onto the sheets` : r.status === "review" ? `<b>Waiting for a person:</b> ${waitingFor}` : r.status === "processed" ? `<b>Processing complete</b> · ${waitingFor === "nothing" ? idle : waitingFor}${r.awaitCommit ? " · commit when ready" : ""}` : r.status === "paused" ? `<b>Ready to commit</b> — every sheet written, every engraving decided` : r.status === "complete" ? `<b>Complete</b> · ${(r.committed || []).length} committed · ${Object.keys(r.holds || {}).length} held` : `<b>${esc(STEP_WORDS[r.step] || r.step)}</b>${esc(stepDetail(r))}`);
     // the few words on the pill, and its tint: a person is needed when it stopped, waits on Review or Engraving, or is ready to commit
     const retry = autoResumable(r), sign = r.status === "stopped" && /\bsign/i.test(r.stoppedBy || "");
-    let tone = "go", short = `${STEP_WORDS[r.step] || r.step}${stepDetail(r)}`;
+    let tone = "go", short = `${STEP_WORDS[r.step] || r.step}${stepDetail(r)}`, lead = "";
     if (r.status === "stopped") { tone = "stop"; short = settling === r || retry && auto.busy ? "Resuming…" : retry ? "Stopped · retrying" : sign ? "Stopped · sign in to Etsy" : "Stopped"; }
     else if (intake) short = "Adding new orders";
     else if (r.status === "complete") { tone = "done"; short = `Complete · ${(r.committed || []).length} committed`; }
     else if (r.status === "paused" || r.status === "processed" && r.awaitCommit) { tone = "wait"; short = "Ready to commit"; }
-    else if (r.status === "review" || r.status === "processed" && waiting) { tone = "wait"; short = waiting ? `Waiting on you · ${waiting}` : "Waiting on you"; }
+    else if (r.status === "review" || r.status === "processed" && waiting) { tone = "wait"; short = waiting ? `Waiting on you · ${waiting}` : "Waiting on you"; if (waiting) lead = "Waiting on you · "; }
     else if (r.status === "processed") { tone = "idle"; short = onCards ? `Processed · ${onCards} line${onCards === 1 ? "" : "s"} on open sheets` : "Processed · sheets filling"; }
     if (r.saveError || local) { tone = "stop"; short = "Not saved · " + short; }
     /* Which run is this? Three cards on the Nest tab and a banner that named only a step left no way to tell this
@@ -4874,7 +4911,7 @@ const RunCtl = window.RunCtl = (() => {
     const seqOf = x => x.seq || +((/-(\d+)$/.exec(String(x.setId || "")) || [])[1] || 0) || null;
     const who = [seqOf(r) ? `Set ${seqOf(r)}` : "", r.day ? new Date(r.day + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "",
       `${(Object.keys(r.lines || {}).length || Orders.rows().filter(x => x.state !== "gone").length) + (+outside.lines || 0)} lines`, nSheets ? `${nSheets} sheet${nSheets === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ");
-    return { tone, short, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
+    return { tone, short, lead, who, why, runId: r.runId + (r.setId ? " · set " + r.setId : ""),
       acts: `${["paused","processed"].includes(r.status) && r.awaitCommit ? `<button class="btn sage sm" id="rbCommit" title="mark every order in the set design-complete on the station">Commit set</button>` : ""}${sign ? `<button class="btn gold sm" id="rbConnect" title="sign the Design Station back in to Etsy, then the run can carry on">Connect Etsy</button>` : ""}${["stopped","processed"].includes(r.status) && !intake ? `<button class="btn gold sm" id="rbResume" title="carry on from the step this run stopped at"${settling === r ? " disabled" : ""}>${r.status === "processed" ? "Retry pending" : settling === r ? "Resuming…" : "Resume"}</button>` : ""}${["running", "review", "paused"].includes(r.status) || intake ? `<button class="btn ghost sm" id="rbStop" title="${r.arrivalBusy ? "stop now — the charms already placed stay where they are, and the new orders wait for Resume" : "stop after the step in progress — the run can be resumed from where it stopped"}">Stop</button>` : ""}${r.status === "complete" ? `<button class="btn ghost sm" id="rbClear" title="take the finished run off the cards — its files and records are kept">Clear run</button>` : ""}`,
       more: `${r.at ? `<button class="btn ghost sm" id="rbAt" title="open the sheet this is about">Show the sheet</button>` : ""}<button class="btn ghost sm" id="rbHistory" title="every run on record">Run history…</button>${r.status !== "complete" ? `<button class="btn ghost sm" id="rbAbandon" title="give up this run — the sheets and files already saved are kept">Abandon run…</button>` : ""}` };
   }
@@ -4890,7 +4927,9 @@ const RunCtl = window.RunCtl = (() => {
     }
     const focusId = h.contains(document.activeElement) ? document.activeElement.id : "";
     h.className = "runBanner " + v.tone;
-    const text = menu.querySelector(".rbText"); if (text.textContent !== v.short) text.textContent = v.short;
+    // on a narrow bar the tint says "waiting" and the words keep what is waiting ("1 in Engraving")
+    const text = menu.querySelector(".rbText"), words = v.lead && v.short.startsWith(v.lead) ? `<span class="rbLead">${esc(v.lead)}</span>${esc(v.short.slice(v.lead.length))}` : esc(v.short);
+    if (text._html !== words) { text._html = words; text.innerHTML = words; }
     fitPill(h);
     const detail = menu.querySelector(".runDetail");
     const changed = [part(detail, `${v.who ? `<b>${esc(v.who)}</b><small>${esc(v.runId)}</small>` : ""}<span class="rbWhy">${v.why}</span>`), part(menu.querySelector(".rbActs"), v.acts || ""), part(menu.querySelector(".rbMore"), v.more || "")].some(Boolean);
@@ -4949,19 +4988,37 @@ const RunCtl = window.RunCtl = (() => {
    at 2,6; two dots for earrings/studs/rings, one otherwise, at 4,2.75; the dispatch date and the order number in 4.7 pt
    bold at 2,39 and 2,46; "Metal / Title / Match" in 3.33 pt at 33,0.5 — and opens the print dialog. Printing there
    writes nothing anywhere else. Here the same page prints the same object (CharmNestOrders.sortingLabel builds it as
-   sorting.html does from the same order) and says when it has handed the label to the print dialog (#notify). Only then
-   is the line marked completed, in the cloud (charmNestLibrary customPut, read by every sorter): a finished line, never
-   pooled, no longer holding its order, under Custom Orders → Completed, where it can be printed again or reopened. One
-   label at a time (the printer reads one "qrPrintAll"); the card says what is happening and nothing else waits. */
+   sorting.html does from the same order) and says when the label is made and its print dialog opens, and when that
+   dialog has closed (#notify). Then the line is marked completed, in the cloud (charmNestLibrary customPut, read by every
+   sorter): a finished line, never pooled, no longer holding its order, under Custom Orders → Completed, where it can be
+   printed again or reopened. A dialog closed without printing looks the same to the page, so the card says "Marked
+   completed · Undo" for 12 s, and Undo takes the completion back. While its label is printed the pool leaves the line be
+   (printing), and one the run put on a sheet meanwhile is cut, not marked. One label at a time (the printer reads one
+   "qrPrintAll"); the card says what is happening and nothing else waits; a name not given yet is asked in the card. */
 const CustomPrint = window.CustomPrint = (() => {
-  const busy = new Map();
+  const busy = new Map();       // card key → what is happening, beside a spinner
+  const printing = new Set();   // line keys whose label is being printed: the pool leaves them be (Pool.addAll, preparePool)
+  const undos = new Map();      // line key → { keys, rows, who, timer }: the card's "Marked completed · Undo"
+  const asking = new Map();     // card key → the step that waits for a name, asked in the card
+  const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
+  const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
-  function say(key, text) {
-    if (text) busy.set(key, text); else busy.delete(key);
+  function redraw() {
     try { Review.render(); } catch (_) {}
     try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
   }
+  function say(key, text) { if (text) busy.set(key, text); else busy.delete(key); redraw(); }
+  /** A step that records a name: straight on when one is saved, else once it is typed in the card (withName). */
+  function withName(key, go) { const who = employeeName(); if (who) { go(who); return; } asking.set(key, go); redraw(); }
+  function named(key, name) {
+    const go = asking.get(key); name = String(name || "").trim(); if (!go || !name) return false;
+    B.employee = name; try { localStorage.setItem("cn.employee", name); } catch (_) {}
+    asking.delete(key); redraw(); go(employeeName());
+    return true;
+  }
+  function unask(key) { if (asking.delete(key)) redraw(); }
+  const wrote = keys => { const t = Date.now(); for (const k of keys) B.maps.customWrites.set(k, t); };
   /** Hand one label to QR Printer.html and wait for its word: { ok, error }. */
   function runPrinter(label, onStarted) {
     return new Promise(resolve => {
@@ -4975,15 +5032,21 @@ const CustomPrint = window.CustomPrint = (() => {
       frame.setAttribute("aria-hidden", "true"); frame.tabIndex = -1; frame.title = "QR label printer";
       let settled = false, timer = null;
       const wait = (ms, why) => { clearTimeout(timer); timer = setTimeout(() => finish({ ok: false, error: why }), ms); };
-      function finish(res) { if (settled) return; settled = true; clearTimeout(timer); window.removeEventListener("message", onMsg); resolve(res); }
+      function finish(res) {
+        if (settled) return; settled = true; clearTimeout(timer); window.removeEventListener("message", onMsg);
+        // a label not printed leaves no frame behind: a dialog opening late cannot print a label nothing records
+        if (!res.ok) { try { frame.remove(); } catch (_) {} if (lastFrame === frame) lastFrame = null; }
+        resolve(res);
+      }
       function onMsg(ev) {
         const d = ev.data; if (ev.origin !== location.origin || !d || d.source !== "qr-printer" || d.nonce !== nonce) return;
-        // the label is being drawn: from here the print dialog can stay open as long as a person needs it
-        if (d.phase === "started") { wait(10 * 60000, "the print dialog did not close"); if (onStarted) onStarted(); return; }
+        // the label is made and its dialog opens: from here the dialog can stay open as long as a person needs it
+        if (d.phase === "started") { wait(10 * 60000, "the print dialog did not close in 10 minutes"); if (onStarted) onStarted(); return; }
         if (d.phase === "done") finish({ ok: !!d.ok, error: d.error || "" });
       }
       window.addEventListener("message", onMsg);
-      wait(45000, "the QR printer did not answer in 45 s");
+      // (until the label is made: a label that cannot be made says so when the printer page does, or here)
+      wait(45000, "the QR label was not made in 45 s");
       frame.onerror = () => finish({ ok: false, error: "the QR printer page could not be loaded" });
       frame.src = encodeURI(PRINTER) + "#notify=" + nonce;
       document.body.appendChild(frame);
@@ -4991,10 +5054,13 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
   function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
-  /** Print the card's sticker; once it reached the print dialog, mark its lines completed. */
+  /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
+    const key = it.key; if (busy.has(key) || asking.has(key)) return;
+    withName(key, who => printAs(it, who));
+  }
+  function printAs(it, who) {
     const key = it.key; if (busy.has(key)) return;
-    const who = employeeName() || askEmployee(); if (!who) return;
     const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || null;
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
     let label = null;
@@ -5002,41 +5068,103 @@ const CustomPrint = window.CustomPrint = (() => {
     if (!label && !(rec && (rec.label || rec.hasLabel))) { toast("There is nothing to print for that card", "bad"); return; }
     const targets = rows.length ? rows.map(r => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" }))
       : [{ key: rec.key, receiptId: rec.receiptId, transactionId: rec.transactionId, sku: rec.sku, title: rec.title, category: rec.category, kind: rec.kind }];
-    say(key, "Waiting for the printer…");
+    // a line still open is left alone by the pool while its label is printed (a run pooling it meanwhile cut it as well)
+    const held = it.done ? [] : rows.map(r => r.key).filter(k => !printing.has(k));
+    for (const k of held) printing.add(k);
+    const release = () => { for (const k of held) printing.delete(k); };
+    fails.delete(key); say(key, "Waiting for the printer…");
     queue = queue.then(async () => {
       if (!label) {
         say(key, "Reading its label…");
         try { const got = rec.label ? rec : (await api("charmNestLibrary", { op: "customGet", key: rec.key }, { quiet: true })).record; label = got && got.label ? JSON.parse(got.label) : null; } catch (_) { label = null; }
-        if (!label) { say(key, null); toast("The label kept for that order could not be read — nothing was printed", "bad", 7000); return; }
+        if (!label) { failed(key, "its kept label could not be read"); say(key, null); toast("The label kept for that order could not be read — nothing was printed", "bad", 7000); return; }
       }
-      say(key, "Building the QR label…");
+      say(key, "Making the QR label…");
       const out = await runPrinter(label, () => say(key, "Print dialog open…"));
-      if (!out.ok) { say(key, null); toast(`QR label not printed: ${out.error || "the printer failed"} — nothing was marked completed`, "bad", 8000); return; }
+      if (!out.ok) { failed(key, out.error || "the printer failed"); say(key, null); toast(`QR label not printed: ${out.error || "the printer failed"} — nothing was marked completed`, "bad", 8000); return; }
+      // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
+      const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
       say(key, "Marking it completed…");
-      const saved = {}; let failed = null;
-      for (const t of targets) { try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) saved[t.key] = r.record; } catch (e) { failed = e; } }
-      if (Object.keys(saved).length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
-      busy.delete(key); settle(); say(key, null);
-      agent({ bridge: true }, failed ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${failed ? ` — not marked completed (${failed.message})` : " · Custom Orders → Completed"}`);
-      if (failed) toast(`The QR label was printed but ${Object.keys(saved).length ? "not every line was" : "the order was not"} marked completed: ${failed.message} — press Print again to retry`, "bad", 9000);
-      else toast(`${targets[0].receiptId} · QR label printed — moved to Custom Orders → Completed`, "ok", 3500);
-    }).catch(e => { say(key, null); toast("QR label: " + e.message, "bad", 7000); });
+      const saved = {}; let putErr = null;
+      for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } }
+      const done = Object.keys(saved);
+      if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+      release(); busy.delete(key);
+      // printed from Open: "Marked completed · Undo" on the card (a dialog closed without printing looks the same here)
+      if (!it.done && done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
+      settle(); say(key, null);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Custom Orders → Completed"}`);
+      if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
+      else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
+      else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
+    }).catch(e => { failed(key, e.message); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(release);
+  }
+  /** "Marked completed · Undo" on the card for UNDO_MS: the lines it completed, by their keys. */
+  function offerUndo(keys, rows, who) {
+    const u = { keys, rows, who, timer: 0 };
+    u.timer = setTimeout(() => { for (const k of keys) if (undos.get(k) === u) undos.delete(k); redraw(); }, UNDO_MS);
+    for (const k of keys) undos.set(k, u);
+  }
+  const undoOf = it => { for (const r of linesOf(it)) { const u = undos.get(r.key); if (u) return u; } return null; };
+  function undo(it) {
+    const u = undoOf(it); if (!u || busy.has(it.key)) return;
+    clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
+    takeBack(it.key, u.rows, u.who, "undo");
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
-  async function reopen(it) {
-    const rows = linesOf(it); if (!rows.length || busy.has(it.key)) return;
-    const who = employeeName() || askEmployee(); if (!who) return;
-    say(it.key, "Reopening…");
-    try {
-      for (const r of rows) await api("charmNestLibrary", { op: "customDelete", key: r.key }, { quiet: true });
-      const next = Object.assign({}, B.maps.customDone); for (const r of rows) delete next[r.key]; B.maps.customDone = next;
-      busy.delete(it.key);
-      for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll();
-      say(it.key, null);
-      agent({ bridge: true }, "DS", `${rows[0].order.receiptId}: custom order reopened by ${who}`);
-    } catch (e) { say(it.key, null); toast("Not reopened: " + e.message, "bad", 7000); }
+  function reopen(it) {
+    const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); takeBack(it.key, rows, who, "reopen"); });
   }
-  return { print, reopen, busy: key => busy.get(key) || "" };
+  /** Each line's record deleted, the page following each as it goes (a failure part way leaves it saying what the cloud
+   *  holds), then the lines put back for cutting; a failure of either is said as what it is. */
+  async function takeBack(key, rows, who, how) {
+    const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
+    say(key, how === "undo" ? "Undoing…" : "Reopening…");
+    let gone = 0;
+    for (const r of rows) {
+      try { await api("charmNestLibrary", { op: "customDelete", key: r.key }, { quiet: true }); }
+      catch (e) {
+        busy.delete(key); settle(); say(key, null);
+        toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
+        return;
+      }
+      const next = Object.assign({}, B.maps.customDone); delete next[r.key]; B.maps.customDone = next; wrote([r.key]); gone++;
+    }
+    busy.delete(key);
+    try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
+    catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Custom Orders → Open`, "bad", 9000); return; }
+    say(key, null);
+    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`);
+  }
+  /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
+   *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
+  function statusHtml(it, sz) {
+    const b = busy.get(it.key);
+    if (b) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(b)}</span>`;
+    if (asking.has(it.key)) return `<span class="cuWho"><input type="text" data-cu-name maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with this custom order" autocomplete="off"><button type="button" class="btn gold ${sz}" data-cu-name-ok>OK</button></span>`;
+    if (undoOf(it)) return `<span class="cuUndo" role="status">Marked completed · <button type="button" class="btn ghost ${sz}" data-cu-undo title="take the completion back (the printed label is not undone)">Undo</button></span>`;
+    return "";
+  }
+  /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
+  function failed(key, why) {
+    const was = fails.get(key); if (was) clearTimeout(was.timer);
+    const f = { why, timer: setTimeout(() => { if (fails.get(key) === f) { fails.delete(key); redraw(); } }, 10000) };
+    fails.set(key, f);
+  }
+  const failNote = it => { const f = fails.get(it.key); return f ? `<span class="cuFail" role="alert" title="${esc(f.why)}">Not printed</span>` : ""; };
+  /** The card's Undo and name field; returns the name field when there is one (to focus it). */
+  function wire(host, it) {
+    const ub = host.querySelector("[data-cu-undo]"); if (ub) ub.onclick = e => { e.stopPropagation(); undo(it); };
+    const box = host.querySelector("[data-cu-name]"), ok = host.querySelector("[data-cu-name-ok]");
+    if (!box || !ok) return null;
+    const go = () => { if (!named(it.key, box.value)) box.focus(); };
+    ok.onclick = e => { e.stopPropagation(); go(); };
+    box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
+    return box;
+  }
+  const stamp = it => [busy.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
+  return { print, reopen, undo, statusHtml, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
 })();
 
 /* ═══ 24 · Review — every decision a person must make ═════════════════════ */
@@ -5341,7 +5469,7 @@ const Review = window.Review = (() => {
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.busy(it.key):""]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.stamp(it):""]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -5355,19 +5483,21 @@ const Review = window.Review = (() => {
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
   /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under its
-   *  Completed switch, with those whose order has left the pull, so a label can always be printed again. */
+   *  Completed switch, with those whose order has left the pull, so a label can always be printed again, and with every
+   *  line read as completed by hand, special or not (its SKU may have a design since), so each can be reopened. One just
+   *  completed from Open stays there too while its card offers Undo (recent). */
   function customLists(decided) {
-    const open = [], done = [], seen = new Set(), groups = new Map();
+    const open = [], done = [], recent = [], seen = new Set(), groups = new Map();
     const itemFor = (key, extra) => { const it = infoItems.get(key) || { kind: "customOrder", key, info: true, t: Date.now() }; Object.assign(it, extra); infoItems.set(key, it); seen.add(key); return it; };
     for (const row of Orders.rows()) {
-      const sp = row.spec; if (!sp || !sp.special || row.state === "gone" || decided.has(row.key)) continue;
+      const sp = row.spec; if (!sp || !(sp.special || sp.customDone) || row.state === "gone" || decided.has(row.key)) continue;
       const isDone = !!sp.customDone;
       if (!isDone && ((row.problems || []).length || row.hold || ["committed", "skipped"].includes(row.state))) continue;
       const key = (isDone ? "cdone:" : "cinfo:") + customKey(row).slice(4);
       if (!groups.has(key)) groups.set(key, { key, done: isDone, rows: [] });
       groups.get(key).rows.push(row);
     }
-    for (const g of groups.values()) (g.done ? done : open).push(itemFor(g.key, { rows: g.rows, row: g.rows[0], done: g.done, record: g.done ? g.rows[0].spec.customDone : null, why: customWhy(g.rows[0], g.done) }));
+    for (const g of groups.values()) { const it = itemFor(g.key, { rows: g.rows, row: g.rows[0], done: g.done, record: g.done ? g.rows[0].spec.customDone : null, why: customWhy(g.rows[0], g.done) }); (g.done ? done : open).push(it); if (g.done && CustomPrint.undoing(g.rows)) recent.push(it); }
     for (const [lineKey, rec] of Object.entries(B.maps.customDone || {})) {
       const r0 = B.orders.byKey && B.orders.byKey.get(lineKey);
       if (!rec || (r0 && r0.state !== "gone")) continue;
@@ -5376,7 +5506,7 @@ const Review = window.Review = (() => {
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
     const at = it => (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
     done.sort((a, b) => at(b) - at(a));
-    return { open, done };
+    return { open, done, recent };
   }
   /** Lines of a Custom Orders card that can have a QR label printed: those not on their way to the laser. */
   const printable = it => it.kind === "customOrder" && (it.done ? !!(it.row || (it.record && (it.record.label || it.record.hasLabel))) : rowsOf(it).some(r => !(r.poolIds || []).length));
@@ -5395,15 +5525,15 @@ const Review = window.Review = (() => {
     const stamp=stampOf(it);
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
     const was=typedIn(cached?.node?.querySelector('.reviewDetails'));   // carried into the rebuilt card
-    const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null),busy=cu?CustomPrint.busy(it.key):'';
+    const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null),busy=cu?CustomPrint.statusHtml(it,'sm'):'';
     const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');
     const orders=new Set(group.map(r=>r.order.receiptId));
     const queue=cu?(it.done?'Custom order · completed':it.info?'Custom order':'Review required'):'Review required';
     const decide=!it.info;
     // a custom card prints the sorting station's QR sticker for its order (CustomPrint); a completed one prints it again
-    // or reopens; while a label is being made the card says what is happening instead
-    const acts=busy?`<span class="cuStat" role="status"><span class="spin"></span>${esc(busy)}</span>`
-      :(cu&&printable(it)?`<button class="btn ${it.done?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
+    // or reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
+    const acts=busy?busy
+      :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)?`<button class="btn ${it.done?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Custom Orders → Open (the printed label is not undone)">Reopen</button>`:'')
       +(decide?`<button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
@@ -5415,6 +5545,7 @@ const Review = window.Review = (() => {
     if(cu){
       const pb=node.querySelector('[data-cu-print]');if(pb)pb.onclick=()=>CustomPrint.print(it);
       const rb=node.querySelector('[data-cu-reopen]');if(rb)rb.onclick=()=>CustomPrint.reopen(it);
+      const who=CustomPrint.wire(node,it);if(who)node._refocus=()=>who.focus({preventScroll:true});
       // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
       // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
       if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
@@ -5443,9 +5574,10 @@ const Review = window.Review = (() => {
     const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
     if (RV.filter === "customOrder" ? !customN && !cl.done.length : RV.filter && RV.filter !== "done" && !byKind.has(RV.filter)) RV.filter = null;
-    // what asks nothing comes after what does, in Everything as under Custom Orders
-    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
-    const list = RV.filter === "customOrder" ? (RV.cseg === "done" ? cl.done : customOpen) : RV.filter && RV.filter !== "done" ? all.filter(it => tabOf(it) === RV.filter) : RV.filter === "done" ? [] : all.concat(cl.open);
+    // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
+    // place while its card offers Undo (not counted as open)
+    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open, cl.recent);
+    const list = RV.filter === "customOrder" ? (RV.cseg === "done" ? cl.done : customOpen) : RV.filter && RV.filter !== "done" ? all.filter(it => tabOf(it) === RV.filter) : RV.filter === "done" ? [] : all.concat(cl.open, cl.recent);
     const chip = (id, label, n, cls, title) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Custom Orders' own two lists, Open and Completed, switch inside the bar beside its chip: no row of their own
     const seg = RV.filter === "customOrder" ? `<span class="rvSeg" role="group" aria-label="Custom Orders"><button type="button" data-cseg="open" class="${RV.cseg !== "done" ? "on" : ""}" aria-pressed="${RV.cseg !== "done"}" title="custom orders still to finish">Open<b>${customN}</b></button><button type="button" data-cseg="done" class="${RV.cseg === "done" ? "on" : ""}" aria-pressed="${RV.cseg === "done"}" title="custom orders whose QR label was printed — print again or reopen">Completed<b>${cl.done.length}</b></button></span>` : "";
@@ -5453,7 +5585,8 @@ const Review = window.Review = (() => {
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     v.querySelector('.ordBar').innerHTML = `${chip("", "Everything", all.length + cl.open.length, "info")}${chips}${settled.length ? chip("done", "Decided", settled.length, "ok") : ""}<span class="spacer"></span><button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
-    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; if (RV.filter !== "customOrder") RV.cseg = "open"; render(); });
+    // (Custom Orders keeps its Open / Completed choice while another chip is shown)
+    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; render(); });
     const host = v.querySelector("#rvList");
     if (RV.filter === "done") {
@@ -6240,21 +6373,23 @@ const OrderWin = window.OrderWin = (() => {
     if (!bar) { bar = el("div", "owCustom"); bar.id = "owCustom"; bar.setAttribute("aria-live", "polite"); fix.parentNode.insertBefore(bar, fix); }
     const it = r.spec && (r.spec.special || r.spec.customDone) ? Review.customItemFor(r.key) : null;
     if (!it) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; return; }
-    const busy = CustomPrint.busy(it.key), can = Review.printable(it);
+    const busy = CustomPrint.statusHtml(it, "xs"), can = Review.printable(it);
     const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || "Custom order";
     const why = it.info || it.done ? it.why : can ? "decide below, or print its label once made by hand" : "a decision waits below";
-    const stamp = JSON.stringify([it.key, label, why, busy, !!it.done, can]);
+    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can]);
     bar.hidden = false;
     if (bar._stamp === stamp) return;
     bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
+    // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
-      (busy ? `<span class="cuStat" role="status"><span class="spin"></span>${esc(busy)}</span>`
-        : (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
+      (busy ? busy
+        : CustomPrint.failNote(it) + (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
           (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Custom Orders → Open (the printed label is not undone)">Reopen</button>` : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
     const pb = bar.querySelector("[data-cu-print]"); if (pb) pb.onclick = () => CustomPrint.print(now());
     const rb = bar.querySelector("[data-cu-reopen]"); if (rb) rb.onclick = () => CustomPrint.reopen(now());
+    const who = CustomPrint.wire(bar, it); if (who) who.focus({ preventScroll: true });
   }
   /** The order's notes as they stand now: another station, or another sorter, may have written since this pull. Read
    *  only; a note being typed, or one waiting to be saved, is never replaced by what the record said a moment ago. */

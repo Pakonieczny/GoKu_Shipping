@@ -75,7 +75,8 @@ const kinds = sp => sp.problems.map(p => p.kind).sort().join(',');
   assert.equal(special('', 'Rush Order Fee'), 'addOn');
   assert.equal(special('ABC9', 'Custom Order for Sarah, 3 charms'), 'customCharm');
   assert.equal(special('ABC6', 'Custom Order for Sarah'), 'customOther');
-  assert.equal(special('ABC8', 'Add-on: second initial'), 'addOn');
+  assert.equal(special('ABC8', 'Add-on: second initial'), null, 'the words "add on" never make a line special: Claude reads it (Paul, 25 Sep 20:27)');
+  assert.equal(special('FAIRY 3', 'Fairy Charm Add On Charm Gold Fairy Pendant'), null, 'a regular charm-only listing that says "add on"');
   assert.equal(special('ABC7', 'Re-engrave my charm'), 'rework');
   const ext = order(4, [line(41, '', 'Chain extender 2 inch', [])]); const se = O.interpretLine(ext, ext.lines[0], ctx());
   assert.equal(se.special.kind, 'chainOnly'); assert.equal(se.problems.length, 0, 'no "no SKU" question for a chain');
@@ -113,6 +114,9 @@ async function library() {
     const b = await call({ op: 'customPut', key, by: 'Bob', label, receiptId: '4176744752' });
     assert.equal(b.record.prints, 2, 'printed again'); assert.equal(b.record.printedBy, 'Ann', 'the first print is kept'); assert.equal(b.record.lastPrintedBy, 'Bob');
     const got = await call({ op: 'customGet' }); assert.equal(got.records[key].prints, 2); assert.equal(got.truncated, false); assert.equal(got.records[key].label, undefined); assert.equal(got.records[key].hasLabel, true);
+    // the lines a sorter has pulled, read by their keys, without their stickers
+    const byKeys = await call({ op: 'customGet', keys: [key, '1_9'] });
+    assert.deepEqual(Object.keys(byKeys.records), [key]); assert.equal(byKeys.keys, 2); assert.equal(byKeys.records[key].label, undefined); assert.equal(byKeys.records[key].hasLabel, true);
     assert.match((await call({ op: 'customPut', key: 'a/b', by: 'x' })).error || '', /key/, 'a key that is not a line key is refused');
     // the sandbox keeps its own records
     await call({ op: 'customPut', key: '1_2', by: 'x', sandbox: true });
@@ -205,6 +209,8 @@ async function browserChecks() {
     assert(rec && rec.state === 'completed' && rec.prints === 1 && rec.printedBy === 'Test Operator' && rec.category === 'Chain only', 'marked completed in the cloud: ' + JSON.stringify(rec));
     await page.waitForFunction(() => !CustomPrint.busy('cinfo:custom:4176744752:CHAIN_8941'));
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open4', 'Completed1']);
+    // (a print dialog closed without printing looks the same: the card stays, saying so, with an Undo for a while)
+    assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4176744752"] .rowActions'), /^Marked completed · Undo$/, 'the card itself says it was completed, with its Undo');
 
     // a decision printed by hand: completed, no longer a decision, never pooled
     const before = await page.evaluate(() => Review.count());
@@ -219,10 +225,17 @@ async function browserChecks() {
       B.maps.customDone = keep; Orders.interpretAll(); out.push([row.state, row.problems.length]); Review.render(); return out;
     });
     assert.deepEqual(flip, [['pulled', 2], ['noDesign', 0]]);
+    // the Undo lasts about 12 s, then the cards are Completed's alone
+    await page.waitForFunction(() => !document.querySelector('#rvList .cuUndo'), null, { timeout: 20000 });
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     list = await rows();
     assert.deepEqual(list.map(x => x.rid).sort(), ['4174476673', '4176744752'], 'both under Completed');
     for (const r of list) { assert.match(r.cls, /cuDone/); assert.deepEqual(r.buttons, ['Print again', 'Reopen']); assert.match(r.why, /QR label printed by Test Operator/); }
+    // a completed line whose SKU has since got a design (no longer special) is still listed, to be reopened
+    assert(await page.evaluate(() => { const row = B.orders.byKey.get('4174476673_41744766731'), sp = row.spec.special; delete row.spec.special; Review.render(); const has = !!document.querySelector('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]'); row.spec.special = sp; Review.render(); return has; }), 'listed under Completed without its special reading');
+    // another chip and back: Completed is still the one chosen
+    await page.click('#reviewView .egTab[data-k=""]'); await page.click('#reviewView .egTab[data-k="customOrder"]');
+    assert.equal(await page.evaluate(() => Review.view().cseg), 'done', 'the Open / Completed choice is kept');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-completed.png') });
     // printed again: the same sticker, counted
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
@@ -233,11 +246,27 @@ async function browserChecks() {
     await page.waitForFunction(() => !B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat'), null, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731'), undefined, 'the record is gone');
     assert.equal(await page.evaluate(() => Review.count()), before, 'its decision is back');
-    // a printer that fails marks nothing
+    // printed from Open with no name saved: the name is asked in the card (never a prompt over the page), then the card
+    // says "Marked completed · Undo", and Undo takes the completion back
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
+    await page.evaluate(() => { B.employee = ''; localStorage.removeItem('cn.employee'); window.prompt = () => { window.__prompted = true; return 'x'; }; });
+    const huggies = '#rvList .reviewListRow[data-rid="4177425406"]', hKey = '4177425406_41774254061';
+    await page.click(huggies + ' [data-cu-print]');
+    await page.waitForSelector(huggies + ' [data-cu-name]');
+    await page.fill(huggies + ' [data-cu-name]', 'Test Operator');
+    await page.click(huggies + ' [data-cu-name-ok]');
+    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-undo]'), hKey, { timeout: 30000 });
+    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).printedBy, 'Test Operator', 'the name typed in the card is recorded');
+    await page.click(huggies + ' [data-cu-undo]');
+    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat'), hKey, { timeout: 30000 });
+    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey), undefined, 'Undo deletes the record');
+    assert.equal(await page.evaluate(() => Review.count()), before, 'and its decision is back');
+    assert.equal(await page.evaluate(() => !!window.__prompted), false, 'no prompt was opened');
+    // a printer that fails marks nothing, and its card says so
     await page.evaluate(() => { window.__failPrint = true; });
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] [data-cu-print]');
-    await page.waitForFunction(() => !document.querySelector('.cuStat'), null, { timeout: 30000 });
+    await page.waitForFunction(() => /^Not printed/.test(document.querySelector('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')?.textContent || '') && !document.querySelector('.cuStat'), null, { timeout: 30000 })
+      .catch(async e => { throw new Error('the card says it was not printed: ' + await page.textContent('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')); });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing');
     await page.evaluate(() => { window.__failPrint = false; });
 

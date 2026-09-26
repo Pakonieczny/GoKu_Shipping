@@ -1055,6 +1055,7 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .runMenu .rbDot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--ink45)}
 .runMenu .rbText{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .runBanner.bare .rbText{visibility:hidden}
+@media (max-width:1399px){.runBanner .rbLead{display:none}}
 .runMenu .rbCaret{flex:0 0 auto;color:var(--ink45)}
 .runBanner.go .rbDot{background:var(--gold2)}
 .topbar .runBanner.wait>.runMenu>summary{background:var(--slateSoft);border-color:#cbd9de;color:#33525d}
@@ -1345,6 +1346,8 @@ dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
 .assetFailed{cursor:pointer;object-fit:contain;color:var(--clay);font:12px var(--sans)}
 .libBar #libKind{border-radius:0;border-top:0;border-right:0;border-bottom:0;background:transparent}
 .placeView .quarterTurns{border-left:1px solid #d5cdbf;padding-left:9px;margin-left:2px}
+/* with On hold or Cancelled beside Open Orders the bar keeps one line under 1400 px: the charm count steps aside, the filters narrow */
+@media(max-width:1399px){#ordChips:has(.egTab + .egTab) ~ .charmTotal,#ordChips:has(.egTab + .egTab) .ordLong{display:none}.ordCompact .ordMetal{max-width:112px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordMetal{max-width:100px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSort{max-width:96px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .ordSearch{width:80px;min-width:80px;flex-basis:80px}.ordCompact:has(#ordChips .egTab + .egTab + .egTab) .egTab{padding:4px 7px}}
 @media(max-width:1100px){.ordCompact{gap:8px}.ordCompact .controlGroup+.controlGroup{padding-left:8px}.ordCompact .ordMetal{max-width:106px}.ordCompact .ordSort{max-width:140px}.ordCompact .ordSearch{width:120px}}
 @media(max-width:700px){.topbar .topTools{border-left:0;padding-left:0}}
 /* Quiet boundaries between tasks; related buttons stay together. */
@@ -1858,6 +1861,9 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .doneRow.cuRow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .cuStat{display:inline-flex;align-items:center;gap:6px;font:600 11.5px var(--sans);color:var(--ink70);white-space:nowrap}
 .cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
+.cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
+.cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
+.cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -2086,7 +2092,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260925-custom-orders"></script>
+<script src="charm-nest-orders.js?v=20260926-engrave"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4907,12 +4913,12 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-hold-cancel"></script>
-<script src="charm-nest-sheetwin.js?v=20260925-sw3"></script>
+<script src="charm-nest-bridge.js?v=20260926-engrave"></script>
+<script src="charm-nest-sheetwin.js?v=20260926-sw7"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260925-done"></script>
+<script src="charm-nest-library.js?v=20260926-find-audit2"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">
