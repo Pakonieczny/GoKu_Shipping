@@ -788,9 +788,10 @@ exports.handler = async (event) => {
         // we need to read the thread doc INSIDE this transaction to
         // satisfy Firestore's read-before-write rule for new doc paths.
         // Reading a non-existent doc is fine — the set() below merges.
+        let parentThreadSnap = null;
         if (parentThreadFinalizePatch && parentThreadFinalizePatch.threadId) {
           const tRef = db.collection(THREADS_COLL_NAME).doc(parentThreadFinalizePatch.threadId);
-          await tx.get(tRef);    // ensures the txn knows about this read path
+          parentThreadSnap = await tx.get(tRef);    // ensures the txn knows about this read path
         }
 
         const snap = await tx.get(ref);
@@ -989,6 +990,19 @@ exports.handler = async (event) => {
             threadPatch.lastAutoProcessedInboundAt =
               admin.firestore.Timestamp.fromMillis(p.inboundMs);
           }
+          // Audit fix P4: the same sticky guards as the pipeline's
+          // finalizeThread. A completed sale keeps its status and AI
+          // scores; an active rush keeps its status (so it stays in
+          // Production Rush) but shows the latest AI scores.
+          try {
+            const td = parentThreadSnap && parentThreadSnap.exists ? (parentThreadSnap.data() || {}) : {};
+            const rush = td.productionRush;
+            if (td.salesCompletedAt) {
+              delete threadPatch.status; delete threadPatch.aiConfidence; delete threadPatch.aiDifficulty;
+            } else if (rush && rush.acceptedAt && !rush.removedAt) {
+              delete threadPatch.status;
+            }
+          } catch (e) { console.warn("[draftSend] sticky-status check skipped:", e.message); }
           tx.set(
             db.collection(THREADS_COLL_NAME).doc(p.threadId),
             threadPatch,
@@ -1502,6 +1516,19 @@ exports.handler = async (event) => {
         if (partial)         finalStatus = "sent_text_only";
         else if (unverified) finalStatus = "sent_unverified";
 
+        // Inbox tabs (design C): a delivered reply clears the thread's
+        // waiting-for-us state and records a short preview for the list
+        // row. An unverified send leaves the thread waiting (marked Send
+        // problem); the next scrape clears it if the message went out.
+        let _awaitFields = {};
+        try {
+          if (finalStatus !== "sent_unverified") {
+            _awaitFields.awaitingReplySince = FV.delete();
+            const preview = String(prev.text || "").replace(/\s+/g, " ").trim().slice(0, 160);
+            if (preview && sentText !== false) _awaitFields.lastOutboundPreview = preview;
+          }
+        } catch (e) { _awaitFields = {}; }
+
         // Decide thread status update based on the snapshot we already read.
         // Mirrors the original logic but uses pre-read data.
         let threadStatusUpdate = null;
@@ -1584,7 +1611,8 @@ exports.handler = async (event) => {
             // consistent state to read.
             autoPipelineDeferUntilMs : FV.delete(),
             updatedAt           : FV.serverTimestamp(),
-            ..._refundFields
+            ..._refundFields,
+            ..._awaitFields
           }, { merge: true });
         } else if (threadStatusUpdate === "auto_replied") {
           tx.set(tRef, {
@@ -1608,7 +1636,8 @@ exports.handler = async (event) => {
             // v3.32 — same defer-field cleanup as the demotion branch.
             autoPipelineDeferUntilMs  : FV.delete(),
             updatedAt                 : FV.serverTimestamp(),
-            ..._refundFields
+            ..._refundFields,
+            ..._awaitFields
           }, { merge: true });
         } else if (prev.threadId && tSnap && tSnap.exists) {
           // v5.30 — No status transition needed (operator manual send
@@ -1638,7 +1667,8 @@ exports.handler = async (event) => {
             lastOperatorReplyAt: FV.serverTimestamp(),
             updatedAt          : FV.serverTimestamp(),
             ..._deferClearFields,
-            ..._refundFields
+            ..._refundFields,
+            ..._awaitFields
           }, { merge: true });
         }
 
