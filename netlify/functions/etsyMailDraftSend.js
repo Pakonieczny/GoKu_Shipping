@@ -77,6 +77,7 @@
  */
 
 const admin = require("./firebaseAdmin");
+const crypto = require("crypto");   // audit fix F16 (text fingerprint in audit rows)
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
 
@@ -802,6 +803,16 @@ exports.handler = async (event) => {
           return { conflict: true, prevStatus: prev.status };
         }
 
+        // Audit fix F1 — an automated sender (auto-pipeline, sales agent,
+        // listing creator) never replaces a reply an operator queued by
+        // hand, even with force:true. The one-per-thread slot would lose
+        // the operator's text before the Etsy helper sends it. (Manual
+        // over manual is handled by PREVIOUS_SEND_PENDING further down.)
+        if (prev && prev.status === "queued" && prev.sendOrigin === "manual" &&
+            inferredSendOriginForRecon === "auto") {
+          return { conflict: true, prevStatus: "queued (an operator reply is waiting to go)" };
+        }
+
         // v0.9.1 #6: block second-operator queue overwrites
         // If another operator already queued this draft, refuse silently
         // unless the current operator passed force:true. The inbox catches
@@ -1040,6 +1051,11 @@ exports.handler = async (event) => {
 
       await audit(threadId, draftId, "draft_enqueued", employeeName || "operator", {
         textLength   : cleanText.length,
+        // Audit fix F16 — enough to tell WHICH message was queued (and to
+        // prove a later overwrite) without storing the whole text twice.
+        textSha256   : crypto.createHash("sha256").update(cleanText).digest("hex").slice(0, 16),
+        textPreview  : cleanText.slice(0, 160),
+        sendOrigin   : inferredSendOriginForRecon,
         attachmentCount: normalized.length,
         attachmentTypes: normalized.map(a => a.type),
         skippedPendingTracking: recon.skippedPendingTracking || []
@@ -1649,13 +1665,19 @@ exports.handler = async (event) => {
         if (!snap.exists) return { notFound: true };
         const prev = snap.data();
         if (prev.sendSessionId !== sessionId) return { notYours: true };
+        // Audit fix F2 — only a draft that is still being sent can fail.
+        // A late or repeated report must not re-open a finished send.
+        if (prev.status !== "sending") return { badState: prev.status };
 
         // v3.15: hoist all reads BEFORE any writes (Firestore rule).
         // Pre-fetch thread so the demote write at the end is legal.
         const threadPrefetch = await prefetchThreadForDemoteInTxn(tx, prev.threadId);
 
         const attempts = prev.sendAttempts || 0;
-        const willRetry = retry && attempts < MAX_SEND_ATTEMPTS;
+        // Audit fix F2 — after Etsy's Send button was clicked the message
+        // may already be delivered: never re-queue (a retry clicks Send again).
+        const clicked   = prev.sendStage === "post_click";
+        const willRetry = retry && attempts < MAX_SEND_ATTEMPTS && !clicked;
 
         const patch = {
           sendError      : String(error).slice(0, 1000),
@@ -1670,6 +1692,14 @@ exports.handler = async (event) => {
           // Keep attempts; next claim increments.
         } else {
           patch.status        = "failed";
+          if (clicked) {
+            // Reuse the inbox's existing STRANDED_POST_CLICK handling
+            // (verify-on-Etsy text + Recover button); keep the helper's code.
+            patch.sendErrorCode         = "STRANDED_POST_CLICK";
+            patch.sendErrorOriginalCode = errorCode || null;
+            patch.sendError = "Send was clicked, then the helper reported: " +
+              String(error).slice(0, 800) + " — check Etsy before re-sending.";
+          }
         }
         tx.set(ref, patch, { merge: true });
 
@@ -1689,6 +1719,7 @@ exports.handler = async (event) => {
       });
       if (result.notFound) return json(404, { error: "Draft not found" });
       if (result.notYours) return json(403, { error: "Fail from wrong session" });
+      if (result.badState) return json(409, { error: `Draft is ${result.badState}; fail ignored`, errorCode: "NOT_SENDING" });
       await audit(result.threadId, draftId, result.requeued ? "draft_send_requeued" : "draft_send_failed", sessionId, {
         error, errorCode, attempts: result.attempts,
         threadStatusUpdate: result.threadStatusUpdate

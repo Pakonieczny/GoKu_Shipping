@@ -401,6 +401,8 @@ function friendlyFailure(code, error) {
     case "REPLACED": return "Not sent: someone in the inbox sent their own reply in this conversation first.";
     case "SLOT_CLEARED": return "Not sent: the inbox cleared this conversation's reply box before it went.";
     case "INBOX_CANCELLED": return "Not sent: it was cancelled in the inbox.";
+    // audit: a clicked-but-unconfirmed send most likely reached the customer
+    case "STRANDED_POST_CLICK": return "Probably sent: Etsy's Send button was clicked but Etsy did not confirm it. Check the conversation before sending it again.";
     default: return "Not sent: " + String(error || "Etsy did not accept the message").slice(0, 200);
   }
 }
