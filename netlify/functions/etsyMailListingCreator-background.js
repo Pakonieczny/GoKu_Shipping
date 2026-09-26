@@ -65,7 +65,12 @@ const MANUAL_LISTING_DEFAULT_PRICE_USD = Math.max(1, Number(process.env.ETSYMAIL
 const AI_MODEL =
   process.env.ETSYMAIL_LISTING_CREATOR_MODEL ||
   process.env.ETSYMAIL_SALES_MODEL ||
-  "claude-sonnet-4-6";
+  "claude-sonnet-5";
+// Sonnet 5 and newer always reason and that counts toward max_tokens, so these
+// short single-shot calls get low effort and room for the reasoning.
+const REASONS_BY_DEFAULT = /^claude-(?:sonnet-5|opus-5|fable-5)/.test(AI_MODEL);
+const shortCallOpts = (maxTokens) => REASONS_BY_DEFAULT
+  ? { maxTokens: maxTokens + 6000, effort: "low" } : { maxTokens };
 
 const MAX_IMAGES_PER_LISTING = 10;   // Etsy's hard cap
 
@@ -740,7 +745,7 @@ Output the JSON object now.`;
 
   const resp = await callClaudeRaw({
     model      : AI_MODEL,
-    maxTokens  : 1500,
+    ...shortCallOpts(1500),
     system     : TITLE_DESC_SYSTEM_PROMPT,
     messages   : [{ role: "user", content: userPrompt }],
     useThinking: false   // single-shot generation, no need for thinking
@@ -1501,7 +1506,7 @@ Write the compact bullet handoff now.`;
   try {
     const resp = await callClaudeRaw({
       model      : AI_MODEL,
-      maxTokens  : 320,
+      ...shortCallOpts(320),
       system     : SYNOPSIS_SYSTEM_PROMPT,
       messages   : [{ role: "user", content: userPrompt }],
       useThinking: false

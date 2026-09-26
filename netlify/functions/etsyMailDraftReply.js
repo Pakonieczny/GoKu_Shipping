@@ -51,7 +51,7 @@
  *  ═══ ENV VARS ═══
  *
  *  ANTHROPIC_API_KEY              required
- *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-4-6
+ *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-5
  *  ETSYMAIL_AI_EFFORT             optional; default "high"
  *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Sonnet 4.6 counts
  *                                 thinking + response + tool-use ALL
@@ -352,7 +352,7 @@ const CONFIG_COLL    = "EtsyMail_Config";
 // remains on Sonnet 4.6 by default — phased rollout: support first, then
 // sales once the cheaper model proves out on confidence-score and
 // human-review-rate metrics.
-const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-4-6";
+const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-5";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 
@@ -4166,12 +4166,16 @@ answering. Do not guess about the order's contents.`;
 
     // Audit 2026-09 (A9, D9): drafts the auto-pipeline runs in-process get
     // a reasoning step and the newer model; the AI Draft button (26 s
-    // synchronous limit) keeps ETSYMAIL_AI_MODEL without thinking.
+    // synchronous limit) uses ETSYMAIL_AI_MODEL at low effort.
     const viaPipelineDraft = body.viaPipeline === true;
     const draftModel = viaPipelineDraft ? AI_PIPELINE_MODEL : AI_MODEL;
     const draftThinking = AI_ADAPTIVE_THINKING === "all"
                        || (AI_ADAPTIVE_THINKING === "pipeline" && viaPipelineDraft)
                        || THINKS_BY_DEFAULT_RX.test(String(draftModel));
+    // The AI Draft button runs under the 26 s synchronous limit; a model that
+    // always reasons keeps that short with low effort there.
+    const draftEffort = (!viaPipelineDraft && THINKS_BY_DEFAULT_RX.test(String(draftModel)))
+                      ? (process.env.ETSYMAIL_AI_BUTTON_EFFORT || "low") : AI_EFFORT;
 
     let loopResult;
     try {
@@ -4183,7 +4187,7 @@ answering. Do not guess about the order's contents.`;
         toolSpecs     : TOOL_SPECS,
         toolExecutors,
         toolContext,
-        effort        : AI_EFFORT,
+        effort        : draftEffort,
         useThinking   : true,
         maxIterations : MAX_TOOL_ITERATIONS,
         adaptiveThinking: draftThinking,
