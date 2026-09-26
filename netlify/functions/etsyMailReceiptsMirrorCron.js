@@ -426,6 +426,9 @@ exports.handler = meter.wrapHandler(async () => {
     invocationId,
     function     : "etsyMailReceiptsMirrorCron",
     phase        : "start",
+    // Audit fix F16 — one row per 3-min tick (~480/day); lets a Firestore TTL
+    // policy on EtsyMail_DiagnosticLog.expireAt remove them after 14 days.
+    expireAt     : admin.firestore.Timestamp.fromMillis(invocationStartMs + 14 * 24 * 60 * 60 * 1000),
     createdAt    : FV.serverTimestamp(),
     invocationStartMs
   });

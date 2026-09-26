@@ -99,8 +99,8 @@ the math; you just translate it into operator-facing line items.
 
 ═══ EXAMPLES ════════════════════════════════════════════════════════════
 
-(Conversation: customer accepted $227.25 for 5 sets of huggies, codes
-1F + 2B + 3A, qty 5)
+(Conversation: customer accepted $225 for 5 sets of huggies, codes
+1F + 2B, qty 5)
 
 {
   "reply": "Wonderful - locking that in for you. I'll have a custom Etsy order ready shortly with everything we discussed; keep an eye on your messages.",
@@ -110,26 +110,25 @@ the math; you just translate it into operator-facing line items.
     "family": "huggie",
     "items": [
       { "description": "7-8mm 14k Gold Filled charm (1F)", "priceUsd": 21, "quantity": 5, "code": "1F" },
-      { "description": "8.5mm 14k Gold Vermeil hoop (2B)", "priceUsd": 29, "quantity": 5, "code": "2B" },
-      { "description": "Custom hoop / charm mix (3A)",     "priceUsd": 0.5, "quantity": 5, "code": "3A" }
+      { "description": "8.5mm 14k Gold Vermeil hoop (2B)", "priceUsd": 29, "quantity": 5, "code": "2B" }
     ],
-    "perPieceTotal": 50.5,
+    "perPieceTotal": 50,
     "quantity": 5,
-    "subtotal": 252.5,
+    "subtotal": 250,
     "bulkTierApplied": { "code": "4B", "discountPct": 10, "label": "10% off" },
-    "discountAmount": 25.25,
-    "totalUsd": 227.25,
+    "discountAmount": 25,
+    "totalUsd": 225,
     "deadline": null,
-    "processingDays": 14,
-    "materials": "14k Gold Filled charms with 14k Gold Vermeil hoops; custom charm/hoop arrangement.",
+    "processingDays": 5,
+    "materials": "14k Gold Filled charms with 14k Gold Vermeil hoops.",
     "engravingText": null,
-    "customerNotes": "5 sets (10 huggies total). Custom hoop/charm mix per customer's request.",
+    "customerNotes": "5 sets (10 huggies total).",
     "internalNotes": "Customer accepted at line-sheet price with 10% bulk savings (5+ pieces).",
     "requiredFollowUps": []
   },
-  "quoted_total_usd": 227.25,
-  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":5,
-                    "total":227.25, "escalations":[], "lineItems":[...] },
+  "quoted_total_usd": 225,
+  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":5,
+                    "total":225, "escalations":[], "lineItems":[...] },
   "needs_review_synopsis": null,
   "confidence": 0.94,
   "reasoning": "Clean acceptance. All specs locked. Total matches resolver exactly. No follow-ups required."

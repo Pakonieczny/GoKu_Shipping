@@ -119,7 +119,10 @@ async function writeAudit({ threadId = null, draftId = null, eventType,
   }
 }
 
-function r2(n) { return Math.round(n * 100) / 100; }
+// Audit fix F13 — strip binary noise before rounding half-up: 1.5 * 0.15
+// is 0.22499999999999998 in floating point and rounded to 0.22 (not 0.23).
+// Identical results for every whole-dollar price (see audit fixture t_r2_fixed.js).
+function r2(n) { return Math.round(Number((n * 100).toPrecision(12))) / 100; }
 
 function invalidateSheetCache(family) {
   if (family) _sheetCache.delete(family);
@@ -485,8 +488,9 @@ async function resolveQuote({ family, selectedCodes, quantity,
   if (!Array.isArray(selectedCodes) || selectedCodes.length === 0) {
     return { success: false, reason: "NO_CODES_SELECTED" };
   }
-  const qty = parseInt(quantity, 10);
-  if (!Number.isFinite(qty) || qty < 1) {
+  // Audit fix F13 — parseInt read "2.9" as 2; refuse non-whole quantities.
+  const qty = Number(quantity);
+  if (!Number.isInteger(qty) || qty < 1) {
     return { success: false, reason: "INVALID_QUANTITY", quantity };
   }
 
@@ -507,15 +511,35 @@ async function resolveQuote({ family, selectedCodes, quantity,
   // Stud section 2 modifiers are tracked separately (they don't add a
   // line item; they transform section 1's price).
   const studSetModifier = { type: null, pct: null, amountUsd: 0 };
+  const seenCodes = new Set();          // audit fix F13
+  const pickedBySection = new Map();    // audit fix F13: sectionId -> first code picked
 
   for (const rawCode of selectedCodes) {
     const code = String(rawCode || "").toUpperCase().trim();
     if (!code) continue;
+    // Audit fix F13 — a repeated code is charged once (it was summed twice).
+    if (seenCodes.has(code)) continue;
+    seenCodes.add(code);
     const entry = codeIndex.get(code);
     if (!entry) {
       unknownCodes.push(code);
       continue;
     }
+    // Audit fix F13 — each option section is "choose one". A second pick in
+    // the same section was summed (two charm sizes = two prices) or, for the
+    // stud set, silently replaced the first. Keep the first pick and
+    // escalate, so a person confirms what the customer wants.
+    if (pickedBySection.has(entry.sectionId)) {
+      escalations.push({
+        code,
+        section  : entry.sectionName,
+        sectionId: entry.sectionId,
+        reason   : "MULTIPLE_OPTIONS_IN_SECTION",
+        details  : { alreadySelected: pickedBySection.get(entry.sectionId) }
+      });
+      continue;
+    }
+    pickedBySection.set(entry.sectionId, code);
     coveredSections.add(entry.sectionId);
     const opt = entry.option;
 
@@ -579,6 +603,27 @@ async function resolveQuote({ family, selectedCodes, quantity,
     }
 
     // ─── Normal priced option ────────────────────────────────────────
+    // Audit fix F13 — a priced row without a usable price (a sheet data
+    // error) was counted as $0 and under-quoted. Escalate instead.
+    if (!(typeof opt.priceUsd === "number" && Number.isFinite(opt.priceUsd) && opt.priceUsd >= 0)) {
+      escalations.push({
+        code,
+        section  : entry.sectionName,
+        sectionId: entry.sectionId,
+        reason   : "PRICE_MISSING_ON_SHEET",
+        details  : opt
+      });
+      lineItems.push({
+        code,
+        sectionId   : entry.sectionId,
+        sectionName : entry.sectionName,
+        label       : optLabelFor(opt),
+        priceUsd    : null,
+        priceMissing: true,
+        explainer   : opt.explainer || null
+      });
+      continue;
+    }
     lineItems.push({
       code,
       sectionId: entry.sectionId,

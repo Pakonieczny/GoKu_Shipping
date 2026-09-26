@@ -154,27 +154,27 @@ this combination."
 
 ═══ EXAMPLES ════════════════════════════════════════════════════════════
 
-(Spec captured: family=huggie, selectedCodes=["1F","2B","3A"], quantity=5,
+(Spec captured: family=huggie, selectedCodes=["1F","2B"], quantity=5,
 urgency_level="none", wantsRush=false)
 
-→ Tool call: resolveQuote(family:"huggie", selectedCodes:["1F","2B","3A"], quantity:5)
-→ Result: {success:true, total:227.25, perPieceAfterModifier:50.5,
-           subtotal:252.5, bulkTier:{code:"4B",discountPct:10}, escalations:[],
+→ Tool call: resolveQuote(family:"huggie", selectedCodes:["1F","2B"], quantity:5)
+→ Result: {success:true, total:225, perPieceAfterModifier:50,
+           subtotal:250, bulkTier:{code:"4B",discountPct:10}, escalations:[],
            rush:null}
 
 CASE A response (no rush, no shipping mention):
 {
-  "reply": "Five sets of 7-8mm 14k Gold Filled huggie charms with the 8.5mm Vermeil hoop and the custom hoop/charm mix - that's $50.50 per piece, and at 5 pieces you get our 10% bulk savings, so $227.25 total. Want me to lock that in?",
+  "reply": "Five sets of 7-8mm 14k Gold Filled huggie charms with the 8.5mm 14k Gold Vermeil hoop - that's $50 per set (a set is 2 huggie charms), and at 5 sets you get our 10% bulk savings, so $225 total. Want me to lock that in?",
   "advance_stage": null,
-  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":5,
-                    "wantsRush":false, "perPieceAfterModifier":50.5,
-                    "subtotal":252.5, "bulkTier":{"code":"4B","discountPct":10},
-                    "discountAmount":25.25, "subtotalAfterDiscount":227.25,
-                    "rush":null, "total":227.25, "escalations":[] },
-  "quoted_total_usd": 227.25,
+  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":5,
+                    "wantsRush":false, "perPieceAfterModifier":50,
+                    "subtotal":250, "bulkTier":{"code":"4B","discountPct":10},
+                    "discountAmount":25, "subtotalAfterDiscount":225,
+                    "rush":null, "total":225, "escalations":[] },
+  "quoted_total_usd": 225,
   "ready_for_human_approval": false,
   "needs_review_synopsis": null,
-  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":5 },
+  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":5 },
   "missing_inputs": [],
   "needs_photo": false,
   "confidence": 0.92,
@@ -183,27 +183,27 @@ CASE A response (no rush, no shipping mention):
 
 ──────────────────────────────────────────────────────────────────────────
 
-(Spec captured: family=huggie, selectedCodes=["1F","2B","3A"], quantity=5,
+(Spec captured: family=huggie, selectedCodes=["1F","2B"], quantity=5,
 urgency_level="high", deadline="next Friday", wantsRush=true)
 
-→ Tool call: resolveQuote(family:"huggie", selectedCodes:["1F","2B","3A"],
+→ Tool call: resolveQuote(family:"huggie", selectedCodes:["1F","2B"],
              quantity:5, wantsRush:true, includeShippingSummary:true)
-→ Result: {success:true, subtotalAfterDiscount:227.25,
+→ Result: {success:true, subtotalAfterDiscount:225,
            rush:{feeUsd:15, productionDaysRushMin:2, productionDaysRushMax:3},
-           total:242.25,
+           total:240,
            shippingSummary:{anyUpgrades:true, rangeText:"$5.00-$22.00", fastestDaysText:"as fast as 2 days"}}
 
 CASE A with rush + shipping mention:
 {
-  "reply": "For a Friday deadline I can rush production - 2-3 business days instead of the usual 4-5. The total comes to $242.25 (your 5 sets at $50.50 each, less the 10% bulk savings, plus $15 rush fee). Etsy also has expedited shipping available at checkout, typically $5.00-$22.00 depending on speed and destination. Want me to lock that in?",
+  "reply": "For a Friday deadline I can rush production - 2-3 business days instead of the usual 4-5. The total comes to $240 (your 5 sets at $50 each, less the 10% bulk savings, plus $15 rush fee). Etsy also has expedited shipping available at checkout, typically $5.00-$22.00 depending on speed and destination. Want me to lock that in?",
   "advance_stage": null,
-  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":5,
-                    "wantsRush":true, "subtotalAfterDiscount":227.25,
-                    "rush":{"feeUsd":15}, "total":242.25, "escalations":[] },
-  "quoted_total_usd": 242.25,
+  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":5,
+                    "wantsRush":true, "subtotalAfterDiscount":225,
+                    "rush":{"feeUsd":15}, "total":240, "escalations":[] },
+  "quoted_total_usd": 240,
   "ready_for_human_approval": false,
   "needs_review_synopsis": null,
-  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":5,
+  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":5,
                       "deadline":"next Friday", "urgency_level":"high", "wantsRush":true },
   "missing_inputs": [],
   "needs_photo": false,

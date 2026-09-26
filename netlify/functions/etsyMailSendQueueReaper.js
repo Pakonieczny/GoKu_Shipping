@@ -69,7 +69,11 @@ const AUDIT_COLL  = "EtsyMail_Audit";
 // thousands of docs.
 const MAX_REAP_PER_RUN = 200;
 
-exports.config = { schedule: "*/5 * * * *" };
+// Audit fix F9 — unscheduled. etsyMailReapers.js (every 5 min) runs this
+// pass and marks a clicked-but-unconfirmed send "sent_unverified"; this
+// older copy marked the same send "failed", which invites a duplicate
+// re-send. The file stays for manual invocation.
+// exports.config = { schedule: "*/5 * * * *" };
 
 function json(statusCode, body) {
   return {

@@ -83,7 +83,9 @@ const MAX_REAP_PER_RUN = 200;
 // In-code schedule config. Netlify runtime reads this on deploy and
 // registers the cron. (Comment in the file header explains the
 // alternate netlify.toml path.)
-exports.config = { schedule: "*/10 * * * *" };
+// Audit fix F9 — unscheduled: etsyMailReapers.js pass 1 does the same work
+// every 5 minutes. The file stays for manual invocation.
+// exports.config = { schedule: "*/10 * * * *" };
 
 function json(statusCode, body) {
   return {

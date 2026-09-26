@@ -581,17 +581,21 @@ exports.handler = async (event) => {
         const receiptsSnap = await db.collection("EtsyMail_Receipts")
           .where("buyer_user_id", "==", buyerUserId)
           .orderBy("created_timestamp", "desc")
-          .limit(1)
+          .limit(2)   // audit fix F17: tell "one order" from "several orders"
           .get();
         if (!receiptsSnap.empty) {
           const receiptDoc = receiptsSnap.docs[0];
+          const severalOrders = receiptsSnap.size > 1;
           orderId = String(receiptDoc.id);  // doc id IS the receipt_id IS the etsyOrderId
           orderIdSource = "buyer_receipts_fallback";
 
           // Backfill the thread so subsequent code paths see the
           // resolved order ID. Best-effort — if this write fails we
           // still proceed with the dispatch using the resolved id.
-          db.collection(THREADS_COLL).doc(threadId).set({
+          // Audit fix F17 — with several orders the newest is only a guess:
+          // use it for this post, but do not write it onto the thread as
+          // if it were the conversation's order.
+          if (!severalOrders) db.collection(THREADS_COLL).doc(threadId).set({
             etsyOrderId: orderId,
             etsyOrderIdResolvedBy: "buyer_receipts_fallback",
             etsyOrderIdResolvedAt: FV.serverTimestamp(),
@@ -609,6 +613,7 @@ exports.handler = async (event) => {
             payload: {
               buyerUserId,
               resolvedOrderId: orderId,
+              severalOrders,
               receiptCreatedTs: (receiptDoc.data() || {}).created_timestamp || null,
             },
             createdAt: FV.serverTimestamp(),

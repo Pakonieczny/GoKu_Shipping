@@ -130,6 +130,10 @@ const AUDIT_COLL    = "EtsyMail_Audit";
 // when the cap is hit, oldest entry is evicted.
 const LOOKUP_CACHE_MS         = 60 * 1000;
 const LOOKUP_CACHE_MAX_ENTRIES = 200;
+// Mirror-first look-ups trust a mirror copy only this long after the catalog
+// sync last wrote it. The nightly sync can stop partway through the pages, so
+// older copies may carry an old price or a listing that is no longer active.
+const MIRROR_FRESH_MS          = 36 * 60 * 60 * 1000;
 const _lookupCache = new Map();   // listingId → { value, fetchedAt }
                                   //   Map preserves insertion order, so
                                   //   the first key is the oldest — used
@@ -467,10 +471,12 @@ async function lookupListingById({ listingId, threadId = null, preferMirror = fa
 
   // Audit fix F12 — budget mode for automatic look-ups: the shop's own
   // listings are mirrored in EtsyMail_Listings, so read the mirror first
-  // (0 Etsy calls) and call Etsy only when the mirror has no copy.
+  // (0 Etsy calls) and call Etsy only when the mirror has no fresh copy.
   if (preferMirror) {
     const mirrorDoc = await getListingFromCacheById(listingId);
-    if (mirrorDoc) {
+    const syncedMs = mirrorDoc && mirrorDoc.lastSyncedAt && typeof mirrorDoc.lastSyncedAt.toMillis === "function"
+      ? mirrorDoc.lastSyncedAt.toMillis() : 0;
+    if (mirrorDoc && Date.now() - syncedMs < MIRROR_FRESH_MS) {
       const listing = normalizeListing(null, null, mirrorDoc, null);
       return {
         found: true,

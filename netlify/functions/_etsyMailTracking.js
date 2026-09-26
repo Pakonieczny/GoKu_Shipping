@@ -79,7 +79,16 @@ async function uploadPng(trackingCode, pngBuffer) {
   const path = `${STORAGE_PREFIX}${safeCode}.png`;
 
   const file = bucket.file(path);
-  const downloadToken = crypto.randomUUID();
+  // Audit fix F18 — keep the existing download token when the PNG for this
+  // tracking code is re-rendered. A new token made every earlier URL
+  // (stored in queued drafts and optimistic messages) answer 403.
+  let downloadToken = null;
+  try {
+    const [meta] = await file.getMetadata();
+    const tokens = meta && meta.metadata && meta.metadata.firebaseStorageDownloadTokens;
+    if (tokens) downloadToken = String(tokens).split(",")[0];
+  } catch (_) { /* first render for this code: no file yet */ }
+  if (!downloadToken) downloadToken = crypto.randomUUID();
 
   await file.save(pngBuffer, {
     metadata: {

@@ -61,8 +61,14 @@ const AUDIT_COLL    = "EtsyMail_Audit";
 
 // ─── Sync constants ────────────────────────────────────────────────────
 const SYNC_PAGE_SIZE      = 100;        // Etsy v3 max
-const SYNC_HARD_CAP       = 5000;       // safety cap on pagination
+const SYNC_HARD_CAP       = 10000;      // safety cap on pagination
 const SYNC_MUTEX_TTL_MS   = 10 * 60 * 1000;  // stale-lock recovery
+// The scheduled run is stopped by the platform after about a minute, and a
+// page with images takes ~3 s, so pages are fetched a few at a time and the
+// run stops paging (without the inactivation pass) before that limit.
+const SYNC_CONCURRENCY    = 8;
+const SYNC_TIME_BUDGET_MS = 38 * 1000;
+const SYNC_WRITE_CHUNK    = 400;        // Firestore allows 500 writes per batch
 
 // ─── AI-trim constants — what the model sees ───────────────────────────
 // Description and tags are CAPPED before going to the model, so a
@@ -239,19 +245,17 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
   let totalWritten = 0;
   const seenIds = new Set();
   let lastError = null;
+  const tStart = Date.now();
 
   try {
-    let offset = 0;
-    let keepGoing = true;
-
-    while (keepGoing) {
+    const fetchPage = async (offset) => {
       meter.bumpSimple("catalog.activeListings");
       const data = await etsyFetch(`/shops/${SHOP_ID}/listings/active`, {
         query: { limit: SYNC_PAGE_SIZE, offset, includes: "Images" }
       });
-      const results = Array.isArray(data.results) ? data.results : [];
-      if (results.length === 0) break;
-
+      return data || {};
+    };
+    const writePage = async (results) => {
       const batch = db.batch();
       let batchSize = 0;
       for (const l of results) {
@@ -263,38 +267,73 @@ async function syncCatalog({ fullSync = true, triggeredBy = "cron" } = {}) {
         totalWritten++;
       }
       if (batchSize > 0) await batch.commit();
+    };
+    const resultsOf = (data) => Array.isArray(data.results) ? data.results : [];
 
-      offset += results.length;
-      // Stop when (a) page is partial (last page reached) or (b) we hit
-      // the safety cap. Both are explicit exits to avoid runaway loops.
-      keepGoing = results.length === SYNC_PAGE_SIZE && offset < SYNC_HARD_CAP;
+    // Audit follow-up — the one-page-at-a-time loop never finished inside
+    // the scheduled run's time limit, so the mirror was only ever partly
+    // refreshed and the inactivation pass never ran. The first page gives
+    // the listing count; the rest are fetched SYNC_CONCURRENCY at a time.
+    // Same number of Etsy calls as before (one per page).
+    const first = await fetchPage(0);
+    const firstResults = resultsOf(first);
+    await writePage(firstResults);
+    const expected = Number.isFinite(Number(first.count)) ? Number(first.count) : null;
+    let complete = firstResults.length < SYNC_PAGE_SIZE;
+    let offset = SYNC_PAGE_SIZE;
+    const lastPlanned = expected == null ? SYNC_HARD_CAP : Math.min(expected, SYNC_HARD_CAP);
+    while (!complete) {
+      if (Date.now() - tStart > SYNC_TIME_BUDGET_MS) break;
+      if (offset >= SYNC_HARD_CAP) break;
+      const offsets = [];
+      // Past the expected count, go one page at a time until a short page
+      // (listings added during the run), so no empty pages are fetched.
+      const width = offset < lastPlanned ? SYNC_CONCURRENCY : 1;
+      for (let k = 0; k < width && offset < SYNC_HARD_CAP; k++) {
+        if (offset >= lastPlanned && k > 0) break;
+        offsets.push(offset);
+        offset += SYNC_PAGE_SIZE;
+      }
+      const pages = await Promise.all(offsets.map(fetchPage));
+      await Promise.all(pages.map(p => writePage(resultsOf(p))));
+      if (pages.some(p => resultsOf(p).length < SYNC_PAGE_SIZE)) complete = true;
     }
 
     // Full-sync inactivation pass: anything previously stored that's NOT
     // in this run's seenIds gets active:false. Skip on incremental syncs
-    // (set fullSync:false in the request body).
+    // (set fullSync:false in the request body), and skip when paging did
+    // not reach the end (a listing on an unread page is still active).
     let inactivatedCount = 0;
-    if (fullSync && seenIds.size > 0) {
+    if (fullSync && complete && seenIds.size > 0) {
       // We only need the active ones — flipping already-inactive listings
       // again is wasted writes. Filter by active==true to keep the read
       // set bounded.
       const allActiveSnap = await db.collection(LISTINGS_COLL)
         .where("active", "==", true)
         .get();
-      const inactivateBatch = db.batch();
-      let pending = 0;
-      const batches = [];
-      allActiveSnap.forEach(doc => {
-        if (!seenIds.has(doc.id)) {
-          inactivateBatch.set(doc.ref, {
+      const stale = [];
+      allActiveSnap.forEach(doc => { if (!seenIds.has(doc.id)) stale.push(doc.ref); });
+      for (let i = 0; i < stale.length; i += SYNC_WRITE_CHUNK) {
+        const inactivateBatch = db.batch();
+        for (const ref of stale.slice(i, i + SYNC_WRITE_CHUNK)) {
+          inactivateBatch.set(ref, {
             active         : false,
             deactivatedAt  : FV.serverTimestamp()
           }, { merge: true });
-          inactivatedCount++;
-          pending++;
         }
+        await inactivateBatch.commit();
+        inactivatedCount += Math.min(SYNC_WRITE_CHUNK, stale.length - i);
+      }
+    }
+
+    if (!complete) {
+      lastError = `partial: ${seenIds.size} of ${expected == null ? "?" : expected} listings refreshed before the run's time limit`;
+      await releaseSyncMutex({ totalListings: seenIds.size, fullSync, lastError });
+      await writeAudit({
+        eventType: "catalog_sync_completed",
+        payload  : { outcome: "partial", triggeredBy, fullSync, totalWritten, totalListings: seenIds.size, expected }
       });
-      if (pending > 0) await inactivateBatch.commit();
+      return { ok: true, partial: true, totalWritten, totalListings: seenIds.size, expected, fullSync };
     }
 
     await releaseSyncMutex({ totalListings: seenIds.size, fullSync, lastError: null });

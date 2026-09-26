@@ -33,6 +33,7 @@
 
 const admin        = require("./firebaseAdmin");
 const crypto       = require("crypto");
+const { requireExtensionAuth } = require("./_etsyMailAuth");   // audit fix F15
 const fetch        = require("node-fetch");
 
 const db = admin.firestore();
@@ -78,6 +79,12 @@ exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
   }
+
+  // Audit fix F15 — a cache miss or forceRefresh starts a paid carrier
+  // scrape (Apify). Only the inbox (api() sends the secret), the server
+  // (etsyMailDraftReply, now sending the secret) and the extension may ask.
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return auth.response;
 
   let trackingCode, carrierHint, forceRefresh, draftId;
 

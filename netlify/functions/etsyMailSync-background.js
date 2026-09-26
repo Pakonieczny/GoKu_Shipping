@@ -106,6 +106,7 @@ const MAX_INVOCATION_MS = 13 * 60 * 1000;  // leave 2 min cleanup tail
 // helper adds in-memory module-level caching that survives across
 // invocations within the same warm Node process.
 const { getValidEtsyAccessToken } = require("./_etsyMailEtsy");
+const { requireExtensionAuth } = require("./_etsyMailAuth");   // audit fix F15
 
 // ─── Money helper ──────────────────────────────────────────────────────────
 function moneyAmt(m) {
@@ -827,6 +828,9 @@ exports.handler = meter.wrapHandler(async (event) => {
     invocationStartMs,
     function     : "etsyMailSync-background",
     phase        : "start",
+    // Audit fix F16 — lets a Firestore TTL policy on EtsyMail_DiagnosticLog.expireAt
+    // delete these rows after 14 days (nothing is deleted until that policy exists).
+    expireAt     : admin.firestore.Timestamp.fromMillis(invocationStartMs + 14 * 24 * 60 * 60 * 1000),
     callerUA     : (_h["user-agent"]      || _h["User-Agent"]      || null),
     callerReferer: (_h["referer"]         || _h["Referer"]         || null),
     callerOrigin : (_h["origin"]          || _h["Origin"]          || null),
@@ -938,6 +942,17 @@ exports.handler = meter.wrapHandler(async (event) => {
     }
 
     if (mode === "backfill") {
+      // Audit fix F15 — starting, resuming or cancelling a 24-month backfill
+      // spends Etsy calls, and this endpoint had no auth. The inbox sends the
+      // secret (api()). The internal chunk self-triggers keep working
+      // without it: a "chunk" does nothing unless a backfill is running.
+      if ((action || "chunk") !== "chunk") {
+        const auth = requireExtensionAuth(event);
+        if (!auth.ok) {
+          await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: `unauthorized backfill ${action}` });
+          return auth.response;
+        }
+      }
       if (!SHOP_ID || !CLIENT_ID || !CLIENT_SECRET) {
         const out = { ok: false, error: "Missing env vars" };
         await writeDiagLog(invocationId, { phase: "end", outcome: "error", errorMsg: out.error });

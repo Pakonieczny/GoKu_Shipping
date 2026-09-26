@@ -2332,6 +2332,40 @@
     .em-compose button.send-etsy:disabled { background: #e88a75; cursor: wait; }
     .em-attach-hidden { display: none !important; }
 
+    /* Audit fix S5 — inline price step for the Custom Listing button. Shown
+       only while the operator confirms the price; no dialog on top of the page. */
+    .em-price-ask {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-top: 8px; padding: 6px 8px; border: 1px solid #d0d7de;
+      border-radius: 6px; background: #f6f8fa; font-size: 12px; color: #1f2328;
+      animation: em-price-in .16s ease-out;
+    }
+    .em-price-ask-label { color: #57606a; }
+    .em-price-ask-field {
+      display: inline-flex; align-items: center; gap: 2px; height: 28px;
+      padding: 0 8px; border: 1px solid #d0d7de; border-radius: 4px;
+      background: #fff; color: #57606a;
+    }
+    .em-price-ask-field:focus-within { border-color: #0366d6; box-shadow: 0 0 0 2px rgba(3,102,214,.15); }
+    .em-price-ask-field input.browser-default {
+      width: 84px; border: 0; outline: none; background: transparent; padding: 0; margin: 0;
+      font: inherit; font-size: 13px; color: #1f2328; font-variant-numeric: tabular-nums;
+    }
+    .em-price-ask-msg { color: #cf222e; font-size: 11px; }
+    .em-price-ask-msg:empty { display: none; }
+    .em-price-ask.m-price-ask { margin: 6px 0 2px; font-size: 14px; }
+    .em-price-ask.m-price-ask .em-price-ask-label { flex-basis: 100%; font-size: 12px; margin-bottom: -4px; }
+    .em-price-ask.m-price-ask .em-price-ask-field { height: 36px; flex: 1 1 0; min-width: 0; }
+    .em-price-ask.m-price-ask .em-price-ask-field input.browser-default { font-size: 16px; width: 100%; min-width: 0; }
+    .em-price-ask.m-price-ask .em-price-ask-msg { flex-basis: 100%; }
+    .em-price-ask.m-price-ask button {
+      height: 36px; padding: 0 12px; border: 1px solid #d0d7de; border-radius: 8px;
+      background: #fff; color: #1f2328; font-size: 14px; font-family: inherit; cursor: pointer;
+    }
+    .em-price-ask.m-price-ask button.primary { background: #1f883d; border-color: #1a7f37; color: #fff; }
+    @keyframes em-price-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .em-price-ask { animation: none; } }
+
     .em-send-status {
       margin-top: 8px; padding: 8px 10px; border-radius: 4px;
       font-size: 12px; display: flex; align-items: center; gap: 8px;
@@ -13101,7 +13135,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           ${showError ? `
             <div style="margin-top:10px; padding:8px 10px; background:#fff; border:1px solid #cf222e; border-radius:4px; font-size:12px; color:#82071e;">
               <strong>Error:</strong> ${esc(errMsg)}
-              ${t.needsOperatorReview ? `<div style="margin-top:4px; font-size:11px;">This thread is flagged <strong>needs operator review</strong> — investigate the failure and either retry by clearing <code>customListingStatus</code> in Firestore (back to <code>"queued"</code>) or mark the thread for manual handling.</div>` : ""}
+              ${t.needsOperatorReview ? `<div style="margin-top:4px; font-size:11px;">Use the <strong>Custom Listing</strong> button to try again (you confirm the price first), or handle this order by hand.</div>` : ""}
             </div>
           ` : ""}
           ${s === "queued" && t.customListingErrorCount ? `
@@ -13381,9 +13415,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
                 ${t.salesCompletedAt ? `<span class="em-muted" style="font-size:11px; font-weight:400; margin-left:auto;">completed ${esc(fmtTime(t.salesCompletedAt))}</span>` : ""}
               </h4>
               ${t.customListingUrl ? `<div style="margin-bottom:10px; font-size:13px;"><strong>Listing:</strong> <a href="${esc(t.customListingUrl)}" target="_blank">${esc(t.customListingUrl)}</a>${t.acceptedQuoteUsd ? ` &nbsp;·&nbsp; <strong>$${esc(String(t.acceptedQuoteUsd))}</strong>` : ""}${t.acceptedQuoteFamily ? ` &nbsp;·&nbsp; ${esc(t.acceptedQuoteFamily)}` : ""}</div>` : ""}
+              ${t.customListingReplyStatus === "failed" ? `<div style="margin-bottom:8px; font-size:12px; color:#82071e;"><strong>The listing link was not delivered</strong>${t.customListingReplyError ? " (" + esc(t.customListingReplyError) + ")" : ""}. Send it from the reply box.</div>` : ""}
+              ${t.customListingReplyStatus === "queued" ? `<div class="em-muted" style="margin-bottom:8px; font-size:11px;">Link message waiting for the Etsy helper…</div>` : ""}
               <div style="white-space:pre-wrap; line-height:1.5; font-size:13px; color:#1f2328;">${esc(formatSaleSynopsisForDisplay(t))}</div>
             </div>
-            ` : renderCustomListingStatusCard(t)}
+            ` : ""}${renderCustomListingStatusCard(t)}
             <div class="em-card">
               <h4>Conversation</h4>
               <!-- v3.30 — Auto-pipeline countdown timer. Visible only
@@ -14064,48 +14100,135 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       return { url, text };
     }
 
-    async function waitForManualCustomListingReply(threadId, apiResponse) {
+    // Audit fix S5 — a result is accepted only when it is newer than the
+    // thread as it was just before the click (no clock comparison), old
+    // failures are ignored, and a timeout never pastes stale draft text.
+    function manualListingMarkers(t) {
+      t = t || {};
+      return {
+        createdMs: manualAiDraftTsMs(t.customListingManualCreatedAt),
+        errorMs  : manualAiDraftTsMs(t.customListingErrorAt),
+        url      : t.customListingUrl || ""
+      };
+    }
+
+    async function waitForManualCustomListingReply(threadId, apiResponse, before) {
       const startedAt = Date.now();
       const timeoutMs = 4 * 60 * 1000;
       const pollMs = 2500;
-      let lastThreadDoc = null;
-      let lastDraftDoc = null;
+      const was = before || { createdMs: 0, errorMs: 0, url: "" };
 
       while ((Date.now() - startedAt) < timeoutMs) {
         const [freshThread, freshDraft] = await Promise.all([
           api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).catch(() => null),
           api("firestoreProxy", { query: { op: "get", coll: "EtsyMail_Drafts", id: "draft_" + threadId } }).catch(() => null)
         ]);
+        const t = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
+        const d = freshDraft && freshDraft.doc ? freshDraft.doc : null;
+        const now = manualListingMarkers(t);
 
-        lastThreadDoc = freshThread && freshThread.doc ? { id: threadId, ...freshThread.doc } : null;
-        lastDraftDoc  = freshDraft  && freshDraft.doc  ? freshDraft.doc : null;
-
-        const status = lastThreadDoc && lastThreadDoc.customListingStatus;
-        const errorMsg = (lastThreadDoc && (lastThreadDoc.customListingError || lastThreadDoc.needsOperatorReviewReason)) || "";
-        if (status === "failed" || (lastThreadDoc && lastThreadDoc.needsOperatorReview && errorMsg)) {
-          throw new Error(errorMsg || "custom listing creation failed");
+        if (t && t.customListingStatus === "failed" && now.errorMs > was.errorMs) {
+          throw new Error(t.customListingError || t.needsOperatorReviewReason || "custom listing creation failed");
         }
-
-        const reply = getManualCustomListingReply(lastThreadDoc, lastDraftDoc, apiResponse);
-        if (reply.text && (!reply.url || reply.text.includes(reply.url))) {
-          return { threadDoc: lastThreadDoc, draftDoc: lastDraftDoc, replyText: reply.text, url: reply.url };
+        if (t && t.customListingStatus === "created" && now.createdMs > was.createdMs && now.url) {
+          const text = [d && d.text, t.customListingReplyText]
+            .find(x => typeof x === "string" && x.includes(now.url)) ||
+            ("Here's the custom listing: " + now.url);
+          return { threadDoc: t, draftDoc: d, replyText: String(text).trim(), url: now.url };
         }
-
         await manualCustomListingDelay(pollMs);
       }
-
-      const fallback = getManualCustomListingReply(lastThreadDoc, lastDraftDoc, apiResponse);
-      if (fallback.text) {
-        return { threadDoc: lastThreadDoc, draftDoc: lastDraftDoc, replyText: fallback.text, url: fallback.url };
-      }
-      throw new Error("custom listing was not loaded into the reply box before timeout");
+      throw new Error("the listing is still being created. Nothing was put in the reply box; reopen the thread in a minute");
     }
 
-    async function generateManualCustomListing(threadId) {
+    // Audit fix S5 — the operator confirms the price that goes live on Etsy,
+    // in a small inline bar above the reply buttons (desktop) or the phone's
+    // composer buttons. Resolves { priceUsd, before }, or null when cancelled
+    // or when the conversation is closed.
+    function askManualListingPrice(threadId, surface) {
+      const mobile = surface === "mobile";
+      const anchor = mobile
+        ? document.querySelector("#mComposer .m-composer-actions")
+        : document.querySelector(".em-compose .em-compose-bar");
+      const open = document.getElementById("emListingPriceAsk");
+      if (open) { const i = open.querySelector("input"); if (i) i.focus(); return Promise.resolve(null); }
+      if (!anchor || !anchor.parentNode) {
+        toast("Open the conversation's reply box first.");
+        return Promise.resolve(null);
+      }
+      const local = (state.threads || []).find(x => x && x.id === threadId) || {};
+      let before = manualListingMarkers(local);
+      const bar = document.createElement("div");
+      bar.id = "emListingPriceAsk";
+      bar.className = "em-price-ask" + (mobile ? " m-price-ask" : "");
+      bar.setAttribute("role", "group");
+      bar.setAttribute("aria-label", "Custom listing price");
+      bar.innerHTML =
+        '<span class="em-price-ask-label">Price on Etsy</span>' +
+        '<span class="em-price-ask-field">$<input class="browser-default" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" aria-label="Price in US dollars"></span>' +
+        '<button type="button" class="primary" data-act="go">Create listing</button>' +
+        '<button type="button" data-act="cancel">Cancel</button>' +
+        '<span class="em-price-ask-msg" aria-live="polite"></span>';
+      anchor.parentNode.insertBefore(bar, anchor);
+      const input = bar.querySelector("input");
+      const msg = bar.querySelector(".em-price-ask-msg");
+      let typed = false;
+      input.addEventListener("input", () => { typed = true; msg.textContent = ""; });
+      input.focus();
+
+      // Fill in the accepted quote (or the last full quote) when it arrives.
+      api("firestoreProxy", { query: { op: "get", coll: THREADS_COLL, id: threadId } }).then(pre => {
+        const t0 = (pre && pre.doc) || null;
+        if (!t0) return;
+        before = manualListingMarkers(t0);
+        const r = t0.lastResolverResult;
+        const full = r && typeof r.total === "number" && !(Array.isArray(r.escalations) && r.escalations.length) ? r.total : 0;
+        const guess = Number(t0.acceptedQuoteUsd || full || 0);
+        if (!typed && guess > 0 && bar.isConnected) { input.value = guess.toFixed(2); input.select(); }
+      }).catch(() => {});
+
+      return new Promise(resolve => {
+        let done = false;
+        const finish = (value) => {
+          if (done) return;
+          done = true;
+          clearInterval(watch);
+          bar.remove();
+          resolve(value);
+        };
+        const submit = () => {
+          const priceUsd = Number(String(input.value).replace(/[$,\s]/g, ""));
+          if (!(priceUsd > 0 && priceUsd < 100000)) {
+            msg.textContent = "Enter a price above $0";
+            input.focus();
+            return;
+          }
+          finish({ priceUsd: Math.round(priceUsd * 100) / 100, before });
+        };
+        bar.querySelector('[data-act="go"]').addEventListener("click", submit);
+        bar.querySelector('[data-act="cancel"]').addEventListener("click", () => finish(null));
+        input.addEventListener("keydown", e => {
+          if (e.key === "Enter") { e.preventDefault(); submit(); }
+          else if (e.key === "Escape") { e.preventDefault(); finish(null); }
+        });
+        // The reply box is redrawn when another conversation opens: give up quietly.
+        const watch = setInterval(() => {
+          if (!bar.isConnected || state.selectedId !== threadId) finish(null);
+        }, 400);
+      });
+    }
+
+    async function generateManualCustomListing(threadId, opts = {}) {
       if (!threadId) return false;
       if (state.manualCustomListingBusyThreadId === threadId) {
         return false;
       }
+
+      // Audit fix S5 — the operator confirms the price that goes live first.
+      const surface = opts.surface === "mobile" || (!opts.surface && window.IS_MOBILE) ? "mobile" : "desktop";
+      const priceAsk = await askManualListingPrice(threadId, surface);
+      if (!priceAsk) return false;                 // cancelled: nothing created
+      if (state.manualCustomListingBusyThreadId === threadId) return false;
 
       // v4.3.21 — Spinner lifetime is tied to the operator-visible result.
       // The button must keep spinning until the customer-facing listing reply
@@ -14121,11 +14244,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             threadId,
             manual: true,
             manualCreate: true,
+            priceUsd: priceAsk.priceUsd,
             requestedBy: getEmployeeName() || "operator"
           }
         });
 
-        const { threadDoc, draftDoc, replyText, url } = await waitForManualCustomListingReply(threadId, res || {});
+        const { threadDoc, draftDoc, replyText, url } = await waitForManualCustomListingReply(threadId, res || {}, priceAsk.before);
 
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
@@ -15663,12 +15787,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           rerender();
           // Re-request from the snapshot endpoint (force refresh)
           try {
-            const res = await fetch("/.netlify/functions/etsyMailTrackingSnapshot", {
+            // Audit fix S15 — through api(), which sends the inbox secret:
+            // a forced refresh starts a paid carrier scrape.
+            const data = await api("etsyMailTrackingSnapshot", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ trackingCode: img.trackingCode, forceRefresh: true })
+              body  : { trackingCode: img.trackingCode, forceRefresh: true }
             });
-            const data = await res.json();
             if (data.inline && data.imageUrl) {
               // Got cache hit (weird for forceRefresh, but handle it)
               Object.assign(img, data, { status: "ready" });
@@ -16731,6 +16855,42 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       return run;
     }
 
+    // Audit fix S11 — tell the operator when a queued reply does not go out.
+    // One status read every 5 s for at most 3 minutes; it never touches the
+    // reply box and never re-sends. No Etsy calls.
+    function watchSendOutcome(threadId, draftId, text) {
+      if (!draftId) return;
+      const started = Date.now();
+      const want = String(text || "").trim();
+      let warnedSlow = false;
+      const tick = async () => {
+        let d = null;
+        try {
+          const r = await api("etsyMailDraftSend", { query: { op: "status", draftId } });
+          d = r && r.draft;
+        } catch (_) {}
+        if (d && String(d.text || "").trim() !== want) return;     // the slot now holds a later reply
+        if (d && (d.status === "sent" || d.status === "sent_text_only")) return;
+        if (d && d.status === "failed") {
+          toast(d.sendErrorCode === "STRANDED_POST_CLICK"
+            ? "Check Etsy: the reply may have gone out, but Etsy did not confirm it."
+            : "Not delivered: " + (d.sendError || d.sendErrorCode || "the Etsy helper could not send it") + ". Open the thread to send it again.", 9000);
+          if (state.selectedId === threadId) showSendStatus({ ...d, id: draftId });
+          return;
+        }
+        if (d && d.status === "sent_unverified") {
+          toast("Check Etsy: the reply was probably sent, but Etsy did not confirm it.", 9000);
+          return;
+        }
+        if (d && !warnedSlow && d.status === "queued" && Date.now() - started > 90 * 1000) {
+          warnedSlow = true;
+          toast("Still waiting to send. Is the Etsy helper tab open?", 7000);
+        }
+        if (Date.now() - started < 3 * 60 * 1000) setTimeout(tick, 5000);
+      };
+      setTimeout(tick, 5000);
+    }
+
     /** Put a failed send's text (and attachments / translation) back. */
     function restoreFailedSend(threadId, snap) {
       const deskTa = $("emDraftText");
@@ -17221,6 +17381,8 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       if (media.imageUrls.length > (local.imageUrls || []).length) Object.assign(patch, media);
       updateLocalSend(threadId, local.id, patch);
       if (state.selectedId === threadId) drawThreadNow();
+      // Audit fix S11: the phone keeps its own check after 8 s.
+      if (surface !== "mobile") watchSendOutcome(threadId, resp && resp.draftId, text);
       // The enqueue wrote the optimistic doc server-side; showSendStatus
       // must not write it again for this draft in this session.
       state._optimInsertedFor = state._optimInsertedFor || new Set();
@@ -22657,7 +22819,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           const tid = state.selectedId;
           if (!tid) return;
           if (typeof generateManualCustomListing === "function") {
-            try { await generateManualCustomListing(tid); }
+            try { await generateManualCustomListing(tid, { surface: "mobile" }); }
             catch (e) { console.error("[mobile] manual custom listing failed:", e); }
           }
           const desktopTa = document.getElementById("emDraftText");

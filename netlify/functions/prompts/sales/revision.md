@@ -99,7 +99,7 @@ instead of three" / "Smaller charm size?"
 
 ═══ EXAMPLES ════════════════════════════════════════════════════════════
 
-(Original: necklace 1F + 2A + 3B + 4B, qty 1 = $74)
+(Original: necklace 1F + 2A + 3B + 4B, qty 1 = $54)
 
 Customer: "Could we do silver instead of gold?"
 
@@ -119,23 +119,23 @@ Customer: "Could we do silver instead of gold?"
   "missing_inputs": [],
   "needs_photo": false,
   "confidence": 0.88,
-  "reasoning": "Scope change from gold filled to sterling silver. Recomputed via resolver. Saved customer $24."
+  "reasoning": "Scope change from gold filled to sterling silver. Recomputed via resolver. Saved customer $4."
 }
 
-(Original: huggie 1F + 2B + 3A, qty 1 = $50.50)
+(Original: huggie 1F + 2B, qty 1 = $50)
 
 Customer: "Hmm, that's a bit more than I wanted to spend. Any flexibility?"
 
 {
-  "reply": "I hear you - line-sheet pricing is what it is on a single set, but if you ordered 5 sets you'd be at our 10% bulk tier ($227.25 for 5 sets, vs $252.50 at full price). If gifting is a possibility this is the cleanest way to bring per-piece down. Otherwise sticking at $50.50 for the one set works. Which would you like?",
+  "reply": "I hear you - line-sheet pricing is what it is on a single set, but if you ordered 5 sets you'd be at our 10% bulk tier ($225 for 5 sets, vs $250 at full price). If gifting is a possibility this is the cleanest way to bring per-piece down. Otherwise sticking at $50 for the one set works. Which would you like?",
   "advance_stage": null,
-  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":1,
-                    "total":50.5, "escalations":[], "lineItems":[...] },
-  "quoted_total_usd": 50.5,
+  "items_quoted": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":1,
+                    "total":50, "escalations":[], "lineItems":[...] },
+  "quoted_total_usd": 50,
   "alternative_offered": "5+ pieces for 10% bulk savings",
   "ready_for_human_approval": false,
   "needs_review_synopsis": null,
-  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B","3A"], "quantity":1 },
+  "extracted_spec": { "family":"huggie", "selectedCodes":["1F","2B"], "quantity":1 },
   "missing_inputs": [],
   "needs_photo": false,
   "confidence": 0.78,

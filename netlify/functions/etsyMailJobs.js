@@ -181,6 +181,15 @@ exports.handler = async (event) => {
       const snap = await ref.get();
       if (!snap.exists) return json(404, { error: "Job not found" });
       const data = snap.data();
+      // Audit fix F18 — same ownership rule as "complete": a late report from
+      // a worker whose claim was reaped must not re-queue or fail the job for
+      // the worker that holds it now, nor re-open a finished job.
+      if (data.claimedBy && data.claimedBy !== workerId) {
+        return json(409, { error: "Job claimed by different worker", claimedBy: data.claimedBy });
+      }
+      if (data.status === "succeeded") {
+        return json(409, { error: "Job already succeeded; fail ignored" });
+      }
       const attempts = data.attempts || 0;
 
       const willRetry = retry && attempts < MAX_ATTEMPTS;

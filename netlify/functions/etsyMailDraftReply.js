@@ -3129,7 +3129,12 @@ function buildToolExecutors(ctx) {
       try {
         res = await fetch(endpoint, {
           method : "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            // audit fix F15: the snapshot endpoint now checks the shared secret
+            ...(process.env.ETSYMAIL_EXTENSION_SECRET
+              ? { "X-EtsyMail-Secret": process.env.ETSYMAIL_EXTENSION_SECRET } : {})
+          },
           // v3.28 — Pull draftId from ctx (was a broken free-variable
           // reference before; threw "draftId is not defined" when the
           // executor was called from outside the AI loop's dispatcher,

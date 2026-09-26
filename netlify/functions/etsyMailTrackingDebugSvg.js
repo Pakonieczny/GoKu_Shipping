@@ -16,11 +16,17 @@
 const admin     = require("./firebaseAdmin");
 const carriers  = require("./_etsyMailCarriersRouter");
 const renderer  = require("./_etsyMailTrackingRender");
+const { requireExtensionAuth } = require("./_etsyMailAuth");   // audit fix F15
 
 exports.handler = async (event) => {
   if (event.httpMethod !== "GET") {
     return { statusCode: 405, body: "Method not allowed" };
   }
+
+  // Audit fix F15 — a working lookup starts a paid carrier scrape; callers
+  // must send X-EtsyMail-Secret (use curl, not a bare browser tab).
+  const auth = requireExtensionAuth(event);
+  if (!auth.ok) return auth.response;
 
   const q = event.queryStringParameters || {};
   const trackingCode = String(q.trackingCode || q.code || "").trim();
@@ -30,7 +36,8 @@ exports.handler = async (event) => {
 
   try {
     // Look up the tracking via the same path as the real renderer
-    const tracking = await carriers.lookup(trackingCode);
+    // audit fix F15: the router exports lookupTracking (lookup was undefined → always 500)
+    const tracking = await carriers.lookupTracking(trackingCode);
 
     // buildSvg returns { svg, width, height } — we just want the SVG string
     const { svg } = renderer.buildSvg(tracking);
@@ -48,7 +55,7 @@ exports.handler = async (event) => {
     return {
       statusCode: 500,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: e.message, code: e.code, stack: e.stack })
+      body: JSON.stringify({ error: e.message, code: e.code })   // audit fix F15: no stack traces to callers
     };
   }
 };
