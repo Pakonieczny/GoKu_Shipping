@@ -302,6 +302,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swFill .t b{font:600 12.5px var(--mono);color:var(--ink)}
 .swFill .t small{font:11px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .swFill .note{font:11.5px/1.45 var(--sans);color:var(--ink45)}
+.swFill h4 [data-fl=all]{margin-left:auto;flex:none;animation:swDrop .24s ${EASE} both}.swFill h4 [data-fl=all]+.swIcon{margin-left:0}
 .swHeld{display:grid;gap:5px;padding:9px 10px;border-radius:10px;border:1px solid var(--line2);margin:0 0 6px;background:var(--card);animation:swDrop .22s ${EASE} both}
 .swHeld .top{display:flex;align-items:baseline;gap:8px;min-width:0}
 .swHeld .no{font:600 13px var(--mono);color:var(--ink)}
@@ -621,8 +622,10 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   const liveOf = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
   // room that something has gone into since (an arrival, a move, a restore) is no longer shown as free
   function pruneFreed() {
-    const live = W.pieces.filter(x => !x.gone);
-    W.freed = W.freed.filter(g => !live.some(x => Math.hypot(x.p.cxPt - g.x.p.cxPt, x.p.cyPt - g.x.p.cyPt) < Math.min(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2));
+    if (W.flow || !W.freed.length) return;
+    const live = W.pieces.filter(x => !x.gone), target = fillTarget();
+    let G = null; if (target) try { G = plateGrid(target); } catch (_) {}
+    W.freed = W.freed.filter(g => freeStill(g, G, target, gh => live.some(x => Math.hypot(x.p.cxPt - gh.x.p.cxPt, x.p.cyPt - gh.x.p.cyPt) < Math.min(gh.x.p.wPt || 20, gh.x.p.hPt || 20) / 2)));
     setFreed(W.id, W.freed);
   }
 
@@ -1657,13 +1660,26 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (!c) return null; if (c.mini) return { centerPt: c.centerPt, outline: c.outline, members: [] };
     try { return { centerPt: c.centerPt, outline: { subpaths: c.outline.subpaths.map(sub => sub.map(s => [s[0], ...s.slice(1).map(q => [r2(q[0]), r2(q[1])])])) }, members: [] }; } catch (_) { return null; }
   }
+  // the removed piece's bitmap (as the solver keeps it), so the spot can be tested for room again after a reload
+  const BITMAPS = new WeakMap();
+  function bitmapOf(c) {
+    if (!c || !c.bits || !c.w || !c.h) return null;
+    if (typeof c.bits === "string") return { bits: c.bits, w: c.w, h: c.h, scale: c.scale };
+    if (BITMAPS.has(c)) return BITMAPS.get(c);
+    const n = c.w * c.h, by = new Uint8Array((n + 7) >> 3); for (let i = 0; i < n; i++) if (c.bits[i]) by[i >> 3] |= 1 << (i & 7);
+    let t = ""; for (let i = 0; i < by.length; i += 8192) t += String.fromCharCode.apply(null, by.subarray(i, i + 8192));
+    const out = { bits: btoa(t), w: c.w, h: c.h, scale: c.scale }; BITMAPS.set(c, out); return out;
+  }
   function setFreed(id, list) {
     if (list && list.length) FREED.set(id, list); else FREED.delete(id);
-    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now(), s: shapeOf(g.x.c) })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
+    // the bitmaps are kept up to about 1 MB in all; a spot without one is judged by distance after a reload
+    let room = 1e6;
+    const bm = c => { const b = bitmapOf(c); if (!b || b.bits.length > room) return null; room -= b.bits.length; return b; };
+    try { const o = {}; for (const [k, gs] of FREED) o[k] = gs.map(g => ({ p: g.x.p, id: g.x.id || "", rid: g.rid || "", sku: g.sku || "", at: g.at || Date.now(), s: shapeOf(g.x.c), b: bm(g.x.c) })); localStorage.setItem(FREED_KEY(), JSON.stringify(o)); } catch (_) {}
   }
   try {
     const o = JSON.parse(localStorage.getItem(FREED_KEY()) || "{}");
-    for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { p: g.p, c: g.s && g.s.outline ? Object.assign({}, g.s, { mini: true }) : null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
+    for (const [k, gs] of Object.entries(o)) { const list = (gs || []).filter(g => g && g.p && Date.now() - (+g.at || 0) < 12 * 3600e3).map(g => ({ x: { id: g.id || undefined, p: g.p, c: g.s && g.s.outline ? Object.assign({}, g.s, { mini: true }, g.b && g.b.bits ? g.b : null) : null, gone: true }, rid: g.rid, sku: g.sku, at: +g.at, t0: 0 })); if (list.length) FREED.set(k, list); }
   } catch (_) {}
   const SV = () => window.CharmNestSolver;
   const bitsOf = c => typeof c.bits === "string" ? SV().bitsFromBase64(c.bits, c.w * c.h) : c.bits;
@@ -1721,7 +1737,22 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     return { grid, clearancePt: job.clearancePt, angles, key: target.placements.map(p => p.id + p.cxPt + p.cyPt + p.angle).join() };
   }
   function roomBoxes(ghosts) {
-    return ghosts.map(g => { const p = g.x.p, hw = (p.wPt || 20) / 2 + 1.5, hh = (p.hPt || 20) / 2 + 1.5; return { cx: p.cxPt, cy: p.cyPt, x0: p.cxPt - hw, x1: p.cxPt + hw, y0: p.cyPt - hh, y1: p.cyPt + hh }; });
+    return ghosts.map((g, i) => { const p = g.x.p, hw = (p.wPt || 20) / 2 + 1.5, hh = (p.hPt || 20) / 2 + 1.5; return { i, cx: p.cxPt, cy: p.cyPt, x0: p.cxPt - hw, x1: p.cxPt + hw, y0: p.cyPt - hh, y1: p.cyPt + hh }; });
+  }
+  // how much of a freed spot is taken again: the piece that left it, put back at its own spot on the sheet as it stands
+  // (0 while the room is free, near 1 once a charm sits in it); null when its shape is not known here or it has not left yet
+  const TAKEN = 0.15;
+  function takenOf(g, G, target) {
+    const c = g.x.c, p = g.x.p; if (!G || !c || !c.bits || !c.w || !c.h) return null;
+    if (g.x.id && target && target.placements.some(q => q.id === g.x.id)) return null;
+    let v = null; try { v = variantOf(c, +p.angle || 0, G.clearancePt); } catch (_) {}
+    if (!v || !v.fine.pm.cells) return null;
+    return G.grid.overlap(v.fine.pm, Math.round(p.cxPt * 2 - v.solid.cx), Math.round(p.cyPt * 2 - v.solid.cy), 1e9) / v.fine.pm.cells;
+  }
+  // a spot is taken once something covers enough of it; without a shape to test, once a charm sits near its middle
+  function freeStill(g, G, target, near) {
+    const f = takenOf(g, G, target);
+    return f == null ? !near(g) : f < TAKEN;
   }
   // every piece of the order placed in the room, one after another, each at the tightest legal spot (most contact with
   // its neighbours, nearest the freed outline), exactly as the nest would test it
@@ -1746,35 +1777,59 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       if (!best) return null;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const s = score(best.v, best.x + dx, best.y + dy, best.b); if (s != null && s > best.s) best = Object.assign({}, best, { x: best.x + dx, y: best.y + dy, s }); }
       grid.stamp(best.v.fine.bits, best.v.fine.w, best.v.fine.h, best.x, best.y);
-      spots.push({ c: z.c, src: z.src, placed: z.placed, cxPt: (best.x + best.v.solid.cx) / res, cyPt: (best.y + best.v.solid.cy) / res, angle: best.v.angle });
+      spots.push({ c: z.c, src: z.src, placed: z.placed, cxPt: (best.x + best.v.solid.cx) / res, cyPt: (best.y + best.v.solid.cy) / res, angle: best.v.angle, bi: best.b.i });
     }
-    return spots;
+    return { spots, grid };
   }
-  // the search runs in slices, so the window stays smooth; a newer search or another sheet ends it
+  // the whole freed room is planned at once: the waiting orders, oldest first, each tried only in the spots still empty
+  // once the ones before it are in, so every freed spot gets its own order and one press can place them all. The search
+  // runs in slices, so the window stays smooth; a newer search or another sheet ends it
   async function suggest() {
-    const target = fillTarget(), ghosts = (FREED.get(W.id) || []);
-    if (!target || !ghosts.length || W.flow) { W.fill = null; renderFill(); return; }
+    const target = fillTarget(), all = (FREED.get(W.id) || []);
+    if (!target || !all.length || W.flow) { W.fill = null; renderFill(); return; }
     const tok = W.token, run = W.fillRun = (W.fillRun || 0) + 1;
     const live = () => tok === W.token && run === W.fillRun && W.dlg.open;
-    const cands = candidatesFor(target), boxes = roomBoxes(ghosts);
-    W.fill = { state: "looking", tried: 0, total: cands.length, list: [] }; renderFill();
+    const cands = candidatesFor(target);
+    W.fill = { state: "looking", tried: 0, total: cands.length, list: [], spots: all.length, filled: 0 }; renderFill();
     if (!cands.length) { W.fill.state = "none"; renderFill(); return; }
     let G; try { G = plateGrid(target); } catch (e) { console.warn("sheet window: fill grid", e); W.fill = null; renderFill(); return; }
+    const ghosts = all.filter(g => { const f = takenOf(g, G, target); return f == null || f < TAKEN; }), boxes = roomBoxes(ghosts);
+    W.fill.spots = ghosts.length;
+    if (!ghosts.length) { W.fill.state = "none"; renderFill(); return; }
     let last = performance.now();
     const breathe = async () => { if (performance.now() - last > 12) { await pause(0); last = performance.now(); } if (!live()) throw new Error("stale"); };
-    const freeArea = boxes.reduce((n, b) => n + (b.x1 - b.x0) * (b.y1 - b.y0), 0), t0 = performance.now();
+    const area = b => (b.x1 - b.x0) * (b.y1 - b.y0), t0 = performance.now();
+    const open = new Set(boxes.map(b => b.i)), planned = new Set();
+    let grid = G.grid;
     try {
       for (const k of cands) {
-        if (W.fill.list.length >= 4 || performance.now() - t0 > 8000) break;
+        if (!open.size || W.fill.list.length >= 8 || performance.now() - t0 > 12000) break;
         W.fill.tried++;
-        if (k.area > freeArea * 1.6) continue;
-        const spots = await fitOrder(k, G, boxes, breathe);
-        if (spots) { W.fill.list.push({ k, spots }); renderFill(); }
-        else if (W.fill.tried % 3 === 0) renderFill();
+        const room = boxes.filter(b => open.has(b.i));
+        if (k.area > room.reduce((n, b) => n + area(b), 0) * 1.6) continue;
+        // a saved sheet is never emptied by a move, counting the orders planned before this one
+        if ([...k.srcs].some(src => src.sheetId && src.placements.length && src.placements.every(p => planned.has(p.id) || k.pieces.some(z => z.src === src && z.c.id === p.id)))) continue;
+        const got = await fitOrder(k, Object.assign({}, G, { grid }), room, breathe);
+        if (!got) { if (W.fill.tried % 3 === 0) renderFill(); continue; }
+        grid = got.grid; for (const s of got.spots) planned.add(s.c.id);
+        const Gn = Object.assign({}, G, { grid });
+        for (const b of room) { const f = takenOf(ghosts[b.i], Gn, null); if (f == null ? got.spots.some(s => s.bi === b.i) : f >= TAKEN) open.delete(b.i); }
+        W.fill.list.push({ k, spots: got.spots }); W.fill.filled = ghosts.length - open.size; renderFill();
       }
     } catch (e) { if (e.message === "stale") return; console.warn("sheet window: fill search", e); }
     if (!live()) return;
     W.fill.state = W.fill.list.length ? "ready" : "none"; W.fill.key = G.key; renderFill();
+  }
+  // the planned orders go in one after another, each its own verified move; one that does not go through stops the rest
+  // (they stay where they are, and what is still free is planned again)
+  async function placeAll(list, target, who) {
+    for (let i = 0; i < list.length; i++) {
+      if (!allSheets().includes(target) || target.recalled || target.laserDoneAt || target.roseCutAt || sentToStation(target)) return;
+      let ok = false;
+      try { ok = await moveIn(list[i].k, list[i].spots, target, who, { part: [i + 1, list.length] }); }
+      catch (e) { console.error("sheet window: move", e); toast("Not moved: " + e.message, "bad", 8000); return; }
+      if (!ok) return;
+    }
   }
   function renderFill() {
     const E = W.el, f = W.fill; if (!E.fill) return;
@@ -1782,12 +1837,25 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (!f || W.flow) { E.fill.hidden = true; E.fill.innerHTML = ""; setGhost(null); return; }
     E.fill.hidden = false;
     const target = fillTarget();
-    const head = `<h4>${ICON.fill}<span>Fill the freed room</span><small>${f.state === "looking" ? "" : f.list.length ? "fits, oldest order first" : ""}</small><button type="button" class="swIcon" data-fl="x" title="Hide suggestions" aria-label="Hide suggestions">${ICON.close}</button></h4>`;
+    // several orders that fit together: one press places them all (in the header, so it is never scrolled away)
+    const every = f.state === "ready" && f.list.length > 1;
+    const allBtn = every ? `<button type="button" class="btn sage xs" data-fl="all" title="Place the ${f.list.length} orders below in the spots shown, one after another (${f.filled} of ${f.spots} freed spots)">Place all ${f.list.length}</button>` : "";
+    const head = `<h4>${ICON.fill}<span>Fill the freed room</span>${every ? "" : `<small>${f.state === "looking" ? "" : f.list.length ? "fits, oldest order first" : ""}</small>`}${allBtn}<button type="button" class="swIcon" data-fl="x" title="Hide suggestions" aria-label="Hide suggestions">${ICON.close}</button></h4>`;
     const rows = f.list.map((s, i) => `<li data-i="${i}" style="--i:${i}">${candRow(s.k)}<span class="a">${HAND_BTN}<button type="button" class="btn sage xs" data-fl="place" title="Place it in the spot shown">Place</button></span></li>`).join("");
     const looking = f.state === "looking" ? `<div class="swWait"><span class="owSpin"></span>Trying the waiting orders in the room · ${f.tried} of ${f.total}</div>` : "";
     const none = f.state === "none" ? `<div class="note">No waiting order fits this room yet.${target && (target.draft || !target.setId) ? " New orders that fit go into it as they arrive." : ""}</div>` : "";
-    E.fill.innerHTML = `<div class="swFill">${head}${rows ? `<ol>${rows}</ol>` : ""}${looking}${none}</div>`;
+    const rest = f.state === "ready" && f.filled < f.spots ? `<div class="note">${f.spots - f.filled === 1 ? "1 freed spot has" : f.spots - f.filled + " freed spots have"} no waiting order that fits yet.${target && (target.draft || !target.setId) ? " New orders that fit go into " + (f.spots - f.filled === 1 ? "it" : "them") + " as they arrive." : ""}</div>` : "";
+    E.fill.innerHTML = `<div class="swFill">${head}${rows ? `<ol>${rows}</ol>` : ""}${looking}${rest}${none}</div>`;
     E.fill.querySelector("[data-fl=x]").onclick = () => { setFreed(W.id, []); W.freed = []; W.fill = null; W.fillRun = (W.fillRun || 0) + 1; renderFill(); renderStrip(); renderSheetChips(); paintFx(); };
+    const allB = E.fill.querySelector("[data-fl=all]");
+    if (allB) {
+      const every = { spots: f.list.flatMap(s => s.spots) }, list = f.list.slice();
+      allB.onmouseenter = allB.onfocus = () => setGhost(every); allB.onmouseleave = allB.onblur = () => setGhost(null);
+      allB.onclick = () => {
+        const who = needName(() => { if (allB.isConnected) allB.click(); }); if (!who || !target) return;
+        setGhost(null); placeAll(list, target, who);
+      };
+    }
     E.fill.querySelectorAll("li[data-i]").forEach(li => {
       const s = f.list[+li.dataset.i];
       drawThumb(li.querySelector("canvas"), { c: s.spots[0].c });
@@ -2020,8 +2088,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const off = stepOf(`Taking order ${rid} off ${srcs.map(sName).join(", ")}`);
     const saves = srcs.map(sh => ({ sh, name: sName(sh), st: stepOf(`Saving ${sName(sh)} without it`) }));
     const put = stepOf(`Placing it on ${tName}`), labels = stepOf("Remaking the QR labels"), check = stepOf("Checking the saved sheets");
-    const work = beginFlow({ state: "working", title: `Moving order ${rid} to ${tName}`, steps: [wait, off, ...saves.map(r => r.st), put, labels, check], note: "" });
-    if (!work) return;
+    const work = beginFlow({ state: "working", title: `Moving order ${rid} to ${tName}${o.part ? ` · ${o.part[0]} of ${o.part[1]}` : ""}`, steps: [wait, off, ...saves.map(r => r.st), put, labels, check], note: "" });
+    if (!work) return false;
     const all = [target, ...srcs];
     if (!all.some(busy)) work.steps.shift();
     W.fill = null; renderFill(); renderWork();
@@ -2083,13 +2151,15 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       agent({ metal: target.metal, run: target.runId }, "POOL", `Order ${rid} moved by ${who} from ${srcs.map(sheetName).join(", ")} to ${sheetName(target)} into the room freed there${ok ? "; both saved sheets read back and match" : "; the read-back flagged: " + check.detail}`);
       // the room it took is no longer free
       const landed = target.placements.filter(p => spots.some(s => s.c.id === p.id));
-      const left = (FREED.get(sheetId) || []).filter(gh => !landed.some(s => Math.hypot(s.cxPt - gh.x.p.cxPt, s.cyPt - gh.x.p.cyPt) < Math.max(gh.x.p.wPt || 20, gh.x.p.hPt || 20) / 2));
+      let G2 = null; try { G2 = plateGrid(target); } catch (_) {}
+      const left = (FREED.get(sheetId) || []).filter(gh => freeStill(gh, G2, target, g => landed.some(s => Math.hypot(s.cxPt - g.x.p.cxPt, s.cyPt - g.x.p.cyPt) < Math.max(g.x.p.wPt || 20, g.x.p.hPt || 20) / 2)));
       setFreed(sheetId, left);
       work.state = "done"; work.title = ok ? `Order ${rid} moved to ${tName}` : `Order ${rid} moved to ${tName} · check flagged`;
       work.note = (ok ? "Verified: the saved sheets and piece records match. " : "") + `${srcs.map(s => esc(sName(s))).join(", ")} keep${srcs.length === 1 ? "s" : ""} filling with the next orders.`;
       paint(); endFlow(work);
       if (window.RunCtl) RunCtl.poke();
       if (W.id === sheetId && W.dlg.open) open(sheetId, { keepWork: true, keepSet: false, glow: [...ids] });
+      return true;
     } catch (e) {
       for (const st of work.steps) doneStep(st);
       let back = "";
