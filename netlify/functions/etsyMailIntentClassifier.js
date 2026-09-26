@@ -67,6 +67,7 @@ const path = require("path");
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
+const { simNow, isSimulating } = require("./_etsyMailSim");
 // v5.0 — Shared utilities are now consolidated in _etsyMailAnthropic.js.
 // The fetcher returns the raw documents (thread, customer, receipts,
 // messages) every AI component reasons against. The investigation
@@ -192,7 +193,7 @@ async function writeAudit({ threadId, eventType, actor = "system:intentClassifie
 async function readCache(threadId, messageText = "") {
   try {
     const snap = await db.collection(CACHE_COLL).doc(threadId).get();
-    if (!snap.exists) return null;
+    if (!snap.exists || isSimulating()) return null;
     const d = snap.data() || {};
     const at = d.classifiedAt && d.classifiedAt.toMillis ? d.classifiedAt.toMillis() : 0;
     if (!at || Date.now() - at > CACHE_TTL_MS) return null;
@@ -372,7 +373,7 @@ async function loadThreadTail(threadId) {
       .get();
     if (snap.empty) return [];
 
-    const cutoff = Date.now() - TAIL_WINDOW_MS;
+    const cutoff = simNow().getTime() - TAIL_WINDOW_MS;
     const newestFirst = [];
     for (const doc of snap.docs) {
       const d = doc.data() || {};
@@ -405,7 +406,7 @@ async function loadThreadTail(threadId) {
 
 function _relTime(ms) {
   if (!ms) return "unknown time";
-  const diff = Date.now() - ms;
+  const diff = simNow().getTime() - ms;
   if (diff < 60_000) return "just now";
   const m = Math.floor(diff / 60_000);
   if (m < 60) return m + " min ago";

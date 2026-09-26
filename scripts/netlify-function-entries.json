@@ -189,6 +189,7 @@
     "_etsyMailOrderLink.js",
     "_etsyMailRoles.js",
     "_etsyMailScheduled.js",
+    "_etsyMailSim.js",
     "_etsyMailTracking.js",
     "_etsyMailTrackingRender.js",
     "_etsyMailVetoes.js",

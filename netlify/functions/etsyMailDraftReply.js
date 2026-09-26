@@ -66,6 +66,7 @@
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { applyDeterministicVetoes, unansweredInboundText } = require("./_etsyMailVetoes");
+const { simNow } = require("./_etsyMailSim");
 // v3.7+ — callClaudeRaw added alongside runToolLoop. The translate ops
 // (op:"detectLanguage" and op:"translate") and the v4.0 summarize op
 // (op:"summarizeThread") all use callClaudeRaw for single-shot Haiku
@@ -2523,7 +2524,7 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
   //   - How long ago the thread was last touched
   // so it can distinguish "I just got this, still actively discussing" from
   // "this has been sitting for days and may have been overtaken by events"
-  const now = new Date();
+  const now = simNow();
   const currentTimeStr = now.toLocaleString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric",
     hour: "numeric", minute: "2-digit", hour12: true,

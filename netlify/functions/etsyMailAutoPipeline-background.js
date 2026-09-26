@@ -876,6 +876,116 @@ async function loadActiveSalesContextStage(threadId) {
 // applyDeterministicVetoes: see ./_etsyMailVetoes.js (same contract; an order
 // tool that RETURNED an error now also counts as tool_call_failed).
 
+/** AI replay for diagnostics (op "simulate"). Runs the same routing, the
+ *  classifier and the drafter or sales agent on a real thread as it stood
+ *  at asOfMs, inside _etsyMailSim: nothing is written, sent, or asked of
+ *  Etsy. The only real write is the result in EtsyMail_DiagnosticLog
+ *  (aisim_<simId>, expires after 30 days). */
+function simTrim(v, depth = 0) {
+  if (typeof v === "string") return v.length > 4000 ? v.slice(0, 4000) + "…" : v;
+  if (!v || typeof v !== "object" || depth > 5) return v;
+  if (Array.isArray(v)) return v.slice(0, 20).map(x => simTrim(x, depth + 1));
+  const out = {};
+  for (const k of Object.keys(v)) out[k] = simTrim(v[k], depth + 1);
+  return out;
+}
+
+async function runSimulation(body) {
+  const { simId, threadId, asOfMs = null, nowMs = null, route: forcedRoute = "auto" } = body;
+  if (!/^[A-Za-z0-9_-]{4,80}$/.test(String(simId || ""))) return bad("simId required");
+  if (!threadId) return bad("Missing threadId");
+  const resultRef = db.collection("EtsyMail_DiagnosticLog").doc("aisim_" + simId);
+  const prior = await resultRef.get();
+  if (prior.exists && (prior.data() || {}).status === "done") return json(200, { ok: true, already: true });
+  const expireAt = admin.firestore.Timestamp.fromMillis(Date.now() + 30 * 86400000);
+  await resultRef.set({ kind: "ai_simulation", status: "running", simId, threadId, asOfMs, nowMs,
+                        startedAt: FV.serverTimestamp(), expireAt });
+
+  const sim = require("./_etsyMailSim");
+  const headers = { "content-type": "application/json" };
+  if (process.env.ETSYMAIL_EXTENSION_SECRET) headers["x-etsymail-secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+  const t0 = Date.now();
+  let out;
+  try {
+    out = await sim.simulate({ asOfMs, nowMs }, async () => {
+      const autoCfg = await getAutoPipelineConfig();
+      let intent = null;
+      if (autoCfg.intentClassifierEnabled) {
+        try {
+          const r = await require("./etsyMailIntentClassifier").handler({ httpMethod: "POST", headers,
+            body: JSON.stringify({ threadId, actor: "system:simulation" }) });
+          intent = JSON.parse((r && r.body) || "null");
+        } catch (e) { intent = { error: e.message }; }
+      }
+      const tSnap = await db.collection(THREADS_COLL).doc(threadId).get();
+      const t = tSnap.exists ? (tSnap.data() || {}) : {};
+      const isHelp = !!t.etsyHeadingBadge && /^\s*help\s*request\s*$/i.test(String(t.etsyHeadingBadge));
+      const saleDone = !!t.salesCompletedAt || t.customListingStatus === "created";
+      let activeStage = null, freshLead = false;
+      if (!isHelp && autoCfg.salesModeEnabled) {
+        activeStage = saleDone ? null : await loadActiveSalesContextStage(threadId);
+        freshLead = !!(autoCfg.salesAutoEngage && intent && intent.classification === "sales_lead"
+                       && typeof intent.confidence === "number" && intent.confidence >= 0.7);
+      }
+      const route = forcedRoute === "support" || forcedRoute === "sales" ? forcedRoute
+                  : (activeStage || freshLead) ? "sales" : "support";
+      const unanswered = await loadUnansweredInboundText(threadId);
+      if (route === "sales") {
+        const inb = await loadLatestInbound(threadId);
+        const r = await require("./etsyMailSalesAgent-background").handler({ httpMethod: "POST", headers,
+          body: JSON.stringify({
+            threadId,
+            latestInboundText: unanswered || inb.text,
+            latestInboundAttachments: inb.attachments,
+            threadReferenceAttachments: inb.threadAttachments && inb.threadAttachments.length ? inb.threadAttachments : inb.attachments,
+            referencedListings: [],
+            customerHistory: { isRepeat: false, orderCount: 0, lifetimeValueUsd: 0 },
+            intentClassification: intent && intent.classification || null,
+            intentConfidence: intent && intent.confidence || null,
+            employeeName: "system:simulation",
+            forceRegenerate: true,
+            bypassExistingDraft: true
+          }) });
+        let data = null; try { data = JSON.parse((r && r.body) || "null"); } catch { data = r && r.body; }
+        return { route, intent, activeStage, freshLead, saleDone, unanswered, statusCode: r && r.statusCode, data };
+      }
+      let data = null, error = null;
+      try {
+        data = await callDraftReply({ threadId, mode: "initial", employeeName: "system:simulation",
+                                      forceRegenerate: true, bypassExistingDraft: true });
+      } catch (e) { error = e.message; data = e.data || null; }
+      return { route, intent, activeStage, freshLead, saleDone, unanswered, data, error };
+    });
+  } catch (e) {
+    await resultRef.set({ status: "failed", error: String(e && e.message || e), finishedAt: FV.serverTimestamp() }, { merge: true });
+    return json(500, { error: e.message });
+  }
+
+  const draftWrites = out.writes.filter(w => /^EtsyMail_Drafts\//.test(w.path || "") && w.data && typeof w.data === "object");
+  const draft = Object.assign({}, ...draftWrites.map(w => w.data));
+  const text = draft.customerFacingReplyDraft || draft.text
+            || (out.result && out.result.data && (out.result.data.text || (out.result.data.draft && out.result.data.draft.text))) || null;
+  await resultRef.set(simTrim({
+    status: "done",
+    durationMs: Date.now() - t0,
+    route: out.result && out.result.route,
+    intent: out.result && out.result.intent,
+    activeStage: out.result && out.result.activeStage || null,
+    freshLead: out.result && out.result.freshLead || false,
+    saleDone: out.result && out.result.saleDone || false,
+    unanswered: out.result && out.result.unanswered || null,
+    error: out.result && out.result.error || null,
+    statusCode: out.result && out.result.statusCode || null,
+    text,
+    draft,
+    response: out.result && out.result.data,
+    writePaths: out.writes.map(w => `${w.op} ${w.path}`),
+    blocked: out.blocked,
+    finishedAt: FV.serverTimestamp()
+  }), { merge: true });
+  return json(200, { ok: true });
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
@@ -894,6 +1004,8 @@ exports.handler = async (event) => {
   let body = {};
   try { body = JSON.parse(event.body || "{}"); }
   catch { return bad("Invalid JSON body"); }
+
+  if (body.op === "simulate") return await runSimulation(body);
 
   const {
     threadId,
