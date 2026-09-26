@@ -277,6 +277,10 @@ function withTailCacheBreakpoint(messages) {
  *  @param {string}   [opts.effort]
  *  @param {boolean}  [opts.useThinking]
  *  @param {number}   [opts.maxIterations] default 6
+ *  @param {string}   [opts.finishTool]  terminal tool; on the last round only it is
+ *                                      offered, with a note to call it now, so a
+ *                                      run that spent its rounds on lookups still
+ *                                      ends with a draft
  */
 async function runToolLoop({
   model,
@@ -292,7 +296,8 @@ async function runToolLoop({
   adaptiveThinking = false,  // passed through to callClaudeRaw
   cacheTail = false,         // cache the growing conversation between loop iterations
   timeoutMs = 0,             // passed through to callClaudeRaw (per request)
-  cacheTtl                   // passed through to callClaudeRaw ("1h" system-prompt cache)
+  cacheTtl,                  // passed through to callClaudeRaw ("1h" system-prompt cache)
+  finishTool = null
 }) {
   const messages = [...initialMessages];
   const toolCalls = [];
@@ -305,10 +310,20 @@ async function runToolLoop({
   let finalResponse = null;
 
   for (let iter = 1; iter <= maxIterations; iter++) {
+    let tools = toolSpecs;
+    const last = messages[messages.length - 1];
+    if (finishTool && iter === maxIterations && iter > 1 && last && last.role === "user" && Array.isArray(last.content)) {
+      const only = (toolSpecs || []).filter(t => t && t.name === finishTool);
+      if (only.length) {
+        tools = only;
+        messages[messages.length - 1] = { ...last, content: [...last.content, { type: "text",
+          text: `[No more lookups are available. Call ${finishTool} now with the best complete reply you can give from what you already have.]` }] };
+      }
+    }
     const response = await callClaudeRaw({
       model, maxTokens, system,
       messages: cacheTail ? withTailCacheBreakpoint(messages) : messages,
-      tools: toolSpecs, effort, useThinking, adaptiveThinking, timeoutMs, cacheTtl
+      tools, effort, useThinking, adaptiveThinking, timeoutMs, cacheTtl
     });
 
     // Aggregate usage
@@ -593,7 +608,7 @@ async function fetchClassificationContext(threadId, opts = {}) {
   ]);
 
   return {
-    fetchedAt    : new Date().toISOString(),
+    fetchedAt    : require("./_etsyMailSim").simNow().toISOString(),
     thread,
     customer,
     recentReceipts,
@@ -744,7 +759,7 @@ function formatContextForPrompt(ctx) {
   const lines = [];
   lines.push("═══ THREAD CONTEXT (raw documents) ═══");
   lines.push("");
-  lines.push(`Context fetched at: ${ctx.fetchedAt || "(unknown)"}`);
+  lines.push(`Context fetched at (this is NOW, the current date and time; use it for every "today", deadline and days-ago judgement): ${ctx.fetchedAt || "(unknown)"}`);
   lines.push("");
   lines.push("─── thread doc ───");
   lines.push(JSON.stringify(ctx.thread || null, null, 2));

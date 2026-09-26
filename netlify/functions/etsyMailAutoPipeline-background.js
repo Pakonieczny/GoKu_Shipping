@@ -1755,7 +1755,9 @@ exports.handler = async (event) => {
               // Audit fix F10 — match on the run id only. An operator's
               // enqueue also bumps updatedAt and keeps generatedBySalesAgent,
               // which used to look like "the agent finished".
-              if (d.generatedBySalesAgent === true && d.manualRunId === salesRunId) {
+              // The run id is unique to this turn; a support draft with it is
+              // the sales agent's hand-off of a non-sales message.
+              if (d.manualRunId === salesRunId) {
                 agentCompleted = true;
                 draftDoc = d;
                 break;

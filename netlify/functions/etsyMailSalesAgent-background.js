@@ -1737,6 +1737,10 @@ const ALWAYS_FORBIDDEN_HANDOFF_PATTERNS = [
   // version below; this one fires regardless of next_action because
   // it's a stall phrasing with no honest version even on escalation.
   /\b(?:look|review|investigate|dig|examine|sort)\s+(?:into\s+|at\s+|over\s+|through\s+)?(?:this|it|that|things|matters|the\s+order|the\s+details|carefully|closely|thoroughly)?(?:\s+\w+){0,4}\s+on\s+(?:our|the)\s+end\b/i,
+  // 2026-09-26 — holding lines the owner counts as non-answers.
+  /\b(?:taking|take)\s+a\s+closer\s+look\b/i,
+  /\b(?:look\s+at|check)\s+(?:this|that|it)\s+(?:carefully|more\s+closely)\s+before\b/i,
+  /\bbefore\s+(?:I|we)\s+can\s+speak\s+to\s+(?:specifics|it|this)\b/i,
 ];
 
 const SOFT_PROMISE_PATTERNS = [
@@ -1917,7 +1921,7 @@ function buildLineSheetSpecFallbackReply(family, latestInboundText = "") {
 
   return [
     `Hi! Yes, I can design and make this as a custom ${familyLabel} piece.`,
-    "Standard production is usually about 4 to 5 business days once the details are set, plus shipping.",
+    "Standard production is usually about 4 to 6 business days once the details are set, plus shipping.",
     `I've attached the ${fam || "custom"} line sheet so you can choose the ${specPhrase} needed for accurate pricing.`,
     question,
     "Many Thanks,\nCustomBrites"
@@ -1929,11 +1933,13 @@ function buildValidationFailureCustomerReply({ parsed, validationContext = {}, v
   const violations = validationResult && Array.isArray(validationResult.violations)
     ? validationResult.violations : [];
   const family = (forced && forced.family) || familyFromParsedAndContext(parsed, validationContext);
+  // Only a real spec-gathering step gets the line-sheet template. A reply
+  // that failed on wording alone (a handoff or soft-promise phrase) is not
+  // a sign the customer still owes specs: the template then asked again for
+  // choices they had already given. Those turns go to the support drafter.
   const hasSpecStepFailure = !!(forced && forced.force) || violations.some(v =>
     v === "escalated_before_customer_specs" ||
-    v === "missing_line_sheet_for_spec_question" ||
-    v === "always_forbidden_handoff" ||
-    v === "soft_promise_in_reply"
+    v === "missing_line_sheet_for_spec_question"
   );
 
   if (!family || !hasSpecStepFailure) return null;
@@ -2123,8 +2129,8 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
           `Your reply contains an always-forbidden handoff/stall phrasing (matched: ${String(rx)}). ` +
           `These commit a specific actor + timing, hallucinate sourcing language, or stall with meta-commentary. ` +
           `No honest version exists, even on escalate_to_human. Rewrite without this phrasing. ` +
-          `If you genuinely cannot answer this turn, set next_action=escalate_to_human and write a short brief holding line ` +
-          `like "Thanks for sending this over. We need to look at this carefully before we can speak to specifics."`
+          `If a person has to decide something, set next_action=escalate_to_human and still answer: name the customer's exact ` +
+          `request and give what the thread and policy already settle. Never a holding line such as "we need to look at this carefully".`
         );
         break;
       }
@@ -3319,6 +3325,16 @@ Do NOT pick next_action: ask_one_question and then write reply text that mention
 A customer-facing sales draft must never say "I'll get back to you", "I'll send options later", "I'll come back with a quote", "once I hear back", or any close variant. This applies even when next_action is escalate_to_human. The operator can see needs_review_synopsis internally; the customer-facing reply must still either act now, ask the next useful customer question, attach the relevant line sheet, or stay empty for operator review.
 
 For custom-shape requests that need operator pricing but still have customer-selectable choices missing, do NOT escalate as the first customer-visible move. Attach the family line sheet and ask for the customer choices first. Example for a two-charm necklace request: confirm we can design and make it, mention the normal production window if asked, attach the necklace line sheet, and ask the customer to pick charm size, metal, chain, length, and confirm the layout. Pricing can be resolved after the specs are complete; do not promise to get back later.
+
+# ALWAYS ANSWER, SHORT (owner's standing rule, overrides any older wording)
+
+Every reply answers what the customer asked in this turn, in its first sentence: a price, a yes or no, a shipping cost, a production time, the next step. Never write "I need to look at this carefully before I can speak to specifics", "we're taking a closer look", "let me check", "I don't know", or any holding line, including on escalate_to_human, where the reply still names the customer's exact request and gives everything the thread and policy already settle.
+
+Keep replies to two to four short sentences plus the sign-off. Answer every question in the customer's latest messages, not only the last one.
+
+One customer can have several conversations in one thread. A sale that finished (order placed, custom listing bought, piece shipped) stays finished: don't re-quote it, re-send the line sheet or ask for specs the customer already gave. Ask only for choices that are still missing.
+
+When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
 `.trim();
 
     // v5.0 — Sales-agent-specific investigation addendum. Pairs with
@@ -3370,9 +3386,10 @@ When ANY of those apply, your output must be:
      #4123, status paid-not-shipped; customer is requesting an engraving
      change on that order, which is post-purchase modification — not a
      new sale.")
-  - \`reply\`: brief and ambiguous about timing, in the standard escalation
-     form: "Thanks for sending this over. I need to look at this carefully
-     before I can speak to specifics." followed by the sign-off.
+  - \`reply\`: one or two sentences that answer the customer's question
+     about that order from what the thread shows, followed by the
+     sign-off. The support drafter, which has the order tools and
+     policies, writes the reply that is actually shown for this turn.
 
 Never run discovery, never ask spec questions, never offer the line
 sheet, never quote prices — even if the customer's message contains
@@ -3624,6 +3641,7 @@ from your investigation, not from the default sales script.
     // invalid customer-facing reply in the staff textarea; preserve it
     // only inside the internal synopsis so the operator can diagnose what
     // the AI tried to say without accidentally sending a bad draft.
+    let validationHandoff = false;
     if (validationResult && !validationResult.valid) {
       const violationsList = (validationResult.violations || []).join(", ");
       const invalidCustomerFacingReply = (typeof parsed.reply === "string") ? parsed.reply : "";
@@ -3660,6 +3678,7 @@ from your investigation, not from the default sales script.
         parsed.reply                = safeFallback.reply;
       } else {
         parsed.reply = "";
+        validationHandoff = true;
       }
 
       parsed.needs_review_synopsis    =
@@ -3689,6 +3708,36 @@ ${validationResult.message}
         `Operator action: review the conversation, decide the correct next step, ` +
         `and either write/send the draft manually OR clear the review flag and ` +
         `let the agent re-attempt on the next inbound message.`;
+    }
+
+    // Not a sale (a problem with a placed order, a return, a question about
+    // shipping...): the support drafter has the policies and order tools to
+    // answer it, so hand the turn over instead of writing a holding reply.
+    // The SalesContext leaves the active stages so the next message is routed
+    // by the classifier again. ETSYMAIL_SALES_NON_SALES_HANDOFF=0 turns it off.
+    // A turn whose reply failed validation twice (with no line-sheet step to
+    // fall back on) goes the same way, so the operator gets a real answer to
+    // edit instead of an empty composer; the sale itself stays open.
+    const nonSalesTurn = parsed.current_state === "non_sales";
+    if ((nonSalesTurn || validationHandoff) && process.env.ETSYMAIL_SALES_NON_SALES_HANDOFF !== "0") {
+      if (nonSalesTurn) {
+        await salesCtx._ref.set({ stage: "non_sales", nonSalesAt: FV.serverTimestamp(),
+                                  lastTurnAt: FV.serverTimestamp() }, { merge: true });
+      }
+      await writeAudit({
+        threadId, eventType: nonSalesTurn ? "sales_agent_handoff_support" : "sales_agent_validation_handoff",
+        payload: { reason: parsed.needs_review_synopsis ? String(parsed.needs_review_synopsis).slice(0, 600) : null },
+        outcome: "success"
+      });
+      const drafterHeaders = { "content-type": "application/json" };
+      if (process.env.ETSYMAIL_EXTENSION_SECRET) drafterHeaders["x-etsymail-secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+      const drafted = await require("./etsyMailDraftReply").handler({
+        httpMethod: "POST", headers: drafterHeaders,
+        body: JSON.stringify({ threadId, mode: "initial", employeeName, viaPipeline: true,
+                               forceRegenerate: true, bypassExistingDraft: true, manualRunId: manualRunId || null })
+      });
+      return { statusCode: drafted && drafted.statusCode || 500, headers: CORS,
+               body: (drafted && drafted.body) || JSON.stringify({ error: "support drafter returned nothing" }) };
     }
 
     // Mirror legacy customerAcceptedRush field if present (downstream-compat).
@@ -3806,8 +3855,10 @@ ${validationResult.message}
       (typeof parsed.needs_review_synopsis === "string" && parsed.needs_review_synopsis.trim().length > 50)
       || parsed.advance_stage === "human_review";
 
+    // The sign-off always sits on its own lines ("...? Many Thanks," ran on
+    // the last sentence in replayed drafts).
     const customerFacingReply = (typeof parsed.reply === "string" && parsed.reply.trim())
-      ? parsed.reply.trim()
+      ? parsed.reply.trim().replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites")
       : "";
 
     // Draft body: ALWAYS the customer-facing reply (or empty). The
