@@ -5962,14 +5962,23 @@ const TeamMail = window.TeamMail = (() => {
   const changed = (rid, sent) => T.subs.forEach(f => { try { f(rid == null ? null : String(rid), sent || null); } catch (_) {} });
   const health = (ok, err) => { const was = T.ok; T.ok = ok; T.err = ok ? null : err; if (was !== ok) changed(null); };
 
-  // ── drafts: one per order, written as it is typed ──
+  // ── drafts: one per order, written as it is typed; every other box of that order is told (onDraft) ──
   const draftOf = rid => { const d = get(LS_D, {})[String(rid)]; return d ? d.t : ""; };
+  const dsubs = new Set();
   function setDraft(rid, text) {
     if (!rid) return;
     const all = get(LS_D, {}), cut = Date.now() - 30 * 86400000;
     if (text && text.trim()) all[rid] = { t: text, at: Date.now() }; else delete all[rid];
     const keep = {}; Object.keys(all).filter(k => all[k].at > cut).sort((a, b) => all[b].at - all[a].at).slice(0, 60).forEach(k => keep[k] = all[k]);
     put(LS_D, keep);
+    dsubs.forEach(f => { try { f(String(rid)); } catch (_) {} });
+  }
+  /** The order's stored draft into a box nobody is typing in, so every box of one order shows the same draft. */
+  function syncDraft(input, rid) {
+    if (!input || !rid || document.activeElement === input) return false;
+    const d = draftOf(rid);
+    if (d === input.value || !(d.trim() || input.value.trim())) return false;
+    input.value = d; return true;
   }
 
   // ── the outbox ──
@@ -6123,11 +6132,14 @@ const TeamMail = window.TeamMail = (() => {
   // a photo in the thread opens large in the viewer (PhotoView, charm-nest-mail.js), with every photo of this order's thread
   const pic = (src, cap) => `<button type="button" class="owPic" data-photo="${esc(src)}" data-photo-cors="1" data-photo-cap="${esc(cap)}" title="Open large"><img crossorigin="anonymous" loading="lazy" alt="" src="${esc(src)}"></button>`;
   const WAIT = '<i class="owSpin" aria-hidden="true"></i>';
-  /** What a thread's drawing depends on: a view draws it again only when this changes. */
+  /** What a thread's drawing depends on: a view draws it again only when this changes. A read on its way shows only while
+      there is nothing to show yet (html), so a poll of a thread already drawn changes nothing; the translations shown
+      (EN/УКР, charm-nest-mail.js) are part of it. */
   function drawKey(rid, up) {
     const t = thread(rid), got = new Set(t.list.map(m => m.id));
     const out = pending(rid).filter(x => !got.has("c-" + x.id));
-    return JSON.stringify([rid, String(employeeName() || "").toLowerCase(), t.list.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up || 0, T.ok, !!t.fullAt, t.err || "", !!t.loading]);
+    const CM = window.CustomerMail, tr = CM && CM.teamTrState ? CM.teamTrState() : 0;
+    return JSON.stringify([rid, String(employeeName() || "").toLowerCase(), t.list.map(m => m.id), out.map(x => [x.id, x.tries, x.error || "", !!x.next]), up || 0, T.ok, !!t.fullAt, t.err || "", !!t.loading && (!t.fullAt || !t.list.length), tr]);
   }
   /** An order's thread as the order window and the engraving card both show it. */
   function html(rid, up) {
@@ -6161,8 +6173,8 @@ const TeamMail = window.TeamMail = (() => {
       + (t.loading && !t.fullAt ? `<div class="owWait small">${WAIT}Checking for newer messages…</div>` : "");
   }
 
-  return { draftOf, setDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto, thread, load, html, drawKey,
-    onThread: f => { tsubs.add(f); return () => tsubs.delete(f); },
+  return { draftOf, setDraft, syncDraft, queue, pending, drop, retry, flush, read, isNew, markSeen, mark, slot, stamp, auto, thread, load, html, drawKey,
+    onThread: f => { tsubs.add(f); return () => tsubs.delete(f); }, onDraft: f => { dsubs.add(f); return () => dsubs.delete(f); },
     ok: () => T.ok, error: () => T.err, waiting: rid => pending(rid).filter(x => !x.error).length, on: f => { T.subs.add(f); return () => T.subs.delete(f); } };
 })();
 
@@ -6190,7 +6202,8 @@ const TeamCard = window.TeamCard = (() => {
     const key = TeamMail.drawKey(C.rid, 0);
     if (key === C.painted) return;
     C.painted = key;
-    const t = C.thread, stick = !keep || t.scrollHeight - t.scrollTop - t.clientHeight < 48, at = t.scrollTop;
+    // where it was last looked at (C.scroll, C.stick): a pane the card has just drawn again reads 0 here
+    const t = C.thread, stick = !keep || C.stick, at = C.scroll;
     t.innerHTML = TeamMail.html(C.rid, 0);
     t.scrollTop = stick ? t.scrollHeight : at;
     if (stick) t.querySelectorAll("img").forEach(img => { if (!img.complete) img.addEventListener("load", () => { t.scrollTop = t.scrollHeight; }, { once: true }); });
@@ -6207,7 +6220,9 @@ const TeamCard = window.TeamCard = (() => {
     host.innerHTML = `<div class="owThread" aria-live="polite"></div>
       <div class="owComp"><div class="owCompLine"><textarea rows="1" placeholder="Message every station working this order…" aria-label="Message to the team"></textarea><button type="button" class="owIco send" title="Send (Enter)" aria-label="Send" disabled>${SEND}</button></div>
       <div class="owHint"><span class="owLink ok"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span></div></div>`;
-    const C = { key, rid: null, host, painted: "", blur: null, thread: host.querySelector(".owThread"), input: host.querySelector("textarea"), send: host.querySelector(".send"), link: host.querySelector(".owLink") };
+    const C = { key, rid: null, host, painted: "", blur: null, scroll: 0, stick: true, thread: host.querySelector(".owThread"), input: host.querySelector("textarea"), send: host.querySelector(".send"), link: host.querySelector(".owLink") };
+    // the thread's place, kept as it is scrolled (as the Customer pane keeps it): pinned to the newest when at the bottom
+    C.thread.addEventListener("scroll", () => { const t = C.thread; if (host.isConnected && t.clientHeight) { C.scroll = t.scrollTop; C.stick = t.scrollHeight - t.scrollTop - t.clientHeight < 48; } }, { passive: true });
     C.input.addEventListener("input", () => { grow(C); TeamMail.setDraft(C.rid, C.input.value); });
     C.input.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(C); } });
     // a blur with nowhere to go is the card being drawn again, not the person leaving the box
@@ -6233,13 +6248,16 @@ const TeamCard = window.TeamCard = (() => {
       C = build(key); panes.set(key, C);
       for (const [k, x] of panes) { if (panes.size <= 8) break; if (!x.host.isConnected && x !== C) panes.delete(k); }
     }
-    if (C.rid !== rid) { C.rid = rid; C.painted = ""; C.input.value = TeamMail.draftOf(rid); }
+    if (C.rid !== rid) { C.rid = rid; C.painted = ""; C.scroll = 0; C.stick = true; C.input.value = TeamMail.draftOf(rid); }
+    else TeamMail.syncDraft(C.input, rid);   // the order window or another line's card may have written or sent it since
     const th = TeamMail.thread(rid, row.spec && row.spec.messages);
     if (!th.fullAt || Date.now() - th.fullAt > 60000) TeamMail.load(rid);
     const b = C.blur && Date.now() - C.blur.at < 400 ? C.blur : null;
     setTimeout(() => {
       if (!C.host.isConnected) return;
       paint(C, true); grow(C);
+      // drawn again, the pane is back where it was looked at, or at the newest message when it was there
+      const t = C.thread; if (t.clientHeight) t.scrollTop = C.stick ? t.scrollHeight : C.scroll;
       if (b) {
         C.blur = null;
         const a = document.activeElement;
@@ -6251,6 +6269,7 @@ const TeamCard = window.TeamCard = (() => {
   /** The tab came to the front: sized, drawn, and read if it has not been lately. */
   function shownNow(key) {
     const C = panes.get(String(key)); if (!C) return;
+    TeamMail.syncDraft(C.input, C.rid);
     C.painted = ""; paint(C); grow(C);
     const th = TeamMail.thread(C.rid);
     if (!th.fullAt || Date.now() - th.fullAt > 20000) TeamMail.load(C.rid);
@@ -6258,9 +6277,10 @@ const TeamCard = window.TeamCard = (() => {
   const each = (rid, f) => { for (const C of panes.values()) if (C.host.isConnected && (rid == null || C.rid === rid)) f(C); };
   TeamMail.on(rid => each(rid, C => paint(C, true)));
   TeamMail.onThread(rid => each(rid, C => paint(C, true)));
+  TeamMail.onDraft(rid => each(rid, C => { if (TeamMail.syncDraft(C.input, rid)) grow(C); }));
   // what the other stations write shows within about 30 s while a card's Team tab is in front
   setInterval(() => { if (!document.hidden) each(null, C => { if (shown(C)) TeamMail.load(C.rid); }); }, 30000);
-  return { pane, shownNow, isNew: row => TeamMail.isNew(String(row.order.receiptId), TeamMail.thread(String(row.order.receiptId), row.spec && row.spec.messages).list) };
+  return { pane, shownNow, repaint: () => each(null, C => paint(C, true)), isNew: row => TeamMail.isNew(String(row.order.receiptId), TeamMail.thread(String(row.order.receiptId), row.spec && row.spec.messages).list) };
 })();
 
 /* ═══ 24b · OrderWin — one line, everything about it, and the way to settle it ═══
@@ -6319,6 +6339,8 @@ const OrderWin = window.OrderWin = (() => {
     TeamMail.on(rid => { if (W.dlg.open && (rid == null || rid === W.rid)) { paintThread(true); paintWho(); } });
     // the thread is shared with the engraving cards: a read, from here or from a card, draws it again
     TeamMail.onThread(rid => { if (W.dlg.open && rid === W.rid) { paintThread(true); paintWho(); } });
+    // and so is the draft: written or sent from a card, this box shows the same (unless it is being typed in)
+    TeamMail.onDraft(rid => { if (W.dlg.open && rid === W.rid && TeamMail.syncDraft(input, rid)) grow(); });
     byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => { paintThread(true); grow(); }, 0));
     document.addEventListener("visibilitychange", () => { if (!document.hidden && W.dlg.open && W.rid) TeamMail.load(W.rid); });
     window.addEventListener("online", () => { if (W.dlg.open && W.rid) TeamMail.load(W.rid); });

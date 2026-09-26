@@ -491,6 +491,8 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 /* the photo viewer: the whole screen, over whatever is open */
 dialog.phv{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;border-radius:0;box-shadow:none;background:transparent;color:#f3efe8;overflow:hidden}
 dialog.phv::backdrop{background:rgba(16,14,12,.95)}
+/* inside an open dialog it is a layer of that dialog (no second pop-up), with its own shade */
+dialog.phv.layer{z-index:2147483000;padding:0;border:0;background:rgba(16,14,12,.95)}
 .phvStage{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:zoom-in}
 .phvStage.zoomed{cursor:grab}.phvStage.zoomed.drag{cursor:grabbing}
 .phvImg{position:absolute;left:0;top:0;max-width:none;max-height:none;transform-origin:0 0;will-change:transform;-webkit-user-drag:none;box-shadow:0 10px 50px rgba(0,0,0,.45);background:#fff}
@@ -4934,9 +4936,9 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260926-engrave"></script>
+<script src="charm-nest-bridge.js?v=20260926-customai"></script>
 <script src="charm-nest-sheetwin.js?v=20260926-sw7"></script>
-<script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
+<script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260926-find-audit2"></script>

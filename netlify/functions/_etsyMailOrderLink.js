@@ -727,24 +727,25 @@ async function pullMissed(e, activityMs) {
 
 /* A message's photos, from the inbox's own copies in Storage first. The mirror names each copy by the first 16 hex of
    the sha1 of its Etsy URL (etsyMailMirrorImage) and appends paths in the order uploads finish, so a copy is matched to
-   its photo by that name. Other copies (the inbox's own attachments) go to the photos left, in order, and any still left
-   over show on their own. A photo the inbox has not copied yet shows straight from Etsy's image server, which lets any
-   page embed it (Cross-Origin-Resource-Policy: cross-origin). src: what to show, href: full size, back: Etsy's copy. */
+   its photo by that name. Other copies (the inbox's own attachments, one path per attachment with a gap where one has
+   none) go to the photo at the same place, never shifted along to a neighbour's, and any still left over show on their
+   own. A photo the inbox has not copied yet shows straight from Etsy's image server, which lets any page embed it
+   (Cross-Origin-Resource-Policy: cross-origin). src: what to show, href: full size, back: Etsy's copy. */
 const STORED = /^etsymail(-collateral)?\/[^\\]+$/;
 const ETSY_IMG = /^https:\/\/([a-z0-9-]+\.)*etsystatic\.(com|net)\//i;
 function imageList(m) {
   const list = v => Array.isArray(v) ? v.map(x => String(x || "")) : [];
   const urls = list(m.imageUrls), thumbs = list(m.thumbnailUrls);
-  const paths = list(m.storageImagePaths).filter(p => STORED.test(p) && !p.includes(".."));
+  const valid = p => STORED.test(p) && !p.includes("..");
+  const raw = list(m.storageImagePaths), paths = raw.filter(valid);
   const stored = p => "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(p);
   const nameOf = p => (p.split("/").pop() || "").replace(/\.[a-z0-9]+$/i, "");
   const byName = new Map(paths.map(p => [nameOf(p), p]));
   const used = new Set(), out = [];
   const own = urls.map(u => { const p = /^https?:\/\//i.test(u) ? byName.get(crypto.createHash("sha1").update(u).digest("hex").slice(0, 16)) : null; if (p) used.add(p); return p || null; });
-  const spare = paths.filter(p => !used.has(p));
   urls.forEach((u, i) => {
-    let p = own[i];
-    if (!p && spare.length) p = spare.shift();   // a copy under another name (the inbox's own attachments): in order
+    // a copy under another name (the inbox's own attachments): the path at the same place, if any
+    const p = own[i] || (valid(raw[i] || "") && !used.has(raw[i]) ? raw[i] : null);
     if (p) used.add(p);
     const etsy = ETSY_IMG.test(u) ? u : null;
     const small = etsy && ETSY_IMG.test(thumbs[i] || "") ? thumbs[i] : etsy;

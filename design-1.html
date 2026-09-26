@@ -812,6 +812,9 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 .pcGate .pcNote{font-size:12.5px;color:var(--ink70)}
 .pcGate input{border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;background:var(--card);color:var(--ink)}
 .pcGate .err{color:#8a3a26;font-size:12px;min-height:16px}
+/* the framed station waiting for the sorter to hand the passcode over */
+.pcWait{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:2147482999;display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:999px;box-shadow:var(--sh);padding:6px 14px;font-size:12.5px;color:var(--ink70)}
+.pcWait .spin{width:12px;height:12px;border:2px solid var(--ink25);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 auto}
 </style>
 </head>
 <body>
@@ -1245,7 +1248,6 @@ const SOLID_UNKNOWN  = "__solid_unknown__";
 
 const PAGE_SIZE = 100;
 
-const TOKEN_KEYS = { access:"access_token", refresh:"refresh_token", expires:"token_expires_at" };
 /* ── SANDBOX. Opened with ?sandbox=1 (kept for this tab in sessionStorage), this page talks to an emulated Etsy
    (etsySandbox: a stored snapshot of the shop's open orders, same response shapes) and keeps every lock, claim, ledger
    entry, note and archive row in Sandbox_-prefixed collections. Its browser storage is namespaced too, so a sandbox
@@ -1253,6 +1255,9 @@ const TOKEN_KEYS = { access:"access_token", refresh:"refresh_token", expires:"to
    reaches Etsy or a real order. ── */
 const SANDBOX = (() => { try { const q = new URLSearchParams(location.search).get("sandbox"); if (q === "1") sessionStorage.setItem("designStation.sandbox", "1"); if (q === "0") sessionStorage.removeItem("designStation.sandbox"); return sessionStorage.getItem("designStation.sandbox") === "1"; } catch (_) { return false; } })();
 const NS = SANDBOX ? ":sandbox" : "";
+/* The Etsy tokens, shared by every station tab of this origin. The sandbox's keys carry its suffix, so it can never touch
+   production's, and it never writes any (setTokens, refreshAccessToken and scheduleTokenRefresh stop at once there). */
+const TOKEN_KEYS = { access:"access_token" + NS, refresh:"refresh_token" + NS, expires:"token_expires_at" + NS };
 const ETSY_CLIENT_ID = "k75zdspz4r99txpqdji7i2em";
 const ETSY_REDIRECT  = "https://design-1.goldenspike.app";
 const ETSY_SCOPE     = "listings_w listings_r transactions_r transactions_w";
@@ -1717,7 +1722,7 @@ const Passcode = (() => {
   function set(v) {
     pc = String(v || "");
     try { if (pc) sessionStorage.setItem(KEY, pc); else sessionStorage.removeItem(KEY); } catch (_) {}
-    if (pc && wake) { const w = wake; wake = null; waiting = null; w(pc); }
+    if (pc && wake) { const w = wake; wake = null; waiting = null; waitNote(false); w(pc); }
   }
   const verify = v => fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": v, "Content-Type": "application/json" }, body: JSON.stringify({ app: "design-1", passcode: v }) }).then(r => r.ok);
   /** The sign-in box: one at a time, gone once a passcode is accepted. */
@@ -1740,9 +1745,19 @@ const Passcode = (() => {
     if (!waiting) waiting = new Promise(res => {
       wake = res;
       if (!framed) ask();
-      else setTimeout(() => { if (wake === res) { wake = null; waiting = null; res(""); } }, 60000);
+      else { waitNote(true); setTimeout(() => { if (wake === res) { wake = null; waiting = null; waitNote(false); res(""); } }, 60000); }
     });
     return waiting;
+  }
+  /** In a frame the wait for the sorter's passcode is shown here, and told to each sorter command waiting on it. */
+  function waitNote(on) {
+    const n = document.getElementById("pcWait");
+    if (!on) { if (n) n.remove(); return; }
+    if (n) return;
+    const box = document.createElement("div"); box.id = "pcWait"; box.className = "pcWait"; box.setAttribute("role", "status");
+    box.innerHTML = `<span class="spin"></span><span>Waiting for the operator passcode…</span>`;
+    (document.body || document.documentElement).appendChild(box);
+    try { Bridge.waiting("Waiting for the operator passcode…"); } catch (_) {}
   }
   /** At boot, a station on its own: with a passcode set and none here that works, the box first. */
   async function gate() {
@@ -1844,6 +1859,7 @@ async function etsyHeadroom() {
 const isEtsyPath  = p => /^\/(etsy|listOpenOrders|etsyImages)/i.test(p);
 const runEtsyTask = makeSpacingQueue(250, etsyHeadroom);   // ≈4 req/s, within the watchdog's limits
 const runImageTask = makeQueue(1);
+let __sandboxPcWait = false;   // the sandbox's last emulated-Etsy call was refused for want of the operator passcode
 
 /**
  * Resilient Etsy fetch. Layers, in order:
@@ -1866,6 +1882,14 @@ async function apiFetch(path, init = {}) {
   };
 
   let resp = isEtsyPath(path) ? await runEtsyTask(doFetch) : await doFetch();
+
+  // the emulated Etsy has no tokens: its 401 is the operator passcode door (Passcode has already waited for one), so the
+  // sandbox never refreshes or signs in, and says what it is waiting for
+  if (SANDBOX && (resp.status === 401) !== __sandboxPcWait) {
+    __sandboxPcWait = resp.status === 401;
+    setConn(__sandboxPcWait ? "warn" : "ok", __sandboxPcWait ? "Sandbox — waiting for the operator passcode" : "Sandbox — emulated Etsy");
+  }
+  if (SANDBOX && resp.status === 401) throw new Error("Sandbox: waiting for the operator passcode");
 
   if (resp.status === 401) {
     try {
@@ -2035,6 +2059,7 @@ function setConn(kind, text) {
 }
 
 function refreshConnBadge() {
+  if (SANDBOX) return setConn(__sandboxPcWait ? "warn" : "ok", __sandboxPcWait ? "Sandbox — waiting for the operator passcode" : "Sandbox — emulated Etsy");
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
   const hasAccess  = !!localStorage.getItem(TOKEN_KEYS.access);
   const hasRefresh = !!localStorage.getItem(TOKEN_KEYS.refresh);
@@ -2047,6 +2072,7 @@ function refreshConnBadge() {
 
 function scheduleTokenRefresh() {
   clearTimeout(window.__etsyRefreshTimer);
+  if (SANDBOX) return;   // the emulated Etsy has no tokens to renew
   const exp = Number(localStorage.getItem(TOKEN_KEYS.expires) || 0);
   const refresh = () => refreshAccessToken().catch(() => {});   // a failure is reported and retried inside
   if (!exp) {
@@ -2062,6 +2088,7 @@ function scheduleTokenRefresh() {
 }
 
 function setTokens({ access_token, refresh_token, expires_in, issued_at }) {
+  if (SANDBOX) return;   // the sandbox never stores an Etsy token
   // a sign-in, or the refresh token Etsy just rotated, must land even when the origin's storage is full
   if (access_token)  setItemEssential(TOKEN_KEYS.access, access_token);
   if (refresh_token) setItemEssential(TOKEN_KEYS.refresh, refresh_token);
@@ -2125,6 +2152,7 @@ function tokenRecovered() {
  * keeps every token, shows a quiet warning, schedules a retry and fails as "Etsy token refresh failed (network): …".
  */
 async function refreshAccessToken({ force = false, now = false } = {}) {
+  if (SANDBOX) return;   // the emulated Etsy has no tokens: nothing is refreshed, here or at Etsy
   if (__refreshPromise) return __refreshPromise;
   if (!localStorage.getItem(TOKEN_KEYS.refresh)) return;
   if (!now && __refreshRetry.t && Date.now() - __refreshRetry.failedAt < 15000) throw new Error("Etsy token refresh failed (network): the retry is scheduled");
@@ -2324,6 +2352,7 @@ function connectForSorterDone() {
 
 /** Runs once at boot: handles all three OAuth return shapes. */
 function bootOAuth() {
+  if (SANDBOX) { refreshConnBadge(); return; }   // the sandbox never signs in, exchanges a code or renews a token
   const url = new URLSearchParams(window.location.search);
 
   const a = url.get("access_token");
@@ -8005,17 +8034,21 @@ const Bridge = (() => {
     reply({ id: d.id, type: "ack" });
     if (d.type !== "feed.post") { S.count++; S.last = d.type; paintBanner(); }
     if (d.type !== "ping" && d.type !== "feed.post") ticker(`Sorter: ${d.type}${d.args && Array.isArray(d.args.receiptIds) && d.args.receiptIds.length ? " " + d.args.receiptIds.slice(0, 6).join(", ") + (d.args.receiptIds.length > 6 ? "…" : "") : d.args && d.args.receiptId ? " " + d.args.receiptId : ""}`);
+    const progress = (done, total, text) => { S.lastCmdAt = Date.now(); reply({ id: d.id, type: "progress", done, total, text }); };
     try {
       mirrorBroadcast(d.type, d.args || {});
-      S.busy = (S.busy || 0) + 1; S.lastCmdAt = Date.now();
-      const result = await fn(d.args || {}, (done, total, text) => { S.lastCmdAt = Date.now(); reply({ id: d.id, type: "progress", done, total, text }); }, ev);
+      S.busy = (S.busy || 0) + 1; S.lastCmdAt = Date.now(); inflight.add(progress);
+      const result = await fn(d.args || {}, progress, ev);
       reply({ id: d.id, type: "done", result });
     } catch (e) {
       reply({ id: d.id, type: "error", error: e && e.message || String(e) });
       ticker(`Sorter command failed: ${d.type} — ${e && e.message || e}`);
       emit("error", { command: d.type, error: e && e.message || String(e) });
-    } finally { S.busy = Math.max(0, (S.busy || 1) - 1); S.lastCmdAt = Date.now(); }
+    } finally { inflight.delete(progress); S.busy = Math.max(0, (S.busy || 1) - 1); S.lastCmdAt = Date.now(); }
   }
+  /** What the station is waiting for (the operator passcode): every sorter command in flight shows it as its progress. */
+  const inflight = new Set();
+  function waiting(text) { ticker(text); inflight.forEach(p => { try { p(0, 0, text); } catch (_) {} }); }
   window.addEventListener("message", onMessage);
 
   function endSession(reason) {
@@ -8044,7 +8077,7 @@ const Bridge = (() => {
     swept() { S.lastSweepAt = Date.now(); },
     locks() { if (!active()) return; const cur = JSON.stringify([...rtSelected]); if (cur !== lastLocks) { lastLocks = cur; emit("lock.changed", { locks: Object.fromEntries([...rtSelected].filter(([, o]) => o && o !== RT.clientId)), claims: Object.fromEntries(rtClaims) }); } }
   };
-  return { hooks, active, framed, emit, ticker, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
+  return { hooks, active, framed, emit, ticker, waiting, endSession, state: () => Object.assign({}, S, { master: !!S.master }), snapshot: stateSnapshot, orderForBridge, commands: Object.keys(CMDS), ALLOWED, cursor: Cursor };
 })();
 if (Bridge.framed()) document.documentElement.classList.add("framed");
 

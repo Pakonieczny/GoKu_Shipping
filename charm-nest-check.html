@@ -19,6 +19,8 @@
   .bar button,.bar a{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 12px;font:13px inherit;cursor:pointer;text-decoration:none}
   .bar .on{background:var(--velvet);color:#fff;border-color:var(--velvet)}
   .bar .note{font:12px var(--mono);color:var(--ink45)}
+  .bar form.pc{display:flex;gap:6px;align-items:center}.bar form.pc.hidden{display:none}
+  .bar input{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:9px;padding:7px 10px;font:13px inherit}
   section{background:var(--card);border:1px solid var(--line);border-radius:12px;margin:0 0 14px;overflow:hidden}
   section h2{margin:0;padding:10px 14px;font:600 14px inherit;border-bottom:1px solid var(--line);background:var(--card2);display:flex;gap:10px;align-items:center}
   section h2 .c{font:12px var(--mono);color:var(--ink45);font-weight:400}
@@ -48,6 +50,7 @@
   <div class="bar">
     <button id="bWrite">write probes</button><button id="bEtsy">spend Etsy calls</button><button id="bAi">spend one Claude call</button>
     <button id="bRun">Run again</button><button id="bCopy">Copy report</button>
+    <form class="pc hidden" id="pcForm"><input id="pcIn" type="password" placeholder="Operator passcode" autocomplete="current-password" aria-label="Operator passcode"><button id="pcUse" type="submit">Use passcode</button><span class="note" id="pcErr" role="alert"></span></form>
     <span class="note" id="cfg"></span>
   </div>
   <div id="groups"></div>
@@ -74,7 +77,10 @@ const FN = location.origin + "/.netlify/functions";
 const DEFAULTS = { dsOrigin: "https://design-1.goldenspike.app" };
 const settings = (() => { try { return JSON.parse(localStorage.getItem("cn.settings") || "{}") || {}; } catch (_) { return {}; } })();
 const dsOrigin = (Q.get("station") || settings.dsOrigin || DEFAULTS.dsOrigin).replace(/\/+$/, "");
-const passcode = sessionStorage.getItem("cn.passcode") || Q.get("passcode") || "";
+/* The operator passcode: this tab's session copy (the sorter's, same key), or typed into the bar when a call is refused.
+   Never read from the address: a passcode there stays in the history and goes out with every link. */
+let passcode = ""; try { passcode = sessionStorage.getItem("cn.passcode") || ""; } catch (_) {}
+if (Q.has("passcode")) { Q.delete("passcode"); try { history.replaceState(null, "", location.pathname + (String(Q) ? "?" + Q : "") + location.hash); } catch (_) {} }
 const MM = 25.4 / 72, PT = 72 / 25.4;
 const rows = []; const groups = new Map();
 const esc = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -115,7 +121,7 @@ async function checkBrowser() {
   row(G, "charm-nest-orders.js", window.CharmNestOrders ? "ok" : "fail", window.CharmNestOrders ? `orders loaded · today ${CharmNestOrders.localDay()} · tag ${CharmNestOrders.dateTag()}` : "not loaded");
   row(G, "Web Worker", typeof Worker === "function" ? "ok" : "fail", typeof Worker === "function" ? "available (the nester runs in workers)" : "missing");
   row(G, "cross-origin isolation", crossOriginIsolated ? "ok" : "warn", crossOriginIsolated ? "COOP/COEP in force (SharedArrayBuffer available)" : "not isolated — the site-wide COEP header is not reaching this page", "");
-  row(G, "cloud passcode", "ok", passcode ? "present (from the sorter's session)" : "none — the functions run open, as configured");
+  row(G, "cloud passcode", "ok", passcode ? "present (from this tab's session)" : "none in this tab's session — fine while the functions run open; the bar asks for it when a call is refused");
   const fonts = {};
   for (const w of ["Regular", "Semibold"]) {
     const path = `vendor/fonts/SourceSans3-${w}.otf`;
@@ -157,7 +163,7 @@ async function checkBrowser() {
 async function checkCloud() {
   const G = "Cloud from this page";
   const ping = await timed(() => api("charmNestLibrary", { op: "ping" }));
-  if (ping.e) { row(G, "charmNestLibrary · ping", "fail", ping.e.status === 401 ? "401 unauthorized — EDIT_PASSCODE is set on Netlify but this page has no passcode (add ?passcode=…)" : err(ping.e), "", ping.ms); return false; }
+  if (ping.e) { if (ping.e.status === 401) askPasscode(); row(G, "charmNestLibrary · ping", "fail", ping.e.status === 401 ? `401 unauthorized — EDIT_PASSCODE is set on Netlify and this tab ${passcode ? "holds a passcode it refused" : "has no passcode"}: enter it in the bar above` : err(ping.e), "", ping.ms); return false; }
   row(G, "charmNestLibrary · ping", "ok", `${ping.r.sheets} sheet(s) · ${ping.r.charms} charm(s) on record`, "", ping.ms);
   const gate = await timed(() => fetch(`${FN}/charmNestLibrary`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "ping" }) }).then(r => r.status));
   row(G, "passcode gate", "ok", gate.r === 401 ? "a call without the passcode is refused (401)" : `open — a call without a passcode answered HTTP ${gate.r}, as configured`, "", gate.ms);
@@ -249,6 +255,22 @@ async function run() {
 }
 for (const [k, id] of [["write", "bWrite"], ["etsy", "bEtsy"], ["ai", "bAi"]]) document.getElementById(id).onclick = () => { const q = new URLSearchParams(location.search); if (OPT[k]) q.delete(k); else q.set(k, "1"); location.search = q.toString(); };
 document.getElementById("bRun").onclick = () => location.reload();
+/** A refused call: the bar asks for the passcode. An accepted one is kept for this tab's session and the check runs again. */
+function askPasscode() { document.getElementById("pcForm").classList.remove("hidden"); setTimeout(() => document.getElementById("pcIn").focus(), 0); }
+document.getElementById("pcForm").onsubmit = async e => {
+  e.preventDefault();
+  const input = document.getElementById("pcIn"), btn = document.getElementById("pcUse"), msg = document.getElementById("pcErr"), v = input.value.trim();
+  if (!v || btn.disabled) return;
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Checking the passcode…'; msg.textContent = "";
+  try {
+    const r = await fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": v, "Content-Type": "application/json" }, body: JSON.stringify({ app: "charm-nest-check", passcode: v }) });
+    if (!r.ok) { msg.textContent = "That passcode was not accepted."; input.select(); return; }
+    let kept = false; try { sessionStorage.setItem("cn.passcode", v); kept = true; } catch (_) {}
+    if (kept) { location.reload(); return; }
+    passcode = v; document.getElementById("pcForm").classList.add("hidden"); run().catch(() => {});   // no session storage: this page only
+  } catch (_) { msg.textContent = "Could not reach the sign-in service."; }
+  finally { btn.disabled = false; btn.textContent = "Use passcode"; }
+};
 document.getElementById("bCopy").onclick = async () => { const pre = document.getElementById("report"); pre.textContent = report(); pre.style.display = "block"; try { await navigator.clipboard.writeText(pre.textContent); document.getElementById("bCopy").textContent = "Copied"; } catch (_) { document.getElementById("bCopy").textContent = "Select and copy the text below"; } };
 window.CheckPage = { rows, report, run };
 run().catch(e => { row("This page", "run", "fail", err(e)); render(); window.__checkDone = true; });

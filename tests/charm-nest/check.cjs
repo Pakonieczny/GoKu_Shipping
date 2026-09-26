@@ -36,9 +36,15 @@ const receipts = [1, 2].map(n => ({ receipt_id: 3521000000 + n, order_number: 35
   assert.strictEqual(find('Server', 'charmNestCheck').s, 'skip', 'the server half is skipped when the ping fails');
   assert.strictEqual(find('This page', 'geometry self-test').s, 'ok', 'the geometry self-test passes: ' + JSON.stringify(find('This page', 'geometry self-test')));
   assert.strictEqual(find('Design Station', 'hello').s, 'ok', 'the station answers hello from the check page');
+  // the refused ping asks for the passcode in the bar; it is kept for this tab's session, never read from the address
+  await page.waitForSelector('#pcForm:not(.hidden) #pcIn', { timeout: 10000 });
+  await page.fill('#pcIn', 'check-secret');
+  await Promise.all([page.waitForNavigation(), page.click('#pcUse')]);
+  assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('cn.passcode')), 'check-secret', 'the passcode typed in the bar is kept for this tab');
 
   // 2 · everything on, with the passcode: every group runs and no row fails
-  await page.goto(`${sorterOrigin}/charm-nest-check.html?station=${encodeURIComponent(stationOrigin)}&passcode=check-secret&write=1&etsy=1&ai=1`);
+  await page.goto(`${sorterOrigin}/charm-nest-check.html?station=${encodeURIComponent(stationOrigin)}&passcode=ignored&write=1&etsy=1&ai=1`);
+  assert(!/passcode=/.test(page.url()), 'a passcode in the address is dropped from it, and never used');
   await page.waitForFunction(() => window.__checkDone === true, null, { timeout: 180000 });
   rows = await page.evaluate(() => CheckPage.rows.map(r => ({ g: r.group, n: r.name, s: r.status, v: r.value, note: r.note })));
   const groups = [...new Set(rows.map(r => r.g))];
