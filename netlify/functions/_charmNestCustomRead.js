@@ -183,9 +183,9 @@ function normalize(x, want) {
 
 /** Read up to 40 lines; every answer is kept, and the answers go back to the page. */
 async function run(body, opts = {}) {
+  if (!process.env.ANTHROPIC_API_KEY && !opts.anthropic) return { skipped: "ANTHROPIC_API_KEY is not set" };
   const admin = opts.admin || require("./firebaseAdmin"), db = opts.db || admin.firestore();
   const anthropic = opts.anthropic || require("./_etsyMailAnthropic"), fetch = opts.fetch || require("node-fetch");
-  if (!process.env.ANTHROPIC_API_KEY && !opts.anthropic) return { skipped: "ANTHROPIC_API_KEY is not set" };
   const lines = (Array.isArray(body.lines) ? body.lines : []).slice(0, MAX_LINES).map(cleanLine).filter(l => l.key && l.hash);
   if (!lines.length) return { error: "no lines" };
   const ctx = await enrich(db, lines, fetch);
@@ -233,12 +233,17 @@ async function lookup(db, items, sandbox) {
 }
 /** A person's decision on a line: custom (or another special kind) or regular; null takes it back. */
 async function decide(db, FV, b, sandbox) {
-  const key = cleanKey(b.key); if (!key) return { error: "which line?" };
+  // one line (key) or the lines of one decision (keys: an Unknown SKU card can hold many orders)
+  const keys = [...new Set((Array.isArray(b.keys) ? b.keys : [b.key]).map(cleanKey).filter(Boolean))];
+  if (!keys.length) return { error: "which line?" };
+  if (keys.length > 400) return { error: "too many lines in one decision" };
   const kind = b.kind == null ? null : KINDS.includes(b.kind) ? b.kind : null;
   if (b.kind != null && !kind) return { error: "bad kind" };
   const rec = kind ? { kind, by: str(b.by, 60) || "someone", at: Date.now() } : null;
-  await db.collection(COLL).doc(key).set({ [sandbox ? "decidedSandbox" : "decided"]: rec || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
-  return { ok: true, decided: rec };
+  const batch = db.batch();
+  for (const key of keys) batch.set(db.collection(COLL).doc(key), { [sandbox ? "decidedSandbox" : "decided"]: rec || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
+  await batch.commit();
+  return { ok: true, decided: rec, keys };
 }
 
 module.exports = { run, lookup, decide, content, cleanLine, normalize, INSTRUCTIONS, SCHEMA, MODEL, KINDS, COLL, MAX_LINES };

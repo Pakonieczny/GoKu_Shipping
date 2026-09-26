@@ -1859,6 +1859,27 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .ordBar .rvSeg button.on b{background:var(--card)}
 .doneRow.reviewListRow.cuRow{border-left-color:var(--gold2)}.doneRow.reviewListRow.cuInfo{border-left-color:var(--slate)}.doneRow.reviewListRow.cuDone{border-left-color:var(--sage)}
 .doneRow.cuRow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+/* Custom Orders: Claude's reading of a line with no design of its own, coloured by how sure it is (sure sage, fairly sure
+   gold, unsure clay); a person's decision is plain ink */
+.doneRow.reviewListRow.cuRow.conf-hi{border-left-color:var(--sage)}.doneRow.reviewListRow.cuRow.conf-mid{border-left-color:var(--gold2)}.doneRow.reviewListRow.cuRow.conf-lo{border-left-color:var(--clay)}
+.purchaseLabel.aiLabel{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.aiConf{display:inline-flex;align-items:center;gap:5px;font:700 10px/1.5 var(--mono);letter-spacing:.02em;text-transform:none;border-radius:999px;padding:1px 8px;white-space:nowrap;background:var(--paper2);color:var(--ink70);transition:background-color .25s,color .25s}
+.aiConf i{width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 6px}
+.aiConf.hi{background:var(--sageSoft);color:#3f5b3a}.aiConf.mid{background:var(--goldSoft);color:#7a5a1d}.aiConf.lo{background:var(--claySoft);color:#8a3a26}
+.aiConf.person{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.aiConf .spin,.aiReading .spin{width:9px;height:9px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 9px}
+.aiReading{display:inline-flex;align-items:center;gap:6px;font:600 11px var(--sans);color:var(--ink70);white-space:nowrap;animation:aiIn .25s ease-out}
+.aiPanel{display:grid;gap:6px;padding:8px 10px;border-radius:9px;background:var(--paper2);border-left:3px solid var(--line);animation:aiIn .25s ease-out}
+.aiPanel.t-hi{background:var(--sageSoft);border-left-color:var(--sage)}.aiPanel.t-mid{background:var(--goldSoft);border-left-color:var(--gold2)}.aiPanel.t-lo{background:var(--claySoft);border-left-color:var(--clay)}.aiPanel.t-reg{border-left-color:var(--ink25)}
+.aiPanel .aiHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.aiPanel .aiSum{font:500 12.5px/1.45 var(--sans);color:var(--ink)}.aiPanel .aiSum.dim{color:var(--ink45)}
+.aiPanel .aiEv{margin:0;padding-left:16px;font:12px/1.45 var(--sans);color:var(--ink70)}
+.aiPanel .aiFor{font:12px var(--sans);color:var(--ink70)}
+.aiPanel .linkBtn{border:0;background:none;padding:0;font:600 12px var(--mono);color:var(--gold);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.aiPanel .aiActs{display:flex;gap:6px;flex-wrap:wrap}
+.aiPanel .aiActs .btn .spin{width:10px;height:10px;margin-right:5px}
+@keyframes aiIn{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.aiPanel,.aiReading{animation:none}}
 .cuStat{display:inline-flex;align-items:center;gap:6px;font:600 11.5px var(--sans);color:var(--ink70);white-space:nowrap}
 .cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
 .cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
