@@ -184,7 +184,10 @@ try {
 let lookupListingByUrl = null;
 let lookupListingById  = null;
 try {
-  ({ lookupListingByUrl, lookupListingById } = require("./etsyMailListingsCatalog"));
+  // Audit fix F12 — the helpers live in etsyMailListingLookup.js; the
+  // catalog module does not export them, so both stayed undefined and the
+  // lookup_listing_by_url tool always answered LOOKUP_UNAVAILABLE.
+  ({ lookupListingByUrl, lookupListingById } = require("./etsyMailListingLookup"));
 } catch (e) {
   console.warn("salesAgent: etsyMailListingsCatalog (lookup helpers) not loadable — listing lookup tools will return graceful errors.", e.message);
 }
@@ -396,9 +399,9 @@ async function writeAudit({ threadId = null, draftId = null, eventType,
 
 function isCustomerVisibleUrl(url) {
   return typeof url === "string"
-    && /^https?:///i.test(url)
+    && /^https?:\/\//i.test(url)          // audit fix F14: was /^https?:///i (a comment ate the test)
     && !/REPLACE_WITH_PUBLIC_URL/i.test(url)
-    && !/example.com/i.test(url);
+    && !/example\.com/i.test(url);
 }
 
 function normalizeAttachment(raw, source = "thread") {
@@ -410,7 +413,8 @@ function normalizeAttachment(raw, source = "thread") {
   return {
     url,
     source,
-    type: raw.type || (raw.contentType && /^image//i.test(raw.contentType) ? "image" : "file"),
+    // audit fix F14: was /^image//i — parsed as a division by `i` (ReferenceError)
+    type: raw.type || (raw.contentType && /^image\//i.test(raw.contentType) ? "image" : "file"),
     contentType: raw.contentType || null,
     filename: raw.filename || raw.name || null
   };
@@ -932,7 +936,8 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId, 
         return { found: false, reason: "LOOKUP_UNAVAILABLE", error: "Listing lookup module is not available in this deployment." };
       }
       try {
-        const result = await lookupListingByUrl({ url, threadId });
+        // audit fix F12 (budget mode): our own listings come from the mirror, 0 Etsy calls
+        const result = await lookupListingByUrl({ url, threadId, preferMirror: true });
         // Surface the result as a flat object the AI can read easily.
         // The full listing data is nested under .listing on success.
         return result;
@@ -3983,7 +3988,16 @@ ${validationResult.message}
     }
     // ──────────────────────────────────────────────────────────────────
 
-    await db.collection(DRAFTS_COLL).doc(draftId).set({
+    // Audit fix F1 — never replace a reply that is waiting to be sent
+    // (queued) or is being sent right now. The draft slot is one per
+    // thread; writing status "draft" over it meant the Etsy helper found
+    // nothing to send and the operator's reply was silently lost.
+    const draftRefForWrite = db.collection(DRAFTS_COLL).doc(draftId);
+    const draftSlotBusy = await db.runTransaction(async (tx) => {
+      const cur = await tx.get(draftRefForWrite);
+      const curStatus = cur.exists ? (cur.data() || {}).status : null;
+      if (curStatus === "queued" || curStatus === "sending") return curStatus;
+      tx.set(draftRefForWrite, {
       draftId,
       threadId,
       manualRunId           : manualRunId || null,
@@ -4108,6 +4122,17 @@ ${validationResult.message}
       sendError             : null,
       sentAt                : null
     }, { merge: true });
+      return null;
+    });
+    if (draftSlotBusy) {
+      console.warn(`[salesAgent] draft slot for ${threadId} is ${draftSlotBusy}; AI draft not written (the waiting reply is kept)`);
+      await writeAudit({
+        threadId, draftId,
+        eventType: "sales_agent_draft_skipped_busy",
+        payload  : { draftStatus: draftSlotBusy },
+        outcome  : "skipped"
+      });
+    }
 
     // ── Persist sales context updates ──
     //

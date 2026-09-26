@@ -452,7 +452,7 @@ function normalizeInventoryVariants(inventoryInfo) {
 /** Look up a listing by its numeric ID. Tries Etsy API first, falls
  *  back to the catalog cache. Returns the structured response shape
  *  documented at the top of the file. */
-async function lookupListingById({ listingId, threadId = null }) {
+async function lookupListingById({ listingId, threadId = null, preferMirror = false }) {
   if (!listingId || !/^\d+$/.test(String(listingId))) {
     return { found: false, reason: "INVALID_INPUT" };
   }
@@ -463,6 +463,26 @@ async function lookupListingById({ listingId, threadId = null }) {
   const cached = _lookupCache.get(String(listingId));
   if (cached && (Date.now() - cached.fetchedAt < LOOKUP_CACHE_MS)) {
     return cached.value;
+  }
+
+  // Audit fix F12 — budget mode for automatic look-ups: the shop's own
+  // listings are mirrored in EtsyMail_Listings, so read the mirror first
+  // (0 Etsy calls) and call Etsy only when the mirror has no copy.
+  if (preferMirror) {
+    const mirrorDoc = await getListingFromCacheById(listingId);
+    if (mirrorDoc) {
+      const listing = normalizeListing(null, null, mirrorDoc, null);
+      return {
+        found: true,
+        listingId: String(listingId),
+        source: "catalog_mirror",
+        etsyApiCallSuccessful: false,
+        cacheFallbackUsed: true,
+        notOurShop: !!(SHOP_ID && listing.shopId && String(listing.shopId) !== String(SHOP_ID)),
+        isActive: listing.state === "active",
+        listing
+      };
+    }
   }
 
   let apiData = null, imageInfo = null, inventoryInfo = null;
@@ -591,7 +611,7 @@ async function lookupListingById({ listingId, threadId = null }) {
 }
 
 /** Look up a listing by its URL. Wraps extractListingIdFromUrl. */
-async function lookupListingByUrl({ url, threadId = null }) {
+async function lookupListingByUrl({ url, threadId = null, preferMirror = false }) {
   if (typeof url !== "string" || url.length < 12) {
     return { found: false, reason: "INVALID_INPUT" };
   }
@@ -607,7 +627,7 @@ async function lookupListingByUrl({ url, threadId = null }) {
       hint: "Etsy short links (etsy.me/...) aren't auto-resolved. Ask the customer for the full URL or the listing's title."
     };
   }
-  return await lookupListingById({ listingId: id, threadId });
+  return await lookupListingById({ listingId: id, threadId, preferMirror });
 }
 
 // ─── Handler ───────────────────────────────────────────────────────────

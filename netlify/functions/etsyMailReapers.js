@@ -2419,7 +2419,11 @@ exports.handler = async (event) => {
       try { results.sendQueue = await runSendQueuePass(); }
       catch (e) { errors.push({ pass: "send_queue", error: e.message }); console.error("sendQueue pass:", e); }
     }
-    if (!op || op === "sales_funnels") {
+    // Audit fix F8 — sales abandonment was removed from policy in v0.9.47
+    // (etsyMailSalesReaper.js REAPER_DISABLED, and the Sales — Abandoned
+    // folder was deleted). Run this pass only when a person asks for it
+    // with { op: "sales_funnels" }; the scheduled run skips it.
+    if (op === "sales_funnels") {
       try { results.salesFunnels = await runSalesFunnelPass({ force }); }
       catch (e) { errors.push({ pass: "sales_funnels", error: e.message }); console.error("salesFunnels pass:", e); }
     }
