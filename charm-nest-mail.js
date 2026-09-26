@@ -1430,6 +1430,9 @@
   // ─── the team's chat: any message, translated with a click ──────────────
   /* Internal messages get the same two buttons. They are drawn by the order window; the translations live here. */
   const teamTr = new Map();   // message text → language shown
+  // moves with every change of what the team's threads show translated: part of what they are drawn from (TeamMail.drawKey)
+  let teamTrV = 0;
+  const teamRepaint = () => { teamTrV++; try { window.OrderWin?.repaintThread?.(); } catch (_) {} try { window.TeamCard?.repaint?.(); } catch (_) {} };
   function teamButtons(text) {
     if (!String(text || "").trim()) return "";
     const on = teamTr.get(plain(text).trim());
@@ -1439,7 +1442,7 @@
     const t = plain(text).trim(), lang = teamTr.get(t);
     if (!lang) return "";
     const v = trCached(t, lang);
-    return v ? (v.same ? "" : `<div class="cmTr team"><span class="cmTrLbl">${E(LANG[lang])}</span>${html(v.text)}</div>`) : `<div class="cmTr team soft">Translating…</div>`;
+    return v ? (v.same ? "" : `<div class="cmTr team"><span class="cmTrLbl">${E(LANG[lang])}</span>${html(v.text)}</div>`) : `<div class="cmTr team soft"><span class="cmSpin" aria-hidden="true"></span> Translating…</div>`;
   }
   document.addEventListener("click", async e => {
     const b = e.target.closest("[data-team-tr]"); if (!b) return;
@@ -1448,22 +1451,24 @@
     if (!M.key) { say("Connect the sorter to the inbox first (Customer tab) to translate", "", 5000); return; }
     const t = plain(msg.dataset.teamText || "").trim(), lang = b.dataset.teamTr;
     teamTr.set(t, teamTr.get(t) === lang ? null : lang);
-    if (window.OrderWin && OrderWin.repaintThread) OrderWin.repaintThread();
+    // the order window and every card's Team tab at once ("Translating…"), and again when the words are in
+    teamRepaint();
     if (teamTr.get(t) && !trCached(t, lang)) {
       try { await translateTexts([t], lang); } catch (err) { say("Translation: " + err.message, "bad"); teamTr.delete(t); }
-      if (window.OrderWin && OrderWin.repaintThread) OrderWin.repaintThread();
+      teamRepaint();
     }
   });
 
   // ─── photos: any picture in a conversation opens large ─────────────────
   /* One viewer for the Customer and Team conversations, in the order window, its own window or an engraving card. It
-     covers the screen over whatever is open (a dialog of its own, in the top layer), so what is underneath stays as it
-     was: the draft, the tab, the scroll. It fits the photo to the screen, zooms with the wheel, a pinch, a double-click
-     (or double-tap) and + −, moves by dragging, steps through every photo of that conversation with ← → and the side
-     buttons, and closes with Esc, the × or a click beside the photo. */
+     covers the screen over whatever is open, so what is underneath stays as it was: the draft, the tab, the scroll. Over
+     the page it is a dialog of its own; inside an open dialog (the order window, a conversation, a sheet) it is a layer
+     of that dialog, never a second pop-up on top of it, and Esc closes the viewer only. It fits the photo to the screen,
+     zooms with the wheel, a pinch, a double-click (or double-tap) and + −, moves by dragging, steps through every photo
+     of that conversation with ← → and the side buttons, and closes with Esc, the × or a click beside the photo. */
   const PhotoView = (() => {
     const SVG = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-    let dlg = null, stage = null, img = null, note = null, list = [], at = 0, opener = null;
+    let dlg = null, stage = null, img = null, note = null, list = [], at = 0, opener = null, host = null;
     let W = 0, H = 0, s = 1, tx = 0, ty = 0, fit = 1, ready = false;
     const pts = new Map(); let pinch = null, down = null, moved = false, tap = null, tapped = 0;
     const maxS = () => Math.max(fit * 6, 4);
@@ -1480,7 +1485,10 @@
       document.body.appendChild(dlg);
       stage = dlg.querySelector(".phvStage"); img = dlg.querySelector(".phvImg"); note = dlg.querySelector(".phvNote");
       dlg.addEventListener("cancel", e => { e.preventDefault(); close(); });
+      // a layer's clicks, taps and wheel stay its own: the dialog underneath (a click beside a sheet closes that) never sees them
+      for (const type of ["pointerdown", "pointerup", "dblclick", "wheel", "contextmenu"]) dlg.addEventListener(type, e => { if (host) e.stopPropagation(); });
       dlg.addEventListener("click", e => {
+        if (host) e.stopPropagation();
         const b = e.target.closest("[data-phv]"); if (!b) return;
         const c = center(), act = b.dataset.phv;
         if (act === "close") close();
@@ -1488,16 +1496,20 @@
         else if (act === "fit") toFit(true);
         else zoomAt(s * (act === "in" ? 1.6 : 1 / 1.6), c.x, c.y, true);
       });
-      dlg.addEventListener("keydown", e => {
+      const keys = e => {
         const k = e.key, c = center();
         e.stopPropagation();   // the page's own shortcuts wait while a photo is open; Esc still closes (cancel, above)
-        if (k === "ArrowRight" || k === "ArrowLeft") step(k === "ArrowRight" ? 1 : -1);
+        if (k === "Escape" && host) close();   // a layer: Esc closes the viewer, never the dialog under it
+        else if (k === "ArrowRight" || k === "ArrowLeft") step(k === "ArrowRight" ? 1 : -1);
         else if (k === "+" || k === "=") zoomAt(s * 1.6, c.x, c.y, true);
         else if (k === "-" || k === "_") zoomAt(s / 1.6, c.x, c.y, true);
         else if (k === "0") toFit(true);
         else return;
-        e.preventDefault();
-      });
+        e.preventDefault();   // for Esc in a layer, this is what keeps the dialog underneath open
+      };
+      dlg.addEventListener("keydown", keys);
+      // a layer takes every key first, wherever the focus went (a click on the photo takes it off the viewer's buttons)
+      window.addEventListener("keydown", e => { if (host && dlg.open && dlg.isConnected) keys(e); }, true);
       stage.addEventListener("wheel", e => {
         e.preventDefault(); if (!ready) return;
         const unit = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : 0.002;
@@ -1605,20 +1617,37 @@
     const itemOf = b => b.dataset.photo
       ? { src: b.dataset.photo, back: b.dataset.photoBack || null, cap: b.dataset.photoCap || "", cors: b.dataset.photoCors === "1" }
       : { src: b.currentSrc || b.getAttribute("src") || "", back: null, cap: b.dataset.photoCap || b.title || b.alt || "", cors: b.crossOrigin === "anonymous", sharp: true };
+    /** The open dialog the photo is in (or the top one), which the viewer then joins as a layer. */
+    function dialogOf(el) {
+      const own = el.closest("dialog[open]"); if (own && own !== dlg) return own;
+      try { return [...document.querySelectorAll("dialog[open]")].filter(d => d !== dlg && d.matches(":modal")).pop() || null; } catch (_) { return null; }
+    }
+    // the dialog underneath asked to close (its own Esc) or closed while the viewer was over it: the viewer goes first
+    function hostCancel(e) { if (!host || !dlg.open || !dlg.isConnected) return; e.preventDefault(); e.stopImmediatePropagation(); close(); }
+    function hostClosed() { close(); }
     function open(el) {
+      const into = dialogOf(el);
+      if (dlg && dlg.open && (into !== host || !dlg.isConnected)) close();
       const scope = el.closest(".cmThread,.owThread,.sheetQR,[data-photo-scope]") || el.parentElement || document.body;
       const all = [...scope.querySelectorAll(ANY)].filter(b => itemOf(b).src);
       list = all.map(itemOf);
       if (!list.length) return;
       opener = el;
       if (!dlg) build();
-      if (!dlg.open) { try { dlg.showModal(); } catch (_) { dlg.show(); } }
+      if (!dlg.open) {
+        host = into;
+        dlg.classList.toggle("layer", !!host);
+        if ((host || document.body) !== dlg.parentNode) (host || document.body).appendChild(dlg);
+        if (host) { host.addEventListener("cancel", hostCancel, true); host.addEventListener("close", hostClosed); dlg.show(); }
+        else { try { dlg.showModal(); } catch (_) { dlg.show(); } }
+      }
       show(Math.max(0, all.indexOf(el)));
       dlg.querySelector(".phvX").focus({ preventScroll: true });
     }
     function close() {
       if (!dlg || !dlg.open) return;
       dlg.close();
+      if (host) { host.removeEventListener("cancel", hostCancel, true); host.removeEventListener("close", hostClosed); host = null; }
       img.onload = img.onerror = null; img.removeAttribute("src"); list = []; pts.clear(); pinch = null; ready = false;
       const o = opener; opener = null;
       if (o && o.isConnected) o.focus({ preventScroll: true });
@@ -1644,7 +1673,7 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else setTimeout(boot, 0);
 
   window.CustomerMail = {
-    orderWindow, orderShown, orderClosed, setTab, lineBox, cardPane, cardAsk, badge, badgeStamp, slot, teamButtons, teamTranslation,
+    orderWindow, orderShown, orderClosed, setTab, lineBox, cardPane, cardAsk, badge, badgeStamp, slot, teamButtons, teamTranslation, teamTrState: () => teamTrV,
     // for the engraving card's Customer tab dot: a new reply, or a message that did not go
     tabNews: rid => { const b = badgeState(String(rid)); return b ? { unread: !!b.unread, bad: !!b.bad } : null; },
     openConversation, connect, connected: () => !!M.key,
