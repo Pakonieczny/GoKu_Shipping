@@ -831,6 +831,22 @@ exports.handler = async (event) => {
         // branch below for the thread-side write.
         const resolvedSendOrigin = inferredSendOriginForRecon;
 
+        // A manual send never silently replaces an earlier manual message
+        // that is still waiting for the Etsy tab. The draft slot is one per
+        // thread, so overwriting it here meant the first message was never
+        // delivered. The inbox waits for the slot and then sends this one.
+        // The same text again is a harmless re-send and still overwrites;
+        // force (an operator-confirmed overwrite) keeps its meaning.
+        if (!force && !orderLink && resolvedSendOrigin === "manual" && prev &&
+            prev.status === "queued" && prev.sendOrigin === "manual" &&
+            !isStaleQueued(prev.queuedAt) &&
+            String(prev.text || "").trim() !== cleanText) {
+          return {
+            pendingPrev : true,
+            prevQueuedAt: prev.queuedAt && prev.queuedAt.toMillis ? prev.queuedAt.toMillis() : null
+          };
+        }
+
         // ━━━ v1.6 — Duplicate-auto-send guard ━━━━━━━━━━━━━━━━━━━━━━━━━━
         //
         // BUG PATTERN: an operator observed a "syncing…" duplicate of a
@@ -982,6 +998,14 @@ exports.handler = async (event) => {
           prevOperator  : result.prevOperator,
           thisOperator  : result.thisOperator,
           prevQueuedAt  : result.prevQueuedAt
+        });
+      }
+      if (result.pendingPrev) {
+        return json(409, {
+          error       : "The previous message on this thread is still waiting to be sent",
+          errorCode   : "PREVIOUS_SEND_PENDING",
+          draftId,
+          prevQueuedAt: result.prevQueuedAt
         });
       }
 
