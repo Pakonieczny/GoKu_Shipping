@@ -3334,7 +3334,7 @@ Keep replies to two to four short sentences plus the sign-off, written as "we" (
 
 One customer can have several conversations in one thread. A sale that finished (order placed, custom listing bought, piece shipped) stays finished: don't re-quote it, re-send the line sheet or ask for specs the customer already gave. Ask only for choices that are still missing.
 
-When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
+Production is 4-6 business days for every order, whatever a listing's processing-time field says. When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
 `.trim();
 
     // v5.0 — Sales-agent-specific investigation addendum. Pairs with
