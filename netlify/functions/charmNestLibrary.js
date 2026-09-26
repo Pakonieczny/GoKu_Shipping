@@ -1790,12 +1790,22 @@ SANDBOXED.add(CUSTOM);
 const CUSTOM_DAYS = 180;
 const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // the list every sorter reads with its maps carries no stickers (hasLabel says one is kept); one line's record, with its
-// sticker, is read by its key when that sticker is printed again
-const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = !!x.label; delete x.label; } return x; };
+// sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
+// each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
+// reads it by its key and says so when there is none.
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "updatedAtMs", "hasLabel"];
+const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
+  // the lines a sorter has pulled, read by their keys (it polls these every minute): a key with no record was never
+  // completed or has been reopened; `keys` says how many were read, the first that many asked for
+  if (Array.isArray(b.keys)) {
+    const keys = [...new Set(b.keys.map(String))].filter(lineKeyOk).slice(0, 1000), records = {};
+    for (let i = 0; i < keys.length; i += 100) for (const s of await db.getAll(...keys.slice(i, i + 100).map(k => col(CUSTOM).doc(k)), { fieldMask: CUSTOM_FIELDS })) if (s.exists) records[s.id] = customRow(s.data(), false);
+    return { records, keys: keys.length, truncated: new Set(b.keys.map(String)).size > keys.length };
+  }
   const since = Date.now() - Math.max(1, Math.min(CUSTOM_DAYS, b.days == null ? CUSTOM_DAYS : num(b.days))) * 86400000;
-  const snap = await col(CUSTOM).where("updatedAtMs", ">=", since).orderBy("updatedAtMs", "desc").limit(1000).get();
+  const snap = await col(CUSTOM).where("updatedAtMs", ">=", since).orderBy("updatedAtMs", "desc").limit(1000).select(...CUSTOM_FIELDS).get();
   const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
   return { records, truncated: snap.size >= 1000 };
 }
@@ -1808,6 +1818,7 @@ async function op_customPut(b) {
     prints: ((cur && +cur.prints) || 0) + 1, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
   if (!cur || !cur.printedAt) Object.assign(doc, { printedAt: now, printedBy: doc.lastPrintedBy });
   if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
+  doc.hasLabel = !!(doc.label || (cur && cur.label));
   await ref.set(doc, { merge: true });
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }

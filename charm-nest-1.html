@@ -1861,6 +1861,9 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .doneRow.cuRow:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .cuStat{display:inline-flex;align-items:center;gap:6px;font:600 11.5px var(--sans);color:var(--ink70);white-space:nowrap}
 .cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
+.cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
+.cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
+.cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -4910,12 +4913,12 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260925-audit1"></script>
+<script src="charm-nest-bridge.js?v=20260926-custom-audit2"></script>
 <script src="charm-nest-sheetwin.js?v=20260925-sw5"></script>
 <script src="charm-nest-mail.js?v=20260925-card-tabs"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260925-done"></script>
+<script src="charm-nest-library.js?v=20260926-find-audit2"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">
