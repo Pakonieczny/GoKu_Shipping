@@ -651,6 +651,9 @@
       padding: 30px; text-align: center; color: #6a737d;
     }
     .em-modal-error { color: #cf222e; }
+    /* Settings: Materialize fixes a checkbox label at 25px, so a label that
+       wraps to two lines ran into the help text under it. */
+    #emSecretModal label > input[type="checkbox"] + span { height: auto; min-height: 25px; line-height: 1.45; padding-top: 3px; }
     .em-order-items {
       display: grid; grid-template-columns: 1fr; gap: 8px;
     }
@@ -5268,7 +5271,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           <span><b>Mirror Etsy listings catalog</b> &mdash; the AI can search shop products and reference them in replies.</span>
         </label>
         <p style="font-size:11px;color:#6a737d;margin:0 0 6px 26px;">
-          When ON, a cron pulls active listings from the Etsy API every 30 min into Firestore. The AI's <code>search_shop_listings</code> tool returns matches with prices, images, and listing URLs. When OFF, the tool returns "disabled" and the AI replies without referencing specific products. Required for v2.0 Step 2 (sales agent).
+          When ON, a nightly job copies the active listings from the Etsy API into Firestore. The AI's <code>search_shop_listings</code> tool returns matches with prices, images, and listing URLs. When OFF, the tool returns "disabled" and the AI replies without referencing specific products. Required for v2.0 Step 2 (sales agent).
         </p>
         <div id="emCatalogStatusBlock" style="margin:0 0 12px 26px; font-size:11px; color:#586069; padding:6px 8px; background:#f6f8fa; border-radius:4px; border-left:2px solid #afb8c1;">
           <span id="emCatalogStatusText">Catalog status: not yet synced</span>
@@ -22409,10 +22412,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
                 <div style="font-size:11px;color:var(--m-c-text-muted);">${mEsc(me.username || "")} · <span class="m-arole">${mEsc((me.role || "").toUpperCase())}</span></div>
               </div>
             </div>
-            <button id="mChangePasswordBtn">Change my password</button>
-            <button class="danger" id="mSignOutBtn" style="margin-left:8px;">
-              <i class="material-icons" style="font-size:16px;">logout</i>Sign out
-            </button>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button id="mChangePasswordBtn">Change my password</button>
+              <button class="danger" id="mSignOutBtn">
+                <i class="material-icons" style="font-size:16px;">logout</i>Sign out
+              </button>
+            </div>
           </div>
         </details>
         <details class="m-settings-section">
