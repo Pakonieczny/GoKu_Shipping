@@ -59,6 +59,66 @@ function normalize(text = "") {
   return String(text).toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Inbox layouts: is the customer waiting on us, and the row previews.
+ * Pure (no Firestore), so tests can call it directly.
+ *
+ *   prev             the thread doc as read before this scrape ({} if new);
+ *                    timestamps may be Firestore Timestamps or plain ms
+ *   newestInboundMs  newest customer message time in this scrape (or null)
+ *   newestOutboundMs newest staff message time in this scrape (or null)
+ *   inboundTs        every customer message time in this scrape
+ *   newestInText     text of the newest customer message in this scrape
+ *   newestOutText    text of the newest staff message in this scrape
+ *
+ * Returns { awaitingReplySinceMs?, clearAwaiting?, lastInboundPreview?,
+ * lastOutboundPreview? }. awaitingReplySince marks the first customer
+ * message we have not answered: set when the customer spoke last, cleared
+ * when a staff reply is scraped (this includes replies typed on Etsy).
+ */
+const AWAIT_SKEW_MS    = 120000;          // lastOperatorReplyAt is server time; message times come from Etsy's page
+const AWAIT_MAX_AGE_MS = 30 * 86400000;   // don't resurrect old back-filled conversations
+function awaitMsOf(v) {
+  if (v && typeof v.toMillis === "function") return v.toMillis();
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  return 0;
+}
+function previewText(s) {
+  return String(s == null ? "" : s).replace(/\s+/g, " ").trim().slice(0, 160);
+}
+function computeAwaitingState({ prev = {}, newestInboundMs = null, newestOutboundMs = null,
+                                inboundTs = [], newestInText = null, newestOutText = null,
+                                nowMs = Date.now() } = {}) {
+  const p = prev || {};
+  const out = {};
+  const lastOurs   = Math.max(awaitMsOf(p.lastOutboundAt), newestOutboundMs || 0, awaitMsOf(p.lastOperatorReplyAt) - AWAIT_SKEW_MS);
+  const lastTheirs = Math.max(awaitMsOf(p.lastInboundAt), newestInboundMs || 0);
+  if (lastTheirs > 0 && lastTheirs >= lastOurs) {           // customer spoke last (a tie counts as waiting)
+    // An archived thread was handled: only a customer message we had not
+    // seen before reopens it, never a re-scrape of the old ones.
+    const archived = p.status === "archived";
+    const seenIn   = awaitMsOf(p.lastInboundAt);
+    const open     = (Array.isArray(inboundTs) ? inboundTs : [])
+      .filter(t => typeof t === "number" && t >= lastOurs && (!archived || t > seenIn));
+    // A scrape may hold only the newest messages: the customer message
+    // already stored as the latest one is unanswered too.
+    if (!archived && seenIn > 0 && seenIn >= lastOurs) open.push(seenIn);
+    const firstOpen = open.length ? open.reduce((a, b) => Math.min(a, b)) : (archived ? 0 : lastTheirs);
+    const cur = awaitMsOf(p.awaitingReplySince);
+    // Old back-filled conversations are left alone: the customer's newest
+    // message must be recent.
+    if (firstOpen > 0 && (!cur || cur < lastOurs) && nowMs - lastTheirs < AWAIT_MAX_AGE_MS) {
+      out.awaitingReplySinceMs = firstOpen;
+    }
+  } else if (p.awaitingReplySince) {
+    out.clearAwaiting = true;                               // a staff reply was scraped
+  }
+  if (newestInText != null && newestInboundMs != null) out.lastInboundPreview = previewText(newestInText);
+  if (newestOutText != null && newestOutboundMs != null) out.lastOutboundPreview = previewText(newestOutText);
+  return out;
+}
+exports.computeAwaitingState = computeAwaitingState;
+
 function pickCustomer(participants) {
   if (!Array.isArray(participants)) return null;
   return participants.find(p => p && p.role === "customer") || null;
@@ -486,6 +546,10 @@ exports.handler = async (event) => {
     let newestAny_ms       = null;
     const toInsert = [];
     const toUpdate = [];
+    // Inbox layouts: customer message times and newest texts in this scrape
+    // (see computeAwaitingState).
+    const inboundTs = [];
+    let newestInText = null, newestInTs = -1, newestOutText = null, newestOutTs = -1;
 
     // Rough heuristic: a "scrape-time fallback" timestamp is one within a
     // few seconds of scrapedAt. If the existing stored timestamp looks like
@@ -505,6 +569,13 @@ exports.handler = async (event) => {
         newestAny_ms = Math.max(newestAny_ms || 0, ts);
         if (direction === "inbound")  newest_inbound_ms  = Math.max(newest_inbound_ms  || 0, ts);
         if (direction === "outbound") newest_outbound_ms = Math.max(newest_outbound_ms || 0, ts);
+        try {
+          const shown = m.text || ((Array.isArray(m.imageUrls) && m.imageUrls.length) || m.messageType === "image" ? "Sent a photo" : "");
+          if (direction === "inbound") {
+            inboundTs.push(ts);
+            if (ts >= newestInTs) { newestInTs = ts; newestInText = shown; }
+          } else if (ts >= newestOutTs) { newestOutTs = ts; newestOutText = shown; }
+        } catch (_) { /* previews are optional */ }
       }
 
       // v3.3 — Check both dedup indexes. Hash match is the fast path
@@ -616,6 +687,24 @@ exports.handler = async (event) => {
       if (newest_outbound_ms != null) {
         tailPatch.lastOutboundAt = admin.firestore.Timestamp.fromMillis(newest_outbound_ms);
       }
+
+      // Inbox layouts: waiting state + row previews, in this same write.
+      // Guarded so a bug here can never stop the tail patch itself.
+      try {
+        const st = computeAwaitingState({
+          prev            : tSnap.exists ? (tSnap.data() || {}) : {},
+          newestInboundMs : newest_inbound_ms,
+          newestOutboundMs: newest_outbound_ms,
+          inboundTs,
+          newestInText,
+          newestOutText,
+          nowMs           : Date.now()
+        });
+        if (st.awaitingReplySinceMs) tailPatch.awaitingReplySince = admin.firestore.Timestamp.fromMillis(st.awaitingReplySinceMs);
+        else if (st.clearAwaiting)   tailPatch.awaitingReplySince = FV.delete();
+        if (st.lastInboundPreview  != null) tailPatch.lastInboundPreview  = st.lastInboundPreview;
+        if (st.lastOutboundPreview != null) tailPatch.lastOutboundPreview = st.lastOutboundPreview;
+      } catch (e) { console.warn("[snapshot] awaiting/preview calc skipped:", e.message); }
 
       // ─── v1.3: image_attached risk flag ──────────────────────────
       // If any of the newly-inserted messages carry images, mark the

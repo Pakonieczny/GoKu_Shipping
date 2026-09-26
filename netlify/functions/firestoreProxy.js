@@ -334,6 +334,19 @@ exports.handler = async (event) => {
           }
         }
 
+        // Paging for "Load older" in the inbox's new layouts: only runs when a
+        // caller passes ?until=<millis>. Returns docs whose untilField
+        // (default updatedAt) is strictly older than the cursor. Single-field
+        // range + orderBy on the same field, so no composite index is needed.
+        if (qs.until != null && qs.until !== "") {
+          const untilMs = Number(qs.until);
+          if (Number.isFinite(untilMs) && untilMs > 0) {
+            const untilField = String(qs.untilField || "updatedAt");
+            q = q.where(untilField, "<", admin.firestore.Timestamp.fromMillis(untilMs));
+            if (!orders.some(o => o.field === untilField)) q = q.orderBy(untilField, "desc");
+          }
+        }
+
         const limit = Math.min(parseInt(qs.limit || "100", 10), 500);
         q = q.limit(limit);
 

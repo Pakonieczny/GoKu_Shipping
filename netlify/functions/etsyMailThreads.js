@@ -501,6 +501,28 @@ exports.handler = async (event) => {
        *     index, SDK incompatibility), we fall back to the legacy
        *     full-scan path so the dashboard never breaks.
        */
+      // Inbox layouts: ?counts=1&keys=a,b,c returns only the requested
+      // counts. Single-field queries only (no composite index needed) and
+      // no full-scan fallback: a key that fails reports null. Used only by
+      // the new layouts' "Labels" section; plain ?counts=1 is unchanged.
+      if (qs.counts === "1" && qs.keys) {
+        const base = db.collection(THREADS_COLL);
+        const Q = {
+          _orderLinkOpen : () => base.orderBy("orderLinkOpenAt").count().get(),
+          _refundFlagged : () => base.orderBy("refundFlaggedAt").count().get(),
+          _completedSales: () => base.orderBy("salesCompletedAt").count().get(),
+          _awaitingReply : () => base.orderBy("awaitingReplySince").count().get(),
+          _total         : () => base.count().get(),
+        };
+        const out = {};
+        await Promise.all(String(qs.keys).split(",").slice(0, 20).map(async k => {
+          const run = Object.prototype.hasOwnProperty.call(Q, k) ? Q[k]
+            : (VALID_STATUSES.has(k) ? () => base.where("status", "==", k).count().get() : null);
+          if (!run) return;
+          try { out[k] = (await run()).data().count; } catch (e) { out[k] = null; console.warn("[counts:keys]", k, e.message); }
+        }));
+        return ok({ counts: out, keys: true });
+      }
       if (qs.counts === "1") {
         try {
           const baseQ = db.collection(THREADS_COLL);
@@ -776,6 +798,9 @@ exports.handler = async (event) => {
           threadPatch.unread = true;
         } else {
           threadPatch.lastOutboundAt = now;
+          // Inbox layouts: our reply answers the customer, so the thread
+          // is no longer waiting on us. Deleting a missing field is a no-op.
+          try { threadPatch.awaitingReplySince = FV.delete(); } catch (_) {}
         }
         batch.set(tRef, threadPatch, { merge: true });
 
@@ -864,6 +889,17 @@ exports.handler = async (event) => {
           patch.manualMoveReason           = FV.delete();
           patch.manualMoveFromStatus       = FV.delete();
         }
+        // Inbox layouts: archiving means handled (records when, and clears
+        // the waiting state); moving out of archived removes archivedAt.
+        // Guarded so it can never stop the status write itself.
+        try {
+          if (status === "archived") {
+            patch.archivedAt         = FV.serverTimestamp();
+            patch.awaitingReplySince = FV.delete();
+          } else if (prev === "archived") {
+            patch.archivedAt         = FV.delete();
+          }
+        } catch (e) { console.warn("[setStatus] archivedAt fields skipped:", e.message); }
 
         await tRef.set(patch, { merge: true });
         await writeAudit({
@@ -994,6 +1030,18 @@ exports.handler = async (event) => {
               .get();
             if (snap.empty) break;
 
+            // Inbox layouts: same archivedAt / waiting-state bookkeeping as
+            // setStatus. Built once per batch, guarded so it can never stop
+            // the purge write itself.
+            let archiveFields = {};
+            try {
+              if (destinationStatus === "archived") {
+                archiveFields = { archivedAt: FV.serverTimestamp(), awaitingReplySince: FV.delete() };
+              } else if (status === "archived") {
+                archiveFields = { archivedAt: FV.delete() };
+              }
+            } catch (e) { archiveFields = {}; console.warn("[purgeFolder] archivedAt fields skipped:", e.message); }
+
             const batch = db.batch();
             for (const docSnap of snap.docs) {
               batch.update(docSnap.ref, {
@@ -1008,7 +1056,8 @@ exports.handler = async (event) => {
                 manualMoveActor         : FV.delete(),
                 manualMoveAt            : FV.delete(),
                 manualMoveReason        : FV.delete(),
-                manualMoveFromStatus    : FV.delete()
+                manualMoveFromStatus    : FV.delete(),
+                ...archiveFields
               });
               if (auditSampleIds.length < 20) auditSampleIds.push(docSnap.id);
             }

@@ -4826,6 +4826,241 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 }
 @media (prefers-reduced-motion:reduce){#emAuthLayer *{animation-duration:.001s!important;transition-duration:.05s!important;}}
 </style>
+<style id="emSmartInboxStyles">
+/* ── New inbox layout ("smart inbox") ─────────────────────────────────
+   Only the new layout's own elements are styled here, and everything
+   that could show in the classic layout is scoped to body.em-tabs-smart,
+   so the classic folders look exactly as before. Materialize gives every
+   focused button a teal background (button:focus), so each new button
+   sets its own :focus background. */
+
+/* Filter button, and the pill of the filter that is on, at the right end
+   of the list's second filter line (the line with reset, sort and star). */
+.em-smart-fwrap { display: none; }
+body.em-tabs-smart .em-smart-fwrap {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: auto; min-width: 0;
+}
+.em-smart-fpill {
+  display: inline-flex; align-items: center; gap: 2px;
+  min-width: 0; max-width: 160px; height: 22px;
+  padding: 0 2px 0 8px; border-radius: 11px;
+  background: #e7f3ff; color: #0366d6; border: 1px solid #b6d4f5;
+  font-size: 11px; font-weight: 500; line-height: 20px; white-space: nowrap;
+}
+.em-smart-fpill[hidden] { display: none; }
+.em-smart-fpill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.em-smart-fpill-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 18px; height: 18px; padding: 0;
+  border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer;
+}
+.em-smart-fpill-x:hover, .em-smart-fpill-x:focus { background: rgba(3,102,214,.14); outline: none; }
+.em-smart-fpill-x .material-icons { font-size: 14px; }
+.em-sort-btn.em-smart-fbtn { margin-left: 0; }
+.em-sort-btn.em-smart-fbtn:focus { background: #fff; outline: none; }
+.em-sort-btn.em-smart-fbtn:hover { background: #f6f8fa; }
+.em-sort-btn.em-smart-fbtn.is-active,
+.em-sort-btn.em-smart-fbtn.is-active:focus { background: #e7f3ff; color: #0366d6; border-color: #b6d4f5; }
+.em-sort-btn.em-smart-fbtn:focus-visible,
+.em-smart-fpill-x:focus-visible { box-shadow: 0 0 0 2px rgba(3,102,214,.45); }
+
+/* Label chips (rows, open conversation, filter pill, explanations) */
+.em-sc {
+  display: inline-block; flex: 0 0 auto; max-width: 190px;
+  padding: 1px 7px; border-radius: 10px;
+  font-size: 11px; line-height: 16px; font-weight: 500; font-style: normal;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+}
+.em-sc-red    { background: #ffebe9; color: #a40e26; }
+.em-sc-amber  { background: #fff1d6; color: #7a4a00; }
+.em-sc-blue   { background: #ddf4ff; color: #0550ae; }
+.em-sc-purple { background: #f3e8ff; color: #6b21a8; }
+.em-sc-green  { background: #dafbe1; color: #116329; }
+.em-sc-stale  { background: #f3f4f6; color: #6e7781; font-style: italic; }
+.em-sc-folder { background: #fff; color: #57606a; box-shadow: inset 0 0 0 1px #d0d7de; }
+.em-smart-badges { flex-wrap: nowrap; overflow: hidden; min-width: 0; }
+
+/* Labels in the open conversation's customer line */
+.em-smart-dchips {
+  display: flex; align-items: center; gap: 6px;
+  flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden;
+}
+.em-smart-dchips:empty { display: none; }
+.em-smart-dchips .em-sc { cursor: pointer; }
+.em-smart-dchips .em-sc:hover,
+.em-smart-dchips .em-sc.is-open { box-shadow: inset 0 0 0 1px currentColor; }
+.em-smart-dchips .em-sc:focus { outline: none; box-shadow: inset 0 0 0 1px currentColor; }
+
+/* List: New / Earlier groups, status lines, older mail */
+.em-smart-group {
+  padding: 7px 14px 4px; font-size: 10px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase; color: #6a737d;
+  background: #fafbfc; border-bottom: 1px solid #f0f2f5;
+}
+.em-smart-line {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; font-size: 11px; color: #57606a;
+  background: #f6f8fa; border-bottom: 1px solid #eaeef2;
+}
+.em-smart-line.is-error { background: #fff8f7; color: #a40e26; border-bottom-color: #ffd8d3; }
+.em-smart-line > span:not(.em-smart-spin) { flex: 1 1 auto; min-width: 0; }
+.em-smart-line button, .em-smart-more button {
+  flex: 0 0 auto; padding: 2px 8px; font-size: 11px; line-height: 16px;
+  border: 1px solid #d0d7de; border-radius: 4px; background: #fff; color: #24292f; cursor: pointer;
+}
+.em-smart-line button:hover, .em-smart-more button:hover:not(:disabled) { background: #f6f8fa; }
+.em-smart-line button:focus, .em-smart-more button:focus { background: #fff; outline: none; }
+.em-smart-more { padding: 12px 14px; text-align: center; }
+.em-smart-more button:disabled { opacity: .55; cursor: default; }
+.em-smart-spin {
+  display: inline-block; flex: 0 0 auto; width: 12px; height: 12px; margin-right: 2px;
+  border: 2px solid #d0d7de; border-top-color: #0366d6; border-radius: 50%;
+  vertical-align: -2px; animation: emSmartSpin .8s linear infinite;
+}
+@keyframes emSmartSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .em-smart-spin { animation-duration: 2.4s; } }
+
+/* Filter menu (desktop) */
+.em-smart-fmenu {
+  position: fixed; z-index: 1200; width: 220px; max-height: 60vh; overflow-y: auto;
+  padding: 4px 0; background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(140,149,159,.25); font-size: 12px;
+}
+.em-smart-fmenu[hidden] { display: none; }
+.em-smart-fmenu-head {
+  padding: 6px 12px 4px; font-size: 10px; font-weight: 700;
+  letter-spacing: .6px; text-transform: uppercase; color: #6a737d;
+}
+.em-smart-fmenu button {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 12px; border: none; background: transparent; color: #24292f;
+  font-size: 12px; line-height: 16px; text-align: left; cursor: pointer;
+}
+.em-smart-fmenu button:hover, .em-smart-fmenu button:focus { background: #f6f8fa; outline: none; }
+.em-smart-fmenu button.on { color: #0366d6; font-weight: 600; background: #e7f3ff; }
+.em-smart-fmenu .n { margin-left: auto; color: #6a737d; font-weight: 400; font-variant-numeric: tabular-nums; }
+.em-smart-fmenu-empty { padding: 6px 12px 8px; color: #6a737d; }
+
+/* Why a label is there ("Not right") */
+.em-smart-pop {
+  position: fixed; z-index: 1200; width: 280px; max-width: calc(100vw - 16px);
+  padding: 10px 12px; background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(140,149,159,.25); font-size: 12px; color: #24292f; line-height: 1.45;
+}
+.em-smart-pop[hidden] { display: none; }
+.em-smart-pop-title { margin-bottom: 6px; }
+.em-smart-pop-title .em-sc { max-width: 100%; }
+.em-smart-pop-why { margin-bottom: 4px; }
+.em-smart-pop-meta { font-size: 11px; color: #6a737d; }
+.em-smart-pop-err { margin-top: 6px; font-size: 11px; color: #a40e26; }
+.em-smart-pop-err[hidden] { display: none; }
+.em-smart-pop-acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.em-smart-pop-acts button {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px;
+  border: 1px solid #d0d7de; border-radius: 4px; background: #fff; color: #24292f;
+  font-size: 12px; cursor: pointer;
+}
+.em-smart-pop-acts button:hover:not(:disabled) { background: #f6f8fa; }
+.em-smart-pop-acts button:focus { background: #fff; outline: none; }
+.em-smart-pop-acts button:disabled { opacity: .6; cursor: default; }
+.em-smart-pop-acts .em-smart-pop-fix { color: #a40e26; border-color: #f0b4ae; }
+.em-smart-pop-acts button:focus-visible { box-shadow: 0 0 0 2px rgba(3,102,214,.45); }
+
+/* Rail: the collapsible Labels heading */
+.em-rail .em-smart-lblhead {
+  display: flex; align-items: center; gap: 2px; margin-top: 4px;
+  cursor: pointer; user-select: none;
+}
+.em-rail .em-smart-lblhead:hover { color: #24292f; }
+.em-rail .em-smart-lblhead:focus { outline: none; color: #0366d6; }
+.em-rail .em-smart-lblhead .material-icons { font-size: 14px; margin-left: -3px; }
+
+/* Settings: Inbox layout (owner only) */
+.em-layout-ctl { display: inline-flex; margin: 6px 0 0; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; }
+.em-layout-opt {
+  padding: 5px 12px; border: none; background: #fff; color: #24292f;
+  font-size: 12px; line-height: 16px; cursor: pointer;
+}
+.em-layout-opt + .em-layout-opt { border-left: 1px solid #d0d7de; }
+.em-layout-opt:hover { background: #f6f8fa; }
+.em-layout-opt:focus { background: #fff; outline: none; }
+.em-layout-opt.on, .em-layout-opt.on:focus { background: #0366d6; color: #fff; }
+.em-layout-opt:focus-visible { box-shadow: inset 0 0 0 2px rgba(3,102,214,.45); }
+
+/* Phone: filter icon in the app bar (list screen, new layout only) */
+#mFilterIcon { display: none; position: relative; }
+body.em-tabs-smart.m-screen-list #mFilterIcon { display: inline-flex; }
+#mFilterIcon:focus { background: transparent; outline: none; }
+#mFilterIcon.is-on { color: var(--m-c-accent); }
+#mFilterIcon.is-on::after {
+  content: ""; position: absolute; top: 11px; right: 11px;
+  width: 8px; height: 8px; border-radius: 50%; background: var(--m-c-accent);
+}
+
+/* Phone: drawer sections */
+.m-drawer-section {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase; color: var(--m-c-text-muted);
+}
+.m-drawer-section.m-smart-lbltoggle { cursor: pointer; margin-right: 12px; }
+.m-drawer-section .material-icons { font-size: 20px; }
+body.em-tabs-smart .m-drawer-folder .m-fcnt { white-space: nowrap; }
+
+/* Phone: rows, groups, status lines, filter line */
+.m-smart-chips { display: flex; gap: 4px; margin-top: 3px; min-width: 0; overflow: hidden; }
+.m-smart-group {
+  padding: 8px 16px 4px; font-size: 11px; font-weight: 700;
+  letter-spacing: .8px; text-transform: uppercase; color: var(--m-c-text-muted);
+  background: var(--m-c-surface-2); border-bottom: 1px solid var(--m-c-border);
+}
+.m-smart-line {
+  display: flex; align-items: center; gap: 8px; padding: 8px 16px;
+  font-size: 13px; color: var(--m-c-text-muted);
+  background: var(--m-c-surface-2); border-bottom: 1px solid var(--m-c-border);
+}
+.m-smart-line.is-error { color: #a40e26; background: #fff8f7; }
+.m-smart-line > span:not(.em-smart-spin) { flex: 1 1 auto; min-width: 0; }
+.m-smart-line button, .m-smart-more button {
+  flex: 0 0 auto; padding: 6px 12px; font-size: 13px;
+  border: 1px solid var(--m-c-border-strong); border-radius: 16px;
+  background: var(--m-c-surface); color: var(--m-c-text); cursor: pointer;
+}
+.m-smart-line button:focus, .m-smart-more button:focus { background: var(--m-c-surface); outline: none; }
+.m-smart-more { padding: 16px; text-align: center; }
+.m-smart-more button:disabled { opacity: .55; }
+.m-smart-fline {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px 16px; font-size: 13px; color: var(--m-c-text-muted);
+  border-bottom: 1px solid var(--m-c-border);
+}
+body.em-mobile .m-smart-fline .em-smart-fpill { height: 30px; max-width: 70%; padding-left: 12px; border-radius: 15px; font-size: 14px; line-height: 28px; }
+body.em-mobile .m-smart-fline .em-smart-fpill-x { width: 26px; height: 26px; }
+body.em-mobile .m-smart-fline .em-smart-fpill-x .material-icons { font-size: 18px; }
+.m-smart-frow { cursor: pointer; }
+.m-smart-frow.on .m-lab { color: var(--m-c-accent); font-weight: 600; }
+.m-smart-frow .m-smart-fn { flex: 0 0 auto; font-size: 14px; color: var(--m-c-text-muted); font-variant-numeric: tabular-nums; }
+.m-smart-frow .material-icons { flex: 0 0 auto; width: 22px; font-size: 20px; color: var(--m-c-accent); }
+
+/* Phone: labels next to the customer's name in a conversation */
+body.em-tabs-smart .m-customer-card-head .m-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.m-smart-cname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-smart-cchips { display: inline-flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow: hidden; font-weight: 400; }
+.m-smart-cchips:empty { display: none; }
+.m-smart-cchips .em-sc { cursor: pointer; }
+
+/* Phone sizes */
+body.em-mobile .em-sc { font-size: 12px; line-height: 18px; padding: 1px 8px; max-width: 170px; }
+body.em-mobile .em-smart-pop { font-size: 14px; width: 300px; }
+body.em-mobile .em-smart-pop-meta { font-size: 13px; }
+body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-size: 14px; }
+@media (max-width: 599px) {
+  body.em-mobile .em-sc { font-size: 13px; line-height: 20px; padding: 2px 9px; max-width: 160px; }
+  body.em-mobile .m-smart-group { font-size: 12px; }
+  body.em-mobile .m-drawer-section { font-size: 12px; padding: 16px 24px 6px; }
+}
+</style>
 </head>
 <body>
 
@@ -5063,6 +5298,14 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
              wrapper keeps the markup tidy; if a satellite-eligible
              setting is added later, place it OUTSIDE this wrapper. -->
         <div data-owner-only="true">
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <p style="margin-bottom:4px;"><b>Inbox layout</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— shared with all operators (stored in Firestore)</span></p>
+        <div class="em-layout-ctl" id="emInboxLayoutCtl" role="radiogroup" aria-label="Inbox layout">
+          <button type="button" class="em-layout-opt" role="radio" aria-checked="false" data-layout="smart">New inbox</button>
+          <button type="button" class="em-layout-opt" role="radio" aria-checked="false" data-layout="legacy">Classic folders</button>
+        </div>
+        <p id="emInboxLayoutNote" style="font-size:11px;color:#6a737d;margin:6px 0 8px;"></p>
+
         <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
         <p style="margin-bottom:4px;"><b>Auto-pipeline</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— shared with all operators (stored in Firestore)</span></p>
 
@@ -5650,6 +5893,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
               aria-label="Star" style="display:none;">
         <i class="material-icons">star_border</i>
       </button>
+      <!-- New inbox layout: filter this folder (list screen only, see CSS) -->
+      <button class="m-appbar-icon" id="mFilterIcon" aria-label="Filter this folder" title="Filter this folder">
+        <i class="material-icons">filter_list</i>
+      </button>
       <button class="m-appbar-icon" id="mMenuIcon" aria-label="More">
         <i class="material-icons">more_vert</i>
       </button>
@@ -5817,6 +6064,14 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           Translation preview will appear above the composer; nothing sends until you tap the Send button.
         </p>
       </div>
+    </div>
+
+    <!-- New inbox layout: filter sheet (phone) -->
+    <div class="m-sheet-backdrop" id="mFilterSheetBackdrop"></div>
+    <div class="m-sheet" id="mFilterSheet" role="dialog" aria-labelledby="mFilterSheetTitle">
+      <div class="m-sheet-handle"></div>
+      <div class="m-sheet-title" id="mFilterSheetTitle">Filter</div>
+      <div class="m-sheet-body" id="mFilterSheetBody"></div>
     </div>
 
     <!-- Overflow menu (per-thread actions; shown on conv screen) -->
@@ -5991,6 +6246,19 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
                   title="Show starred threads only">
             <i class="material-icons">star_border</i>
           </button>
+          <!-- New inbox layout: filter this folder by label (one at a
+               time). Shown only with body.em-tabs-smart. -->
+          <span class="em-smart-fwrap" id="emSmartFilterWrap">
+            <span class="em-smart-fpill" id="emSmartFilterPill" hidden>
+              <span class="em-smart-fpill-text"></span>
+              <button type="button" class="em-smart-fpill-x" aria-label="Clear filter" title="Clear filter"><i class="material-icons">close</i></button>
+            </span>
+            <button type="button" class="em-sort-btn em-smart-fbtn" id="emSmartFilterBtn"
+                    aria-haspopup="menu" aria-expanded="false" aria-pressed="false"
+                    title="Filter this folder by label">
+              <i class="material-icons">filter_list</i>
+            </button>
+          </span>
         </div>
       </div>
       <div class="em-list-items" id="emListItems">
@@ -6682,6 +6950,58 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // Refreshed on Settings open + on Settings save + every COUNTS_POLL.
     let _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: false };
 
+    // ── Inbox layout ─────────────────────────────────────────────────
+    // "smart" is the new inbox (Inbox, Waiting on customer, Sent, Starred,
+    // Done, All mail, with labels); "legacy" is the classic folder list.
+    // Chosen, in order, by:
+    //   1. this browser's override: ?tabs=legacy|smart saves it here,
+    //      ?tabs=default removes it;
+    //   2. the owner's setting, inboxTabs in EtsyMail_Config/autoPipeline
+    //      (a copy of the last value seen is kept so the first paint uses it);
+    //   3. the default, the new inbox.
+    const TAB_LAYOUTS = ["legacy", "smart"];
+    const TAB_LAYOUT_DEFAULT = "smart";
+    const TAB_LAYOUT_LS_KEY = "etsymail_tab_layout";
+    const TAB_LAYOUT_CFG_CACHE_KEY = "etsymail_tab_layout_cfg";
+    let _tabLayoutOverrideMem = null;   // used when localStorage is blocked
+    (function readTabLayoutParam() {
+      try {
+        const q = new URLSearchParams(location.search).get("tabs");
+        if (TAB_LAYOUTS.includes(q)) {
+          _tabLayoutOverrideMem = q;
+          try { localStorage.setItem(TAB_LAYOUT_LS_KEY, q); } catch (_) {}
+        } else if (q === "default") {
+          _tabLayoutOverrideMem = null;
+          try { localStorage.removeItem(TAB_LAYOUT_LS_KEY); } catch (_) {}
+        }
+      } catch (_) {}
+    })();
+    function tabLayoutOverride() {
+      try {
+        const v = localStorage.getItem(TAB_LAYOUT_LS_KEY);
+        if (TAB_LAYOUTS.includes(v)) return v;
+      } catch (_) {}
+      return _tabLayoutOverrideMem;
+    }
+    function tabLayoutFromConfig() {
+      if (_autoCfg && _autoCfg._tabsKnown) {
+        return TAB_LAYOUTS.includes(_autoCfg.inboxTabs) ? _autoCfg.inboxTabs : TAB_LAYOUT_DEFAULT;
+      }
+      try {
+        const c = localStorage.getItem(TAB_LAYOUT_CFG_CACHE_KEY);
+        if (TAB_LAYOUTS.includes(c)) return c;
+      } catch (_) {}
+      return TAB_LAYOUT_DEFAULT;
+    }
+    function resolveTabLayout() { return tabLayoutOverride() || tabLayoutFromConfig(); }
+    let _tabLayout = resolveTabLayout();
+    function isSmartLayout() { return _tabLayout === "smart"; }
+    document.documentElement.classList.toggle("em-tabs-smart-root", _tabLayout === "smart");
+    if (document.body) document.body.classList.toggle("em-tabs-smart", _tabLayout === "smart");
+    document.addEventListener("DOMContentLoaded", () => {
+      document.body.classList.toggle("em-tabs-smart", _tabLayout === "smart");
+    });
+
     async function fetchAutoConfig() {
       try {
         const res = await api("firestoreProxy", {
@@ -6714,17 +7034,21 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             salesAutoEngage        : d.salesAutoEngage === true,
             salesAutoSendEnabled   : d.salesAutoSendEnabled === true,
             salesPilotThreadIds    : Array.isArray(d.salesPilotThreadIds) ? d.salesPilotThreadIds : [],
+            // Inbox layout picked by the owner (null: the default, the new inbox).
+            inboxTabs              : TAB_LAYOUTS.includes(d.inboxTabs) ? d.inboxTabs : null,
+            _tabsKnown             : true,
             updatedBy            : d.updatedBy || null,
             updatedAt            : d.updatedAt || null,
             _loaded              : true
           };
         } else {
-          _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
+          _autoCfg = { ...AUTO_CFG_DEFAULTS, inboxTabs: null, _tabsKnown: true, _loaded: true };
         }
       } catch (e) {
         console.warn("auto-config fetch failed:", e.message);
         if (!_autoCfg._loaded) _autoCfg = { ...AUTO_CFG_DEFAULTS, _loaded: true };
       }
+      try { smartOnConfigLoaded(); } catch (e) { console.warn("[inbox layout]", e.message); }
       return _autoCfg;
     }
 
@@ -6800,7 +7124,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     async function saveAutoConfig({ enabled, threshold, quietPeriodMinutes, manualAiDraftAutoSend,
                                     listingsMirrorEnabled, intentClassifierEnabled,
                                     salesModeEnabled, salesAutoEngage, salesAutoSendEnabled, salesPilotThreadIds,
-                                    by }) {
+                                    inboxTabs, by }) {
       // Sanitize pilot list: lines → trimmed strings → drop empties.
       let pilotList = [];
       if (Array.isArray(salesPilotThreadIds)) {
@@ -6833,6 +7157,8 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         salesAutoEngage        : salesAutoEngage === true,
         salesAutoSendEnabled   : salesAutoSendEnabled === true,
         salesPilotThreadIds    : pilotList,
+        // Inbox layout: written only when the owner picks one (merge keeps it otherwise).
+        ...(TAB_LAYOUTS.includes(inboxTabs) ? { inboxTabs } : {}),
         updatedBy            : by || getEmployeeName() || "operator",
         updatedAt            : { __serverTimestamp: true }
       };
@@ -6847,7 +7173,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           data : clean
         }
       });
-      _autoCfg = { ...clean, _loaded: true };
+      const _prevTabs = { inboxTabs: _autoCfg.inboxTabs, _tabsKnown: _autoCfg._tabsKnown };
+      _autoCfg = { ..._prevTabs, ...clean, _loaded: true };
+      if (clean.inboxTabs) _autoCfg._tabsKnown = true;
       return _autoCfg;
     }
 
@@ -9283,6 +9611,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         expiresAt: Number.MAX_SAFE_INTEGER
       });
       _updateAllStarDOM(threadId, next);
+      if (isSmartLayout()) smartScheduleRender();   // Starred folder + count
 
       // 2. Debounce the backend write. Each click resets the timer, so
       // a burst of clicks resolves to a single write with the final
@@ -9307,7 +9636,9 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
               data  : {
                 starred  : valueToWrite,
                 starredAt: valueToWrite ? { __serverTimestamp: true } : null,
-                starredBy: valueToWrite ? ((typeof getEmployeeName === "function" ? getEmployeeName() : null) || "operator") : null
+                starredBy: valueToWrite ? ((typeof getEmployeeName === "function" ? getEmployeeName() : null) || "operator") : null,
+                // Bumped so other open tabs pick the change up on their next refresh.
+                updatedAt: { __serverTimestamp: true }
               }
             }
           });
@@ -10414,6 +10745,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       const input = $("emSecretInput");
       const errEl = $("emSecretError");
       if (!modal) return;
+      smartS.layoutChoice = null;   // Inbox layout: no unsaved pick
       // v6 — the secret field was removed; nothing to pre-fill.
 
       // Show modal first; populate auto-pipeline fields with current
@@ -10470,6 +10802,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
             metaEl.textContent = "Stored in Firestore at EtsyMail_Config/autoPipeline";
           }
         }
+        try { smartSyncLayoutControl(); } catch (_) {}
       };
       populateFromCfg();
       if (thr && thrVal) {
@@ -10589,8 +10922,11 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           salesAutoEngage        : salesAutoEngageInput ? salesAutoEngageInput.checked : false,
           salesAutoSendEnabled   : salesAutoSendInput   ? salesAutoSendInput.checked   : false,
           salesPilotThreadIds    : salesPilotInput      ? salesPilotInput.value        : [],
+          inboxTabs              : smartS.layoutChoice || undefined,
           by                   : getEmployeeName() || "operator"
         });
+        smartS.layoutChoice = null;
+        try { smartOnConfigLoaded(); } catch (_) {}
       } catch (e) {
         $("emSecretError").textContent = "Couldn't save auto-pipeline config: " + e.message;
         $("emSecretError").classList.add("active");
@@ -10743,6 +11079,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
     // ───── Rail ─────
     function renderRail() {
+      if (isSmartLayout()) return smartRenderRail();
       const rail = $("emRail");
       // Single flat section now that we've cleaned up the legacy hold
       // and inbox staging folders. Counts come from etsyMailThreads
@@ -11412,6 +11749,1816 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // restored from version control.
 
 
+    // ═════════════════════════════════════════════════════════════════
+    // New inbox layout ("smart inbox")
+    // ═════════════════════════════════════════════════════════════════
+    //
+    // Folders are decided by facts only: who wrote last, read or unread,
+    // Done (archived) and starred. Labels from Etsy, the inbox, rules and
+    // the AI show as small chips and can filter a folder; they never move
+    // a conversation between folders.
+    //
+    // Every folder is a view over one cache, state.threads, filled by the
+    // loaders below and kept fresh by the same 60-second delta poll the
+    // classic folders use. Folder counts are worked out here, in the
+    // browser. renderRail, renderThreadList, fetchThreadListNow,
+    // fetchSearchResults, fetchCountsNow, setStatus and the phone's drawer
+    // and list branch here with one line each when isSmartLayout() is
+    // true; with the classic layout they run exactly as before.
+
+    /* TABS-CORE-BEGIN */
+    // Pure folder rules. tests/etsy-mail/tabs.cjs runs this block in Node.
+    const DAY = 86400000, INBOX_FALLBACK_DAYS = 14, WAITING_DAYS = 30;
+    const SKEW_MS = 120000;   // our send times are server time; message times come from Etsy's page
+    // A reply that may not have gone out. (tracking_unready is the AI
+    // holding its reply until tracking images are ready: "AI: needs you".)
+    const SEND_PROBLEM_RE = /^human_review_after_(?!tracking_unready$)/;
+    function lastOursMs(t) {
+      return Math.max(tsToMs(t.lastOutboundAt), tsToMs(t.lastOperatorReplyAt) - SKEW_MS);
+    }
+    function isArchived(t) { return !!t && t.status === "archived"; }
+    function aiState(t, now = Date.now()) {
+      if (t.status === "queued_for_auto_send") return "sending";
+      if (t.lastAutoDecision === "in_progress") return "drafting";
+      if (t.lastAutoDecision === "deferred_quiet_period" && (Number(t.autoPipelineDeferUntilMs) || 0) > now) return "quiet_period";
+      if (SEND_PROBLEM_RE.test(t.lastAutoDecision || "")) return "send_problem";
+      return null;
+    }
+    // A send that was not confirmed stays a problem until a later reply of
+    // ours is recorded (sent from this page, or seen on Etsy by a scrape).
+    function hasSendProblem(t) {
+      if (!SEND_PROBLEM_RE.test(t.lastAutoDecision || "")) return false;
+      const at = tsToMs(t.lastAutoDecisionAt);
+      if (!at) return true;
+      if (tsToMs(t.lastOperatorReplyAt) > at + 5000) return false;
+      if (tsToMs(t.lastOutboundAt) >= at - SKEW_MS) return false;
+      return true;
+    }
+    // Inbox: the customer wrote last and nobody has answered yet.
+    // awaitingReplySince is kept by the server; documents written before it
+    // existed use the fallback rule (customer spoke last within 14 days, or
+    // the thread sits in the old review queue). A tie counts as waiting.
+    function isAwaiting(t, now = Date.now()) {
+      const inb = tsToMs(t.lastInboundAt);
+      const since = tsToMs(t.awaitingReplySince);
+      if (since) return hasSendProblem(t) || !(lastOursMs(t) > Math.max(inb, since));
+      if (isArchived(t)) return false;
+      if (hasSendProblem(t)) return true;
+      return inb > 0 && inb >= lastOursMs(t)
+          && (now - inb < INBOX_FALLBACK_DAYS * DAY || t.status === "pending_human_review");
+    }
+    function isNew(t, now = Date.now()) { return !!t.unread && isAwaiting(t, now); }
+    // Waiting on customer: we wrote last, within the last 30 days.
+    function isWaitingOnCustomer(t, now = Date.now()) {
+      const ours = lastOursMs(t);
+      return !isArchived(t) && ours > 0 && ours > tsToMs(t.lastInboundAt) && now - ours < WAITING_DAYS * DAY && !isAwaiting(t, now);
+    }
+    // Done: archived, unless the customer has written again since.
+    function isDone(t, now = Date.now()) { return isArchived(t) && !isAwaiting(t, now); }
+    function isActiveRush(t) {
+      const r = t.productionRush;
+      return !!(r && r.acceptedAt && !r.removedAt) || t.status === "production_rush";
+    }
+    // Is an AI result about the customer's latest message?
+    function aiFresh(t)     { return tsToMs(t.lastAutoProcessedInboundAt) >= tsToMs(t.lastInboundAt); }
+    function intentFresh(t) { return tsToMs(t.intentClassifiedAt) >= tsToMs(t.lastInboundAt); }
+    // Our newest reply is the AI's own confirmed send (no reply by hand since).
+    function lastReplyByAi(t) {
+      if (t.lastAutoDecision !== "auto_send_confirmed" || t.sendOrigin === "manual") return false;
+      const at = tsToMs(t.lastAutoDecisionAt);
+      if (!at) return false;
+      return tsToMs(t.lastOperatorReplyAt) <= at + 5000 && tsToMs(t.lastOutboundAt) <= at + SKEW_MS;
+    }
+    function mainFolderOf(t, now = Date.now()) {
+      if (isAwaiting(t, now)) return "x_inbox";
+      if (isWaitingOnCustomer(t, now)) return "x_waiting";
+      if (isDone(t, now)) return "x_done";
+      return "x_all";
+    }
+    /* TABS-CORE-END */
+
+    /* TABS-CHIPS-BEGIN */
+    // Labels ("chips"). A row shows the first two, by importance (the
+    // order below); the open conversation shows them in its customer line.
+    // src is where a label comes from, shown only in words inside its
+    // explanation: E = Etsy, S = the inbox, R = a rule that reads the
+    // customer's words, AI = the AI. fix: the label can be marked
+    // "Not right" (AI and rule labels); that hides it until the customer
+    // writes again. A label about an earlier message is shown dimmed.
+    const INTENT_MIN_CONF = 0.7;
+    const INTENT_LABEL = { support: "Support", sales_lead: "Sales lead", post_purchase: "Post-purchase", spam: "Spam?", unclear: "Unclear" };
+    const NEEDS_YOU_RE = /^(human_review(_vetoed)?|human_review_after_tracking_unready|sales_auto_send_(human_review|vetoed|kill_switch|tracking_unready))$/;
+    const SALES_STAGE_WORDS = { discovery: "discovery", spec: "spec", quote: "quote", revision: "revision", pending_close_approval: "ready to close", abandoned: "abandoned", active: "active" };
+    const SEND_PROBLEM_WORDS = {
+      unverified_send    : "was not confirmed on Etsy",
+      partial_send       : "only partly went out",
+      send_cancelled     : "was cancelled",
+      stranded_post_click: "got stuck after the send click",
+      retry_exhausted    : "failed after several tries",
+      send_failure       : "failed to send",
+      queued_expired     : "waited too long in the send queue",
+      claim_abandoned    : "was dropped by the Etsy tab",
+      circuit_breaker    : "was stopped by the sending safety limit",
+      enqueue_failure    : "could not be queued for sending"
+    };
+    const CHIP_SOURCE_NAMES = { E: "Etsy", S: "the inbox", R: "a rule that reads the customer's words", AI: "the AI" };
+    function tabsWhen(ms, now = Date.now()) {
+      if (!ms) return "";
+      const d = new Date(ms);
+      if (d.toDateString() === new Date(now).toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return d.toLocaleDateString([], { month: "short", day: "numeric" });
+    }
+    function tabsQuoted(reason) {
+      const m = /^[a-z_]+:"([\s\S]*?)"?$/i.exec(String(reason || ""));
+      return m ? m[1].trim() : "";
+    }
+    // "Not right" hides a label until the customer's next message.
+    function labelOverridden(t, id) {
+      const o = t && t.labelOverrides && t.labelOverrides[id];
+      if (!o || o.off !== true) return false;
+      return (Number(o.forInboundMs) || 0) >= tsToMs(t.lastInboundAt);
+    }
+    const CHIP_DEFS = [
+      { id: "send_problem", src: "S", tone: "red", menu: "Send problem",
+        test : t => hasSendProblem(t),
+        label: () => "Send problem",
+        why  : t => "Our last reply " + (SEND_PROBLEM_WORDS[String(t.lastAutoDecision || "").replace(SEND_PROBLEM_RE, "")] || "may not have gone out")
+                  + ". Check the conversation on Etsy before sending again.",
+        about: t => "the reply tried at " + tabsWhen(tsToMs(t.lastAutoDecisionAt)) },
+      { id: "needs_you", src: "AI", tone: "amber", fix: true, menu: "AI: needs you",
+        test : (t, now) => NEEDS_YOU_RE.test(t.lastAutoDecision || "") && aiFresh(t) && isAwaiting(t, now),
+        label: () => "AI: needs you",
+        why  : t => {
+          const d = String(t.lastAutoDecision || "");
+          return "The AI held its reply for a person: " + (/vetoed/.test(d) ? "a safety rule stopped it"
+            : /kill_switch/.test(d) ? "automatic sending is switched off"
+            : /tracking_unready/.test(d) ? "tracking is not ready yet"
+            : "it wants you to answer this one") + ".";
+        },
+        about: t => "the customer's message of " + tabsWhen(tsToMs(t.lastInboundAt)),
+        conf : t => (t.aiReviewDecision && typeof t.aiReviewDecision.confidence === "number") ? t.aiReviewDecision.confidence : null },
+      { id: "refund", src: "R", tone: "red", fix: true, menu: "Refund/return talk",
+        test : t => !!t.refundFlaggedAt && !/^draft:/.test(t.refundFlaggedReason || ""),
+        stale: t => tsToMs(t.refundFlaggedAt) < tsToMs(t.lastInboundAt),
+        label: () => "Refund/return talk",
+        why  : t => {
+          const r = String(t.refundFlaggedReason || ""), q = tabsQuoted(r);
+          if (/^outbound_send:/.test(r)) return q ? "Our reply mentioned “" + q + "”." : "Our reply talked about a refund or return.";
+          return q ? "The customer wrote “" + q + "”." : "Refund or return words were found in this conversation.";
+        },
+        about: (t, stale) => (stale ? "an earlier message" : "the latest message") + ", noticed " + tabsWhen(tsToMs(t.refundFlaggedAt)) },
+      { id: "workshop", src: "S", tone: "amber", menu: "Workshop question",
+        test : t => (Number(t.orderLinkOpen) || 0) > 0,
+        label: () => "Workshop question",
+        why  : t => "A Charm Sorter question is open" + (t.orderLinkTitle ? " (" + t.orderLinkTitle + ")" : "")
+                  + ". The customer's answer goes back to the sorter, and AI replies wait." },
+      { id: "rush", src: "S", tone: "amber", menu: "Rush",
+        test : t => isActiveRush(t),
+        label: () => "Rush",
+        why  : () => "An active rush order: production target 2-3 business days." },
+      { id: "ai_working", src: "S", tone: "green", menu: "AI replying",
+        test : (t, now) => ["drafting", "quiet_period", "sending"].includes(aiState(t, now)),
+        label: (t, now) => {
+          const s = aiState(t, now);
+          if (s === "sending") return "Sending…";
+          if (s === "quiet_period") return "AI replying · " + Math.max(1, Math.ceil(((Number(t.autoPipelineDeferUntilMs) || 0) - now) / 60000)) + "m";
+          return "AI replying";
+        },
+        why  : (t, now) => {
+          const s = aiState(t, now);
+          if (s === "sending") return "The AI's reply passed its checks and is waiting for the Etsy tab to send it.";
+          if (s === "quiet_period") return "The AI waits for the customer to finish writing, then replies unless you answer first.";
+          return "The AI is writing a reply now.";
+        } },
+      { id: "draft_ready", src: "AI", tone: "green", menu: "AI draft ready",
+        test : (t, now) => t.aiDraftStatus === "ready" && aiFresh(t) && !aiState(t, now) && isAwaiting(t, now),
+        label: () => "AI draft ready",
+        why  : () => "A reply is drafted for the customer's latest message. Open the conversation to review it.",
+        about: t => "the customer's message of " + tabsWhen(tsToMs(t.lastInboundAt)) },
+      { id: "ai_replied", src: "AI", tone: "green", menu: "AI replied",
+        test : (t, now) => lastReplyByAi(t) && !!t.unread && !isAwaiting(t, now),
+        label: () => "AI replied",
+        why  : () => "The AI answered on its own, and nobody has opened the conversation since.",
+        about: t => "the AI's reply of " + tabsWhen(tsToMs(t.lastAutoDecisionAt)) },
+      { id: "order", src: "E", tone: "blue", menu: "Has order",
+        test : t => !!t.etsyOrderId,
+        label: t => "Order …" + String(t.etsyOrderId).slice(-4),
+        why  : t => "Etsy shows order #" + t.etsyOrderId + " in this conversation." },
+      { id: "help", src: "E", tone: "blue", menu: "Help request",
+        test : t => /help\s*request/i.test(t.etsyHeadingBadge || ""),
+        label: () => "Help request",
+        why  : () => "Etsy marks this conversation as a Help request." },
+      { id: "photo", src: "E", tone: "blue", menu: "With photo",
+        test : t => Array.isArray(t.riskFlags) && t.riskFlags.includes("image_attached"),
+        label: () => "Photo",
+        why  : () => "The customer attached a photo." },
+      { id: "intent", src: "AI", tone: "purple", fix: true, menu: null,
+        test : t => !!INTENT_LABEL[t.intentClassification] && (Number(t.intentConfidence) || 0) >= INTENT_MIN_CONF,
+        stale: t => !intentFresh(t),
+        label: (t, now, stale) => INTENT_LABEL[t.intentClassification] + (stale ? "" : " " + Math.round(100 * Number(t.intentConfidence)) + "%"),
+        why  : (t, now, stale) => (stale ? "The AI read an earlier message as “" : "The AI reads the customer's latest message as “")
+                  + INTENT_LABEL[t.intentClassification] + "”." + (stale ? " It has not read the newest one yet." : ""),
+        about: (t, stale) => stale ? "an earlier message (read " + tabsWhen(tsToMs(t.intentClassifiedAt)) + ")"
+                                   : "the customer's message of " + tabsWhen(tsToMs(t.lastInboundAt)),
+        conf : t => Number(t.intentConfidence) },
+      { id: "sales_stage", src: "S", tone: "purple", menu: "Sales stage",
+        test : t => /^sales_/.test(t.status || "") && t.status !== "sales_completed",
+        label: t => "Sales: " + (SALES_STAGE_WORDS[t.salesStage] || SALES_STAGE_WORDS[String(t.status).slice(6)] || "active"),
+        why  : t => "The sales assistant has this conversation at the “"
+                  + (SALES_STAGE_WORDS[t.salesStage] || SALES_STAGE_WORDS[String(t.status).slice(6)] || "active") + "” stage." },
+      { id: "sold", src: "S", tone: "green", menu: "Custom listing sold",
+        test : t => !!t.salesCompletedAt,
+        label: () => "Listing sold",
+        why  : t => "A custom listing from this conversation was bought (" + tabsWhen(tsToMs(t.salesCompletedAt)) + ")." },
+      { id: "syncing", src: "S", tone: "blue", menu: "Syncing from Etsy",
+        test : t => tsToMs(t.gmailReceivedAt) > tsToMs(t.lastInboundAt) + 60000,
+        label: () => "Syncing from Etsy",
+        why  : t => "Etsy emailed about a new message at " + tabsWhen(tsToMs(t.gmailReceivedAt))
+                  + ". It shows here once the conversation is read from Etsy." }
+    ];
+    // Every label on a conversation, most important first (fresh before dimmed).
+    function smartChipsFor(t, now = Date.now()) {
+      const out = [];
+      for (let rank = 0; rank < CHIP_DEFS.length; rank++) {
+        const d = CHIP_DEFS[rank];
+        let on = false;
+        try { on = !!d.test(t, now); } catch (_) { on = false; }
+        if (!on || labelOverridden(t, d.id)) continue;
+        const stale = !!(d.stale && d.stale(t, now));
+        const label = d.label(t, now, stale);
+        out.push({
+          id    : d.id,
+          src   : d.src,
+          fix   : !!d.fix,
+          rank,
+          stale,
+          tone  : stale ? "stale" : d.tone,
+          label : stale ? label + " (earlier message)" : label,
+          why   : d.why(t, now, stale),
+          about : d.about ? d.about(t, stale) : "",
+          conf  : d.conf ? d.conf(t) : null,
+          filter: d.id === "intent" ? "intent:" + t.intentClassification : d.id
+        });
+      }
+      out.sort((a, b) => (a.stale - b.stale) || (a.rank - b.rank));
+      return out;
+    }
+    // The filters offered for a folder: Unread, then one per label kind.
+    function smartFilterDefs() {
+      const out = [{ id: "unread", label: "Unread" }];
+      for (const d of CHIP_DEFS) {
+        if (d.id === "intent") {
+          for (const c of Object.keys(INTENT_LABEL)) out.push({ id: "intent:" + c, label: INTENT_LABEL[c] });
+        } else {
+          out.push({ id: d.id, label: d.menu });
+        }
+      }
+      return out;
+    }
+    // A label's tooltip: why it is there and where it comes from, in words.
+    function smartChipTip(k) {
+      return k.why + " Source: " + (CHIP_SOURCE_NAMES[k.src] || "the inbox") + ".";
+    }
+    // Dimmed labels (about an earlier message) never match a filter.
+    function smartHasFilter(t, f, chips) {
+      if (f === "unread") return !!t.unread;
+      return (chips || smartChipsFor(t)).some(k => !k.stale && k.filter === f);
+    }
+    // Smart views: saved filters over Inbox and Waiting on customer.
+    const SMART_VIEWS = [
+      { id: "x_v_sales",    label: "Sales leads",        icon: "trending_up",             filters: ["intent:sales_lead", "sales_stage"] },
+      { id: "x_v_post",     label: "Post-purchase",      icon: "local_shipping",          filters: ["intent:post_purchase"] },
+      { id: "x_v_refund",   label: "Refund & returns",   icon: "currency_exchange",       filters: ["refund"] },
+      { id: "x_v_workshop", label: "Workshop questions", icon: "precision_manufacturing", filters: ["workshop"] },
+      { id: "x_v_rush",     label: "Rush orders",        icon: "local_fire_department",   filters: ["rush"] }
+    ];
+    function inSmartView(t, view, now = Date.now(), chips) {
+      if (!isAwaiting(t, now) && !isWaitingOnCustomer(t, now)) return false;
+      const c = chips || smartChipsFor(t, now);
+      return view.filters.some(f => smartHasFilter(t, f, c));
+    }
+    /* TABS-CHIPS-END */
+
+    const SMART_FOLDERS = [
+      { id: "x_inbox",   label: "Inbox",               icon: "inbox",         loader: null },
+      { id: "x_waiting", label: "Waiting on customer", icon: "schedule_send", loader: "replied" },
+      { id: "x_sent",    label: "Sent",                icon: "send",          loader: "replied" },
+      { id: "x_starred", label: "Starred",             icon: "star",          loader: null },
+      { id: "x_done",    label: "Done",                icon: "archive",       loader: "done" },
+      { id: "x_all",     label: "All mail",            icon: "all_inbox",     loader: null }
+    ];
+    const SMART_FOLDER_SHORT = { x_inbox: "Inbox", x_waiting: "Waiting", x_done: "Done", x_all: "All mail" };
+    // The classic folders kept under "Labels" (same queries and rules).
+    const SMART_LABEL_IDS = ["production_questions", "production_rush", "refunds", "sales_active", "completed_sales"];
+    const SMART_LABEL_KEYS = ["_orderLinkOpen", "production_rush", "_refundFlagged", "sales_active", "sales_discovery", "sales_spec",
+                              "sales_quote", "sales_revision", "sales_pending_close_approval", "_completedSales"];
+    const SMART_LABELS_LS_KEY = "etsymail_smart_labels_open";
+    const SMART_ATTENTION_REFRESH_MS = 2 * 3600e3;
+    const SMART_HIDDEN_REFRESH_MS = 30 * 60e3;
+    const SMART_KEY_COUNTS_MS = 15 * 60e3;
+
+    const smartS = {
+      gen            : 0,       // bumped on layout switch and sign-out; older async results are dropped
+      booted         : false,
+      bootPromise    : null,
+      bootError      : null,
+      loaded         : {},      // loader name → true
+      loading        : {},      // loader name → { text, promise }
+      loadErrors     : {},      // loader name → message
+      cursorMs       : null,    // delta cursor: newest updatedAt of the "all" batch and the deltas
+      deltaInFlight  : null,
+      allOldestMs    : null,
+      allExhausted   : false,
+      attentionAt    : 0,
+      hiddenAt       : 0,
+      keyCounts      : null,
+      keyCountsAt    : 0,
+      labelsOpen     : false,
+      filterByFolder : {},      // folder id → filter id (one filter at a time)
+      pageByFolder   : {},
+      scrollByFolder : {},
+      shownByFolder  : {},
+      pendingMScroll : null,
+      sticky         : null,    // the open conversation stays in the folder it was opened from
+      lastSelectedId : null,
+      detailId       : null,
+      detailThread   : null,
+      searchSeq      : 0,
+      searchPending  : false,
+      searchInfo     : null,
+      mSearchTimer   : null,
+      renderQueued   : false,
+      layoutChoice   : null,    // owner's unsaved pick in Settings
+      pop            : null,    // { threadId, chipId }
+      menuOpen       : false
+    };
+    try { smartS.labelsOpen = localStorage.getItem(SMART_LABELS_LS_KEY) === "1"; } catch (_) {}
+    if (isSmartLayout()) state.activeFilterId = "x_inbox";
+
+    function smartFind(id) {
+      if (!id) return null;
+      return (state.threads || []).find(t => t && t.id === id) || null;
+    }
+    function smartFolderDef(id) {
+      return SMART_FOLDERS.find(f => f.id === id)
+        || SMART_VIEWS.find(v => v.id === id)
+        || (SMART_LABEL_IDS.includes(id) ? RAIL_FILTERS.find(f => f.id === id) : null)
+        || null;
+    }
+    function smartFilterLabel(id) {
+      const d = smartFilterDefs().find(x => x.id === id);
+      return d ? d.label : "";
+    }
+    function smartSnippet(t) {
+      const inb = tsToMs(t.lastInboundAt);
+      const outb = tsToMs(t.lastOutboundAt);
+      if (t.lastInboundPreview && inb > 0 && inb >= lastOursMs(t)) return t.lastInboundPreview;
+      if (t.lastOutboundPreview && outb > 0 && outb >= inb) return (lastReplyByAi(t) ? "AI: " : "You: ") + t.lastOutboundPreview;
+      const name = t.customerName || t.etsyUsername || "";
+      let subject = t.subject || "";
+      if (name && subject.toLowerCase() === ("conversation with " + name).toLowerCase()) subject = "";
+      return subject || t.etsyHeadingTitle || t.category || "";
+    }
+    function smartMatchesSearch(t, q) {
+      if (!q) return true;
+      return [t.searchableText, t.customerName, t.etsyUsername, t.subject, t.lastInboundPreview, t.lastOutboundPreview,
+              t.etsyOrderId, t.linkedOrderId, t.category, t.etsyHeadingTitle]
+        .some(v => v != null && String(v).toLowerCase().includes(q));
+    }
+    function smartStatusWords(t) {
+      const s = String((t && t.status) || "");
+      if (s === "etsy_scraped") return "New";
+      if (s === "pending_human_review") return "Needs review";
+      if (s === "queued_for_auto_send") return "AI reply sending";
+      if (s === "auto_replied") return t.manuallyMovedToAutoReplied ? "Moved to Auto-Reply" : (t.sendOrigin === "manual" ? "You replied" : "AI replied");
+      if (s === "archived") return "Done";
+      if (s === "production_rush") return "Rush order";
+      if (s === "sales_completed") return "Sale completed";
+      if (s.indexOf("sales_") === 0) return "Sales: " + (SALES_STAGE_WORDS[s.slice(6)] || s.slice(6).replace(/_/g, " "));
+      if (!s) return "No status";
+      const w = s.replace(/_/g, " ");
+      return w.charAt(0).toUpperCase() + w.slice(1);
+    }
+
+    // ── Cache ────────────────────────────────────────────────────────
+    // A document replaces the cached copy only when it is newer, so an
+    // older copy (for example a cached search result) never undoes a change.
+    function smartMergeDocs(docs) {
+      if (!Array.isArray(docs) || !docs.length) return 0;
+      const byId = new Map((state.threads || []).map(t => [t.id, t]));
+      let changed = 0;
+      for (const d of docs) {
+        if (!d || !d.id) continue;
+        const cur = byId.get(d.id);
+        if (cur) {
+          const a = _threadUpdatedAtMs(d), b = _threadUpdatedAtMs(cur);
+          if (a < b || (a === b && a > 0)) continue;
+        }
+        byId.set(d.id, d);
+        changed++;
+      }
+      if (changed) state.threads = Array.from(byId.values());
+      return changed;
+    }
+    function smartAdvanceCursor(docs) {
+      let max = smartS.cursorMs || 0;
+      for (const d of docs || []) {
+        const ms = _threadUpdatedAtMs(d);
+        if (ms > max) max = ms;
+      }
+      if (max > 0) smartS.cursorMs = max;
+    }
+    function smartOldest(docs) {
+      let min = 0;
+      for (const d of docs || []) {
+        const ms = _threadUpdatedAtMs(d);
+        if (ms > 0 && (!min || ms < min)) min = ms;
+      }
+      return min || null;
+    }
+    function smartForget(id) {
+      state.threads = (state.threads || []).filter(t => t && t.id !== id);
+      if (smartS.sticky && smartS.sticky.id === id) smartS.sticky = null;
+      smartScheduleRender();
+    }
+    function smartReset() {
+      smartS.gen++;
+      smartS.booted = false;
+      smartS.bootPromise = null;
+      smartS.bootError = null;
+      smartS.loaded = {};
+      smartS.loading = {};
+      smartS.loadErrors = {};
+      smartS.cursorMs = null;
+      smartS.deltaInFlight = null;
+      smartS.allOldestMs = null;
+      smartS.allExhausted = false;
+      smartS.attentionAt = 0;
+      smartS.keyCounts = null;
+      smartS.keyCountsAt = 0;
+      smartS.sticky = null;
+      smartS.lastSelectedId = null;
+      smartS.searchSeq++;
+      smartS.searchPending = false;
+      smartS.searchInfo = null;
+    }
+
+    // ── Loaders (single-field queries on the firestoreProxy list op) ──
+    function smartList(query) {
+      return api("firestoreProxy", { query: Object.assign({ op: "list", coll: THREADS_COLL }, query) })
+        .then(d => (d && d.docs) || []);
+    }
+    async function smartListMany(queries) {
+      const res = await Promise.allSettled(queries.map(smartList));
+      const docs = [];
+      let failed = 0, firstErr = null;
+      for (const r of res) {
+        if (r.status === "fulfilled") docs.push(...r.value);
+        else { failed++; firstErr = firstErr || r.reason; }
+      }
+      if (failed && failed === res.length) throw firstErr;
+      if (failed) console.warn("[smart inbox] a query failed:", firstErr && firstErr.message);
+      return docs;
+    }
+    const SMART_LOADERS = {
+      // The newest 500 conversations; sets the delta cursor.
+      all: async gen => {
+        const docs = await smartList({ orderBy: "updatedAt,desc", limit: 500 });
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+        smartAdvanceCursor(docs);
+        smartS.allOldestMs = smartOldest(docs);
+        smartS.allExhausted = docs.length < 500;
+      },
+      // Everything that may need an answer, plus starred conversations.
+      attention: async gen => {
+        const docs = await smartListMany([
+          { orderBy: "awaitingReplySince,desc", limit: 500 },
+          { where: "status,==,pending_human_review", limit: 500 },
+          { where: "status,==,queued_for_auto_send", limit: 100 },
+          { where: "starred,==,true", limit: 200 }
+        ]);
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+        smartS.attentionAt = Date.now();
+      },
+      replied: async gen => {
+        const docs = await smartListMany([
+          { orderBy: "lastOperatorReplyAt,desc", limit: 300 },
+          { orderBy: "lastOutboundAt,desc", limit: 300 }
+        ]);
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+      },
+      done: async gen => {
+        const docs = await smartList({ orderBy: "archivedAt,desc", limit: 100 });
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+      },
+      // "Show older archived": the classic Archived query.
+      doneOlder: async gen => {
+        const docs = await smartList({ where: "status,==,archived", limit: 500 });
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+      },
+      // "Load older" in All mail: the next 500 before the oldest loaded.
+      older: async gen => {
+        if (!smartS.allOldestMs) { smartS.allExhausted = true; return; }
+        const docs = await smartList({ orderBy: "updatedAt,desc", until: String(smartS.allOldestMs), untilField: "updatedAt", limit: 500 });
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+        const oldest = smartOldest(docs);
+        if (oldest && oldest < smartS.allOldestMs) smartS.allOldestMs = oldest;
+        smartS.allExhausted = docs.length < 500 || !oldest;
+      }
+    };
+    // A label runs the classic query for that folder, unchanged.
+    function smartLabelLoader(id) {
+      const f = RAIL_FILTERS.find(x => x.id === id);
+      return async gen => {
+        if (!f) return;
+        let queries;
+        if (f.orderByField) queries = [{ orderBy: f.orderByField + ",desc", limit: 500 }];
+        else if (Array.isArray(f.status)) queries = f.status.map(s => ({ where: "status,==," + s, limit: 500 }));
+        else if (f.status) queries = [{ where: "status,==," + f.status, limit: 500 }];
+        else return;
+        const docs = await smartListMany(queries);
+        if (gen !== smartS.gen) return;
+        smartMergeDocs(docs);
+      };
+    }
+    function smartLoaderText(name) {
+      if (name === "replied") return "Loading sent replies…";
+      if (name === "done") return "Loading Done…";
+      if (name === "doneOlder") return "Loading older Done conversations…";
+      if (name === "older") return "Loading older conversations…";
+      if (name.indexOf("label:") === 0) {
+        const f = RAIL_FILTERS.find(x => x.id === name.slice(6));
+        return "Loading " + (f ? f.label : "label") + "…";
+      }
+      return "Loading…";
+    }
+    function smartRunLoader(name, opts = {}) {
+      const cur = smartS.loading[name];
+      if (cur) return cur.promise;
+      const fn = SMART_LOADERS[name] || (name.indexOf("label:") === 0 ? smartLabelLoader(name.slice(6)) : null);
+      if (!fn) return Promise.resolve();
+      const gen = smartS.gen;
+      const entry = { text: opts.quiet ? "" : smartLoaderText(name), promise: null };
+      smartS.loading[name] = entry;
+      delete smartS.loadErrors[name];
+      if (entry.text) smartScheduleRender();
+      entry.promise = (async () => {
+        try {
+          await fn(gen);
+          if (gen === smartS.gen && name !== "older") smartS.loaded[name] = true;
+        } catch (e) {
+          if (gen === smartS.gen) {
+            smartS.loadErrors[name] = (e && e.message) || "unknown error";
+            console.warn("[smart inbox] " + name + " failed:", smartS.loadErrors[name]);
+          }
+          if (opts.rethrow) throw e;
+        } finally {
+          if (gen === smartS.gen && smartS.loading[name] === entry) {
+            delete smartS.loading[name];
+            smartScheduleRender();
+          }
+        }
+      })();
+      return entry.promise;
+    }
+    function smartLoaderFor(fid) {
+      const f = SMART_FOLDERS.find(x => x.id === fid);
+      if (f) return f.loader;
+      if (SMART_VIEWS.some(v => v.id === fid)) return "replied";
+      if (SMART_LABEL_IDS.includes(fid)) return "label:" + fid;
+      return null;
+    }
+    function smartEnsureLoaded(fid) {
+      if (!smartS.booted) return;
+      const name = smartLoaderFor(fid);
+      if (!name || smartS.loaded[name] || smartS.loading[name] || smartS.loadErrors[name]) return;
+      smartRunLoader(name);
+    }
+    function smartBoot() {
+      if (smartS.bootPromise) return smartS.bootPromise;
+      const gen = smartS.gen;
+      smartS.bootError = null;
+      smartS.loading.boot = { text: "Loading your inbox…", promise: null };
+      smartScheduleRender();
+      smartS.bootPromise = Promise.all([
+        smartRunLoader("all", { quiet: true, rethrow: true }),
+        smartRunLoader("attention", { quiet: true, rethrow: true })
+      ]).then(() => {
+        if (gen !== smartS.gen) return;
+        smartS.booted = true;
+        setBackendOk(true, "Backend: connected");
+      }, e => {
+        if (gen !== smartS.gen) return;
+        smartS.bootError = (e && e.message) || "unknown error";
+        console.warn("[smart inbox] load failed:", smartS.bootError);
+        setBackendOk(false, "Backend: error");
+        // With the newest conversations in hand the page can work; the
+        // missing part is retried by the next poll.
+        if (smartS.loaded.all) smartS.booted = true;
+      }).then(() => {
+        if (gen !== smartS.gen) return;
+        delete smartS.loading.boot;
+        smartS.bootPromise = null;
+        smartScheduleRender();
+        smartEnsureLoaded(state.activeFilterId);
+      });
+      smartS.loading.boot.promise = smartS.bootPromise;
+      return smartS.bootPromise;
+    }
+    // Changes since the cursor, for every folder at once.
+    function smartDelta() {
+      if (smartS.deltaInFlight) return smartS.deltaInFlight;
+      const gen = smartS.gen;
+      smartS.deltaInFlight = (async () => {
+        try {
+          if (smartS.cursorMs == null) {
+            // Nothing loaded yet (an empty inbox): read the newest again.
+            await smartRunLoader("all", { quiet: true, rethrow: true });
+            return;
+          }
+          for (let i = 0; i < 5; i++) {
+            const docs = await smartList({ orderBy: "updatedAt,asc", since: String(smartS.cursorMs), sinceField: "updatedAt", limit: 200 });
+            if (gen !== smartS.gen) return;
+            smartMergeDocs(docs);
+            smartAdvanceCursor(docs);
+            if (docs.length < 200) break;
+          }
+          setBackendOk(true, "Backend: connected");
+        } catch (e) {
+          if (gen === smartS.gen) {
+            console.warn("[smart inbox] refresh failed:", e.message);
+            setBackendOk(false, "Backend: error");
+          }
+        } finally {
+          if (gen === smartS.gen) {
+            smartS.deltaInFlight = null;
+            smartAfterDataChange();
+          }
+        }
+      })();
+      return smartS.deltaInFlight;
+    }
+    // fetchThreadListNow in the new layout: first load, then deltas.
+    function smartFetch(opts = {}) {
+      if ((opts.source || "user") === "user") smartScheduleRender();
+      if (!smartS.booted) return smartBoot();
+      const now = Date.now();
+      if (!smartS.loading.attention && (!smartS.loaded.attention || now - smartS.attentionAt > SMART_ATTENTION_REFRESH_MS)) {
+        smartRunLoader("attention", { quiet: true }).then(() => { if (smartS.loaded.attention) smartS.bootError = null; });
+      }
+      smartEnsureLoaded(state.activeFilterId);
+      return smartDelta();
+    }
+    // fetchCountsNow in the new layout: folder counts need no reads. Label
+    // counts are read (single-field counts) only while Labels is open, at
+    // most every 15 minutes. The config refresh is kept.
+    async function smartFetchCounts(opts = {}) {
+      const gen = smartS.gen;
+      if (smartS.labelsOpen && (opts.force || Date.now() - smartS.keyCountsAt > SMART_KEY_COUNTS_MS)) {
+        smartS.keyCountsAt = Date.now();
+        try {
+          const data = await api("etsyMailThreads", { query: { counts: 1, keys: SMART_LABEL_KEYS.join(",") } });
+          if (gen === smartS.gen) {
+            smartS.keyCounts = (data && data.counts) || {};
+            smartRenderRail();
+            if (window.IS_MOBILE && typeof window.mNotifyCountsChanged === "function") window.mNotifyCountsChanged();
+          }
+        } catch (e) {
+          console.warn("[smart inbox] label counts failed:", e.message);
+        }
+      }
+      if (!opts.labelsOnly) fetchAutoConfig().catch(() => {});
+    }
+    function smartServerSearch(q) {
+      const my = ++smartS.searchSeq;
+      const gen = smartS.gen;
+      smartS.searchPending = true;
+      smartScheduleRender();
+      return api("etsyMailThreads", { query: { search: 1, q, limit: 500 } }).then(data => {
+        if (gen !== smartS.gen || my !== smartS.searchSeq) return;
+        smartMergeDocs((data && data.docs) || []);
+        smartS.searchInfo = { q, scanned: (data && data.scanned) || 0, maxed: !!(data && data.maxedOut), error: null };
+        setBackendOk(true, "Backend: connected");
+      }, e => {
+        if (gen !== smartS.gen || my !== smartS.searchSeq) return;
+        smartS.searchInfo = { q, scanned: 0, maxed: false, error: e.message || "search failed" };
+        console.warn("[smart inbox] search failed:", e.message);
+      }).then(() => {
+        if (gen !== smartS.gen || my !== smartS.searchSeq) return;
+        smartS.searchPending = false;
+        smartScheduleRender();
+      });
+    }
+    function smartMobileSearch(q) {
+      clearTimeout(smartS.mSearchTimer);
+      const v = String(q || "").trim();
+      if (v.length < 2) return;
+      smartS.mSearchTimer = setTimeout(() => smartServerSearch(v), 400);
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────
+    function smartScheduleRender() {
+      if (smartS.renderQueued) return;
+      smartS.renderQueued = true;
+      const run = () => {
+        smartS.renderQueued = false;
+        if (!isSmartLayout()) return;
+        try { smartAfterDataChange(); } catch (e) { console.warn("[smart inbox] render failed:", e.message); }
+      };
+      if (typeof requestAnimationFrame === "function" && document.visibilityState !== "hidden") requestAnimationFrame(run);
+      else setTimeout(run, 0);
+    }
+    function smartAfterDataChange() {
+      if (!isSmartLayout()) return;
+      if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
+      if (typeof applyUnreadOverrides === "function") applyUnreadOverrides(state.threads);
+      if (typeof applyReplyAtOverrides === "function") applyReplyAtOverrides(state.threads);
+      renderThreadList();
+      if (window.IS_MOBILE && typeof window.mNotifyThreadsChanged === "function") window.mNotifyThreadsChanged();
+      smartRefreshDetailDecor();
+    }
+    function smartFolderMatcher(fid, now, chipsOf) {
+      switch (fid) {
+        case "x_inbox":   return t => isAwaiting(t, now);
+        case "x_waiting": return t => isWaitingOnCustomer(t, now);
+        case "x_sent":    return t => lastOursMs(t) > 0;
+        case "x_starred": return t => !!t.starred;
+        case "x_done":    return t => isDone(t, now);
+        case "x_all":     return () => true;
+      }
+      const view = SMART_VIEWS.find(v => v.id === fid);
+      if (view) return t => inSmartView(t, view, now, chipsOf(t));
+      const label = SMART_LABEL_IDS.includes(fid) ? RAIL_FILTERS.find(f => f.id === fid) : null;
+      if (label) return t => threadMatchesFilter(t, label);
+      return () => false;
+    }
+    function smartSortKey(fid) {
+      if (fid === "x_inbox") return t => tsToMs(t.lastInboundAt) || pickThreadInteractionMs(t);
+      if (fid === "x_waiting" || fid === "x_sent") return t => lastOursMs(t);
+      if (fid === "x_done") return t => tsToMs(t.archivedAt) || pickThreadInteractionMs(t);
+      return t => pickThreadInteractionMs(t);
+    }
+    // The rows of a folder: folder rule (or search), starred-only, the
+    // folder's filter, sort, and the New group on top of Inbox.
+    function smartBuildList(fidIn, qRaw, nowIn) {
+      const now = nowIn || Date.now();
+      const fid = smartFolderDef(fidIn) ? fidIn : "x_inbox";
+      const q = String(qRaw || "").trim().toLowerCase();
+      const searching = q.length > 0;
+      const all = state.threads || [];
+      const memo = new Map();
+      const chipsOf = t => {
+        let c = memo.get(t);
+        if (!c) { c = smartChipsFor(t, now); memo.set(t, c); }
+        return c;
+      };
+      const inFolder = smartFolderMatcher(fid, now, chipsOf);
+      if (state.selectedId !== smartS.lastSelectedId) {
+        // A conversation was opened: it stays in this folder (and in the New
+        // group) until another one is opened, even when opening or replying
+        // changes where it belongs.
+        smartS.lastSelectedId = state.selectedId;
+        const st = smartFind(state.selectedId);
+        smartS.sticky = (st && !searching && inFolder(st))
+          ? { id: st.id, folderId: fid, wasNew: fid === "x_inbox" && isNew(st, now) }
+          : null;
+      }
+      const sticky = (!searching && smartS.sticky && smartS.sticky.folderId === fid) ? smartS.sticky : null;
+      let base = searching
+        ? all.filter(t => t && smartMatchesSearch(t, q))
+        : all.filter(t => t && (inFolder(t) || (sticky && t.id === sticky.id)));
+      if (state.starredOnly) base = base.filter(t => !!t.starred);
+      const filterId = smartS.filterByFolder[fid] || null;
+      let rows = filterId ? base.filter(t => smartHasFilter(t, filterId, chipsOf(t))) : base.slice();
+      const key = smartSortKey(searching ? "x_all" : fid);
+      const dir = state.sortDirection === "asc" ? 1 : -1;
+      rows.sort((a, b) => (dir * (key(a) - key(b))) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      let newCount = 0;
+      if (fid === "x_inbox" && !searching) {
+        const isNewRow = t => isNew(t, now) || !!(sticky && sticky.id === t.id && sticky.wasNew);
+        const fresh = rows.filter(isNewRow);
+        newCount = fresh.length;
+        if (newCount) rows = fresh.concat(rows.filter(t => !isNewRow(t)));
+      }
+      return { fid, q, searching, base, rows, newCount, filterId, chipsOf, now };
+    }
+    function smartCounts(now = Date.now()) {
+      const c = { inbox: 0, fresh: 0, waitingAi: 0, starred: 0, views: {} };
+      for (const v of SMART_VIEWS) c.views[v.id] = 0;
+      for (const t of state.threads || []) {
+        if (!t) continue;
+        const aw = isAwaiting(t, now);
+        if (aw) { c.inbox++; if (t.unread) c.fresh++; }
+        const wt = !aw && isWaitingOnCustomer(t, now);
+        if (wt && t.unread && lastReplyByAi(t)) c.waitingAi++;
+        if (t.starred) c.starred++;
+        if (aw || wt) {
+          const chips = smartChipsFor(t, now);
+          for (const v of SMART_VIEWS) if (v.filters.some(f => smartHasFilter(t, f, chips))) c.views[v.id]++;
+        }
+      }
+      return c;
+    }
+    function smartFolderBadge(id, c) {
+      if (id === "x_inbox" && c.inbox) {
+        return {
+          html : c.fresh ? "<b>" + c.fresh + "</b> · " + c.inbox : String(c.inbox),
+          title: (c.fresh ? c.fresh + " new · " : "") + c.inbox + " waiting on you"
+        };
+      }
+      if (id === "x_waiting" && c.waitingAi) {
+        return { html: c.waitingAi + " AI", title: c.waitingAi + " AI " + (c.waitingAi === 1 ? "reply" : "replies") + " nobody has opened" };
+      }
+      if (id === "x_starred" && c.starred) return { html: String(c.starred), title: "" };
+      return null;
+    }
+    function smartLabelCount(f) {
+      if (smartS.loaded["label:" + f.id]) return (state.threads || []).filter(t => threadMatchesFilter(t, f)).length;
+      const k = smartS.keyCounts;
+      if (!k) return null;
+      if (f.countKey) return typeof k[f.countKey] === "number" ? k[f.countKey] : null;
+      const sts = Array.isArray(f.status) ? f.status : (f.status ? [f.status] : []);
+      let n = 0, any = false;
+      for (const s of sts) if (typeof k[s] === "number") { n += k[s]; any = true; }
+      return any ? n : null;
+    }
+    function smartRenderRail() {
+      const rail = $("emRail");
+      if (!rail) return;
+      const c = smartCounts();
+      const active = state.activeFilterId;
+      const item = (id, icon, label, badge) =>
+        `<div class="em-rail-item${active === id ? " active" : ""}" data-filter="${esc(id)}">` +
+          `<span><i class="material-icons">${esc(icon)}</i>${esc(label)}</span>` +
+          (badge ? `<span class="em-count"${badge.title ? ` title="${esc(badge.title)}"` : ""}>${badge.html}</span>` : "") +
+        `</div>`;
+      let html = '<div class="em-rail-section">Folders</div>';
+      for (const f of SMART_FOLDERS) html += item(f.id, f.icon, f.label, smartFolderBadge(f.id, c));
+      html += '<div class="em-rail-section">Smart views</div>';
+      for (const v of SMART_VIEWS) html += item(v.id, v.icon, v.label, c.views[v.id] ? { html: String(c.views[v.id]), title: "" } : null);
+      const open = smartS.labelsOpen;
+      html += `<div class="em-rail-section em-smart-lblhead" data-smart-labels="1" role="button" tabindex="0" aria-expanded="${open ? "true" : "false"}">` +
+                `<i class="material-icons">${open ? "expand_more" : "chevron_right"}</i>Labels</div>`;
+      if (open) {
+        for (const id of SMART_LABEL_IDS) {
+          const f = RAIL_FILTERS.find(x => x.id === id);
+          if (!f) continue;
+          const n = smartLabelCount(f);
+          html += item(f.id, f.icon, f.label, n == null ? null : { html: String(n), title: "" });
+        }
+      }
+      rail.innerHTML = html;
+      rail.querySelectorAll(".em-rail-item[data-filter]").forEach(el => {
+        el.addEventListener("click", () => smartSelectFolder(el.dataset.filter));
+      });
+      const lh = rail.querySelector("[data-smart-labels]");
+      if (lh) {
+        lh.addEventListener("click", smartToggleLabels);
+        lh.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); smartToggleLabels(); } });
+      }
+    }
+    function smartToggleLabels() {
+      smartS.labelsOpen = !smartS.labelsOpen;
+      try { localStorage.setItem(SMART_LABELS_LS_KEY, smartS.labelsOpen ? "1" : "0"); } catch (_) {}
+      smartRenderRail();
+      if (window.IS_MOBILE && typeof window.mNotifyCountsChanged === "function") window.mNotifyCountsChanged();
+      if (smartS.labelsOpen) smartFetchCounts({ labelsOnly: true });
+    }
+    function smartSelectFolder(id) {
+      if (!smartFolderDef(id)) return;
+      const prev = state.activeFilterId;
+      const listEl = $("emListItems");
+      if (prev) {
+        smartS.pageByFolder[prev] = state.threadListPage;
+        if (listEl) smartS.scrollByFolder[prev] = listEl.scrollTop;
+        if (window.IS_MOBILE) {
+          const ml = document.getElementById("mList");
+          smartS.scrollByFolder["m:" + prev] = ml ? ml.scrollTop : 0;
+          smartS.shownByFolder[prev] = mState.shownCount;
+        }
+      }
+      state.activeFilterId = id;
+      state.threadListPage = smartS.pageByFolder[id] || 1;
+      smartS.sticky = null;
+      smartCloseMenu();
+      smartClosePop();
+      if (state.selectionMode) exitSelectionMode();
+      // Opening a folder ends a search.
+      if (state.searchText) {
+        state.searchText = "";
+        const si = $("emSearchInput");
+        if (si) si.value = "";
+      }
+      if (window.IS_MOBILE) {
+        mState.currentFilterId = id;
+        mState.shownCount = smartS.shownByFolder[id] || mState.pageSize;
+        smartS.pendingMScroll = smartS.scrollByFolder["m:" + id] || 0;
+        if (mState.searchQuery) {
+          mState.searchQuery = "";
+          const mi = document.getElementById("mAppbarSearchInput");
+          if (mi) mi.value = "";
+          const mc = document.getElementById("mAppbarSearchClear");
+          if (mc) mc.classList.remove("visible");
+        }
+      }
+      renderThreadList();
+      if (listEl) listEl.scrollTop = smartS.scrollByFolder[id] || 0;
+      if (window.IS_MOBILE) {
+        mState.dirtyList = true;
+        mState.dirtyDrawer = true;
+        mRequestRender();
+      }
+      smartEnsureLoaded(id);
+    }
+    function smartSetFilter(fid, filterId) {
+      if (filterId) smartS.filterByFolder[fid] = filterId;
+      else delete smartS.filterByFolder[fid];
+      state.threadListPage = 1;
+      if (window.IS_MOBILE) mState.shownCount = mState.pageSize;
+      smartCloseMenu();
+      renderThreadList();
+      const listEl = $("emListItems");
+      if (listEl) listEl.scrollTop = 0;
+      if (window.IS_MOBILE) {
+        mState.dirtyList = true;
+        mRequestRender();
+      }
+    }
+    function smartClearFilter() { smartSetFilter(state.activeFilterId, null); }
+    // The filters with at least one match in the folder's rows, with counts.
+    function smartFilterItems(view) {
+      const out = [];
+      for (const d of smartFilterDefs()) {
+        let n = 0;
+        for (const t of view.base) if (smartHasFilter(t, d.id, view.chipsOf(t))) n++;
+        if (n > 0 || d.id === view.filterId) out.push({ id: d.id, label: d.label, n });
+      }
+      return out;
+    }
+    function smartUpdateFilterUi(view) {
+      const label = view.filterId ? (smartFilterLabel(view.filterId) || view.filterId) : "";
+      const pill = $("emSmartFilterPill");
+      if (pill) {
+        pill.hidden = !label;
+        const txt = pill.querySelector(".em-smart-fpill-text");
+        if (txt) txt.textContent = label;
+        pill.title = label ? "Showing only: " + label : "";
+      }
+      const btn = $("emSmartFilterBtn");
+      if (btn) {
+        btn.classList.toggle("is-active", !!label);
+        btn.setAttribute("aria-pressed", label ? "true" : "false");
+        btn.title = label ? "Filtered: " + label + ". Click to change" : "Filter this folder by label";
+      }
+      const mi = document.getElementById("mFilterIcon");
+      if (mi) mi.classList.toggle("is-on", !!label);
+    }
+    function smartChipHtml(k) {
+      return `<span class="em-sc em-sc-${esc(k.tone)}" title="${esc(smartChipTip(k))}">${esc(k.label)}</span>`;
+    }
+    function smartFolderTagHtml(t, now) {
+      const f = mainFolderOf(t, now);
+      return `<span class="em-sc em-sc-folder" title="In ${esc(SMART_FOLDER_SHORT[f])}">${esc(SMART_FOLDER_SHORT[f])}</span>`;
+    }
+    // Status lines at the top of the list: loading, errors, search.
+    function smartStatusLines(view, mobile) {
+      const cls = mobile ? "m-smart-line" : "em-smart-line";
+      const spin = '<span class="em-smart-spin" aria-hidden="true"></span>';
+      const lines = [];
+      const texts = [];
+      if (smartS.loading.boot) texts.push(smartS.loading.boot.text);
+      for (const k of Object.keys(smartS.loading)) {
+        if (k !== "boot" && smartS.loading[k].text) texts.push(smartS.loading[k].text);
+      }
+      if (view.searching && smartS.searchPending) texts.push("Searching all mail…");
+      for (const tx of texts) lines.push(`<div class="${cls}" role="status">${spin}<span>${esc(tx)}</span></div>`);
+      const loaderName = smartLoaderFor(view.fid);
+      const err = (!smartS.booted && !smartS.loading.boot && smartS.bootError)
+        ? smartS.bootError
+        : (smartS.loadErrors.attention && !smartS.loading.attention && (view.fid === "x_inbox" || view.fid === "x_starred"))
+          ? smartS.loadErrors.attention
+          : (loaderName && smartS.loadErrors[loaderName]) || "";
+      if (err) {
+        lines.push(`<div class="${cls} is-error" role="alert"><span>Couldn't load this folder (${esc(err)}).</span>` +
+                   `<button type="button" data-smart-retry="1">Retry</button></div>`);
+      }
+      if (view.searching && !smartS.searchPending && smartS.searchInfo && smartS.searchInfo.error && smartS.searchInfo.q.toLowerCase() === view.q) {
+        lines.push(`<div class="${cls} is-error" role="alert"><span>Search of older mail failed (${esc(smartS.searchInfo.error)}). Showing loaded conversations only.</span></div>`);
+      }
+      return lines.join("");
+    }
+    function smartRetry() {
+      if (!smartS.booted) { smartS.bootError = null; smartBoot(); return; }
+      const name = smartLoaderFor(state.activeFilterId);
+      if (smartS.loadErrors.attention) { delete smartS.loadErrors.attention; smartRunLoader("attention"); }
+      if (name && smartS.loadErrors[name]) { delete smartS.loadErrors[name]; smartRunLoader(name); }
+      smartScheduleRender();
+    }
+    function smartEmptyText(view) {
+      if (view.searching) return `No conversations match “${esc(view.q)}”.`;
+      if (view.filterId) return `Nothing here matches <b>${esc(smartFilterLabel(view.filterId))}</b>.`;
+      if (state.starredOnly) return "No starred conversations here.";
+      switch (view.fid) {
+        case "x_inbox":   return "Nothing waiting on you.";
+        case "x_waiting": return "No conversations are waiting on the customer.";
+        case "x_sent":    return "No sent replies loaded.";
+        case "x_starred": return "No starred conversations.";
+        case "x_done":    return "Nothing in Done yet.";
+        case "x_all":     return "No conversations.";
+      }
+      const d = smartFolderDef(view.fid);
+      return "Nothing in <b>" + esc(d ? d.label : "this folder") + "</b> right now.";
+    }
+    // Extra actions at the end of a folder: older mail on request.
+    function smartMoreHtml(view, mobile) {
+      if (view.searching || !smartS.booted) return "";
+      const cls = mobile ? "m-smart-more" : "em-smart-more";
+      if (view.fid === "x_all" && !smartS.allExhausted && smartS.allOldestMs) {
+        return `<div class="${cls}"><button type="button" data-smart-more="older"${smartS.loading.older ? " disabled" : ""}>Load older conversations</button></div>`;
+      }
+      if (view.fid === "x_done" && !smartS.loaded.doneOlder) {
+        return `<div class="${cls}"><button type="button" data-smart-more="doneOlder"${smartS.loading.doneOlder ? " disabled" : ""}>Show older archived</button></div>`;
+      }
+      return "";
+    }
+    function smartWireListExtras(host) {
+      host.querySelectorAll("[data-smart-retry]").forEach(b => b.addEventListener("click", e => { e.stopPropagation(); smartRetry(); }));
+      host.querySelectorAll("[data-smart-more]").forEach(b => b.addEventListener("click", e => {
+        e.stopPropagation();
+        if (!b.disabled) smartRunLoader(b.getAttribute("data-smart-more"));
+      }));
+      host.querySelectorAll("[data-smart-clear-filter]").forEach(b => b.addEventListener("click", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        smartClearFilter();
+      }));
+    }
+    // renderThreadList in the new layout (desktop).
+    function smartRenderList() {
+      const host = $("emListItems");
+      if (!host) return;
+      const view = smartBuildList(state.activeFilterId, state.searchText);
+      if (view.fid !== state.activeFilterId) state.activeFilterId = view.fid;
+      smartRenderRail();
+      smartUpdateFilterUi(view);
+      if (smartS.menuOpen) smartFillMenu(view);
+      const lines = smartStatusLines(view, false);
+      let banner = "";
+      if (view.searching) {
+        const n = view.rows.length;
+        banner = '<div class="em-search-banner"><i class="material-icons">search</i><span><b>' + n + '</b> match' + (n === 1 ? "" : "es") +
+                 " across all mail" + (smartS.searchInfo && smartS.searchInfo.maxed && !smartS.searchPending
+                   ? ' <span style="color:#9a3f00;">(scan limit reached, narrow your query for deeper results)</span>' : "") +
+                 "</span></div>";
+      }
+      if (!view.rows.length) {
+        const busy = !!(smartS.loading.boot || smartS.loading[smartLoaderFor(view.fid)] || (view.searching && smartS.searchPending));
+        const clear = view.filterId ? '<br><a href="#" data-smart-clear-filter="1">Show everything in this folder</a>' : "";
+        host.innerHTML = lines + banner + (busy ? "" : `<div class="em-list-empty">${smartEmptyText(view)}${clear}</div>`) + smartMoreHtml(view, false);
+        smartWireListExtras(host);
+        renderPagination(0);
+        updateSelectionBar();
+        return;
+      }
+      const total = view.rows.length;
+      const totalPages = Math.max(1, Math.ceil(total / THREADS_PER_PAGE));
+      if (state.threadListPage > totalPages) state.threadListPage = totalPages;
+      if (state.threadListPage < 1) state.threadListPage = 1;
+      const start = (state.threadListPage - 1) * THREADS_PER_PAGE;
+      const pageRows = view.rows.slice(start, start + THREADS_PER_PAGE);
+      const sel = state.selectionMode;
+      const grouped = view.fid === "x_inbox" && !view.searching && view.newCount > 0;
+      let html = lines + banner;
+      pageRows.forEach((t, i) => {
+        const idx = start + i;
+        if (grouped && idx === 0) html += '<div class="em-smart-group">New</div>';
+        if (grouped && idx === view.newCount) html += '<div class="em-smart-group">Earlier</div>';
+        const chips = view.chipsOf(t);
+        const shown = chips.slice(0, 2);
+        const rest = chips.slice(2);
+        const tag = view.searching ? smartFolderTagHtml(t, view.now) : "";
+        const badges = tag + shown.map(smartChipHtml).join("");
+        const checkbox = sel
+          ? `<input type="checkbox" class="em-list-check" data-id="${esc(t.id)}"${state.checkedIds.has(t.id) ? " checked" : ""}>`
+          : "";
+        html += `
+          <div class="em-list-item${state.selectedId === t.id ? " selected" : ""}${t.unread ? " unread" : ""}${state.checkedIds.has(t.id) ? " checked" : ""}${sel ? " selectable" : ""}" data-id="${esc(t.id)}">
+            ${checkbox}
+            <div class="em-name">${esc(t.customerName || "Unknown customer")}</div>
+            <button type="button"
+                    class="em-star-btn${t.starred ? " is-on" : ""}"
+                    data-star-id="${esc(t.id)}"
+                    aria-label="${t.starred ? "Unstar thread" : "Star thread"}"
+                    title="${t.starred ? "Starred — click to remove" : "Star this thread"}">
+              <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
+            </button>
+            <div class="em-time">${esc(fmtTime(pickThreadInteractionMs(t)))}</div>
+            <div class="em-snippet">${esc(smartSnippet(t))}</div>
+            <div class="em-badges em-smart-badges"${rest.length ? ` title="${esc("Also: " + rest.map(k => k.label).join(", "))}"` : ""}>${badges}</div>
+          </div>`;
+      });
+      if (start + THREADS_PER_PAGE >= total) html += smartMoreHtml(view, false);
+      host.innerHTML = html;
+      smartWireListExtras(host);
+      host.querySelectorAll(".em-list-item").forEach(el => {
+        const id = el.dataset.id;
+        const checkbox = el.querySelector(".em-list-check");
+        if (checkbox) {
+          checkbox.addEventListener("click", e => e.stopPropagation());
+          checkbox.addEventListener("change", () => toggleChecked(id));
+        }
+        const starBtn = el.querySelector(".em-star-btn");
+        if (starBtn) {
+          starBtn.addEventListener("click", e => {
+            e.stopPropagation();
+            toggleThreadStarred(starBtn.getAttribute("data-star-id") || id);
+          });
+        }
+        el.addEventListener("click", e => {
+          if (state.selectionMode) {
+            if (e.target !== checkbox) toggleChecked(id);
+          } else {
+            openThread(id);
+          }
+        });
+      });
+      updateSelectionBar();
+      renderPagination(total);
+    }
+
+    // ── Filter menu (desktop) ────────────────────────────────────────
+    function smartFillMenu(view) {
+      const menu = $("emSmartFilterMenu");
+      if (!menu) return;
+      const items = smartFilterItems(view);
+      let html = '<div class="em-smart-fmenu-head">Filter this folder</div>';
+      if (view.filterId) {
+        html += `<button type="button" role="menuitemradio" aria-checked="false" data-f="">Show all<span class="n">${view.base.length}</span></button>`;
+      }
+      html += items.length
+        ? items.map(it => `<button type="button" role="menuitemradio" aria-checked="${it.id === view.filterId ? "true" : "false"}"` +
+                          ` class="${it.id === view.filterId ? "on" : ""}" data-f="${esc(it.id)}">${esc(it.label)}<span class="n">${it.n}</span></button>`).join("")
+        : '<div class="em-smart-fmenu-empty">No labels in this folder right now.</div>';
+      menu.innerHTML = html;
+    }
+    function smartOpenMenu() {
+      const btn = $("emSmartFilterBtn");
+      if (!btn) return;
+      smartClosePop();
+      let menu = $("emSmartFilterMenu");
+      if (!menu) {
+        menu = document.createElement("div");
+        menu.id = "emSmartFilterMenu";
+        menu.className = "em-smart-fmenu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", "Filter this folder");
+        menu.addEventListener("click", e => {
+          const b = e.target.closest("button[data-f]");
+          if (!b) return;
+          smartSetFilter(state.activeFilterId, b.getAttribute("data-f") || null);
+          btn.focus();
+        });
+        document.body.appendChild(menu);
+      }
+      smartFillMenu(smartBuildList(state.activeFilterId, state.searchText));
+      menu.hidden = false;
+      const r = btn.getBoundingClientRect();
+      const w = menu.offsetWidth || 220;
+      menu.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + "px";
+      menu.style.top = Math.round(r.bottom + 4) + "px";
+      smartS.menuOpen = true;
+      btn.setAttribute("aria-expanded", "true");
+    }
+    function smartCloseMenu() {
+      const menu = $("emSmartFilterMenu");
+      if (menu) menu.hidden = true;
+      smartS.menuOpen = false;
+      const btn = $("emSmartFilterBtn");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+    }
+
+    // ── Filter sheet (phone) ─────────────────────────────────────────
+    function smartOpenFilterSheet() {
+      const sheet = document.getElementById("mFilterSheet");
+      const bd = document.getElementById("mFilterSheetBackdrop");
+      const body = document.getElementById("mFilterSheetBody");
+      const title = document.getElementById("mFilterSheetTitle");
+      if (!sheet || !bd || !body) return;
+      const view = smartBuildList(mState.currentFilterId, mState.searchQuery);
+      const def = smartFolderDef(view.fid);
+      if (title) title.textContent = "Filter " + (def ? def.label : "folder");
+      const items = smartFilterItems(view);
+      const row = (id, label, n, on) =>
+        `<div class="m-sheet-row m-smart-frow${on ? " on" : ""}" role="button" tabindex="0" data-f="${mEsc(id)}">` +
+          `<span class="m-lab">${mEsc(label)}</span><span class="m-smart-fn">${n}</span>` +
+          `<i class="material-icons" aria-hidden="true">${on ? "check" : ""}</i></div>`;
+      let html = view.filterId ? row("", "Show all", view.base.length, false) : "";
+      html += items.map(it => row(it.id, it.label, it.n, it.id === view.filterId)).join("");
+      if (!items.length) html += '<div class="m-sheet-row"><span class="m-lab">No labels in this folder right now.</span></div>';
+      body.innerHTML = html;
+      body.querySelectorAll(".m-smart-frow").forEach(el => {
+        const pick = () => { smartCloseFilterSheet(); smartSetFilter(view.fid, el.getAttribute("data-f") || null); };
+        el.addEventListener("click", pick);
+        el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+      });
+      bd.classList.add("visible");
+      sheet.classList.add("visible");
+    }
+    function smartCloseFilterSheet() {
+      const sheet = document.getElementById("mFilterSheet");
+      const bd = document.getElementById("mFilterSheetBackdrop");
+      if (sheet) sheet.classList.remove("visible");
+      if (bd) bd.classList.remove("visible");
+    }
+
+    // ── Phone: drawer and list ───────────────────────────────────────
+    function smartMRenderDrawer() {
+      const folders = document.getElementById("mDrawerFolders");
+      const nameEl  = document.getElementById("mDrawerName");
+      const roleEl  = document.getElementById("mDrawerRole");
+      if (!folders) return;
+      if (state.currentUser) {
+        nameEl.textContent = state.currentUser.displayName || state.currentUser.username;
+        roleEl.textContent = (state.isOwner ? "Owner" : "Operator");
+      } else {
+        nameEl.textContent = "Signed out";
+        roleEl.textContent = "";
+      }
+      const c = smartCounts();
+      const cur = mState.currentFilterId;
+      const row = (id, icon, label, badge) =>
+        `<div class="m-drawer-folder${cur === id ? " active" : ""}" data-filter="${mEsc(id)}">` +
+          `<i class="material-icons">${mEsc(icon)}</i><span class="m-flbl">${mEsc(label)}</span>` +
+          (badge ? `<span class="m-fcnt">${badge.html}</span>` : "") + `</div>`;
+      let html = SMART_FOLDERS.map(f => row(f.id, f.icon, f.label, smartFolderBadge(f.id, c))).join("");
+      html += '<div class="m-drawer-section">Smart views</div>';
+      html += SMART_VIEWS.map(v => row(v.id, v.icon, v.label, c.views[v.id] ? { html: String(c.views[v.id]) } : null)).join("");
+      const open = smartS.labelsOpen;
+      html += `<div class="m-drawer-section m-smart-lbltoggle" role="button" tabindex="0" aria-expanded="${open ? "true" : "false"}" data-smart-labels="1">` +
+                `<span>Labels</span><i class="material-icons">${open ? "expand_less" : "expand_more"}</i></div>`;
+      if (open) {
+        for (const id of SMART_LABEL_IDS) {
+          const f = RAIL_FILTERS.find(x => x.id === id);
+          if (!f) continue;
+          const n = smartLabelCount(f);
+          html += row(f.id, f.icon, f.label, n == null ? null : { html: String(n) });
+        }
+      }
+      folders.innerHTML = html;
+      folders.querySelectorAll(".m-drawer-folder[data-filter]").forEach(el => {
+        el.addEventListener("click", () => {
+          smartSelectFolder(el.getAttribute("data-filter"));
+          mCloseDrawer();
+          mShowScreen("list");
+        });
+      });
+      const lt = folders.querySelector("[data-smart-labels]");
+      if (lt) {
+        lt.addEventListener("click", smartToggleLabels);
+        lt.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); smartToggleLabels(); } });
+      }
+    }
+    function smartMRenderList() {
+      const list = document.getElementById("mList");
+      if (!list) return;
+      mUpdateAppbar();
+      const view = smartBuildList(mState.currentFilterId, mState.searchQuery);
+      smartUpdateFilterUi(view);
+      const lines = smartStatusLines(view, true);
+      const pill = view.filterId
+        ? `<div class="m-smart-fline"><span class="em-smart-fpill"><span class="em-smart-fpill-text">${mEsc(smartFilterLabel(view.filterId))}</span>` +
+          `<button type="button" class="em-smart-fpill-x" data-smart-clear-filter="1" aria-label="Clear filter"><i class="material-icons">close</i></button></span>` +
+          `<span>${view.rows.length} of ${view.base.length}</span></div>`
+        : "";
+      if (smartS.mScrollObserver) {
+        try { smartS.mScrollObserver.disconnect(); } catch (_) {}
+        smartS.mScrollObserver = null;
+      }
+      if (mState._scrollObserver) {
+        try { mState._scrollObserver.disconnect(); } catch (_) {}
+        mState._scrollObserver = null;
+      }
+      if (!view.rows.length) {
+        const busy = !!(smartS.loading.boot || smartS.loading[smartLoaderFor(view.fid)] || (view.searching && smartS.searchPending));
+        list.innerHTML = lines + pill + (busy ? "" : `
+          <div style="padding: 60px 32px; text-align: center; color: var(--m-c-text-muted);">
+            <i class="material-icons" style="font-size:48px; color: var(--m-c-border-strong);">${view.searching ? "search_off" : "inbox"}</i>
+            <p style="margin-top: 12px; font-size: 15px;">${smartEmptyText(view)}</p>
+          </div>`) + smartMoreHtml(view, true);
+        smartWireListExtras(list);
+        return;
+      }
+      const shown = Math.min(mState.shownCount, view.rows.length);
+      const hasMore = shown < view.rows.length;
+      const grouped = view.fid === "x_inbox" && !view.searching && view.newCount > 0;
+      let html = lines + pill;
+      view.rows.slice(0, shown).forEach((t, idx) => {
+        if (grouped && idx === 0) html += '<div class="m-smart-group">New</div>';
+        if (grouped && idx === view.newCount) html += '<div class="m-smart-group">Earlier</div>';
+        const name = t.customerName || t.etsyUsername || "(Unknown)";
+        const initials = mInitials(name);
+        const color = mAvatarColor(name);
+        const snippet = smartSnippet(t);
+        const chips = view.chipsOf(t).slice(0, 2);
+        const tag = view.searching ? smartFolderTagHtml(t, view.now) : "";
+        const avatarImg = t.buyerAvatarUrl
+          ? `<img src="${mEsc(t.buyerAvatarUrl)}" referrerpolicy="no-referrer" alt="" onerror="this.replaceWith(document.createTextNode('${mEsc(initials)}'));">`
+          : mEsc(initials);
+        html += `
+          <div class="m-thread-row ${t.unread ? "unread" : ""}" data-id="${mEsc(t.id)}">
+            <div class="m-thread-row-content">
+              <div class="m-avatar ${color}">${avatarImg}</div>
+              <div class="m-thread-text">
+                <div class="m-thread-line-1">
+                  <span class="m-thread-name">${mEsc(name)}</span>
+                  <button type="button"
+                          class="m-thread-star${t.starred ? " is-on" : ""}"
+                          data-star-id="${mEsc(t.id)}"
+                          aria-label="${t.starred ? "Unstar" : "Star"}">
+                    <i class="material-icons">${t.starred ? "star" : "star_border"}</i>
+                  </button>
+                  <span class="m-thread-time">${mEsc(mFmtThreadTime(pickThreadInteractionMs(t)))}</span>
+                </div>
+                ${snippet ? `<div class="m-thread-subject">${mEsc(snippet)}</div>` : ""}
+                ${(tag || chips.length) ? `<div class="m-smart-chips">${tag}${chips.map(smartChipHtml).join("")}</div>` : ""}
+              </div>
+            </div>
+          </div>`;
+      });
+      html += hasMore
+        ? `<div class="m-list-sentinel" id="mListSentinel"><i class="material-icons" style="font-size:18px; color:var(--m-c-text-muted);">more_horiz</i>` +
+          `<span>Loading more (${shown} of ${view.rows.length})…</span></div>`
+        : smartMoreHtml(view, true) +
+          `<div style="padding: 24px; text-align: center; color: var(--m-c-text-faint); font-size: 13px;">End of list · ${view.rows.length} conversation${view.rows.length === 1 ? "" : "s"}</div>`;
+      list.innerHTML = html;
+      smartWireListExtras(list);
+      list.querySelectorAll(".m-thread-row").forEach(row => {
+        const id = row.getAttribute("data-id");
+        const star = row.querySelector(".m-thread-star");
+        if (star) {
+          star.addEventListener("click", e => {
+            e.stopPropagation();
+            toggleThreadStarred(star.getAttribute("data-star-id") || id);
+          });
+        }
+        row.querySelector(".m-thread-row-content").addEventListener("click", () => mOpenThread(id));
+      });
+      if (hasMore && typeof IntersectionObserver !== "undefined") {
+        const sentinel = document.getElementById("mListSentinel");
+        if (sentinel) {
+          const obs = new IntersectionObserver(entries => {
+            for (const entry of entries) {
+              if (entry.isIntersecting) {
+                obs.disconnect();
+                smartS.mScrollObserver = null;
+                mState.shownCount += mState.pageSize;
+                smartMRenderList();
+                break;
+              }
+            }
+          }, { root: list, rootMargin: "200px" });
+          smartS.mScrollObserver = obs;
+          obs.observe(sentinel);
+        }
+      }
+      if (smartS.pendingMScroll != null) {
+        list.scrollTop = smartS.pendingMScroll;
+        smartS.pendingMScroll = null;
+      }
+    }
+    // Phone conversation: labels inside the customer name line.
+    function smartPaintMobileConv(t) {
+      const nameEl = document.querySelector("#mCustomerCardHead .m-name");
+      if (!nameEl || !t) return;
+      let box = nameEl.querySelector(".m-smart-cchips");
+      if (!box) {
+        const text = nameEl.textContent;
+        nameEl.textContent = "";
+        const span = document.createElement("span");
+        span.className = "m-smart-cname";
+        span.textContent = text;
+        box = document.createElement("span");
+        box.className = "m-smart-cchips";
+        nameEl.appendChild(span);
+        nameEl.appendChild(box);
+        box.addEventListener("click", e => {
+          const chip = e.target.closest("[data-chip]");
+          if (!chip) return;
+          e.stopPropagation();
+          smartOpenPop(chip, box.getAttribute("data-thread-id"), chip.getAttribute("data-chip"));
+        });
+      }
+      const chips = smartChipsFor(t).filter(k => k.id !== "order" && k.id !== "help").slice(0, 2);
+      box.setAttribute("data-thread-id", t.id);
+      box.innerHTML = chips.map(k => `<span class="em-sc em-sc-${esc(k.tone)}" role="button" tabindex="0" data-chip="${esc(k.id)}">${esc(k.label)}</span>`).join("");
+    }
+    // Phone overflow menu: Done / Reopen in place of Archive and
+    // "Mark needs review".
+    function smartSyncMobileMenu() {
+      const menu = document.getElementById("mMenu");
+      if (!menu) return;
+      const arch = menu.querySelector('[data-action="archive"]');
+      const reply = menu.querySelector('[data-action="reply"]');
+      const items = [arch, reply].filter(Boolean);
+      if (!isSmartLayout()) {
+        for (const el of items) {
+          if (el.hasAttribute("data-legacy-html")) { el.innerHTML = el.getAttribute("data-legacy-html"); el.style.display = ""; }
+        }
+        return;
+      }
+      for (const el of items) if (!el.hasAttribute("data-legacy-html")) el.setAttribute("data-legacy-html", el.innerHTML);
+      const t = smartFind(state.selectedId);
+      const done = !!t && isArchived(t);
+      if (arch) { arch.innerHTML = '<i class="material-icons">done</i>Done'; arch.style.display = done ? "none" : ""; }
+      if (reply) { reply.innerHTML = '<i class="material-icons">unarchive</i>Reopen'; reply.style.display = done ? "" : "none"; }
+    }
+
+    // ── Open conversation: human status words, labels, Done/Reopen ──
+    function smartDecorateDetail(t) {
+      if (!t || !isSmartLayout()) return;
+      if (t.id && !smartFind(t.id)) {
+        // Opened from a link: keep it in the cache so it shows in its folder.
+        smartMergeDocs([t]);
+        smartScheduleRender();
+      }
+      const th = smartFind(t.id) || t;
+      smartS.detailId = th.id;
+      smartS.detailThread = th;
+      const detail = $("emDetail");
+      const header = detail && detail.querySelector(".em-detail-header");
+      if (!header) return;
+      const pill = header.querySelector(".em-status-pill");
+      if (pill) {
+        pill.setAttribute("data-smart", "1");
+        pill.className = "em-status-pill " + smartLegacyPill(th).cls;
+        pill.textContent = smartStatusWords(th);
+        pill.title = "Status: " + (th.status || "none");
+      }
+      for (const id of ["emReviewBtn", "emAllBtn"]) {
+        const b = $(id);
+        if (b) b.style.display = "none";
+      }
+      const arch = $("emArchiveBtn");
+      if (arch) {
+        if (!arch.hasAttribute("data-legacy-html")) {
+          arch.setAttribute("data-legacy-html", arch.innerHTML);
+          arch.setAttribute("data-legacy-title", arch.title || "");
+        }
+        const done = isArchived(th);
+        arch.innerHTML = done ? '<i class="material-icons">unarchive</i>Reopen' : '<i class="material-icons">done</i>Done';
+        arch.title = done ? "Reopen: take this conversation out of Done" : "Done: nothing more to do here";
+      }
+      const head = $("emCustHead");
+      if (head) {
+        let box = $("emSmartDetailChips");
+        if (!box) {
+          box = document.createElement("div");
+          box.id = "emSmartDetailChips";
+          box.className = "em-smart-dchips";
+          head.insertBefore(box, head.querySelector(".em-cust-chevron"));
+          box.addEventListener("click", e => {
+            e.stopPropagation();   // the customer line toggles its panel on click
+            const chip = e.target.closest("[data-chip]");
+            if (chip) smartOpenPop(chip, box.getAttribute("data-thread-id"), chip.getAttribute("data-chip"));
+          });
+          box.addEventListener("keydown", e => {
+            const chip = e.target.closest("[data-chip]");
+            if (!chip || (e.key !== "Enter" && e.key !== " ")) return;
+            e.preventDefault();
+            e.stopPropagation();
+            smartOpenPop(chip, box.getAttribute("data-thread-id"), chip.getAttribute("data-chip"));
+          });
+        }
+        // Order and Help request already show in the Etsy bar above.
+        const chips = smartChipsFor(th).filter(k => k.id !== "order" && k.id !== "help").slice(0, 4);
+        box.setAttribute("data-thread-id", th.id);
+        box.innerHTML = chips.map(k =>
+          `<span class="em-sc em-sc-${esc(k.tone)}${smartS.pop && smartS.pop.threadId === th.id && smartS.pop.chipId === k.id ? " is-open" : ""}"` +
+          ` role="button" tabindex="0" aria-haspopup="dialog" data-chip="${esc(k.id)}" title="${esc(smartChipTip(k))}">${esc(k.label)}</span>`).join("");
+      }
+    }
+    // The classic header's pill: the raw status (as renderDetail writes it).
+    function smartLegacyPill(t) {
+      if (t && t.status === "auto_replied" && t.sendOrigin === "manual" && !t.manuallyMovedToAutoReplied) {
+        return { cls: "manually_sent", label: "manually_sent" };
+      }
+      return { cls: (t && t.status) || "", label: (t && t.status) || "unknown" };
+    }
+    function smartUndecorateDetail() {
+      const detail = $("emDetail");
+      const pill = detail && detail.querySelector(".em-detail-header .em-status-pill");
+      if (pill && pill.hasAttribute("data-smart")) {
+        const t = smartFind(smartS.detailId) || smartS.detailThread;
+        const p = smartLegacyPill(t);
+        pill.className = "em-status-pill " + p.cls;
+        pill.textContent = p.label;
+        pill.removeAttribute("data-smart");
+        pill.removeAttribute("title");
+      }
+      for (const id of ["emReviewBtn", "emAllBtn"]) {
+        const b = $(id);
+        if (b) b.style.display = "";
+      }
+      const arch = $("emArchiveBtn");
+      if (arch && arch.hasAttribute("data-legacy-html")) {
+        arch.innerHTML = arch.getAttribute("data-legacy-html");
+        arch.title = arch.getAttribute("data-legacy-title") || "Archive";
+        arch.removeAttribute("data-legacy-html");
+        arch.removeAttribute("data-legacy-title");
+      }
+      const box = $("emSmartDetailChips");
+      if (box) box.remove();
+      const mbox = document.querySelector("#mCustomerCardHead .m-smart-cchips");
+      if (mbox) mbox.remove();
+    }
+    function smartRefreshDetailDecor() {
+      if (!isSmartLayout() || !smartS.detailId || smartS.detailId !== state.selectedId) return;
+      const t = smartFind(smartS.detailId);
+      if (t && $("emCustHead")) smartDecorateDetail(t);
+    }
+
+    // ── Label explanation popover ("Not right") ──────────────────────
+    function smartOpenPop(anchor, threadId, chipId) {
+      const t = smartFind(threadId) || (smartS.detailThread && smartS.detailThread.id === threadId ? smartS.detailThread : null);
+      if (!t || !anchor) return;
+      const k = smartChipsFor(t).find(x => x.id === chipId);
+      if (!k) return;
+      smartCloseMenu();
+      let pop = $("emSmartPop");
+      if (pop && !pop.hidden && smartS.pop && smartS.pop.threadId === threadId && smartS.pop.chipId === chipId) {
+        smartClosePop();
+        return;
+      }
+      if (!pop) {
+        pop = document.createElement("div");
+        pop.id = "emSmartPop";
+        pop.className = "em-smart-pop";
+        pop.setAttribute("role", "dialog");
+        pop.setAttribute("aria-label", "About this label");
+        pop.addEventListener("click", e => {
+          const b = e.target.closest("button[data-act]");
+          if (!b) return;
+          e.stopPropagation();
+          if (b.getAttribute("data-act") === "close") smartClosePop();
+          else if (b.getAttribute("data-act") === "fix" && smartS.pop) smartMarkNotRight(smartS.pop.threadId, smartS.pop.chipId, b);
+        });
+        document.body.appendChild(pop);
+      }
+      document.querySelectorAll("[data-chip].is-open").forEach(el => el.classList.remove("is-open"));
+      anchor.classList.add("is-open");
+      smartS.pop = { threadId, chipId };
+      const meta = ["Source: " + CHIP_SOURCE_NAMES[k.src]];
+      if (typeof k.conf === "number" && isFinite(k.conf)) meta.push(Math.round(k.conf * 100) + "% sure");
+      if (k.about) meta.push("About " + k.about);
+      pop.innerHTML =
+        `<div class="em-smart-pop-title"><span class="em-sc em-sc-${esc(k.tone)}">${esc(k.label)}</span></div>` +
+        `<div class="em-smart-pop-why">${esc(k.why)}</div>` +
+        `<div class="em-smart-pop-meta">${esc(meta.join(" · "))}</div>` +
+        `<div class="em-smart-pop-err" hidden></div>` +
+        `<div class="em-smart-pop-acts">` +
+          (k.fix ? `<button type="button" class="em-smart-pop-fix" data-act="fix" title="Hide this label until the customer writes again">Not right</button>` : "") +
+          `<button type="button" data-act="close">Close</button>` +
+        `</div>`;
+      pop.hidden = false;
+      const r = anchor.getBoundingClientRect();
+      const w = pop.offsetWidth, h = pop.offsetHeight;
+      let top = r.bottom + 6;
+      if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+      pop.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left)) + "px";
+      pop.style.top = Math.round(top) + "px";
+    }
+    function smartClosePop() {
+      const pop = $("emSmartPop");
+      if (pop) pop.hidden = true;
+      smartS.pop = null;
+      document.querySelectorAll("[data-chip].is-open").forEach(el => el.classList.remove("is-open"));
+    }
+    async function smartMarkNotRight(threadId, chipId, btn) {
+      const t = smartFind(threadId) || (smartS.detailThread && smartS.detailThread.id === threadId ? smartS.detailThread : null);
+      if (!t) return;
+      const by = (typeof getEmployeeName === "function" ? getEmployeeName() : null) || "operator";
+      const forInboundMs = tsToMs(t.lastInboundAt) || 0;
+      const prev = t.labelOverrides;
+      const errEl = document.querySelector("#emSmartPop .em-smart-pop-err");
+      if (errEl) errEl.hidden = true;
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="em-smart-spin" aria-hidden="true"></span>Saving…'; }
+      // Hide it at once; put it back if the save fails.
+      t.labelOverrides = Object.assign({}, prev || {}, { [chipId]: { off: true, forInboundMs, by } });
+      smartScheduleRender();
+      try {
+        await api("firestoreProxy", {
+          method: "POST",
+          body  : {
+            op   : "set",
+            coll : THREADS_COLL,
+            id   : String(threadId),
+            merge: true,
+            actor: by,
+            data : {
+              labelOverrides: { [chipId]: { off: true, forInboundMs, by, at: { __serverTimestamp: true } } },
+              updatedAt     : { __serverTimestamp: true }
+            }
+          }
+        });
+        if (smartS.pop && smartS.pop.threadId === threadId && smartS.pop.chipId === chipId) smartClosePop();
+        toast("Label hidden until the customer writes again");
+      } catch (e) {
+        t.labelOverrides = prev;
+        smartScheduleRender();
+        if (btn) { btn.disabled = false; btn.textContent = "Not right"; }
+        const err = document.querySelector("#emSmartPop .em-smart-pop-err");
+        if (err) { err.textContent = "Couldn't save: " + (e.message || "unknown error") + ". Try again."; err.hidden = false; }
+      }
+    }
+
+    // ── Status changes (Done / Reopen and the other quick actions) ──
+    function smartStatusToast(status, prevStatus, t) {
+      if (status === "archived") return "Moved to Done";
+      if (prevStatus === "archived") return "Reopened" + (t ? " · now in " + SMART_FOLDER_SHORT[mainFolderOf(t)] : "");
+      if (status === "production_rush") return "Marked as rush";
+      if (status === "sales_active") return "Moved to Sales — Active";
+      if (status === "pending_human_review") return "Marked as needs review";
+      if (status === "auto_replied") return "Moved to Auto-Reply";
+      return "Status updated";
+    }
+    // setStatus in the new layout: the same server call, shown at once.
+    async function smartSetStatus(threadId, status, reason) {
+      const t = smartFind(threadId);
+      const prev = t ? { status: t.status, archivedAt: t.archivedAt, awaitingReplySince: t.awaitingReplySince } : null;
+      if (t) {
+        t.status = status;
+        if (status === "archived") { t.archivedAt = { _ts: true, ms: Date.now() }; delete t.awaitingReplySince; }
+        else if (prev.status === "archived") delete t.archivedAt;
+      }
+      if (smartS.sticky && smartS.sticky.id === threadId && (status === "archived" || (prev && prev.status === "archived"))) smartS.sticky = null;
+      smartAfterDataChange();
+      try {
+        await api("etsyMailThreads", { method: "POST", body: { action: "setStatus", threadId, status, reason } });
+        toast(smartStatusToast(status, prev && prev.status, t));
+        smartDelta();
+      } catch (e) {
+        if (t && prev) {
+          t.status = prev.status;
+          if (prev.archivedAt) t.archivedAt = prev.archivedAt; else delete t.archivedAt;
+          if (prev.awaitingReplySince) t.awaitingReplySince = prev.awaitingReplySince;
+        }
+        smartAfterDataChange();
+        toast("Error: " + e.message);
+      }
+    }
+    function smartDoneOrReopen(threadId) {
+      const t = smartFind(threadId) || (smartS.detailThread && smartS.detailThread.id === threadId ? smartS.detailThread : null);
+      if (t && isArchived(t)) return smartSetStatus(threadId, "pending_human_review", "operator reopen");
+      return smartSetStatus(threadId, "archived", "operator archive");
+    }
+
+    // ── Layout switch and Settings control ──────────────────────────
+    function smartApplyChrome() {
+      const smart = isSmartLayout();
+      document.documentElement.classList.toggle("em-tabs-smart-root", smart);
+      if (document.body) document.body.classList.toggle("em-tabs-smart", smart);
+      const bulk = $("emSelArchiveBtn");
+      if (bulk && (smart || bulk.hasAttribute("data-legacy-html"))) {
+        if (!bulk.hasAttribute("data-legacy-html")) {
+          bulk.setAttribute("data-legacy-html", bulk.innerHTML);
+          bulk.setAttribute("data-legacy-title", bulk.title || "");
+        }
+        bulk.innerHTML = smart ? '<i class="material-icons">done</i>Done' : bulk.getAttribute("data-legacy-html");
+        bulk.title = smart ? "Move all selected conversations to Done" : bulk.getAttribute("data-legacy-title");
+      }
+    }
+    function applyTabLayout(next) {
+      if (!TAB_LAYOUTS.includes(next) || next === _tabLayout) return;
+      _tabLayout = next;
+      try { smartOnLayoutSwitch(next); } catch (e) { console.warn("[inbox layout] switch failed:", e.message); }
+    }
+    function smartOnLayoutSwitch(next) {
+      smartApplyChrome();
+      smartCloseMenu();
+      smartClosePop();
+      smartCloseFilterSheet();
+      if (state.selectionMode) exitSelectionMode();
+      // A search being typed survives the switch; it is run again below.
+      state.searchMode = false;
+      smartReset();
+      state.threadListPage = 1;
+      if (next === "smart") {
+        if (!smartFolderDef(state.activeFilterId)) state.activeFilterId = "x_inbox";
+      } else {
+        if (!RAIL_FILTERS.some(f => f.id === state.activeFilterId)) state.activeFilterId = "all";
+        state.lastListFilterKey = null;
+        state.threadCursorMs = null;
+      }
+      if (window.IS_MOBILE) {
+        mState.currentFilterId = state.activeFilterId;
+        mState.shownCount = mState.pageSize;
+        mState.dirtyList = true;
+        mState.dirtyDrawer = true;
+        mState.dirtyConv = true;
+      }
+      if (next === "smart") {
+        const t = smartFind(state.selectedId) || smartS.detailThread;
+        if (t && state.selectedId && t.id === state.selectedId) smartDecorateDetail(t);
+      } else {
+        smartUndecorateDetail();
+      }
+      renderRail();
+      renderThreadList();
+      fetchThreadListNow({ source: "user", forceFullFetch: true });
+      fetchCountsNow();
+      const q = String(state.searchText || "").trim();
+      if (q.length >= 2) fetchSearchResults(q);
+      if (window.IS_MOBILE) mRequestRender();
+    }
+    function smartOnConfigLoaded() {
+      if (!_autoCfg || !_autoCfg._tabsKnown) return;
+      const v = TAB_LAYOUTS.includes(_autoCfg.inboxTabs) ? _autoCfg.inboxTabs : null;
+      try {
+        if (v) localStorage.setItem(TAB_LAYOUT_CFG_CACHE_KEY, v);
+        else localStorage.removeItem(TAB_LAYOUT_CFG_CACHE_KEY);
+      } catch (_) {}
+      applyTabLayout(resolveTabLayout());
+      smartSyncLayoutControl();
+    }
+    function smartSyncLayoutControl() {
+      const ctl = $("emInboxLayoutCtl");
+      if (!ctl) return;
+      const saved = (_autoCfg && TAB_LAYOUTS.includes(_autoCfg.inboxTabs)) ? _autoCfg.inboxTabs : TAB_LAYOUT_DEFAULT;
+      const pick = smartS.layoutChoice || saved;
+      ctl.querySelectorAll("[data-layout]").forEach(b => {
+        const on = b.getAttribute("data-layout") === pick;
+        b.classList.toggle("on", on);
+        b.setAttribute("aria-checked", on ? "true" : "false");
+      });
+      const note = $("emInboxLayoutNote");
+      if (note) {
+        const ov = tabLayoutOverride();
+        const name = v => v === "legacy" ? "Classic folders" : "New inbox";
+        note.textContent = (smartS.layoutChoice && smartS.layoutChoice !== saved ? "Changes for everyone when you press Save. " : "")
+          + (ov ? "This browser is set to " + name(ov) + " (opened with ?tabs=" + ov + "); open the page with ?tabs=default to follow this setting."
+                : "Anyone can try the other layout in their own browser with ?tabs=legacy or ?tabs=smart.");
+      }
+    }
+
+    // ── One-time wiring ──────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", () => {
+      try { smartApplyChrome(); } catch (_) {}
+      $("emSmartFilterBtn")?.addEventListener("click", e => {
+        e.stopPropagation();
+        if (smartS.menuOpen) smartCloseMenu(); else smartOpenMenu();
+      });
+      $("emSmartFilterPill")?.addEventListener("click", e => {
+        if (!e.target.closest(".em-smart-fpill-x")) return;
+        e.stopPropagation();
+        smartClearFilter();
+      });
+      document.getElementById("mFilterIcon")?.addEventListener("click", () => {
+        if (!isSmartLayout()) return;
+        smartOpenFilterSheet();
+      });
+      document.getElementById("mFilterSheetBackdrop")?.addEventListener("click", smartCloseFilterSheet);
+      $("emInboxLayoutCtl")?.addEventListener("click", e => {
+        const b = e.target.closest("[data-layout]");
+        if (!b) return;
+        smartS.layoutChoice = b.getAttribute("data-layout");
+        smartSyncLayoutControl();
+      });
+    });
+    document.addEventListener("click", e => {
+      if (smartS.menuOpen) {
+        const m = $("emSmartFilterMenu"), b = $("emSmartFilterBtn");
+        if (!(m && m.contains(e.target)) && !(b && b.contains(e.target))) smartCloseMenu();
+      }
+      if (smartS.pop) {
+        const p = $("emSmartPop");
+        if (!(p && p.contains(e.target)) && !(e.target.closest && e.target.closest("[data-chip]"))) smartClosePop();
+      }
+    }, true);
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape") return;
+      if (smartS.pop) { smartClosePop(); return; }
+      if (smartS.menuOpen) { smartCloseMenu(); const b = $("emSmartFilterBtn"); if (b) b.focus(); return; }
+      const sheet = document.getElementById("mFilterSheet");
+      if (sheet && sheet.classList.contains("visible")) smartCloseFilterSheet();
+    });
+    window.addEventListener("resize", () => {
+      if (smartS.pop) smartClosePop();
+      if (smartS.menuOpen) smartCloseMenu();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") { smartS.hiddenAt = Date.now(); return; }
+      if (isSmartLayout() && smartS.booted && smartS.hiddenAt && Date.now() - smartS.hiddenAt > SMART_HIDDEN_REFRESH_MS && !smartS.loading.attention) {
+        smartRunLoader("attention", { quiet: true });
+      }
+      smartS.hiddenAt = 0;
+    });
+
     // ───── Thread list ─────
     function currentFilter() {
       return RAIL_FILTERS.find(f => f.id === state.activeFilterId) || RAIL_FILTERS[0];
@@ -11498,6 +13645,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       //     user action by default.
       // Sequence guard below ensures whichever response is freshest wins
       // even when multiple fetches end up running in parallel.
+      if (isSmartLayout()) return smartFetch(opts);
       const source = opts.source || "user";
       if (source === "poll" && state.inFlightList) return;
       if (state.searchMode) return;
@@ -11745,6 +13893,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // slow response can't clobber a fresher query.
     let _searchSeq = 0;
     async function fetchSearchResults(q) {
+      if (isSmartLayout()) return smartServerSearch(q);
       const mySeq = ++_searchSeq;
       state.searchMode = true;
       try {
@@ -11769,6 +13918,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (!state.searchText.trim()) return;
 
         state.threads = data.docs || [];
+        // Folders keyed off a timestamp (Production questions, Refunds,
+        // Completed Sales) send no status, so the server searched all mail:
+        // keep only this folder's conversations.
+        if (filter.orderByField) state.threads = state.threads.filter(d => threadMatchesFilter(d, filter));
         // v5.30.3 — Apply star overrides (see comment at the primary
         // fetch site above).
         if (typeof applyStarOverrides === "function") applyStarOverrides(state.threads);
@@ -11777,7 +13930,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         if (typeof applyReplyAtOverrides === "function") applyReplyAtOverrides(state.threads);
         state.searchScanned = data.scanned || 0;
         state.searchMaxedOut = !!data.maxedOut;
-        state.searchScopedTo = filter.status ? filter.label : null;
+        state.searchScopedTo = (filter.status || filter.orderByField) ? filter.label : null;
         // Re-run the local filter against the new candidate pool —
         // ensures the rendered list matches whatever the user has
         // typed BY NOW, not the query that was sent 200ms ago.
@@ -11825,6 +13978,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     }
 
     function renderThreadList() {
+      if (isSmartLayout()) return smartRenderList();
       const host = $("emListItems");
       const q = state.searchText.trim().toLowerCase();
 
@@ -12520,7 +14674,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       }
       if (!targetStatus) return;
       const target = MOVE_TARGETS.find(t => t.status === targetStatus);
-      const targetLabel = target ? target.label : targetStatus;
+      const targetLabel = (isSmartLayout() && targetStatus === "archived") ? "Done" : (target ? target.label : targetStatus);
 
       // v1.4: stronger confirm for moves to Auto-Reply. This folder is
       // meant for AI-handled sends; operator moves are tagged
@@ -12574,6 +14728,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
     // ───── Counts ─────
     async function fetchCountsNow() {
+      if (isSmartLayout()) return smartFetchCounts();
       try {
         const data = await api("etsyMailThreads", { query: { counts: 1 } });
         state.counts = data.counts || {};
@@ -13800,7 +15955,10 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       });
 
       $("emReviewBtn")?.addEventListener("click", () => setStatus(t.id, "pending_human_review", "operator triage"));
-      $("emArchiveBtn")?.addEventListener("click", () => setStatus(t.id, "archived", "operator archive"));
+      $("emArchiveBtn")?.addEventListener("click", () => {
+        if (isSmartLayout()) return smartDoneOrReopen(t.id);   // Done, or Reopen on a Done thread
+        setStatus(t.id, "archived", "operator archive");
+      });
 
       // v0.9.36 — Mark a thread unread without changing its status.
       // Optimistically flips state.threads.unread=true so the list
@@ -14007,6 +16165,12 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // ticks 1Hz while the tab is visible. No-op (banner stays
       // hidden) for threads that aren't currently deferred.
       renderAutoPipelineTimer(t);
+
+      // New inbox layout: human status words and the labels in the
+      // customer line (nothing else in the header changes).
+      if (isSmartLayout()) {
+        try { smartDecorateDetail(t); } catch (e) { console.warn("[smart inbox] header:", e.message); }
+      }
     }
 
     // ─── Manual Custom Listing creation ────────────────────────────────
@@ -18556,6 +20720,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
      * end so the list itself updates — only the rail is fast-pathed.
      */
     async function setStatus(threadId, status, reason) {
+      if (isSmartLayout()) return smartSetStatus(threadId, status, reason);
       // Snapshot the current status so we can revert on failure.
       const t = state.threads && state.threads.find(t => t && t.id === threadId);
       const previousStatus = t ? t.status : null;
@@ -18731,6 +20896,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
           state.selectedId = null;
           $("emDetail").innerHTML = `<div class="em-detail-empty">Thread deleted. Pick another from the list.</div>`;
         } catch {}
+        if (isSmartLayout()) smartForget(threadId);
         fetchThreadListNow();
       } catch (e) {
         toast("Delete failed: " + e.message);
@@ -19319,6 +21485,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         // v5.32: full fetch — clearing the filter chips effectively
         // resets the view, so we want fresh folder contents, not a
         // delta off whatever state.threads currently holds.
+        if (isSmartLayout()) smartClearFilter();
         fetchThreadListNow({ forceFullFetch: true });
       });
 
@@ -20542,7 +22709,8 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
       if (screen === "list") {
         leftIcon.textContent = "menu";
-        const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId) || (RAIL_FILTERS || [])[0];
+        const filter = (isSmartLayout() ? smartFolderDef(mState.currentFilterId) : null)
+          || (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId) || (RAIL_FILTERS || [])[0];
         titleEl.textContent = filter ? filter.label : "Inbox";
         const total = mFilteredThreads().length;
         subEl.textContent = `${total} thread${total === 1 ? "" : "s"}`;
@@ -20627,7 +22795,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     function mCloseDrawer() { document.getElementById("mDrawerBackdrop").classList.remove("visible"); document.getElementById("mDrawer").classList.remove("visible"); }
     function mOpenSheet()   { document.getElementById("mSheetBackdrop").classList.add("visible");     document.getElementById("mSheet").classList.add("visible"); }
     function mCloseSheet()  { document.getElementById("mSheetBackdrop").classList.remove("visible");  document.getElementById("mSheet").classList.remove("visible"); }
-    function mToggleMenu()  { document.getElementById("mMenu").classList.toggle("visible"); }
+    function mToggleMenu()  { try { smartSyncMobileMenu(); } catch (_) {} document.getElementById("mMenu").classList.toggle("visible"); }
     function mCloseMenu()   { document.getElementById("mMenu").classList.remove("visible"); }
     // v5.10 — List-screen menu helpers. Same pattern as the per-thread
     // mMenu so click-outside / open / close / dynamic label updates
@@ -20846,6 +23014,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
 
     // ── Drawer rendering ─────────────────────────────────────────
     function mRenderDrawer() {
+      if (isSmartLayout()) { if (window.IS_MOBILE) smartMRenderDrawer(); return; }
       const folders = document.getElementById("mDrawerFolders");
       const nameEl  = document.getElementById("mDrawerName");
       const roleEl  = document.getElementById("mDrawerRole");
@@ -20918,6 +23087,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // etsyUsername, subject. Returns a NEW array (slice) so callers
     // can mutate the result safely.
     function mFilteredThreads() {
+      if (isSmartLayout()) return window.IS_MOBILE ? smartBuildList(mState.currentFilterId, mState.searchQuery).rows : [];
       const filter = (RAIL_FILTERS || []).find(f => f.id === mState.currentFilterId);
       const all = state.threads || [];
 
@@ -20997,6 +23167,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
     // sentinel scrolls into view. Avoids rendering 261 (and growing)
     // DOM nodes on every poll cycle.
     function mRenderList() {
+      if (isSmartLayout()) { if (window.IS_MOBILE) smartMRenderList(); return; }
       const list = document.getElementById("mList");
       if (!list) return;
       mUpdateAppbar();
@@ -21363,6 +23534,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
       // The phone's Design button shows this conversation's switch.
       paintDesignSwitch();
       mRenderMessages(t);
+      if (isSmartLayout()) { try { smartPaintMobileConv(t); } catch (_) {} }
       // Try to paint summary card from cache (no-op if cache miss; the
       // mStartSummaryWatch interval will catch a late arrival).
       mUpdateSummaryCard(t);
@@ -22483,6 +24655,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         clearTimeout(mState._searchDebounce);
         mState._searchDebounce = setTimeout(() => {
           mState.searchQuery = sbInput.value || "";
+          if (isSmartLayout()) smartMobileSearch(mState.searchQuery);
           mState.shownCount = mState.pageSize;  // reset pagination on every query
           mState.dirtyList = true;
           mRequestRender();
@@ -22503,6 +24676,7 @@ body.authed #emAuthLayer .gate{animation:gate-out .4s var(--ease) forwards;}
         const _runInlineSearch = () => {
           const q = inlineSearch.value || "";
           mState.searchQuery = q;
+          if (isSmartLayout()) smartMobileSearch(q);   // also search mail not loaded yet
           mState.shownCount = mState.pageSize;  // reset pagination on every query
           mState.dirtyList = true;
           inlineSearchClear.classList.toggle("visible", q.length > 0);
@@ -23674,6 +25848,7 @@ const EtsyMailAuth=(()=>{
     try{ handleOrderLinkHash(); }catch(_){}
   };
   A.hooks.onSignedOut=function(){
+    try{ smartReset(); }catch(_){}
     state.currentUser=null; state.isOwner=false;
     try{ applyRoleVisibility(); }catch(_){}
     state.threads=[]; state.messages=[]; state.selectedId=null;
