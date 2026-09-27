@@ -2170,7 +2170,10 @@ exports.handler = async (event) => {
       draftResp = await callDraftReply({
         threadId,
         mode         : "initial",
-        employeeName : employeeName || "system:auto-pipeline"
+        employeeName : employeeName || "system:auto-pipeline",
+        // A manual AI Draft click that came through here waits for the
+        // draft carrying its run id, whichever agent writes it.
+        manualRunId  : manualRunId || null
       });
     } catch (err) {
       // Audit 2026-09 — ONE automatic retry per inbound for transient

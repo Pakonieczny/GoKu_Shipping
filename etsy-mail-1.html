@@ -16617,7 +16617,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             const isNewerThanPrior = draftMs > (priorDraftMs || 0);
             const isClearlyThisRun = draftMs >= (startedAt - 10000);
             const isMatchingManualRun = manualRunId && draft.manualRunId === manualRunId;
-            if (isSalesAgentDraft && (isMatchingManualRun || (!manualRunId && (isNewerThanPrior || isClearlyThisRun || !priorDraftMs)))) {
+            // The pipeline may hand the message to the support drafter
+            // (finished sale, order question); its draft carries the same
+            // run id, so it counts as this click's reply.
+            if (isMatchingManualRun) return draft;
+            if (isSalesAgentDraft && !manualRunId && (isNewerThanPrior || isClearlyThisRun || !priorDraftMs)) {
               return draft;
             }
           }
@@ -16639,8 +16643,16 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             if (decision === "sales_agent_timeout" || decision === "sales_agent_failed") {
               throw new Error(reason || "sales agent failed before writing a draft");
             }
+            // The run ended without a draft for this click: say so instead
+            // of spinning until the timeout.
+            const decidedAt = t ? manualAiDraftTsMs(t.lastAutoDecisionAt) : 0;
+            if (decidedAt >= startedAt - 5000 && /^(failed|skipped_already_replied|skipped_draft_in_flight)$/.test(decision || "")) {
+              throw new Error(decision === "skipped_already_replied" ? "the AI run stopped: this message already has a reply"
+                            : decision === "skipped_draft_in_flight" ? "another AI reply for this conversation is still running"
+                            : "the AI run failed before writing a draft" + (reason ? " (" + reason + ")" : ""));
+            }
           } catch (e) {
-            if (/sales agent/i.test(e.message || "")) throw e;
+            if (/sales agent|AI run|another AI reply/i.test(e.message || "")) throw e;
             console.warn("[manual-sales-route] thread status poll failed:", e.message);
           }
         }
