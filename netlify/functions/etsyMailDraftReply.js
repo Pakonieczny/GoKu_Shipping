@@ -1415,9 +1415,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         don't list every other country.
 
      2. Always pair the transit time with the no-guarantee sentence
-        from section 7.3 ("we don't guarantee specific delivery
-        dates"). Transit time is the carrier's typical window, not a
-        commitment.
+        from section 7.3 ("Unfortunately we can't guarantee delivery
+        dates, whichever shipping option is chosen"). Transit time is
+        the carrier's typical window in business days, never a calendar
+        date.
 
      3. Production time (4-6 business days) is SEPARATE from shipping
         time. When the customer asks "how long will it take to get
@@ -1492,6 +1493,21 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    they are NEVER framed to the customer as commitments. This rule
    overrides every instinct to be helpful, agreeable, or affirming about
    timing.
+
+   OWNER'S HARD RULE (overrides everything below and every other
+   section): never give a concrete delivery timeline. No calendar date
+   or date range for arrival ("should land Sep 28-29", "arrives by
+   Friday", "USPS expects it on the 30th", "you'll have it next week"),
+   not even when tracking or the carrier shows an estimated delivery
+   date. The most you may give is a range in business days (production
+   4-6 business days, shipping to the region X-Y business days), and
+   every such range is followed by the polite disclaimer: "Unfortunately
+   we can't guarantee delivery dates, whichever shipping option is
+   chosen." That includes Priority, Express and rush. Don't bring up
+   arrival timing at all when the customer didn't ask about it (a
+   thank-you gets a thank-you). The one calendar date allowed is the
+   lost-package date from the section above, written only as "if it
+   hasn't arrived by <date>, message us".
 
    FIRST-CHECK PROTOCOL — apply before composing any reply.
 
@@ -1572,9 +1588,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
    After the no-guarantee sentence, stop. No reassurance on top of it
    ("plenty of time", "well ahead", "you'll be within that window",
-   "everything points to it arriving"). When the date is months away or
-   the customer says there's no rush, the no-guarantee sentence isn't
-   needed.
+   "everything points to it arriving"). Every reply that gives any
+   timing range carries the no-guarantee sentence, even when the date
+   is months away or the customer says there's no rush.
 
    THE NO-GUARANTEE DISCLAIMER. Some natural paraphrase of "we don't
    guarantee specific delivery dates" MUST appear in any reply where a
@@ -4867,6 +4883,18 @@ answering. Do not guess about the order's contents.`;
       s = s.replace(/\s+([.,;!?])/g, "$1");
       s = s.split("\n").map(line => line.replace(/\s+$/, "")).join("\n");
       s = s.replace(/\n{3,}/g, "\n\n");
+      // Owner's rule: any timing range carries the no-guarantee sentence.
+      // Added in English replies when the model left it out.
+      const _timing = /\b\d+\s*-\s*\d+\s+(?:business\s+|working\s+)?(?:days?|weeks?)\b/i;
+      const _timingTopic = /\b(?:ship\w*|deliver\w*|arriv\w*|transit|production|made|mail\w*|reach\w*|get\s+(?:it|there|to\s+you))\b/i;
+      const _english = ((s.match(/\b(?:the|and|you|your|we|it|is|to)\b/gi) || []).length >= 2);
+      if (_english && !/guarantee/i.test(s)
+          && s.split(/(?<=[.!?])\s+|\n+/).some(t => _timing.test(t) && _timingTopic.test(t))) {
+        const _disc = "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen.";
+        const _sig = s.search(/\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i);
+        s = _sig > 0 ? s.slice(0, _sig).replace(/\s+$/, "") + " " + _disc + s.slice(_sig)
+                     : s.replace(/\s+$/, "") + " " + _disc;
+      }
       // Sign-off on its own lines, never run onto the last sentence.
       s = s.replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites");
 
@@ -4972,6 +5000,25 @@ answering. Do not guess about the order's contents.`;
         parsed.confidence = 0.5;
         parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
           " | Reply offers a refund, remake, reship or discount; confidence capped at 0.5 so a person approves it.";
+      }
+    }
+    // Owner's rule: no concrete delivery timeline. A sentence that ties
+    // arrival to a calendar date or weekday is held for a person; the one
+    // allowed date is the lost-package "if it hasn't arrived by <date>".
+    {
+      const _mon = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?";
+      const _day = "(?:mon|tues|wednes|thurs|fri|satur|sun)day|tomorrow|next\\s+week|this\\s+week|the\\s+\\d{1,2}(?:st|nd|rd|th)";
+      const _dateRx = new RegExp("\\b(?:" + _mon + "|\\d{1,2}/\\d{1,2}|" + _day + ")\\b", "i");
+      const _arriveRx = /\b(?:arriv\w*|land\w*|deliver\w*|get\s+(?:it|there|to\s+you)|be\s+there|reach\w*|expect\w*|have\s+it|in\s+your\s+hands|show\s+up)\b/i;
+      const _lostRx = /\b(?:hasn['\u2019]?t|has\s+not|haven['\u2019]?t|have\s+not|not|doesn['\u2019]?t|does\s+not)\s+(?:yet\s+)?(?:arrived|shown\s+up|received|come|reached|delivered|got(?:ten)?)\b/i;
+      const _dated = (parsed.text || "").split(/(?<=[.!?])\s+|\n+/)
+        .find(t => _dateRx.test(t) && _arriveRx.test(t) && !_lostRx.test(t));
+      if (_dated) {
+        parsed.aiDeliveryDateReview = true;
+        parsed.aiEscalationRequested = true;
+        parsed.confidence = 0;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          " | Reply gives a delivery date (\"" + _dated.slice(0, 80) + "\"); the shop never gives delivery dates, only business-day ranges. Remove it before sending.";
       }
     }
     // The 10% goodwill code: only a code issue_discount_code returned may
@@ -5347,6 +5394,7 @@ answering. Do not guess about the order's contents.`;
       aiEscalationRequested : !!parsed.aiEscalationRequested,
       aiCanadaMentionReview : !!parsed.aiCanadaMentionReview,
       aiDiscountCode        : parsed.aiDiscountCode || null,
+      aiDeliveryDateReview  : !!parsed.aiDeliveryDateReview,
       aiInventedCodeReview  : !!parsed.aiInventedCodeReview,
       aiInvestigation       : parsed.investigation || null,
       aiAutoSendBlockers    : autoSendBlockers,
