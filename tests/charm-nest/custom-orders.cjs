@@ -216,9 +216,17 @@ async function browserChecks() {
     await page.click('#owClose');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-open.png') });
 
-    // print the chain-only sticker: the sorting station's label, then completed
+    // print the chain-only sticker: the sorting station's label, then completed: the seal is pressed on the button and
+    // the card flies to Completed, where a note says what arrived and offers Undo
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
     await page.waitForFunction(() => B.maps.customDone['4176744752_41767447521'], null, { timeout: 30000 });
+    await page.waitForFunction(() => document.querySelector('#motionLayer .mGhost .seal.seal-print'), null, { timeout: 5000 });
+    if (shots) { await page.waitForTimeout(420); await page.screenshot({ path: path.join(shots, 'seal-stamp.png') }); await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, 'seal-stamped.png') }); await page.waitForTimeout(1500); await page.screenshot({ path: path.join(shots, 'seal-flight.png') }); }
+    await page.waitForFunction(() => document.querySelector('.mNote') && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
+    const note1 = await page.evaluate(() => ({ text: document.querySelector('.mNote .mNoteT').textContent, acts: [...document.querySelectorAll('.mNote .mNoteBtn')].map(b => b.textContent), card: !!document.querySelector('#rvList .reviewListRow[data-rid="4176744752"]'), stamped: document.querySelector('#rvList .reviewListRow[data-rid="4176744752"]') }));
+    assert.equal(note1.text, 'Order 4176744752 moved to Completed · QR label printed by Test Operator'); assert.deepEqual(note1.acts, ['Undo', 'Show']);
+    assert.equal(note1.card, false, 'the card left Open (it flew to Completed)');
+    if (shots) await page.screenshot({ path: path.join(shots, 'seal-note.png') });
     const printed = await page.evaluate(() => ({ docs: window.__qrDocs, printed: window.__printed, handed: JSON.parse(localStorage.getItem('qrPrintAll')) }));
     assert.equal(printed.printed, 1, 'the print dialog was opened once (a stub: nothing printed)');
     const dd = printed.docs[0];
@@ -234,13 +242,12 @@ async function browserChecks() {
     assert(rec && rec.state === 'completed' && rec.prints === 1 && rec.printedBy === 'Test Operator' && rec.category === 'Chain only', 'marked completed in the cloud: ' + JSON.stringify(rec));
     await page.waitForFunction(() => !CustomPrint.busy('cinfo:custom:4176744752:CHAIN_8941'));
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Completed1']);
-    // (a print dialog closed without printing looks the same: the card stays, saying so, with an Undo for a while)
-    assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4176744752"] .rowActions'), /^Marked completed · Undo$/, 'the card itself says it was completed, with its Undo');
+    await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
 
     // a decision printed by hand: completed, no longer a decision, never pooled
     const before = await page.evaluate(() => Review.count());
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-print]');
-    await page.waitForFunction(() => B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat'), null, { timeout: 30000 });
+    await page.waitForFunction(() => B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
     const after = await page.evaluate(() => ({ n: Review.count(), st: B.orders.byKey.get('4174476673_41744766731').state, problems: B.orders.byKey.get('4174476673_41744766731').problems.length }));
     assert.equal(after.n, before - 1, 'its decision is gone'); assert.equal(after.st, 'noDesign'); assert.equal(after.problems, 0);
     // another sorter reopens it (the records come back without it): the line is a line to settle again, then completed again
@@ -250,10 +257,12 @@ async function browserChecks() {
       B.maps.customDone = keep; Orders.interpretAll(); out.push([row.state, row.problems.length]); Review.render(); return out;
     });
     assert.deepEqual(flip, [['pulled', 2], ['noDesign', 0]]);
-    // the Undo lasts about 12 s, then the cards are Completed's alone
-    await page.waitForFunction(() => !document.querySelector('#rvList .cuUndo'), null, { timeout: 20000 });
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     list = await rows();
+    // each carries its seal, the print button in the seal's colour
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => [n.dataset.rid, [...n.querySelectorAll('.sealRow .seal')].map(x => x.className.replace(/\s+/g, ' ').trim()), n.querySelector('[data-cu-print]').className.includes('sealedPrint')]).sort()),
+      [['4174476673', ['seal seal-print'], true], ['4176744752', ['seal seal-print'], true]], 'one print seal each');
+    assert.match(await page.getAttribute('#rvList .reviewListRow[data-rid="4176744752"] .seal', 'title'), /^QR label printed by Test Operator · /);
     assert.deepEqual(list.map(x => x.rid).sort(), ['4174476673', '4176744752'], 'both under Completed');
     // Completed holds every filter: pressing it again shows all it holds (here what Custom Orders does: nothing else was answered)
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
@@ -280,11 +289,22 @@ async function browserChecks() {
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-completed.png') });
     // printed again: the same sticker, counted
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
-    await page.waitForFunction(() => (window.__printed || 0) >= 3 && !document.querySelector('.cuStat'), null, { timeout: 30000 });
+    await page.waitForFunction(() => (window.__printed || 0) >= 3 && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 2);
+    // a second seal, pressed where it shows, beside the first
+    await page.waitForFunction(() => document.querySelectorAll('#rvList .reviewListRow[data-rid="4176744752"] .seal.seal-print').length === 2 && !document.querySelector('.seal.pending') && !document.querySelector('#motionLayer .sealTool'), null, { timeout: 8000 });
+    assert.deepEqual(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').stamps.map(x => x.how), ['print', 'print']);
+    if (shots) await page.screenshot({ path: path.join(shots, 'seal-two.png') });
+    // a press on the seal over the button prints (the seal passes the press on); one elsewhere only wobbles
+    const sealHit = await page.evaluate(() => { const n = document.querySelector('#rvList .reviewListRow[data-rid="4176744752"]'), s = n.querySelectorAll('.seal')[1], r = s.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return e && e.closest('.seal') === s; });
+    assert(sealHit, 'the seal takes the pointer where it is (and passes a press over the button to it)');
+    const pb0 = await page.evaluate(() => window.__printed || 0);
+    { const s = await page.$$('#rvList .reviewListRow[data-rid="4176744752"] .seal'); const bb = await s[1].boundingBox(); await page.mouse.click(bb.x + bb.width * .7, bb.y + bb.height / 2); }
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => [window.__printed || 0, !!document.querySelector('.seal.wobble'), OrderWin.isOpen()].join()), [pb0, true, false].join(), 'a press on the seal away from the button prints nothing and opens nothing');
     // reopened: back to Open, a decision again
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]');
-    await page.waitForFunction(() => !B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat'), null, { timeout: 30000 });
+    await page.waitForFunction(() => !B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731'), undefined, 'the record is gone');
     assert.equal(await page.evaluate(() => Review.count()), before, 'its decision is back');
     // printed from Open with no name saved: the name is asked in the card (never a prompt over the page), then the card
@@ -296,17 +316,21 @@ async function browserChecks() {
     await page.waitForSelector(huggies + ' [data-cu-name]');
     await page.fill(huggies + ' [data-cu-name]', 'Test Operator');
     await page.click(huggies + ' [data-cu-name-ok]');
-    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-undo]'), hKey, { timeout: 30000 });
+    await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
+    await page.waitForFunction(k => B.maps.customDone[k] && [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4177425406 moved to Completed/.test(n.textContent)), hKey, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).printedBy, 'Test Operator', 'the name typed in the card is recorded');
-    await page.click(huggies + ' [data-cu-undo]');
-    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat'), hKey, { timeout: 30000 });
+    await page.click('.mNote .mNoteBtn:text("Undo")');
+    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), hKey, { timeout: 30000 })
+      .catch(async e => { throw new Error('undo: ' + await page.evaluate(k => JSON.stringify({ done: !!B.maps.customDone[k], stat: [...document.querySelectorAll('.cuStat, .btn.working')].map(n => n.outerHTML.slice(0, 200)), toasts: [...document.querySelectorAll('#toasts .toast')].map(n => n.textContent), notes: [...document.querySelectorAll('.mNote')].map(n => n.textContent) }), hKey)); });
+    // it flies back into Open from the Completed switch
+    await page.waitForFunction(() => document.querySelector('#rvList .reviewListRow[data-rid="4177425406"]') && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', hKey), undefined, 'Undo deletes the record');
     assert.equal(await page.evaluate(() => Review.count()), before, 'and its decision is back');
     assert.equal(await page.evaluate(() => !!window.__prompted), false, 'no prompt was opened');
     // a printer that fails marks nothing, and its card says so
     await page.evaluate(() => { window.__failPrint = true; });
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] [data-cu-print]');
-    await page.waitForFunction(() => /^Not printed/.test(document.querySelector('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')?.textContent || '') && !document.querySelector('.cuStat'), null, { timeout: 30000 })
+    await page.waitForFunction(() => /^Not printed/.test(document.querySelector('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')?.textContent || '') && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 })
       .catch(async e => { throw new Error('the card says it was not printed: ' + await page.textContent('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')); });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing');
     await page.evaluate(() => { window.__failPrint = false; });
@@ -337,14 +361,17 @@ async function browserChecks() {
 
     // Complete Order: completed at once with no label printed, "Completed by" under Completed, and reopened again
     await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-complete]');
-    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-undo]'), hKey, { timeout: 30000 });
+    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#motionLayer .mGhost .seal.seal-button'), hKey, { timeout: 30000 });
+    if (shots) { await page.waitForTimeout(1100); await page.screenshot({ path: path.join(shots, 'seal-complete.png') }); }
+    await page.waitForFunction(() => /moved to Completed · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     const byButton = srv.st.doc('Charm_Custom_Orders', hKey);
     assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && !byButton.prints, 'completed without a print: ' + JSON.stringify(byButton));
-    await page.waitForFunction(() => !document.querySelector('#rvList .cuUndo'), null, { timeout: 20000 });
+    await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4177425406"] .reviewReason'), /^Completed by Test Operator · /, 'who completed it and when');
+    assert.deepEqual(await page.evaluate(() => { const n = document.querySelector('#rvList .reviewListRow[data-rid="4177425406"]'); return [[...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), n.querySelector('[data-cu-print]').textContent]; }), [[true], 'Print QR label'], 'a Complete Order seal; its label not printed yet');
     await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-reopen]');
-    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat'), hKey, { timeout: 30000 });
+    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), hKey, { timeout: 30000 });
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
     // a custom order's own designs: .ai / .dxf dropped on its card, a metal picked for each in one window, Send to Sheet
@@ -375,7 +402,7 @@ async function browserChecks() {
     assert.match(strip.strip, /2 designs · 3 pieces/); assert.match(strip.gold, /gold/, 'Send to Sheet is the next step');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-designs-card.png') });
     await page.click(neck + ' [data-cu-send]');
-    await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .cuStat'), nKey, { timeout: 30000 });
+    await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .cuStat, #rvList .btn.working'), nKey, { timeout: 30000 });
     // no run here: the line waits for the next one, settled (its SKU asks nothing); a run puts it on as any line
     const w = await page.evaluate(k => { const r = B.orders.byKey.get(k); return { st: r.state, problems: r.problems.length, eng: r.spec.engraveCandidate, custom: Review.count() }; }, nKey);
     assert.deepEqual([w.st, w.problems, w.eng], ['pulled', 0, false]);
@@ -411,7 +438,7 @@ async function browserChecks() {
     assert.deepEqual(list.map(x => x.rid), ['4176744752']); assert.deepEqual(list[0].buttons, ['Print again'], 'no line to reopen');
     const printedBefore = await page.evaluate(() => window.__printed || 0);
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
-    await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat'), printedBefore, { timeout: 30000 });
+    await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat, .btn.working'), printedBefore, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 3, 'printed from the record');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum), '4176744752', 'the same sticker');
     assert.deepEqual(errors, [], 'no page errors');

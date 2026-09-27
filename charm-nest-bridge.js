@@ -5020,6 +5020,8 @@ const CustomPrint = window.CustomPrint = (() => {
   const undos = new Map();      // line key → { keys, rows, who, timer }: the card's "Marked completed · Undo"
   const asking = new Map();     // card key → the step that waits for a name, asked in the card
   const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
+  const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
+  const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
   const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
@@ -5093,7 +5095,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const held = it.done ? [] : rows.map(r => r.key).filter(k => !printing.has(k));
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
-    fails.delete(key); say(key, "Waiting for the printer…");
+    fails.delete(key); acting.set(key, "print"); say(key, "Waiting for the printer…");
     queue = queue.then(async () => {
       if (!label) {
         say(key, "Reading its label…");
@@ -5110,15 +5112,16 @@ const CustomPrint = window.CustomPrint = (() => {
       for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } }
       const done = Object.keys(saved);
       if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
-      release(); busy.delete(key);
-      // printed from Open: "Marked completed · Undo" on the card (a dialog closed without printing looks the same here)
-      if (!it.done && done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
-      settle(); say(key, null);
+      release(); busy.delete(key); acting.delete(key);
+      // printed from Open: the seal is pressed on the button and the card flies to Completed, where a note offers Undo
+      // (a dialog closed without printing looks the same here); printed again: a new seal is pressed on the card
+      if (done.length) sealed(it, rows, saved, done, who, "print");
+      settle(); say(key, null); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
-    }).catch(e => { failed(key, e.message); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(release);
+    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
   }
   /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
    *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
@@ -5134,7 +5137,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const held = rows.map(r => r.key).filter(k => !printing.has(k));
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
-    fails.delete(key); say(key, "Completing…");
+    fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
     queue = queue.then(async () => {
       let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
       const saved = {}; let putErr = null, cut = 0;
@@ -5144,13 +5147,36 @@ const CustomPrint = window.CustomPrint = (() => {
       }
       const done = Object.keys(saved), rid = rows[0].order.receiptId;
       if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
-      release(); busy.delete(key);
-      if (done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
-      settle(); say(key, null);
+      release(); busy.delete(key); acting.delete(key);
+      if (done.length) sealed(it, rows, saved, done, who, "button");
+      settle(); say(key, null); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
-    }).catch(e => { failed(key, e.message); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(release);
+    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+  }
+  /* ── the seal and the move (Paul, 27 Sep 20:09-20:24): what was pressed is stamped on the button that did it, with
+     who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
+  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]';
+  const mkeyOf = rows => "cu:" + Review.cardKey(rows[0]);
+  function sealed(it, rows, saved, done, who, how) {
+    const rec = saved[done[0]] || {}, list = window.Seal ? Seal.list(rec) : [], st = list.filter(x => x.how === (how === "button" ? "button" : "print")).pop() || { how, at: Date.now(), by: who };
+    const mk = mkeyOf(rows); fresh.set(mk, +st.at || Date.now());
+    if (it.done || !window.Motion) return;                                // printed again: stamped where the card is
+    offerUndo(done, rows.filter(r => saved[r.key]), who);
+    const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
+    const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
+    Motion.expect(mk, { to: DONE_SW, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: st, label: how === "button" ? "Complete Order" : "Print QR label" },
+      note: inWin ? null : { text: `Order ${rid} moved to Completed · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] } });
+  }
+  /** The seals just pressed are stamped where they show (the card in Completed, the order window's bar). */
+  function pressSoon() { requestAnimationFrame(() => requestAnimationFrame(() => { if (window.Seal) Seal.pressPending(); fresh.clear(); })); }
+  /** Back to Open, seen: the card leaves Completed for the Open switch, or flies into Open from the Completed switch. */
+  function comesBack(rows, note) {
+    if (!window.Motion || !rows.length) return;
+    const mk = mkeyOf(rows);
+    Motion.expect(mk, { to: OPEN_SW, note: note ? { text: note, actions: [{ label: "Show", fn: () => Review.showCard(mk, "open") }] } : null });
+    Motion.expectIn(mk, { from: DONE_SW });
   }
   /** "Marked completed · Undo" on the card for UNDO_MS: the lines it completed, by their keys. */
   function offerUndo(keys, rows, who) {
@@ -5162,12 +5188,21 @@ const CustomPrint = window.CustomPrint = (() => {
   function undo(it) {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
+    comesBack(u.rows);
     takeBack(it.key, u.rows, u.who, "undo");
+  }
+  /** Undo from the note under Completed: the lines it completed, by their keys. */
+  function undoKeys(keys) {
+    const u = keys.map(k => undos.get(k)).find(Boolean);
+    if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
+    clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
+    comesBack(u.rows);
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, u.who, "undo");
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); takeBack(it.key, rows, who, "reopen"); });
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
   }
   /** Each line's record deleted, the page following each as it goes (a failure part way leaves it saying what the cloud
    *  holds), then the lines put back for cutting; a failure of either is said as what it is. */
@@ -5194,11 +5229,21 @@ const CustomPrint = window.CustomPrint = (() => {
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
   function statusHtml(it, sz) {
     const b = busy.get(it.key);
-    if (b) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(b)}</span>`;
+    if (b && !acting.has(it.key)) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(b)}</span>`;
+    if (b) return "";
     if (asking.has(it.key)) return `<span class="cuWho"><input type="text" data-cu-name maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with this custom order" autocomplete="off"><button type="button" class="btn gold ${sz}" data-cu-name-ok>OK</button></span>`;
-    if (undoOf(it)) return `<span class="cuUndo" role="status">Marked completed · <button type="button" class="btn ghost ${sz}" data-cu-undo title="take the completion back (the printed label is not undone)">Undo</button></span>`;
+    if (sz === "xs" && undoOf(it)) return `<span class="cuUndo" role="status">Marked completed · <button type="button" class="btn ghost ${sz}" data-cu-undo title="take the completion back (the printed label is not undone)">Undo</button></span>`;
     return "";
   }
+  /** The button pressed, while its work runs: { act: "print" | "complete", text }; null when nothing runs. */
+  const working = it => busy.has(it.key) && acting.has(it.key) ? { act: acting.get(it.key), text: busy.get(it.key) } : null;
+  /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
+  function buttonHtml(it, act, cls, label, title, sz, attrs) {
+    const w = working(it), more = attrs ? " " + attrs : "";
+    if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
+    return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
+  }
+  const freshOf = mk => fresh.get(mk) || 0;
   /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
   function failed(key, why) {
     const was = fails.get(key); if (was) clearTimeout(was.timer);
@@ -5216,8 +5261,8 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
-  const stamp = it => [busy.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
-  return { print, complete, reopen, undo, statusHtml, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+  const stamp = it => [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -5791,7 +5836,11 @@ const Review = window.Review = (() => {
     const gone = items().find(x => x.key === key);
     B.review.items = items().filter(x => x.key !== key);
     if (n === items().length) return;
-    if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+    if (gone && !/^(eng|held):/.test(String(key))) {
+      settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+      const d0 = settled[0], rid = d0.orders[0] || "";
+      if (window.Motion) Motion.expect(mkeyOf(gone), { to: DONE_SW, note: { text: `${rid ? "Order " + rid : "The decision"} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
+    }
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
@@ -5849,6 +5898,8 @@ const Review = window.Review = (() => {
     redraw();
     CustomRead.later();                                                  // lines with no design of their own are read by Claude
   }
+  /** A card's motion name: a custom order keeps one name open or completed (so it is seen moving between the two). */
+  const mkeyOf = it => it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key);
   /** Every line the item speaks for — the group when it has one, the single row otherwise. */
   const rowsOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== "gone");
   /** Apply one decision to every line it covers, then re-pool them together. */
@@ -5861,7 +5912,18 @@ const Review = window.Review = (() => {
     const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
     RV.filter=null;RV.cseg="open";RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
-    if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});c.classList.add('pulse');setTimeout(()=>c.classList.remove('pulse'),1300);}
+    if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});found(c);}
+  }
+  /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
+  function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** "Show" in a note: Review, the folder (and chip) the card is in now, scrolled to it and marked. */
+  function showCard(mk, seg, kind) {
+    const v = document.getElementById("reviewView");
+    if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
+    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.limit = Math.max(RV.limit, 400);
+    render();
+    const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
+    if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
   }
 
   async function repool(row) {
@@ -6111,12 +6173,23 @@ const Review = window.Review = (() => {
   // cseg: Open or Completed, the one switch at the front of the bar, for every filter (Paul, 27 Sep: one global Completed
   // folder, no longer Custom Orders' own); filter: the kind chip, shared by both
   const RV = { filter: null, limit:40, open:null, cseg:"open" };
+  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
+  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]';
+  const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
+  // the card last acted on (its buttons, or its question in the order window): a card that leaves just after is seen
+  // going where its answer sent it; one that leaves on its own (another station, a new pull) folds away where it was
+  let acted = { mk: "", t: 0 };
+  document.addEventListener("click", e => {
+    const t = e.target; if (!t || !t.closest) return;
+    const card = t.closest("#rvList .reviewListRow"); if (card && card.dataset.mkey) { acted = { mk: card.dataset.mkey, t: Date.now() }; return; }
+    const fix = t.closest("#owFix"); if (fix && fix._rvKey) { const it = items().find(x => x.key === fix._rvKey); if (it) acted = { mk: mkeyOf(it), t: Date.now() }; }
+  }, true);
   let reviewFilter=null;
   const reviewRows=new Map();
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):"",CustomRead.stamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints,(it.record.stamps||[]).length,it.record.completedAt],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):"",CustomRead.stamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
@@ -6178,7 +6251,7 @@ const Review = window.Review = (() => {
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null),busy=cu?CustomPrint.statusHtml(it,'sm'):'';
     // Claude's reading of a line with no design of its own: its confidence beside the label, the card's edge in its colour
     const aiChip=row&&!it.done&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&row?CustomRead.bandOf(row):'';
-    const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');
+    const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
     const queue=cu?(it.done?'Custom order · completed':it.info?'Custom order':'Review required'):'Review required';
     // a custom card has no "Review & resolve" (Paul, 27 Sep 19:45): its question is answered in the order window, which a
@@ -6188,11 +6261,18 @@ const Review = window.Review = (() => {
     // (Complete Order) or sends the order's own designs to the sheets (CustomSheet); a completed one prints it again or
     // reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
     const cs=cu&&!it.done&&row?CustomSheet.cardOf(it):null,sendFirst=!!(cs&&!cs.sent&&!cs.why&&!cs.busy);
+    // completed: every seal of the order (each print, and Complete Order when it was used) beside its print button, which
+    // takes the print seal's colour once a label was printed (Paul, 27 Sep 20:09-20:18)
+    const mk=mkeyOf(it),printed=cu&&it.done&&rec&&window.Seal&&Seal.hasPrint(rec);
+    const seals=cu&&it.done&&rec&&window.Seal?Seal.row(rec,{pending:CustomPrint.freshOf(mk)}):'';
+    const printBtn=cu&&printable(it)&&!cs?.busy?(it.done
+        ?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn')
+        :CustomPrint.buttonHtml(it,'print',sendFirst?'ghost':'gold','Print QR label',"print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed",'sm')):'';
     const acts=busy?busy
-      :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)&&!cs?.busy?`<button class="btn ${it.done||sendFirst?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
-      +(cu&&!it.done&&printable(it)&&!cs?.busy?`<button class="btn ghost sm" data-cu-complete title="mark this order completed now, without printing its label (it moves to Completed)">Complete Order</button>`:'')
+      :(cu?CustomPrint.failNote(it):'')+printBtn+seals
+      +(cu&&!it.done&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm'):'')
       +(cs?CustomSheet.buttonsHtml(it,true):'')
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>`:'')
+      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'')
       +(decide?`<button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
@@ -6220,7 +6300,7 @@ const Review = window.Review = (() => {
   const settledRows = new WeakMap();
   function settledRow(d) {
     let node = settledRows.get(d); if (node) return node;
-    node=el('div','doneRow workRow reviewListRow rvSettled');node.dataset.rid=String(d.orders?.[0] || '');
+    node=el('div','doneRow workRow reviewListRow rvSettled');node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;
     node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} lines</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions"><span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span></div>`;
     settledRows.set(d, node); return node;
   }
@@ -6259,9 +6339,9 @@ const Review = window.Review = (() => {
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
-    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open, cl.recent);
+    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
     const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
-      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open, cl.recent);
+      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
@@ -6277,8 +6357,29 @@ const Review = window.Review = (() => {
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
     const host = v.querySelector("#rvList");
     const what = f ? (KIND_WORDS[f] || f) : "";
-    if (!list.length) host.innerHTML = `<div class="libEmpty">${doneMode ? (f === "customOrder" ? "No custom order completed yet — print its QR label from Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}</div>`;
-    else {const desired=list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})),keep=new Set(desired.map(x=>x.node));desired.forEach(({it,node},i)=>{if(host.children[i]!==node)host.insertBefore(node,host.children[i]||null);const r=it.settled?it.settled.row:it.row;if(r)ListMedia.mount(node,r);});for(const node of [...host.children])if(!keep.has(node))node.remove();for(const {node} of desired)if(node._refocus){const f=node._refocus;node._refocus=null;f();}}
+    // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
+    const where = new Map();
+    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: tabOf(it), it });
+    for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: tabOf(it), it });
+    const leave = (mk, node) => {
+      const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
+      const who = rid ? "Order " + rid : "The decision";
+      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
+      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (!w && mine) {
+        // answered: its lines went back to the orders (on hold, or in line for the sheets)
+        const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
+        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold under Orders` : `${who} is back in line for the sheets`, actions: [] } };
+      }
+      return null;
+    };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
+    const sameView = host._mView === view && host.childElementCount > 0; host._mView = view;
+    if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
+    else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
+    for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
+    for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     v.querySelector('.egPane.scroll').scrollTop=oldScroll;
     if(active?.isConnected)active.focus({preventScroll:true});
@@ -6296,7 +6397,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -7077,16 +7178,21 @@ const OrderWin = window.OrderWin = (() => {
     const busy = CustomPrint.statusHtml(it, "xs"), can = Review.printable(it);
     const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || "Custom order";
     const why = it.info || it.done ? it.why : can ? "decide below, or print its label once made by hand" : "a decision waits below";
-    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can]);
+    const rec = it.record || null, printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
+    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can, rec && (rec.stamps || []).length, rec && rec.prints]);
     bar.hidden = false;
     if (bar._stamp === stamp) return;
     bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
     // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
+    // completed: its seals, small, beside the print button (each with who and when on hover; the Review card shows them
+    // full size), the newest pressed there as it happens
+    const seals = it.done && rec && window.Seal ? Seal.row(rec, { size: 34, pending: CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
-      (busy ? busy
-        : CustomPrint.failNote(it) + (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
-          (can && !it.done ? `<button type="button" class="btn ghost xs" data-cu-complete title="mark this order completed now, without printing its label (it moves to Completed)">Complete Order</button>` : "") +
-          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>` : ""));
+      (busy && !busy.includes("cuUndo") ? busy
+        : CustomPrint.failNote(it) + (can ? (it.done ? CustomPrint.buttonHtml(it, "print", printed ? "sealedPrint" : "ghost", printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${printed ? " again" : ""}`, "xs", "data-seal-btn")
+            : CustomPrint.buttonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs")) : "") + seals +
+          (can && !it.done ? CustomPrint.buttonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs") : "") +
+          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>` : "") + (busy && busy.includes("cuUndo") ? busy : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
     const pb = bar.querySelector("[data-cu-print]"); if (pb) pb.onclick = () => CustomPrint.print(now());

@@ -2096,6 +2096,53 @@ dialog.cuDlg{width:min(900px,96vw)}
 .cuEmpty{display:grid;place-items:center;gap:5px;padding:30px 0;color:var(--ink45);font:12.5px var(--sans)}.cuEmpty b{font:500 18px var(--serif);color:var(--ink70)}
 .cuSum{font:12px var(--sans);color:var(--ink70);gap:12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
 @media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 28px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuRm{grid-column:3;grid-row:1}}
+/* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
+#motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
+.mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
+.mGhost>.mCopy{border-radius:10px}
+.mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}
+.mPlus{position:fixed;z-index:141;font:800 11.5px var(--sans);color:#3f5b3a;background:var(--card);border:1px solid #cddcc9;border-radius:999px;padding:1px 8px;box-shadow:0 4px 12px rgba(30,24,16,.12);white-space:nowrap;pointer-events:none}
+.mFound{animation:mFound 2.4s ease-out}
+@keyframes mFound{0%,30%{box-shadow:0 0 0 3px rgba(169,130,63,.55),0 10px 30px rgba(169,130,63,.18)}100%{box-shadow:0 0 0 0 rgba(169,130,63,0)}}
+.mNote{position:fixed;z-index:305;pointer-events:none;display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 16px));padding:8px 6px 11px 13px;border-radius:11px;background:var(--velvet);color:#f3eee4;font:600 12px/1.4 var(--sans);box-shadow:0 12px 30px rgba(20,16,10,.3)}
+.mNoteArrow{position:absolute;top:-5px;width:11px;height:11px;background:var(--velvet);transform:rotate(45deg);border-radius:2px}
+.mNoteArrow[hidden]{display:none}
+.mNoteT{min-width:0}
+.mNoteA{display:flex;align-items:center;gap:2px;flex:none}
+.mNoteBtn,.mNoteX{pointer-events:auto}
+.mNoteBtn{border:0;background:transparent;color:var(--gold2);font:700 12px var(--sans);padding:5px 9px;border-radius:7px;cursor:pointer}
+.mNoteBtn:hover,.mNoteBtn:focus-visible{background:rgba(255,255,255,.09);outline:none}
+.mNoteX{border:0;background:transparent;color:#f3eee4;opacity:.5;font-size:15px;line-height:1;padding:4px 7px;cursor:pointer;border-radius:7px}.mNoteX:hover{opacity:1;background:rgba(255,255,255,.08)}
+.mNoteBar{position:absolute;left:12px;right:12px;bottom:5px;height:2px;border-radius:2px;background:rgba(202,168,97,.6);transform-origin:left;animation:mNoteBar linear forwards}
+.mNote.paused .mNoteBar{animation-play-state:paused}
+@keyframes mNoteBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+/* the seals: ink on the paper and on the button, never in the way of a click */
+.sealRow{display:inline-flex;align-items:center;flex-wrap:wrap;pointer-events:none;margin:-34px 0 -20px 30px;min-width:0}
+.sealRow .seal+.seal{margin-left:-14px}
+.sealRow.mini{margin:-10px 0 -10px -16px}.sealRow.mini .seal+.seal{margin-left:-6px}
+.seal{position:relative;display:inline-block;flex:none;width:var(--sz,112px);height:var(--sz,112px);border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
+.seal svg{display:block;width:100%;height:100%;overflow:visible;pointer-events:none}
+.seal.loose{position:absolute;z-index:3}
+.seal.pending{opacity:0}
+.seal.wet{filter:saturate(1.4) brightness(.8);transition:none}
+.sealRow.press .seal{transform:rotate(var(--rot)) scale(.955);transition:transform .08s ease-out}
+.sealRow.spring .seal{animation:sealSpring .55s cubic-bezier(.3,1.7,.5,1)}
+@keyframes sealSpring{0%{transform:rotate(var(--rot)) scale(.955)}100%{transform:rotate(var(--rot)) scale(1)}}
+.seal.wobble{animation:sealWobble .65s ease-out}
+@keyframes sealWobble{0%,100%{transform:rotate(var(--rot))}18%{transform:rotate(calc(var(--rot) - 5deg)) scale(1.03)}42%{transform:rotate(calc(var(--rot) + 3.5deg))}68%{transform:rotate(calc(var(--rot) - 1.5deg))}}
+.sealTool{position:absolute;z-index:4;pointer-events:none;will-change:transform,opacity}
+.sealTool svg{display:block;width:100%;height:100%}
+.sealRing{position:absolute;z-index:2;border-radius:50%;border:2px solid var(--ink);pointer-events:none;box-sizing:border-box}
+.sealMore{align-self:center;font:700 10.5px var(--sans);color:var(--ink45);margin:0 12px 0 34px;pointer-events:auto;white-space:nowrap}
+.btn.sealedPrint{background:#e6ebf8;border-color:#a7b6de;color:#22408f}
+.btn.sealedPrint:hover,.btn.sealedPrint.hov{background:#d9e1f4;opacity:1}
+.btn.sealedDone{background:#e2eee6;border-color:#a0c4ac;color:#19663f}
+.btn.sealedDone:hover,.btn.sealedDone.hov{background:#d4e7da;opacity:1}
+.btn.hov{opacity:.9}.btn.ghost.hov{background:var(--card2)}.btn.act{transform:translateY(1px)}
+.btn.working{opacity:1;cursor:progress}
+.btn.working:disabled{opacity:1}
+@container(max-width:1100px){.doneRow .rowActions .sealRow:not(.mini){margin:-30px 0 -30px -54px}}
+@media(prefers-reduced-motion:reduce){.seal,.sealRow.press .seal{transition:none}.seal.wobble,.sealRow.spring .seal,.mFound{animation:none}}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -2318,6 +2365,7 @@ dialog.cuDlg{width:min(900px,96vw)}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
+<script src="charm-nest-motion.js?v=20260927-seals"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5220,7 +5268,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260927-custom"></script>
+<script src="charm-nest-bridge.js?v=20260927-seals"></script>
 <script src="charm-nest-sheetwin.js?v=20260927-custom"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>

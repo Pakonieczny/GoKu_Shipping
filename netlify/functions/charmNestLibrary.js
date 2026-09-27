@@ -1807,7 +1807,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "updatedAtMs", "hasLabel"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -1824,7 +1824,18 @@ async function op_customGet(b) {
   return { records, truncated: snap.size >= 1000 };
 }
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label
-   printed, so no print is counted). Either records who completed it and when (completedAt/completedBy). */
+   printed, so no print is counted). Either records who completed it and when (completedAt/completedBy).
+   stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order, the newest 24: { how: "print" | "button", at, by }.
+   The card shows each as a seal of its own (a print seal or a Complete Order seal). A record from before them has its
+   seals read from what it kept (the completion, the first and the last print). */
+const legacyStamps = c => {
+  if (!c) return [];
+  const out = [];
+  if (c.how === "button" && c.completedAt) out.push({ how: "button", at: +c.completedAt, by: c.completedBy || "" });
+  if (c.printedAt) out.push({ how: "print", at: +c.printedAt, by: c.printedBy || "" });
+  if (+c.prints > 1 && c.lastPrintedAt && +c.lastPrintedAt !== +c.printedAt) out.push({ how: "print", at: +c.lastPrintedAt, by: c.lastPrintedBy || "" });
+  return out.sort((a, b) => a.at - b.at);
+};
 async function op_customPut(b) {
   const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the line's receipt_transaction) required" };
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
@@ -1839,6 +1850,8 @@ async function op_customPut(b) {
   }
   if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
   doc.hasLabel = !!(doc.label || (cur && cur.label));
+  const prev = cur && Array.isArray(cur.stamps) ? cur.stamps : legacyStamps(cur);
+  doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-24);
   await ref.set(doc, { merge: true });
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
