@@ -982,6 +982,11 @@ async function runSimulation(body) {
     writePaths: out.writes.map(w => `${w.op} ${w.path}`),
     blocked: out.blocked,
     blockedPaths: out.blockedPaths || [],
+    // What the sales agent decided and logged (hand-offs, validation
+    // failures), trimmed, so a replay shows why a turn went where it did.
+    audits: out.writes.filter(w => /^EtsyMail_Audit\//.test(w.path || "") && w.data)
+      .slice(0, 12).map(w => ({ eventType: w.data.eventType || null,
+                                payload: JSON.stringify(w.data.payload || null).slice(0, 1500) })),
     // Did this turn accept a quote (the custom listing trigger)?
     customerAccepted: out.writes.some(w => w.data && typeof w.data === "object"
       && (w.data.customerAccepted === true || w.data.customer_accepted === true)),
