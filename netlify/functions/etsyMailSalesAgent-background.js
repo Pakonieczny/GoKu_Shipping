@@ -154,8 +154,9 @@ const {
 
 let searchListings = null;
 let getServiceListingsBlock = null;
+let SERVICE_LISTING_IDS = [];
 try {
-  ({ searchListings, getServiceListingsBlock } = require("./etsyMailListingsCatalog"));
+  ({ searchListings, getServiceListingsBlock, SERVICE_LISTING_IDS = [] } = require("./etsyMailListingsCatalog"));
 } catch (e) {
   console.warn("salesAgent: etsyMailListingsCatalog not loadable — search_shop_listings tool will return graceful empty.", e.message);
 }
@@ -2069,8 +2070,11 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   // their flag alone, so a set flag needs no get_collateral call; rejecting
   // it cost a whole extra model round for nothing.
   const naPayload = parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+  // An add-on/fee listing named in the prompt's service block needs no search.
+  const pointerId = (String(naPayload.url || "").match(/listing\/(\d+)/) || [])[1];
   const listingPointer = na === "attach_collateral" && naPayload.kind === "listing_url"
-    && (toolNamesCalled.includes("search_shop_listings") || toolNamesCalled.includes("lookup_listing_by_url"));
+    && (toolNamesCalled.includes("search_shop_listings") || toolNamesCalled.includes("lookup_listing_by_url")
+      || (!!pointerId && SERVICE_LISTING_IDS.includes(pointerId)));
   const guideFlagged = ["attach_fit_reference", "attach_metal_comparison", "attach_care_instructions", "attach_bracelet_sizing"]
     .some(f => parsed[f] === true);
   const collateralSatisfied = listingPointer || guideFlagged || parsed.attach_line_sheet === true;
@@ -3281,7 +3285,7 @@ A visual sheet showing the available styles, sizes, codes, and prices for a prod
 A visual showing how a NECKLACE sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit" / "how does it sit on the chest" / "how long is 18 inches really" / "I'm petite, will it look right" / "where does it hang" / "how low does it sit" — about a NECKLACE. Do NOT claim the line sheet shows fit; it doesn't. Use the fit reference for necklace-fit questions specifically.
 
 **3. Metal comparison — \`attach_metal_comparison: true\`**
-A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold (gold only; a sterling silver question gets the care guide, never this card). Send this ONLY when the customer is ASKING about gold differences or needs help deciding between gold types — "what's the difference between gold filled and solid gold", "is it real gold", "will the gold filled tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type. Do NOT attach this when the customer has STATED their metal preference (e.g. "I want rose gold," "silver please," "let's do 14k gold") — they've decided, the comparison is noise. Mentioning a metal as part of an order specification is not the same as asking about metals.
+A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold (gold only; a sterling silver question gets the care guide, never this card). Send this ONLY when the customer is ASKING about gold differences or needs help deciding between gold types — "what's the difference between gold filled and solid gold", "is it real gold", "will the gold filled tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type, in any language. Escalating another part of the message does not cancel it. Do NOT attach this when the customer has STATED their metal preference (e.g. "I want rose gold," "silver please," "let's do 14k gold") — they've decided, the comparison is noise. Mentioning a metal as part of an order specification is not the same as asking about metals.
 
 **4. Care instructions — \`attach_care_instructions: true\`**
 A visual showing how to care for and clean fine custom jewellery. Send this ONLY when the customer asks about care, cleaning, storage, durability, longevity, tarnish (sterling silver tarnish always gets this one), lotion, sunscreen, water, or maintenance. Do NOT send this proactively on order-finalization or spec-confirmation messages — when the customer is focused on placing an order, care info is noise that distracts from the purchase decision. If a customer hasn't asked about care, they don't need a care guide right now.

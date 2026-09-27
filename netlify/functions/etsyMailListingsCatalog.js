@@ -587,7 +587,7 @@ async function searchListings(query, limit = AI_RESULT_LIMIT) {
 const SERVICE_LISTINGS = [
   { id: "479975460",  use: "Paid change to an order already placed or to a piece the customer sends back: an engraving added after checkout (staff quote $5), a letter or wording change, shortening or adding chain. The customer picks the total dollar amount already quoted in this thread and writes what to change in the checkout note. Not for a new or replacement piece (that gets a custom listing)." },
   { id: "816278941",  use: "A new or replacement chain: a broken or lost chain, a different chain style, or one chain to hang several of our pendants together. The customer picks metal and length and adds a note at checkout." },
-  { id: "770835682",  use: "A longer chain than the necklace listing offers, on a necklace being ordered or already ordered but not yet made. The customer picks the length range and writes the exact length per piece in the checkout note." },
+  { id: "770835682",  use: "A longer chain than the necklace listing offers, on a necklace being ordered or already ordered but not yet made. The customer picks the length range and writes the exact length per piece in the checkout note. When the necklace listing's own length options can't be read, send this link rather than assume the listing offers the length (the family option sheet prices custom pieces, not a listing's dropdown)." },
   { id: "628970499",  use: "An extender added to a piece the customer is ordering now (1, 2 or 3 inches)." },
   { id: "559716663",  use: "An extender on its own, for a necklace the customer already has (for example one that sits too tight)." },
   { id: "1699154208", use: "Upgrade a necklace to the beady chain (gold filled or sterling silver, not rose gold). The customer says which necklace in the personalization box." },
@@ -731,6 +731,7 @@ exports.handler = meter.wrapHandler(async (event) => {
 module.exports.searchListings = searchListings;
 module.exports.trimForAI      = trimForAI;
 module.exports.getServiceListingsBlock = getServiceListingsBlock;
+module.exports.SERVICE_LISTING_IDS = SERVICE_LISTINGS.map(s => String(s.id));
 // Also used by etsyMailListingLookup's catalogStatus / catalogSync ops: Netlify
 // refuses direct calls to this scheduled function on the live site, so the
 // inbox's Settings line and Sync now button reach the same code through it.
