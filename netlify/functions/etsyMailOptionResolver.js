@@ -401,7 +401,9 @@ async function resolveListingSpecs({ query }) {
     // agent has thickness/gauge info available for any follow-up
     // question without a second tool call. metalSpecs is universal
     // across the product line (same value on every family doc).
-    metalSpecs: (familySheet && familySheet.metalSpecs) || null,
+    // Minus the stored collateral notes (they say to paste card URLs and
+    // send both cards on any care question; the cards attach from flags).
+    metalSpecs: metalSpecsForAi(familySheet && familySheet.metalSpecs),
     availableMetals: Array.isArray(entry.availableMetals) ? entry.availableMetals : null,
     basePriceUsd: typeof entry.basePriceUsd === "number" ? entry.basePriceUsd : null,
     regularPriceUsd: typeof entry.regularPriceUsd === "number" ? entry.regularPriceUsd : null,
@@ -1132,6 +1134,27 @@ exports.handler = async (event) => {
 // Direct-import path for sibling functions (etsyMailSalesAgent and
 // future Step 3's etsyMailCustomOrderDraft). Same pattern as Step 1's
 // searchListings + Step 2's computeQuoteBand.
+// The stored metal specs carry old notes telling the AI to fetch and paste
+// both collateral cards on any care or tarnish question. Keys named for
+// collateral are dropped and sentences about it are cut from the notes.
+function metalSpecsForAi(ms) {
+  if (!ms || typeof ms !== "object") return null;
+  const clean = (v) => {
+    if (typeof v === "string") {
+      return v.split(/(?<=[.!?])\s+/).filter(x => !/collateral|attach the matching|comparison \+ jewel/i.test(x)).join(" ");
+    }
+    if (Array.isArray(v)) return v.map(clean);
+    if (v && typeof v === "object") {
+      const o = {};
+      for (const [k, x] of Object.entries(v)) if (!/collateral/i.test(k)) o[k] = clean(x);
+      return o;
+    }
+    return v;
+  };
+  return clean(ms);
+}
+
+module.exports.metalSpecsForAi     = metalSpecsForAi;
 module.exports.resolveQuote        = resolveQuote;
 module.exports.loadSheet           = loadSheet;
 module.exports.indexSheetCodes     = indexSheetCodes;

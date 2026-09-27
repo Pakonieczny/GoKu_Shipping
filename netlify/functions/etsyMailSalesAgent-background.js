@@ -154,8 +154,9 @@ const {
 
 let searchListings = null;
 let getServiceListingsBlock = null;
+let SERVICE_LISTING_IDS = [];
 try {
-  ({ searchListings, getServiceListingsBlock } = require("./etsyMailListingsCatalog"));
+  ({ searchListings, getServiceListingsBlock, SERVICE_LISTING_IDS = [] } = require("./etsyMailListingsCatalog"));
 } catch (e) {
   console.warn("salesAgent: etsyMailListingsCatalog not loadable — search_shop_listings tool will return graceful empty.", e.message);
 }
@@ -461,7 +462,8 @@ async function loadRecentThreadMessages(threadId, limit = 12) {
     const rows = [];
     for (const d of snap.docs) {
       const m = d.data() || {};
-      const text = String(m.text || "").trim();
+      // Etsy's scraped "Translate to English" button label is not the customer's words.
+      const text = String(m.text || "").replace(/\s*Translate to English\s*$/i, "").trim();
       const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
       const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
       if (!text && imageUrls.length === 0 && attachmentUrls.length === 0) continue;
@@ -574,6 +576,13 @@ function compactOption(option) {
   };
 }
 
+// The stored metalSpecs carry an old collateral note telling the AI to call
+// get_collateral and paste both card URLs into the reply; the cards attach
+// from their flags now and a pasted URL shows as a raw link. Drop it.
+function metalSpecsForAi(ms) {
+  try { return require("./etsyMailOptionResolver").metalSpecsForAi(ms); } catch { return null; }
+}
+
 function compactOptionSheetForAi(sheet) {
   if (!sheet || !Array.isArray(sheet.sections)) return null;
   return {
@@ -590,7 +599,7 @@ function compactOptionSheetForAi(sheet) {
     // questions directly without escalation. Same block is also returned
     // by lookup_listing_specs for existing-listing queries — either path
     // gets the agent the same answer.
-    metalSpecs: sheet.metalSpecs || null,
+    metalSpecs: metalSpecsForAi(sheet.metalSpecs),
     sections: sheet.sections.map(sec => ({
       sectionId: sec.sectionId,
       name: sec.name,
@@ -893,6 +902,7 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId, 
           includeShippingSummary: includeShippingSummary === true
         });
         salesCtx._lastResolverResult = result;
+        salesCtx._resolverThisTurn = result;
 
         // Direct-import calls bypass etsyMailOptionResolver's HTTP handler,
         // so the sales agent writes the canonical quote audit row here.
@@ -1290,11 +1300,11 @@ const TOOL_SPEC_GET_OPTION_SHEET = {
 
 const TOOL_SPEC_GET_COLLATERAL = {
   name: "get_collateral",
-  description: "Retrieve operator-curated collateral (line sheets, product cards, lookbooks, image sets, terms/care/material guides) by category. Returns URLs you can reference in your reply. Useful categories: 'huggie', 'necklace', 'stud', 'metals_education', 'aftercare'.",
+  description: "Retrieve operator-curated collateral (line sheets, product cards, lookbooks, image sets, terms/care/material guides) by category. Returns the stored items; the matching attach flag turns them into image attachments, so never paste their URLs. Categories: 'necklace', 'huggie', 'stud' (line sheets), 'metal_comparison', 'care_instructions', 'fit_reference', 'bracelet_sizing' (guides).",
   input_schema: {
     type: "object",
     properties: {
-      category: { type: "string", description: "The category to search within (e.g., 'huggie', 'metals_education')." },
+      category: { type: "string", description: "The category to search within (e.g., 'necklace', 'metal_comparison')." },
       kind    : {
         type: "string",
         enum: ["line_sheet", "product_card", "lookbook", "image_set", "terms"],
@@ -1338,7 +1348,7 @@ const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
 // from "similar items".
 const TOOL_SPEC_LOOKUP_LISTING_SPECS = {
   name: "lookup_listing_specs",
-  description: "Look up the dimensions and charm specs for a specific Etsy listing from the internal product catalog. Call this WHENEVER a customer asks about dimensions, sizing, measurements, or physical specs (e.g. 'how big is it?', 'what size?', 'dimensions please?', 'measurements?', 'how many mm?') AND the customer has referenced a specific listing — by full Etsy URL, bare listing ID, URL slug, partial title, or any contextual reference (e.g. 'this charm', 'the duckie one'). The tool accepts flexible input and resolves to the canonical catalog entry. It returns dimensionsSummary (a ready-to-paraphrase one-liner like '5×6mm silhouette charm with 2.1mm I.D. mounting ring') and structured dimensions for follow-up questions. CRITICAL BEHAVIOR: if found is false, OR incomplete is true, OR the response includes a 'recommendation' to escalate — DO NOT estimate dimensions from similar items, DO NOT guess based on the listing title, DO NOT use the customer's own phrasing as a confirmation. Acknowledge briefly ('let me grab the exact measurements and get back shortly') and escalate to human review. Confident-wrong dimension answers are the single highest-impact credibility burn this agent can cause.",
+  description: "Look up the dimensions and charm specs for a specific Etsy listing from the internal product catalog. Call this WHENEVER a customer asks about dimensions, sizing, measurements, or physical specs (e.g. 'how big is it?', 'what size?', 'dimensions please?', 'measurements?', 'how many mm?') AND the customer has referenced a specific listing — by full Etsy URL, bare listing ID, URL slug, partial title, or any contextual reference (e.g. 'this charm', 'the duckie one'). The tool accepts flexible input and resolves to the canonical catalog entry. It returns dimensionsSummary (a ready-to-paraphrase one-liner like '5×6mm silhouette charm with 2.1mm I.D. mounting ring') and structured dimensions for follow-up questions. CRITICAL BEHAVIOR: if found is false, OR incomplete is true, OR the response includes a 'recommendation' to escalate — DO NOT estimate dimensions from similar items, DO NOT guess based on the listing title, DO NOT use the customer's own phrasing as a confirmation. Give what the result does settle (for example the family's standard size range), set needs review so a person adds the exact figure, and write no holding line (\"let me grab the measurements\" and the like are rejected). Confident-wrong dimension answers are the single highest-impact credibility burn this agent can cause.",
   input_schema: {
     type: "object",
     properties: {
@@ -1689,10 +1699,10 @@ const VALID_NEXT_ACTIONS = new Set([
 // state is "completed" or "abandoned" since those are terminal — we let
 // acknowledge through for tail-end pleasantries.
 const STATE_ACTION_COMPAT = {
-  discovery:               ["attach_collateral", "ask_one_question", "compute_quote", "escalate_to_human", "abandon"],
-  spec:                    ["compute_quote", "attach_collateral", "ask_one_question", "escalate_to_human", "abandon"],
+  discovery:               ["attach_collateral", "ask_one_question", "compute_quote", "acknowledge", "escalate_to_human", "abandon"],
+  spec:                    ["compute_quote", "attach_collateral", "ask_one_question", "acknowledge", "escalate_to_human", "abandon"],
   quote:                   ["confirm_acceptance_and_create_listing", "ask_one_question", "attach_collateral", "acknowledge", "escalate_to_human", "abandon"],
-  revision:                ["compute_quote", "attach_collateral", "ask_one_question", "escalate_to_human", "abandon"],
+  revision:                ["compute_quote", "attach_collateral", "ask_one_question", "acknowledge", "escalate_to_human", "abandon"],
   pending_close_approval:  ["confirm_acceptance_and_create_listing", "acknowledge", "escalate_to_human"],
   abandoned:               ["acknowledge", "escalate_to_human", "abandon"],
   completed:               ["acknowledge", "escalate_to_human"],
@@ -1909,6 +1919,23 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   const existingOrder = parsed && parsed.known_facts && parsed.known_facts.existingOrder;
   if (existingOrder && (existingOrder.orderId || existingOrder.receiptId)) return { force: false };
   if (!inboundLooksLikeCustomSalesSpecRequest(validationContext.latestInboundText)) return { force: false };
+  // Owner's rule: interest in an existing listing stays with that listing;
+  // the sheet is for custom work only.
+  const payload = parsed && parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+  if (payload.kind === "listing_url") return { force: false };
+  const inboundText = String(validationContext.latestInboundText || "");
+  if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
+      && !/\b(custom|design|make|made|create|personali[sz]e|instead|different|change|mix|combine|bigger|smaller|larger|similar|version|based\s+on|modif\w*|adjust|swap)\b/i.test(inboundText)) {
+    return { force: false };
+  }
+  // A change to an existing listing that only production can settle (a
+  // backing or finding the sheet doesn't offer) is a capability question,
+  // not a spec gap: the sheet would not answer it.
+  const blockedRows = Array.isArray(parsed && parsed.missing_or_blocked) ? parsed.missing_or_blocked : [];
+  if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
+      && blockedRows.some(r => r && /operator|human|staff|production/i.test(String(r.how_to_get_it || "")))) {
+    return { force: false };
+  }
 
   const selectableMissing = customerSelectableMissingItems(parsed);
   const noCodesYet = selectedCodesCount(parsed) === 0;
@@ -2037,9 +2064,23 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
     violations.push("compute_quote_missing_tool");
     messages.push("You declared next_action: compute_quote but did not call resolveQuote this turn. Call resolveQuote with the family, selectedCodes, and quantity, then state the result.");
   }
-  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral")) {
+  // attach_collateral is also how the prompt points at an existing listing
+  // (payload kind "listing_url", found with a listing tool). Line sheets and
+  // guides (fit, metals, care, bracelet) attach from the prefetched pool by
+  // their flag alone, so a set flag needs no get_collateral call; rejecting
+  // it cost a whole extra model round for nothing.
+  const naPayload = parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+  // An add-on/fee listing named in the prompt's service block needs no search.
+  const pointerId = (String(naPayload.url || "").match(/listing\/(\d+)/) || [])[1];
+  const listingPointer = na === "attach_collateral" && naPayload.kind === "listing_url"
+    && (toolNamesCalled.includes("search_shop_listings") || toolNamesCalled.includes("lookup_listing_by_url")
+      || (!!pointerId && SERVICE_LISTING_IDS.includes(pointerId)));
+  const guideFlagged = ["attach_fit_reference", "attach_metal_comparison", "attach_care_instructions", "attach_bracelet_sizing"]
+    .some(f => parsed[f] === true);
+  const collateralSatisfied = listingPointer || guideFlagged || parsed.attach_line_sheet === true;
+  if (na === "attach_collateral" && !collateralSatisfied && !toolNamesCalled.includes("get_collateral")) {
     violations.push("attach_collateral_missing_tool");
-    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and include the URL in your reply.");
+    messages.push("You declared next_action: attach_collateral but set no attach flag. Set the matching flag (attach_line_sheet: true for a line sheet, or attach_fit_reference / attach_metal_comparison / attach_care_instructions / attach_bracelet_sizing); the image attaches automatically, so never paste its URL in the reply.");
   }
 
   // Rule 1b — compute_quote requires items_quoted populated and matching
@@ -2056,7 +2097,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   }
 
   // Rule 1c — attach_collateral requires collateral_referenced non-empty
-  if (na === "attach_collateral") {
+  if (na === "attach_collateral" && !collateralSatisfied) {
     const cr = parsed.collateral_referenced;
     if (!Array.isArray(cr) || cr.length === 0) {
       violations.push("attach_collateral_no_referenced");
@@ -2109,7 +2150,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   const compatActions = STATE_ACTION_COMPAT[cs] || [];
   if (compatActions.length && !compatActions.includes(na) && na !== "escalate_to_human") {
     violations.push("state_action_incompatible");
-    messages.push(`current_state "${cs}" is not compatible with next_action "${na}". Allowed actions for this state: ${compatActions.join(", ")}, or escalate_to_human.`);
+    messages.push(`current_state "${cs}" is not compatible with next_action "${na}". Allowed actions for this state: ${compatActions.filter(a => a !== "escalate_to_human").concat("escalate_to_human").join(", ")}.`);
   }
 
   // Rule 3b — Line sheet/spec step before human escalation or bare question.
@@ -2125,9 +2166,9 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
     messages.push(
       `The customer is asking about a custom ${forcedLineSheet.family} request, but option codes/customer-selectable specs are still missing. ` +
       `Do not write a holding reply and do not escalate before gathering customer choices. ` +
-      `Use next_action: attach_collateral, call get_collateral(category: "${forcedLineSheet.family}", kind: "line_sheet"), set attach_line_sheet: true, populate collateral_referenced, ` +
+      `Use next_action: attach_collateral with next_action_payload { category: "${forcedLineSheet.family}", kind: "line_sheet" } and set attach_line_sheet: true (the sheet attaches from that flag), ` +
       `answer any production-time question briefly, and ask the customer to use the attached ${forcedLineSheet.family} line sheet to choose the missing specs. ` +
-      `For this Miguel-style two-charm necklace case, the reply should confirm we can design/make the custom piece, mention the normal production window, attach the necklace line sheet, and ask for the arrangement plus size/metal/chain/length choices. ` +
+      `Answer what the customer asked, then invite them to pick the missing choices from the attached sheet. ` +
       `Do not say "I'll get back to you", "I'll send options later", or any future quote promise.`
     );
   }
@@ -2191,7 +2232,8 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
         violations.push("escalate_specific_timeframe");
         messages.push(
           `Your escalation reply contains a specific timeframe (matched: ${String(rx)}). ` +
-          `Keep the holding line ambiguous about timing, e.g. "We'll get back to you as soon as we hear back from the team."`
+          `Remove the timing and do not replace it with a holding line ("we'll get back to you", "as soon as we hear back" and the like are also rejected). ` +
+          `Answer what the thread and policy already settle, e.g. "Thanks, we have your change to proof A noted." and stop there.`
         );
         break;
       }
@@ -2321,7 +2363,20 @@ function backfillLegacyFieldsFromV5(parsed) {
       care_instructions: "attach_care_instructions",
       bracelet_sizing:   "attach_bracelet_sizing"
     };
-    const flag = FLAG_BY_KIND[kind];
+    // The get_collateral kind list has no guide kinds, so a metals-card turn
+    // arrives as { category: "metal_comparison", kind: "line_sheet" }. The
+    // category names the guide; and when the model already set a guide flag,
+    // "line_sheet" in the payload is that guide, not a family line sheet
+    // (replays attached a necklace sheet nobody asked for).
+    const category = String(payload.category || "").toLowerCase().replace(/[\s-]+/g, "_");
+    const guideByCategory = { metals_education: "attach_metal_comparison", aftercare: "attach_care_instructions",
+      care: "attach_care_instructions", fit: "attach_fit_reference", bracelet: "attach_bracelet_sizing" };
+    const categoryFlag = FLAG_BY_KIND[category] || guideByCategory[category] || null;
+    const guideSet = ["attach_fit_reference", "attach_metal_comparison", "attach_care_instructions", "attach_bracelet_sizing"]
+      .some(f => parsed[f] === true);
+    let flag = FLAG_BY_KIND[kind];
+    if (categoryFlag && categoryFlag !== "attach_line_sheet") flag = categoryFlag;
+    else if (flag === "attach_line_sheet" && guideSet) flag = null;
     if (flag && parsed[flag] !== true) {
       parsed[flag] = true;
     }
@@ -2361,6 +2416,10 @@ function backfillLegacyFieldsFromV5(parsed) {
       // still needing the image chip.
       /\b(?:line\s+sheet|option\s+sheet|options\s+sheet|pricing\s+sheet|menu)\b/i
     ];
+    // A reply can name the sheet in passing ("the only backing on our line
+    // sheet") after the model decided against sending it (attach_line_sheet
+    // explicitly false): then only a real sending phrase attaches it.
+    if (parsed.attach_line_sheet === false) lineSheetPromisePatterns.pop();
     if (lineSheetPromisePatterns.some(rx => rx.test(r))) {
       parsed.attach_line_sheet = true;
       // Mark this on the parsed object so we can log it in the audit
@@ -2745,7 +2804,7 @@ exports.handler = async (event) => {
 
 ## When to send the line sheet
 
-When the customer signals interest in pricing or options — even WEAKLY — your default action is to send the line sheet for that family. Examples of triggering signals:
+For CUSTOM work (a design we make, not an existing listing), when the customer signals interest in pricing or options — even WEAKLY — your default action is to send the line sheet for that family. Examples of triggering signals:
 - "do you have a pricing sheet"
 - "what are my options"
 - "what sizes / metals / chains do you offer"
@@ -2756,7 +2815,7 @@ When the customer signals interest in pricing or options — even WEAKLY — you
 
 The ONE thing you may need before sending the line sheet is which family (necklace, stud earring, or huggie hoop earring). If conversation context already tells you this — a prior round, an earlier message in this round, an explicit listing reference — USE that, don't re-ask.
 
-When the family is still unknown on a new custom design or price request, do NOT hold the sheet back to ask first: attach the necklace line sheet (most custom pieces are necklace charms, and it is what staff send), and add one short line that the design can also be made as huggie hoops or studs if they prefer. The same holds the first time you give a custom price in a conversation where no line sheet has gone out yet: attach the family's sheet so the customer sees the other sizes and metals.
+When the family is still unknown on a new custom design or price request, do NOT hold the sheet back to ask first: attach the necklace line sheet (most custom pieces are necklace charms, and it is what staff send), and add one short line that the design can also be made as huggie hoops or studs if they prefer. When they asked for an earring but named no hoop, send the stud sheet the same way and mention huggie charms as the other option. The same holds the first time you give a custom price in a conversation where no line sheet has gone out yet: attach the family's sheet so the customer sees the other sizes and metals.
 
 ## How to send the line sheet — CRITICAL
 
@@ -2764,10 +2823,10 @@ When you decide to send the line sheet, you MUST do BOTH of the following in you
 
 1. **Set the structured signal**: include \`"attach_line_sheet": true\` as a top-level field in your JSON. The system reads this and attaches the actual line-sheet IMAGE FILE (from operator-uploaded collateral) to your draft message. The customer sees the image inline in their Etsy conversation. This is the entire mechanism — the image attaches automatically; you do not need to embed any URL.
 
-2. **Keep reply text SHORT and OPTION-FREE**. Your \`reply\` field must be a single short sentence inviting the customer to look at the attached sheet and tell you what they want. NO PRICES. NO LISTS. NO OPTIONS RECITED IN TEXT. The image carries that information. Examples of CORRECT reply text:
-   - "Here's our necklace charm line sheet — take a look and let me know which size, metal, chain, and length you'd like."
-   - "Attached is our huggie hoop line sheet. Pick the configuration you want and I'll quote it."
-   - "Sending over the stud earring line sheet — let me know which option works for you."
+2. **Keep reply text SHORT and OPTION-FREE**. If the customer asked something direct (can you make it, is solid gold available, how much for the size they named), answer that first in one sentence. Then one short sentence inviting them to look at the attached sheet and tell you what they want. Beyond that direct answer: NO PRICES. NO LISTS. NO OPTIONS RECITED IN TEXT. The image carries that information. Examples of CORRECT reply text:
+   - "Yes, we can make that as a necklace charm. Our line sheet is attached; let us know which size, metal, chain and length you'd like."
+   - "Attached is our huggie hoop line sheet. Pick the configuration you want and we'll quote it."
+   - "Yes, solid 14k gold is available for the studs. The stud line sheet is attached; let us know which size you'd like."
 
 Examples of INCORRECT reply text (DO NOT do this — these are exactly the failure mode being patched):
    - ❌ "Here's the rundown for necklace charms. Charm size + metal: 9-10mm, 11-12mm, 14mm..." (reciting the sheet in text)
@@ -2780,7 +2839,7 @@ The customer will SEE the line sheet image rendered in their Etsy conversation. 
 ## When NOT to send the line sheet
 
 - The question is only about delivery, shipping time, returns, production time, an order already placed, or a complaint. Answer that; a line sheet there is noise.
-- The customer is ordering a standard listing as it is (their choices are the listing's own dropdowns). Point them to the listing instead.
+- The customer is interested in an existing listing (asking about it, its price, metal, size or chain choices, or ordering it as it is). Owner's rule: stay with that listing, answer from it and point to it, and send NO line sheet. The sheet is for custom work, a design we make where they must choose size, metal or chain. This is judged by context, not by whether a listing was linked: a custom piece based on an existing listing (a size, metal, chain or design the listing doesn't offer, two designs combined, their own photo or name in that style) is custom work and gets the sheet, with the listing as the reference.
 - The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote with resolveQuote.
 - The customer has explicitly declined to see options ("just quote me X").
 - A line-sheet collateral image is not available for the family (you can tell by checking context.summary.recommendedCollateral — if empty, fall back to asking which family or to a brief verbal exchange).
@@ -2835,6 +2894,7 @@ Proofs and prices a person typed:
 - When the accepted price was typed by staff rather than produced by your resolver, also set \`"accepted_quote_usd": <total>\` (for example 2 charms at $24 each = 48). The system checks that figure against the shop's own messages.
 - Never send a generic "Custom Charm + Shipping" or other checkout listing for a custom piece; the custom listing made for this customer is the checkout.
 - If no price was ever given and the spec is too incomplete to price, don't accept yet: ask for the one missing detail.
+- A proof approval or "how do I buy it" is not ready while a choice the listing needs was never made in this conversation: the metal, and for a necklace the chain and length. Ask for that one choice in a short reply ("Which metal would you like: 14k gold filled, sterling silver or rose gold filled?"), keep customer_accepted false, and accept on their answer. Never pick the metal for them.
 
 When NOT to set \`customer_accepted: true\`:
 - Customer is still asking questions or comparing options.
@@ -3225,10 +3285,10 @@ A visual sheet showing the available styles, sizes, codes, and prices for a prod
 A visual showing how a NECKLACE sits on the body — chain length comparisons (16", 18", 20", etc.) shown on a neck model. This is what you send when the customer asks "how does it fit" / "how does it sit on the chest" / "how long is 18 inches really" / "I'm petite, will it look right" / "where does it hang" / "how low does it sit" — about a NECKLACE. Do NOT claim the line sheet shows fit; it doesn't. Use the fit reference for necklace-fit questions specifically.
 
 **3. Metal comparison — \`attach_metal_comparison: true\`**
-A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold. Send this ONLY when the customer is ASKING about metal differences or needs help deciding between metals — "what's the difference between gold filled and solid gold", "is it real gold", "will it tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type. Do NOT attach this when the customer has STATED their metal preference (e.g. "I want rose gold," "silver please," "let's do 14k gold") — they've decided, the comparison is noise. Mentioning a metal as part of an order specification is not the same as asking about metals.
+A visual showing the side-by-side differences between Gold Filled vs Gold Plated vs 14k Solid Gold (gold only; a sterling silver question gets the care guide, never this card). Send this ONLY when the customer is ASKING about gold differences or needs help deciding between gold types — "what's the difference between gold filled and solid gold", "is it real gold", "will the gold filled tarnish", "which gold is best", price-vs-quality comparisons across metals, allergy or skin-reaction concerns about metal type, in any language. Escalating another part of the message does not cancel it. Do NOT attach this when the customer has STATED their metal preference (e.g. "I want rose gold," "silver please," "let's do 14k gold") — they've decided, the comparison is noise. Mentioning a metal as part of an order specification is not the same as asking about metals.
 
 **4. Care instructions — \`attach_care_instructions: true\`**
-A visual showing how to care for and clean fine custom jewellery. Send this ONLY when the customer asks about care, cleaning, storage, durability, longevity, tarnish, or maintenance. Do NOT send this proactively on order-finalization or spec-confirmation messages — when the customer is focused on placing an order, care info is noise that distracts from the purchase decision. If a customer hasn't asked about care, they don't need a care guide right now.
+A visual showing how to care for and clean fine custom jewellery. Send this ONLY when the customer asks about care, cleaning, storage, durability, longevity, tarnish (sterling silver tarnish always gets this one), lotion, sunscreen, water, or maintenance. Do NOT send this proactively on order-finalization or spec-confirmation messages — when the customer is focused on placing an order, care info is noise that distracts from the purchase decision. If a customer hasn't asked about care, they don't need a care guide right now.
 
 **5. Bracelet sizing — \`attach_bracelet_sizing: true\`**
 A visual showing the bracelet length range with a wrist sizing chart and instructions for how to measure a wrist. This is what you send when the customer asks "what size bracelet do I need" / "how do I measure my wrist" / "what length should I order" / "will a 7-inch fit me" / "how does the bracelet sit on the wrist" / anything about wrist measurement or bracelet length selection. NOT the same as the necklace fit reference — these are physically different artifacts answering different questions. If the customer asks about necklace length, use \`attach_fit_reference\`. If the customer asks about bracelet length, use \`attach_bracelet_sizing\`. Never substitute one for the other.
@@ -3356,11 +3416,10 @@ When you decide to attach a line sheet:
 - Set \`next_action\` to "attach_collateral"
 - Set \`next_action_payload\` to { "category": "<necklace|huggie|stud>", "kind": "line_sheet" }
 - Set \`attach_line_sheet: true\`
-- Call the \`get_collateral\` tool this turn with the same category and kind
-- Populate \`collateral_referenced\` with the collateral ID
+- Populate \`collateral_referenced\` with the collateral ID when you have it (from context or get_collateral); no get_collateral call is needed just to attach, the flag does that
 - Write reply text inviting the customer to look at the attached sheet
 
-ALL FIVE must be true. The structured action is canonical; the legacy flag is what fires the attachment; both must agree.
+ALL of these must hold. The structured action is canonical; the legacy flag is what fires the attachment; both must agree.
 
 If you find yourself in a turn where the line sheet WOULD be useful but you also need to ask one specific question, you have two options:
 - Send the line sheet AND ask the question in one reply (next_action: attach_collateral; the reply text invites them to look at the sheet AND asks the question). This is preferred.
@@ -3382,13 +3441,23 @@ For custom-shape requests that need operator pricing but still have customer-sel
 
 Every reply answers what the customer asked in this turn, in its first sentence: a price, a yes or no, a shipping cost, a production time, the next step. Never write "I need to look at this carefully before I can speak to specifics", "we're taking a closer look", "let me check", "I don't know", or any holding line, including on escalate_to_human, where the reply still names the customer's exact request and gives everything the thread and policy already settle.
 
-Keep replies to two to four short sentences plus the sign-off, written as "we" (the shop), never "I". Answer every question in the customer's latest messages, not only the last one. Before finishing, delete every sentence that neither answers nor moves the customer forward. Attach a line sheet only when the customer still has to choose size, metal, chain or length; a yes/no question about a standard listing gets a yes/no answer.
+Keep replies to two to four short sentences plus the sign-off, written as "we" (the shop), never "I" (this replaces the older "use I and me" line). Answer every question in the customer's latest messages, not only the last one. Before finishing, delete every sentence that neither answers nor moves the customer forward. Attach a line sheet only when the customer still has to choose size, metal, chain or length; a yes/no question about a standard listing gets a yes/no answer.
 
 One customer can have several conversations in one thread. A sale that finished (order placed, custom listing bought, piece shipped) stays finished: don't re-quote it, re-send the line sheet or ask for specs the customer already gave. Ask only for choices that are still missing.
 
 Production is 4-6 business days for every order, whatever a listing's processing-time field says. When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
 
 Never give a concrete delivery timeline: no calendar date or date range for arrival ("by Friday", "Sep 28-29", "next week"). Give ranges in business days only, always followed by: "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen." That covers rush, Priority and Express too.
+
+The worked examples earlier in this prompt were written before these rules; where they differ, these rules win. Replies say "we", not "I". A line sheet goes out through attach_line_sheet, never as a "<line sheet URL>" in the text, and "every conversation gets the line sheet before the quote" means every custom conversation, never an existing listing. The metals comparison card shows gold filled, gold plated and solid gold only (not sterling silver), whatever an older example says; describe it that way. An attach flag is all attach_collateral needs; the older "MUST call get_collateral" rule is relaxed. A turn that states a resolver price keeps next_action compute_quote and may still set attach_line_sheet: true. A spec change on an order the customer already paid (Example 3) is support: follow SELF-ESCAPE A, not the fast path. Example 7's holding line is banned: that reply names the customer's exact request (the Beady Chain in 14k solid gold with rush) and says what is settled, e.g. that this chain is priced individually and rush on it needs the shop's confirmation.
+
+Existing listings first, judged by context. A customer who wants a listing as it is, or part of one (just the charm, a replacement charm, one huggie charm, a single stud), gets that listing: find it with search_shop_listings, name the dropdown option to pick, and send no custom quote and no line sheet. After declining a change a listing can't take, point back to the listing as it is. A customer who wants something made from a listing that it doesn't offer (another size, metal, design or combination) is asking for custom work: say we can make it, use the listing as the reference and send the sheet. A search miss or a missing dropdown option is not a no: never say we don't have it or can't do it on that basis, and never contradict what staff already said yes to in this thread.
+
+Staff prices stand. If staff already typed a price for this configuration, restate that price (it is the shop's quote) and flag any difference from the calculator for review instead of re-quoting. Huggies sell as a pair of hoops, but the charms on them may vary: one charm on the pair, mismatched charms or odd counts are configurations to price, never to refuse. A customer asking for huggie-size charms (even for a necklace) is the huggie family. A charm for the customer's own bracelet, string or keychain is a charm sold without chain.
+
+Reply in the customer's language; "Translate to English" at the end of a message is Etsy's button label, not a request. Never write that you can't see or open an image; if you can't tell which photo they mean, ask which one. Never state a shop policy (sales schedules, warranties) this prompt doesn't give, and never send the customer to "check the photos" for a size: use lookup_listing_specs or get_option_sheet's universal sizes.
+
+Acceptance. A customer who says they'll buy later (payday, next week) has not accepted: say the quote stands and they can message when ready, and don't start the listing. The custom listing already carries the accepted total, so never tell the customer to select a price option on it. Any add-on you mention goes with its link from the ADD-ON block.
 
 Never offer a discount or type a discount code yourself. When the customer accepts an extra 10% code the shop offered earlier, or asks about an exchange, return, refund or cancellation, that is support, not a sale: set current_state to non_sales so the support drafter answers it.
 `.trim();
@@ -3803,10 +3872,20 @@ ${validationResult.message}
       });
       const drafterHeaders = { "content-type": "application/json" };
       if (process.env.ETSYMAIL_EXTENSION_SECRET) drafterHeaders["x-etsymail-secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+      // A price the shop's calculator produced this turn would otherwise be
+      // lost: the drafter has no calculator and may not state custom prices
+      // from memory. Hand it over when it is clean (no Quote rows).
+      const rq = salesCtx._resolverThisTurn;
+      const handoffPrice = (!nonSalesTurn && rq && rq.success === true && typeof rq.total === "number"
+        && !(Array.isArray(rq.escalations) && rq.escalations.length))
+        ? `The shop's price calculator priced the customer's current ${rq.family || "custom"} spec this turn at $${rq.total.toFixed(2)} total` +
+          ` (quantity ${rq.quantity || 1}${rq.rush ? ", rush included" : ""}). You may state that total; state no other custom price.`
+        : null;
       const drafted = await require("./etsyMailDraftReply").handler({
         httpMethod: "POST", headers: drafterHeaders,
         body: JSON.stringify({ threadId, mode: "initial", employeeName, viaPipeline: true,
-                               forceRegenerate: true, bypassExistingDraft: true, manualRunId: manualRunId || null })
+                               forceRegenerate: true, bypassExistingDraft: true, manualRunId: manualRunId || null,
+                               ...(handoffPrice ? { instructions: handoffPrice } : {}) })
       });
       return { statusCode: drafted && drafted.statusCode || 500, headers: CORS,
                body: (drafted && drafted.body) || JSON.stringify({ error: "support drafter returned nothing" }) };
@@ -3973,7 +4052,7 @@ ${validationResult.message}
         console.warn(`[salesAgent] collateral link check failed for ${threadId}: ${e.message}`);
       }
     }
-    const replyText = customerFacingReply;
+    let replyText = customerFacingReply;
 
     const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
@@ -4178,6 +4257,12 @@ ${validationResult.message}
       if (kind === "line_sheet" && !lineSheetAttachInfo) lineSheetAttachInfo = info;
     }
     // ──────────────────────────────────────────────────────────────────
+
+    // Name each attached guide in an English reply that left it out.
+    try {
+      const { nameAttachedGuides } = require("./etsyMailCollateral");
+      if (replyText) replyText = nameAttachedGuides(replyText, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
+    } catch {}
 
     // Audit fix F1 — never replace a reply that is waiting to be sent
     // (queued) or is being sent right now. The draft slot is one per
@@ -4538,7 +4623,11 @@ ${validationResult.message}
         }
         // A price a person typed in the conversation ("$24 each") that the
         // customer said yes to; only when the shop's own messages state it.
-        const fromStaffQuote = staffQuotedTotal(parsed.accepted_quote_usd, recentThreadMessages);
+        // The prompt's example puts it inside next_action_payload; replays
+        // did that too, and the staff price was then never found.
+        const naPl = parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+        const fromStaffQuote = staffQuotedTotal(parsed.accepted_quote_usd, recentThreadMessages)
+          ?? staffQuotedTotal(naPl.accepted_quote_usd, recentThreadMessages);
         const resolvedQuote = fromCurrentTurn ?? fromStaffQuote ?? fromInMemLrr ?? fromPersistedLrr ?? fromTotalQuoted ?? fromHistory;
         // Pick the family from current/persisted resolver result, in same
         // priority order as the price.

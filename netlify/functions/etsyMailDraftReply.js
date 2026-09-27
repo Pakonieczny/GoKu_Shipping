@@ -100,6 +100,18 @@ try {
   searchListings = null;
 }
 
+// Listing sizes and metal facts from the internal catalog (the sales
+// agent's lookup_listing_specs). Replays showed the drafter telling
+// customers to "check the photos" for a charm's size because it had no
+// source for it. Firestore reads only, no Etsy calls.
+let resolveListingSpecs = null;
+let loadOptionSheet = null;
+try {
+  ({ resolveListingSpecs, loadSheet: loadOptionSheet } = require("./etsyMailOptionResolver"));
+} catch (e) {
+  console.warn("draftReply: etsyMailOptionResolver not loadable — lookup_listing_specs unavailable.", e.message);
+}
+
 // v5.21 — Etsy-API-first listing lookup. When the customer pastes a
 // listing URL, the AI needs the AUTHORITATIVE listing data (real
 // variants from /listings/{id}/inventory, current price, state) —
@@ -120,8 +132,9 @@ try {
 // result rather than crashing.
 let searchCollateral = null;
 let pullCollateralUrlsFromText = null;
+let nameAttachedGuides = null;
 try {
-  ({ searchCollateral, pullCollateralUrlsFromText } = require("./etsyMailCollateral"));
+  ({ searchCollateral, pullCollateralUrlsFromText, nameAttachedGuides } = require("./etsyMailCollateral"));
 } catch (e) {
   console.warn("draftReply: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
   searchCollateral = null;
@@ -461,7 +474,14 @@ async function loadMessages(threadId, limit) {
     .orderBy("timestamp", "desc")
     .limit(limit + 1)
     .get();
-  const all = dropDuplicateGhosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  // Etsy's "Translate to English" button label gets scraped onto the end of
+  // non-English messages (about 1 in 20 inbound); it is not the customer's
+  // request, and replays answered a French buyer in English because of it.
+  const all = dropDuplicateGhosts(snap.docs.map(d => {
+    const m = { id: d.id, ...d.data() };
+    if (typeof m.text === "string") m.text = m.text.replace(/\s*Translate to English\s*$/i, "");
+    return m;
+  }));
   const hasMore = snap.size > limit;
   const kept = all.slice(0, limit).reverse();  // → chronological
   // Only "older messages exist" is known (limit+1 fetched); the old
@@ -1057,7 +1077,21 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         Otherwise say the price comes with the proof or custom listing.
       - When the customer approves a proof or accepts a price for a
         custom piece, the custom listing made for them is the checkout.
-        Never send a generic custom-charm checkout listing instead.
+        Never send a generic custom-charm checkout listing instead, and
+        never send the re-work/modification listing for a new or
+        replacement piece.
+      - You cannot start a custom listing yourself. When the customer
+        has approved a proof or a price and the thread shows no custom
+        listing yet, confirm what is settled (design, metal, price),
+        say the custom listing comes next, and set
+        ready_for_human_approval:true with a note "Create custom listing
+        at $X" (or "needs price" when none was given, plus a request
+        for the missing size or metal in the reply). A person makes it.
+      - A search miss or a missing dropdown option is not a no. Never
+        tell the customer we can't do something because a listing or
+        search didn't show it, and never contradict what staff already
+        said yes to in this thread. Never mention "our system" or any
+        internal tool in the reply.
 
 5.1 GENTLE UPSELL. When the customer's question is answered and the
     mood is good (a pre-purchase question, a happy customer, a
@@ -1068,6 +1102,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     late or lost package, a refund or return, or an upset customer.
 
 6. HUMAN TONE HYGIENE:
+      - Write as "we" (the shop), never "I", the way staff do.
+      - Reply in the customer's language. "Translate to English" at the
+        end of a message is Etsy's button label, not a request.
       - Don't use corporate-speak ("per our policy", "as per the
         agreement", "we strive to...") — this screams support-bot
       - Don't over-structure with bullet lists or headers — talk
@@ -2000,9 +2037,24 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - Never say a package is or isn't lost without scan data; say
         what tracking shows.
       - Never invent a product detail (backing type, clasp, size, how a
-        part attaches, where it is made). State what the listing, a
-        tool result or this prompt shows; if none shows it, say which
-        part you can confirm and answer the rest.
+        part attaches, where it is made) or a shop policy (sales
+        schedules, warranties). State what the listing, a tool result
+        or this prompt shows; for sizes and metal behaviour call
+        lookup_listing_specs first. If none shows it, say which part
+        you can confirm and answer the rest. Never send the customer to
+        "check the photos" or to someone else for an answer the shop
+        should give.
+      - Never write that you can't see or open an image. If you can't
+        tell which photo or design they mean, ask which one.
+      - When a shop fact isn't available (an exact size, whether a pair
+        is mirrored), don't write about checking or confirming it and
+        don't guess it: give what is standard or settled, name the fact
+        to verify in confidenceReasoning and set
+        ready_for_human_approval:true so a person adds it before sending.
+        Never mention an internal catalog, system or tool to the customer.
+      - Mismatched pairs, a single earring and odd charm counts are
+        priced, never refused; never contradict what staff already
+        said yes to in this thread.
       - Shipping speeds are the ones in section 7 (USPS Priority Mail
         1-3 business days, Priority Mail Express 1-2), never another
         figure.
@@ -2087,6 +2139,12 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     is genuinely something else open in the thread that the customer
     DIDN'T address. If everything is resolved and they're closing out,
     close out with them. Don't manufacture a problem.
+
+    One such open item: the shop promised a custom listing (or a link,
+    proof or quote) in this thread and none has gone out yet. Then the
+    thanks is not trivial: reply briefly, set
+    ready_for_human_approval:true and name what is still owed
+    ("Custom listing for the $75 set promised, not created yet").
 
 15. RUSH PRODUCTION OFFER ($15) — STRICT ELIGIBILITY.
     CustomBrites offers a $15 flat-fee rush production upgrade that
@@ -2448,6 +2506,11 @@ You have seven tools:
     variants and state of an Etsy listing URL. Listings the customer
     linked in their latest message are already provided under
     PRE-FETCHED LISTING DATA; call this only for other URLs.
+  - lookup_listing_specs(query) — a listing's size and charm specs and
+    the shop's per-metal facts (durability, water, tarnish). Call it for
+    "how big is it", "is it too small for a man", "will it work on a
+    bracelet" or "can it get wet" about a listing, before answering;
+    never tell the customer to check the photos for a size.
   - search_shop_listings(query) — searches the mirrored active Etsy
     listing catalog. Use it for pre-purchase availability questions like
     "do you sell X?", "do you have this in silver?", or "how much is Y?"
@@ -2477,10 +2540,16 @@ Workflow:
   5. If the active question is a product availability, variant, or price
      question and no exact listing is already clear from the thread,
      call search_shop_listings before suggesting products or prices
-  6. If the active question is about sizes, materials, available variants,
-     or any other "what's available" topic for a custom or configurable
-     piece, set attach_line_sheet to the family (necklace, stud or huggie)
-     on compose_draft_reply; the sheet attaches as an image
+  6. If the active question is about sizes, materials or options for a
+     CUSTOM piece (a design we make), set attach_line_sheet to the family
+     (necklace, stud or huggie) on compose_draft_reply; the sheet attaches
+     as an image. For an existing listing as it is, answer from that
+     listing and point to it, with no line sheet (owner's rule); a custom
+     piece based on a listing is custom work and gets the sheet
+  6b. If the question is about gold types, care or tarnish, necklace fit
+     or bracelet sizing, set the matching guide flag (see COLLATERAL
+     ATTACHMENT FLAGS), on placed orders too, and name each attached
+     image in one clause of the reply
   7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
@@ -2570,26 +2639,35 @@ WHEN TO SEND A LINE SHEET (use attach_line_sheet):
 
 A line sheet is a single reference image showing every size, metal,
 chain length, and engraving option for a product family on one page.
-Operators send it constantly because one image answers a paragraph of
-follow-up questions before they get asked. The following patterns
-should trigger attach_line_sheet on compose_draft_reply:
+It is for CUSTOM work only: a design we make where the customer must
+choose size, metal or chain.
 
-  - "What sizes do your charms come in?"
-  - "What size are your <design> charms?"
-  - "Do you have a chart / sheet / breakdown of the options?"
-  - "What metals do you offer?" (when scoped to a specific family)
-  - "What chain lengths can I pick from?"
-  - "Show me what's available" / "what are my options"
-  - "I'm not sure which one to pick" (after they've named the family)
+OWNER'S RULE: a customer interested in an existing listing (they linked
+it or named it and ask its price, metal, size, chain, or how to order)
+stays with that listing. Answer from the listing and point to it; no
+line sheet. Judge by context, not by the link: a custom piece based on
+a listing (a size, metal, chain or design it doesn't offer, two designs
+combined, their own photo or name in that style) is custom work and
+gets the sheet, with the listing as the reference.
 
-Identify the family from the customer's message or the listing they
-linked. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
-"hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud". Then set
+For custom work, these patterns trigger attach_line_sheet on
+compose_draft_reply:
+
+  - "Can you make a <design> charm? What sizes/metals are there?"
+  - "How much would a custom <design> be?"
+  - "Do you have a chart / sheet / breakdown of the custom options?"
+  - "What chain lengths can I pick from?" (for a custom piece)
+  - "I'm not sure which one to pick" (custom piece, family named)
+
+Identify the family from the customer's message. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
+"hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud": for an
+earring with no hoop named, send the stud sheet and add that it can be
+made as a huggie charm too, rather than asking which first. Then set
 attach_line_sheet: "<family>" on compose_draft_reply. The sheet
 attaches to the draft as an image, the same way the sales team sends
 it, and you mention it in one short sentence:
 
-  "Our standard necklace charms are 9-10mm. I've attached our charm
+  "Yes, we can make that as a custom charm. I've attached our charm
   line sheet with every size, metal and chain laid out, so just tell
   me which you'd like."
 
@@ -2606,18 +2684,20 @@ COLLATERAL ATTACHMENT FLAGS (set these on your compose_draft_reply call):
 
 When the customer's question would be better answered with a visual reference, set the matching boolean flag and the image will attach as a chip on the draft:
 
-  - attach_metal_comparison: true — customer asks about metals (gold filled vs gold plated vs solid gold, gold purity, what kind of gold, is it real gold, what karat, tarnish, hypoallergenic)
-  - attach_care_instructions: true — customer asks about care, cleaning, water/shower exposure, daily wear, durability, longevity, storage, maintenance
+  - attach_metal_comparison: true — customer asks about GOLD types (gold filled vs gold plated vs solid gold, gold purity, what kind of gold, is it real gold, what karat, whether gold filled tarnishes, hypoallergenic gold). The card shows gold only: never send it for a sterling silver question.
+  - attach_care_instructions: true — customer asks about care, cleaning, water/shower exposure, lotion or sunscreen, daily wear, durability, longevity, storage, maintenance, or sterling silver tarnishing
   - attach_fit_reference: true — customer asks about necklace fit on the body, chain length, how it sits
   - attach_bracelet_sizing: true — customer asks about wrist sizing, bracelet length, how to measure a wrist
+These guides apply on placed orders too: a customer weighing 16 vs 18 inches on an order gets the fit reference with the answer.
 
 The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT paste the URL of these four flagged images into your reply text — they attach automatically as chips, and a raw URL in prose shows the customer URL characters with no image. Line sheets work the same way through attach_line_sheet.
 
 ADD-ON AND SERVICE LISTINGS: the context carries an "ADD-ON AND SERVICE
 LISTINGS" block with the shop's live links for a replacement chain, a
 longer chain, an extender, the beady chain upgrade, an added disc, the
-re-work/modification fee, custom-charm checkout, priority shipping and
-the re-shipping fee, each with when to use it. When the customer needs
+re-work/modification fee, a huggie charm without hoop, an extra charm
+at a price staff quoted, priority shipping and the re-shipping fee,
+each with when to use it. When the customer needs
 one of those, link it from that block (don't search for it and never
 build a link yourself) and say what to select and what to note at
 checkout, the way staff do: "You can add a longer chain with this
@@ -2971,6 +3051,18 @@ const TOOL_SPECS = [
     }
   },
   {
+    name: "lookup_listing_specs",
+    description: "Look up a listing's size and charm specs, plus the shop's metal facts (thickness, durability, water and tarnish behaviour per metal), from the internal catalog. Call it when the customer asks how big a piece is, its dimensions, whether it suits a man or a bracelet, or how a metal holds up, and a listing is referenced (URL, ID, title or 'this one'). Answer from dimensionsSummary, or from familyFacts (the family's universal silhouette sizes and metal facts) when the listing has no own entry. If neither settles it, don't estimate the exact figure: give what the result does settle (for example the family's standard size range), set ready_for_human_approval:true so a person adds the exact size, and write no holding line.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The listing as the customer referred to it: full Etsy URL, bare listing ID, slug, or title words. If the latest message has none, pass the most recent one from the thread." },
+        family: { type: "string", enum: ["necklace", "huggie", "stud"], description: "The listing's family when known (necklace charm, huggie hoop charm or stud)." }
+      },
+      required: ["query"]
+    }
+  },
+  {
     name: "search_shop_listings",
     description: "Search the shop's mirrored active Etsy listings. Use this for normal customer-service/pre-purchase questions about whether the shop sells something, available variants/materials, or rough product price when the thread did not route to sales mode.",
     input_schema: {
@@ -3113,7 +3205,7 @@ const TOOL_SPECS = [
         attach_line_sheet: {
           type: "string",
           enum: ["necklace", "stud", "huggie"],
-          description: "Set to the product family when the customer is choosing sizes, metals, chains or prices for a custom or configurable piece. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Leave it out for delivery, shipping, return, order-status or complaint questions, and when the customer is simply ordering a standard listing."
+          description: "Set to the product family only for custom work: the customer is choosing sizes, metals, chains or prices for a design we make. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Owner's rule, judged by context: a customer interested in an existing listing as it is (its price, metal, size, chain, or ordering it) stays with that listing, with no line sheet; a custom piece based on a listing (something it doesn't offer) is custom work and gets the sheet. Leave it out for those and for delivery, shipping, return, order-status or complaint questions."
         }
       },
       required: ["investigation", "text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
@@ -3282,6 +3374,37 @@ function buildToolExecutors(ctx) {
       } catch (e) {
         return { found: false, reason: "LOOKUP_ERROR", error: e.message };
       }
+    },
+
+    lookup_listing_specs: async (input) => {
+      const query = String((input && input.query) || "").trim();
+      if (!query) return { found: false, reason: "INVALID_INPUT", error: "query is required" };
+      if (!resolveListingSpecs) return { found: false, reason: "RESOLVER_UNAVAILABLE" };
+      let result;
+      try {
+        result = await resolveListingSpecs({ query });
+      } catch (e) {
+        result = { found: false, reason: "RESOLVER_ERROR", error: e.message };
+      }
+      if (result && result.found === true && !result.incomplete) return result;
+      // Few listings have their own catalog entry, but each family sheet
+      // carries the universal charm sizes and the per-metal facts.
+      const family = String((input && input.family) || "").toLowerCase()
+        || (/\b(huggie|hoop)/i.test(query) ? "huggie" : /\b(stud|earring)/i.test(query) ? "stud" : "necklace");
+      try {
+        const sheet = loadOptionSheet ? await loadOptionSheet(family) : null;
+        if (sheet) {
+          const ms = require("./etsyMailOptionResolver").metalSpecsForAi(sheet.metalSpecs);
+          // The resolver's "escalate, do NOT estimate" is about this
+          // listing's own entry; the family sizes below are the shop's
+          // standard and may be stated (replays read the two as a clash).
+          result = { ...result,
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            familyFacts: { family, charmStyles: sheet.charmStyles || null, metalSpecs: ms,
+            note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
+        }
+      } catch {}
+      return result;
     },
 
     search_shop_listings: async (input) => {
@@ -4995,7 +5118,17 @@ answering. Do not guess about the order's contents.`;
       // Fallback — model produced text but never called compose_draft_reply.
       // Extract the last text content block as the reply.
       const finalContent = Array.isArray(loopResult.finalResponse.content) ? loopResult.finalResponse.content : [];
-      const lastText = finalContent.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
+      let lastText = finalContent.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
+      // A reply written as a JSON object in plain text (tool arguments typed
+      // out instead of called) would put raw JSON in the composer: keep
+      // only its reply text. Still confidence 0 below, so a person reviews it.
+      if (/^(?:```(?:json)?\s*)?\{/.test(lastText)) {
+        try {
+          const j = JSON.parse(lastText.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""));
+          const t = j && (typeof j.text === "string" ? j.text : typeof j.reply === "string" ? j.reply : null);
+          if (t && t.trim()) lastText = t.trim();
+        } catch {}
+      }
       parsed = {
         text                : postProcessDraft(lastText) || "(Model finished without producing a draft. Try again.)",
         reasoning           : "(Model did not call compose_draft_reply — using last text block as reply.)",
@@ -5446,6 +5579,11 @@ answering. Do not guess about the order's contents.`;
     // Final attachments list combines tracking-image attachments
     // (existing behavior) with collateral attachments (new).
     const attachments = trackingAttachments.concat(collateralAttachments);
+    if (nameAttachedGuides && parsed.text) {
+      try {
+        parsed.text = nameAttachedGuides(parsed.text, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
+      } catch {}
+    }
 
     // Audit 2026-09 — second half of the attachment-claim guard: the prose
     // promises an attachment but nothing attached (e.g. a flag was set but
