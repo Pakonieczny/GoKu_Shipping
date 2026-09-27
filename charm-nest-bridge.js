@@ -1292,6 +1292,10 @@ const Orders = window.Orders = (() => {
     // between arrivals there is no Stop to press: say what the run is doing with the lines instead
     pull.title = !running ? "refresh open orders using the pull rule in Settings" : B.run.status === "processed" ? "the open run holds these lines · new orders join it as they arrive" : "a run is open — stop it first, or its lines would be replaced under it";
     v.querySelector("#ordSort").value = OV.sort;
+    // the search box always shows the search the list is narrowed by: the sheet window's "In Orders" set it before the
+    // tab was first drawn, and the box came up empty over a list of one order's lines (Paul, 27 Sep 22:28: "It's only
+    // showing me two orders in the orders tab where it says 360")
+    { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; }
     const charmTotal=v.querySelector("#ordCharmTotal");
     charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
     charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
