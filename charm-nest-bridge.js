@@ -4995,7 +4995,7 @@ const RunCtl = window.RunCtl = (() => {
    writes nothing anywhere else. Here the same page prints the same object (CharmNestOrders.sortingLabel builds it as
    sorting.html does from the same order) and says when the label is made and its print dialog opens, and when that
    dialog has closed (#notify). Then the line is marked completed, in the cloud (charmNestLibrary customPut, read by every
-   sorter): a finished line, never pooled, no longer holding its order, under Custom Orders → Completed, where it can be
+   sorter): a finished line, never pooled, no longer holding its order, under Review → Completed, where it can be
    printed again or reopened. A dialog closed without printing looks the same to the page, so the card says "Marked
    completed · Undo" for 12 s, and Undo takes the completion back. While its label is printed the pool leaves the line be
    (printing), and one the run put on a sheet meanwhile is cut, not marked. One label at a time (the printer reads one
@@ -5098,7 +5098,7 @@ const CustomPrint = window.CustomPrint = (() => {
       // printed from Open: "Marked completed · Undo" on the card (a dialog closed without printing looks the same here)
       if (!it.done && done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
       settle(); say(key, null);
-      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Custom Orders → Completed"}`);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
@@ -5138,7 +5138,7 @@ const CustomPrint = window.CustomPrint = (() => {
     }
     busy.delete(key);
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
-    catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Custom Orders → Open`, "bad", 9000); return; }
+    catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
     agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`);
   }
@@ -5362,7 +5362,7 @@ const Review = window.Review = (() => {
   /* Custom Orders (Paul, 25 Sep): every special line — custom charms and pieces, rework, chain only, add-ons, anything
      that is not a regular listing purchase (O.specialOf) — is grouped under one tab. A special line with questions is one
      decision there; one with none (chain only is never cut; a custom charm already on its way to the laser) is listed
-     there too, as a card that asks nothing, and one whose QR label was printed moves to its Completed switch. */
+     there too, as a card that asks nothing, and one whose QR label was printed moves to Completed (one switch for every filter). */
   const isCustomRow = row => !!(row && row.spec && row.spec.special);
   const customKey = row => `ord:custom:${row.order.receiptId}:${row.spec.designSku || row.line.sku || row.line.listingId || row.key}`;
   // a regular listing whose metal could not be read is a question about its options: it is shown under Options
@@ -5445,7 +5445,7 @@ const Review = window.Review = (() => {
   }
   function focus(rowKey) {
     const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
-    RV.filter=null;RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
+    RV.filter=null;RV.cseg="open";RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
     if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});c.classList.add('pulse');setTimeout(()=>c.classList.remove('pulse'),1300);}
   }
@@ -5654,6 +5654,8 @@ const Review = window.Review = (() => {
     missingSize: "Pick the size to cut — or, made by hand, print its QR label to complete it.",
     other: "Settle it below — or, made by hand, print its QR label to complete it."
   };
+  // cseg: Open or Completed, the one switch at the front of the bar, for every filter (Paul, 27 Sep: one global Completed
+  // folder, no longer Custom Orders' own); filter: the kind chip, shared by both
   const RV = { filter: null, limit:40, open:null, cseg:"open" };
   let reviewFilter=null;
   const reviewRows=new Map();
@@ -5673,8 +5675,8 @@ const Review = window.Review = (() => {
     if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
-  /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under its
-   *  Completed switch, with those whose order has left the pull, so a label can always be printed again, and with every
+  /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under
+   *  Completed, with those whose order has left the pull, so a label can always be printed again, and with every
    *  line read as completed by hand, special or not (its SKU may have a design since), so each can be reopened. One just
    *  completed from Open stays there too while its card offers Undo (recent). */
   function customLists(decided) {
@@ -5727,7 +5729,7 @@ const Review = window.Review = (() => {
     // or reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
     const acts=busy?busy
       :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)?`<button class="btn ${it.done?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Custom Orders → Open (the printed label is not undone)">Reopen</button>`:'')
+      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>`:'')
       +(decide?`<button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
@@ -5749,57 +5751,70 @@ const Review = window.Review = (() => {
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     if(open&&decide)show();reviewRows.set(it.key,{stamp,node});return node;
   }
+  /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
+  const settledRows = new WeakMap();
+  function settledRow(d) {
+    let node = settledRows.get(d); if (node) return node;
+    node=el('div','doneRow workRow reviewListRow rvSettled');node.dataset.rid=String(d.orders?.[0] || '');
+    node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} lines</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions"><span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span></div>`;
+    settledRows.set(d, node); return node;
+  }
   function render() {
     if(window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     const active=v.contains(document.activeElement)?document.activeElement:null;
-    const oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
-    if(reviewFilter!==RV.filter){RV.limit=40;reviewFilter=RV.filter;}
+    // the old Decided chip is Completed now
+    if (RV.filter === "done") { RV.filter = null; RV.cseg = "done"; }
+    const doneMode = RV.cseg === "done";
+    const view = RV.cseg + "|" + (RV.filter || "");
+    let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
+    if(reviewFilter!==view){RV.limit=40;reviewFilter=view;oldScroll=0;}
     const all = items().filter(it => mine(it) && !isNotice(it));
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
-    const alive=new Set(all.concat(cl.open, cl.done).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
     all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || a.t - b.t);
     cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a));
+    // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
+    // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
+    const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
+    const finished = cl.done.concat(settled.filter(d => !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const alive=new Set(all.concat(cl.open, cl.done).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
     const customAsk = byKind.get("customOrder") || 0, customN = customAsk + cl.open.length;
-    if (RV.filter === "customOrder" ? !customN && !cl.done.length : RV.filter && RV.filter !== "done" && !byKind.has(RV.filter)) RV.filter = null;
+    if (customN) byKind.set("customOrder", customN); else byKind.delete("customOrder");
+    const doneKind = new Map(); for (const it of finished) doneKind.set(tabOf(it), (doneKind.get(tabOf(it)) || 0) + 1);
+    const kinds = doneMode ? doneKind : byKind;
+    // a filter emptied under Open goes back to Everything; under Completed it is only not shown, so Open keeps it
+    if (!doneMode && RV.filter && !byKind.has(RV.filter)) RV.filter = null;
+    const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
     const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open, cl.recent);
-    const list = RV.filter === "customOrder" ? (RV.cseg === "done" ? cl.done : customOpen) : RV.filter && RV.filter !== "done" ? all.filter(it => tabOf(it) === RV.filter) : RV.filter === "done" ? [] : all.concat(cl.open, cl.recent);
-    const chip = (id, label, n, cls, title) => `<button class="egTab${(RV.filter || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    // Custom Orders' own two lists, Open and Completed, switch inside the bar beside its chip: no row of their own
-    const seg = RV.filter === "customOrder" ? `<span class="rvSeg" role="group" aria-label="Custom Orders"><button type="button" data-cseg="open" class="${RV.cseg !== "done" ? "on" : ""}" aria-pressed="${RV.cseg !== "done"}" title="custom orders still to finish">Open<b>${customN}</b></button><button type="button" data-cseg="done" class="${RV.cseg === "done" ? "on" : ""}" aria-pressed="${RV.cseg === "done"}" title="custom orders whose QR label was printed — print again or reopen">Completed<b>${cl.done.length}</b></button></span>` : "";
-    const chips = ORDER.filter(k => k === "customOrder" ? customN || cl.done.length : byKind.has(k)).map(k => k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide · ${cl.done.length} completed`) + seg : chip(k, KIND_WORDS[k] || k, byKind.get(k))).join("");
+    const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
+      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open, cl.recent);
+    const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
+    // Open or Completed first, then the filters: the switch holds for every chip
+    const openN = all.length + cl.open.length;
+    const seg = `<span class="rvSeg" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="what still waits, in every filter">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished, in every filter: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
+    const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} completed`)
+      : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
-    v.querySelector('.ordBar').innerHTML = `${chip("", "Everything", all.length + cl.open.length, "info")}${chips}${settled.length ? chip("done", "Decided", settled.length, "ok") : ""}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    v.querySelector('.ordBar').innerHTML = `${seg}${chip("", "Everything", doneMode ? finished.length : openN, doneMode ? "ok" : "info")}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
-    // (Custom Orders keeps its Open / Completed choice while another chip is shown)
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; render(); });
     const host = v.querySelector("#rvList");
-    if (RV.filter === "done") {
-      // what this shift settled: the other half of "what has been approved", which the screen never used to say
-      host.innerHTML=settled.length ? '' : '<div class="libEmpty">Nothing settled yet this session</div>';
-      for(const d of settled.slice(0,RV.limit)){
-        const node=el('div','doneRow workRow reviewListRow');node.dataset.rid=String(d.orders?.[0] || '');
-        node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span><span class="groupScope">${d.lines} lines</span></div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions"><span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+fmtT(d.t):''}</span></div>`;
-        host.appendChild(node);if(d.row)ListMedia.mount(node,d.row);
-      }
-      ListMedia.more(host,settled.length,Math.min(RV.limit,settled.length),()=>{RV.limit+=40;render();});
-      v.querySelector('.egPane.scroll').scrollTop=oldScroll;
-      return;
-    }
-    if (!list.length) host.innerHTML = `<div class="libEmpty">${RV.filter === "customOrder" ? (RV.cseg === "done" ? "No custom order completed yet — print its QR label from Open." : "No custom order is open.") : "Nothing waits for a decision."}</div>`;
-    else {const desired=list.slice(0,RV.limit).map(it=>({it,node:reviewRow(it)})),keep=new Set(desired.map(x=>x.node));desired.forEach(({it,node},i)=>{if(host.children[i]!==node)host.insertBefore(node,host.children[i]||null);if(it.row)ListMedia.mount(node,it.row);});for(const node of [...host.children])if(!keep.has(node))node.remove();for(const {node} of desired)if(node._refocus){const f=node._refocus;node._refocus=null;f();}}
+    const what = f ? (KIND_WORDS[f] || f) : "";
+    if (!list.length) host.innerHTML = `<div class="libEmpty">${doneMode ? (f === "customOrder" ? "No custom order completed yet — print its QR label from Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}</div>`;
+    else {const desired=list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})),keep=new Set(desired.map(x=>x.node));desired.forEach(({it,node},i)=>{if(host.children[i]!==node)host.insertBefore(node,host.children[i]||null);const r=it.settled?it.settled.row:it.row;if(r)ListMedia.mount(node,r);});for(const node of [...host.children])if(!keep.has(node))node.remove();for(const {node} of desired)if(node._refocus){const f=node._refocus;node._refocus=null;f();}}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     v.querySelector('.egPane.scroll').scrollTop=oldScroll;
     if(active?.isConnected)active.focus({preventScroll:true});
-    const notices = items().filter(isNotice);
+    const notices = doneMode ? [] : items().filter(isNotice);
     if (notices.length) {
       host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
@@ -6602,7 +6617,7 @@ const OrderWin = window.OrderWin = (() => {
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (busy ? busy
         : CustomPrint.failNote(it) + (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
-          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Custom Orders → Open (the printed label is not undone)">Reopen</button>` : ""));
+          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>` : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
     const pb = bar.querySelector("[data-cu-print]"); if (pb) pb.onclick = () => CustomPrint.print(now());
