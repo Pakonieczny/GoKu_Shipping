@@ -1921,6 +1921,20 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .toast .toastUndo{border:1px solid rgba(244,236,220,.35);background:transparent;color:#f4ecdc;border-radius:7px;padding:1px 9px;font:650 11.5px var(--sans);cursor:pointer;margin-left:2px;flex:0 0 auto;align-self:center}
 .toast .toastUndo:hover{background:#f4ecdc;color:var(--velvet)}
 @media (prefers-reduced-motion:reduce){.ldMark,.ldLine,.ldChev,.ldPanel,.ldThumb img,.libTabs button{transition:none}.ldIn,.ldHit,.ldFound,.libTabs .cnt.pulse,#libBody.ldSwap,#libDone.ldSwap{animation:none}}
+/* a Library card on its way to a tab (Paul, 27 Sep 20:09-20:24) looks as it did in its list: laid out at the list's
+   width under the list's own container rules, its corner check left behind */
+.mGhost:has(>.mCopy.librarySheet,>.mCopy.setCard,>.mCopy.ldItem,>.mCopy.libCard){container-name:workspace}
+.mGhost .libCard{position:relative}
+.mGhost .ldMark:not(.ldMarkSet){display:none}
+/* the list scrolled past the bar: a small sign at its top stands for the tab something goes to (or comes from) */
+.ldSign{position:fixed;z-index:139;display:inline-flex;align-items:center;gap:5px;padding:3px 11px 3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);box-shadow:0 6px 18px rgba(30,24,16,.14);font:650 11px/16px var(--sans);color:var(--ink70);white-space:nowrap;pointer-events:none;animation:ldSignIn .32s cubic-bezier(.3,1.3,.5,1)}
+.ldSign svg{width:11px;height:11px;flex:0 0 11px}
+@keyframes ldSignIn{from{opacity:0;transform:translateY(-6px)}}
+/* Undo set: what the station is doing, at the set's title, until that line goes to the Orders tab */
+.setUndoChip{display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--mono);color:var(--ink70);background:var(--paper2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;white-space:nowrap;animation:ldFade .3s ease}
+.setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
+.setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
+@media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}

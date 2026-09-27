@@ -82,17 +82,25 @@ function seed(st, blobUrl) {
   assert(+vis > 0.9, 'the check shows on hover: ' + vis);
   await shot('02-hover-mark');
   await page.click(`#libBody .libCard[data-id="${first}"] .ldMark`);
+  // (Paul, 27 Sep: it leaves at once, a copy of it flies to the Completed tab, which counts it as it lands)
   await page.waitForFunction(id => !document.querySelector(`#libBody .libCard[data-id="${id}"]`), first, { timeout: 5000 });
+  const flying = await page.evaluate(() => [document.querySelectorAll('#motionLayer .mGhost').length, document.querySelector('#libDoneCount').textContent]);
+  assert.deepEqual(flying, [1, '120'], 'a copy flies to the tab, which counts it as it lands: ' + flying);
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '121', null, { timeout: 5000 });
   assert(done(first) && st.doc(SHEETS, first).laserDoneBy === 'Tester', 'the mark is recorded with its name');
   assert.equal(await page.evaluate(id => CN.allSheets().some(p => p.sheetId === id) || LibraryDone.isDone({ id }), first), true);
-  await page.waitForSelector('.toast .toastUndo');
-  await shot('03-marked-undo-toast');
-  await page.click('.toast .toastUndo');
+  // one Undo: in the note under the Completed tab, once the copy has landed (no toast beside it)
+  await page.waitForSelector(`.mNote[data-ld="sheet:${first}"] .mNoteBtn`);
+  assert.match(await page.textContent(`.mNote[data-ld="sheet:${first}"]`), /Sheet \d+ marked completed/);
+  assert.equal(await page.$$eval('#motionLayer .mGhost', x => x.length), 0, 'nothing left on the motion layer');
+  assert.equal(await page.$('.toast .toastUndo'), null, 'no second Undo in a toast');
+  await shot('03-marked-undo-note');
+  await page.click(`.mNote[data-ld="sheet:${first}"] .mNoteBtn`);
   await page.waitForFunction(id => !!document.querySelector(`#libBody .libCard[data-id="${id}"]`), first, { timeout: 5000 });
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '120', null, { timeout: 5000 });
   assert(!done(first) && !('laserDoneBy' in st.doc(SHEETS, first)), 'Undo takes the mark back in the cloud');
-  ok.push('a sheet marked from its corner leaves Current, is recorded with who and when, and Undo brings it back');
+  await page.waitForFunction(() => !document.querySelector('#motionLayer .mGhost'), null, { timeout: 5000 });
+  ok.push('a sheet marked from its corner flies to Completed (counted as it lands), is recorded with who and when; Undo in the note under the tab brings it back');
 
   // the page's own run: a run page of a completed sheet is closed to more charms
   const closed = await page.evaluate(() => { const p = CN.activePage('gold'); p.sheetId = 'sh0x1x0'; return LibraryDone.mark('sheet', 'sh0x1x0', true).then(() => [!!p.laserDoneAt, !!window.LiveNest?.closed(p)]); });
@@ -124,8 +132,7 @@ function seed(st, blobUrl) {
   const partMembers = st.doc(SETS, partSet).sheetIds;
   await page.click(`#libBody .ldMarkSet[data-ld="set:${partSet}"]`);
   await until(() => partMembers.every(done) && +st.doc(SETS, partSet).laserDoneAt > 0);
-  await page.waitForSelector('.toast .toastUndo');
-  await page.click('.toast .toastUndo');
+  await page.click(`.mNote[data-ld="set:${partSet}"] .mNoteBtn`);
   await until(() => !st.doc(SETS, partSet).laserDoneAt && partMembers.filter(done).length === 1);
   assert(done(other), 'the sheet marked before keeps its mark');
   await page.waitForFunction(id => [...document.querySelectorAll('#libBody .setCard')].some(c => c._laserSet && c._laserSet.setId === id && c.querySelector('.ldPartial')), partSet, { timeout: 5000 });
