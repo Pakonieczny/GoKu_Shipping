@@ -72,5 +72,32 @@ async function check({ queued = false, automatic = false } = {}) {
   assert.match(retry.status.textContent, /1 retries admitted by collector/);
   const automatic = await check({ automatic: true });
   assert.match(automatic.status.textContent, /Automatic check finished.*1 state changes/);
+
+  const renderStart = source.indexOf("    function _renderSessionBlock(session) {");
+  const renderEnd = source.indexOf("    async function _cancelSession(sessionId) {", renderStart);
+  assert(renderStart > 0 && renderEnd > renderStart);
+  const now = Date.now();
+  const batches = [
+    ...Array.from({ length: 30 }, (_, i) => ({ batchName: `batch_active_${i}`,
+      displayName: `lg1-Beady_Necklace-300sets-test-part${i + 1}of300`,
+      state: "JOB_STATE_RUNNING", createdAt: now - 3 * 3600000, updatedAt: now - 60000,
+      batchStats: { requestCount: 6, pendingRequestCount: 6, successfulRequestCount: 0, failedRequestCount: 0 },
+      setsCount: 1 })),
+    { batchName: "batch_failed", displayName: "lg1-Beady_Necklace-300sets-test-part31of300",
+      state: "JOB_STATE_FAILED", retryRequested: true, setsCount: 1 },
+  ];
+  const html = vm.runInNewContext(`${source.slice(renderStart, renderEnd)}; _renderSessionBlock({
+    sessionId: "sess_test", batches, earliest: Date.now() - 3 * 3600000, latest: Date.now()
+  })`, {
+    batches, Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: now + 600000,
+    _normBatchState: (x) => x, _batchSafeText: (x) => String(x),
+    _formatDuration: (ms) => `${Math.round(ms / 3600000)}h`,
+    normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }),
+    DEFAULT_IMAGE_MODEL: "sunburst",
+  });
+  assert.match(html, /Provider backlog · awaiting images/);
+  assert.match(html, /0 completed · 180 pending · 0 failed/);
+  assert.match(html, /Provider has not reported any completed image requests/);
+  assert.match(html, /Oldest active job/);
   console.log("Listing refresh UI: provider check, feedback, collection, retry sweep passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

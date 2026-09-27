@@ -13083,12 +13083,27 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const total = uniqueEffective.size;
       const finished = [...uniqueEffective.values()].filter((b) => b.collected).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
-      const running = states.filter((st) => st === "JOB_STATE_RUNNING" || st === "JOB_STATE_PENDING").length;
+      const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
+      const running = activeJobs.length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
       const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
-      const lastProviderCheck = Math.max(0, ...effective.filter((b) =>
-        ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state)))
-        .map((b) => Number(b.updatedAt || 0)));
+      const lastProviderCheck = Math.max(0, ...activeJobs.map((b) => Number(b.updatedAt || 0)));
+      const oldestActiveAt = activeJobs.length ? Math.min(...activeJobs.map((b) => Number(b.createdAt || Date.now()))) : 0;
+      const requestStats = activeJobs.reduce((sum, b) => {
+        const st = b.batchStats;
+        if (st?.requestCount) {
+          sum.reporting++;
+          sum.total += Number(st.requestCount || 0);
+          sum.completed += Number(st.successfulRequestCount || 0);
+          sum.failed += Number(st.failedRequestCount || 0);
+          sum.pending += Number(st.pendingRequestCount || 0);
+        }
+        return sum;
+      }, { reporting: 0, total: 0, completed: 0, failed: 0, pending: 0 });
+      const providerWaiting = running > 0 && requestStats.reporting === running &&
+        requestStats.completed === 0 && requestStats.failed === 0 &&
+        requestStats.pending === requestStats.total &&
+        oldestActiveAt && Date.now() - oldestActiveAt > 2 * 60 * 60 * 1000;
 
       let totalSets = 0;
       let totalImagesGen = 0;
@@ -13140,6 +13155,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
+      } else if (providerWaiting) {
+        headline = "Provider backlog · awaiting images"; headlineColor = "#fde68a";
       } else if (waitingRetries && running >= _batchRetryLimit) {
         headline = "Processing · retries waiting"; headlineColor = "#93c5fd";
       } else if (running > 0 || waitingRetries > 0) {
@@ -13164,10 +13181,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
         : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
-      rows.push(["Progress", `${finished} saved · ${running} processing · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
+      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (waitingRetries) rows.push(["Retry admission", `${running} active provider jobs · queued retries start below ${_batchRetryLimit}`]);
-      if (lastProviderCheck) rows.push(["Provider checked", new Date(lastProviderCheck).toLocaleTimeString()]);
+      if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
+      if (oldestActiveAt) rows.push(["Oldest active job", `${_formatDuration(Date.now() - oldestActiveAt)} waiting`]);
+      if (lastProviderCheck) rows.push(["Last provider check", new Date(lastProviderCheck).toLocaleTimeString()]);
+      const lastSavedAt = Math.max(0, ...session.batches.map((b) => Number(b.collectedAt || 0)));
+      if (lastSavedAt) rows.push(["Last set saved", `${new Date(lastSavedAt).toLocaleTimeString()} · ${_formatDuration(Date.now() - lastSavedAt)} ago`]);
       const sweep = _batchSweepInfo;
       const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
       const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
@@ -13203,13 +13224,16 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const reason = running >= _batchRetryLimit
           ? `${running} provider jobs are still processing. At least ${needToFinish} must finish before a queued retry can enter the ${_batchRetryLimit}-job retry admission limit.`
           : `${_batchRetryLimit - running} retry place(s) are available. The collector will fill them at the next sweep.`;
+        const providerDetail = providerWaiting
+          ? ` The provider reports ${requestStats.pending}/${requestStats.total} image requests pending across these jobs, with none completed yet; the oldest job has waited ${_formatDuration(Date.now() - oldestActiveAt)}. Repeated status checks confirm the state but do not advance provider processing.`
+          : "";
         const sweepProblem = sweep?.lastError ? ` Last collector error: ${sweep.lastError}.` :
           sweep?.runningSince && !sweepIsRunning ? " The collector has not completed its last sweep; check its status." :
           sweepStale ? " No sweep has completed in over 25 minutes; the scheduled collector needs attention." :
           sweep?.lastResult?.collectErrors ? ` ${sweep.lastResult.collectErrors} collection attempt(s) failed on the last sweep.` : "";
-        queueExplanation = `<div role="status" style="margin:10px 0; padding:10px; border-radius:6px; background:var(--inset); border:1px solid var(--line); font-size:11px; line-height:1.5;">
-          <strong>${running >= _batchRetryLimit ? "Waiting for provider capacity" : "Retries ready for the next sweep"}</strong><br>
-          ${_batchSafeText(reason + sweepProblem)}${notSubmitted ? ` The original submission still has ${notSubmitted} planned parts without a provider job; its browser may continue submitting them independently of the retry limit.` : ""} The ${waitingRetries} queued retries are saved and need no open browser tab.
+        queueExplanation = `<div role="status" style="margin:10px 0; padding:10px; border-radius:6px; background:var(--inset); border:1px solid ${providerWaiting ? "#a16207" : "var(--line)"}; font-size:11px; line-height:1.5;">
+          <strong>${providerWaiting ? "Provider has not reported any completed image requests" : running >= _batchRetryLimit ? "Waiting for provider capacity" : "Retries ready for the next sweep"}</strong><br>
+          ${_batchSafeText(reason + providerDetail + sweepProblem)}${notSubmitted ? ` The original submission still has ${notSubmitted} planned parts without a provider job; its browser may continue submitting them independently of the retry limit.` : ""} The ${waitingRetries} queued retries are saved and need no open browser tab.
         </div>`;
       }
 
