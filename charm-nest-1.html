@@ -1379,6 +1379,9 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .rvItem .ask{font:12.5px var(--sans);color:var(--ink70)}
 .rvItem .fixes.pick{gap:5px}
 .rvItem .fixes.other.hidden{display:none}
+/* Options: the option picks the charm itself (a zodiac sign, a birthstone): the master's SKUs the value names, with their pictures */
+.rvItem .fixes.design.hidden{display:none}.rvItem .fixes.design .dsFor{font-size:12px;color:var(--ink70)}
+.rvItem .dsPick{display:inline-flex;align-items:center;gap:6px}.rvItem .dsPick img{width:22px;height:22px;object-fit:contain;border-radius:4px;background:var(--paper2)}
 .rvItem .scopeOne{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink45)}
 .rvItem[data-kind=needsMapping] .rh .sub{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 220px}
 .rvItem .fixes input,.rvItem .fixes select,.rvItem .fixes textarea{border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:12.5px;background:var(--card)}
@@ -2261,7 +2264,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260926-engrave"></script>
+<script src="charm-nest-orders.js?v=20260927-varsku"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -5143,7 +5146,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260927-rvall"></script>
+<script src="charm-nest-bridge.js?v=20260927-varsku"></script>
 <script src="charm-nest-sheetwin.js?v=20260927-sw10"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>

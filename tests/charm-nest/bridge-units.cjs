@@ -27,6 +27,28 @@ const pass = (name) => console.log('  ✓', name);
     sp = O.interpretLine(order, mk({ sku: 'BR-EAR-03', listingId: '9999', variations: [] }), ctx); assert.strictEqual(sp.designSku, 'BR-EAR-03', 'a SKU the master holds beats the alias'); assert.strictEqual(sp.skuSource, 'transaction');
     sp = O.interpretLine(order, mk({ sku: 'CHAIN-18', listingId: '9999', variations: [] }), ctx); assert(sp.noDesign, 'a no-design SKU on an aliased listing stays no-design');
     sp = O.interpretLine(order, mk({ sku: 'BR-GONE-09', listingId: '9999', variations: [] }), { optionMaps: {}, aliases: ctx.aliases, noDesign: {} }); assert.strictEqual(sp.designSku, 'BR-GONE-09', 'without a master to ask, the line keeps its own SKU');
+    // variation SKUs (Paul, 27 Sep): Etsy gives each line the SKU of the variation bought, read as it comes
+    {
+      const lib = { 'MAPLE_8065': {}, 'PISCES_68933': {}, 'LIBRA_1': {}, 'BR-ALS-02': {} };
+      const cx = (extra) => Object.assign({ optionMaps: {}, aliases: {}, noDesign: {}, masterEntry: s => lib[s] || null }, extra);
+      const v = (sku, vars, lid) => mk({ sku, listingId: lid || '5555', personalization: [], variations: vars || [{ name: 'Metal Choice', value: 'Gold-Charm Only' }, { name: 'Necklace Length in inches', value: 'Charm Only-No Chain' }] });
+      sp = O.interpretLine(order, v('Maple_8065-CO'), cx()); assert.strictEqual(sp.designSku, 'MAPLE_8065', 'a charm-only variation SKU is its catalogue design'); assert.strictEqual(sp.skuSource, 'variation'); assert.strictEqual(sp.form, 'charm'); assert.deepStrictEqual(sp.problems, []);
+      sp = O.interpretLine(order, v('LADYBUG-CO'), cx()); assert.strictEqual(sp.designSku, 'LADYBUG-CO', 'no catalogue design under it: its own SKU, asked about'); assert(sp.problems.some(p => p.kind === 'unmatchedSku'));
+      assert.strictEqual(O.variationBase('DUCKIE SHAPE- BEADY-CO'), 'DUCKIE SHAPE- BEADY'); assert.strictEqual(O.variationBase('TACO'), '');
+      // "Use this charm" is the variation's: another SKU of the same listing is asked about, not given it
+      const al = { '5555': { v: 2, bySku: { 'STAR-GOLD-X': 'BR-ALS-02' } } };
+      sp = O.interpretLine(order, v('STAR-GOLD-X', []), cx({ aliases: al })); assert.strictEqual(sp.designSku, 'BR-ALS-02'); assert.strictEqual(sp.skuSource, 'alias');
+      sp = O.interpretLine(order, v('STAR-SILVER-X', []), cx({ aliases: al })); assert.strictEqual(sp.designSku, 'STAR-SILVER-X', "another variation's SKU keeps its own"); assert(sp.problems.some(p => p.kind === 'unmatchedSku'));
+      sp = O.interpretLine(order, v('', []), cx({ aliases: { '5555': { v: 2, sku: 'BR-ALS-02' } } })); assert.strictEqual(sp.designSku, 'BR-ALS-02', 'a line with no SKU: the listing\'s answer');
+      sp = O.interpretLine(order, v('STAR-SILVER-X', []), cx({ aliases: { '5555': { v: 2, sku: 'BR-ALS-02' } } })); assert(sp.problems.some(p => p.kind === 'unmatchedSku'), 'the listing\'s answer is not a SKU\'s');
+      // an option that picks the charm (the signs share one SKU): asked first, the unknown SKU waits; answered, it is the design
+      const zod = [{ name: 'Metal Choice :', value: 'Silver • 1 symbol' }, { name: 'Zodiac Sign', value: 'Pisces' }];
+      sp = O.interpretLine(order, v('ZODIAC REVAMP', zod, '1706155793'), cx()); assert.deepStrictEqual(sp.problems.map(p => p.kind), ['needsMapping'], 'the option first, not a charm for every sign: ' + JSON.stringify(sp.problems));
+      const om = { '1706155793': { 'zodiac sign': { pisces: { field: 'design', value: 'PISCES_68933' } } } };
+      sp = O.interpretLine(order, v('ZODIAC REVAMP', zod, '1706155793'), cx({ optionMaps: om })); assert.strictEqual(sp.designSku, 'PISCES_68933'); assert.strictEqual(sp.skuSource, 'option'); assert.deepStrictEqual(sp.problems, []);
+      sp = O.interpretLine(order, v('ZODIAC REVAMP', [zod[0], { name: 'Zodiac Sign', value: 'Libra' }], '1706155793'), cx({ optionMaps: om })); assert.deepStrictEqual(sp.problems.map(p => p.kind), ['needsMapping'], 'Libra is asked on its own');
+      sp = O.interpretLine(order, v('ZODIAC REVAMP', zod, '42'), cx({ optionMaps: om })); assert.deepStrictEqual(sp.problems.map(p => p.kind), ['needsMapping'], 'another listing\'s Pisces is its own question');
+    }
     sp = O.interpretLine(order, mk({ sku: 'CHAIN-18', variations: [] }), ctx); assert(sp.noDesign); assert.deepStrictEqual(sp.problems, []);
     sp = O.interpretLine(order, mk({ sku: 'BR-CMP-01', variations: [{ name: 'Size', value: 'XL' }] }), ctx); assert(sp.problems.some(p => p.kind === 'missingSize'), 'sized line with no design for that size is held');
     sp = O.interpretLine(order, mk({ metalKey: '', metalLabel: 'Rose Quartz', variations: [{ name: 'Stone', value: 'Rose Quartz' }] }), ctx); assert(sp.problems.some(p => p.kind === 'needsMaterial'), '"Rose Quartz" never classifies as rose: the station left metalKey empty and the sorter holds the line'); assert(sp.problems.some(p => p.kind === 'needsMapping'), 'an unmapped option is a Needs-mapping item'); assert.strictEqual(sp.material, null);
