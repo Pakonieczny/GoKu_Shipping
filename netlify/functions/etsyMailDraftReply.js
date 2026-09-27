@@ -336,6 +336,9 @@ const CUSTOMERS_COLL = "EtsyMail_Customers";
 const DRAFTS_COLL    = "EtsyMail_Drafts";
 const AUDIT_COLL     = "EtsyMail_Audit";
 const CONFIG_COLL    = "EtsyMail_Config";
+// One doc per 10% goodwill code (doc id = the code). Etsy's API cannot
+// create coupons, so staff create the code in Etsy before sending.
+const DISCOUNT_CODES_COLL = "EtsyMail_DiscountCodes";
 
 // ─── Model config ────────────────────────────────────────────────────────
 // Sonnet 4.6 default. effort:"high" per operator request.
@@ -1297,6 +1300,28 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    return it within 14 days for a refund and then place a new order.
    Don't soften this into "let me check," the policy is firm.
 
+   ─── Extra 10% code when policy says no ───
+   When you must refuse what the customer asked for because policy
+   does not allow it (an exchange, a return or refund outside the
+   14-day window or on a personalized item, a cancellation past 12
+   hours), soften the no with ONE offer, right after stating the
+   policy: an extra 10% off their next order with a one-time code.
+   Ask whether they would like it. Example: "We'd be happy to give
+   you an extra 10% off your next order with a one-time code. Would
+   you like us to send it?" Do not include a code in that first
+   offer. Like every discount, the offer waits for staff approval.
+   Never make this offer when the customer threatens a bad review,
+   a case or a dispute (section 7.4), on price haggling before a
+   purchase, or when this thread already shows the offer was made or
+   declined, or a code was already given.
+   When the customer accepts an offer we made earlier in this thread
+   ("yes please", "sure, send the code"), call issue_discount_code
+   and put the exact code it returns in the reply, with one line on
+   how to use it: enter it at checkout on their next order. Never
+   type a code yourself; only a code issue_discount_code returned may
+   appear in a reply. Set ready_for_human_approval:true so staff
+   create the code in Etsy before it goes out.
+
    ─── Cancellations ───
    The buyer can request a cancellation within 12 hours of placing the
    order. After 12 hours, cancellations are closed. When a customer
@@ -1840,7 +1865,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         exchange too, just send over what catches your eye"). The
         shop does NOT do exchanges at all (section 7).
       - Refunds, partial refunds, or store credit (even if the
-        customer is clearly frustrated). The shop's refund policy is
+        customer is clearly frustrated). The one discount you may
+        offer is the extra 10% code in section 7, only as described
+        there. The shop's refund policy is
         return-first; see section 7.
       - Production prioritization ("I'll flag your order to go through
         faster", "I'll get this expedited", "I'll move it up the
@@ -2934,6 +2961,17 @@ const TOOL_SPECS = [
     }
   },
   {
+    name: "issue_discount_code",
+    description: "Get the one-time 10% off code for this customer. Call ONLY when the customer has just accepted an extra-10% offer that we made earlier in this thread (see 'Extra 10% code when policy says no'). Returns the code to put in the reply word for word. The same customer always gets the same code; calling it twice returns the same code.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "One short line: what policy refusal the offer softened and where the customer accepted it." }
+      },
+      required: ["reason"]
+    }
+  },
+  {
     name: "compose_draft_reply",
     description: "Emit the final reply text that will be shown to the operator. Call this EXACTLY ONCE at the end of your reasoning/tool-use process. This ends the draft generation. Self-rate confidence and difficulty honestly — these scores drive the auto-reply pipeline (high confidence → auto-sent; low confidence → routed to human review). Do NOT inflate confidence to seem useful; under-confident is far less harmful than over-confident.",
     input_schema: {
@@ -3242,6 +3280,49 @@ function buildToolExecutors(ctx) {
         return result;
       } catch (e) {
         return { matches: [], error: e.message };
+      }
+    },
+
+    // One code per customer (per thread when the buyer is unknown), kept in
+    // Firestore so a redraft or a second thread hands out the same code.
+    // No Etsy call: staff create the code in Etsy before approving.
+    issue_discount_code: async (input) => {
+      const threadId = ctx.thread && ctx.thread.id ? String(ctx.thread.id) : null;
+      if (!threadId) return { error: "No thread to issue a code for." };
+      const buyer = ctx.thread.buyerUserId ? String(ctx.thread.buyerUserId) : null;
+      const coll = db.collection(DISCOUNT_CODES_COLL);
+      const keep = (d, reused) => {
+        ctx.issuedDiscountCode = { code: d.code, percent: d.percent || 10, reused: !!reused };
+        return reused
+          ? { code: d.code, percent: d.percent || 10, alreadyIssued: true,
+              note: "This customer already has this code. Give them this same code; never promise a second one." }
+          : { code: d.code, percent: 10,
+              note: "Put this exact code in the reply. It is 10% off their next order, entered at checkout." };
+      };
+      try {
+        let prior = await coll.where("threadId", "==", threadId).limit(1).get();
+        if (prior.empty && buyer) prior = await coll.where("buyerUserId", "==", buyer).limit(1).get();
+        if (!prior.empty) return keep(prior.docs[0].data(), true);
+        const ABC = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        for (let i = 0; i < 3; i++) {
+          let code = "CB10";
+          for (const b of require("crypto").randomBytes(6)) code += ABC[b % ABC.length];
+          const doc = {
+            code, percent: 10, threadId, buyerUserId: buyer,
+            reason: String(input && input.reason || "").slice(0, 300),
+            status: "issued", etsyCreated: false,
+            createdAt: FV.serverTimestamp()
+          };
+          try {
+            await coll.doc(code).create(doc);
+            return keep(doc, false);
+          } catch (e) {
+            if (!/already exists|ALREADY_EXISTS/i.test(String(e && e.message))) throw e;
+          }
+        }
+        return { error: "Could not issue a code; leave the code for staff to add." };
+      } catch (e) {
+        return { error: `issue_discount_code failed: ${e.message}` };
       }
     },
 
@@ -4883,7 +4964,7 @@ answering. Do not guess about the order's contents.`;
       .replace(/[^.!?\n]*\bonce\s+(?:they|it|the\s+\w+)\s+(?:arrives?|(?:is|are)\s+back)[^.!?\n]*refund[^.!?\n]*[.!?]?/gi, "")
       .split(/(?<=[.!?])\s+|\n+/)
       .find(t => /\b(?:we|we['\u2019](?:ll|d|re)|us)\b/i.test(t)
-        && /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b/i.test(t));
+        && /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b|\b\d+\s*%\s*off\b/i.test(t));
     if (parsed.text && !parsed.aiEscalationRequested && _remedySentence) {
       parsed.aiEscalationRequested = true;
       parsed.aiRemedyOfferReview = true;
@@ -4891,6 +4972,27 @@ answering. Do not guess about the order's contents.`;
         parsed.confidence = 0.5;
         parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
           " | Reply offers a refund, remake, reship or discount; confidence capped at 0.5 so a person approves it.";
+      }
+    }
+    // The 10% goodwill code: only a code issue_discount_code returned may
+    // reach the customer, and the draft waits so staff create it in Etsy.
+    {
+      const issued = toolContext.issuedDiscountCode || null;
+      const inText = issued && parsed.text && parsed.text.includes(issued.code);
+      const stray = (parsed.text || "").match(/\bCB10[A-Z0-9]{4,}\b/g) || [];
+      if (stray.some(c => !issued || c !== issued.code)) {
+        parsed.aiInventedCodeReview = true;
+        parsed.aiEscalationRequested = true;
+        parsed.confidence = 0;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          " | Reply contains a discount code that was not issued; confidence=0, check the code before sending.";
+      }
+      if (inText) {
+        parsed.aiDiscountCode = { code: issued.code, percent: issued.percent || 10, reused: !!issued.reused };
+        parsed.aiEscalationRequested = true;
+        if (typeof parsed.confidence !== "number" || parsed.confidence > 0.5) parsed.confidence = 0.5;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          ` | Contains one-time ${issued.percent || 10}% code ${issued.code}; create it in Etsy before sending.`;
       }
     }
     if (parsed.text && !/450\s*Matheson\s*Blvd/i.test(parsed.text)
@@ -5244,6 +5346,8 @@ answering. Do not guess about the order's contents.`;
       // Audit 2026-09
       aiEscalationRequested : !!parsed.aiEscalationRequested,
       aiCanadaMentionReview : !!parsed.aiCanadaMentionReview,
+      aiDiscountCode        : parsed.aiDiscountCode || null,
+      aiInventedCodeReview  : !!parsed.aiInventedCodeReview,
       aiInvestigation       : parsed.investigation || null,
       aiAutoSendBlockers    : autoSendBlockers,
       attachments,
@@ -5517,6 +5621,7 @@ answering. Do not guess about the order's contents.`;
       // Audit 2026-09: empty array = nothing blocks an auto-send
       autoSendBlockers,
       aiEscalationRequested: !!parsed.aiEscalationRequested,
+      aiDiscountCode     : parsed.aiDiscountCode || null,
       trackingImages,
       attachments,
       toolCalls          : toolCallLog,

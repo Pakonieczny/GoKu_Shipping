@@ -152,7 +152,7 @@ function install() {
   Q.get = async function () {
     const snap = await origGet.apply(this, arguments);
     const s = current();
-    if (!s || !s.asOfMs) return snap;
+    if (!s || (!s.asOfMs && !(s.extra && s.extra.length))) return snap;
     let changed = false;
     const docs = [];
     for (const d of snap.docs) {
@@ -166,6 +166,16 @@ function install() {
         if (v === null) { changed = true; continue; }
         if (v.changed) { changed = true; docs.push(wrapSnap(d, v.data)); } else docs.push(d);
       } else docs.push(d);
+    }
+    // Test-only turns added after the cut (e.g. our offer and the
+    // customer's "yes"), newest first like the thread queries ask.
+    const first = snap.docs[0] && snap.docs[0].ref.path;
+    if (s.extra && s.extra.length && first && s.extraPath && first.startsWith(s.extraPath)) {
+      changed = true;
+      for (const m of s.extra.slice().reverse()) {
+        const data = Object.assign({}, m.data, { timestamp: fs.Timestamp.fromMillis(m.ms), createdAt: fs.Timestamp.fromMillis(m.ms) });
+        docs.unshift({ id: m.id, exists: true, ref: { path: s.extraPath + m.id, id: m.id }, data: () => data, get: k => data[k] });
+      }
     }
     if (!changed) return snap;
     return { docs, empty: docs.length === 0, size: docs.length, forEach: fn => docs.forEach(fn),
@@ -214,9 +224,21 @@ function install() {
 }
 
 /** Run fn inside a replay context. Returns { result, writes, blocked }. */
-async function simulate({ asOfMs = null, nowMs = null }, fn) {
+async function simulate({ asOfMs = null, nowMs = null, threadId = null, extraMessages = null }, fn) {
   install();
   const store = { asOfMs, nowMs, startedAt: Date.now(), writes: [], blocked: [] };
+  if (threadId && Array.isArray(extraMessages) && extraMessages.length) {
+    const base = asOfMs || Date.now();
+    store.extraPath = `EtsyMail_Threads/${threadId}/messages/`;
+    store.extra = extraMessages.slice(0, 4).map((m, i) => {
+      const inbound = m.direction !== "outbound";
+      return { id: "simextra_" + i, ms: base + (i + 1) * 60000, data: {
+        direction: inbound ? "inbound" : "outbound",
+        senderRole: inbound ? "customer" : "staff",
+        senderName: inbound ? (m.senderName || "Customer") : "CustomBrites",
+        source: "etsy", text: String(m.text || "").slice(0, 2000) } };
+    });
+  }
   const result = await als.run(store, fn);
   return { result, writes: store.writes, blocked: [...new Set(store.blocked)] };
 }

@@ -891,7 +891,7 @@ function simTrim(v, depth = 0) {
 }
 
 async function runSimulation(body) {
-  const { simId, threadId, asOfMs = null, nowMs = null, route: forcedRoute = "auto" } = body;
+  const { simId, threadId, asOfMs = null, nowMs = null, route: forcedRoute = "auto", extraMessages = null } = body;
   if (!/^[A-Za-z0-9_-]{4,80}$/.test(String(simId || ""))) return bad("simId required");
   if (!threadId) return bad("Missing threadId");
   const resultRef = db.collection("EtsyMail_DiagnosticLog").doc("aisim_" + simId);
@@ -907,7 +907,7 @@ async function runSimulation(body) {
   const t0 = Date.now();
   let out;
   try {
-    out = await sim.simulate({ asOfMs, nowMs }, async () => {
+    out = await sim.simulate({ asOfMs, nowMs, threadId, extraMessages }, async () => {
       const autoCfg = await getAutoPipelineConfig();
       let intent = null;
       if (autoCfg.intentClassifierEnabled) {

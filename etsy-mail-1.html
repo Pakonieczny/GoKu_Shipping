@@ -15657,6 +15657,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                   reply text, or attach the artifact yourself, before sending.
                 </span>
               </div>
+              <!-- The AI put a one-time 10% code in this reply. Etsy's API
+                   can't create coupons, so staff create it before sending. -->
+              <div class="em-attach-claim-warn" id="emDiscountCodeNote" style="display:none;">
+                <i class="material-icons">sell</i>
+                <span id="emDiscountCodeNoteText"></span>
+              </div>
 
               <!-- v3.7 — Translation controls. Three things in one strip:
                    - Auto Translate toggle: flips the entire conversation
@@ -18659,6 +18665,18 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (warnEl) {
           warnEl.style.display = (draft && draft.aiAttachmentClaimMismatch === true)
             ? "flex" : "none";
+        }
+        const codeEl = document.getElementById("emDiscountCodeNote");
+        const dc = draft && draft.aiDiscountCode;
+        if (codeEl) {
+          const on = !!(dc && dc.code && (!draft.status || draft.status === "draft"));
+          if (on) {
+            document.getElementById("emDiscountCodeNoteText").innerHTML =
+              "<b>Create code " + esc(dc.code) + " in Etsy before sending.</b> " +
+              "Shop Manager, Marketing, Sales and discounts, Create a promo code: " +
+              esc(String(dc.percent || 10)) + "% off, code " + esc(dc.code) + ".";
+          }
+          codeEl.style.display = on ? "flex" : "none";
         }
       } catch {}
       if (!draft) return;
@@ -24130,6 +24148,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const parts = ["AI draft loaded"];
       if (confPct) parts.push(confPct);
       if (isSalesAgent) parts.push("sales agent");
+      if (d.aiDiscountCode && d.aiDiscountCode.code) parts.push("create code " + d.aiDiscountCode.code + " in Etsy first");
       if (indText) indText.textContent = parts.join(" · ");
 
       // Color tint based on confidence — green ≥80%, yellow 60-79%,
