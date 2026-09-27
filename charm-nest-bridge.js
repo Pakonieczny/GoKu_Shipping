@@ -5797,16 +5797,18 @@ const Review = window.Review = (() => {
     const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open, cl.recent);
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    // Open or Completed first, then the filters: the switch holds for every chip
+    // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
-    const seg = `<span class="rvSeg" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="what still waits, in every filter">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished, in every filter: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
     const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} completed`)
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
-    v.querySelector('.ordBar').innerHTML = `${seg}${chip("", "Everything", doneMode ? finished.length : openN, doneMode ? "ok" : "info")}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
+    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
-    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
-    v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; render(); });
+    // a chip pressed again lets go of its filter
+    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
+    v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
     const host = v.querySelector("#rvList");
     const what = f ? (KIND_WORDS[f] || f) : "";
     if (!list.length) host.innerHTML = `<div class="libEmpty">${doneMode ? (f === "customOrder" ? "No custom order completed yet — print its QR label from Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}</div>`;
