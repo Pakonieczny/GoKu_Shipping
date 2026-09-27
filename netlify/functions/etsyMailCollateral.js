@@ -776,5 +776,35 @@ exports.handler = async (event) => {
 };
 
 // Exposed for direct import by etsyMailSalesAgent (Step 2 + 3 use this).
+// Every attached image should be named in the reply (owner's rule); replays
+// showed guides attached with no word about them. For an English reply, add
+// one short sentence per unnamed guide before the sign-off. Other languages
+// are left as written (the model is told to name them itself).
+const GUIDE_MENTIONS = {
+  metal_comparison : { rx: /\b(comparison|metals?\s+(card|guide|chart)|gold\s+(card|guide|chart))\b/i,
+                       name: "our gold comparison card (gold filled, gold plated and solid gold side by side)" },
+  care_instructions: { rx: /\bcare\s+(guide|card|instructions|sheet)\b/i,
+                       name: "our care guide" },
+  fit_reference    : { rx: /\b(fit|length)\s+(guide|reference|chart|card)\b|\bhow\s+(each|the)\s+lengths?\s+sits?\b/i,
+                       name: "our necklace length guide, showing how each length sits" },
+  bracelet_sizing  : { rx: /\b(siz(e|ing)\s+(guide|chart|card)|wrist\s+(chart|guide))\b/i,
+                       name: "our bracelet sizing chart" }
+};
+function looksEnglish(text) {
+  const words = new Set((String(text).toLowerCase().match(/\b[a-z']+\b/g) || []));
+  return ["the", "and", "you", "your", "our", "with", "for", "this", "that", "have"].filter(w => words.has(w)).length >= 4;
+}
+function nameAttachedGuides(text, kinds) {
+  const t = String(text || "");
+  if (!t.trim() || !Array.isArray(kinds) || !kinds.length || !looksEnglish(t)) return t;
+  const names = [...new Set(kinds)].map(k => GUIDE_MENTIONS[k]).filter(g => g && !g.rx.test(t)).map(g => g.name);
+  if (!names.length) return t;
+  const add = ["We've attached " + (names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0]) + "."];
+  const m = t.match(/\n\s*\n(?=\s*(?:many\s+thanks|kind\s+regards|best\s+wishes|thanks|thank\s+you|warmly|cheers)[^\n]{0,20}\n[^\n]*\s*$)/i);
+  if (m) return t.slice(0, m.index) + " " + add.join(" ") + t.slice(m.index);
+  return t.trimEnd() + " " + add.join(" ");
+}
+
+module.exports.nameAttachedGuides = nameAttachedGuides;
 module.exports.searchCollateral = searchCollateral;
 module.exports.pullCollateralUrlsFromText = pullCollateralUrlsFromText;

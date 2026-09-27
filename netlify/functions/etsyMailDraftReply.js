@@ -100,6 +100,18 @@ try {
   searchListings = null;
 }
 
+// Listing sizes and metal facts from the internal catalog (the sales
+// agent's lookup_listing_specs). Replays showed the drafter telling
+// customers to "check the photos" for a charm's size because it had no
+// source for it. Firestore reads only, no Etsy calls.
+let resolveListingSpecs = null;
+let loadOptionSheet = null;
+try {
+  ({ resolveListingSpecs, loadSheet: loadOptionSheet } = require("./etsyMailOptionResolver"));
+} catch (e) {
+  console.warn("draftReply: etsyMailOptionResolver not loadable — lookup_listing_specs unavailable.", e.message);
+}
+
 // v5.21 — Etsy-API-first listing lookup. When the customer pastes a
 // listing URL, the AI needs the AUTHORITATIVE listing data (real
 // variants from /listings/{id}/inventory, current price, state) —
@@ -120,8 +132,9 @@ try {
 // result rather than crashing.
 let searchCollateral = null;
 let pullCollateralUrlsFromText = null;
+let nameAttachedGuides = null;
 try {
-  ({ searchCollateral, pullCollateralUrlsFromText } = require("./etsyMailCollateral"));
+  ({ searchCollateral, pullCollateralUrlsFromText, nameAttachedGuides } = require("./etsyMailCollateral"));
 } catch (e) {
   console.warn("draftReply: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
   searchCollateral = null;
@@ -2014,9 +2027,18 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - Never say a package is or isn't lost without scan data; say
         what tracking shows.
       - Never invent a product detail (backing type, clasp, size, how a
-        part attaches, where it is made). State what the listing, a
-        tool result or this prompt shows; if none shows it, say which
-        part you can confirm and answer the rest.
+        part attaches, where it is made) or a shop policy (sales
+        schedules, warranties). State what the listing, a tool result
+        or this prompt shows; for sizes and metal behaviour call
+        lookup_listing_specs first. If none shows it, say which part
+        you can confirm and answer the rest. Never send the customer to
+        "check the photos" or to someone else for an answer the shop
+        should give.
+      - Never write that you can't see or open an image. If you can't
+        tell which photo or design they mean, ask which one.
+      - Mismatched pairs, a single earring and odd charm counts are
+        priced, never refused; never contradict what staff already
+        said yes to in this thread.
       - Shipping speeds are the ones in section 7 (USPS Priority Mail
         1-3 business days, Priority Mail Express 1-2), never another
         figure.
@@ -2468,6 +2490,11 @@ You have seven tools:
     variants and state of an Etsy listing URL. Listings the customer
     linked in their latest message are already provided under
     PRE-FETCHED LISTING DATA; call this only for other URLs.
+  - lookup_listing_specs(query) — a listing's size and charm specs and
+    the shop's per-metal facts (durability, water, tarnish). Call it for
+    "how big is it", "is it too small for a man", "will it work on a
+    bracelet" or "can it get wet" about a listing, before answering;
+    never tell the customer to check the photos for a size.
   - search_shop_listings(query) — searches the mirrored active Etsy
     listing catalog. Use it for pre-purchase availability questions like
     "do you sell X?", "do you have this in silver?", or "how much is Y?"
@@ -3008,6 +3035,18 @@ const TOOL_SPECS = [
     }
   },
   {
+    name: "lookup_listing_specs",
+    description: "Look up a listing's size and charm specs, plus the shop's metal facts (thickness, durability, water and tarnish behaviour per metal), from the internal catalog. Call it when the customer asks how big a piece is, its dimensions, whether it suits a man or a bracelet, or how a metal holds up, and a listing is referenced (URL, ID, title or 'this one'). Answer from dimensionsSummary, or from familyFacts (the family's universal silhouette sizes and metal facts) when the listing has no own entry. If neither settles it, don't estimate the exact figure: give what the result does settle (for example the family's standard size range), set ready_for_human_approval:true so a person adds the exact size, and write no holding line.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The listing as the customer referred to it: full Etsy URL, bare listing ID, slug, or title words. If the latest message has none, pass the most recent one from the thread." },
+        family: { type: "string", enum: ["necklace", "huggie", "stud"], description: "The listing's family when known (necklace charm, huggie hoop charm or stud)." }
+      },
+      required: ["query"]
+    }
+  },
+  {
     name: "search_shop_listings",
     description: "Search the shop's mirrored active Etsy listings. Use this for normal customer-service/pre-purchase questions about whether the shop sells something, available variants/materials, or rough product price when the thread did not route to sales mode.",
     input_schema: {
@@ -3319,6 +3358,32 @@ function buildToolExecutors(ctx) {
       } catch (e) {
         return { found: false, reason: "LOOKUP_ERROR", error: e.message };
       }
+    },
+
+    lookup_listing_specs: async (input) => {
+      const query = String((input && input.query) || "").trim();
+      if (!query) return { found: false, reason: "INVALID_INPUT", error: "query is required" };
+      if (!resolveListingSpecs) return { found: false, reason: "RESOLVER_UNAVAILABLE" };
+      let result;
+      try {
+        result = await resolveListingSpecs({ query });
+      } catch (e) {
+        result = { found: false, reason: "RESOLVER_ERROR", error: e.message };
+      }
+      if (result && result.found === true && !result.incomplete) return result;
+      // Few listings have their own catalog entry, but each family sheet
+      // carries the universal charm sizes and the per-metal facts.
+      const family = String((input && input.family) || "").toLowerCase()
+        || (/\b(huggie|hoop)/i.test(query) ? "huggie" : /\b(stud|earring)/i.test(query) ? "stud" : "necklace");
+      try {
+        const sheet = loadOptionSheet ? await loadOptionSheet(family) : null;
+        if (sheet) {
+          const ms = require("./etsyMailOptionResolver").metalSpecsForAi(sheet.metalSpecs);
+          result = { ...result, familyFacts: { family, charmStyles: sheet.charmStyles || null, metalSpecs: ms,
+            note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
+        }
+      } catch {}
+      return result;
     },
 
     search_shop_listings: async (input) => {
@@ -5493,6 +5558,11 @@ answering. Do not guess about the order's contents.`;
     // Final attachments list combines tracking-image attachments
     // (existing behavior) with collateral attachments (new).
     const attachments = trackingAttachments.concat(collateralAttachments);
+    if (nameAttachedGuides && parsed.text) {
+      try {
+        parsed.text = nameAttachedGuides(parsed.text, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
+      } catch {}
+    }
 
     // Audit 2026-09 — second half of the attachment-claim guard: the prose
     // promises an attachment but nothing attached (e.g. a flag was set but

@@ -578,10 +578,7 @@ function compactOption(option) {
 // get_collateral and paste both card URLs into the reply; the cards attach
 // from their flags now and a pasted URL shows as a raw link. Drop it.
 function metalSpecsForAi(ms) {
-  if (!ms || typeof ms !== "object") return ms || null;
-  const out = {};
-  for (const [k, v] of Object.entries(ms)) if (!/collateral/i.test(k)) out[k] = v;
-  return out;
+  try { return require("./etsyMailOptionResolver").metalSpecsForAi(ms); } catch { return null; }
 }
 
 function compactOptionSheetForAi(sheet) {
@@ -1349,7 +1346,7 @@ const TOOL_SPEC_LOOKUP_LISTING_BY_URL = {
 // from "similar items".
 const TOOL_SPEC_LOOKUP_LISTING_SPECS = {
   name: "lookup_listing_specs",
-  description: "Look up the dimensions and charm specs for a specific Etsy listing from the internal product catalog. Call this WHENEVER a customer asks about dimensions, sizing, measurements, or physical specs (e.g. 'how big is it?', 'what size?', 'dimensions please?', 'measurements?', 'how many mm?') AND the customer has referenced a specific listing — by full Etsy URL, bare listing ID, URL slug, partial title, or any contextual reference (e.g. 'this charm', 'the duckie one'). The tool accepts flexible input and resolves to the canonical catalog entry. It returns dimensionsSummary (a ready-to-paraphrase one-liner like '5×6mm silhouette charm with 2.1mm I.D. mounting ring') and structured dimensions for follow-up questions. CRITICAL BEHAVIOR: if found is false, OR incomplete is true, OR the response includes a 'recommendation' to escalate — DO NOT estimate dimensions from similar items, DO NOT guess based on the listing title, DO NOT use the customer's own phrasing as a confirmation. Acknowledge briefly ('let me grab the exact measurements and get back shortly') and escalate to human review. Confident-wrong dimension answers are the single highest-impact credibility burn this agent can cause.",
+  description: "Look up the dimensions and charm specs for a specific Etsy listing from the internal product catalog. Call this WHENEVER a customer asks about dimensions, sizing, measurements, or physical specs (e.g. 'how big is it?', 'what size?', 'dimensions please?', 'measurements?', 'how many mm?') AND the customer has referenced a specific listing — by full Etsy URL, bare listing ID, URL slug, partial title, or any contextual reference (e.g. 'this charm', 'the duckie one'). The tool accepts flexible input and resolves to the canonical catalog entry. It returns dimensionsSummary (a ready-to-paraphrase one-liner like '5×6mm silhouette charm with 2.1mm I.D. mounting ring') and structured dimensions for follow-up questions. CRITICAL BEHAVIOR: if found is false, OR incomplete is true, OR the response includes a 'recommendation' to escalate — DO NOT estimate dimensions from similar items, DO NOT guess based on the listing title, DO NOT use the customer's own phrasing as a confirmation. Give what the result does settle (for example the family's standard size range), set needs review so a person adds the exact figure, and write no holding line (\"let me grab the measurements\" and the like are rejected). Confident-wrong dimension answers are the single highest-impact credibility burn this agent can cause.",
   input_schema: {
     type: "object",
     properties: {
@@ -3441,6 +3438,8 @@ Existing listings first, judged by context. A customer who wants a listing as it
 
 Staff prices stand. If staff already typed a price for this configuration, restate that price (it is the shop's quote) and flag any difference from the calculator for review instead of re-quoting. Huggies sell as a pair of hoops, but the charms on them may vary: one charm on the pair, mismatched charms or odd counts are configurations to price, never to refuse. A customer asking for huggie-size charms (even for a necklace) is the huggie family. A charm for the customer's own bracelet, string or keychain is a charm sold without chain.
 
+Never write that you can't see or open an image; if you can't tell which photo they mean, ask which one. Never state a shop policy (sales schedules, warranties) this prompt doesn't give, and never send the customer to "check the photos" for a size: use lookup_listing_specs or get_option_sheet's universal sizes.
+
 Acceptance. A customer who says they'll buy later (payday, next week) has not accepted: say the quote stands and they can message when ready, and don't start the listing. The custom listing already carries the accepted total, so never tell the customer to select a price option on it. Any add-on you mention goes with its link from the ADD-ON block.
 
 Never offer a discount or type a discount code yourself. When the customer accepts an extra 10% code the shop offered earlier, or asks about an exchange, return, refund or cancellation, that is support, not a sale: set current_state to non_sales so the support drafter answers it.
@@ -4036,7 +4035,7 @@ ${validationResult.message}
         console.warn(`[salesAgent] collateral link check failed for ${threadId}: ${e.message}`);
       }
     }
-    const replyText = customerFacingReply;
+    let replyText = customerFacingReply;
 
     const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
@@ -4241,6 +4240,12 @@ ${validationResult.message}
       if (kind === "line_sheet" && !lineSheetAttachInfo) lineSheetAttachInfo = info;
     }
     // ──────────────────────────────────────────────────────────────────
+
+    // Name each attached guide in an English reply that left it out.
+    try {
+      const { nameAttachedGuides } = require("./etsyMailCollateral");
+      if (replyText) replyText = nameAttachedGuides(replyText, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
+    } catch {}
 
     // Audit fix F1 — never replace a reply that is waiting to be sent
     // (queued) or is being sent right now. The draft slot is one per
