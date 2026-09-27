@@ -1807,7 +1807,7 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "updatedAtMs", "hasLabel"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
@@ -1823,14 +1823,20 @@ async function op_customGet(b) {
   const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
   return { records, truncated: snap.size >= 1000 };
 }
+/* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label
+   printed, so no print is counted). Either records who completed it and when (completedAt/completedBy). */
 async function op_customPut(b) {
   const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "key (the line's receipt_transaction) required" };
   const label = b.label && typeof b.label === "object" ? b.label : null, labelJson = label ? JSON.stringify(label) : "";
   const now = Date.now(), ref = col(CUSTOM).doc(key), snap = await ref.get(), cur = snap.exists ? snap.data() : null;
+  const button = b.how === "button", who = str(b.by || "operator", 80);
   const doc = { key, receiptId: str(b.receiptId, 40), transactionId: str(b.transactionId, 40), sku: str(b.sku, 60), title: str(b.title, 200),
-    category: str(b.category, 60), kind: str(b.kind, 40), state: "completed", lastPrintedAt: now, lastPrintedBy: str(b.by || "operator", 80),
-    prints: ((cur && +cur.prints) || 0) + 1, updatedAtMs: now, updatedAt: FV.serverTimestamp() };
-  if (!cur || !cur.printedAt) Object.assign(doc, { printedAt: now, printedBy: doc.lastPrintedBy });
+    category: str(b.category, 60), kind: str(b.kind, 40), state: "completed", updatedAtMs: now, updatedAt: FV.serverTimestamp() };
+  if (!cur || cur.state !== "completed" || !cur.completedAt) Object.assign(doc, { completedAt: now, completedBy: who, how: button ? "button" : "print" });
+  if (!button) {
+    Object.assign(doc, { lastPrintedAt: now, lastPrintedBy: who, prints: ((cur && +cur.prints) || 0) + 1 });
+    if (!cur || !cur.printedAt) Object.assign(doc, { printedAt: now, printedBy: who });
+  }
   if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
   doc.hasLabel = !!(doc.label || (cur && cur.label));
   await ref.set(doc, { merge: true });

@@ -101,6 +101,19 @@ const kinds = sp => sp.problems.map(p => p.kind).sort().join(',');
   console.log('  ✓ classifier, completion and sticker');
 }
 
+// a custom design as a .dxf (a 22 × 20 mm rounded heart-ish tag drawn as a polyline with bulges, a hole, red engraving)
+const DG = (...kv) => { let t = ''; for (let i = 0; i < kv.length; i += 2) t += `${kv[i]}\n${kv[i + 1]}\n`; return t; };
+const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES',
+  0, 'LWPOLYLINE', 8, 'CUT', 90, 4, 70, 1, 10, 0, 20, 0, 10, 18, 20, 0, 42, 0.4, 10, 18, 20, 20, 10, 0, 20, 20,
+  0, 'CIRCLE', 8, 'CUT', 10, 9, 20, 16, 40, 1.2, 0, 'LINE', 8, 'ENGRAVE', 62, 1, 10, 4, 20, 8, 11, 14, 21, 8, 0, 'ENDSEC', 0, 'EOF');
+let DESIGN_AI = '';
+async function designFixtures() {
+  global.window = global; global.PDFLib = require(path.join(root, 'vendor/pdf-lib-1.17.1.min.js'));
+  const D = require(path.join(root, 'charm-nest-dxf.js'));
+  const tag = DG(0, 'SECTION', 2, 'ENTITIES', 0, 'CIRCLE', 8, '0', 10, 0, 20, 0, 40, 7, 0, 'CIRCLE', 8, '0', 10, 0, 20, 5, 40, 1, 0, 'ENDSEC', 0, 'EOF');
+  DESIGN_AI = Buffer.from((await D.toPdf(tag, 'tag.dxf')).bytes).toString('base64');   // an .ai is a PDF
+}
+
 async function library() {
   const srv = await start({ receipts: [] });
   try {
@@ -122,7 +135,14 @@ async function library() {
     await call({ op: 'customPut', key: '1_2', by: 'x', sandbox: true });
     assert(srv.st.doc('Sandbox_Charm_Custom_Orders', '1_2') && !srv.st.doc('Charm_Custom_Orders', '1_2'), 'sandboxed');
     assert.equal((await call({ op: 'customDelete', key })).ok, true); assert.equal((await call({ op: 'customGet' })).records[key], undefined, 'reopened');
-    console.log('  ✓ cloud records: put, print again, read, sandbox, reopen');
+    // Complete Order (27 Sep): completed with no label printed, so no print is counted; a print afterwards keeps who completed it
+    const c = await call({ op: 'customPut', how: 'button', key, by: 'Cy', label, receiptId: '4176744752', sku: 'CHAIN_8941' });
+    assert.equal(c.record.state, 'completed'); assert.equal(c.record.completedBy, 'Cy'); assert.equal(c.record.how, 'button'); assert(c.record.completedAt > 0);
+    assert.equal(c.record.prints, undefined, 'no print counted'); assert.equal(c.record.lastPrintedAt, undefined); assert.equal(c.record.hasLabel, true, 'its sticker is kept to print later');
+    const d = await call({ op: 'customPut', key, by: 'Di', label, receiptId: '4176744752' });
+    assert.equal(d.record.prints, 1); assert.equal(d.record.completedBy, 'Cy', 'printed later: still completed by Cy'); assert.equal(d.record.how, 'button');
+    assert.equal((await call({ op: 'customGet', keys: [key] })).records[key].completedBy, 'Cy', 'the lists carry who completed it');
+    console.log('  ✓ cloud records: put, print again, read, sandbox, reopen, Complete Order');
   } finally { srv.close(); }
 }
 
@@ -179,8 +199,9 @@ async function browserChecks() {
     for (const o of EXAMPLES) { const r = list.find(x => x.rid === o.receiptId); assert(r, o.receiptId + ' listed'); assert.equal(r.label, WANT[o.lines[0].sku], 'its category shows'); }
     const chainRow = list.find(x => x.rid === '4176744752');
     assert.match(chainRow.cls, /cuInfo/); assert.match(chainRow.why, /not laser cut/, 'the card says chain only is not cut');
-    assert.deepEqual(chainRow.buttons, ['Print QR label'], 'nothing to decide: only its label');
-    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Review & resolve'], r.rid + ' keeps Review & resolve');
+    assert.deepEqual(chainRow.buttons, ['Print QR label', 'Complete Order'], 'nothing to decide and nothing to cut: its label, or completed as it is');
+    // no Review & resolve on a custom card (Paul, 27 Sep 19:45): Complete Order, and Send to Sheet for its own designs
+    for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'], r.rid + ': ' + r.buttons.join(', '));
     // one Open / Completed switch at the front of the bar, for every filter (Paul, 27 Sep)
     // no Everything chip (Paul, 27 Sep: it always read the same as Open)
     const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
@@ -189,10 +210,10 @@ async function browserChecks() {
     assert.deepEqual(seg.b, ['Open' + openAll, 'Completed0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
-    // Review & resolve still opens the question's own controls
-    await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-review-open]');
-    assert(await page.evaluate(() => !!document.querySelector('#rvList .reviewListRow[data-rid="4174476673"] .reviewDetails .cuStep [data-f=mat]')), 'the material question inside the custom card');
-    await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-review-open]');
+    // the question is answered in the order window, which a click on the card opens
+    await page.click('#rvList .reviewListRow[data-rid="4174476673"] .engravingIdentity');
+    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'), null, { timeout: 10000 });
+    await page.click('#owClose');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-open.png') });
 
     // print the chain-only sticker: the sorting station's label, then completed
@@ -314,11 +335,72 @@ async function browserChecks() {
     await page.waitForFunction(() => document.getElementById('owNote').value === 'Engrave on the back only (Ann, station 2)', null, { timeout: 10000 });
     await page.click('#owClose');
 
+    // Complete Order: completed at once with no label printed, "Completed by" under Completed, and reopened again
+    await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-complete]');
+    await page.waitForFunction(k => B.maps.customDone[k] && document.querySelector('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-undo]'), hKey, { timeout: 30000 });
+    const byButton = srv.st.doc('Charm_Custom_Orders', hKey);
+    assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && !byButton.prints, 'completed without a print: ' + JSON.stringify(byButton));
+    await page.waitForFunction(() => !document.querySelector('#rvList .cuUndo'), null, { timeout: 20000 });
+    await page.click('#reviewView .rvSeg [data-cseg="done"]');
+    assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4177425406"] .reviewReason'), /^Completed by Test Operator · /, 'who completed it and when');
+    await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-reopen]');
+    await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat'), hKey, { timeout: 30000 });
+    await page.click('#reviewView .rvSeg [data-cseg="open"]');
+
+    // a custom order's own designs: .ai / .dxf dropped on its card, a metal picked for each in one window, Send to Sheet
+    const neck = '#rvList .reviewListRow[data-rid="4175423829"]', nKey = '4175423829_41754238291';
+    const drop = (sel, files) => page.evaluate(({ sel, files }) => {
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(new File([f.b64 ? Uint8Array.from(atob(f.b64), c => c.charCodeAt(0)) : f.text], f.name));
+      const n = document.querySelector(sel);
+      for (const t of ['dragenter', 'dragover', 'drop']) n.dispatchEvent(new DragEvent(t, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }, { sel, files });
+    await drop(neck, [{ name: 'heart-name.dxf', text: DESIGN_DXF }, { name: 'notes.txt', text: 'not a design' }]);
+    await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuFile .cuThumb img'), null, { timeout: 30000 });
+    const d1 = await page.evaluate(() => ({ rows: [...document.querySelectorAll('#cuDlg .cuFile')].map(n => ({ name: n.querySelector('.cuMeta b').textContent, meta: n.querySelector('.cuMeta .dim').textContent, on: [...n.querySelectorAll('.cuM.on')].map(b => b.textContent) })), title: document.getElementById('cuDlgT').textContent, send: document.querySelector('#cuDlg [data-send]').disabled, dialogs: document.querySelectorAll('dialog[open]').length, sheetsBefore: allSheets().reduce((n, p) => n + p.charms.length, 0) }));
+    assert.equal(d1.title, 'Designs for order 4175423829'); assert.equal(d1.dialogs, 1, 'one window');
+    assert.equal(d1.rows.length, 1, 'the .txt is left out'); assert.equal(d1.rows[0].name, 'heart-name.dxf'); assert.deepEqual(d1.rows[0].on, ['GF 14/20'], 'the order\'s metal first');
+    assert.match(d1.rows[0].meta, /^22\.\d × 20\.\d mm · 1 piece · DXF in mm$/, 'its size as traced: ' + d1.rows[0].meta);
+    assert.equal(d1.send, false, 'ready to send');
+    assert.equal(await page.evaluate(() => document.getElementById('dropAll').classList.contains('on')), false, 'the page\'s own drop veil is gone after the drop');
+    // a second design, an .ai, dropped on the window itself, put on Sterling Silver and cut twice
+    await drop('#cuDlg', [{ name: 'Tag Back.ai', b64: DESIGN_AI }]);
+    await page.waitForFunction(() => document.querySelectorAll('#cuDlg .cuFile .cuThumb img').length === 2, null, { timeout: 30000 });
+    await page.click('#cuDlg .cuFile:nth-child(2) .cuM[data-m="silver"]');
+    await page.click('#cuDlg .cuFile:nth-child(2) [data-q="1"]');
+    assert.deepEqual(await page.evaluate(() => ({ sum: document.getElementById('cuSum').textContent, all: !document.querySelector('#cuDlg .cuAll').hidden })), { sum: '2 designs · 3 pieces to cut', all: true });
+    if (shots) { await page.waitForTimeout(400); await page.screenshot({ path: path.join(shots, 'custom-designs-window.png') }); }
+    await page.click('#cuDlg [data-x]');
+    const strip = await page.evaluate(sel => ({ strip: document.querySelector(sel + ' .cuDesigns')?.textContent, gold: document.querySelector(sel + ' [data-cu-send]')?.className }), neck);
+    assert.match(strip.strip, /2 designs · 3 pieces/); assert.match(strip.gold, /gold/, 'Send to Sheet is the next step');
+    if (shots) await page.screenshot({ path: path.join(shots, 'custom-designs-card.png') });
+    await page.click(neck + ' [data-cu-send]');
+    await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .cuStat'), nKey, { timeout: 30000 });
+    // no run here: the line waits for the next one, settled (its SKU asks nothing); a run puts it on as any line
+    const w = await page.evaluate(k => { const r = B.orders.byKey.get(k); return { st: r.state, problems: r.problems.length, eng: r.spec.engraveCandidate, custom: Review.count() }; }, nKey);
+    assert.deepEqual([w.st, w.problems, w.eng], ['pulled', 0, false]);
+    assert(srv.st.blobs && [...srv.st.blobs.keys()].some(k => /charmnest\/(sandbox\/)?custom\/4175423829\//.test(k)), 'each design copied to the cloud');
+    const placed = await page.evaluate(async k => {
+      const row = B.orders.byKey.get(k); await Pool.poolAdd(row, null); Orders.interpretAll(); Review.render();
+      const pieces = allSheets().flatMap(p => p.charms.filter(c => c.custom).map(c => [p.metal, c.name]));
+      return { st: row.state, ids: row.poolIds, pieces, pools: row.poolIds.map(id => B.pool.rows.get(id)).map(p => [p.material, p.custom, p.customFile]), tag: [...document.querySelectorAll('.cuTag')].map(t => t.textContent),
+        why: document.querySelector('#rvList .reviewListRow[data-rid="4175423829"] .reviewReason')?.textContent, sent: !!document.querySelector('#rvList .reviewListRow[data-rid="4175423829"] .cuDesigns.sent') };
+    }, nKey);
+    assert.equal(placed.st, 'pooled'); assert.deepEqual(placed.ids, ['4175423829_41754238291_1', '4175423829_41754238291_2', '4175423829_41754238291_3']);
+    assert.deepEqual(placed.pieces.map(p => p[0]).sort(), ['gold', 'silver', 'silver'], 'each design on its own metal: ' + JSON.stringify(placed.pieces));
+    assert.deepEqual(placed.pools, [['gold', true, 'heart-name.dxf'], ['silver', true, 'Tag Back.ai'], ['silver', true, 'Tag Back.ai']]);
+    assert(placed.tag.includes('1 custom') && placed.tag.includes('2 custom'), 'each sheet says how many custom pieces it holds: ' + placed.tag);
+    assert.match(placed.why, /its own designs, on their way to the laser/); assert(placed.sent, 'the card shows its designs as sent');
+    // a drop anywhere else in Review starts nothing
+    await drop('#reviewView .ordBar', [{ name: 'stray.ai', b64: DESIGN_AI }]);
+    assert.deepEqual(await page.evaluate(() => [S.sources.length, document.getElementById('dropAll').classList.contains('on')]), [0, false], 'not taken as a manual nest job, and no veil left over');
+
     // a reload: the workspace comes back (its lines, its decisions, the switch where it was) and what was completed with it
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     await page.evaluate(async () => { await Session.flush(); window.__oldPage = true; });
     await boot();
     await page.waitForFunction(() => B.orders.rows.length === 8 && document.querySelector('#rvList .reviewListRow.cuDone'), null, { timeout: 30000 });
+    assert.deepEqual(await page.evaluate(k => ({ sent: !!CustomSheet.sentOf(B.orders.byKey.get(k)), pieces: allSheets().reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), files: Object.values(B.customDesigns)[0].files.map(F => F.bytes.length > 100) }), nKey), { sent: true, pieces: 3, files: [true, true] }, 'the designs and their pieces survive a reload');
     list = await rows();
     assert.deepEqual(list.map(x => x.rid), ['4176744752'], 'completed survives a reload'); assert.deepEqual(list[0].buttons, ['Print again', 'Reopen']);
     assert.deepEqual(await page.evaluate(() => ({ st: B.orders.byKey.get('4176744752_41767447521').state, v: Review.view().cseg })), { st: 'noDesign', v: 'done' });
@@ -339,6 +421,7 @@ async function browserChecks() {
 
 (async () => {
   await library();
+  await designFixtures();
   await browserChecks();
   console.log('Custom Orders OK: five examples classified, chain only never pooled, one card per line, sorting-station QR label → Completed → print again / reopen, order window and notes');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -2036,6 +2036,66 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
 .cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
 .cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
+/* Custom Orders: the order's own designs (CustomSheet). Plum is custom's colour everywhere: on the card, in the window and
+   on the sheets. A card takes .ai / .dxf files dropped on it; its designs sit in a strip under it. */
+.doneRow.cuDropOk{position:relative}
+.cuDropVeil{position:absolute;inset:4px;border-radius:12px;border:2px dashed #8e6bb8;background:rgba(250,247,253,.95);display:grid;place-items:center;opacity:0;pointer-events:none;transition:opacity .15s ease;z-index:3}
+.cuDropVeil span{display:grid;gap:4px;text-align:center}.cuDropVeil b{font:500 18px var(--serif);color:#4d3470}.cuDropVeil i{font:500 12px var(--sans);color:var(--ink70);font-style:normal}
+.doneRow.cuDragOver .cuDropVeil{opacity:1}
+body.cuDragging #dropAll{display:none!important}
+body.cuDragging .doneRow.cuDropOk{outline:1.5px dashed rgba(125,86,168,.55);outline-offset:-4px}
+.btn[aria-disabled="true"]{opacity:.45;cursor:default}
+.cuHint{border:0;background:none;padding:1px 0;font:500 11px var(--sans);color:var(--ink45);cursor:pointer;text-align:left;text-decoration:underline dashed rgba(125,86,168,.45);text-underline-offset:3px}
+.cuHint:hover{color:#5d3f82}
+.cuDesigns{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:var(--card2);border:1px solid var(--line2);animation:aiIn .25s ease-out}
+@container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
+@container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
+.cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
+.cuDzLbl{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#6a4a93;white-space:nowrap}
+.cuDzThumbs{display:flex;gap:6px;border:0;background:none;padding:0;cursor:pointer}.cuDzThumbs:disabled{cursor:default}
+.cuDzT{position:relative;width:44px;height:44px;border-radius:8px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;font:700 13px var(--sans);color:#a4432c;transition:transform .15s,border-color .15s}
+.cuDzThumbs:not(:disabled):hover .cuDzT{border-color:rgba(125,86,168,.5)}.cuDzT.bad{background:var(--claySoft)}
+.cuDzT img{width:100%;height:100%;object-fit:contain;border-radius:7px}
+.cuDzT i{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2px var(--card)}
+.cuDzMore{align-self:center;font:600 11px var(--mono);color:var(--ink45)}
+.cuDzSum{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font:12px var(--sans);color:var(--ink70);min-width:0}
+.cuDzSum b{font-weight:600;color:var(--ink)}.cuDzM{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.cuDzM i{width:8px;height:8px;border-radius:50%}
+.cuDzWhy{color:var(--ink45)}.cuDesigns.ready .cuDzWhy{color:#5d3f82;font-weight:600}
+.cuDesigns .linkBtn{margin-left:auto;border:0;background:none;padding:0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.cuThumb .spin,.cuDzT .spin{width:16px;height:16px;border:2px solid rgba(0,0,0,.12);border-top-color:#7d56a8;border-radius:50%;animation:spin .7s linear infinite}
+.prov .cuTag,.cuTag{color:#5d3f82;font-weight:600}
+/* the designs window: one row per file, its picture, its size, the five metals beside it, how many to cut */
+dialog.cuDlg{width:min(900px,96vw)}
+.cuDlg .dlgHead{align-items:flex-start}.cuDlgTitle{min-width:0;display:grid;gap:3px}
+.cuDlgTitle .sub{font:12px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cuAll{display:flex;align-items:center;gap:14px;padding:9px 18px;border-bottom:1px solid var(--line2);background:var(--card2)}
+.cuAll>span:first-child{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-right:auto}
+.cuList{padding:2px 18px;min-height:110px}
+.cuFile{display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 28px;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line2)}
+.cuFile.fresh{animation:aiIn .2s ease-out}
+.cuFile:last-child{border-bottom:0}
+.cuThumb{width:84px;height:84px;box-sizing:border-box;border-radius:10px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.cuThumb img{width:100%;height:100%;object-fit:contain}.cuThumb .x{font:700 18px var(--sans);color:#a4432c}
+.cuFile.bad .cuThumb{background:var(--claySoft);border-color:#e7c3b7}
+.cuMeta{display:grid;gap:3px;min-width:0}
+.cuMeta b{font:600 13px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cuMeta .dim{font:11.5px var(--sans);color:var(--ink45)}.cuMeta .err{font:600 11.5px var(--sans);color:#a4432c}.cuMeta .warn,.cuSum .warn{font:600 11.5px var(--sans);color:#8a6420}
+.cuMetals{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.cuM{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s}
+.cuM i{width:9px;height:9px;border-radius:50%;background:var(--mc);box-shadow:inset 0 0 0 1px rgba(0,0,0,.14)}
+.cuM:hover{border-color:var(--mc);color:var(--ink)}
+.cuM.on{background:color-mix(in srgb,var(--mc) 17%,#fff);border-color:var(--mc);color:var(--ink);box-shadow:0 0 0 1px var(--mc) inset}
+.cuM:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}
+.cuQty{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card)}
+.cuQty button{border:0;background:none;width:28px;height:28px;font:600 15px var(--sans);color:var(--ink70);cursor:pointer}.cuQty button:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.cuQty button:disabled{opacity:.35;cursor:default}
+.cuQty b{font:600 12px var(--mono);min-width:36px;text-align:center;color:var(--ink)}
+.cuRm{border:0;background:none;width:28px;height:28px;border-radius:50%;color:var(--ink45);font:400 19px/1 var(--sans);cursor:pointer}.cuRm:hover{background:var(--claySoft);color:#a4432c}
+.cuAdd{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 18px 16px;padding:13px;border:1.5px dashed var(--line);border-radius:12px;color:var(--ink70);font:500 12.5px var(--sans);cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.cuAdd:hover,.cuDlg.dragOver .cuAdd{border-color:#8e6bb8;background:#f8f4fc;color:#4d3470}
+.cuAddIc{width:22px;height:22px;border-radius:50%;background:var(--paper2);display:grid;place-items:center;font:600 15px var(--sans);color:var(--ink70)}
+.cuEmpty{display:grid;place-items:center;gap:5px;padding:30px 0;color:var(--ink45);font:12.5px var(--sans)}.cuEmpty b{font:500 18px var(--serif);color:var(--ink70)}
+.cuSum{font:12px var(--sans);color:var(--ink70);gap:12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
+@media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 28px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuRm{grid-column:3;grid-row:1}}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -2257,6 +2317,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
+<script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -4395,6 +4456,7 @@ function renderCard(sh) {
   if (rc) bits.push("recalled");
   // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
   if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
+  { const cu = sh.charms.filter(c => c.custom && !c.excluded).length; if (cu) bits.push(`<span class="cuTag" title="Custom orders' own designs on this sheet, tinted plum">${cu} custom</span>`); }
 
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
@@ -4538,6 +4600,13 @@ function drawPreviewNow(sh) {
   paintPreview(cv, sh, false, R);
   const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
 }
+/* A custom order's own design on a sheet (CustomSheet): a plum tint and a dashed plum ring just outside its outline, drawn
+   on screen only — never into a sheet's files. */
+const CUSTOM_TINT = "rgba(125,86,168,.20)";
+function customRing(ctx, c, tx, k) {
+  ctx.save(); ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
+  ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = Math.max(1.5, 1.6 * k); ctx.setLineDash([Math.max(3, 3 * k), Math.max(2, 2 * k)]); ctx.stroke(); ctx.restore();
+}
 function paintPreview(cv, sh, clean, R) {
   R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
   if (!clean) { sh._view = { R, k }; cv._backSheetScale = k * cv.clientWidth / cv.width; }   // the on-screen canvas only; offscreen renders must not disturb click mapping
@@ -4566,10 +4635,12 @@ function paintPreview(cv, sh, clean, R) {
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
-      ctx.fillStyle = sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
+      // a custom order's own design is plum, so it stands out on the sheet (Paul, 27 Sep: "clearly identified as Custom")
+      ctx.fillStyle = c.custom ? (sel === c.id ? "rgba(125,86,168,.42)" : CUSTOM_TINT) : sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
     }
     CharmNestPDF.drawCharm(ctx, c, tx, k);
+    if (!clean && c.custom) customRing(ctx, c, tx, k);
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
@@ -4586,8 +4657,9 @@ function paintPreview(cv, sh, clean, R) {
       const c = byId.get(g.id); if (!c || onSheet.has(g.id)) continue;
       const live = g === sh.probe, cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       ctx.save(); ctx.translate(g.cxPt * k, g.cyPt * k); ctx.rotate(g.angle * Math.PI / 180);
-      ctx.fillStyle = "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
+      ctx.fillStyle = c.custom ? CUSTOM_TINT : "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
       CharmNestPDF.drawCharm(ctx, c, tx, k);
+      if (c.custom && !live) customRing(ctx, c, tx, k);
       if (live) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(40,90,180,.9)"; ctx.lineWidth = Math.max(1, .3 * k); ctx.stroke(); }
       ctx.restore();
     }
@@ -5128,6 +5200,8 @@ async function boot() {
   document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#dropAll").classList.remove("on"); } });
   document.addEventListener("dragover", e => e.preventDefault());
   document.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropAll").classList.remove("on"); if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, null); });
+  // a drop taken by something else (a custom order's card) still ends the page's drag veil
+  window.resetPageDrop = () => { dragDepth = 0; $("#dropAll").classList.remove("on"); };
   window.addEventListener("resize", () => METALS.forEach(m => drawPreview(activePage(m.key))));
   // a sheet nesting out of sight shows on its tab: each second the tabs' marks of its metal are brought up to date (and once
   // more after it stops, so its tab does not keep the spinner); the whole row of every metal used to be written again
@@ -5146,8 +5220,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260927-huggie"></script>
-<script src="charm-nest-sheetwin.js?v=20260927-sw10"></script>
+<script src="charm-nest-bridge.js?v=20260927-custom"></script>
+<script src="charm-nest-sheetwin.js?v=20260927-custom"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

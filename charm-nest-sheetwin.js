@@ -154,6 +154,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swTag.eng{background:var(--claySoft);color:#8a3a26}
 .swTag.engOk{background:var(--sageSoft);color:#3f5b3c}
 .swTag.eng::before,.swTag.engOk::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.swTag.cust{background:#efe8f6;color:#5d3f82}
 .swNone{padding:28px 18px;text-align:center;color:var(--ink45);font-size:12.5px}
 .swFoot{border-top:1px solid var(--line2);padding:10px 14px 12px;display:grid;gap:10px;background:var(--card2)}
 .swFoot .row{display:flex;align-items:center;gap:10px;min-width:0}
@@ -720,9 +721,12 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     for (const x of W.pieces) {
       if (x.gone) continue;
       withPiece(ctx, x, () => {
-        ctx.fillStyle = "rgba(200,162,78,.10)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
+        // a custom order's own design is plum here too, as on the sheet's card (CustomSheet)
+        const cu = x.c && x.c.custom;
+        ctx.fillStyle = cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
         if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
+        if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
       });
     }
   }
@@ -938,7 +942,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       const what = [...skus].map(([s, n]) => `${s}${n > 1 ? ` ×${n}` : ""}`).join(", ");
       const need = live.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = live.filter(x => x.eng?.kind === "approved").length;
       const other = rid === "—" ? [] : otherSheets(rid);
-      const tags = (need ? `<span class="swTag eng" title="Back engraving still to approve">${need > 1 ? need + " backs" : "back"}</span>` : ok ? `<span class="swTag engOk" title="Back engraving approved">back</span>` : "") +
+      const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
+        (need ? `<span class="swTag eng" title="Back engraving still to approve">${need > 1 ? need + " backs" : "back"}</span>` : ok ? `<span class="swTag engOk" title="Back engraving approved">back</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
       return `<li class="swOrd" data-rid="${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
     }).join("");

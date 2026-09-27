@@ -834,6 +834,12 @@ const Orders = window.Orders = (() => {
       // a special line finished by hand (Custom Orders), or a chain-only line, that the run had held for a decision is
       // not cut either: it never went to the pool, so nothing is on a sheet for it
       if ((row.spec.customDone || (row.spec.special && row.spec.special.notCut)) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "noDesign"; row.reason = null; }
+      // a custom order's own designs sent to the sheets from its card (CustomSheet): what it is cut from is settled, and
+      // its designs carry no back to engrave; a line with pieces of its own goes on like any other
+      if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
+        row.problems = []; row.spec.engraveCandidate = false; const m0 = CustomSheet.metalOf(row); if (m0) row.spec.material = m0;
+        if (CustomSheet.piecesOf(row) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
+      }
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
     }
     Review.syncOrderItems();
@@ -1851,9 +1857,11 @@ const Pool = window.Pool = (() => {
       not fit (row.state says which). */
   async function preparePool(row, run) {
     const sp = row.spec;
-    if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     // a custom line whose QR label is being printed (Custom Orders) waits: printed, it is completed by hand, not cut
     if (window.CustomPrint && CustomPrint.printing(row.key)) return null;
+    // a custom order sent from its card is cut from its own designs, each on the metal picked for it (CustomSheet)
+    if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row)) return CustomSheet.prepare(row, run);
+    if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
@@ -1882,15 +1890,19 @@ const Pool = window.Pool = (() => {
     const { sp, pools, charms } = prep;
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
-    let page=window.LiveNest ? LiveNest.intakePage(sp.material, run, row.order.receiptId) : pagesOf(sp.material).at(-1);
-    if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
-    S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);if(!page.el)window.CN?.showPage(sp.material,S.sheets[sp.material].active);   // the card shows the page its buttons act on
-    if (run) page.runId = run.runId;
-    for (const c of charms) if (!page.charms.includes(c)) page.charms.push(c);
+    // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
+    const byMetal = new Map(); for (const c of charms) { const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
+    for (const [metal, list] of byMetal) {
+      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
+      if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(metal);
+      S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
+      if (run) page.runId = run.runId;
+      for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
+      if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
+    }
     for (const p of pools) B.pool.rows.set(p.poolId, p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
-    if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
-    agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
+    agent({ metal: sp.material, pool: true }, "POOL", prep.custom ? `${row.order.receiptId} · custom designs: ${[...byMetal].map(([m, l]) => `${l.length} → ${labelOf(m)}`).join(", ")}` : `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
   async function poolAdd(row, run) {
     const prep = await preparePool(row, run); if (!prep) return;
@@ -5060,6 +5072,8 @@ const CustomPrint = window.CustomPrint = (() => {
     });
   }
   const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
+  /** What the cloud record of one line says about it. */
+  const targetOf = (r, rec) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
   function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
   /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
@@ -5073,7 +5087,7 @@ const CustomPrint = window.CustomPrint = (() => {
     let label = null;
     try { label = rows.length ? O.sortingLabel(rows[0].order, rows[0].line) : null; } catch (_) { label = null; }
     if (!label && !(rec && (rec.label || rec.hasLabel))) { toast("There is nothing to print for that card", "bad"); return; }
-    const targets = rows.length ? rows.map(r => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" }))
+    const targets = rows.length ? rows.map(r => targetOf(r, rec))
       : [{ key: rec.key, receiptId: rec.receiptId, transactionId: rec.transactionId, sku: rec.sku, title: rec.title, category: rec.category, kind: rec.kind }];
     // a line still open is left alone by the pool while its label is printed (a run pooling it meanwhile cut it as well)
     const held = it.done ? [] : rows.map(r => r.key).filter(k => !printing.has(k));
@@ -5105,6 +5119,38 @@ const CustomPrint = window.CustomPrint = (() => {
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
     }).catch(e => { failed(key, e.message); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(release);
+  }
+  /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
+   *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
+   *  still be printed from Completed. A line on its way to the laser is cut there: it is left as it is. */
+  function complete(it) {
+    const key = it.key; if (busy.has(key) || asking.has(key)) return;
+    withName(key, who => completeAs(it, who));
+  }
+  function completeAs(it, who) {
+    const key = it.key; if (busy.has(key)) return;
+    const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
+    if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
+    const held = rows.map(r => r.key).filter(k => !printing.has(k));
+    for (const k of held) printing.add(k);
+    const release = () => { for (const k of held) printing.delete(k); };
+    fails.delete(key); say(key, "Completing…");
+    queue = queue.then(async () => {
+      let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
+      const saved = {}; let putErr = null, cut = 0;
+      for (const r of rows) {
+        if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
+        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
+      }
+      const done = Object.keys(saved), rid = rows[0].order.receiptId;
+      if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+      release(); busy.delete(key);
+      if (done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
+      settle(); say(key, null);
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
+      if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
+      else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
+    }).catch(e => { failed(key, e.message); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(release);
   }
   /** "Marked completed · Undo" on the card for UNDO_MS: the lines it completed, by their keys. */
   function offerUndo(keys, rows, who) {
@@ -5171,7 +5217,373 @@ const CustomPrint = window.CustomPrint = (() => {
     return box;
   }
   const stamp = it => [busy.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
-  return { print, reopen, undo, statusHtml, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+  return { print, complete, reopen, undo, statusHtml, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+})();
+
+/* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
+   Paul, 27 Sep 19:45: a custom order's card takes the order's own designs, .ai or .dxf files dropped on it. A window
+   shows each file as a picture with the five metals beside it: one click puts a design on a metal. "Send to Sheet" puts
+   every piece on the next open sheet of its metal, as any order line goes on (Pool.poolAdd, at once rather than at the
+   next update), and the pieces show as Custom on the sheets (a plum tint), so they are easy to pick out.
+   Kept per card with the workspace (B.customDesigns): each file's bytes, as PDF (a .dxf is read into one by
+   CharmNestDXF), its metal and how many to cut; once sent, a copy of each file in the cloud and which pieces went to
+   which line. A line sent reads as settled (no question about its SKU, no back to engrave) and comes back on a sheet
+   after a reload or in a later run the way any line does, from these files. Nothing here calls Etsy. */
+const CustomSheet = window.CustomSheet = (() => {
+  if (!B.customDesigns) B.customDesigns = {};
+  const ACCEPT = /\.(ai|dxf)$/i;
+  const all = () => B.customDesigns || (B.customDesigns = {});
+  const geo = new Map();          // file id → Promise<{ parsed, g, charms }>: traced once a session, from its bytes
+  const pending = new Map();      // file id → the File dropped, until it is read
+  const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
+  const D = { dlg: null, ck: null, it: null, askName: false };
+  let ver = 0, idxFor = null, idxVer = -1, idx = new Map(), lastPrune = 0;
+  const ckOf = it => String(it.key || "").replace(/^[a-z]+:/, "");        // "ord:custom:…" and "cinfo:custom:…" are one card
+  const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
+  const metalOf = k => METALS.find(m => m.key === k) || null;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const safe = s => String(s || "design").replace(/[^\w.\-]+/g, "_").slice(0, 60);
+  function changed() { ver++; try { Session.schedule(); } catch (_) {} redraw(); }
+  function redraw() { try { Review.render(); } catch (_) {} if (D.dlg && D.dlg.open) paint(); }
+  /** The line keys of every card sent, to the card they went with (read by interpretAll and preparePool). */
+  function index() {
+    if (idxFor !== all() || idxVer !== ver) { idx = new Map(); for (const e of Object.values(all())) if (e && e.sent) for (const k of Object.keys(e.sent.lines || {})) idx.set(k, e); idxFor = all(); idxVer = ver; }
+    return idx;
+  }
+  const sentOf = row => (row && index().get(row.key)) || null;
+  const piecesOf = row => { const e = sentOf(row); return e ? (e.sent.lines[row.key] || []).length : 0; };
+  /** The metal of a sent line's first piece: the line reads as that metal (lists, the day's plan). */
+  const metalOfRow = row => { const e = sentOf(row), pc = e && (e.sent.lines[row.key] || [])[0], F = pc && e.files.find(x => x.id === pc.f); return (F && F.metal) || null; };
+  /** Every line of the card that can still take designs: not on a sheet, not completed. */
+  const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
+  const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
+  const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /** Why the card's designs cannot be sent yet, or "" when they can. */
+  function notReady(e) {
+    if (!e || !e.files.length) return "Drop the order's .ai or .dxf designs on its card first";
+    if (e.files.some(F => F.state === "reading")) return "Its designs are still being read";
+    const bad = e.files.find(F => F.state === "error"); if (bad) return `${bad.name} could not be read — remove it or drop it again`;
+    const none = e.files.filter(F => !F.metal); if (none.length) return none.length === 1 ? `Pick the metal for ${none[0].name}` : `Pick a metal for each design (${none.length} have none)`;
+    const big = e.files.find(F => tooBig(F)); if (big) return `${big.name} is too big for the ${labelOf(big.metal)} plate`;
+    return "";
+  }
+  function tooBig(F) {
+    if (!F.metal || !F.maxPt) return false;
+    const st = stockFor(F.metal), ins = +S.settings.insetPt || 0;
+    return F.maxAreaPt2 > (st.wPt - 2 * ins) * (st.hPt - 2 * ins) * (+S.settings.maxFill || 0.8) || F.minPt > Math.max(st.wPt, st.hPt) - 2 * ins;
+  }
+  /** What the Review card draws from: its designs and where they stand. */
+  function cardOf(it) {
+    const ck = ckOf(it), e = all()[ck] || null, row = linesOf(it)[0];
+    if (!row || it.done) return null;
+    const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
+    const sent = !!(e && e.sent);
+    const open = openLines(it).length > 0;
+    return { ck, e, files: e ? e.files : [], sent, open, cut, busy: busy.get(ck) || "", why: sent ? "" : notReady(e), dropOk: !sent && open };
+  }
+  const stamp = it => { const e = all()[ckOf(it)]; return [ver, busy.get(ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty).join() + (e.sent ? "s" : "") : ""].join("|"); };
+
+  /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
+  function read(F) {
+    if (geo.has(F.id)) return geo.get(F.id);
+    const task = (async () => {
+      if (!F.bytes || !F.bytes.length) {
+        if (!F.cloud || !(F.cloud.url || F.cloud.path)) throw new Error("its file is no longer on this browser — drop it again");
+        const url = F.cloud.url || (await api("charmNestOutput", { op: "url", path: F.cloud.path })).url;
+        F.bytes = await CharmNestAssets.bytes(url);
+      }
+      const parsed = await P.parseSource(F.bytes, F.name);
+      const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
+      if (!g.charms.length) throw new Error("no closed cut outline in it — a piece's outline must be a closed black or grey line");
+      // loose ink within reach of a piece is part of that piece (as a master's is, Pool.readMasterCharm)
+      for (const m of g.orphans) {
+        if (!m.bbox) continue;
+        const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
+        if (c && !c.members.includes(m)) c.members.push(m);
+      }
+      for (const c of g.charms) { const r = P.integrateRings(c); if (r.left.length) throw new Error("a hoop could not join its piece — " + r.left[0]); }
+      await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6);
+      const charms = g.charms.filter(c => !c.open);
+      if (!charms.length) throw new Error("its outlines are not closed — every piece needs a closed cut line");
+      return { parsed, g, charms };
+    })();
+    geo.set(F.id, task); task.catch(() => geo.delete(F.id));
+    return task;
+  }
+  /** The size a piece is cut at: its cut outline, curves followed (its box counts their control points). */
+  function outlineBox(seg) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity], at = p => { if (p[0] < b[0]) b[0] = p[0]; if (p[1] < b[1]) b[1] = p[1]; if (p[0] > b[2]) b[2] = p[0]; if (p[1] > b[3]) b[3] = p[1]; };
+    for (const sub of seg.subpaths || []) {
+      let cur = null;
+      for (const sg of sub) {
+        if (sg[0] === "m" || sg[0] === "l") { at(sg[1]); cur = sg[1]; }
+        else if (sg[0] === "c" && cur) { const [a, c2, e] = [sg[1], sg[2], sg[3]]; for (let i = 1; i <= 24; i++) { const t = i / 24, u = 1 - t; at([u * u * u * cur[0] + 3 * u * u * t * a[0] + 3 * u * t * t * c2[0] + t * t * t * e[0], u * u * u * cur[1] + 3 * u * u * t * a[1] + 3 * u * t * t * c2[1] + t * t * t * e[1]]); } cur = e; }
+      }
+    }
+    return Number.isFinite(b[0]) ? b : seg.bbox;
+  }
+  /** Every piece of a file, as drawn, on white: the picture beside it in the window and on the card. */
+  function thumbOf(charms, size) {
+    const b = charms.reduce((a, c) => [Math.min(a[0], c.bbox[0]), Math.min(a[1], c.bbox[1]), Math.max(a[2], c.bbox[2]), Math.max(a[3], c.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+    const pad = Math.max(2, (b[2] - b[0]) * .06), w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
+    const cv = document.createElement("canvas"); cv.width = size; cv.height = size; const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
+    const ox = (size - w * s) / 2, oy = (size - h * s) / 2, tx = (x, y) => [ox + (x - b[0] + pad) * s, oy + (b[3] + pad - y) * s];
+    for (const c of charms) P.drawCharm(ctx, c, tx, s);
+    return cv.toDataURL("image/png");
+  }
+  async function ingest(F) {
+    try {
+      const file = pending.get(F.id); pending.delete(F.id);
+      if (!file) throw new Error("the file was not read");
+      const raw = new Uint8Array(await file.arrayBuffer());
+      if (F.kind === "dxf") { if (!window.CharmNestDXF) throw new Error("the .dxf reader is not loaded — reload the page"); const r = await CharmNestDXF.toPdf(raw, F.name); F.bytes = r.bytes; F.units = r.meta.units; }
+      else F.bytes = raw;
+      F.hash = await sha256(F.bytes);
+      const { charms } = await read(F);
+      const bb = charms.reduce((a, c) => { const o = outlineBox(c.outline); return [Math.min(a[0], o[0]), Math.min(a[1], o[1]), Math.max(a[2], o[2]), Math.max(a[3], o[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
+      Object.assign(F, { pieces: charms.length, wMm: (bb[2] - bb[0]) * MM, hMm: (bb[3] - bb[1]) * MM, thumb: thumbOf(charms, 176),
+        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), state: "ready", error: null });
+    } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
+    changed();
+  }
+  /** Files dropped on a card (or added in its window): read one after another, the window open at once to show them. */
+  function add(it, files) {
+    const c = cardOf(it); if (!c) return;
+    const list = [...(files || [])], ok = list.filter(f => ACCEPT.test(f.name || "")), bad = list.length - ok.length;
+    if (bad) toast(ok.length ? `${plural(bad, "file")} left out: only .ai and .dxf designs go on a custom order` : "Only .ai and .dxf designs can go on a custom order", "bad", 5000);
+    if (!ok.length) return;
+    if (c.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
+    if (!c.open) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
+    const row = linesOf(it)[0];
+    const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
+    const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
+    const fresh = ok.map(f => ({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }));
+    fresh.forEach((F, i) => pending.set(F.id, ok[i]));
+    e.files.push(...fresh); e.at = Date.now();
+    open(it); changed();
+    let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
+  }
+  function remove(ck, id) {
+    const e = all()[ck]; if (!e || e.sent) return;
+    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id);
+    if (!e.files.length) delete all()[ck];
+    changed();
+  }
+  function setMetal(ck, id, m) { const e = all()[ck]; if (!e || e.sent) return; for (const F of e.files) if (id == null || F.id === id) F.metal = m; changed(); }
+  function setQty(ck, id, d) { const e = all()[ck]; if (!e || e.sent) return; const F = e.files.find(x => x.id === id); if (!F) return; F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed(); }
+
+  /* ── Send to Sheet ── */
+  async function send(it) {
+    const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
+    const why = notReady(e); if (why) { toast(why, "bad", 5000); if (e && e.files.length) open(it); return; }
+    const who = employeeName(); if (!who) { open(it, { askName: true }); return; }
+    const rows = openLines(it);
+    if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
+    const say = t => { busy.set(ck, t); redraw(); };
+    try {
+      // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
+      for (const F of e.files) {
+        say(`Reading ${F.name}…`); await read(F);
+        if (!F.cloud && S.cloud.ok) { say(`Saving ${F.name}…`); try { F.cloud = await uploadBytes(`charmnest/custom/${e.rid}/${String(F.hash || F.id).slice(0, 12)}-${safe(F.name.replace(ACCEPT, ""))}.pdf`, F.bytes, "application/pdf", `Saving ${F.name}`); } catch (err) { agent({ bridge: true }, "warn", `${e.rid}: ${F.name} was not copied to the cloud (${err.message}); it is kept on this browser`); } }
+      }
+      // the pieces: every copy of every design; with more than one line on the card, the copies are shared out over them
+      const lines = {}; for (const r of rows) lines[r.key] = [];
+      for (const F of e.files) for (let q = 0; q < F.qty; q++) { const r = rows[q % rows.length]; const { charms } = await read(F); for (let i = 0; i < charms.length; i++) lines[r.key].push({ f: F.id, i }); }
+      e.sent = { at: Date.now(), by: who, lines }; changed();
+      say("Placing on the sheets…");
+      for (const r of rows) await Review.repool(r);
+      busy.delete(ck);
+      if (D.dlg && D.dlg.open && D.ck === ck) D.dlg.close();
+      const placed = rows.filter(r => r.state === "pooled"), n = Object.values(lines).reduce((a, l) => a + l.length, 0), metals = [...new Set(e.files.map(F => labelOf(F.metal)))].join(" and ");
+      const held = rows.find(r => r.state === "held" && r.reason);
+      if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
+      else toast(placed.length ? `${e.rid}: ${plural(n, "custom piece")} on the ${metals} sheet${e.files.length > 1 ? "s" : ""}` : `${e.rid}: sent — ${n === 1 ? "its piece goes" : "its pieces go"} on the ${metals} sheet${e.files.length > 1 ? "s" : ""} with the next run`, "ok", 6000);
+      agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
+    } catch (err) {
+      busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
+    } finally { redraw(); }
+  }
+  /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
+  async function prepare(row, run) {
+    const e = sentOf(row), mine = (e && e.sent.lines[row.key]) || [];
+    if (!mine.length) { row.state = "noDesign"; row.reason = "made with its order's other line"; return null; }
+    const sp = row.spec, rid = row.order.receiptId, pools = [], charms = [];
+    for (const [n, pc] of mine.entries()) {
+      const F = e.files.find(x => x.id === pc.f); if (!F) throw new Error("a design sent for it is missing");
+      if (tooBig(F)) { row.state = "oversize"; row.reason = `${F.name} does not fit the ${labelOf(F.metal)} plate`; return null; }
+      const src = await sourceOf(e, F), base = src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      const copy = n + 1, poolId = O.poolId(row.order, row.line, copy);
+      const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
+      Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0,
+        orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
+        poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
+      charms.push(c);
+    }
+    row.engrave = { needed: false, state: "none", approved: true };
+    return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
+  }
+  /** One pool source per file, as a master's (Pool.masterCharm): its pieces traced once, every copy sharing them. */
+  async function sourceOf(e, F) {
+    const id = "cust:" + String(F.hash || F.id).slice(0, 16);
+    const had = S.poolSources[id]; if (had && had.charms && had.charms.length) { had.usedAt = Date.now(); return had; }
+    const { parsed, g, charms } = await read(F);
+    const src = { id, pool: true, custom: true, name: `${F.name} (custom · ${e.rid})`, sku: "CUSTOM", bytes: F.bytes, hash: F.hash, parsed, group: g, charms, metal: null, state: "ready", t0: performance.now(), cloud: F.cloud ? { path: F.cloud.path, url: F.cloud.url } : null, persisting: null, usedAt: Date.now() };
+    charms.forEach((c, i) => Object.assign(c, { id: id + ":" + i, sourceId: id, sourceName: src.name, index: i, name: F.name, sku: "CUSTOM", namedBy: "custom", excluded: false, cloud: F.cloud ? { ai: F.cloud.url, aiPath: F.cloud.path, png: null, pngPath: null } : null, upAngle: null, engravable: false, backKeepOut: null, custom: true }));
+    S.poolSources[id] = src;
+    return src;
+  }
+  /** Designs of orders that have left (cut and done, or gone) and are on no sheet any more go after an hour. */
+  function prune() {
+    const t = Date.now(); if (t - lastPrune < 60000 || !B.orders.pulledAt || !Orders.rows().length) return; lastPrune = t;
+    const live = new Set(); for (const r of Orders.rows()) if (r.spec && r.spec.special && !["gone", "committed"].includes(r.state)) live.add(Review.cardKey(r));
+    for (const r of Orders.rows()) { const e = sentOf(r); if (e && !["gone", "committed"].includes(r.state)) live.add(e.ck); }
+    const onSheet = new Set(); for (const p of allSheets()) for (const c of p.charms || []) if (c.customCk) onSheet.add(c.customCk);
+    let n = 0; for (const [ck, e] of Object.entries(all())) if (!live.has(ck) && !onSheet.has(ck) && t - ((e && e.at) || 0) > 3600e3) { for (const F of (e && e.files) || []) geo.delete(F.id); delete all()[ck]; n++; }
+    if (n) { ver++; try { Session.schedule(); } catch (_) {} }
+  }
+
+  /* ── the card: a drop area, its designs in a strip, Send to Sheet ── */
+  function stripHtml(it) {
+    const c = cardOf(it); if (!c || !c.files.length) return "";
+    const byMetal = new Map(); for (const F of c.files) if (F.state === "ready") byMetal.set(F.metal, (byMetal.get(F.metal) || 0) + F.pieces * F.qty);
+    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? F.pieces * F.qty : 0), 0);
+    const words = c.sent ? `Sent to the sheets${c.e.sent.by ? " by " + c.e.sent.by : ""}` : c.why ? c.why : "Ready to send";
+    return `<div class="cuDesigns${c.sent ? " sent" : c.why ? "" : " ready"}" role="group" aria-label="Designs for this order">` +
+      `<span class="cuDzLbl">${c.sent ? "Custom · on the sheets" : "Custom designs"}</span>` +
+      `<button type="button" class="cuDzThumbs" data-cu-designs title="${c.sent ? "Sent to the sheets" : "Open the designs: pick each one's metal"}"${c.sent ? " disabled" : ""}>` +
+      c.files.slice(0, 6).map(F => `<span class="cuDzT${F.state === "error" ? " bad" : ""}">${F.thumb ? `<img alt="" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : "!"}${F.metal ? `<i style="background:${esc(metalOf(F.metal).color)}" title="${esc(labelOf(F.metal))}"></i>` : ""}</span>`).join("") +
+      (c.files.length > 6 ? `<span class="cuDzMore">+${c.files.length - 6}</span>` : "") + `</button>` +
+      `<span class="cuDzSum"><b>${plural(c.files.length, "design")} · ${plural(n, "piece")}</b>${[...byMetal].filter(([m]) => m).map(([m, k]) => `<span class="cuDzM"><i style="background:${esc(metalOf(m).color)}"></i>${esc(labelOf(m))}${byMetal.size > 1 ? " × " + k : ""}</span>`).join("")}<span class="cuDzWhy">${esc(words)}</span></span>` +
+      (c.sent ? "" : `<button type="button" class="linkBtn" data-cu-designs>Edit</button>`) + `</div>`;
+  }
+  function buttonsHtml(it, primary) {
+    const c = cardOf(it); if (!c) return "";
+    if (c.busy) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(c.busy)}</span>`;
+    if (c.sent || !c.open || (c.cut && !c.files.length)) return "";
+    const ready = !c.why;
+    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : " aria-disabled=\"true\""} title="${esc(ready ? "Put every design on the next open sheet of its metal" : c.why)}">Send to Sheet</button>` +
+      (c.files.length ? "" : `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf files on this card, or press to pick them">Drop .ai / .dxf designs here</button>`);
+  }
+  const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
+  function wire(node, it) {
+    const c = cardOf(it); if (!c) return;
+    node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length }); });
+    const sb = node.querySelector("[data-cu-send]"); if (sb) sb.onclick = ev => { ev.stopPropagation(); send(it); };
+    if (!c.dropOk) return;
+    node.classList.add("cuDropOk");
+    let depth = 0;
+    node.addEventListener("dragenter", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); depth++; node.classList.add("cuDragOver"); });
+    node.addEventListener("dragover", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; });
+    node.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; node.classList.remove("cuDragOver"); } });
+    node.addEventListener("drop", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.stopPropagation(); depth = 0; node.classList.remove("cuDragOver"); endDrag(); add(it, ev.dataTransfer.files); });
+    const over = el("div", "cuDropVeil"); over.setAttribute("aria-hidden", "true");
+    over.innerHTML = `<span><b>Drop the designs for ${esc(linesOf(it)[0].order.receiptId)}</b><i>.ai or .dxf · you pick each one's metal next</i></span>`;
+    node.appendChild(over);
+  }
+  /* In the Review tab a drag of files shows where they can go (every custom card that takes them), not the page's own
+     "drop to route by file name" veil; files dropped anywhere else there are not started on a sheet as a manual job. */
+  let dragDepth = 0;
+  const inReview = () => { const v = document.getElementById("reviewView"); return !!v && !v.classList.contains("hidden"); };
+  function endDrag() { dragDepth = 0; document.body.classList.remove("cuDragging"); if (window.resetPageDrop) window.resetPageDrop(); }
+  document.addEventListener("dragenter", ev => { if (!hasFiles(ev) || !(inReview() || (D.dlg && D.dlg.open))) return; dragDepth++; document.body.classList.add("cuDragging"); }, true);
+  document.addEventListener("dragleave", () => { if (!document.body.classList.contains("cuDragging")) return; if (--dragDepth <= 0) endDrag(); }, true);
+  document.addEventListener("dragend", endDrag, true);
+  document.addEventListener("drop", ev => {
+    const on = document.body.classList.contains("cuDragging"); endDrag();
+    if (!on || !hasFiles(ev) || ev.target.closest?.(".cuDropOk, #cuDlg")) return;
+    ev.preventDefault(); ev.stopPropagation();
+    toast("Drop the designs on the custom order's card", "bad", 4000);
+  }, true);
+
+  /* ── the designs window: each file as a picture, its metal one click away, how many to cut ── */
+  function build() {
+    if (D.dlg) return D.dlg;
+    const d = el("dialog", "cuDlg"); d.id = "cuDlg"; d.setAttribute("aria-labelledby", "cuDlgT");
+    d.innerHTML = `<div class="dlg"><div class="dlgHead"><div class="cuDlgTitle"><h3 id="cuDlgT"></h3><div class="sub" id="cuDlgSub"></div></div><div class="right"><button type="button" class="btn ghost sm" data-x aria-label="Close">Close</button></div></div>
+      <div class="cuAll" hidden><span>All designs</span><span class="cuMetals" data-all role="group" aria-label="Metal for every design"></span></div>
+      <div class="dlgBody cuList" id="cuList"></div>
+      <label class="cuAdd" id="cuAdd"><input type="file" multiple accept=".ai,.dxf" hidden><span class="cuAddIc" aria-hidden="true">+</span><span>Drop more .ai or .dxf files here, or <u>browse</u></span></label>
+      <div class="dlgFoot"><span class="left cuSum" id="cuSum"></span><span class="cuWho" id="cuWho" hidden><input type="text" maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with the sheets" autocomplete="off"></span><button type="button" class="btn ghost sm" data-x>Done</button><button type="button" class="btn gold sm" data-send>Send to Sheet</button></div></div>`;
+    document.body.appendChild(d); D.dlg = d;
+    d.querySelectorAll("[data-x]").forEach(b => b.onclick = () => d.close());
+    d.addEventListener("close", () => { D.ck = null; D.it = null; D.askName = false; endDrag(); });
+    const inp = d.querySelector("#cuAdd input"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
+    // the whole window takes files
+    let depth = 0;
+    d.addEventListener("dragenter", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); depth++; d.classList.add("dragOver"); });
+    d.addEventListener("dragover", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; });
+    d.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; d.classList.remove("dragOver"); } });
+    d.addEventListener("drop", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.stopPropagation(); depth = 0; d.classList.remove("dragOver"); endDrag(); if (D.it) add(D.it, ev.dataTransfer.files); });
+    d.querySelector("[data-send]").onclick = () => {
+      const who = d.querySelector("#cuWho input");
+      if (!employeeName()) { const v = who.value.trim(); if (!v) { D.askName = true; paint(); who.focus(); return; } B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {} }
+      if (D.it) send(D.it);
+    };
+    d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
+    return d;
+  }
+  const chips = (sel, data) => METALS.map(m => `<button type="button" role="radio" aria-checked="${sel === m.key}" class="cuM${sel === m.key ? " on" : ""}" data-m="${m.key}" ${data} style="--mc:${m.color}" title="${esc(m.long)}"><i></i>${esc(m.label)}</button>`).join("");
+  function paint() {
+    const d = D.dlg; if (!d || !D.ck) return;
+    const e = all()[D.ck], it = D.it, row = it && linesOf(it)[0];
+    if (!row) { d.close(); return; }
+    const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
+    d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
+    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "metal not read from the order"].filter(Boolean).join(" · ");
+    const files = e ? e.files : [], busyNow = busy.get(D.ck) || "";
+    const allRow = d.querySelector(".cuAll"); allRow.hidden = files.length < 2 || !!(e && e.sent);
+    const same = files.length && files.every(F => F.metal === files[0].metal) ? files[0].metal : null;
+    allRow.querySelector("[data-all]").innerHTML = chips(same, "data-all-m");
+    const list = d.querySelector("#cuList");
+    // one row per design, kept as it is while it reads the same (a click on a metal does not rebuild every picture)
+    const keep = new Map([...list.children].map(n => [n.dataset.id, n]));
+    list.replaceChildren(...files.map(F => {
+      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, !!(e && e.sent), tooBig(F)].join("|");
+      let n = keep.get(F.id); if (n && n._sig === sig) return n;
+      n = el("div", "cuFile" + (F.state === "error" ? " bad" : "") + (keep.has(F.id) ? "" : " fresh")); n.dataset.id = F.id; n._sig = sig;
+      const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
+      const big = tooBig(F);
+      n.innerHTML = `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : '<span class="x">!</span>'}</div>` +
+        `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading…</span>' : F.state === "error" ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick its metal</span>' : ""}`}</div>` +
+        `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${F.state === "error" ? "" : chips(F.metal, "")}</div>` +
+        `<div class="cuQty" title="How many of this design to cut">${F.state === "error" ? "" : `<button type="button" data-q="-1" aria-label="One fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="One more">+</button>`}</div>` +
+        `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>`;
+      return n;
+    }));
+    if (!files.length) list.innerHTML = `<div class="cuEmpty"><b>No designs yet</b><span>Drop the order's .ai or .dxf files anywhere in this window</span></div>`;
+    const ready = e ? e.files.filter(F => F.state === "ready") : [], n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
+    d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat" role="status"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
+    const sb = d.querySelector("[data-send]"); sb.disabled = !!why || !!busyNow; sb.title = why || "Put every design on the next open sheet of its metal";
+    const who = d.querySelector("#cuWho"); who.hidden = !(D.askName && !employeeName());
+    d.querySelector("#cuAdd").hidden = !!(e && e.sent);
+  }
+  function wireDlg() {
+    const d = D.dlg;
+    d.querySelector("#cuList").onclick = ev => {
+      const n = ev.target.closest(".cuFile"); if (!n || !D.ck) return; const id = n.dataset.id;
+      const m = ev.target.closest("[data-m]"); if (m) { setMetal(D.ck, id, m.dataset.m); return; }
+      const q = ev.target.closest("[data-q]"); if (q) { setQty(D.ck, id, +q.dataset.q); return; }
+      if (ev.target.closest("[data-rm]")) remove(D.ck, id);
+    };
+    d.querySelector(".cuAll").onclick = ev => { const m = ev.target.closest("[data-m]"); if (m && D.ck) setMetal(D.ck, null, m.dataset.m); };
+    // arrows move between a design's metals, as in any group of choices
+    d.querySelector("#cuList").onkeydown = ev => {
+      const b = ev.target.closest(".cuM"); if (!b || !["ArrowLeft", "ArrowRight"].includes(ev.key)) return;
+      ev.preventDefault(); const sib = ev.key === "ArrowRight" ? b.nextElementSibling : b.previousElementSibling; if (sib) { sib.focus(); sib.click(); }
+    };
+  }
+  /** The window, for one card: never over another window (the order window is closed first). */
+  function open(it, opts = {}) {
+    const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
+    D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
+    paint();
+    if (!d.open) d.showModal();
+    if (opts.browse) d.querySelector("#cuAdd input").click();
+    else if (D.askName) d.querySelector("#cuWho input").focus();
+  }
+  return { add, send, prepare, sentOf, piecesOf, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -5704,17 +6116,20 @@ const Review = window.Review = (() => {
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.stamp(it):"",CustomRead.stamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):"",CustomRead.stamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
   const whenOf = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? fmtT(t) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + fmtT(t); };
   function customWhy(row, done, rec) {
     rec = rec || (row && row.spec && row.spec.customDone) || null;
+    // completed by Complete Order (no label printed) or by printing its label; a label printed since is said too
+    if (done && rec && rec.how === "button") return `Completed${rec.completedBy ? " by " + rec.completedBy : ""}${rec.completedAt ? " · " + whenOf(rec.completedAt) : ""}${rec.prints ? ` · QR label printed${rec.prints > 1 ? ` ${rec.prints}×` : ""}` : ""}`;
     if (done) return `QR label printed${rec && rec.lastPrintedBy ? " by " + rec.lastPrintedBy : ""}${rec && rec.lastPrintedAt ? " · " + whenOf(rec.lastPrintedAt) : ""}${rec && rec.prints > 1 ? ` · printed ${rec.prints}×` : ""}`;
-    const sp = row.spec, spc = sp.special;
+    const sp = row.spec, spc = sp.special, mine = CustomSheet.sentOf(row);
+    if ((row.poolIds || []).length) return `${spc.label} · ${mine ? "its own designs, on their way" : "on its way"} to the laser (${Orders.statePill(row)[1]})`;
+    if (mine) return `${spc.label} · its designs go on the sheets with the next run`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
-    if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
   /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under
@@ -5739,7 +6154,7 @@ const Review = window.Review = (() => {
       done.push(itemFor("cdone:rec:" + lineKey, { rows: [], row: null, done: true, record: rec, rid: rec.receiptId, why: customWhy(null, true, rec) }));
     }
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
-    const at = it => (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
+    const at = it => (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
     done.sort((a, b) => at(b) - at(a));
     return { open, done, recent };
   }
@@ -5766,28 +6181,36 @@ const Review = window.Review = (() => {
     const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');
     const orders=new Set(group.map(r=>r.order.receiptId));
     const queue=cu?(it.done?'Custom order · completed':it.info?'Custom order':'Review required'):'Review required';
-    const decide=!it.info;
-    // a custom card prints the sorting station's QR sticker for its order (CustomPrint); a completed one prints it again
-    // or reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
+    // a custom card has no "Review & resolve" (Paul, 27 Sep 19:45): its question is answered in the order window, which a
+    // click on the card opens; the other kinds keep theirs
+    const decide=!it.info&&!cu;
+    // a custom card prints the sorting station's QR sticker for its order (CustomPrint), completes it without one
+    // (Complete Order) or sends the order's own designs to the sheets (CustomSheet); a completed one prints it again or
+    // reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
+    const cs=cu&&!it.done&&row?CustomSheet.cardOf(it):null,sendFirst=!!(cs&&!cs.sent&&!cs.why&&!cs.busy);
     const acts=busy?busy
-      :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)?`<button class="btn ${it.done?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
+      :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)&&!cs?.busy?`<button class="btn ${it.done||sendFirst?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
+      +(cu&&!it.done&&printable(it)&&!cs?.busy?`<button class="btn ghost sm" data-cu-complete title="mark this order completed now, without printing its label (it moves to Completed)">Complete Order</button>`:'')
+      +(cs?CustomSheet.buttonsHtml(it,true):'')
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>`:'')
       +(decide?`<button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div><div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(it):''}<div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
     const btn=node.querySelector('[data-review-open]'),detail=node.querySelector('.reviewDetails');
     const show=()=>{if(!btn)return;if(!detail.childNodes.length){detail.appendChild(card(it));const f=putTyped(detail,was.splice(0));if(f&&!node.isConnected)node._refocus=f;}detail.hidden=false;node.classList.add('open');btn.textContent='Close details';btn.setAttribute('aria-expanded','true');};
     if(btn)btn.onclick=()=>{if(detail.hidden){RV.open=it.key;show();}else{RV.open=null;detail.hidden=true;node.classList.remove('open');btn.textContent='Review & resolve';btn.setAttribute('aria-expanded','false');}};
     if(cu){
       const pb=node.querySelector('[data-cu-print]');if(pb)pb.onclick=()=>CustomPrint.print(it);
+      const cb=node.querySelector('[data-cu-complete]');if(cb)cb.onclick=()=>CustomPrint.complete(it);
       const rb=node.querySelector('[data-cu-reopen]');if(rb)rb.onclick=()=>CustomPrint.reopen(it);
+      if(cs)CustomSheet.wire(node,it);
       const who=CustomPrint.wire(node,it);if(who)node._refocus=()=>who.focus({preventScroll:true});
       // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
       // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
       if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
         const openIt=()=>OrderWin.open(row.key);
-        node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails'))return;openIt();};
+        node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails,.cuDesigns'))return;openIt();};
         node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
     }
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
@@ -5804,6 +6227,7 @@ const Review = window.Review = (() => {
   function render() {
     if(window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip is Completed now
     if (RV.filter === "done") { RV.filter = null; RV.cseg = "done"; }
@@ -5821,7 +6245,7 @@ const Review = window.Review = (() => {
     // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
-    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
     const finished = cl.done.concat(settled.filter(d => !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
@@ -5872,7 +6296,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, repool, customItemFor, printable };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -6661,10 +7085,12 @@ const OrderWin = window.OrderWin = (() => {
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (busy ? busy
         : CustomPrint.failNote(it) + (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
+          (can && !it.done ? `<button type="button" class="btn ghost xs" data-cu-complete title="mark this order completed now, without printing its label (it moves to Completed)">Complete Order</button>` : "") +
           (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>` : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
     const pb = bar.querySelector("[data-cu-print]"); if (pb) pb.onclick = () => CustomPrint.print(now());
+    const cb = bar.querySelector("[data-cu-complete]"); if (cb) cb.onclick = () => CustomPrint.complete(now());
     const rb = bar.querySelector("[data-cu-reopen]"); if (rb) rb.onclick = () => CustomPrint.reopen(now());
     const who = CustomPrint.wire(bar, it); if (who) who.focus({ preventScroll: true });
   }
@@ -7566,7 +7992,7 @@ const Session = window.Session = (() => {
     return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
-      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
@@ -7658,7 +8084,7 @@ const Session = window.Session = (() => {
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
       if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
-      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map();
+      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {};
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
         const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
