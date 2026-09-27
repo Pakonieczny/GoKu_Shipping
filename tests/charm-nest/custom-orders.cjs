@@ -2,7 +2,7 @@
 // only, add-ons, private listings — is read as such (CharmNestOrders.specialOf) and grouped under Review → Custom Orders,
 // once per line with its category; chain only is never pooled; a QR label printed from there is the sorting station's
 // own sticker (QR Printer.html, the same object sorting.html hands it) and marks the line completed in the cloud
-// (charmNestLibrary customPut), under the tab's Completed switch, where it can be printed again or reopened; a click on
+// (charmNestLibrary customPut), under Review's Completed switch (one for every filter), where it can be printed again or reopened; a click on
 // a card opens the order window with everything about the order and its notes.
 // Part 1 runs in node. Part 2 opens the sorter in headless Chromium against the local fake site (bridge-server.cjs):
 // every request that is not to the loopback is aborted, the label's PDF library is a stub that records the page it is
@@ -181,8 +181,11 @@ async function browserChecks() {
     assert.match(chainRow.cls, /cuInfo/); assert.match(chainRow.why, /not laser cut/, 'the card says chain only is not cut');
     assert.deepEqual(chainRow.buttons, ['Print QR label'], 'nothing to decide: only its label');
     for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Review & resolve'], r.rid + ' keeps Review & resolve');
-    const seg = await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()));
-    assert.deepEqual(seg, ['Open5', 'Completed0'], 'the Open / Completed switch sits in the bar');
+    // one Open / Completed switch at the front of the bar, for every filter (Paul, 27 Sep)
+    const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: document.querySelector('#reviewView .egTab[data-k=""]').textContent.trim() }));
+    assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar');
+    assert.deepEqual(seg.b, ['Open' + seg.all.replace('Everything', ''), 'Completed0'], 'Open counts everything that waits: ' + JSON.stringify(seg));
+    const openAll = +seg.all.replace('Everything', '');
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
     // Review & resolve still opens the question's own controls
@@ -208,7 +211,7 @@ async function browserChecks() {
     const rec = srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521');
     assert(rec && rec.state === 'completed' && rec.prints === 1 && rec.printedBy === 'Test Operator' && rec.category === 'Chain only', 'marked completed in the cloud: ' + JSON.stringify(rec));
     await page.waitForFunction(() => !CustomPrint.busy('cinfo:custom:4176744752:CHAIN_8941'));
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open4', 'Completed1']);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim())), ['Open' + (openAll - 1), 'Completed1']);
     // (a print dialog closed without printing looks the same: the card stays, saying so, with an Undo for a while)
     assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4176744752"] .rowActions'), /^Marked completed · Undo$/, 'the card itself says it was completed, with its Undo');
 
@@ -230,6 +233,20 @@ async function browserChecks() {
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     list = await rows();
     assert.deepEqual(list.map(x => x.rid).sort(), ['4174476673', '4176744752'], 'both under Completed');
+    // Completed holds every filter: Everything under it lists what Custom Orders does (nothing else was answered here)
+    await page.click('#reviewView .egTab[data-k=""]');
+    assert.deepEqual((await rows()).map(x => x.rid).sort(), ['4174476673', '4176744752'], 'Everything under Completed');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim())), ['Everything2', 'Custom Orders2'], 'only the kinds completed, with their counts');
+    // a decision answered under another filter joins the same Completed folder, under its own chip (put back after)
+    const opt = await page.evaluate(() => {
+      const it = Review.items().find(x => x.kind === 'needsMaterial' || x.kind === 'needsMapping'); Review.remove(it.key, 'Test Operator'); Review.view().filter = null; Review.render();
+      const out = { chips: [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim()), row: document.querySelector('#rvList .rvSettled .rowActions')?.textContent.trim(), seg: document.querySelector('#reviewView .rvSeg [data-cseg="done"]').textContent.trim() };
+      document.querySelector('#reviewView .egTab[data-k="needsMapping"]').click(); out.only = [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid);
+      Review.settled().shift(); Review.add(it); return out;
+    });
+    assert.deepEqual(opt.chips, ['Everything3', 'Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
+    assert.match(opt.row, /^Resolved\s*Test Operator · /, 'who answered it and when'); assert.deepEqual(opt.only, ['4178000003'], 'Options under Completed: its answer only');
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
     for (const r of list) { assert.match(r.cls, /cuDone/); assert.deepEqual(r.buttons, ['Print again', 'Reopen']); assert.match(r.why, /QR label printed by Test Operator/); }
     // a completed line whose SKU has since got a design (no longer special) is still listed, to be reopened
     assert(await page.evaluate(() => { const row = B.orders.byKey.get('4174476673_41744766731'), sp = row.spec.special; delete row.spec.special; Review.render(); const has = !!document.querySelector('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]'); row.spec.special = sp; Review.render(); return has; }), 'listed under Completed without its special reading');
