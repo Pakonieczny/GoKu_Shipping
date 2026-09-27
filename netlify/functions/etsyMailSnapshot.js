@@ -35,6 +35,7 @@
 
 const admin = require("./firebaseAdmin");
 const align = require("./_etsyMailThreadAlign");
+const { removeCopies, loadStoredForAlign, sweepPage } = require("./_etsyMailMessageCopies");
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const db  = admin.firestore();
 const FV  = admin.firestore.FieldValue;
@@ -213,54 +214,6 @@ function unmangleObjectStrings(obj, _seen) {
   return out;
 }
 
-// ─── Extra copies of a message (see _etsyMailThreadAlign.js) ───
-// Each removed copy is kept in EtsyMail_MessageArchive first, so nothing is
-// lost if one turns out to be a real repeat. Only scraped (source "etsy")
-// docs are ever removed.
-const ARCHIVE_COLL = "EtsyMail_MessageArchive";
-async function removeCopies(tRef, threadId, ids) {
-  if (!ids || !ids.length) return 0;
-  const list = Array.from(new Set(ids)).slice(0, 400);
-  const snaps = await db.getAll(...list.map(id => tRef.collection("messages").doc(id)));
-  const batch = db.batch();
-  const now = FV.serverTimestamp();
-  let removed = 0;
-  snaps.forEach(sn => {
-    if (!sn.exists || (sn.data() || {}).source !== "etsy") return;
-    batch.set(db.collection(ARCHIVE_COLL).doc(`${threadId}__${sn.id}`), {
-      threadId, messageId: sn.id, reason: "duplicate_copy", archivedAt: now, data: sn.data()
-    });
-    batch.delete(sn.ref);
-    removed++;
-  });
-  if (!removed) return 0;
-  batch.set(tRef, { messageCount: FV.increment(-removed), duplicatesRemovedAt: now }, { merge: true });
-  await batch.commit();
-  return removed;
-}
-
-// Stored messages of one thread, split into scraped ones and our stand-ins.
-async function loadStoredForAlign(tRef) {
-  const snap = await tRef.collection("messages")
-    .select("contentHash", "senderRole", "text", "imageUrls", "timestamp", "createdAt", "source", "direction")
-    .limit(2000).get();
-  const ids = new Set(), etsy = [], other = [];
-  snap.forEach(d => {
-    ids.add(d.id);
-    const data = d.data() || {};
-    const row = {
-      id       : d.id,
-      fp       : align.fingerprint(data),
-      tsMs     : align.msOf(data.timestamp),
-      createdMs: align.msOf(data.createdAt),
-      direction: data.direction || (data.senderRole === "customer" ? "inbound" : "outbound")
-    };
-    if (!row.fp || row.tsMs == null) return;
-    if (data.source === "etsy") etsy.push(row); else other.push(row);
-  });
-  return { ids, etsy, other };
-}
-
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
@@ -333,26 +286,8 @@ exports.handler = async (event) => {
   if (body.op === "dedupeSweep") {
     const limit = Math.max(1, Math.min(40, Number(body.limit) || 20));
     const dryRun = body.dryRun !== false;
-    let q = db.collection(THREADS_COLL).orderBy(admin.firestore.FieldPath.documentId()).limit(limit);
-    if (body.startAfter) q = q.startAfter(String(body.startAfter));
-    const page = await q.get();
-    const out = [];
-    let removedTotal = 0, last = null;
-    for (const t of page.docs) {
-      last = t.id;
-      try {
-        const st = await loadStoredForAlign(t.ref);
-        const ids = align.findLegacyDuplicates(st.etsy, st.other);
-        if (!ids.length) continue;
-        const removed = dryRun ? ids.length : await removeCopies(t.ref, t.id, ids);
-        removedTotal += removed;
-        out.push({ threadId: t.id, copies: removed });
-      } catch (e) {
-        out.push({ threadId: t.id, error: e.message });
-      }
-    }
-    return json(200, { success: true, dryRun, scanned: page.size, removed: removedTotal, threads: out,
-                       next: page.size === limit ? last : null });
+    const r = await sweepPage({ startAfter: body.startAfter || null, limit, dryRun, deadline: Date.now() + 20000 });
+    return json(200, { success: true, dryRun, ...r });
   }
 
   const {
