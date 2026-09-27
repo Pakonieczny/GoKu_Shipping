@@ -410,7 +410,7 @@ const receipts = [
       // the sets of the run on the cards right now say so instead of offering Open
       assert(hist.sets.every(x => /Set \d/.test(x.text) && /sheet/.test(x.text) && (x.acts.includes('open') || /on the cards/.test(x.text)) && x.thumb), 'each set is named, sized, pictured and can be opened: ' + JSON.stringify(hist.sets[0]));
       assert(hist.days.length >= 1, 'filed under its day: ' + JSON.stringify(hist.days));
-      assert(/looked at the \d+ most recent runs/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
+      assert(/searched \d+ runs and \d+ sheets/.test(hist.foot), 'it says how far it looked: ' + hist.foot);
       assert(hist.found.length === 1 && /Set 1/.test(hist.found[0]), 'searching by order number leaves only the set that carried it: ' + JSON.stringify(hist.found));
       assert(/nothing matches/.test(hist.none), 'and a search with no answer says so: ' + hist.none);
       assert(!hist.stillVisible, 'and closing it puts it away');
