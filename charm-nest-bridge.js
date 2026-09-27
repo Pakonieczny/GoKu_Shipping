@@ -5281,7 +5281,10 @@ const CustomSheet = window.CustomSheet = (() => {
   const geo = new Map();          // file id → Promise<{ parsed, g, charms }>: traced once a session, from its bytes
   const pending = new Map();      // file id → the File dropped, until it is read
   const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
-  const D = { dlg: null, ck: null, it: null, askName: false };
+  // motion (Paul, 27 Sep 20:09-20:24): files just dropped, still on their way into their rows; thumbnails new on a card;
+  // cards whose strip of designs is about to show for the first time
+  const arriving = new Set(), popThumb = new Set(), stripNew = new Set();
+  const D = { dlg: null, ck: null, it: null, askName: false, opening: false };
   let ver = 0, idxFor = null, idxVer = -1, idx = new Map(), lastPrune = 0;
   const ckOf = it => String(it.key || "").replace(/^[a-z]+:/, "");        // "ord:custom:…" and "cinfo:custom:…" are one card
   const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
@@ -5324,9 +5327,12 @@ const CustomSheet = window.CustomSheet = (() => {
     const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
     const sent = !!(e && e.sent);
     const open = openLines(it).length > 0;
-    return { ck, e, files: e ? e.files : [], sent, open, cut, busy: busy.get(ck) || "", why: sent ? "" : notReady(e), dropOk: !sent && open };
+    // a card takes designs while it can still be cut from them: not sent, not completed, not chain only (never cut)
+    return { ck, e, files: e ? e.files : [], sent, open, cut, busy: busy.get(ck) || "", why: sent ? "" : notReady(e), dropOk: !sent && open && !cut };
   }
-  const stamp = it => { const e = all()[ckOf(it)]; return [ver, busy.get(ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty).join() + (e.sent ? "s" : "") : ""].join("|"); };
+  // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
+  // dropped the drag state of the card under the pointer)
+  const stamp = it => { const e = all()[ckOf(it)]; return [busy.get(ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + (e.sent.by || "") : "") : ""].join("|"); };
 
   /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
   function read(F) {
@@ -5389,29 +5395,34 @@ const CustomSheet = window.CustomSheet = (() => {
       const bb = charms.reduce((a, c) => { const o = outlineBox(c.outline); return [Math.min(a[0], o[0]), Math.min(a[1], o[1]), Math.max(a[2], o[2]), Math.max(a[3], o[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
       Object.assign(F, { pieces: charms.length, wMm: (bb[2] - bb[0]) * MM, hMm: (bb[3] - bb[1]) * MM, thumb: thumbOf(charms, 176),
         maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), state: "ready", error: null });
+      popThumb.add(F.id);
     } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
     changed();
   }
-  /** Files dropped on a card (or added in its window): read one after another, the window open at once to show them. */
-  function add(it, files) {
+  /** Files dropped on a card (or added in its window): read one after another, the window open at once to show them.
+   *  opts.at: where they were dropped (they are seen flying from there into their rows); opts.from: the card. */
+  function add(it, files, opts = {}) {
     const c = cardOf(it); if (!c) return;
     const list = [...(files || [])], ok = list.filter(f => ACCEPT.test(f.name || "")), bad = list.length - ok.length;
     if (bad) toast(ok.length ? `${plural(bad, "file")} left out: only .ai and .dxf designs go on a custom order` : "Only .ai and .dxf designs can go on a custom order", "bad", 5000);
     if (!ok.length) return;
     if (c.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
     if (!c.open) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
+    if (c.cut && !c.files.length) { toast("That order is not laser cut, so it takes no designs", "bad", 5000); return; }
     const row = linesOf(it)[0];
     const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
     const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
     const fresh = ok.map(f => ({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }));
     fresh.forEach((F, i) => pending.set(F.id, ok[i]));
+    if (!e.files.length) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
+    for (const F of fresh) arriving.add(F.id);
     e.files.push(...fresh); e.at = Date.now();
-    open(it); changed();
+    open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
     let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent) return;
-    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id);
+    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id); arriving.delete(id); popThumb.delete(id);
     if (!e.files.length) delete all()[ck];
     changed();
   }
@@ -5421,8 +5432,11 @@ const CustomSheet = window.CustomSheet = (() => {
   /* ── Send to Sheet ── */
   async function send(it) {
     const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
-    const why = notReady(e); if (why) { toast(why, "bad", 5000); if (e && e.files.length) open(it); return; }
-    const who = employeeName(); if (!who) { open(it, { askName: true }); return; }
+    // not ready: what is missing is shown where it is fixed (the window, its reason lit), or, with no design yet, the
+    // card's drop area is lit and says what it takes
+    const why = notReady(e);
+    if (why) { if (e && e.files.length) { open(it, { from: cardNode(ck) }); nudge(); } else { lit(cardNode(ck)?.querySelector(".cuHint"), "cuNudge"); toast(why, "bad", 5000); } return; }
+    const who = employeeName(); if (!who) { open(it, { askName: true, from: cardNode(ck) }); return; }
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
@@ -5438,12 +5452,16 @@ const CustomSheet = window.CustomSheet = (() => {
       e.sent = { at: Date.now(), by: who, lines }; changed();
       say("Placing on the sheets…");
       for (const r of rows) await Review.repool(r);
-      busy.delete(ck);
-      if (D.dlg && D.dlg.open && D.ck === ck) D.dlg.close();
+      busy.delete(ck); redraw();
+      // the window goes back into its card, and a copy of the designs is seen going to the sheets (the Nest tab), which
+      // says what came (Paul, 27 Sep 20:09-20:24); a toast only when that tab is out of sight
+      const shutting = !!(D.dlg && D.dlg.open && D.ck === ck); if (shutting) shut();
       const placed = rows.filter(r => r.state === "pooled"), n = Object.values(lines).reduce((a, l) => a + l.length, 0), metals = [...new Set(e.files.map(F => labelOf(F.metal)))].join(" and ");
       const held = rows.find(r => r.state === "held" && r.reason);
+      const sheets = `the ${metals} sheet${new Set(e.files.map(F => F.metal)).size > 1 ? "s" : ""}`;
+      const words = placed.length ? `Order ${e.rid}: ${plural(n, "custom piece")} on ${sheets}` : `Order ${e.rid} is sent: ${n === 1 ? "its piece goes" : "its pieces go"} on ${sheets} with the next run`;
       if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
-      else toast(placed.length ? `${e.rid}: ${plural(n, "custom piece")} on the ${metals} sheet${e.files.length > 1 ? "s" : ""}` : `${e.rid}: sent — ${n === 1 ? "its piece goes" : "its pieces go"} on the ${metals} sheet${e.files.length > 1 ? "s" : ""} with the next run`, "ok", 6000);
+      else if (!toSheets(ck, n, words, shutting ? 700 : 0)) toast(words, "ok", 6000);
       agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
     } catch (err) {
       busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
@@ -5490,145 +5508,422 @@ const CustomSheet = window.CustomSheet = (() => {
   }
 
   /* ── the card: a drop area, its designs in a strip, Send to Sheet ── */
+  const cardNodes = new Map();    // card key → its card in the Review list (the window opens from it and goes back into it)
+  const cardNode = ck => { const n = cardNodes.get(ck); return n && n.isConnected ? n : null; };
+  const motionOff = () => !window.Motion || Motion.reduced();
+  const DROP_IC = `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.2v7.4M5.1 6.8 8 9.7l2.9-2.9M2.6 10.4v2a1.3 1.3 0 0 0 1.3 1.3h8.2a1.3 1.3 0 0 0 1.3-1.3v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  /** A light that answers for a moment (a class put on, then taken off). */
+  function lit(n, cls, ms = 1100) { if (!n) return; n.classList.remove(cls); void n.offsetWidth; n.classList.add(cls); clearTimeout(n["_" + cls]); n["_" + cls] = setTimeout(() => n.classList.remove(cls), ms); }
   function stripHtml(it) {
     const c = cardOf(it); if (!c || !c.files.length) return "";
     const byMetal = new Map(); for (const F of c.files) if (F.state === "ready") byMetal.set(F.metal, (byMetal.get(F.metal) || 0) + F.pieces * F.qty);
-    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? F.pieces * F.qty : 0), 0);
-    const words = c.sent ? `Sent to the sheets${c.e.sent.by ? " by " + c.e.sent.by : ""}` : c.why ? c.why : "Ready to send";
-    return `<div class="cuDesigns${c.sent ? " sent" : c.why ? "" : " ready"}" role="group" aria-label="Designs for this order">` +
-      `<span class="cuDzLbl">${c.sent ? "Custom · on the sheets" : "Custom designs"}</span>` +
-      `<button type="button" class="cuDzThumbs" data-cu-designs title="${c.sent ? "Sent to the sheets" : "Open the designs: pick each one's metal"}"${c.sent ? " disabled" : ""}>` +
-      c.files.slice(0, 6).map(F => `<span class="cuDzT${F.state === "error" ? " bad" : ""}">${F.thumb ? `<img alt="" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : "!"}${F.metal ? `<i style="background:${esc(metalOf(F.metal).color)}" title="${esc(labelOf(F.metal))}"></i>` : ""}</span>`).join("") +
+    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? F.pieces * F.qty : 0), 0), rid = linesOf(it)[0].order.receiptId;
+    // where the designs stand, in a few words: ready, what is still missing (in amber), or sent, by whom and when
+    const words = c.sent ? `Sent${c.e.sent.by ? " by " + c.e.sent.by : ""}${c.e.sent.at ? " · " + fmtT(c.e.sent.at) : ""}` : c.why || "Ready to send";
+    return `<div class="cuDesigns${c.sent ? " sent" : c.why ? " todo" : " ready"}" role="group" aria-label="Designs for order ${esc(rid)}">` +
+      `<span class="cuDzLbl">${c.sent ? "On the sheets" : "Custom designs"}</span>` +
+      `<button type="button" class="cuDzThumbs" data-cu-designs title="${c.sent ? "These designs are on the sheets" : "Open the designs: each one's metal and how many to cut"}"${c.sent ? " disabled" : ""}>` +
+      c.files.slice(0, 6).map(F => `<span class="cuDzT${F.state === "error" ? " bad" : ""}${F.thumb && popThumb.has(F.id) ? " new" : ""}">${F.thumb ? `<img alt="" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : "!"}${F.metal ? `<i style="background:${esc(metalOf(F.metal).color)}" title="${esc(labelOf(F.metal))}"></i>` : ""}</span>`).join("") +
       (c.files.length > 6 ? `<span class="cuDzMore">+${c.files.length - 6}</span>` : "") + `</button>` +
       `<span class="cuDzSum"><b>${plural(c.files.length, "design")} · ${plural(n, "piece")}</b>${[...byMetal].filter(([m]) => m).map(([m, k]) => `<span class="cuDzM"><i style="background:${esc(metalOf(m).color)}"></i>${esc(labelOf(m))}${byMetal.size > 1 ? " × " + k : ""}</span>`).join("")}<span class="cuDzWhy">${esc(words)}</span></span>` +
-      (c.sent ? "" : `<button type="button" class="linkBtn" data-cu-designs>Edit</button>`) + `</div>`;
+      (c.sent ? "" : `<button type="button" class="linkBtn" data-cu-designs>Edit designs</button>`) + `</div>`;
   }
+  /** Send to Sheet, and, while the card has no design, the place to drop them (a click there chooses the files). A Send to
+   *  Sheet that cannot send yet stays in its place, greyed, and says why (its drop area beside it lights up when pressed). */
   function buttonsHtml(it, primary) {
     const c = cardOf(it); if (!c) return "";
     if (c.busy) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(c.busy)}</span>`;
     if (c.sent || !c.open || (c.cut && !c.files.length)) return "";
-    const ready = !c.why;
-    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : " aria-disabled=\"true\""} title="${esc(ready ? "Put every design on the next open sheet of its metal" : c.why)}">Send to Sheet</button>` +
-      (c.files.length ? "" : `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf files on this card, or press to pick them">Drop .ai / .dxf designs here</button>`);
+    const ready = !c.why, none = !c.files.length;
+    const tip = ready ? "Put every design on the next open sheet of its metal" : none ? "Its designs come first: drop the order's .ai or .dxf files on this card" : c.why;
+    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">Send to Sheet</button>` +
+      (none ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
   }
   const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
+  const veilWords = () => `${drag.n ? plural(drag.n, "file") + " · " : ""}.ai and .dxf designs only · you pick each one's metal next`;
   function wire(node, it) {
     const c = cardOf(it); if (!c) return;
-    node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length }); });
+    node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
+    node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
     const sb = node.querySelector("[data-cu-send]"); if (sb) sb.onclick = ev => { ev.stopPropagation(); send(it); };
+    // what just came onto the card: its strip of designs opens its room the first time, a new picture settles in
+    const strip = node.querySelector(".cuDesigns");
+    if (strip && stripNew.delete(c.ck) && !motionOff()) queueMicrotask(() => { if (strip.isConnected) Motion.grow(strip, { ms: 700 }); });
+    for (const F of c.files) if (F.thumb) popThumb.delete(F.id);
     if (!c.dropOk) return;
     node.classList.add("cuDropOk");
-    let depth = 0;
-    node.addEventListener("dragenter", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); depth++; node.classList.add("cuDragOver"); });
-    node.addEventListener("dragover", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; });
-    node.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; node.classList.remove("cuDragOver"); } });
-    node.addEventListener("drop", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.stopPropagation(); depth = 0; node.classList.remove("cuDragOver"); endDrag(); add(it, ev.dataTransfer.files); });
-    const over = el("div", "cuDropVeil"); over.setAttribute("aria-hidden", "true");
-    over.innerHTML = `<span><b>Drop the designs for ${esc(linesOf(it)[0].order.receiptId)}</b><i>.ai or .dxf · you pick each one's metal next</i></span>`;
-    node.appendChild(over);
+    const rid = linesOf(it)[0].order.receiptId, veil = el("div", "cuDropVeil"); veil.setAttribute("aria-hidden", "true");
+    veil.innerHTML = `<span class="cuVeilIc">${DROP_IC}</span><b>Drop to add to order <span class="mono">${esc(rid)}</span></b><i>${esc(veilWords())}</i>`;
+    node.appendChild(veil);
+    // rebuilt in the middle of a drag: it takes its state at once, with no second fade (the one under the pointer keeps it)
+    if (drag.on) {
+      node.classList.add("cuNoFade"); requestAnimationFrame(() => requestAnimationFrame(() => node.classList.remove("cuNoFade")));
+      if (drag.ck === c.ck) { if (drag.hot && drag.hot !== node) drag.hot.classList.remove("cuDragOver"); drag.hot = node; node.classList.add("cuDragOver"); }
+    }
   }
-  /* In the Review tab a drag of files shows where they can go (every custom card that takes them), not the page's own
-     "drop to route by file name" veil; files dropped anywhere else there are not started on a sheet as a manual job. */
-  let dragDepth = 0;
+
+  /* ── files dragged over Review (Paul, 27 Sep 20:21: "the drag and drop hover states must be beautiful responsive from one
+     list card to another"). As Dropbox, Figma and Atlassian's drop targets do: while files are over the page, every card
+     that takes them is marked calmly (a dashed plum line), the rest step back, and the card under the pointer says in
+     words what a drop does there, with its order number. The card under the pointer is read from where each dragover
+     lands, not counted from enter / leave pairs (a child entered or a card redrawn under the pointer no longer loses or
+     sticks the mark); moving to the next card hands the mark over, and crossing the small gap between two cards keeps it.
+     The drag ends when the page is left (every element entered has been left), on Esc, on a drop, or at the first move
+     of the pointer after it (the page hears no pointer while a drag is over it). Elsewhere the pointer shows that no drop
+     is taken there, and a small note at the foot of the list says where the designs go, or why that card takes none. ── */
+  const drag = { on: false, over: new Set(), hot: null, ck: "", grace: 0, n: 0, tip: null };
   const inReview = () => { const v = document.getElementById("reviewView"); return !!v && !v.classList.contains("hidden"); };
-  function endDrag() { dragDepth = 0; document.body.classList.remove("cuDragging"); if (window.resetPageDrop) window.resetPageDrop(); }
-  document.addEventListener("dragenter", ev => { if (!hasFiles(ev) || !(inReview() || (D.dlg && D.dlg.open))) return; dragDepth++; document.body.classList.add("cuDragging"); }, true);
-  document.addEventListener("dragleave", () => { if (!document.body.classList.contains("cuDragging")) return; if (--dragDepth <= 0) endDrag(); }, true);
+  const otherWindow = () => [...document.querySelectorAll("dialog[open]")].some(x => x !== D.dlg && x.matches(":modal"));
+  const engaged = ev => hasFiles(ev) && (D.dlg && D.dlg.open ? true : inReview() && !otherWindow());
+  function fileCount(ev) { try { const l = ev.dataTransfer.items; return l ? [...l].filter(x => x.kind === "file").length : 0; } catch (_) { return 0; } }
+  /** Where the pointer is: the open window (it takes every drop), a card that takes designs, or neither. */
+  function spot(t) {
+    if (D.dlg && D.dlg.open) return { take: D.dlg };
+    const card = t && t.closest ? t.closest("#rvList > .reviewListRow") : null;
+    if (card && card.classList.contains("cuDropOk")) return { take: card };
+    return { card, gap: !card && !!(t && t.closest && t.closest("#rvList")) };
+  }
+  function setHot(n) {
+    if (drag.hot === n) { if (n) says(n); return; }
+    const was = drag.hot; drag.hot = n; drag.ck = n && n !== D.dlg ? n._cuCk || "" : "";
+    if (was) { was.classList.remove(was === D.dlg ? "dragOver" : "cuDragOver"); if (was === D.dlg) addWords(); }
+    if (n) { n.classList.add(n === D.dlg ? "dragOver" : "cuDragOver"); says(n); }
+  }
+  /** The drop target's words: on a card, how many files and what comes next; in the window, whose order they go to. */
+  function says(n) {
+    if (n === D.dlg) { const t = n.querySelector(".cuAddT"), rid = D.it && linesOf(D.it)[0] ? linesOf(D.it)[0].order.receiptId : ""; const w = `Drop to add ${drag.n === 1 ? "it" : "them"} to order ${rid}`; if (t && t.textContent !== w) t.textContent = w; return; }
+    const i = n.querySelector(".cuDropVeil i"), w = veilWords(); if (i && i.textContent !== w) i.textContent = w;
+  }
+  function track(ev) {
+    const s = spot(ev.target); drag.n = fileCount(ev) || drag.n;
+    if (s.take) { clearTimeout(drag.grace); drag.grace = 0; setHot(s.take); }
+    else if (s.gap && drag.hot && drag.hot !== D.dlg) { if (!drag.grace) drag.grace = setTimeout(() => { drag.grace = 0; setHot(null); tip(null); }, 140); }
+    else { clearTimeout(drag.grace); drag.grace = 0; setHot(null); }
+    tip(s);
+    return !!drag.hot;
+  }
+  function begin(ev) { drag.over.add(ev.target); if (drag.on) return; drag.on = true; document.body.classList.add("cuDragging"); }
+  function endDrag() {
+    clearTimeout(drag.grace); drag.grace = 0; drag.over.clear(); setHot(null); drag.n = 0;
+    if (drag.on) { drag.on = false; document.body.classList.remove("cuDragging"); tip(null); }
+    if (window.resetPageDrop) window.resetPageDrop();
+  }
+  /** The note at the foot of the list while files are held over something that takes none. */
+  function tip(s) {
+    let words = "";
+    if (drag.on && !drag.hot && !(D.dlg && D.dlg.open)) words = (s && s.card && whyNot(s.card)) || (document.querySelector("#rvList > .cuDropOk") ? "Drop the designs on their order's card" : "Only an open custom order's card takes designs");
+    let t = drag.tip;
+    if (!words) { if (t) t.classList.remove("on"); return; }
+    if (!t) { t = drag.tip = el("div", "cuTip", "<i></i><span></span>"); t.setAttribute("role", "status"); document.body.appendChild(t); }
+    const w = t.lastChild; if (w.textContent !== words) w.textContent = words;
+    if (!t.classList.contains("on")) { const v = document.getElementById("reviewView"), r = v && v.getBoundingClientRect(); t.style.left = (r && r.width ? r.left + r.width / 2 : innerWidth / 2) + "px"; t.classList.add("on"); }
+  }
+  /** Why a card under the pointer takes no designs, in plain words. */
+  function whyNot(card) {
+    const who = card.dataset.rid ? `Order ${card.dataset.rid}` : "This one";
+    if (!card.classList.contains("cuRow")) return "Only a custom order's card takes designs";
+    if (card.classList.contains("cuDone")) return `${who} is completed: reopen it to add designs`;
+    const c = card._cuIt ? cardOf(card._cuIt) : null;
+    if (c && c.sent) return `${who}: its designs are already on the sheets`;
+    if (c && c.cut) return `${who} is not laser cut, so it takes no designs`;
+    if (c && !c.open) return `${who} is already on a sheet`;
+    return "Only an open custom order's card takes designs";
+  }
+  document.addEventListener("dragenter", ev => {
+    if (!engaged(ev)) return;
+    begin(ev); const ok = track(ev);
+    ev.preventDefault(); ev.dataTransfer.dropEffect = ok ? "copy" : "none";
+  }, true);
+  document.addEventListener("dragover", ev => {
+    if (!engaged(ev)) return;
+    if (!drag.on) begin(ev);
+    const ok = track(ev);
+    ev.preventDefault(); ev.dataTransfer.dropEffect = ok ? "copy" : "none";
+  }, true);
+  document.addEventListener("dragleave", ev => {
+    if (!drag.on) return;
+    drag.over.delete(ev.target); for (const n of drag.over) if (!n.isConnected) drag.over.delete(n);
+    if (!drag.over.size) endDrag();
+  }, true);
   document.addEventListener("dragend", endDrag, true);
   document.addEventListener("drop", ev => {
-    const on = document.body.classList.contains("cuDragging"); endDrag();
-    if (!on || !hasFiles(ev) || ev.target.closest?.(".cuDropOk, #cuDlg")) return;
+    if (!engaged(ev)) { if (drag.on) endDrag(); return; }
+    // what is marked is where it goes (a drop in the gap just after a card is that card's)
+    const s = spot(ev.target), to = s.take || (drag.grace ? drag.hot : null), at = { x: ev.clientX, y: ev.clientY };
+    endDrag();
     ev.preventDefault(); ev.stopPropagation();
-    toast("Drop the designs on the custom order's card", "bad", 4000);
+    if (to === D.dlg) { if (D.it) add(D.it, ev.dataTransfer.files, { at }); }
+    else if (to && to._cuIt) add(to._cuIt, ev.dataTransfer.files, { at, from: to });
+    else toast(s.card ? whyNot(s.card) : "Drop the designs on their custom order's card", "bad", 4000);
   }, true);
+  for (const t of ["pointermove", "pointerdown"]) document.addEventListener(t, () => { if (drag.on) endDrag(); }, { capture: true, passive: true });
+  addEventListener("blur", () => { if (drag.on) endDrag(); });
 
-  /* ── the designs window: each file as a picture, its metal one click away, how many to cut ── */
+  /* ── the designs window: each file as a picture, its metal one click away, how many to cut. It opens out of its card
+     and goes back into it; files dropped are seen flying into their rows; a design removed folds its row away, one
+     added opens its room (Paul, 27 Sep 20:09-20:24). ── */
   function build() {
     if (D.dlg) return D.dlg;
-    const d = el("dialog", "cuDlg"); d.id = "cuDlg"; d.setAttribute("aria-labelledby", "cuDlgT");
-    d.innerHTML = `<div class="dlg"><div class="dlgHead"><div class="cuDlgTitle"><h3 id="cuDlgT"></h3><div class="sub" id="cuDlgSub"></div></div><div class="right"><button type="button" class="btn ghost sm" data-x aria-label="Close">Close</button></div></div>
-      <div class="cuAll" hidden><span>All designs</span><span class="cuMetals" data-all role="group" aria-label="Metal for every design"></span></div>
+    const d = el("dialog", "cuDlg"); d.id = "cuDlg"; d.setAttribute("aria-labelledby", "cuDlgT"); d.setAttribute("aria-describedby", "cuDlgSub");
+    d.innerHTML = `<div class="dlg"><div class="dlgHead"><div class="cuDlgTitle"><h3 id="cuDlgT"></h3><div class="sub" id="cuDlgSub"></div></div><div class="right"><button type="button" class="btn ghost sm" data-x>Close</button></div></div>
+      <div class="cuAll" hidden><span class="cuAllL" id="cuAllL">Same metal for all</span><span class="cuMetals" data-all role="radiogroup" aria-labelledby="cuAllL"></span></div>
       <div class="dlgBody cuList" id="cuList"></div>
-      <label class="cuAdd" id="cuAdd"><input type="file" multiple accept=".ai,.dxf" hidden><span class="cuAddIc" aria-hidden="true">+</span><span>Drop more .ai or .dxf files here, or <u>browse</u></span></label>
-      <div class="dlgFoot"><span class="left cuSum" id="cuSum"></span><span class="cuWho" id="cuWho" hidden><input type="text" maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with the sheets" autocomplete="off"></span><button type="button" class="btn ghost sm" data-x>Done</button><button type="button" class="btn gold sm" data-send>Send to Sheet</button></div></div>`;
+      <button type="button" class="cuAdd" id="cuAdd"><span class="cuAddIc" aria-hidden="true">+</span><span class="cuAddT"></span></button><input type="file" id="cuFileIn" multiple accept=".ai,.dxf" hidden>
+      <div class="dlgFoot"><span class="left cuSum" id="cuSum" role="status"></span><span class="cuWho" id="cuWho" hidden><input type="text" maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with the sheets" autocomplete="off"></span><button type="button" class="btn ghost sm" data-later>Send later</button><button type="button" class="btn gold sm" data-send>Send to Sheet</button></div></div>`;
     document.body.appendChild(d); D.dlg = d;
-    d.querySelectorAll("[data-x]").forEach(b => b.onclick = () => d.close());
-    d.addEventListener("close", () => { D.ck = null; D.it = null; D.askName = false; endDrag(); });
-    const inp = d.querySelector("#cuAdd input"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
-    // the whole window takes files
-    let depth = 0;
-    d.addEventListener("dragenter", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); depth++; d.classList.add("dragOver"); });
-    d.addEventListener("dragover", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.dataTransfer.dropEffect = "copy"; });
-    d.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; d.classList.remove("dragOver"); } });
-    d.addEventListener("drop", ev => { if (!hasFiles(ev)) return; ev.preventDefault(); ev.stopPropagation(); depth = 0; d.classList.remove("dragOver"); endDrag(); if (D.it) add(D.it, ev.dataTransfer.files); });
+    d.querySelectorAll("[data-x],[data-later]").forEach(b => b.onclick = () => shut());
+    d.addEventListener("cancel", ev => { ev.preventDefault(); shut(); });      // Esc: back into its card, as Close does
+    d.addEventListener("close", () => { settle(d); D.ck = null; D.it = null; D.askName = false; endDrag(); });
+    const inp = d.querySelector("#cuFileIn"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
+    d.querySelector("#cuAdd").onclick = () => inp.click();
     d.querySelector("[data-send]").onclick = () => {
+      if (!D.it || busy.get(D.ck)) return;
+      if (notReady(all()[D.ck])) { nudge(); return; }
       const who = d.querySelector("#cuWho input");
-      if (!employeeName()) { const v = who.value.trim(); if (!v) { D.askName = true; paint(); who.focus(); return; } B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {} }
-      if (D.it) send(D.it);
+      if (!employeeName()) { const v = who.value.trim(); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {} }
+      send(D.it);
     };
     d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
     return d;
   }
-  const chips = (sel, data) => METALS.map(m => `<button type="button" role="radio" aria-checked="${sel === m.key}" class="cuM${sel === m.key ? " on" : ""}" data-m="${m.key}" ${data} style="--mc:${m.color}" title="${esc(m.long)}"><i></i>${esc(m.label)}</button>`).join("");
+  // the metals, a group of choices: one stop for Tab (the one chosen), the arrows choose within it
+  const chips = (sel, data) => { const has = METALS.some(m => m.key === sel); return METALS.map((m, i) => `<button type="button" role="radio" aria-checked="${sel === m.key}" tabindex="${sel === m.key || (!has && !i) ? 0 : -1}" class="cuM${sel === m.key ? " on" : ""}" data-m="${m.key}" ${data} style="--mc:${m.color}" title="${esc(m.long)}"><i></i>${esc(m.label)}</button>`).join(""); };
+  function rowHtml(F) {
+    const big = tooBig(F), err = F.state === "error";
+    const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
+    return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
+      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}`}</div>` +
+      (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
+        `<div class="cuQty" role="group" aria-label="How many of ${esc(F.name)} to cut" title="How many of this design to cut"><button type="button" data-q="-1" aria-label="Cut one fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="Cut one more"${F.qty >= 99 ? " disabled" : ""}>+</button></div>`) +
+      `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>`;
+  }
+  // a row redrawn keeps the focus where it was (the metal just chosen with the arrows, the + pressed again and again)
+  const focusOf = host => { const a = document.activeElement; if (!a || a === host || !host.contains(a)) return null; return a.dataset.m ? `[data-m="${a.dataset.m}"]` : a.dataset.q ? `[data-q="${a.dataset.q}"]` : a.hasAttribute("data-rm") ? "[data-rm]" : null; };
+  const refocus = (host, sel) => { if (!sel) return; let b = host.querySelector(sel); if (b && b.disabled) b = host.querySelector("[data-q]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); };
+  const addWords = () => { const d = D.dlg, e = D.ck && all()[D.ck], t = d && d.querySelector(".cuAddT"); if (t) t.innerHTML = e && e.files.length ? "Drop more .ai or .dxf files here, or <u>browse</u>" : "Drop the order's .ai or .dxf files here, or <u>browse</u>"; };
   function paint() {
     const d = D.dlg; if (!d || !D.ck) return;
     const e = all()[D.ck], it = D.it, row = it && linesOf(it)[0];
     if (!row) { d.close(); return; }
     const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
     d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
-    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "metal not read from the order"].filter(Boolean).join(" · ");
-    const files = e ? e.files : [], busyNow = busy.get(D.ck) || "";
-    const allRow = d.querySelector(".cuAll"); allRow.hidden = files.length < 2 || !!(e && e.sent);
+    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
+    const files = e ? e.files : [], sent = !!(e && e.sent), busyNow = busy.get(D.ck) || "", calm = D.opening || !d.open || motionOff();
+    // one metal for every design (with two or more), its bar opening or folding its room
+    const allRow = d.querySelector(".cuAll"), grp = allRow.querySelector("[data-all]");
+    bar(allRow, files.length > 1 && !sent, calm);
     const same = files.length && files.every(F => F.metal === files[0].metal) ? files[0].metal : null;
-    allRow.querySelector("[data-all]").innerHTML = chips(same, "data-all-m");
+    if (grp._sig !== String(same)) { const f = focusOf(grp); grp.innerHTML = chips(same, "data-all-m"); grp._sig = String(same); refocus(grp, f); }
+    // one row per design, kept while it reads the same and redrawn in place when it changes; one removed folds away
+    // where it stood, one added opens its room (and, just dropped, waits for its file to land in it)
     const list = d.querySelector("#cuList");
-    // one row per design, kept as it is while it reads the same (a click on a metal does not rebuild every picture)
-    const keep = new Map([...list.children].map(n => [n.dataset.id, n]));
-    list.replaceChildren(...files.map(F => {
-      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, !!(e && e.sent), tooBig(F)].join("|");
-      let n = keep.get(F.id); if (n && n._sig === sig) return n;
-      n = el("div", "cuFile" + (F.state === "error" ? " bad" : "") + (keep.has(F.id) ? "" : " fresh")); n.dataset.id = F.id; n._sig = sig;
-      const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
-      const big = tooBig(F);
-      n.innerHTML = `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : '<span class="x">!</span>'}</div>` +
-        `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading…</span>' : F.state === "error" ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick its metal</span>' : ""}`}</div>` +
-        `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${F.state === "error" ? "" : chips(F.metal, "")}</div>` +
-        `<div class="cuQty" title="How many of this design to cut">${F.state === "error" ? "" : `<button type="button" data-q="-1" aria-label="One fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="One more">+</button>`}</div>` +
-        `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>`;
-      return n;
-    }));
-    if (!files.length) list.innerHTML = `<div class="cuEmpty"><b>No designs yet</b><span>Drop the order's .ai or .dxf files anywhere in this window</span></div>`;
-    const ready = e ? e.files.filter(F => F.state === "ready") : [], n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
-    d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat" role="status"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
-    const sb = d.querySelector("[data-send]"); sb.disabled = !!why || !!busyNow; sb.title = why || "Put every design on the next open sheet of its metal";
-    const who = d.querySelector("#cuWho"); who.hidden = !(D.askName && !employeeName());
-    d.querySelector("#cuAdd").hidden = !!(e && e.sent);
+    if (list._ck !== D.ck) { list.replaceChildren(); list._ck = D.ck; }
+    const ids = new Set(files.map(F => F.id));
+    for (const n of [...list.children]) { if (n._leaving) continue; if (n.classList.contains("cuEmpty")) { if (files.length) n.remove(); } else if (!ids.has(n.dataset.id)) fold(n, calm); }
+    let prev = null;
+    for (const F of files) {
+      let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
+      if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
+      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, sent, tooBig(F)].join("|");
+      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); }
+      if (made && !calm) Motion.grow(n, { ms: 700 });
+      prev = n;
+    }
+    if (!files.length && !list.querySelector(":scope > .cuEmpty")) list.appendChild(el("div", "cuEmpty", `<b>No designs yet</b><span>The order's .ai or .dxf files show here as soon as you drop them</span>`));
+    const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
+    d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
+    // Send to Sheet stays where it is, greyed while it cannot send, and says why (pressed, the reason lights up)
+    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow;
+    if (why && !busyNow) sb.setAttribute("aria-disabled", "true"); else sb.removeAttribute("aria-disabled");
+    sb.title = busyNow ? busyNow : why ? (files.length ? why : "Its designs come first: drop the order's .ai or .dxf files here") : "Put every design on the next open sheet of its metal";
+    const later = d.querySelector("[data-later]"), keep = files.length && !sent;
+    later.textContent = keep ? "Send later" : "Close"; later.title = keep ? "Close the window: the designs stay on the order's card until you send them" : "Close the window";
+    d.querySelector("#cuWho").hidden = !(D.askName && !employeeName());
+    d.querySelector("#cuAdd").hidden = sent;
+    if (drag.hot === d) says(d); else addWords();
+  }
+  /** A bar of the window shown or hidden opens or folds its room, rather than making everything under it jump. */
+  function bar(n, show, calm) {
+    if (show) { if (n._fold) { n._fold.cancel(); n._fold = null; } if (!n.hidden) return; n.hidden = false; if (!calm) Motion.grow(n, { ms: 600 }); return; }
+    if (n.hidden || n._fold) return;
+    if (calm) { n.hidden = true; return; }
+    const h = n.offsetHeight, a = n._fold = n.animate([{ height: h + "px", opacity: 1, overflow: "hidden" }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }], { duration: 480, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" });
+    a.finished.then(() => { if (n._fold !== a) return; n._fold = null; n.hidden = true; a.cancel(); }, () => {});
+  }
+  /** A design removed: its row slides a little toward its × as it fades, then closes its gap (the rows under it rise
+   *  into place and the window shortens with it). The design itself is gone at once. */
+  function fold(n, calm) {
+    n._leaving = true; n.inert = true; n.classList.remove("arriving");
+    if (calm) { n.remove(); return; }
+    const h = n.offsetHeight;
+    n.animate([
+      { height: h + "px", opacity: 1, transform: "none", overflow: "hidden" },
+      { height: h + "px", opacity: 0, transform: "translateX(24px)", offset: .42, overflow: "hidden" },
+      { height: "0px", opacity: 0, transform: "translateX(24px)", paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }
+    ], { duration: 700, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }).finished.then(() => n.remove(), () => n.remove());
+  }
+  /** Send pressed before the designs are ready: the reason lights up, and the design it is about takes the focus. */
+  function nudge() {
+    const d = D.dlg, e = D.ck && all()[D.ck]; if (!d || !d.open || !e) return;
+    lit(d.querySelector("#cuSum .warn"), "cuNudge");
+    const F = e.files.find(x => x.state === "error") || e.files.find(x => !x.metal && x.state !== "reading") || e.files.find(x => tooBig(x)) || null;
+    const n = F && [...d.querySelector("#cuList").children].find(x => x.dataset.id === F.id && !x._leaving); if (!n) return;
+    lit(n, "cuNudge");
+    const f = F.state === "error" ? n.querySelector("[data-rm]") : n.querySelector('.cuM[tabindex="0"]'); if (f) f.focus({ preventScroll: true });
+    n.scrollIntoView({ block: "nearest", behavior: motionOff() ? "auto" : "smooth" });
   }
   function wireDlg() {
-    const d = D.dlg;
-    d.querySelector("#cuList").onclick = ev => {
-      const n = ev.target.closest(".cuFile"); if (!n || !D.ck) return; const id = n.dataset.id;
+    const d = D.dlg, list = d.querySelector("#cuList");
+    list.onclick = ev => {
+      const n = ev.target.closest(".cuFile"); if (!n || n._leaving || !D.ck) return; const id = n.dataset.id;
       const m = ev.target.closest("[data-m]"); if (m) { setMetal(D.ck, id, m.dataset.m); return; }
       const q = ev.target.closest("[data-q]"); if (q) { setQty(D.ck, id, +q.dataset.q); return; }
-      if (ev.target.closest("[data-rm]")) remove(D.ck, id);
+      if (ev.target.closest("[data-rm]")) {
+        // the focus goes on to the next design's × (or the one before, or the add box) as the row folds away
+        const rows = [...list.children].filter(x => x.classList.contains("cuFile") && !x._leaving), i = rows.indexOf(n), next = rows[i + 1] || rows[i - 1];
+        const had = n.contains(document.activeElement);
+        remove(D.ck, id);
+        if (had) (next ? next.querySelector("[data-rm]") : d.querySelector("#cuAdd"))?.focus({ preventScroll: true });
+      }
     };
     d.querySelector(".cuAll").onclick = ev => { const m = ev.target.closest("[data-m]"); if (m && D.ck) setMetal(D.ck, null, m.dataset.m); };
-    // arrows move between a design's metals, as in any group of choices
-    d.querySelector("#cuList").onkeydown = ev => {
-      const b = ev.target.closest(".cuM"); if (!b || !["ArrowLeft", "ArrowRight"].includes(ev.key)) return;
-      ev.preventDefault(); const sib = ev.key === "ArrowRight" ? b.nextElementSibling : b.previousElementSibling; if (sib) { sib.focus(); sib.click(); }
+    d.addEventListener("keydown", ev => {
+      const b = ev.target.closest && ev.target.closest(".cuM"); if (!b) return;
+      const k = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: "first", End: "last" }[ev.key]; if (!k) return;
+      ev.preventDefault();
+      const group = [...b.parentElement.querySelectorAll(".cuM")], i = group.indexOf(b);
+      const to = k === "first" ? group[0] : k === "last" ? group[group.length - 1] : group[(i + k + group.length) % group.length];
+      to.focus(); to.click();
+    });
+  }
+  /** The layer copies fly on: the page's, or the window's own (the window sits above the whole page). */
+  function layerIn(d) { let l = d.querySelector(":scope > .motionLayer"); if (!l) { l = el("div", "motionLayer"); l.setAttribute("aria-hidden", "true"); d.appendChild(l); } return l; }
+  function pageLayer() { let l = document.getElementById("motionLayer"); if (!l) { l = el("div"); l.id = "motionLayer"; l.setAttribute("aria-hidden", "true"); document.body.appendChild(l); } return l; }
+  /** The window opens out of its card: from the card's middle, small and clear, to its place. */
+  function growFrom(d, from) {
+    const src = from && from.isConnected ? from.getBoundingClientRect() : null;
+    if (!src || !src.width || motionOff()) return Promise.resolve();
+    const r = d.getBoundingClientRect(), dx = src.left + src.width / 2 - (r.left + r.width / 2), dy = src.top + src.height / 2 - (r.top + r.height / 2);
+    const s = Math.max(.3, Math.min(.8, src.height / r.height));
+    try { d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: "ease-out", pseudoElement: "::backdrop" }); } catch (_) {}
+    return d.animate([
+      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 },
+      { opacity: 1, offset: .35 },
+      { transform: "none", opacity: 1 }
+    ], { duration: 500, easing: "cubic-bezier(.2,.75,.2,1)" }).finished.catch(() => {});
+  }
+  /** Files just added, seen going in: a chip with each one's name lifts where it was dropped (or from the add box), flies
+   *  into its row, and the row fills as it lands. The row's place is read on every frame, so a bar that opens above it
+   *  or a list that scrolls does not make it miss. */
+  function launch(fly) {
+    const d = D.dlg; if (!d || !d.open || !fly) return;
+    const list = d.querySelector("#cuList"), rows = fly.ids.map(id => [...list.children].find(x => x.dataset.id === id && !x._leaving)).filter(Boolean);
+    if (!rows.length) return;
+    if (motionOff()) { rows.forEach(n => land(n, true)); return; }
+    // the last of them in sight (a long list scrolls down to it)
+    const lr = list.getBoundingClientRect(), z = rows[rows.length - 1], need = z.getBoundingClientRect().top + z.scrollHeight - lr.bottom;
+    if (need > 0) list.scrollTop += need + 6;
+    const box = d.querySelector("#cuAdd").getBoundingClientRect(), at = fly.at || { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files;
+    rows.forEach((n, i) => {
+      const F = files.find(x => x.id === n.dataset.id); if (!F) { land(n, true); return; }
+      const chip = el("div", "cuChip", `<i>${F.kind === "dxf" ? "DXF" : "AI"}</i><span></span>`); chip.lastChild.textContent = F.name;
+      L.appendChild(chip);
+      flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => land(n));
+    });
+  }
+  const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, easeOut = t => 1 - Math.pow(1 - t, 3);
+  function flight(chip, at, i, target, onLand) {
+    const w = chip.offsetWidth, h = chip.offsetHeight, x0 = at.x + i * 10, y0 = at.y + i * 8;   // a small fan, as a handful is held
+    const ms = 1050, t0 = performance.now() + i * 140;
+    let landed = false;
+    chip.style.opacity = "0";
+    const step = now => {
+      if (!chip.isConnected) return;
+      const q = Math.min(1, (now - t0) / ms); if (q < 0) { requestAnimationFrame(step); return; }
+      const t = target(), tr = t ? t.getBoundingClientRect() : null;
+      if (!tr || !tr.width) { chip.animate([{ opacity: chip.style.opacity || 1 }, { opacity: 0 }], { duration: 240, fill: "forwards" }).finished.then(() => chip.remove(), () => chip.remove()); if (!landed) { landed = true; onLand(); } return; }
+      const x1 = tr.left + tr.width / 2, y1 = tr.top + tr.height / 2;
+      // it lifts (0-14%), then follows a curve that rises and comes down into the row, shrinking to the picture it becomes
+      const up = Math.min(1, q / .14), p = easeIO(Math.max(0, (q - .1) / .9)), bend = Math.min(120, 40 + Math.hypot(x1 - x0, y1 - y0) * .16);
+      const cx = (x0 + x1) / 2, cy = Math.min(y0, y1) - bend;
+      const x = (1 - p) * (1 - p) * x0 + 2 * (1 - p) * p * cx + p * p * x1, y = (1 - p) * (1 - p) * y0 + 2 * (1 - p) * p * cy + p * p * y1 - (1 - p) * 10 * up;
+      const end = Math.min(1, (tr.width * .92) / w);
+      const s = q < .14 ? .6 + .44 * easeOut(up) : q < .6 ? 1.04 - .04 * ((q - .14) / .46) : 1 + (end - 1) * easeIO((q - .6) / .4);
+      chip.style.transform = `translate(${x - w / 2}px,${y - h / 2}px) scale(${s})`;
+      chip.style.opacity = String(q < .14 ? up : q < .86 ? 1 : Math.max(0, 1 - (q - .86) / .14));
+      if (!landed && q >= .86) { landed = true; onLand(); }
+      if (q < 1) requestAnimationFrame(step); else chip.remove();
     };
+    requestAnimationFrame(step);
+  }
+  /** A file has landed in its row: the row shows, its picture answers with a plum ring. */
+  function land(n, quiet) {
+    arriving.delete(n.dataset.id);
+    if (!n.isConnected) return;
+    n.classList.remove("arriving");
+    if (!quiet) lit(n.querySelector(".cuThumb"), "cuLanded", 1000);
+  }
+  /** What a closed window leaves behind is cleared: chips still flying, rows still folding, rows still waiting. */
+  function settle(d) {
+    d.querySelectorAll(":scope > .motionLayer > .cuChip").forEach(x => x.remove());
+    for (const n of [...d.querySelector("#cuList").children]) { if (n._leaving) n.remove(); else n.classList.remove("arriving"); }
+    arriving.clear();
   }
   /** The window, for one card: never over another window (the order window is closed first). */
   function open(it, opts = {}) {
     const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
     D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
-    paint();
-    if (!d.open) d.showModal();
-    if (opts.browse) d.querySelector("#cuAdd input").click();
+    if (!d.open) {
+      D.opening = true; try { paint(); } finally { D.opening = false; }
+      d.showModal();
+      const shown = growFrom(d, opts.from);
+      if (opts.fly) shown.then(() => launch(opts.fly));
+    } else { paint(); if (opts.fly) launch(opts.fly); }
+    if (opts.browse) d.querySelector("#cuFileIn").click();
     else if (D.askName) d.querySelector("#cuWho input").focus();
   }
-  return { add, send, prepare, sentOf, piecesOf, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
+  /** The window goes back into its card: it closes at once (the page is usable again), and a copy of it shrinks into the
+   *  card's designs, which answer. A card out of sight: the copy only fades. */
+  function shut() {
+    const d = D.dlg; if (!d || !d.open) return;
+    const ck = D.ck, box = d.getBoundingClientRect();
+    let g = null;
+    if (!motionOff()) {
+      g = el("div", "cuDlgGhost cuDlg"); g.inert = true;
+      Object.assign(g.style, { left: box.left + "px", top: box.top + "px", width: box.width + "px", height: box.height + "px" });
+      const copy = d.querySelector(".dlg").cloneNode(true); for (const x of copy.querySelectorAll("[id]")) x.removeAttribute("id"); g.appendChild(copy);
+    }
+    d.close();
+    if (!g) return;
+    const L = pageLayer(), shade = el("div", "cuShade"); L.append(shade, g);
+    shade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 480, easing: "ease-out", fill: "forwards" }).finished.then(() => shade.remove(), () => shade.remove());
+    const card = cardNode(ck), to = card && (card.querySelector(".cuDzThumbs") || card), tr = to && to.getBoundingClientRect();
+    if (!tr || !tr.width || tr.bottom < 0 || tr.top > innerHeight) { g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: 380, easing: "ease-in", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove()); return; }
+    const dx = tr.left + tr.width / 2 - (box.left + box.width / 2), dy = tr.top + tr.height / 2 - (box.top + box.height / 2);
+    const s = Math.max(.04, Math.min(.5, (tr.height * 1.3) / box.height, (tr.width * 1.3) / box.width));
+    g.animate([
+      { transform: "none", opacity: 1 },
+      { transform: `translate(${dx * .3}px,${dy * .3}px) scale(${(1 + s) / 1.7})`, opacity: 1, offset: .42 },
+      { transform: `translate(${dx * .92}px,${dy * .92}px) scale(${s * 1.15})`, opacity: .7, offset: .85 },
+      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 }
+    ], { duration: 660, easing: "cubic-bezier(.45,.05,.3,1)", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
+    setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 560);
+  }
+  /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what
+   *  came, with Show. false when that cannot be seen (the caller says it in a toast instead). */
+  function toSheets(ck, n, words, delay) {
+    const tab = document.querySelector('#modeSeg [data-mode="nest"]');
+    if (!window.Motion || !tab || !tab.getClientRects().length) return false;
+    const note = { text: words, actions: [{ label: "Show", title: "open the sheets", fn: () => { try { CN.setMode("nest"); } catch (_) {} } }] };
+    setTimeout(() => {
+      const pics = cardNode(ck)?.querySelector(".cuDzThumbs"), r = pics && pics.getBoundingClientRect();
+      if (!r || !r.width || motionOff() || r.bottom < 0 || r.top > innerHeight) { Motion.pulse(tab, { note }); return; }
+      Motion.fly(Motion.ghost(pics, r, r.width, document.body), tab, { note, plus: "+" + n });
+    }, delay || 0);
+    return true;
+  }
+  return { add, send, prepare, sentOf, piecesOf, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
