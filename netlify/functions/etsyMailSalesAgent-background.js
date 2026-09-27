@@ -461,7 +461,8 @@ async function loadRecentThreadMessages(threadId, limit = 12) {
     const rows = [];
     for (const d of snap.docs) {
       const m = d.data() || {};
-      const text = String(m.text || "").trim();
+      // Etsy's scraped "Translate to English" button label is not the customer's words.
+      const text = String(m.text || "").replace(/\s*Translate to English\s*$/i, "").trim();
       const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
       const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
       if (!text && imageUrls.length === 0 && attachmentUrls.length === 0) continue;
@@ -1926,6 +1927,14 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
       && !/\b(custom|design|make|made|create|personali[sz]e|instead|different|change|mix|combine|bigger|smaller|larger|similar|version|based\s+on|modif\w*|adjust|swap)\b/i.test(inboundText)) {
     return { force: false };
   }
+  // A change to an existing listing that only production can settle (a
+  // backing or finding the sheet doesn't offer) is a capability question,
+  // not a spec gap: the sheet would not answer it.
+  const blockedRows = Array.isArray(parsed && parsed.missing_or_blocked) ? parsed.missing_or_blocked : [];
+  if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
+      && blockedRows.some(r => r && /operator|human|staff|production/i.test(String(r.how_to_get_it || "")))) {
+    return { force: false };
+  }
 
   const selectableMissing = customerSelectableMissingItems(parsed);
   const noCodesYet = selectedCodesCount(parsed) === 0;
@@ -2403,6 +2412,10 @@ function backfillLegacyFieldsFromV5(parsed) {
       // still needing the image chip.
       /\b(?:line\s+sheet|option\s+sheet|options\s+sheet|pricing\s+sheet|menu)\b/i
     ];
+    // A reply can name the sheet in passing ("the only backing on our line
+    // sheet") after the model decided against sending it (attach_line_sheet
+    // explicitly false): then only a real sending phrase attaches it.
+    if (parsed.attach_line_sheet === false) lineSheetPromisePatterns.pop();
     if (lineSheetPromisePatterns.some(rx => rx.test(r))) {
       parsed.attach_line_sheet = true;
       // Mark this on the parsed object so we can log it in the audit
@@ -3438,7 +3451,7 @@ Existing listings first, judged by context. A customer who wants a listing as it
 
 Staff prices stand. If staff already typed a price for this configuration, restate that price (it is the shop's quote) and flag any difference from the calculator for review instead of re-quoting. Huggies sell as a pair of hoops, but the charms on them may vary: one charm on the pair, mismatched charms or odd counts are configurations to price, never to refuse. A customer asking for huggie-size charms (even for a necklace) is the huggie family. A charm for the customer's own bracelet, string or keychain is a charm sold without chain.
 
-Never write that you can't see or open an image; if you can't tell which photo they mean, ask which one. Never state a shop policy (sales schedules, warranties) this prompt doesn't give, and never send the customer to "check the photos" for a size: use lookup_listing_specs or get_option_sheet's universal sizes.
+Reply in the customer's language; "Translate to English" at the end of a message is Etsy's button label, not a request. Never write that you can't see or open an image; if you can't tell which photo they mean, ask which one. Never state a shop policy (sales schedules, warranties) this prompt doesn't give, and never send the customer to "check the photos" for a size: use lookup_listing_specs or get_option_sheet's universal sizes.
 
 Acceptance. A customer who says they'll buy later (payday, next week) has not accepted: say the quote stands and they can message when ready, and don't start the listing. The custom listing already carries the accepted total, so never tell the customer to select a price option on it. Any add-on you mention goes with its link from the ADD-ON block.
 

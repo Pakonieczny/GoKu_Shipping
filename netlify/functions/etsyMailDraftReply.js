@@ -474,7 +474,14 @@ async function loadMessages(threadId, limit) {
     .orderBy("timestamp", "desc")
     .limit(limit + 1)
     .get();
-  const all = dropDuplicateGhosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  // Etsy's "Translate to English" button label gets scraped onto the end of
+  // non-English messages (about 1 in 20 inbound); it is not the customer's
+  // request, and replays answered a French buyer in English because of it.
+  const all = dropDuplicateGhosts(snap.docs.map(d => {
+    const m = { id: d.id, ...d.data() };
+    if (typeof m.text === "string") m.text = m.text.replace(/\s*Translate to English\s*$/i, "");
+    return m;
+  }));
   const hasMore = snap.size > limit;
   const kept = all.slice(0, limit).reverse();  // → chronological
   // Only "older messages exist" is known (limit+1 fetched); the old
@@ -1095,6 +1102,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     late or lost package, a refund or return, or an upset customer.
 
 6. HUMAN TONE HYGIENE:
+      - Write as "we" (the shop), never "I", the way staff do.
+      - Reply in the customer's language. "Translate to English" at the
+        end of a message is Etsy's button label, not a request.
       - Don't use corporate-speak ("per our policy", "as per the
         agreement", "we strive to...") — this screams support-bot
       - Don't over-structure with bullet lists or headers — talk
@@ -2036,6 +2046,12 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         should give.
       - Never write that you can't see or open an image. If you can't
         tell which photo or design they mean, ask which one.
+      - When a shop fact isn't available (an exact size, whether a pair
+        is mirrored), don't write about checking or confirming it and
+        don't guess it: give what is standard or settled, name the fact
+        to verify in confidenceReasoning and set
+        ready_for_human_approval:true so a person adds it before sending.
+        Never mention an internal catalog, system or tool to the customer.
       - Mismatched pairs, a single earring and odd charm counts are
         priced, never refused; never contradict what staff already
         said yes to in this thread.
@@ -3379,7 +3395,12 @@ function buildToolExecutors(ctx) {
         const sheet = loadOptionSheet ? await loadOptionSheet(family) : null;
         if (sheet) {
           const ms = require("./etsyMailOptionResolver").metalSpecsForAi(sheet.metalSpecs);
-          result = { ...result, familyFacts: { family, charmStyles: sheet.charmStyles || null, metalSpecs: ms,
+          // The resolver's "escalate, do NOT estimate" is about this
+          // listing's own entry; the family sizes below are the shop's
+          // standard and may be stated (replays read the two as a clash).
+          result = { ...result,
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            familyFacts: { family, charmStyles: sheet.charmStyles || null, metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
       } catch {}
