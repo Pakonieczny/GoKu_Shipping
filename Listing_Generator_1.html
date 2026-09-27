@@ -2679,6 +2679,30 @@
    never painted even for a frame. */
 html.gs-locked,body.gs-locked{overflow:hidden!important}
 html.gs-locked body > *:not(#gate){display:none!important}
+
+/* Batch progress: readable summary first, diagnostics on demand. */
+#batchJobsPanel { font-size:15px; line-height:1.6; }
+#batchJobsPanel .batch-card { padding:24px; border:1px solid var(--line); border-radius:12px; background:var(--card-2); }
+#batchJobsPanel .batch-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px 20px; }
+#batchJobsPanel .batch-status { font-size:19px; font-weight:650; }
+#batchJobsPanel .batch-date { color:var(--text-2); font-size:14px; }
+#batchJobsPanel .batch-count { margin-top:20px; font-size:17px; }
+#batchJobsPanel .batch-count strong { font-size:32px; line-height:1.2; }
+#batchJobsPanel .batch-track { height:10px; background:var(--inset); border:1px solid var(--line); border-radius:8px; overflow:hidden; margin:12px 0; }
+#batchJobsPanel .batch-note { margin:18px 0; font-size:16px; line-height:1.6; }
+#batchJobsPanel .batch-meta { color:var(--text-2); font-size:14px; }
+#batchJobsPanel .batch-alert { margin:16px 0; padding:14px; border:1px solid #7a3838; border-radius:8px; color:#fca5a5; overflow-wrap:anywhere; }
+#batchJobsPanel .batch-details { margin-top:20px; padding-top:16px; border-top:1px solid var(--line); }
+#batchJobsPanel summary { cursor:pointer; font-size:15px; color:var(--text-2); padding:4px 0; }
+#batchJobsPanel .batch-stats { display:grid; gap:12px; margin:18px 0; font-size:14px; }
+#batchJobsPanel .batch-stat { display:grid; grid-template-columns:minmax(110px, 1fr) minmax(0, 2fr); gap:16px; }
+#batchJobsPanel .batch-stat span:first-child { color:var(--text-2); }
+#batchJobsPanel .batch-stat span:last-child { overflow-wrap:anywhere; }
+#batchJobsPanel .batch-details .btn { font-size:14px !important; padding:10px 14px; }
+@media (max-width:600px) {
+  #batchJobsPanel .batch-card { padding:18px; }
+  #batchJobsPanel .batch-stat { grid-template-columns:1fr; gap:2px; }
+}
 </style>
 </head>
 <body>
@@ -3209,7 +3233,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
 
           <!-- Batch generation: loops generateSet() N times in Standard mode,
                or submits one OpenAI batch job in Batch mode. -->
-          <div style="margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
+          <div style="margin-top: 20px; padding: 18px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <label style="margin: 0; font-size: 12px;">Batch generate</label>
               <span class="muted" style="font-size: 10px;" id="batchGenHint">loops the action above N times</span>
@@ -3257,16 +3281,14 @@ html.gs-locked body > *:not(#gate){display:none!important}
                to collect → results downloaded into Firebase. -->
           <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-              <label style="margin: 0; font-size: 12px; font-weight: 600;">Your batch jobs</label>
-              <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 12px; padding: 6px 12px;">↻ Refresh</button>
+              <label style="margin: 0; font-size: 20px; font-weight: 600;">Batch progress</label>
+              <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 15px; padding: 10px 16px;">↻ Refresh</button>
             </div>
-            <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              OpenAI jobs and queued repairs continue if you close this tab. The scheduled collector saves finished images to Firebase; this panel refreshes every 60 seconds while open.
-            </div>
-            <div id="batchRefreshStatus" role="status" aria-live="polite" style="font-size: 12px; line-height: 1.5; margin-bottom: 10px; padding: 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; color: #93c5fd;">
+            <div class="muted" style="font-size: 14px; margin: 6px 0 12px;">Checks automatically every minute.</div>
+            <div id="batchRefreshStatus" role="status" aria-live="polite" style="font-size: 14px; line-height: 1.6; margin-bottom: 18px; color: #93c5fd;">
               Loading saved job records…
             </div>
-            <div id="batchRecoveryStatus" role="status" aria-live="polite" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px;"></div>
+            <div id="batchRecoveryStatus" role="status" aria-live="polite" style="font-size: 14px; line-height: 1.5; margin-bottom: 8px;"></div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
             </div>
@@ -13016,7 +13038,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (oldestSession) oldestSession.historyTruncated = true;
         }
         const sessionList = [...sessions.values()].sort((a, b) => b.earliest - a.earliest);
+        const expanded = new Set([...listEl.querySelectorAll("details[data-batch-detail][open]")]
+          .map((el) => el.getAttribute("data-batch-detail")));
         listEl.innerHTML = sessionList.map((s) => _renderSessionBlock(s)).join("");
+        listEl.querySelectorAll("details[data-batch-detail]").forEach((el) => {
+          el.open = expanded.has(el.getAttribute("data-batch-detail"));
+        });
 
         // Wire session-level buttons. We use data attributes instead
         // of one-id-per-batch so the wiring is one query per panel
@@ -13037,7 +13064,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         _startBatchAutoPoll();
         const checkStatus = document.getElementById("batchRefreshStatus");
         if (checkStatus && checkStatus.textContent.includes("Loading saved"))
-          checkStatus.textContent = `Saved jobs loaded at ${new Date(_batchListLoadedAt).toLocaleTimeString()} · Provider states checked every 60 seconds; Refresh checks them now.`;
+          checkStatus.textContent = `Saved progress loaded · Refresh checks OpenAI now.`;
         return { ok: true, batches };
       } catch (err) {
         listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${_batchSafeText(err?.message || err)}</div>`;
@@ -13156,9 +13183,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
       } else if (providerWaiting) {
-        headline = "Provider backlog · awaiting images"; headlineColor = "#fde68a";
+        headline = "Waiting for OpenAI"; headlineColor = "#fde68a";
       } else if (waitingRetries && running >= _batchRetryLimit) {
-        headline = "Processing · retries waiting"; headlineColor = "#93c5fd";
+        headline = "Waiting for images"; headlineColor = "#93c5fd";
       } else if (running > 0 || waitingRetries > 0) {
         headline = "In progress"; headlineColor = "#93c5fd";
       } else {
@@ -13207,36 +13234,33 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (!session.historyTruncated) rows.push([allDone ? "Total time" : "Elapsed", _formatDuration(elapsedMs)]);
 
       const statsHtml = rows.map(([k, v]) =>
-        `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${_batchSafeText(k)}</span><span style="color:var(--text); font-weight:500; overflow-wrap:anywhere;">${_batchSafeText(v)}</span></div>`
+        `<div class="batch-stat"><span>${_batchSafeText(k)}</span><span>${_batchSafeText(v)}</span></div>`
       ).join("");
-
       const progressPct = plannedSets ? Math.min(100, Math.round(100 * finished / plannedSets)) : 0;
-      const progressHtml = plannedSets && !session.historyTruncated ? `<div style="margin:12px 0 8px;">
-        <div style="height:7px; background:var(--inset); border-radius:6px; overflow:hidden; border:1px solid var(--line);">
-          <div role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}"
-            style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
-        </div>
-        <div class="muted" style="font-size:10px; margin-top:4px;">${finished} of ${plannedSets} planned sets saved (${progressPct}%)</div>
-      </div>` : "";
-      let queueExplanation = "";
-      if (waitingRetries) {
-        const needToFinish = Math.max(0, running - _batchRetryLimit + 1);
-        const reason = running >= _batchRetryLimit
-          ? `${running} provider jobs are still processing. At least ${needToFinish} must finish before a queued retry can enter the ${_batchRetryLimit}-job retry admission limit.`
-          : `${_batchRetryLimit - running} retry place(s) are available. The collector will fill them at the next sweep.`;
-        const providerDetail = providerWaiting
-          ? ` The provider reports ${requestStats.pending}/${requestStats.total} image requests pending across these jobs, with none completed yet; the oldest job has waited ${_formatDuration(Date.now() - oldestActiveAt)}. Repeated status checks confirm the state but do not advance provider processing.`
-          : "";
-        const sweepProblem = sweep?.lastError ? ` Last collector error: ${sweep.lastError}.` :
-          sweep?.runningSince && !sweepIsRunning ? " The collector has not completed its last sweep; check its status." :
-          sweepStale ? " No sweep has completed in over 25 minutes; the scheduled collector needs attention." :
-          sweep?.lastResult?.collectErrors ? ` ${sweep.lastResult.collectErrors} collection attempt(s) failed on the last sweep.` : "";
-        queueExplanation = `<div role="status" style="margin:10px 0; padding:10px; border-radius:6px; background:var(--inset); border:1px solid ${providerWaiting ? "#a16207" : "var(--line)"}; font-size:11px; line-height:1.5;">
-          <strong>${providerWaiting ? "Provider has not reported any completed image requests" : running >= _batchRetryLimit ? "Waiting for provider capacity" : "Retries ready for the next sweep"}</strong><br>
-          ${_batchSafeText(reason + providerDetail + sweepProblem)}${notSubmitted ? ` The original submission still has ${notSubmitted} planned parts without a provider job; its browser may continue submitting them independently of the retry limit.` : ""} The ${waitingRetries} queued retries are saved and need no open browser tab.
-        </div>`;
-      }
-
+      const progressHtml = plannedSets && !session.historyTruncated ? `
+        <div class="batch-count"><strong>${finished} / ${plannedSets}</strong> sets saved</div>
+        <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
+          <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
+        </div>` : "";
+      const attention = Math.max(0, failed - waitingRetries);
+      const activity = [running ? `${running} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
+        attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
+      const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
+      const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      let explanation = providerWaiting
+        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}.`
+        : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
+        : running ? "Waiting for OpenAI to return the next images."
+        : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
+        : notSubmitted ? `${notSubmitted} sets still need to be submitted. Keep the original submission tab open.`
+        : attention ? "Some jobs need attention. Open Details & actions to review them."
+        : "";
+      const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
+        sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
+        sweepStale ? "The image collector has not completed a check in over 25 minutes." :
+        sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed. Open Details & actions.` : "");
+      const queueExplanation = explanation ? `<p class="batch-note">${_batchSafeText(explanation)}</p>` : "";
+      const alertHtml = sweepProblem ? `<div class="batch-alert" role="alert">${_batchSafeText(sweepProblem)}</div>` : "";
       // Action buttons: only show what's actionable. Cancel-all if
       // anything is still running. Recover-all if there are failed /
       // expired batches the user could pull partial results from.
@@ -13287,22 +13311,26 @@ Click the button again to permanently delete eligible temporary files, or cancel
       }).join("");
 
       return `
-        <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 10px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
-            <div style="font-size: 12px; font-weight: 600;">${_batchSafeText(sessionLabel)}</div>
-            <div style="font-size: 12px; font-weight: 700; color: ${headlineColor};">${headline}</div>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-            ${statsHtml}
+        <section class="batch-card">
+          <div class="batch-heading">
+            <div class="batch-status" style="color:${headlineColor};">${headline}</div>
+            <div class="batch-date">${_batchSafeText(sessionLabel)}</div>
           </div>
           ${progressHtml}
+          ${activity ? `<div>${_batchSafeText(activity)}</div>` : ""}
           ${queueExplanation}
-          ${buttonsHtml}
-          <details style="margin-top:10px; font-size:11px;">
-            <summary style="cursor:pointer; color:var(--text-2);">Details for ${session.batches.length} batches · individual states, times and errors</summary>
-            <div style="max-height:360px; overflow:auto; margin-top:6px;">${stateDetail}</div>
+          ${lastSavedAt ? `<div class="batch-meta">Last set saved ${Date.now() - lastSavedAt > 86400000 ? new Date(lastSavedAt).toLocaleDateString() : `${shortTime(lastSavedAt)} · ${Math.floor((Date.now() - lastSavedAt) / 60000)} min ago`}</div>` : ""}
+          ${alertHtml}
+          <details class="batch-details" data-batch-detail="${_batchSafeText(session.sessionId)}">
+            <summary>Details &amp; actions</summary>
+            <div class="batch-stats">${statsHtml}</div>
+            ${buttonsHtml}
+            <details data-batch-detail="${_batchSafeText(session.sessionId)}-jobs" style="margin-top:18px; font-size:14px;">
+              <summary>Individual jobs (${session.batches.length})</summary>
+              <div style="max-height:360px; overflow:auto; margin-top:12px;">${stateDetail}</div>
+            </details>
           </details>
-        </div>
+        </section>
       `;
     }
 
@@ -13499,12 +13527,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const el = document.getElementById("batchRefreshStatus");
       if (!el) return;
       el.textContent = message;
-      el.style.color = error ? "#fca5a5" : message.includes("check finished") ? "#7fdb96" : "#93c5fd";
+      el.style.color = error ? "#fca5a5" : message.startsWith("Checked ") ? "#7fdb96" : "#93c5fd";
     }
 
     async function _checkBatchJobsNow(manual = false) {
       if (_batchPollInFlight) {
-        if (manual) _showBatchCheck("A provider check is already in progress. Its progress will appear here.");
+        if (manual) _showBatchCheck("Checking OpenAI…");
         return;
       }
       _batchPollInFlight = true;
@@ -13523,7 +13551,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
             .includes(_normBatchState(b.state)));
         _showBatchCheck(pendingChecks.length
           ? `Checking provider jobs: 0/${pendingChecks.length}…`
-          : "No active provider jobs to check. Reading the retry queue and collector…");
+          : "Checking queued jobs…");
         let checkIndex = 0;
         await Promise.all(Array.from({ length: Math.min(4, pendingChecks.length) }, async () => {
           while (checkIndex < pendingChecks.length) {
@@ -13579,13 +13607,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
             }
             _showBatchCheck(`Collector ${_batchSweepInfo?.stage || "starting"}… ${attempt + 1}/12 checks`);
           }
-          if (!sweepNote) sweepNote = "Collector has not completed a new sweep; its current stage appears in the panel.";
+          if (!sweepNote) sweepNote = "Collector still checking queued jobs.";
           const afterSweep = await refreshBatchJobsPanel();
           if (!afterSweep?.ok) throw afterSweep?.error || new Error("Could not refresh queued jobs");
         }
         const savedNow = _lastBatchList.filter((b) => b.collected).length - beforeSaved;
-        const time = new Date().toLocaleTimeString();
-        _showBatchCheck(`${manual ? "Manual" : "Automatic"} check finished ${time}: ${checked} provider jobs checked, ${changed} state changes, ${Math.max(0, savedNow)} newly saved${saving ? `, ${saving} collections started` : ""}${checkErrors ? `, ${checkErrors} check errors (first: ${firstCheckError})` : ""}. ${sweepNote || (queued ? `${queued} queued; ${active} active. ` : "") + (changed || savedNow ? "" : "No new provider results yet.")}`,
+        const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const outcome = savedNow > 0 ? `${savedNow} newly saved.` : saving ? `Saving images from ${saving} job(s).` :
+          changed ? `${changed} job(s) updated.` : "No new images yet.";
+        _showBatchCheck(`Checked ${time} · ${outcome}${checkErrors ? ` ${checkErrors} checks failed: ${firstCheckError}` : ""}${sweepNote ? ` ${sweepNote}` : ""}`,
           !!checkErrors || sweepNote.startsWith("Collector error"));
         const charmPanel = document.getElementById("charmBatchJobsPanel");
         if (charmPanel && charmPanel.style.display !== "none" && typeof refreshCharmBatchPanel === "function")

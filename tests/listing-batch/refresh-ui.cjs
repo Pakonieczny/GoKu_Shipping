@@ -63,7 +63,7 @@ async function check({ queued = false, automatic = false } = {}) {
   assert.equal(provider.statusCalls, 1, "Refresh queries live provider state");
   assert.equal(provider.collects, 1, "a new success is queued for collection");
   assert(provider.status.changes.some((x) => x.includes("Checking provider jobs: 0/1")));
-  assert.match(provider.status.textContent, /Manual check finished.*1 state changes/);
+  assert.match(provider.status.textContent, /Checked .*Saving images from 1 job/);
   assert.equal(provider.btn.disabled, false);
   assert.equal(provider.btn.textContent, "↻ Refresh");
 
@@ -71,7 +71,7 @@ async function check({ queued = false, automatic = false } = {}) {
   assert.equal(retry.sweepCalls, 1, "Refresh asks collector to fill an available place");
   assert.match(retry.status.textContent, /1 retries admitted by collector/);
   const automatic = await check({ automatic: true });
-  assert.match(automatic.status.textContent, /Automatic check finished.*1 state changes/);
+  assert.match(automatic.status.textContent, /Checked .*Saving images from 1 job/);
 
   const renderStart = source.indexOf("    function _renderSessionBlock(session) {");
   const renderEnd = source.indexOf("    async function _cancelSession(sessionId) {", renderStart);
@@ -95,9 +95,16 @@ async function check({ queued = false, automatic = false } = {}) {
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }),
     DEFAULT_IMAGE_MODEL: "sunburst",
   });
-  assert.match(html, /Provider backlog · awaiting images/);
+  assert.match(html, /Waiting for OpenAI/);
   assert.match(html, /0 completed · 180 pending · 0 failed/);
-  assert.match(html, /Provider has not reported any completed image requests/);
+  assert.match(html, /OpenAI has not returned images for the active jobs/);
   assert.match(html, /Oldest active job/);
+  const summary = html.slice(0, html.indexOf('<details class="batch-details"'));
+  assert.match(summary, /0 \/ 300/);
+  assert.match(summary, /30 active jobs · 1 queued/);
+  assert(!summary.includes("Active image requests"), "technical stats are collapsed");
+  assert(!summary.includes("data-session-cancel"), "destructive actions are collapsed");
+  assert(!/<details[^>]*\sopen(?:[\s>])/.test(html), "details start closed");
+  assert.match(html, /data-session-cancel/, "recovery and cancellation controls remain available");
   console.log("Listing refresh UI: provider check, feedback, collection, retry sweep passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });
