@@ -190,6 +190,7 @@
     "_etsyMailRoles.js",
     "_etsyMailScheduled.js",
     "_etsyMailSim.js",
+    "_etsyMailThreadAlign.js",
     "_etsyMailTracking.js",
     "_etsyMailTrackingRender.js",
     "_etsyMailVetoes.js",

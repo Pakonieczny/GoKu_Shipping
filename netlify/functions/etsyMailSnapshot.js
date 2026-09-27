@@ -34,6 +34,7 @@
  */
 
 const admin = require("./firebaseAdmin");
+const align = require("./_etsyMailThreadAlign");
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const db  = admin.firestore();
 const FV  = admin.firestore.FieldValue;
@@ -212,6 +213,54 @@ function unmangleObjectStrings(obj, _seen) {
   return out;
 }
 
+// ─── Extra copies of a message (see _etsyMailThreadAlign.js) ───
+// Each removed copy is kept in EtsyMail_MessageArchive first, so nothing is
+// lost if one turns out to be a real repeat. Only scraped (source "etsy")
+// docs are ever removed.
+const ARCHIVE_COLL = "EtsyMail_MessageArchive";
+async function removeCopies(tRef, threadId, ids) {
+  if (!ids || !ids.length) return 0;
+  const list = Array.from(new Set(ids)).slice(0, 400);
+  const snaps = await db.getAll(...list.map(id => tRef.collection("messages").doc(id)));
+  const batch = db.batch();
+  const now = FV.serverTimestamp();
+  let removed = 0;
+  snaps.forEach(sn => {
+    if (!sn.exists || (sn.data() || {}).source !== "etsy") return;
+    batch.set(db.collection(ARCHIVE_COLL).doc(`${threadId}__${sn.id}`), {
+      threadId, messageId: sn.id, reason: "duplicate_copy", archivedAt: now, data: sn.data()
+    });
+    batch.delete(sn.ref);
+    removed++;
+  });
+  if (!removed) return 0;
+  batch.set(tRef, { messageCount: FV.increment(-removed), duplicatesRemovedAt: now }, { merge: true });
+  await batch.commit();
+  return removed;
+}
+
+// Stored messages of one thread, split into scraped ones and our stand-ins.
+async function loadStoredForAlign(tRef) {
+  const snap = await tRef.collection("messages")
+    .select("contentHash", "senderRole", "text", "imageUrls", "timestamp", "createdAt", "source", "direction")
+    .limit(2000).get();
+  const ids = new Set(), etsy = [], other = [];
+  snap.forEach(d => {
+    ids.add(d.id);
+    const data = d.data() || {};
+    const row = {
+      id       : d.id,
+      fp       : align.fingerprint(data),
+      tsMs     : align.msOf(data.timestamp),
+      createdMs: align.msOf(data.createdAt),
+      direction: data.direction || (data.senderRole === "customer" ? "inbound" : "outbound")
+    };
+    if (!row.fp || row.tsMs == null) return;
+    if (data.source === "etsy") etsy.push(row); else other.push(row);
+  });
+  return { ids, etsy, other };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
@@ -276,6 +325,34 @@ exports.handler = async (event) => {
       // rather than blocking on a transient backend error.
       return json(200, { exists: false, error: err.message });
     }
+  }
+
+  // Clean copies left by the old time-based dedupe, a page of threads per
+  // call: { op: "dedupeSweep", startAfter, limit, dryRun }. Returns the
+  // cursor for the next page and what was (or would be) removed.
+  if (body.op === "dedupeSweep") {
+    const limit = Math.max(1, Math.min(40, Number(body.limit) || 20));
+    const dryRun = body.dryRun !== false;
+    let q = db.collection(THREADS_COLL).orderBy(admin.firestore.FieldPath.documentId()).limit(limit);
+    if (body.startAfter) q = q.startAfter(String(body.startAfter));
+    const page = await q.get();
+    const out = [];
+    let removedTotal = 0, last = null;
+    for (const t of page.docs) {
+      last = t.id;
+      try {
+        const st = await loadStoredForAlign(t.ref);
+        const ids = align.findLegacyDuplicates(st.etsy, st.other);
+        if (!ids.length) continue;
+        const removed = dryRun ? ids.length : await removeCopies(t.ref, t.id, ids);
+        removedTotal += removed;
+        out.push({ threadId: t.id, copies: removed });
+      } catch (e) {
+        out.push({ threadId: t.id, error: e.message });
+      }
+    }
+    return json(200, { success: true, dryRun, scanned: page.size, removed: removedTotal, threads: out,
+                       next: page.size === limit ? last : null });
   }
 
   const {
@@ -408,138 +485,32 @@ exports.handler = async (event) => {
       await tRef.set(threadPatch, { merge: true });
     }
 
-    // ─── 2) Dedupe + upsert messages ───
-    // We fetch existing hashes AND their current timestamps so we can UPDATE
-    // a stored message's timestamp if the scraper now provides a better one
-    // (e.g., scraper v0.3+ extracts real per-message Date: headers that
-    // earlier scrapes missed).
-    //
-    // v3.3 — Also build a CONTENT-based dedup index. The existing
-    // contentHash includes the bubble's position in the full thread,
-    // which doesn't survive an incremental scrape: if a returning
-    // customer sends a new message, the incremental scrape sees only
-    // the bottom ~10 visible bubbles, so previously-stored bubbles get
-    // assigned different positions in the scrape than they had in
-    // storage. Different positions → different hashes → false negatives
-    // on the dedup check → duplicate copies of every old bubble inserted.
-    //
-    // The content-based index avoids that by keying on:
-    //   - role (staff/customer/shop_owner → folded into staff vs customer)
-    //   - either normalizedText (text bubbles) OR sorted imageUrls
-    //     (image bubbles), since image bubbles have empty text and would
-    //     otherwise collide with each other
-    //   - tsMinute (timestamp rounded to the minute; matches Etsy's
-    //     minute-level UI precision)
-    //
-    // Both indexes are checked for every incoming bubble: a match in
-    // EITHER means we already have it. Old bubbles in storage match
-    // via the content index; new bubbles match either way.
-    const existingSnap = await tRef.collection("messages")
-      .select("contentHash", "senderRole", "normalizedText", "text", "imageUrls", "timestamp", "messageType")
-      .limit(2000).get();
-    const existingByHash    = new Map();   // hash → { docId, currentTsMs }
-    const existingByContent = new Map();   // contentKey → { docId, currentTsMs }
+    // ─── 2) Match the scrape against what is stored, then insert ───
+    // By message order and content, never by time (see
+    // _etsyMailThreadAlign.js): the scraper stamps the top of a partial
+    // scrape with the next day's time, and the old minute-based dedupe
+    // stored those messages again on every scrape. Only scraped messages
+    // (source "etsy") are matched: our own "just sent" stand-in is one doc
+    // per thread, rewritten by every send, so Etsy's copy must be stored.
+    const stored = await loadStoredForAlign(tRef);
+    const existingIds = stored.ids;
+    const storedEtsy = stored.etsy;
+    const storedOther = stored.other;
 
+    const scrapeMode = (body.diagnostics && body.diagnostics.scrapeMode) || null;
+    const incoming = messages.map(m => ({
+      fp  : m ? align.fingerprint(m) : "",
+      tsMs: m && typeof m.timestampMs === "number" ? m.timestampMs : null
+    }));
+    const scrapeTimeMs = typeof scrapedAt === "number" ? scrapedAt : Date.now();
+    const aligned = align.alignScrape(storedEtsy, incoming, { scrapedAt: scrapeTimeMs });
 
-    // Normalize the role vocabulary. Snapshot writes "customer"/"staff".
-    // Optimistic-message writes "shop_owner" (treated as staff equivalent).
-    // Anything else falls back to customer (safer default — content match
-    // on an unknown role won't accidentally suppress a real customer
-    // bubble; the worst case is one extra dedupe miss).
-    function normalizeRole(senderRole) {
-      if (senderRole === "staff" || senderRole === "shop_owner") return "staff";
-      return "customer";
-    }
-
-    // Build a stable content-fingerprint for a bubble. For text bubbles
-    // the fingerprint is the normalized text. For image bubbles the
-    // fingerprint is the sorted, joined imageUrls (matches the in-scraper
-    // pattern at processImageAttachment: `IMAGE:${urlKey}`).
-    // Falls back to text → URLs in that order to handle borderline docs.
-    // Extract the stable image identifier from an Etsy CDN URL so we
-    // can dedupe image bubbles across scrapes even if the URL format
-    // varies slightly (CDN domain rotation, size suffix changes like
-    // _5760xN vs _fullxfull, cache-busting query params). Etsy's
-    // messaging-image URLs have one of these shapes:
-    //
-    //   https://i.etsystatic.com/iiii/icm/iap/<ID>/<filename>_<size>.jpg
-    //   https://i.etsystatic.com/<numeric>/r/il/<hash>/<id>/il_<size>.<id>_<rand>.jpg
-    //
-    // The identifier segment is preceded by /icm/ or /il/. We pick the
-    // last segment before the filename — that's where Etsy's image
-    // identifier consistently lives across URL variations. Falls back
-    // to the full URL if the pattern doesn't match, so we never
-    // dedupe LESS aggressively than today.
-    function extractEtsyImageId(url) {
-      const str = String(url || "");
-      if (!str) return "";
-      // Strip query string and fragment
-      const clean = str.split(/[?#]/)[0];
-      // Take the last 1-2 path segments; the actual ID is usually the
-      // second-to-last segment (the folder containing the image file).
-      // e.g. ".../icm/iap/abc123def/foo_fullxfull.jpg" → "abc123def"
-      const parts = clean.split("/").filter(Boolean);
-      if (parts.length >= 2) {
-        const candidate = parts[parts.length - 2];
-        // Reject obvious non-ID segments like "icm", "iap", "iusa"
-        if (candidate.length >= 6 && !/^(icm|iap|iusa|r|il)$/i.test(candidate)) {
-          return candidate;
-        }
-      }
-      // Fallback: use the entire cleaned URL. Still works when both
-      // sides of the dedup comparison see the same exact URL.
-      return clean;
-    }
-
-    function bubbleFingerprint({ text, normalizedText, imageUrls, messageType }) {
-      const txt = normalizedText || normalize(text || "");
-      if (txt) return `T:${txt}`;
-      if (Array.isArray(imageUrls) && imageUrls.length) {
-        const ids = imageUrls
-          .filter(Boolean)
-          .map(extractEtsyImageId)
-          .filter(Boolean)
-          .sort();
-        if (ids.length) return `I:${ids.join("|")}`;
-      }
-      // Empty bubble (no text, no images). Should never happen in
-      // practice but if it does, fold to a sentinel so the key is at
-      // least valid (won't collide with real bubbles since real ones
-      // always have one or the other).
-      return "E:empty";
-    }
-
-    function contentKey(senderRole, fp, tsMs) {
-      const role = normalizeRole(senderRole);
-      const minute = tsMs != null ? Math.floor(tsMs / 60000) : "";
-      return `${role}|${fp}|${minute}`;
-    }
-
-    existingSnap.forEach(d => {
-      const data = d.data() || {};
-      const currentTsMs = data.timestamp && typeof data.timestamp.toMillis === "function"
-        ? data.timestamp.toMillis()
-        : null;
-      if (data.contentHash) {
-        existingByHash.set(data.contentHash, { docId: d.id, currentTsMs });
-      }
-      // Also index by content. Skip docs without enough info to
-      // fingerprint reliably (no text AND no images AND no timestamp).
-      if (currentTsMs != null && data.senderRole) {
-        const fp = bubbleFingerprint({
-          text          : data.text,
-          normalizedText: data.normalizedText,
-          imageUrls     : data.imageUrls,
-          messageType   : data.messageType
-        });
-        if (fp !== "E:empty") {
-          existingByContent.set(
-            contentKey(data.senderRole, fp, currentTsMs),
-            { docId: d.id, currentTsMs }
-          );
-        }
-      }
-    });
+    // Copies stored by the old dedupe: proven by this scrape, or found by
+    // the pattern the old bug left (findLegacyDuplicates).
+    const dupIds = new Set(aligned.duplicates);
+    try {
+      for (const id of align.findLegacyDuplicates(storedEtsy, storedOther)) dupIds.add(id);
+    } catch (e) { console.warn("[snapshot] legacy duplicate scan skipped:", e.message); }
 
     let newest_inbound_ms  = null;
     let newest_outbound_ms = null;
@@ -550,21 +521,17 @@ exports.handler = async (event) => {
     // (see computeAwaitingState).
     const inboundTs = [];
     let newestInText = null, newestInTs = -1, newestOutText = null, newestOutTs = -1;
+    const usedIds = new Set();
 
-    // Rough heuristic: a "scrape-time fallback" timestamp is one within a
-    // few seconds of scrapedAt. If the existing stored timestamp looks like
-    // a fallback AND the new one doesn't, update it.
-    const scrapeTimeMs = typeof scrapedAt === "number" ? scrapedAt : Date.now();
-    const FALLBACK_WINDOW_MS = 120 * 1000;  // 2 minutes
-    function looksLikeFallbackTs(tsMs) {
-      return tsMs != null && Math.abs(tsMs - scrapeTimeMs) < FALLBACK_WINDOW_MS;
-    }
-
-    for (const m of messages) {
-      if (!m || !m.contentHash) continue;
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (!m || !incoming[i].fp) continue;
 
       const direction = m.senderRole === "staff" ? "outbound" : "inbound";
-      const ts = typeof m.timestampMs === "number" ? m.timestampMs : null;
+      const j = aligned.matchOf[i];
+      // A matched message keeps its stored time; a new one gets a time
+      // between its neighbours.
+      const ts = j >= 0 ? aligned.sorted[j].tsMs : aligned.newTs[i];
       if (ts != null) {
         newestAny_ms = Math.max(newestAny_ms || 0, ts);
         if (direction === "inbound")  newest_inbound_ms  = Math.max(newest_inbound_ms  || 0, ts);
@@ -577,44 +544,7 @@ exports.handler = async (event) => {
           } else if (ts >= newestOutTs) { newestOutTs = ts; newestOutText = shown; }
         } catch (_) { /* previews are optional */ }
       }
-
-      // v3.3 — Check both dedup indexes. Hash match is the fast path
-      // (full-scrape case). Content match handles the incremental case
-      // where the same bubble's hash differs because its position in
-      // the scrape doesn't match its position in storage.
-      let existing = existingByHash.get(m.contentHash);
-      if (!existing) {
-        const fp = bubbleFingerprint({
-          text          : m.text,
-          normalizedText: null,                // recomputed from text
-          imageUrls     : m.imageUrls,
-          messageType   : m.messageType
-        });
-        if (fp !== "E:empty") {
-          existing = existingByContent.get(contentKey(m.senderRole, fp, ts));
-        }
-      }
-
-      if (existing) {
-        // Candidate for timestamp update: we have a new ts, it's different,
-        // and either we stored nothing or what we stored looks like a fallback.
-        if (ts != null) {
-          const stored = existing.currentTsMs;
-          const storedLooksFallback = looksLikeFallbackTs(stored);
-          const newLooksFallback    = looksLikeFallbackTs(ts);
-          const storedMissingOrBad  = stored == null || storedLooksFallback;
-          if (storedMissingOrBad && !newLooksFallback && stored !== ts) {
-            toUpdate.push({
-              docId: existing.docId,
-              patch: {
-                timestamp : admin.firestore.Timestamp.fromMillis(ts),
-                updatedAt : now
-              }
-            });
-          }
-        }
-        continue;   // already exists, don't re-insert
-      }
+      if (j >= 0) continue;   // already stored
 
       // Sanitize listing cards — accept only expected fields, drop anything weird
       const listingCards = Array.isArray(m.listingCards)
@@ -629,15 +559,23 @@ exports.handler = async (event) => {
           })).filter(c => c.listingId && c.listingUrl)
         : [];
 
+      // The scraper's hash counts positions inside this scrape, so a partial
+      // scrape can repeat the id of an older message: never overwrite one.
+      const baseId = `etsy_${String(m.contentHash || require("crypto").createHash("sha1").update(incoming[i].fp).digest("hex")).replace(/\//g, "_")}`;
+      let docId = baseId, k = 2;
+      while (existingIds.has(docId) || usedIds.has(docId)) docId = `${baseId}_${k++}`;
+      usedIds.add(docId);
+
       toInsert.push({
+        docId,
         source            : "etsy",
         direction,
         senderName        : m.senderName || "Unknown",
         senderRole        : m.senderRole || "customer",
-        timestamp         : ts ? admin.firestore.Timestamp.fromMillis(ts) : now,
+        timestamp         : admin.firestore.Timestamp.fromMillis(ts != null ? ts : scrapeTimeMs),
         text              : m.text || "",
         normalizedText    : normalize(m.text),
-        contentHash       : m.contentHash,
+        contentHash       : m.contentHash || null,
         messageType       : m.messageType || "text",     // "text" | "image" | future types
         imageUrls         : Array.isArray(m.imageUrls) ? m.imageUrls : [],
         thumbnailUrls     : Array.isArray(m.thumbnailUrls) ? m.thumbnailUrls : [],
@@ -646,6 +584,8 @@ exports.handler = async (event) => {
         storageMirrorState: Array.isArray(m.imageUrls) && m.imageUrls.length ? "pending" : "none",
         attachmentUrls    : Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [],
         etsyDomSelector   : m.domSelector || null,
+        // Time read off the page vs placed between its neighbours.
+        timestampSource   : (ts != null && ts === incoming[i].tsMs) ? "page" : "placed",
         createdAt         : now
       });
     }
@@ -656,25 +596,23 @@ exports.handler = async (event) => {
       const batch = db.batch();
       const chunk = toInsert.slice(i, i + 400);
       for (const m of chunk) {
-        const mRef = tRef.collection("messages").doc(`etsy_${m.contentHash}`);
-        batch.set(mRef, m, { merge: false });
+        const { docId, ...data } = m;
+        batch.set(tRef.collection("messages").doc(docId), data, { merge: false });
       }
       await batch.commit();
       writtenCount += chunk.length;
     }
+    const updatedCount = toUpdate.length;
 
-    // Write timestamp updates (existing messages with better timestamps now available)
-    let updatedCount = 0;
-    for (let i = 0; i < toUpdate.length; i += 400) {
-      const batch = db.batch();
-      const chunk = toUpdate.slice(i, i + 400);
-      for (const u of chunk) {
-        const mRef = tRef.collection("messages").doc(u.docId);
-        batch.set(mRef, u.patch, { merge: true });
-      }
-      await batch.commit();
-      updatedCount += chunk.length;
-    }
+    // Remove the extra copies. Each is kept in EtsyMail_MessageArchive first,
+    // so nothing is lost if one was a real repeat.
+    let duplicatesRemoved = 0;
+    try { duplicatesRemoved = await removeCopies(tRef, threadId, Array.from(dupIds)); }
+    catch (e) { console.warn("[snapshot] duplicate cleanup skipped:", e.message); }
+    // A partial scrape that shares nothing with what is stored: messages
+    // above the visible part may be missing. The extension answers with a
+    // full scrape.
+    const needsFullScrape = aligned.gap && scrapeMode !== "full";
 
     // ─── 3) Update thread tail timestamps + message count ───
     if (writtenCount > 0) {
@@ -682,8 +620,9 @@ exports.handler = async (event) => {
       tailPatch.messageCount = FV.increment(writtenCount);
       if (newest_inbound_ms != null) {
         tailPatch.lastInboundAt = admin.firestore.Timestamp.fromMillis(newest_inbound_ms);
-        tailPatch.unread = true;
       }
+      // Unread only when a customer message we had not stored arrives.
+      if (toInsert.some(m => m.direction === "inbound")) tailPatch.unread = true;
       if (newest_outbound_ms != null) {
         tailPatch.lastOutboundAt = admin.firestore.Timestamp.fromMillis(newest_outbound_ms);
       }
@@ -812,7 +751,7 @@ exports.handler = async (event) => {
         const orderLink = require("./_etsyMailOrderLink");
         const threadNow = Object.assign({}, tSnap.exists ? tSnap.data() : {}, threadPatch);
         const fresh = toInsert.map(m => ({
-          id        : "etsy_" + m.contentHash,
+          id        : m.docId,
           direction : m.direction,
           senderName: m.senderName,
           tsMs      : m.timestamp && typeof m.timestamp.toMillis === "function" ? m.timestamp.toMillis() : Date.now(),
@@ -876,7 +815,7 @@ exports.handler = async (event) => {
     // EtsyMail_Config/autoPipeline (read by the pipeline itself, cached
     // 15s). Snapshot stays dumb — every new inbound triggers, and the
     // pipeline decides whether to act.
-    const hasNewInbound = writtenCount > 0 && newest_inbound_ms != null;
+    const hasNewInbound = toInsert.some(m => m.direction === "inbound");
     if (hasNewInbound && !etsyLoggedOut) {
       const baseUrl = process.env.URL
                    || process.env.DEPLOY_URL
@@ -921,6 +860,8 @@ exports.handler = async (event) => {
       payload  : {
         newMessageCount      : writtenCount,
         updatedMessageCount  : updatedCount,
+        duplicatesRemoved,
+        needsFullScrape,
         totalMessagesScraped : messages.length,
         threadDomHash        : threadDomHash || null,
         scrapedAt            : scrapedAt || null
@@ -935,7 +876,7 @@ exports.handler = async (event) => {
     for (const m of toInsert) {
       if (!m.imageUrls || !m.imageUrls.length) continue;
       imagesToMirror.push({
-        messageDocId: `etsy_${m.contentHash}`,
+        messageDocId: m.docId,
         imageUrls   : m.imageUrls
       });
     }
@@ -1023,6 +964,8 @@ exports.handler = async (event) => {
       threadExisted,
       newMessages     : writtenCount,
       updatedMessages : updatedCount,
+      duplicatesRemoved,
+      needsFullScrape,
       totalScanned    : messages.length,
       imagesToMirror
     });
