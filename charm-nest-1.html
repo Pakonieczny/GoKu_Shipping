@@ -2055,42 +2055,84 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 /* Custom Orders: the order's own designs (CustomSheet). Plum is custom's colour everywhere: on the card, in the window and
    on the sheets. A card takes .ai / .dxf files dropped on it; its designs sit in a strip under it. */
 .doneRow.cuDropOk{position:relative}
-.cuDropVeil{position:absolute;inset:4px;border-radius:12px;border:2px dashed #8e6bb8;background:rgba(250,247,253,.95);display:grid;place-items:center;opacity:0;pointer-events:none;transition:opacity .15s ease;z-index:3}
-.cuDropVeil span{display:grid;gap:4px;text-align:center}.cuDropVeil b{font:500 18px var(--serif);color:#4d3470}.cuDropVeil i{font:500 12px var(--sans);color:var(--ink70);font-style:normal}
-.doneRow.cuDragOver .cuDropVeil{opacity:1}
+/* files held over Review (Paul, 27 Sep 20:21: "the drag and drop hover states must be beautiful responsive from one list
+   card to another"): every card that takes them wears a calm dashed plum line and a breath of plum; the one under the
+   pointer fills with plum and says what a drop does there, with its order number; the cards that take none step back.
+   The mark hands over from card to card in one short crossfade. */
+.cuDropVeil{position:absolute;inset:5px;z-index:3;border-radius:11px;display:grid;place-content:center;justify-items:center;gap:7px;padding:10px 18px;text-align:center;pointer-events:none;opacity:0;border:1.5px dashed rgba(125,86,168,.5);background:rgba(142,107,184,.04);transition:opacity .2s ease,background-color .22s ease,border-color .22s ease,box-shadow .22s ease}
+.cuDropVeil>*{opacity:0;transform:translateY(5px);transition:opacity .18s ease,transform .28s cubic-bezier(.2,.8,.2,1)}
+body.cuDragging .cuDropOk .cuDropVeil{opacity:1}
+.cuDropOk.cuDragOver .cuDropVeil{background:rgba(249,246,253,.96);border-color:rgba(125,86,168,0);box-shadow:inset 0 0 0 2px #8e6bb8,0 12px 30px rgba(77,52,112,.18)}
+.cuDropOk.cuDragOver .cuDropVeil>*{opacity:1;transform:none}
+.cuDropOk.cuDragOver .cuDropVeil>i{transition-delay:.06s}
+.cuDropVeil b{font:500 19px/1.25 var(--serif);color:#4d3470}
+.cuDropVeil b .mono{font:600 .84em var(--mono);letter-spacing:.02em;white-space:nowrap}
+.cuDropVeil i{font:500 12px/1.4 var(--sans);font-style:normal;color:#6f5c8c;max-width:52ch}
+.cuVeilIc{width:36px;height:36px;border-radius:50%;background:#eee5f8;color:#6a4a93;display:grid;place-items:center;box-shadow:0 0 0 6px rgba(142,107,184,.08)}
+.cuVeilIc svg{width:19px;height:19px}
+.cuDropOk.cuDragOver .cuVeilIc svg{animation:cuBob 1.2s ease-in-out infinite}
+@keyframes cuBob{0%,100%{transform:translateY(-1.5px)}50%{transform:translateY(2px)}}
+.cuDropOk.cuNoFade .cuDropVeil,.cuDropOk.cuNoFade .cuDropVeil>*{transition:none}
 body.cuDragging #dropAll{display:none!important}
-body.cuDragging .doneRow.cuDropOk{outline:1.5px dashed rgba(125,86,168,.55);outline-offset:-4px}
-.btn[aria-disabled="true"]{opacity:.45;cursor:default}
-.cuHint{border:0;background:none;padding:1px 0;font:500 11px var(--sans);color:var(--ink45);cursor:pointer;text-align:left;text-decoration:underline dashed rgba(125,86,168,.45);text-underline-offset:3px}
-.cuHint:hover{color:#5d3f82}
-.cuDesigns{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:var(--card2);border:1px solid var(--line2);animation:aiIn .25s ease-out}
+#rvList>.reviewListRow{transition:opacity .25s ease,filter .25s ease}
+body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturate(.55)}
+/* the note at the foot of the list while files are held where none is taken: where they go, or why that card takes none */
+.cuTip{position:fixed;z-index:160;bottom:22px;left:50%;display:flex;align-items:center;gap:9px;max-width:min(520px,calc(100vw - 32px));padding:9px 15px 9px 13px;border-radius:999px;background:var(--velvet);color:#f3eee4;font:600 12px/1.35 var(--sans);box-shadow:0 12px 30px rgba(20,16,10,.28);pointer-events:none;opacity:0;transform:translate(-50%,10px);transition:opacity .2s ease,transform .28s cubic-bezier(.2,.8,.2,1)}
+.cuTip.on{opacity:1;transform:translate(-50%,0)}
+.cuTip i{flex:none;width:8px;height:8px;border-radius:50%;background:#b597dc;box-shadow:0 0 0 3px rgba(181,151,220,.25)}
+/* a button that cannot act yet stays in its place, greyed, and says why (its title; pressed, what is missing lights up) */
+.btn[aria-disabled="true"]{opacity:.45;cursor:default}.btn.ghost[aria-disabled="true"]:hover{background:transparent}
+/* the card's place for its designs while it has none: a dashed plum slot as tall as the buttons beside it (a click there
+   chooses the files) */
+.cuHint{display:inline-flex;align-items:center;gap:7px;min-height:36px;box-sizing:border-box;padding:6px 12px 6px 10px;border:1.5px dashed rgba(125,86,168,.5);border-radius:9px;background:transparent;font:600 12px/1.3 var(--sans);color:#5d3f82;cursor:pointer;text-align:left;transition:background-color .15s,border-color .15s,color .15s}
+.cuHint svg{flex:none;width:15px;height:15px}
+.cuHint:hover{background:#f8f4fc;border-color:#8e6bb8;color:#4d3470}
+.cuHint:focus-visible,.cuDzThumbs:focus-visible,.cuDesigns .linkBtn:focus-visible,.cuAdd:focus-visible,.cuQty button:focus-visible,.cuRm:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}
+.cuHint.cuNudge,.cuWho input.cuNudge{animation:cuNudge .9s ease-out}
+@keyframes cuNudge{0%{box-shadow:0 0 0 0 rgba(142,107,184,.55);background-color:#f3ecfb}35%{box-shadow:0 0 0 5px rgba(142,107,184,.25)}100%{box-shadow:0 0 0 11px rgba(142,107,184,0)}}
+.cuDesigns{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:var(--card2);border:1px solid var(--line2);animation:aiIn .25s ease-out}
 @container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
 @container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
+@container(max-width:500px){.doneRow .cuDesigns{padding:8px 10px;gap:8px 10px}.doneRow .cuDesigns .linkBtn{margin-left:0}}
 .cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
+.cuDesigns.cuGot{animation:aiIn .25s ease-out,cuGot 1.2s ease-out}
+@keyframes cuGot{0%{box-shadow:0 0 0 0 rgba(142,107,184,.5)}35%{box-shadow:0 0 0 6px rgba(142,107,184,.2);background-color:#f1e9fa}100%{box-shadow:0 0 0 12px rgba(142,107,184,0)}}
 .cuDzLbl{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#6a4a93;white-space:nowrap}
-.cuDzThumbs{display:flex;gap:6px;border:0;background:none;padding:0;cursor:pointer}.cuDzThumbs:disabled{cursor:default}
+.cuDzThumbs{display:flex;gap:6px;border:0;background:none;padding:0;border-radius:9px;cursor:pointer}.cuDzThumbs:disabled{cursor:default}
 .cuDzT{position:relative;width:44px;height:44px;border-radius:8px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;font:700 13px var(--sans);color:#a4432c;transition:transform .15s,border-color .15s}
 .cuDzThumbs:not(:disabled):hover .cuDzT{border-color:rgba(125,86,168,.5)}.cuDzT.bad{background:var(--claySoft)}
+.cuDzT.new{animation:cuPop .55s cubic-bezier(.3,1.5,.5,1) both}
+@keyframes cuPop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
 .cuDzT img{width:100%;height:100%;object-fit:contain;border-radius:7px}
 .cuDzT i{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2px var(--card)}
 .cuDzMore{align-self:center;font:600 11px var(--mono);color:var(--ink45)}
 .cuDzSum{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font:12px var(--sans);color:var(--ink70);min-width:0}
 .cuDzSum b{font-weight:600;color:var(--ink)}.cuDzM{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.cuDzM i{width:8px;height:8px;border-radius:50%}
-.cuDzWhy{color:var(--ink45)}.cuDesigns.ready .cuDzWhy{color:#5d3f82;font-weight:600}
-.cuDesigns .linkBtn{margin-left:auto;border:0;background:none;padding:0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.cuDzWhy{color:var(--ink45)}.cuDesigns.ready .cuDzWhy{color:#5d3f82;font-weight:600}.cuDesigns.todo .cuDzWhy{color:#8a6420;font-weight:600}
+.cuDesigns .linkBtn{margin-left:auto;border:0;background:none;padding:2px 0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer;white-space:nowrap}
 .cuThumb .spin,.cuDzT .spin{width:16px;height:16px;border:2px solid rgba(0,0,0,.12);border-top-color:#7d56a8;border-radius:50%;animation:spin .7s linear infinite}
 .prov .cuTag,.cuTag{color:#5d3f82;font-weight:600}
-/* the designs window: one row per file, its picture, its size, the five metals beside it, how many to cut */
-dialog.cuDlg{width:min(900px,96vw)}
+/* the designs window: one row per file, its picture, its size, the five metals beside it, how many to cut. It stands at a
+   fixed height from the top, so a row added or removed grows or shortens it downwards instead of moving it all. */
+dialog.cuDlg{width:min(900px,96vw);margin-block:max(5vh,20px) auto;transition:box-shadow .2s ease}
+dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgba(0,0,0,.32)}
 .cuDlg .dlgHead{align-items:flex-start}.cuDlgTitle{min-width:0;display:grid;gap:3px}
 .cuDlgTitle .sub{font:12px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cuAll{display:flex;align-items:center;gap:14px;padding:9px 18px;border-bottom:1px solid var(--line2);background:var(--card2)}
-.cuAll>span:first-child{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);margin-right:auto}
+.cuAll[hidden],.cuWho[hidden],.cuAdd[hidden]{display:none}
+.cuAllL{font:600 12px var(--sans);color:var(--ink70);margin-right:auto;white-space:nowrap}
 .cuList{padding:2px 18px;min-height:110px}
-.cuFile{display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 28px;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line2)}
-.cuFile.fresh{animation:aiIn .2s ease-out}
+.cuFile{position:relative;display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 28px;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line2)}
 .cuFile:last-child{border-bottom:0}
+/* a file on its way in: its row waits as a dashed plum slot, and fills as the file lands */
+.cuFile>*{transition:opacity .35s ease}
+.cuFile::before{content:"";position:absolute;z-index:-1;inset:10px 0;border:1.5px dashed rgba(125,86,168,.45);border-radius:12px;background:#faf7fd;opacity:0;pointer-events:none;transition:opacity .35s ease}
+.cuFile.arriving>*{opacity:0}.cuFile.arriving::before{opacity:1}
+.cuFile.cuNudge{animation:cuRowNudge 1.1s ease-out}
+@keyframes cuRowNudge{0%,35%{background-color:#f5eefc}100%{background-color:transparent}}
 .cuThumb{width:84px;height:84px;box-sizing:border-box;border-radius:10px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.cuThumb.cuLanded{animation:cuLand 1s ease-out}
+@keyframes cuLand{0%{box-shadow:0 0 0 0 rgba(142,107,184,.6);border-color:#8e6bb8}45%{box-shadow:0 0 0 7px rgba(142,107,184,.2)}100%{box-shadow:0 0 0 13px rgba(142,107,184,0)}}
 .cuThumb img{width:100%;height:100%;object-fit:contain}.cuThumb .x{font:700 18px var(--sans);color:#a4432c}
 .cuFile.bad .cuThumb{background:var(--claySoft);border-color:#e7c3b7}
 .cuMeta{display:grid;gap:3px;min-width:0}
@@ -2103,15 +2145,29 @@ dialog.cuDlg{width:min(900px,96vw)}
 .cuM.on{background:color-mix(in srgb,var(--mc) 17%,#fff);border-color:var(--mc);color:var(--ink);box-shadow:0 0 0 1px var(--mc) inset}
 .cuM:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}
 .cuQty{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card)}
-.cuQty button{border:0;background:none;width:28px;height:28px;font:600 15px var(--sans);color:var(--ink70);cursor:pointer}.cuQty button:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.cuQty button:disabled{opacity:.35;cursor:default}
+.cuQty button{border:0;background:none;width:30px;height:30px;font:600 15px var(--sans);color:var(--ink70);cursor:pointer}.cuQty button:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.cuQty button:disabled{opacity:.35;cursor:default}
+.cuQty button:focus-visible{outline-offset:-2px}
 .cuQty b{font:600 12px var(--mono);min-width:36px;text-align:center;color:var(--ink)}
-.cuRm{border:0;background:none;width:28px;height:28px;border-radius:50%;color:var(--ink45);font:400 19px/1 var(--sans);cursor:pointer}.cuRm:hover{background:var(--claySoft);color:#a4432c}
-.cuAdd{display:flex;align-items:center;justify-content:center;gap:10px;margin:6px 18px 16px;padding:13px;border:1.5px dashed var(--line);border-radius:12px;color:var(--ink70);font:500 12.5px var(--sans);cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.cuRm{grid-column:-2/-1;border:0;background:none;width:30px;height:30px;border-radius:50%;color:var(--ink45);font:400 19px/1 var(--sans);cursor:pointer}.cuRm:hover{background:var(--claySoft);color:#a4432c}
+.cuAdd{display:flex;align-items:center;justify-content:center;gap:10px;width:calc(100% - 36px);box-sizing:border-box;margin:6px 18px 16px;padding:13px;border:1.5px dashed var(--line);border-radius:12px;background:none;color:var(--ink70);font:500 12.5px var(--sans);cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
 .cuAdd:hover,.cuDlg.dragOver .cuAdd{border-color:#8e6bb8;background:#f8f4fc;color:#4d3470}
-.cuAddIc{width:22px;height:22px;border-radius:50%;background:var(--paper2);display:grid;place-items:center;font:600 15px var(--sans);color:var(--ink70)}
-.cuEmpty{display:grid;place-items:center;gap:5px;padding:30px 0;color:var(--ink45);font:12.5px var(--sans)}.cuEmpty b{font:500 18px var(--serif);color:var(--ink70)}
-.cuSum{font:12px var(--sans);color:var(--ink70);gap:12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
-@media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 28px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuRm{grid-column:3;grid-row:1}}
+.cuDlg.dragOver .cuAdd{border-style:solid}
+.cuAddIc{width:22px;height:22px;border-radius:50%;background:var(--paper2);display:grid;place-items:center;font:600 15px var(--sans);color:var(--ink70);transition:background-color .15s,color .15s}
+.cuDlg.dragOver .cuAddIc{background:#8e6bb8;color:#fff;animation:cuBob 1.2s ease-in-out infinite}
+.cuEmpty{display:grid;place-items:center;gap:5px;padding:30px 0;color:var(--ink45);font:12.5px var(--sans);text-align:center;animation:cuIn .4s .3s ease-out both}.cuEmpty b{font:500 18px var(--serif);color:var(--ink70)}
+@keyframes cuIn{from{opacity:0}to{opacity:1}}
+.cuSum{font:12px var(--sans);color:var(--ink70);gap:4px 12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
+.cuSum .warn{display:inline-block}.cuSum .warn.cuNudge{animation:cuShake .5s ease-in-out}
+@keyframes cuShake{0%,100%{transform:none}20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+.cuWho{display:inline-flex;align-items:center;gap:6px}
+/* a file flying in (on the window's own layer), and the window going back into its card (on the page's) */
+.cuChip{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:7px;max-width:240px;padding:5px 11px 5px 5px;border-radius:9px;background:var(--card);border:1px solid rgba(125,86,168,.45);box-shadow:0 14px 30px rgba(45,30,70,.24);font:600 12px/1.2 var(--sans);color:var(--ink);white-space:nowrap;transform-origin:50% 50%;will-change:transform,opacity}
+.cuChip span{overflow:hidden;text-overflow:ellipsis}
+.cuChip i{flex:none;font:700 9.5px/1 var(--mono);font-style:normal;letter-spacing:.05em;color:#fff;background:#7d56a8;border-radius:5px;padding:5px}
+.cuDlgGhost{position:fixed;overflow:hidden;border-radius:15px;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);will-change:transform,opacity}
+.cuShade{position:fixed;inset:0;background:rgba(20,18,15,.52)}
+@media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 30px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuQty{justify-self:start}.cuFile .cuRm{grid-column:3;grid-row:1}.cuAll{flex-wrap:wrap;gap:8px}.cuAll .cuMetals{justify-content:flex-start}.cuDlg .dlgFoot{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge{animation:none!important}}
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
 #motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
