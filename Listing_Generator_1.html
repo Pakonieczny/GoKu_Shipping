@@ -13005,6 +13005,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
         _batchSweepInfo = resp?.sweep || null;
+        if (resp?.admissionError) _batchSweepInfo = { ...(_batchSweepInfo || {}), lastError: resp.admissionError };
         _batchNextSweepAt = Number(resp?.nextSweepAt || 0) || null;
         _batchRetryLimit = Number(resp?.retryActiveLimit || 30);
         _batchListLoadedAt = Date.now();
@@ -13140,7 +13141,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       for (const b of session.batches) {
         if (!b.retryOf) totalSets += b.setsCount || 0;
         if (b.retryRequested && !b.retryBatchName && !b.collected &&
-            ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))) waitingRetries++;
+            ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))) waitingRetries++;
         if (b.results) {
           totalImagesGen += b.results.succeededCount || 0;
           totalImagesFailed += b.results.failedCount || 0;
@@ -13148,6 +13149,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
 
+      const attention = effective.filter((b) => !b.collected && !b.retryRequested &&
+        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))).length;
       const originals = session.batches.filter((b) => !b.retryOf);
       const partNumbers = new Set();
       let plannedSets = 0;
@@ -13208,9 +13211,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
         : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
-      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
+      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${attention ? ` · ${attention} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
-      if (waitingRetries) rows.push(["Retry admission", `${running} active provider jobs · queued retries start below ${_batchRetryLimit}`]);
+      if (waitingRetries) rows.push(["Queue admission", `${running} active provider jobs · new jobs and retries start below ${_batchRetryLimit}`]);
       if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
       if (oldestActiveAt) rows.push(["Oldest active job", `${_formatDuration(Date.now() - oldestActiveAt)} waiting`]);
       if (lastProviderCheck) rows.push(["Last provider check", new Date(lastProviderCheck).toLocaleTimeString()]);
@@ -13242,7 +13245,6 @@ Click the button again to permanently delete eligible temporary files, or cancel
         <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const attention = Math.max(0, failed - waitingRetries);
       const activity = [running ? `${running} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
         attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
@@ -13546,7 +13548,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (!initial?.ok) throw initial?.error || new Error("Could not load saved jobs");
         }
         const beforeSaved = _lastBatchList.filter((b) => b.collected).length;
-        const pendingChecks = _lastBatchList.filter((b) => !b.collected &&
+        const pendingChecks = _lastBatchList.filter((b) => !b.collected && !b.locallyQueued &&
           !["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_SUCCEEDED"]
             .includes(_normBatchState(b.state)));
         _showBatchCheck(pendingChecks.length
@@ -13590,7 +13592,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const active = _lastBatchList.filter((b) => !b.collected &&
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state))).length;
         const queued = _lastBatchList.filter((b) => !b.collected && b.retryRequested && !b.retryBatchName &&
-          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))).length;
+          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))).length;
         let sweepNote = "";
         if (manual && queued && active < _batchRetryLimit) {
           _showBatchCheck(`Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to fill them…`);

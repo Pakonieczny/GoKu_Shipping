@@ -56,6 +56,8 @@ async function runSweep({ rejectRetry = false } = {}) {
   };
   const result = await vm.runInNewContext(`(async () => { ${source.slice(start, end)} })()`, {
     kind: "batch_sweep", getDb: () => db,
+    admissionControl: () => ({ reconcile: async () => {} }),
+    quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" },
       FieldValue: { serverTimestamp: () => Date.now() } } },

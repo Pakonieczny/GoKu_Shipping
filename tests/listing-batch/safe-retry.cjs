@@ -44,6 +44,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
       copy: async () => { throw new Error("unexpected copy"); } }),
   };
   const sandbox = {
+    quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
     kind: "batch_retry_missing", body: { batchName: "batch_original" },
     BATCHES_COLL: "batches", batchDocIdFromName: (n) => n,
     getDb: () => db, batchApiKey: () => "key",
@@ -156,7 +157,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   assert.equal((await admission(10, true)).submitted, 1, "stops on provider refusal");
 
   const dedupeStart = source.indexOf('      const submitSessionId = String(body?.sessionId || "");');
-  const dedupeEnd = source.indexOf('      // Step A: Run all "copy" tasks', dedupeStart);
+  const dedupeEnd = source.indexOf('      const admission = admissionControl', dedupeStart);
   assert(dedupeStart > 0 && dedupeEnd > dedupeStart, "idempotent original submission exists");
   async function dedupe(path) {
     const old = { sessionId: "sess_live", batchName: "batch_existing",
