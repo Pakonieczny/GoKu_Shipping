@@ -2457,6 +2457,18 @@ exports.handler = async (event) => {
       }
     }
 
+    // Copies of Etsy messages stored by the old time-based dedupe
+    // (_etsyMailMessageCopies.js): one sweep of every thread, a slice per
+    // run with whatever time is left, then a single doc read per run.
+    // Copies are archived to EtsyMail_MessageArchive before removal.
+    if (!op || op === "message_copies") {
+      const budgetMs = Math.min(10000, 26000 - (Date.now() - tStart));
+      if (budgetMs > 3000) {
+        try { results.messageCopies = await require("./_etsyMailMessageCopies").runScheduledSweep({ budgetMs }); }
+        catch (e) { errors.push({ pass: "message_copies", error: e.message }); console.error("messageCopies pass:", e); }
+      }
+    }
+
     // v5.31 — Storage TTL pass. EXPLICITLY OPT-IN (no `!op ||` here).
     // Default invocations of this function (the 5-minute cron and any
     // generic "run all passes" call) skip this pass entirely so an
