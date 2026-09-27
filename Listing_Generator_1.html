@@ -3261,8 +3261,9 @@ html.gs-locked body > *:not(#gate){display:none!important}
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              Submitted batches run at OpenAI for hours, then images auto-save to Firebase. You can close this tab; jobs keep running. The status box below updates every 60 seconds.
+              OpenAI jobs continue if you close this tab. Keep this page open for automatic collection into Firebase; if you close it, reopen Batch mode to collect finished jobs. Status refreshes every 60 seconds while this panel is open.
             </div>
+            <div id="batchRecoveryStatus" role="status" aria-live="polite" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px;"></div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
               <div class="muted" style="font-size: 11px; padding: 6px 0;">Loading…</div>
             </div>
@@ -12264,7 +12265,7 @@ These requirements take precedence over any instruction to duplicate a reference
           }
         }
       } catch (e) {
-        console.warn("[verifyEmpty] Could not list Completed_Listing_Sets:", e);
+        throw new Error(`Cannot verify completed sets: ${e?.message || e}`);
       }
 
       // 2) Get the set of Set_N folders that ACTUALLY EXIST in Storage
@@ -12278,7 +12279,7 @@ These requirements take precedence over any instruction to duplicate a reference
           if (m) existingSet.add(parseInt(m[1], 10));
         }
       } catch (e) {
-        console.warn("[verifyEmpty] Could not list Ready_To_List:", e);
+        throw new Error(`Cannot verify ready sets: ${e?.message || e}`);
       }
 
       // Parallelism for all Storage verification stages below.
@@ -12373,6 +12374,7 @@ These requirements take precedence over any instruction to duplicate a reference
       let approvedCount = 0;
       let phantomCount = 0;
       let partialCount = 0;
+      let blockedCount = 0;
       let done = 0;
 
       const ns = [];
@@ -12438,12 +12440,8 @@ These requirements take precedence over any instruction to duplicate a reference
           }
         } catch (e) {
           console.warn(`[verifyEmpty] Could not check Set_${n}:`, e);
-          // On error, treat as empty (safer to retry than to skip).
-          reallyEmpty.push({
-            setN: n,
-            outputBasePath: `${ROOT}/${category}/Ready_To_List/Set_${n}`,
-            reason: "error",
-          });
+          // Unknown state: never retry a folder we could not inspect.
+          blockedCount++;
         }
         done++;
         if (onProgress) {
@@ -12478,6 +12476,7 @@ These requirements take precedence over any instruction to duplicate a reference
         approvedCount,
         phantomCount,
         partialCount,
+        blockedCount,
         fakeApprovedCount: fakeApprovedEntries.length,
       };
     }
@@ -12514,6 +12513,25 @@ These requirements take precedence over any instruction to duplicate a reference
       if (!batchModelConfig.supportsBatch) {
         _setGenMode("standard");
         alert(`${batchModelConfig.label} uses Standard mode. Select Sunburst before resuming OpenAI batches.`);
+        return;
+      }
+
+      // Existing jobs can still write into an allocated folder. Check the
+      // provider mirror before any new reservation or submission.
+      let liveBatches;
+      try {
+        liveBatches = (await postJson("geminiImageProxy", {
+          kind: "batch_list", limit: 1000, includeCollected: true,
+        })).batches || [];
+      } catch (err) {
+        alert(`Cannot verify current batch jobs: ${err?.message || err}. Retry later.`);
+        return;
+      }
+      if (liveBatches.some((b) => !b.collected && ![
+        "JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED", "JOB_STATE_SUCCEEDED",
+        "BATCH_STATE_FAILED", "BATCH_STATE_EXPIRED", "BATCH_STATE_CANCELLED", "BATCH_STATE_SUCCEEDED",
+      ].includes(b.state))) {
+        alert("Some batch jobs are still running. Wait for them to finish and collect their images before resuming empty folders.");
         return;
       }
 
@@ -12573,7 +12591,11 @@ These requirements take precedence over any instruction to duplicate a reference
             }
           }
         );
-        const empty = verified.empty;
+        const protectedEntries = verified.empty.filter((entry) => entry.reason !== "phantom");
+        const empty = verified.empty.filter((entry) => entry.reason === "phantom");
+        if (protectedEntries.length || verified.blockedCount) {
+          setStatus(`${protectedEntries.length} existing partial/approved set(s) and ${verified.blockedCount || 0} unreadable set(s) protected from overwrite. Only absent folders can be resumed safely.`);
+        }
         const populatedCount = verified.populatedCount;
         const approvedCount = verified.approvedCount;
         const phantomCount = verified.phantomCount;
@@ -12582,11 +12604,11 @@ These requirements take precedence over any instruction to duplicate a reference
 
         if (empty.length === 0) {
           alert(
-            `No empty sets found for ${category} (verified by direct storage scan).\n\n` +
+            `No absent folders can be safely retried for ${category}.\n\n` +
             `Highest allocated: Set_${highestN}\n` +
             `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} slot images): ${populatedCount}\n` +
             `Already approved (skipped): ${approvedCount}\n` +
-            `Empty: 0`
+            `Absent: 0\nProtected partial/approved: ${protectedEntries.length}\nUnreadable: ${verified.blockedCount || 0}`
           );
           return;
         }
@@ -12607,7 +12629,7 @@ These requirements take precedence over any instruction to duplicate a reference
 
         // Detailed breakdown of partial / fake-approved folders so the
         // user can verify exactly what slot indices are present.
-        const partialsList = empty.filter(
+        const partialsList = protectedEntries.filter(
           (e) => e.reason === "partial" || e.reason === "fakeApproved"
         );
         const partialsDetail = partialsList.length > 0
@@ -12653,13 +12675,13 @@ These requirements take precedence over any instruction to duplicate a reference
           `Highest allocated: Set_${highestN}\n` +
           `Populated (≥${MIN_SLOT_IMAGES_FOR_POPULATED} unique slot images): ${populatedCount}\n` +
           `Already approved (skipped): ${approvedCount}\n` +
-          `Empty (to be filled): ${empty.length}` +
+          `Absent folders eligible for retry: ${empty.length}\nProtected partial/approved: ${protectedEntries.length}\nUnreadable: ${verified.blockedCount || 0}` +
           breakdownNote +
           serverMismatchNote +
           partialsDetail +
           consoleHint +
           `\nEmpty Set_Ns: ${setNsDisplay}\n\n` +
-          `Click OK to submit ${empty.length} batch jobs (one per empty set) using ` +
+          `Click OK to submit ${empty.length} batch jobs (one per absent folder) using ` +
           `fresh charms from the pool. Populated and already-approved sets will NOT be touched.`
         );
         if (!proceed) return;
@@ -12939,7 +12961,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
     // Each card shows state and offers Refresh/Collect/Cancel/Delete.
     // ------------------------------------------------------------
     let _batchPollTimer = null;
+    let _batchPollInFlight = false;
     let _lastBatchList = [];
+    let _recoveryInFlight = false;
+    let _retryInFlight = false;
+    const _batchSafeText = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
     async function refreshBatchJobsPanel() {
       const listEl = document.getElementById("batchJobsList");
@@ -12979,6 +13006,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
         listEl.querySelectorAll("[data-session-recover]").forEach((btn) => {
           btn.addEventListener("click", () => _recoverSession(btn.getAttribute("data-session-recover")));
         });
+        listEl.querySelectorAll("[data-session-inspect]").forEach((btn) => {
+          btn.addEventListener("click", () => _inspectSessionFailures(btn.getAttribute("data-session-inspect")));
+        });
+        listEl.querySelectorAll("[data-session-retry]").forEach((btn) => {
+          btn.addEventListener("click", () => _retrySessionMissing(btn.getAttribute("data-session-retry")));
+        });
 
         _startBatchAutoPoll();
       } catch (err) {
@@ -13008,9 +13041,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // render individual batch rows — at 1000+ sets that's a wall of
       // text. The user only needs counts and a button to act on the
       // problem cases.
-      const states = session.batches.map((b) => _normBatchState(b.state));
-      const total = session.batches.length;
-      const finished = session.batches.filter((b) => b.collected).length;
+      const effective = session.batches.filter((b) => !b.retryBatchName);
+      const states = effective.map((b) => _normBatchState(b.state));
+      const total = effective.length;
+      const finished = effective.filter((b) => b.collected).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const running = states.filter((st) => st === "JOB_STATE_RUNNING" || st === "JOB_STATE_PENDING").length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
@@ -13021,7 +13055,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       let totalImagesFailed = 0;
       let totalCharmsMoved = 0;
       for (const b of session.batches) {
-        totalSets += b.setsCount || 0;
+        if (!b.retryOf) totalSets += b.setsCount || 0;
         if (b.results) {
           totalImagesGen += b.results.succeededCount || 0;
           totalImagesFailed += b.results.failedCount || 0;
@@ -13064,7 +13098,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets requested",   String(totalSets)]);
-      rows.push(["Batches",          `${total} total · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      rows.push(["Batches",          `${session.batches.length} submitted (${total} current) · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
       if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
@@ -13085,30 +13119,60 @@ Click the button again to permanently delete eligible temporary files, or cancel
       });
       const recoverableBatches = session.batches.filter((b) => {
         const st = _normBatchState(b.state);
-        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName;
       });
+      const retryable = recoverableBatches.filter((b) => !b.responsesFile &&
+        b.retryStatus !== "submitting");
 
       const buttons = [];
       if (cancellableBatches.length > 0) {
         buttons.push(`<button class="btn btnSmall" data-session-cancel="${session.sessionId}" style="background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5; font-size: 11px;">✕ Cancel all running (${cancellableBatches.length})</button>`);
       }
       if (recoverableBatches.length > 0) {
-        buttons.push(`<button class="btn btnSmall" data-session-recover="${session.sessionId}" style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 11px;">⚠ Recover failed (${recoverableBatches.length})</button>`);
+        buttons.push(`<button class="btn btnSmall" data-session-inspect="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Inspect failure reasons (${recoverableBatches.length})</button>`);
+        if (recoverableBatches.some((b) => b.responsesFile)) {
+          buttons.push(`<button class="btn btnSmall" data-session-recover="${_batchSafeText(session.sessionId)}" style="background: #3d3017; border: 1px solid #7a5e2c; color: #fde68a; font-size: 11px;">Recover available results</button>`);
+        }
+      }
+      if (retryable.length > 0) {
+        buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Retry missing images (${retryable.length})</button>`);
       }
       const buttonsHtml = buttons.length
         ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
         : "";
 
+      const stateDetail = session.batches.map((b) => {
+        const state = _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
+        const name = _batchSafeText(b.displayName || b.batchName || "Unnamed batch");
+        const updated = b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "No update yet";
+        const counts = b.batchStats || b.requestCounts || {};
+        const done = counts.successfulRequestCount ?? counts.completed ?? counts.completed_count ?? 0;
+        const failures = counts.failedRequestCount ?? counts.failed ?? counts.failed_count ?? 0;
+        const results = b.results || {};
+        const message = b.providerError || b.error?.message || b.error || b.statusError ||
+          b.retryError || results.failures?.[0]?.error || "";
+        const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
+        return `<div style="padding:6px 0; border-top:1px solid var(--line); overflow-wrap:anywhere;">
+          <strong>${name}</strong> · ${_batchSafeText(state)}${b.collected ? " · saved" : ""}${b.retryBatchName ? " · retried" : ""}
+          · ${_batchSafeText(String(done))} complete · ${_batchSafeText(String(failures))} failed
+          <div class="muted">Updated ${_batchSafeText(updated)} · ${_batchSafeText(b.batchName || "")}</div>${detail}
+        </div>`;
+      }).join("");
+
       return `
         <div style="background: var(--card-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px; margin-bottom: 10px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 6px;">
-            <div style="font-size: 12px; font-weight: 600;">${sessionLabel}</div>
+            <div style="font-size: 12px; font-weight: 600;">${_batchSafeText(sessionLabel)}</div>
             <div style="font-size: 12px; font-weight: 700; color: ${headlineColor};">${headline}</div>
           </div>
           <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
             ${statsHtml}
           </div>
           ${buttonsHtml}
+          <details style="margin-top:10px; font-size:11px;">
+            <summary style="cursor:pointer; color:var(--text-2);">Details for ${total} batches · individual states, times and errors</summary>
+            <div style="max-height:360px; overflow:auto; margin-top:6px;">${stateDetail}</div>
+          </details>
         </div>
       `;
     }
@@ -13132,20 +13196,112 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
     // Recover (force-collect partial results) for every failed/expired
     // batch in a session that hasn't been collected yet.
+    async function _retrySessionMissing(sessionId) {
+      if (_retryInFlight) return;
+      const targets = _lastBatchList.filter((b) =>
+        (b.sessionId || "(unsessioned)") === sessionId &&
+        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)) &&
+        !b.collected && !b.responsesFile && !b.retryBatchName &&
+        b.retryStatus !== "submitting");
+      if (!targets.length) return;
+      if (!confirm(`Retry missing images for ${targets.length} failed sets?\n\nThe server reuses each set's original prompts and charm, skips every saved image, and blocks approved sets. Keep this page open while the retry jobs are submitted. Once submitted, the scheduled collector can finish without this tab.`)) return;
+      _retryInFlight = true;
+      const status = document.getElementById("batchRecoveryStatus");
+      const btn = document.querySelector("[data-session-retry]");
+      if (btn) btn.disabled = true;
+      let submitted = 0, complete = 0, skipped = 0;
+      const errors = [];
+      try {
+        for (const [i, b] of targets.entries()) {
+          if (status) status.textContent = `Submitting safe retries ${i + 1}/${targets.length} · ${submitted} submitted · ${complete} already complete · ${skipped} protected`;
+          try {
+            const r = await postJson("geminiImageProxy", { kind: "batch_retry_missing", batchName: b.batchName });
+            if (r.complete) complete++;
+            else if (r.batchName || r.submitting) submitted++;
+            else skipped++;
+          } catch (err) {
+            const msg = String(err?.message || err);
+            if (/already in Completed_Listing_Sets/i.test(msg)) skipped++;
+            else errors.push(`${b.displayName || b.batchName}: ${msg}`);
+          }
+        }
+      } finally {
+        _retryInFlight = false;
+        if (status) status.innerHTML = `<strong>Retry submission finished:</strong> ${submitted} submitted or already running · ${complete} already complete · ${skipped} protected · ${errors.length} errors.` +
+          (errors.length ? `<details><summary>Show retry errors</summary><div style="white-space:pre-wrap; max-height:180px; overflow:auto;">${_batchSafeText(errors.join("\n"))}</div></details>` : "");
+        try { await refreshBatchJobsPanel(); } catch (err) { console.warn(err); }
+      }
+    }
+
+    async function _inspectSessionFailures(sessionId) {
+      if (_recoveryInFlight) return;
+      const targets = _lastBatchList.filter((b) =>
+        (b.sessionId || "(unsessioned)") === sessionId &&
+        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)));
+      if (!targets.length) return;
+      _recoveryInFlight = true;
+      const status = document.getElementById("batchRecoveryStatus");
+      let checked = 0;
+      const errors = [];
+      try {
+        let index = 0;
+        await Promise.all(Array.from({ length: Math.min(4, targets.length) }, async () => {
+          while (index < targets.length) {
+            const b = targets[index++];
+            try { await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName }); }
+            catch (err) { errors.push(`${b.batchName}: ${err?.message || err}`); }
+            checked++;
+            if (status) status.textContent = `Checking provider failure reasons ${checked}/${targets.length}…`;
+          }
+        }));
+        await refreshBatchJobsPanel();
+        if (status) status.textContent = `Checked ${checked} failed jobs. Expand submission details to see provider reasons.` +
+          (errors.length ? ` ${errors.length} status request(s) failed: ${errors.slice(0, 3).join("; ")}` : "");
+      } finally { _recoveryInFlight = false; }
+    }
+
     async function _recoverSession(sessionId) {
+      if (_recoveryInFlight) return;
       const targets = _lastBatchList.filter((b) => {
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
         const st = _normBatchState(b.state);
-        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected;
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !!b.responsesFile;
       });
-      if (targets.length === 0) return;
-      const ok = confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis pulls whatever images the provider managed to finish before the failure. Successful images land in Firebase; failed slots stay empty.`);
-      if (!ok) return;
-      for (const b of targets) {
-        try { await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName, force: true }); }
-        catch (e) { console.warn(`recover ${b.batchName} failed:`, e?.message || e); }
+      if (!targets.length) return;
+      if (!confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis collects existing provider outputs only. It will not regenerate missing images or overwrite saved sets.`)) return;
+      _recoveryInFlight = true;
+      const status = document.getElementById("batchRecoveryStatus");
+      const buttons = [...document.querySelectorAll("[data-session-recover]")];
+      buttons.forEach((btn) => { btn.disabled = true; });
+      let recovered = 0, noOutput = 0;
+      const errors = [];
+      try {
+        for (const [index, b] of targets.entries()) {
+          if (status) status.textContent = `Checking failed batch ${index + 1}/${targets.length} · ${recovered} recovered · ${noOutput} with no result file`;
+          try {
+            const result = await postJson("geminiImageProxy", {
+              kind: "batch_collect", batchName: b.batchName, force: true,
+            });
+            if (result?.collected || result?.alreadyCollected) recovered++;
+            else errors.push(`${b.displayName || b.batchName}: collection did not confirm a save`);
+          } catch (err) {
+            const msg = err?.message || String(err);
+            if (/no (?:provider )?result file/i.test(msg)) noOutput++;
+            else errors.push(`${b.displayName || b.batchName}: ${msg}`);
+          }
+        }
+      } finally {
+        _recoveryInFlight = false;
+        if (status) {
+          status.innerHTML = `<strong>Recovery checked ${targets.length} batches:</strong> ${recovered} collected; ${noOutput} have no provider result file; ${errors.length} other error(s). Saved images were preserved.` +
+            (errors.length ? `<details><summary>Show recovery errors</summary><div style="max-height:180px; overflow:auto; white-space:pre-wrap;">${_batchSafeText(errors.join("\n"))}</div></details>` : "") +
+            (noOutput ? `<div>Those ${noOutput} batches need a safe retry after the provider failure is resolved.</div>` : "");
+        }
+        try { await refreshBatchJobsPanel(); } catch (err) {
+          if (status) status.textContent += ` Status refresh failed: ${err?.message || err}`;
+        }
+        buttons.forEach((btn) => { btn.disabled = false; });
       }
-      await refreshBatchJobsPanel();
     }
 
     async function pollOneBatch(batchName) {
@@ -13231,6 +13387,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
           : x;
       };
       _batchPollTimer = setInterval(async () => {
+        if (_batchPollInFlight) return;
+        _batchPollInFlight = true;
+        try {
         // Stop polling once every visible batch is final (collected,
         // failed, cancelled, expired). Auto-collect-pending batches
         // remain "open" until the collect call updates their record.
@@ -13254,17 +13413,21 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const charmVisible = !!(charmPanel && charmPanel.style.display !== "none");
         if (!genVisible && !charmVisible) return;
 
-        // Step 1: refresh state from the image provider for any non-final batch.
-        for (const b of _lastBatchList) {
-          if (b.collected) continue;
+        // Step 1: bound status traffic and wait for all checks before the
+        // next panel refresh. Never launch another cycle over a slow one.
+        const pendingChecks = _lastBatchList.filter((b) => {
+          if (b.collected) return false;
           const st = _normState(b.state);
-          const isFinal = st === "JOB_STATE_FAILED" || st === "JOB_STATE_CANCELLED" ||
-                          st === "JOB_STATE_EXPIRED" || st === "JOB_STATE_SUCCEEDED";
-          if (isFinal) continue;
-          try {
-            await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName });
-          } catch (_) { /* swallow */ }
-        }
+          return !["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_SUCCEEDED"].includes(st);
+        });
+        let checkIndex = 0;
+        await Promise.all(Array.from({ length: Math.min(4, pendingChecks.length) }, async () => {
+          while (checkIndex < pendingChecks.length) {
+            const b = pendingChecks[checkIndex++];
+            try { await postJson("geminiImageProxy", { kind: "batch_status", batchName: b.batchName }); }
+            catch (err) { console.warn(`Status check ${b.batchName} failed:`, err?.message || err); }
+          }
+        }));
 
         // Step 2: AUTO-COLLECT — for every batch that has flipped to
         // SUCCEEDED but not yet collected, kick off a background
@@ -13276,11 +13439,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (b.collected) continue;
           const st = _normState(b.state);
           if (st !== "JOB_STATE_SUCCEEDED") continue;
-          if (_autoCollectsInFlight.has(b.batchName)) continue;
+          if (_autoCollectsInFlight.has(b.batchName) || _autoCollectsInFlight.size >= 3) continue;
           _autoCollectsInFlight.add(b.batchName);
           (async () => {
             try {
-              await postJson("geminiImageProxy", { kind: "batch_collect", batchName: b.batchName });
+              await postJson("geminiImageProxy-background", { kind: "batch_collect", batchName: b.batchName });
             } catch (e) {
               console.warn(`[auto-collect] ${b.batchName} failed:`, e?.message || e);
             } finally {
@@ -13291,6 +13454,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
         if (genVisible) await refreshBatchJobsPanel();
         if (charmVisible && typeof refreshCharmBatchPanel === "function") await refreshCharmBatchPanel();
+        } catch (err) {
+          console.warn("Batch polling failed:", err?.message || err);
+        } finally {
+          _batchPollInFlight = false;
+        }
       }, BATCH_POLL_MS);
     }
 
@@ -18192,4 +18360,3 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
 </body>
 </html>
-

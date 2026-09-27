@@ -1,0 +1,96 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+
+const source = fs.readFileSync("netlify/functions/geminiImageProxy-background.js", "utf8");
+const start = source.indexOf('    if (kind === "batch_retry_missing") {');
+const end = source.indexOf('    if (kind === "batch_status") {', start);
+assert(start > 0 && end > start, "retry handler exists");
+const retryBranch = source.slice(start, end);
+
+const tasks = Array.from({ length: 6 }, (_, slotIndex) => ({
+  type: slotIndex === 5 ? "copy" : "edits",
+  slotIndex,
+  prompt: `Original prompt ${slotIndex}`,
+  input_storage_path: "reference.png",
+  input_charm_storage_path: "original-charm.png",
+  source_storage_path: "size-guide.png",
+}));
+const base = "listing-generator-1/Beady_Necklace/Ready_To_List/Set_123";
+
+async function scenario({ approved = false, present = [1, 3, 6], responseFile = null,
+                          retryBatchName = null } = {}) {
+  const record = { batchName: "batch_original", state: "JOB_STATE_FAILED", model: "gpt-image-2.5-sunburst",
+    imageSize: "2K", sessionId: "session-1", collected: false, retryBatchName,
+    sets: [{ category: "Beady_Necklace", setN: 123, outputBasePath: base, tasks }] };
+  const writes = [], submitted = [];
+  const ref = {
+    get: async () => ({ exists: true, data: () => record }),
+    set: async (data) => { writes.push(data); Object.assign(record, data); },
+  };
+  const db = {
+    collection: () => ({ doc: () => ref }),
+    runTransaction: async (fn) => fn({ get: ref.get, set: (_ref, data) => {
+      writes.push(data); Object.assign(record, data);
+    } }),
+  };
+  const bucket = {
+    getFiles: async ({ prefix }) => [prefix.includes("Completed_Listing_Sets")
+      ? (approved ? [{ name: prefix + "Slot_1.png" }] : [])
+      : present.map((n) => ({ name: `${base}/Slot_${n}.png` }))],
+    file: (path) => ({ exists: async () => [present.includes(Number(/Slot_(\d+)/.exec(path)?.[1]))],
+      copy: async () => { throw new Error("unexpected copy"); } }),
+  };
+  const sandbox = {
+    kind: "batch_retry_missing", body: { batchName: "batch_original" },
+    BATCHES_COLL: "batches", batchDocIdFromName: (n) => n,
+    getDb: () => db, batchApiKey: () => "key",
+    getGeminiBatchJob: async () => ({ state: "JOB_STATE_FAILED",
+      response: { responsesFile: responseFile } }),
+    batchFailureDetails: () => null,
+    assertAllowedOutputBase: (path) => assert.equal(path, base),
+    admin: { storage: () => ({ bucket: () => bucket }),
+      firestore: { FieldValue: { serverTimestamp: () => ({ toMillis: () => Date.now() }) } } },
+    module: { exports: { handler: async (event) => {
+      submitted.push(JSON.parse(event.body));
+      return { statusCode: 200, body: JSON.stringify({ ok: true, batchName: "batch_retry" }) };
+    } } },
+    json: (statusCode, value) => ({ statusCode, ...value }),
+  };
+  const result = await vm.runInNewContext(`(async () => { ${retryBranch} })()`, sandbox);
+  return { result, writes, submitted, record };
+}
+
+(async () => {
+  const retry = await scenario();
+  assert.equal(retry.result.statusCode, 200);
+  assert.equal(retry.result.batchName, "batch_retry");
+  assert.deepEqual(Array.from(retry.submitted[0].sets[0].tasks, (t) => t.slotIndex), [1, 3, 4]);
+  assert.equal(retry.submitted[0].sets[0].allTasks.length, 6);
+  assert.equal(retry.submitted[0].retryOf, "batch_original");
+  assert.equal(retry.record.retryBatchName, "batch_retry");
+
+  const approval = await scenario({ approved: true });
+  assert.equal(approval.result.statusCode, 409);
+  assert.equal(approval.submitted.length, 0);
+
+  const recoverFirst = await scenario({ responseFile: "file-errors" });
+  assert.equal(recoverFirst.result.statusCode, 409);
+  assert.equal(recoverFirst.submitted.length, 0);
+
+  const repeated = await scenario({ retryBatchName: "batch_retry_existing" });
+  assert.equal(repeated.result.batchName, "batch_retry_existing");
+  assert.equal(repeated.submitted.length, 0);
+
+  const complete = await scenario({ present: [1, 2, 3, 4, 5, 6] });
+  assert.equal(complete.result.complete, true);
+  assert.equal(complete.submitted.length, 0);
+
+  const helperStart = source.indexOf("function batchFailureDetails(data) {");
+  const helperEnd = source.indexOf("\n}", helperStart) + 2;
+  const describe = vm.runInNewContext(`${source.slice(helperStart, helperEnd)}; batchFailureDetails`, {});
+  assert.equal(describe({ errors: { data: [{ code: "invalid_request", message: "Invalid image edit" }] } }), "Invalid image edit");
+  console.log("Listing batch selective retry: 6 scenarios passed");
+})().catch((err) => { console.error(err); process.exitCode = 1; });
