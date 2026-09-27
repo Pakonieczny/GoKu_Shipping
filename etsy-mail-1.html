@@ -1216,6 +1216,51 @@
       font-size: 12px; line-height: 1.45;
     }
     .em-attach-claim-warn .material-icons { font-size: 18px; color: #b8860b; flex: 0 0 auto; }
+    /* New AI text: a fine green outline on every letter, only until the
+     * reader clicks into the box. Kept faint so it never hurts reading. */
+    #emDraftText, #mComposerTextarea { transition: text-shadow .5s ease; }
+    #emDraftText.em-ai-fresh, #mComposerTextarea.em-ai-fresh {
+      text-shadow: 0 0 1px rgba(46,160,67,.5), 0 0 2.5px rgba(46,160,67,.22);
+    }
+    /* Parallel AI replies: one line per list card while a reply is being
+     * written (spinner, elapsed time), then a green check with what the
+     * AI did. Purple matches the AI Draft button. */
+    .em-ai-run {
+      display: flex; align-items: center; gap: 6px; min-width: 0;
+      font-size: 11.5px; line-height: 1.35; padding: 3px 8px 3px 7px;
+      border-radius: 6px; position: relative; overflow: hidden;
+      transition: opacity .6s ease;
+    }
+    .em-list-item > .em-ai-run { grid-column: 1 / -1; margin-top: 2px; }
+    .em-ai-run .em-ai-run-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .em-ai-run .em-ai-run-text b { font-weight: 600; }
+    .em-ai-run .em-ai-run-sec { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: .7; font-size: 11px; }
+    .em-ai-run .material-icons { font-size: 15px; flex: 0 0 auto; }
+    .em-ai-run.is-running { background: #f6f1ff; color: #6639ba; }
+    .em-ai-run.is-running::after {
+      content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 35%;
+      background: linear-gradient(90deg, transparent, #8250df, transparent);
+      animation: emAiRunSweep 1.8s ease-in-out infinite;
+    }
+    .em-ai-run-spin {
+      flex: 0 0 auto; width: 11px; height: 11px; border-radius: 50%;
+      border: 2px solid rgba(130,80,223,.22); border-top-color: #8250df;
+      animation: emAiRunSpin .9s linear infinite;
+    }
+    .em-ai-run.is-done { background: #eaf7ee; color: #1a7f37; }
+    .em-ai-run.is-done .material-icons { color: #1f883d; }
+    .em-ai-run.is-failed { background: #fff0ee; color: #a40e26; }
+    .em-ai-run.is-failed .material-icons { color: #cf222e; }
+    .em-ai-run.is-fresh { animation: emAiRunIn .45s cubic-bezier(.2,.9,.3,1.2); }
+    .em-ai-run.is-leaving { opacity: 0; }
+    .m-thread-text > .em-ai-run { font-size: 12px; padding: 2px 8px 2px 6px; margin: 1px 0; }
+    @keyframes emAiRunSpin { to { transform: rotate(360deg); } }
+    @keyframes emAiRunSweep { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+    @keyframes emAiRunIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      .em-ai-run.is-running::after, .em-ai-run.is-fresh { animation: none; }
+      .em-ai-run-spin { animation-duration: 2.4s; }
+    }
     .em-compose .em-translate-bar select.em-translate-lang {
       font-size: 11px; padding: 2px 4px; border: 1px solid #d0d7de;
       border-radius: 3px; background: #fff;
@@ -12925,6 +12970,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             <div class="em-time">${esc(fmtTime(pickThreadInteractionMs(t)))}</div>
             <div class="em-snippet">${esc(smartSnippet(t))}</div>
             <div class="em-badges em-smart-badges"${rest.length ? ` title="${esc("Also: " + rest.map(k => k.label).join(", "))}"` : ""}>${badges}</div>
+            ${aiRunPillHtml(t.id)}
           </div>`;
       });
       if (start + THREADS_PER_PAGE >= total) html += smartMoreHtml(view, false);
@@ -13149,7 +13195,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                   </button>
                   <span class="m-thread-time">${mEsc(mFmtThreadTime(pickThreadInteractionMs(t)))}</span>
                 </div>
-                ${snippet ? `<div class="m-thread-subject">${mEsc(snippet)}</div>` : ""}
+                ${aiRunPillHtml(t.id) || (snippet ? `<div class="m-thread-subject">${mEsc(snippet)}</div>` : "")}
                 ${(tag || chips.length) ? `<div class="m-smart-chips">${tag}${chips.map(smartChipHtml).join("")}</div>` : ""}
               </div>
             </div>
@@ -14503,6 +14549,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             <div class="em-time">${esc(when)}</div>
             <div class="em-snippet">${esc(snippet)}</div>
             <div class="em-badges">${badges.join("")}</div>
+            ${aiRunPillHtml(t.id)}
           </div>`;
       }).join("");
 
@@ -14889,6 +14936,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
 
     async function openThread(threadId) {
+      aiTextDismissFresh();
       // v5.37 — CRITICAL FIX. Clear state.messages whenever the operator
       // switches to a different thread, so leftover messages from the
       // previously-open thread can't leak into the new thread's view.
@@ -15187,7 +15235,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
               }
               // Re-render the right pane so the listing status card,
               // synopsis, and Thread details all reflect the new state.
-              renderDetail({ ...cur, id: threadId });
+              renderDetailKeepScroll({ ...cur, id: threadId });
             }
           }
         } catch (e) {
@@ -15458,6 +15506,35 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const el = $("emAutoTimerBanner");
       if (el) el.style.display = "none";
     }
+
+    // Re-render the open conversation after a background change (a draft
+    // landed, a status moved) without jumping the reader back to the top:
+    // the scroll positions are put back after the rebuild and after the
+    // messages repaint, unless the reader scrolls in the meantime.
+    function renderDetailKeepScroll(thread) {
+      const SCROLLERS = "#emDetail .em-detail-body > div, #emThreadBox";
+      const before = Array.from(document.querySelectorAll(SCROLLERS)).map(el => el.scrollTop);
+      renderDetail(thread);
+      let userMoved = false;
+      const stop = () => { userMoved = true; };
+      ["wheel", "touchstart", "keydown", "mousedown"].forEach(ev => window.addEventListener(ev, stop, { once: true, passive: true, capture: true }));
+      const restore = () => {
+        if (userMoved) return;
+        Array.from(document.querySelectorAll(SCROLLERS)).forEach((el, i) => {
+          if (before[i] != null && before[i] > 0 && Math.abs(el.scrollTop - before[i]) > 2) el.scrollTop = before[i];
+        });
+      };
+      restore();
+      requestAnimationFrame(restore);
+      setTimeout(restore, 300);
+      setTimeout(restore, 900);
+      setTimeout(() => ["wheel", "touchstart", "keydown", "mousedown"].forEach(ev => window.removeEventListener(ev, stop, { capture: true })), 1000);
+    }
+
+    window.emRerenderOpenThread = () => {
+      const t = (state.threads || []).find(x => x && x.id === state.selectedId);
+      if (t) renderDetailKeepScroll(t);
+    };
 
     function renderDetail(thread) {
       if (!thread) {
@@ -16227,6 +16304,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // re-generate. If a draft exists, populate the textarea with its text
       // and render the AI-draft card.
       hydrateAiDraft(t);
+      aiRunOpened(t.id);
 
       // M3: populate customer panel
       hydrateCustomerPanel(t);
@@ -16706,6 +16784,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (typeof window.mNotifyDraftChanged === "function") window.mNotifyDraftChanged();
       }
 
+      if (isHydratableState && text) aiTextMarkFresh(threadId, text);
       renderAiDraftCard(draft);
       if (isHydratableState && typeof hydrateComposerFromDraft === "function") {
         hydrateComposerFromDraft(threadId, draft);
@@ -16734,7 +16813,304 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     //   because it made the button look broken: operators clicked AI Draft
     //   and saw the same stale reply come back. Internal callers should use
     //   a different helper if they ever need cache/dedupe semantics.
+    /* ── Parallel AI replies ──────────────────────────────────────────
+     * One run per conversation, any number of conversations at once. The
+     * list card shows a spinner line while a run writes, then a green
+     * check line with what the AI did. The check stays until the
+     * conversation is opened, then fades a few seconds later. Runs are
+     * kept in localStorage so a reload keeps showing them and picks up
+     * the saved draft when it lands. Zero Etsy calls. */
+    function aiRunMap() {
+      if (window.__emAiRuns) return window.__emAiRuns;
+      const m = new Map();
+      try {
+        const raw = JSON.parse(localStorage.getItem("etsymail_ai_runs_v1") || "[]");
+        const now = Date.now();
+        for (const [id, r] of (Array.isArray(raw) ? raw : [])) {
+          if (!id || !r || !r.startedAt) continue;
+          if (r.status === "running" && now - r.startedAt > 6 * 60000) continue;
+          if (r.status !== "running" && now - (r.doneAt || r.startedAt) > 24 * 3600000) continue;
+          if (r.status !== "running" && r.seenAt) continue;
+          if (r.status === "running") r.recovering = true;
+          m.set(id, r);
+        }
+      } catch (_) {}
+      window.__emAiRuns = m;
+      for (const [id, r] of m) if (r.recovering) aiRunRecover(id, r);
+      aiRunEnsureTicker();
+      return m;
+    }
+    function aiRunsSave() {
+      try {
+        localStorage.setItem("etsymail_ai_runs_v1", JSON.stringify([...aiRunMap()].map(([id, r]) =>
+          [id, { status: r.status, mode: r.mode, startedAt: r.startedAt, doneAt: r.doneAt || null,
+                 seenAt: r.seenAt || null, serverRunId: r.serverRunId || null, info: r.info || null }])));
+      } catch (_) {}
+    }
+    function aiRunIsRunning(threadId) {
+      const r = aiRunMap().get(threadId);
+      return !!(r && r.status === "running" && !r.recovering);
+    }
+    function aiRunName(threadId) {
+      const t = (state.threads || []).find(x => x && x.id === threadId);
+      return (t && (t.customerName || t.etsyUsername)) || "another conversation";
+    }
+    function aiRunStart(threadId, mode) {
+      const run = { status: "running", mode, startedAt: Date.now() };
+      aiRunMap().set(threadId, run);
+      aiRunsSave(); aiRunsRepaint(); aiRunEnsureTicker();
+      return run;
+    }
+    function aiRunSetServerId(threadId, run, id) {
+      if (aiRunMap().get(threadId) !== run) return;
+      run.serverRunId = id;
+      aiRunsSave();
+    }
+    function aiRunInfo(d, mode, ms) {
+      d = d || {};
+      const names = new Set((d.toolCalls || d.aiToolCalls || []).map(c => c && c.name));
+      const did = [];
+      if (names.has("lookup_order_tracking") || names.has("generate_tracking_image")) did.push("tracking checked");
+      else if (names.has("lookup_order_details")) did.push("order checked");
+      if (names.has("search_shop_listings") || names.has("lookup_listing_by_url")) did.push("listings matched");
+      if (names.has("get_collateral")) did.push("line sheet added");
+      if (names.has("issue_discount_code") || d.aiDiscountCode) did.push("10% code added");
+      const words = String(d.text || "").trim().split(/\s+/).filter(Boolean).length;
+      const conf = typeof d.aiConfidence === "number" ? d.aiConfidence : (typeof d.confidence === "number" ? d.confidence : null);
+      const review = d.aiEscalationRequested === true || d.readyForHumanApproval === true;
+      const head = mode === "revise" ? "Reply revised" : mode === "follow_up" ? "Follow-up ready"
+                 : d.generatedBySalesAgent ? "Sales reply ready" : "Reply ready";
+      const detail = [did.length ? did.join(", ") : (words ? words + " words" : ""),
+                      review ? "needs your review" : (conf != null ? Math.round(conf * 100) + "% sure" : "")]
+        .filter(Boolean).join(" · ");
+      return { head, detail, secs: Math.max(1, Math.round((ms || 0) / 1000)),
+               title: d.activeQuestion ? "Answers: " + d.activeQuestion : head };
+    }
+    function aiRunFinish(threadId, run, data, mode) {
+      if (aiRunMap().get(threadId) !== run) return;
+      run.status = "done";
+      run.recovering = false;
+      run.doneAt = Date.now();
+      run.info = aiRunInfo(data, mode || run.mode, run.doneAt - run.startedAt);
+      if (aiRunViewing(threadId)) run.seenAt = run.doneAt;
+      aiRunsSave(); aiRunsRepaint(); aiRunEnsureTicker();
+    }
+    function aiRunFail(threadId, run, msg) {
+      if (aiRunMap().get(threadId) !== run) return;
+      run.status = "failed";
+      run.recovering = false;
+      run.doneAt = Date.now();
+      run.info = { head: "AI reply failed", detail: "open to try again", secs: Math.max(1, Math.round((run.doneAt - run.startedAt) / 1000)),
+                   title: String(msg || "The AI reply failed") };
+      if (aiRunViewing(threadId)) run.seenAt = run.doneAt;
+      aiRunsSave(); aiRunsRepaint(); aiRunEnsureTicker();
+    }
+    // A run that ends without a result (early return) leaves no line.
+    function aiRunSettle(threadId, run) {
+      if (aiRunMap().get(threadId) === run && run.status === "running") {
+        aiRunMap().delete(threadId);
+        aiRunsSave(); aiRunsRepaint();
+      }
+    }
+    // Opening a conversation: its check has been seen, and the AI buttons
+    // show that conversation's own run, not another one's.
+    function aiRunOpened(threadId) {
+      const r = aiRunMap().get(threadId);
+      if (r && r.status === "running") paintAiRunBusy(threadId);
+      else paintAiRunIdle();
+      // Owner's rule: the check goes away on the first click into the
+      // conversation.
+      if (r && r.status !== "running" && !r.seenAt) {
+        aiRunMap().delete(threadId);
+        aiRunsSave(); aiRunsRepaint();
+      }
+    }
+    // After a reload the request is gone, but the server still saves the
+    // draft; watch the draft document for it.
+    async function aiRunRecover(threadId, run) {
+      while (aiRunMap().get(threadId) === run && run.status === "running") {
+        if (Date.now() - run.startedAt > 6 * 60000) {
+          aiRunFail(threadId, run, "No reply arrived after the page reloaded. Press AI Draft again.");
+          return;
+        }
+        try {
+          const d = await readManualSalesDraft(threadId);
+          if (d && ((run.serverRunId && d.manualRunId === run.serverRunId)
+                    || manualAiDraftUpdatedMs(d) > run.startedAt)) {
+            aiRunFinish(threadId, run, d, run.mode);
+            if (state.selectedId === threadId) {
+              const t = (state.threads || []).find(x => x && x.id === threadId);
+              if (t) hydrateAiDraft(t);
+            }
+            return;
+          }
+        } catch (_) {}
+        await new Promise(res => setTimeout(res, 4000));
+      }
+    }
+    // New AI text: the first time a reply's text is shown, every letter
+    // gets a faint green outline until the reader clicks into the box,
+    // types, or leaves the conversation. Seen replies are remembered per
+    // browser, so coming back shows plain text.
+    function aiTextKey(threadId, text) {
+      let h = 0; const t = String(text || "").trim();
+      for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+      return threadId + ":" + h;
+    }
+    function aiTextMarkFresh(threadId, text) {
+      if (!text || !String(text).trim()) return;
+      const key = aiTextKey(threadId, text);
+      let seen = {};
+      try { seen = JSON.parse(localStorage.getItem("etsymail_ai_seen_text_v1") || "{}") || {}; } catch (_) {}
+      const showing = window.__emAiFresh && window.__emAiFresh.key === key;
+      if (seen[key] && !showing) return;
+      if (!seen[key]) {
+        seen[key] = Date.now();
+        const keys = Object.keys(seen);
+        if (keys.length > 400) keys.sort((a, b) => seen[a] - seen[b]).slice(0, keys.length - 400).forEach(k => delete seen[k]);
+        try { localStorage.setItem("etsymail_ai_seen_text_v1", JSON.stringify(seen)); } catch (_) {}
+      }
+      window.__emAiFresh = { key, threadId, text: String(text).trim() };
+      setTimeout(aiTextApplyFresh, 0);
+      setTimeout(aiTextApplyFresh, 250);
+    }
+    function aiTextApplyFresh() {
+      const f = window.__emAiFresh;
+      if (!f || state.selectedId !== f.threadId) return;
+      ["emDraftText", "mComposerTextarea"].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || (el.value || "").trim() !== f.text) return;
+        el.classList.add("em-ai-fresh");
+        if (!el.__emAiFreshWired) {
+          el.__emAiFreshWired = true;
+          ["focus", "pointerdown", "input"].forEach(ev => el.addEventListener(ev, aiTextDismissFresh));
+        }
+      });
+    }
+    function aiTextDismissFresh() {
+      window.__emAiFresh = null;
+      ["emDraftText", "mComposerTextarea"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("em-ai-fresh");
+      });
+    }
+
+    // On the phone the list and the conversation are separate screens:
+    // back on the list, the last conversation is still "selected".
+    function aiRunViewing(threadId) {
+      if (state.selectedId !== threadId) return false;
+      if (!window.IS_MOBILE) return true;
+      const conv = document.getElementById("mScreenConv");
+      return !!(conv && conv.classList.contains("visible"));
+    }
+    function aiRunFmt(ms) {
+      const sec = Math.max(0, Math.floor(ms / 1000));
+      return sec < 60 ? sec + "s" : Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+    }
+    function aiRunPillHtml(threadId) {
+      const r = aiRunMap().get(threadId);
+      if (!r) return "";
+      const now = Date.now();
+      if (r.status === "running") {
+        const verb = r.mode === "revise" ? "Revising the AI reply" : r.mode === "follow_up" ? "Writing an AI follow-up" : "Writing an AI reply";
+        return '<div class="em-ai-run is-running" title="The AI is writing a reply for this conversation. Keep working; it saves by itself.">' +
+          '<span class="em-ai-run-spin" style="animation-delay:-' + ((now - r.startedAt) % 900) + 'ms"></span>' +
+          '<span class="em-ai-run-text">' + esc(verb) + '…</span>' +
+          '<span class="em-ai-run-sec" data-ai-t0="' + r.startedAt + '">' + aiRunFmt(now - r.startedAt) + '</span></div>';
+      }
+      if (r.seenAt && now - r.seenAt > 6000) return "";
+      const info = r.info || {};
+      const failed = r.status === "failed";
+      const fresh = now - (r.doneAt || 0) < 1200 ? " is-fresh" : "";
+      const leaving = r.seenAt && now - r.seenAt > 5200 ? " is-leaving" : "";
+      return '<div class="em-ai-run ' + (failed ? "is-failed" : "is-done") + fresh + leaving + '" title="' + esc(info.title || "") + '">' +
+        '<i class="material-icons">' + (failed ? "error" : "check_circle") + '</i>' +
+        '<span class="em-ai-run-text"><b>' + esc(info.head || "") + '</b>' + (info.detail ? " · " + esc(info.detail) : "") + '</span>' +
+        (info.secs ? '<span class="em-ai-run-sec">' + aiRunFmt(info.secs * 1000) + '</span>' : "") + '</div>';
+    }
+    let _aiRunRepaintT = null;
+    function aiRunsRepaint() {
+      if (_aiRunRepaintT) return;
+      _aiRunRepaintT = setTimeout(() => {
+        _aiRunRepaintT = null;
+        try {
+          if (window.IS_MOBILE) { if (typeof mRenderList === "function") mRenderList(); }
+          else renderThreadList();
+        } catch (e) { console.warn("[ai-runs] list repaint failed:", e.message); }
+      }, 0);
+    }
+    let _aiRunTick = null;
+    function aiRunEnsureTicker() {
+      if (_aiRunTick) return;
+      _aiRunTick = setInterval(() => {
+        const now = Date.now();
+        document.querySelectorAll(".em-ai-run-sec[data-ai-t0]").forEach(el => {
+          el.textContent = aiRunFmt(now - Number(el.getAttribute("data-ai-t0")));
+        });
+        let changed = false, live = false;
+        for (const [id, r] of aiRunMap()) {
+          if (r.status === "running") { live = true; continue; }
+          if (!r.seenAt) continue;
+          const age = now - r.seenAt;
+          if (age > 6000) { aiRunMap().delete(id); changed = true; }
+          else {
+            live = true;
+            if (age > 5200) document.querySelectorAll('[data-id="' + CSS.escape(id) + '"] .em-ai-run').forEach(el => el.classList.add("is-leaving"));
+          }
+        }
+        if (changed) { aiRunsSave(); aiRunsRepaint(); }
+        if (!live) { clearInterval(_aiRunTick); _aiRunTick = null; }
+      }, 1000);
+    }
+    function paintAiRunBusy(threadId) {
+      const r = aiRunMap().get(threadId);
+      const mode = r ? r.mode : "initial";
+      const btns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
+      btns.forEach(b => { b.disabled = true; });
+      const btn = mode === "follow_up" ? $("emAiFollowUpBtn") : mode === "revise" ? $("emReviseBtn") : $("emAiDraftBtn");
+      if (btn) {
+        btn.classList.add("is-loading");
+        const sp = btn.querySelector("span");
+        if (sp) { if (!sp.dataset.aiLabel) sp.dataset.aiLabel = sp.textContent; sp.textContent = "Generating…"; }
+      }
+      const mBtn = document.getElementById("mActionAi");
+      if (mBtn) mBtn.classList.add("is-loading");
+      const mInd = document.getElementById("mAiIndicator");
+      const mIndText = document.getElementById("mAiIndicatorText");
+      if (window.IS_MOBILE && mInd && mIndText) {
+        mInd.style.display = "";
+        mInd.classList.add("is-loading");
+        mIndText.textContent = (mode === "revise" ? "Revising draft" : mode === "follow_up" ? "Composing follow-up" : "Composing draft") + "…";
+      }
+    }
+    function paintAiRunIdle() {
+      ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean).forEach(b => {
+        b.disabled = false;
+        b.classList.remove("is-loading");
+        const sp = b.querySelector("span");
+        if (sp && sp.dataset.aiLabel) { sp.textContent = sp.dataset.aiLabel; delete sp.dataset.aiLabel; }
+      });
+      const mBtn = document.getElementById("mActionAi");
+      if (mBtn) mBtn.classList.remove("is-loading");
+      const mInd = document.getElementById("mAiIndicator");
+      const mIndText = document.getElementById("mAiIndicatorText");
+      if (mInd && mInd.classList.contains("is-loading")) {
+        mInd.classList.remove("is-loading");
+        if (mIndText && /^(Composing|Revising)/.test(mIndText.textContent || "")) mInd.style.display = "none";
+      }
+    }
+
     async function generateAiDraft(threadId, mode = "initial", instructions = null, forceRegenerate = true) {
+      // Each conversation runs its own AI reply, in parallel with the
+      // others. The run's result only touches the reply box while that
+      // conversation is open; otherwise it waits in its saved draft and
+      // the list card shows a check.
+      if (aiRunIsRunning(threadId)) {
+        toast("A reply for this conversation is already being written");
+        return;
+      }
+      const isOpen = () => state.selectedId === threadId;
+      const run = aiRunStart(threadId, mode);
       // ──── v3.30 — Manual override of quiet-period defer ──────────────
       // If this thread is currently in deferred_quiet_period (server-
       // side debounce parked the AI draft because the customer was
@@ -16777,28 +17153,29 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }).catch((e) => console.warn("[autoTimer] manual-override clear failed:", e.message));
       }
 
-      const allBtns = ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean);
-      const body   = $("emAiCardBody");
+      const allBtns = isOpen() ? ["emAiDraftBtn", "emAiFollowUpBtn", "emReviseBtn"].map($).filter(Boolean) : [];
+      const body   = isOpen() ? $("emAiCardBody") : null;
       const primaryBtn = mode === "follow_up" ? $("emAiFollowUpBtn")
                       : mode === "revise"     ? $("emReviseBtn")
                                               : $("emAiDraftBtn");
       const primaryLabel = primaryBtn?.querySelector("span");
       const primaryOriginalLabel = primaryLabel?.textContent;
 
+      if (isOpen()) paintAiRunBusy(threadId);
       allBtns.forEach(b => { b.disabled = true; });
       // v5.29 — Add .is-loading to the primary button so its CSS
       // shows a spinner in place of the icon. Only the primary
       // (whichever AI action was clicked) gets the spinner; the
       // others are just disabled.
-      if (primaryBtn) primaryBtn.classList.add("is-loading");
+      if (primaryBtn && isOpen()) primaryBtn.classList.add("is-loading");
       // Mobile parity: pulse the mActionAi button + show a shimmering
       // "Composing draft…" badge in the existing mAiIndicator surface.
       // The indicator text reverts to the standard "AI draft loaded"
       // when the call completes (or to whatever caller subsequently
       // sets via mShowAiIndicator).
-      const mAiBtn = document.getElementById("mActionAi");
+      const mAiBtn = isOpen() ? document.getElementById("mActionAi") : null;
       if (mAiBtn) mAiBtn.classList.add("is-loading");
-      const mInd     = document.getElementById("mAiIndicator");
+      const mInd     = isOpen() ? document.getElementById("mAiIndicator") : null;
       const mIndText = document.getElementById("mAiIndicatorText");
       if (mInd && mIndText) {
         mInd.style.display = "";
@@ -16808,7 +17185,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                    :                          "Composing draft";
         mIndText.textContent = verb + "…";
       }
-      if (primaryLabel) primaryLabel.textContent = "Generating…";
+      if (primaryLabel && isOpen()) primaryLabel.textContent = "Generating…";
 
       // Show transient "thinking" state
       if (body) {
@@ -16821,7 +17198,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           'Reading thread, looking up orders if needed, composing…</span></div>';
       }
       // Also show a "thinking" state in the token counter
-      const tc = $("emTokenCounter");
+      const tc = isOpen() ? $("emTokenCounter") : null;
       if (tc) {
         tc.className = "em-token-counter empty";
         tc.innerHTML = '<span class="em-tok-label">Tokens:</span><span><span class="spinner" style="border-color:rgba(130,80,223,.3);border-top-color:#8250df;width:10px;height:10px;"></span> waiting for model…</span>';
@@ -16831,6 +17208,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const manualRunId = (mode === "initial")
         ? ("manual_ai_" + Date.now() + "_" + Math.random().toString(36).slice(2, 10))
         : null;
+      if (manualRunId) aiRunSetServerId(threadId, run, manualRunId);
       const reqBody = {
         threadId,
         mode,
@@ -16845,7 +17223,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // immediately so a stale draft is not left sitting in the textarea
       // during a long sales-agent run. Revise/follow-up keep their current
       // behavior because they intentionally operate on existing text.
-      if (mode === "initial") {
+      if (mode === "initial" && isOpen()) {
         const oldTa = $("emDraftText");
         if (oldTa) {
           oldTa.value = "";
@@ -16917,16 +17295,24 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
           const freshThread = await refreshThreadAfterManualSalesDraft(threadId);
           if (state.selectedId === threadId && freshThread) {
-            try { renderDetail(freshThread); } catch (e) { console.warn("[manual-sales-route] render refresh failed:", e.message); }
+            try { renderDetailKeepScroll(freshThread); } catch (e) { console.warn("[manual-sales-route] render refresh failed:", e.message); }
           }
-          hydrateManualSalesDraftIntoComposer(threadId, draft);
+          if (isOpen()) hydrateManualSalesDraftIntoComposer(threadId, draft);
+          aiRunFinish(threadId, run, draft, mode);
           fetchThreadListNow({ source: "user" }).catch(e => console.warn("[manual-sales-route] list refresh failed:", e.message));
           fetchCountsNow().catch(e => console.warn("[manual-sales-route] count refresh failed:", e.message));
-          toast("Sales draft generated");
+          toast(isOpen() ? "Sales draft generated" : "Reply ready for " + aiRunName(threadId));
           return;
         }
 
         const data = await api("etsyMailDraftReply", { method: "POST", body: reqBody });
+        aiRunFinish(threadId, run, data, mode);
+        if (!isOpen()) {
+          // Saved as this conversation's draft; opening it loads it.
+          toast("Reply ready for " + aiRunName(threadId));
+          fetchThreadListNow({ source: "user" }).catch(() => {});
+        }
+        if (isOpen()) {
         // v5.8 — Defensively check for #emDraftText. It doesn't exist
         // on mobile (created dynamically by renderDetail; see line
         // 9184). Without this guard, the .value assignment would throw
@@ -16952,6 +17338,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             if (_send) _send.disabled = !((_mta.value || "").trim());
           }
         }
+        aiTextMarkFresh(threadId, data.text || "");
         // Render AI card
         renderAiDraftCard(data);
         // v5.5 — Mobile AI draft card: build from the response payload.
@@ -16970,6 +17357,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           if (lookups) msg += ` (${lookups} lookup${lookups === 1 ? "" : "s"})`;
         }
         toast(msg);
+        }
 
         // ── v1.7 / v1.8: auto-send if confidence is high ─────────
         // Pre-v1.7, manually clicking "AI Draft" generated the draft but
@@ -17062,7 +17450,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                 });
                 state._optimInsertedFor = state._optimInsertedFor || new Set();
                 state._optimInsertedFor.add(draftId);
-                if (state.selectedId === threadId) fetchMessagesNow(threadId);
+                if (isOpen()) fetchMessagesNow(threadId);
               } catch (e) {
                 console.warn("optimistic insert from AI-Draft auto-send failed:", e.message);
               }
@@ -17077,7 +17465,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                 if (fresh && fresh.doc) {
                   const idx = state.threads.findIndex(x => x.id === threadId);
                   if (idx >= 0) state.threads[idx] = { id: threadId, ...fresh.doc };
-                  renderDetail({ id: threadId, ...fresh.doc });
+                  if (isOpen()) renderDetailKeepScroll({ id: threadId, ...fresh.doc });
                 }
               } catch (refetchErr) {
                 console.warn("post-AI-Draft detail refresh failed:", refetchErr.message);
@@ -17091,22 +17479,23 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         }
       } catch (e) {
-        if (body) {
+        aiRunFail(threadId, run, e.message);
+        if (body && isOpen()) {
           body.innerHTML = '<div class="em-ai-warning">⚠ Draft generation failed: ' + esc(e.message) + '</div>';
         }
-        if (tc) {
+        if (tc && isOpen()) {
           tc.className = "em-token-counter empty";
           tc.innerHTML = '<span class="em-tok-label">Tokens:</span><span>failed — see error above</span>';
         }
-        toast("AI error: " + e.message, 4000);
+        toast((isOpen() ? "AI error: " : "AI reply failed for " + aiRunName(threadId) + ": ") + e.message, 4000);
       } finally {
+        aiRunSettle(threadId, run);
         allBtns.forEach(b => { b.disabled = false; });
         // v5.29 — Clear loading classes set at the start of the function.
+        // Only for the open conversation: the phone's AI button and chip
+        // are shared, and another conversation may be running its own.
         if (primaryBtn) primaryBtn.classList.remove("is-loading");
-        const _mAiBtn = document.getElementById("mActionAi");
-        if (_mAiBtn) _mAiBtn.classList.remove("is-loading");
-        const _mInd = document.getElementById("mAiIndicator");
-        if (_mInd) _mInd.classList.remove("is-loading");
+        if (isOpen()) paintAiRunIdle();
         // The indicator's text and visibility are reset by the success
         // path (mShowAiIndicator) or by mNotifyDraftChanged. If neither
         // ran (e.g. exception thrown before the draft was rendered),
@@ -19708,6 +20097,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     // Load any existing draft from Firestore and render it. Called on
     // thread open. Silent if no draft exists (card shows empty state).
     async function hydrateAiDraft(thread) {
+      // A new AI Draft is still being written for this conversation: keep
+      // the box empty for it instead of showing the draft it replaces.
+      const _run = aiRunMap().get(thread.id);
+      if (_run && _run.status === "running" && _run.mode === "initial") {
+        setComposerAttachments(thread.id, []);
+        renderComposerChips();
+        return;
+      }
       try {
         const draftId = "draft_" + thread.id;
         const res = await api("firestoreProxy", {
@@ -19828,6 +20225,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             if (_send) _send.disabled = !((_mta.value || "").trim());
           }
         }
+        if (isHydratableState && d.text) aiTextMarkFresh(thread.id, d.text);
         renderAiDraftCard(d);
 
         // v5.7.1 — Tracking images must hydrate independently of the AI card body.
@@ -23475,7 +23873,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                   </button>
                   <span class="m-thread-time">${mEsc(time)}</span>
                 </div>
-                ${subjectLine ? `<div class="m-thread-subject">${mEsc(subjectLine)}</div>` : ""}
+                ${aiRunPillHtml(t.id) || (subjectLine ? `<div class="m-thread-subject">${mEsc(subjectLine)}</div>` : "")}
                 ${pills ? `<div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">${pills}</div>` : ""}
               </div>
             </div>
@@ -23531,6 +23929,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
     // ── Open thread (mobile) ─────────────────────────────────────
     function mOpenThread(threadId) {
+      aiTextDismissFresh();
       // Mirror to desktop state. fetchMessagesNow uses state.selectedId
       // internally; the desktop's renderDetail() will also fire and
       // update the (hidden) desktop UI. That's fine — it's a no-op for
@@ -25045,7 +25444,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // generateAiDraft via the desktop path) will mirror the text in.
         // As a fallback, do it explicitly here.
         const desktopTa = document.getElementById("emDraftText");
-        if (desktopTa) {
+        if (desktopTa && state.selectedId === tid) {
           ta.value = desktopTa.value || "";
           mAutoGrow(ta);
           send.disabled = !((ta.value || "").trim() || mGetCurrentAttachments().length > 0);
