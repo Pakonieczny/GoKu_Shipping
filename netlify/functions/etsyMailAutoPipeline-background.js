@@ -981,6 +981,10 @@ async function runSimulation(body) {
     response: out.result && out.result.data,
     writePaths: out.writes.map(w => `${w.op} ${w.path}`),
     blocked: out.blocked,
+    blockedPaths: out.blockedPaths || [],
+    // Did this turn accept a quote (the custom listing trigger)?
+    customerAccepted: out.writes.some(w => w.data && typeof w.data === "object"
+      && (w.data.customerAccepted === true || w.data.customer_accepted === true)),
     // Which model each path would use (model names only, no secrets), so a
     // replay can show an environment override.
     models: {

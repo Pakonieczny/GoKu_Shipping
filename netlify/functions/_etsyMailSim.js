@@ -82,6 +82,76 @@ function receiptAsOf(data, asOfMs) {
   return { data: out, changed };
 }
 
+// Listing ids a thread's messages mention after the cut: a custom listing
+// made later must not show up in the replayed moment (thread fields, sales
+// context, listings mirror). Message times can be import times, so the
+// listing id, not a timestamp, decides what is "later".
+const LISTING_ID_RX = /listing\/(\d{8,12})/g;
+async function futureListingIds(s, threadRef, origGet) {
+  s.future = s.future || {};
+  const key = threadRef.path;
+  if (s.future[key]) return s.future[key];
+  const ids = new Set();
+  try {
+    const ts = admin.firestore.Timestamp.fromMillis(s.asOfMs);
+    const snap = await origGet.call(threadRef.collection("messages").where("timestamp", ">", ts).limit(400));
+    for (const d of snap.docs) {
+      const m = d.data() || {};
+      const txt = String(m.text || "") + " " + JSON.stringify(m.listingCards || []);
+      for (const x of txt.matchAll(LISTING_ID_RX)) ids.add(x[1]);
+    }
+  } catch (_) {}
+  s.future[key] = ids;
+  s.futureAll = new Set([...(s.futureAll || []), ...ids]);
+  return ids;
+}
+
+/** A thread doc as it stood at asOfMs: a custom listing, acceptance or
+ *  completed sale that came later is taken off. */
+function threadAsOf(data, asOfMs, future) {
+  if (!data) return { data, changed: false };
+  const out = { ...data };
+  let changed = false;
+  const later = (...keys) => keys.some(k => { const ms = toMs(data[k]); return ms && ms > asOfMs; });
+  const drop = rx => { for (const k of Object.keys(out)) if (rx.test(k)) { delete out[k]; changed = true; } };
+  const listingLater = (data.customListingId && future.has(String(data.customListingId)))
+    || later("customListingStartedAt", "customListingDraftCreatedAt", "customListingCreatedAt", "customListingSentAt");
+  if (listingLater) drop(/^customListing/);
+  if (listingLater || later("customerAcceptedAt")) drop(/^(customerAccepted|acceptedQuote)/);
+  if (listingLater || later("salesCompletedAt")) {
+    drop(/^(salesCompletedAt|salesSynopsis)$/);
+    if (out.status === "sales_completed") { out.status = "open"; changed = true; }
+  }
+  return { data: out, changed };
+}
+
+/** A sales context as it stood at asOfMs: no later completion, abandonment
+ *  or quotes; a context created later does not exist yet. */
+function salesCtxAsOf(data, asOfMs, future) {
+  if (!data) return { data, changed: false };
+  if ((toMs(data.createdAt) || 0) > asOfMs) return null;
+  const out = { ...data };
+  let changed = false;
+  const doneLater = (data.completedListingId && future.has(String(data.completedListingId)))
+    || (toMs(data.stageCompletedAt) || 0) > asOfMs || (toMs(data.abandonedAt) || 0) > asOfMs;
+  const quotes = Array.isArray(data.quoteHistory) ? data.quoteHistory : [];
+  const keptQuotes = quotes.filter(q => !q || !q.at || q.at <= asOfMs);
+  if (keptQuotes.length !== quotes.length) { out.quoteHistory = keptQuotes; changed = true; }
+  if (doneLater || (toMs(data.lastTurnAt) || 0) > asOfMs) {
+    for (const k of ["completedListingId", "completionReason", "stageCompletedAt", "abandonedAt", "lastCustomerFacingReply"]) {
+      if (k in out) { delete out[k]; changed = true; }
+    }
+    if (!/^(discovery|spec|quote|revision|pending_close_approval)$/.test(String(out.stage || ""))) {
+      out.stage = keptQuotes.length ? "quote" : "spec";
+      changed = true;
+    }
+    if (!keptQuotes.length && ("_lastResolverResult" in out || "totalQuotedUsd" in out)) {
+      delete out._lastResolverResult; delete out.totalQuotedUsd; changed = true;
+    }
+  }
+  return { data: out, changed };
+}
+
 function wrapSnap(snap, data) {
   return new Proxy(snap, {
     get(t, p) {
@@ -183,13 +253,41 @@ function install() {
   };
 
   const origDocGet = DR.get;
+  // One document as it stood at asOfMs (receipts, thread, sales context,
+  // a custom listing made later).
+  const docAsOf = async (s, ref, snap) => {
+    if (!s || !s.asOfMs || !snap || !snap.exists) return snap;
+    const path = ref.path;
+    if (/^EtsyMail_Receipts\//.test(path)) {
+      const v = receiptAsOf(snap.data(), s.asOfMs);
+      if (v === null) return wrapSnap(snap, undefined);
+      return v.changed ? wrapSnap(snap, v.data) : snap;
+    }
+    if (/^EtsyMail_Threads\/[^/]+$/.test(path)) {
+      const future = await futureListingIds(s, ref, origGet);
+      const v = threadAsOf(snap.data(), s.asOfMs, future);
+      return v.changed ? wrapSnap(snap, v.data) : snap;
+    }
+    if (/^EtsyMail_SalesContext\/[^/]+$/.test(path)) {
+      const future = await futureListingIds(s, admin.firestore().collection("EtsyMail_Threads").doc(ref.id), origGet);
+      const v = salesCtxAsOf(snap.data(), s.asOfMs, future);
+      if (v === null) return wrapSnap(snap, undefined);
+      return v.changed ? wrapSnap(snap, v.data) : snap;
+    }
+    if (/^EtsyMail_Listings\//.test(path) && s.futureAll && s.futureAll.has(ref.id)) return wrapSnap(snap, undefined);
+    return snap;
+  };
   DR.get = async function () {
     const snap = await origDocGet.apply(this, arguments);
+    return docAsOf(current(), this, snap);
+  };
+  const FS = fs.Firestore && fs.Firestore.prototype;
+  const origGetAll = FS && FS.getAll;
+  if (FS && origGetAll) FS.getAll = async function (...refs) {
+    const snaps = await origGetAll.apply(this, refs);
     const s = current();
-    if (!s || !s.asOfMs || !snap.exists || !/^EtsyMail_Receipts\//.test(this.path)) return snap;
-    const v = receiptAsOf(snap.data(), s.asOfMs);
-    if (v === null) return wrapSnap(snap, undefined);
-    return v.changed ? wrapSnap(snap, v.data) : snap;
+    if (!s || !s.asOfMs) return snaps;
+    return Promise.all(snaps.map(sn => docAsOf(s, sn.ref, sn)));
   };
 
   const guard = (mod, name) => {
@@ -212,9 +310,11 @@ function install() {
     globalThis.fetch = function (input, init) {
       const s = current();
       if (s) {
-        const h = hostOf(typeof input === "string" || input instanceof URL ? input : input && input.url);
+        const u = typeof input === "string" || input instanceof URL ? input : input && input.url;
+        const h = hostOf(u);
         if (!ALLOWED_HOST_RX.test(h)) {
           s.blocked.push(h || "(unknown)");
+          try { (s.blockedPaths = s.blockedPaths || []).push(h + new URL(String(u)).pathname); } catch (_) {}
           return Promise.reject(new Error(`SIMULATION: outbound call to ${h || "unknown host"} blocked`));
         }
       }
@@ -240,7 +340,8 @@ async function simulate({ asOfMs = null, nowMs = null, threadId = null, extraMes
     });
   }
   const result = await als.run(store, fn);
-  return { result, writes: store.writes, blocked: [...new Set(store.blocked)] };
+  return { result, writes: store.writes, blocked: [...new Set(store.blocked)],
+           blockedPaths: [...new Set(store.blockedPaths || [])] };
 }
 
 /** "Now" for prompts: the replayed moment inside a replay, else the clock. */
