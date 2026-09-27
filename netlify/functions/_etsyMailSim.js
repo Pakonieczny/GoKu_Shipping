@@ -128,7 +128,7 @@ function threadAsOf(data, asOfMs, future) {
     // The reaper marks a dead lead abandoned with only updatedAt, so an
     // abandonment after the cut was not there yet.
     if (out.status === "sales_abandoned") { out.status = "open"; if (out.salesStage === "abandoned") delete out.salesStage; changed = true; }
-    drop(/^(searchable|intent|aiReview|aiConfidence|aiDifficulty|aiDraftStatus|salesSynopsis|lastResolverResult|lastAuto|riskFlags|needsHumanReview|needsOperatorReview|readyForHumanApproval|latestDraftId|lastSalesAgentBlockReason)/);
+    drop(/^(searchable|intent|aiReview|aiConfidence|aiDifficulty|aiDraftStatus|salesSynopsis|lastResolverResult|lastAuto|riskFlags|needsHumanReview|needsOperatorReview|readyForHumanApproval|latestDraftId|lastSalesAgentBlockReason|summary|aiSummary|customOrder)/);
     for (const k of ["lastInboundAt", "lastOutboundAt", "lastOperatorReplyAt", "lastReadAt", "lastSyncedAt", "gmailReceivedAt"]) {
       if (later(k)) { delete out[k]; changed = true; }
     }
@@ -167,6 +167,16 @@ function salesCtxAsOf(data, asOfMs, future) {
     if (!/^(discovery|spec|quote|revision|pending_close_approval)$/.test(String(out.stage || ""))) {
       out.stage = keptQuotes.length ? "quote" : "spec";
       changed = true;
+    }
+    // Free-text notes and summaries were written by later turns (they can
+    // say "proof approved" or "order paid" before it happened).
+    for (const k of Object.keys(out)) {
+      if (/notes|summary|synopsis|handoff/i.test(k)) { delete out[k]; changed = true; }
+    }
+    if (out.accumulatedSpec && typeof out.accumulatedSpec === "object") {
+      const spec = { ...out.accumulatedSpec };
+      for (const k of Object.keys(spec)) if (/notes|summary|synopsis/i.test(k)) { delete spec[k]; changed = true; }
+      out.accumulatedSpec = spec;
     }
     if (!keptQuotes.length && ("_lastResolverResult" in out || "totalQuotedUsd" in out)) {
       delete out._lastResolverResult; delete out.totalQuotedUsd; changed = true;

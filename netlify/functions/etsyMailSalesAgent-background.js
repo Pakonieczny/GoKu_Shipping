@@ -2037,9 +2037,19 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
     violations.push("compute_quote_missing_tool");
     messages.push("You declared next_action: compute_quote but did not call resolveQuote this turn. Call resolveQuote with the family, selectedCodes, and quantity, then state the result.");
   }
-  if (na === "attach_collateral" && !toolNamesCalled.includes("get_collateral")) {
+  // attach_collateral is also how the prompt points at an existing listing
+  // (payload kind "listing_url", found with a listing tool) and how the
+  // guide flags (fit, metals, care, bracelet) attach from the prefetched
+  // pool without a tool call; neither needs get_collateral.
+  const naPayload = parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+  const listingPointer = na === "attach_collateral" && naPayload.kind === "listing_url"
+    && (toolNamesCalled.includes("search_shop_listings") || toolNamesCalled.includes("lookup_listing_by_url"));
+  const guideFlagged = ["attach_fit_reference", "attach_metal_comparison", "attach_care_instructions", "attach_bracelet_sizing"]
+    .some(f => parsed[f] === true);
+  const collateralSatisfied = listingPointer || (guideFlagged && parsed.attach_line_sheet !== true);
+  if (na === "attach_collateral" && !collateralSatisfied && !toolNamesCalled.includes("get_collateral")) {
     violations.push("attach_collateral_missing_tool");
-    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and include the URL in your reply.");
+    messages.push("You declared next_action: attach_collateral but did not call get_collateral this turn. Call get_collateral(category, kind) and set the matching attach flag (attach_line_sheet: true for a line sheet); the image attaches automatically, so never paste its URL in the reply.");
   }
 
   // Rule 1b — compute_quote requires items_quoted populated and matching
@@ -2056,7 +2066,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   }
 
   // Rule 1c — attach_collateral requires collateral_referenced non-empty
-  if (na === "attach_collateral") {
+  if (na === "attach_collateral" && !collateralSatisfied) {
     const cr = parsed.collateral_referenced;
     if (!Array.isArray(cr) || cr.length === 0) {
       violations.push("attach_collateral_no_referenced");
@@ -2127,7 +2137,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
       `Do not write a holding reply and do not escalate before gathering customer choices. ` +
       `Use next_action: attach_collateral, call get_collateral(category: "${forcedLineSheet.family}", kind: "line_sheet"), set attach_line_sheet: true, populate collateral_referenced, ` +
       `answer any production-time question briefly, and ask the customer to use the attached ${forcedLineSheet.family} line sheet to choose the missing specs. ` +
-      `For this Miguel-style two-charm necklace case, the reply should confirm we can design/make the custom piece, mention the normal production window, attach the necklace line sheet, and ask for the arrangement plus size/metal/chain/length choices. ` +
+      `Answer what the customer asked, then invite them to pick the missing choices from the attached sheet. ` +
       `Do not say "I'll get back to you", "I'll send options later", or any future quote promise.`
     );
   }
