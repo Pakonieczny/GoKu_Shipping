@@ -14038,7 +14038,7 @@ async function _handlerImpl(event) {
       const isFinal = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(st));
       const isSucceeded = (st) => normState(st) === "JOB_STATE_SUCCEEDED";
 
-      let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0;
+      let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
 
       const open = [];
       // A 250-document first page can be saturated by failed jobs forever,
@@ -14072,6 +14072,30 @@ async function _handlerImpl(event) {
         }
       }
 
+      // Token-based provider admission can reject a large submission before
+      // it starts. Keep requested repairs durable, and admit a few only when
+      // the number of active listing batches has drained. A child that fails
+      // carries retryRequested and is eligible again on a later sweep.
+      const activeStates = ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"];
+      let activeCount = open.filter((b) => !b.collected && activeStates.includes(normState(b.state))).length;
+      const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName &&
+        !b.collected && !b.responsesFile && isFinal(b.state) && b.batchName &&
+        Number(b.retryAttempt || 0) < 5);
+      for (const b of waiting) {
+        if (activeCount >= 12 || retriesSubmitted >= 4 || Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        const retry = await inProcess({ kind: "batch_retry_missing", batchName: b.batchName });
+        if (retry?.batchName && retry.batchName !== b.batchName) {
+          activeCount++; retriesSubmitted++;
+        } else if (retry?.complete || /already in Completed_Listing_Sets/i.test(retry?.error?.message || "")) {
+          await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
+            retryRequested: false, retryStatus: "complete_or_protected",
+            retryError: retry?.error?.message || null,
+          }, { merge: true });
+        } else if (!retry?.ok) {
+          console.warn("[batch_sweep] retry postponed:", b.batchName, retry?.error?.message || "unknown error");
+        }
+      }
+
       // Resume orchestrations whose self-chain got dropped (no update in 20m).
       const orchSnap = await db.collection(ORCH_COLL).where("status", "==", "running").limit(20).get();
       const origin = (process.env.URL || process.env.DEPLOY_PRIME_URL || process.env.DEPLOY_URL || "").replace(/\/+$/, "");
@@ -14096,9 +14120,10 @@ async function _handlerImpl(event) {
       await guardRef.set({
         runningSince: null,
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastResult: { statusChecked, collected, collectErrors, resumed },
+        lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted },
       }, { merge: true });
-      return json(200, { ok: true, statusChecked, collected, collectErrors, resumed, openBatches: open.length });
+      return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
+        retriesSubmitted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {
       try { await guardRef.set({ runningSince: null }, { merge: true }); } catch (_) {}
       console.error("[batch_sweep] failed", safeErr(err));
@@ -14750,6 +14775,8 @@ async function _handlerImpl(event) {
         displayName,
         sessionId: String(body?.sessionId || ""),
         retryOf: String(body?.retryOf || "") || null,
+        retryRequested: body?.retryRequested === true,
+        retryAttempt: Number(body?.retryAttempt || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
@@ -14794,6 +14821,36 @@ async function _handlerImpl(event) {
       });
     }
 
+    if (kind === "batch_retry_queue") {
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!/^sess_[A-Za-z0-9_-]{8,80}$/.test(sessionId)) {
+        return json(400, { error: { message: "A valid listing submission ID is required" } });
+      }
+      const db = getDb();
+      const snap = await db.collection(BATCHES_COLL).where("sessionId", "==", sessionId).limit(1000).get();
+      let queued = 0, alreadyQueued = 0, protectedCount = 0;
+      let writes = db.batch();
+      let pending = 0;
+      for (const doc of snap.docs) {
+        const d = doc.data();
+        const state = String(d.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
+        if (!(["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(state)) ||
+            d.collected || d.responsesFile || d.retryBatchName ||
+            d.sets?.length !== 1 || d.sets[0]?.setKind === "charm_maker") {
+          protectedCount++;
+          continue;
+        }
+        if (d.retryRequested) { alreadyQueued++; continue; }
+        writes.set(doc.ref, { retryRequested: true,
+          retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        pending++; queued++;
+        if (pending >= 250) { await writes.commit(); writes = db.batch(); pending = 0; }
+      }
+      if (pending) await writes.commit();
+      return json(200, { ok: true, queued, alreadyQueued, protected: protectedCount,
+        message: "The scheduled collector submits up to four repairs every ten minutes when fewer than twelve jobs are active." });
+    }
+
     // Retry only slots absent from a terminal listing batch, using its
     // original prompts and charm. Never reallocate a set or copy an image
     // onto an occupied slot. A repeat request returns the existing retry.
@@ -14807,6 +14864,9 @@ async function _handlerImpl(event) {
       const originalSnap = await originalRef.get();
       if (!originalSnap.exists) return json(404, { error: { message: "Original batch record is missing" } });
       const original = originalSnap.data();
+      if (Number(original.retryAttempt || 0) >= 5) {
+        return json(409, { error: { message: "Five retry attempts reached; inspect the provider failure before submitting again" } });
+      }
       if (!Array.isArray(original.sets) || original.sets.length !== 1 ||
           original.sets[0].setKind === "charm_maker") {
         return json(409, { error: { message: "Selective retry supports one listing set per batch" } });
@@ -14863,6 +14923,8 @@ async function _handlerImpl(event) {
           kind: "batch_submit", model: original.model, sets: [retrySet],
           imageSize: original.imageSize, sessionId: original.sessionId,
           retryOf: originalName,
+          retryRequested: original.retryRequested === true,
+          retryAttempt: Number(original.retryAttempt || 0) + 1,
           displayName: `retry-${set.category}-Set_${set.setN}`,
         }) });
         const result = JSON.parse(response.body || "{}");
@@ -15355,6 +15417,8 @@ async function _handlerImpl(event) {
           responsesFile: d.responsesFile || null,
           retryOf: d.retryOf || null,
           retryBatchName: d.retryBatchName || null,
+          retryRequested: !!d.retryRequested,
+          retryAttempt: Number(d.retryAttempt || 0),
           retryStatus: d.retryStatus || null,
           retryError: d.retryError || null,
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,

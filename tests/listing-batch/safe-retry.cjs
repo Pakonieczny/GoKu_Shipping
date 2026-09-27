@@ -92,5 +92,30 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   const helperEnd = source.indexOf("\n}", helperStart) + 2;
   const describe = vm.runInNewContext(`${source.slice(helperStart, helperEnd)}; batchFailureDetails`, {});
   assert.equal(describe({ errors: { data: [{ code: "invalid_request", message: "Invalid image edit" }] } }), "Invalid image edit");
-  console.log("Listing batch selective retry: 6 scenarios passed");
+
+  const queueStart = source.indexOf('    if (kind === "batch_retry_queue") {');
+  const queueEnd = source.indexOf('    if (kind === "batch_retry_missing") {', queueStart);
+  assert(queueStart > 0 && queueEnd > queueStart, "durable retry queue exists");
+  const queueRecords = [
+    { state: "JOB_STATE_FAILED", collected: false, sets: [{ setKind: null }] },
+    { state: "JOB_STATE_RUNNING", collected: false, sets: [{ setKind: null }] },
+    { state: "JOB_STATE_FAILED", collected: false, responsesFile: "file-123", sets: [{ setKind: null }] },
+    { state: "JOB_STATE_FAILED", collected: false, retryRequested: true, sets: [{ setKind: null }] },
+  ];
+  const changes = [];
+  const docs = queueRecords.map((value) => ({ data: () => value, ref: value }));
+  const queueDb = { collection: () => ({ where: () => ({ limit: () => ({ get: async () => ({ docs }) }) }) }),
+    batch: () => ({ set: (ref, value) => changes.push([ref, value]), commit: async () => {} }) };
+  const queued = await vm.runInNewContext(`(async () => { ${source.slice(queueStart, queueEnd)} })()`, {
+    kind: "batch_retry_queue", body: { sessionId: "sess_123456789_abcdef" },
+    BATCHES_COLL: "batches", getDb: () => queueDb,
+    admin: { firestore: { FieldValue: { serverTimestamp: () => 123 } } },
+    json: (statusCode, value) => ({ statusCode, ...value }),
+  });
+  assert.equal(queued.queued, 1);
+  assert.equal(queued.alreadyQueued, 1);
+  assert.equal(queued.protected, 2);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0][0], queueRecords[0]);
+  console.log("Listing batch recovery: 7 scenarios passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

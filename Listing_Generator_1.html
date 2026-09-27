@@ -3261,7 +3261,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
               <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
-              OpenAI jobs continue if you close this tab. Keep this page open for automatic collection into Firebase; if you close it, reopen Batch mode to collect finished jobs. Status refreshes every 60 seconds while this panel is open.
+              OpenAI jobs and queued repairs continue if you close this tab. The scheduled collector saves finished images to Firebase; this panel refreshes every 60 seconds while open.
             </div>
             <div id="batchRecoveryStatus" role="status" aria-live="polite" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px;"></div>
             <div id="batchJobsList" style="display: flex; flex-direction: column; gap: 8px;">
@@ -13054,8 +13054,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       let totalImagesGen = 0;
       let totalImagesFailed = 0;
       let totalCharmsMoved = 0;
+      let waitingRetries = 0;
       for (const b of session.batches) {
         if (!b.retryOf) totalSets += b.setsCount || 0;
+        if (b.retryRequested && !b.retryBatchName && !b.collected &&
+            ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))) waitingRetries++;
         if (b.results) {
           totalImagesGen += b.results.succeededCount || 0;
           totalImagesFailed += b.results.failedCount || 0;
@@ -13099,6 +13102,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets requested",   String(totalSets)]);
       rows.push(["Batches",          `${session.batches.length} submitted (${total} current) · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      if (waitingRetries) rows.push(["Waiting to retry", `${waitingRetries} sets · admitted as provider capacity opens`]);
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
       if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
@@ -13121,7 +13125,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const st = _normBatchState(b.state);
         return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName;
       });
-      const retryable = recoverableBatches.filter((b) => !b.responsesFile &&
+      const retryable = recoverableBatches.filter((b) => !b.responsesFile && !b.retryRequested &&
         b.retryStatus !== "submitting");
 
       const buttons = [];
@@ -13135,7 +13139,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
       if (retryable.length > 0) {
-        buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Retry missing images (${retryable.length})</button>`);
+        buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Queue missing images (${retryable.length})</button>`);
       }
       const buttonsHtml = buttons.length
         ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
@@ -13201,34 +13205,22 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const targets = _lastBatchList.filter((b) =>
         (b.sessionId || "(unsessioned)") === sessionId &&
         ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)) &&
-        !b.collected && !b.responsesFile && !b.retryBatchName &&
+        !b.collected && !b.responsesFile && !b.retryBatchName && !b.retryRequested &&
         b.retryStatus !== "submitting");
       if (!targets.length) return;
-      if (!confirm(`Retry missing images for ${targets.length} failed sets?\n\nThe server reuses each set's original prompts and charm, skips every saved image, and blocks approved sets. Keep this page open while the retry jobs are submitted. Once submitted, the scheduled collector can finish without this tab.`)) return;
+      if (!confirm(`Queue missing images for ${targets.length} failed sets?\n\nThe provider rejected these jobs at its enqueued-token limit. The server will submit a few at a time when capacity opens, reuse each set's original tasks, and preserve saved images and approved sets. You can close this tab after queuing.`)) return;
       _retryInFlight = true;
       const status = document.getElementById("batchRecoveryStatus");
       const btn = document.querySelector("[data-session-retry]");
       if (btn) btn.disabled = true;
-      let submitted = 0, complete = 0, skipped = 0;
-      const errors = [];
       try {
-        for (const [i, b] of targets.entries()) {
-          if (status) status.textContent = `Submitting safe retries ${i + 1}/${targets.length} · ${submitted} submitted · ${complete} already complete · ${skipped} protected`;
-          try {
-            const r = await postJson("geminiImageProxy", { kind: "batch_retry_missing", batchName: b.batchName });
-            if (r.complete) complete++;
-            else if (r.batchName || r.submitting) submitted++;
-            else skipped++;
-          } catch (err) {
-            const msg = String(err?.message || err);
-            if (/already in Completed_Listing_Sets/i.test(msg)) skipped++;
-            else errors.push(`${b.displayName || b.batchName}: ${msg}`);
-          }
-        }
+        if (status) status.textContent = `Saving ${targets.length} retry requests…`;
+        const r = await postJson("geminiImageProxy", { kind: "batch_retry_queue", sessionId });
+        if (status) status.textContent = `${r.queued || 0} sets queued · ${r.alreadyQueued || 0} already queued. The scheduled collector submits up to four retries every ten minutes when fewer than twelve jobs are active.`;
+      } catch (err) {
+        if (status) status.textContent = `Could not queue retries: ${err?.message || err}. No saved images were changed.`;
       } finally {
         _retryInFlight = false;
-        if (status) status.innerHTML = `<strong>Retry submission finished:</strong> ${submitted} submitted or already running · ${complete} already complete · ${skipped} protected · ${errors.length} errors.` +
-          (errors.length ? `<details><summary>Show retry errors</summary><div style="white-space:pre-wrap; max-height:180px; overflow:auto;">${_batchSafeText(errors.join("\n"))}</div></details>` : "");
         try { await refreshBatchJobsPanel(); } catch (err) { console.warn(err); }
       }
     }
