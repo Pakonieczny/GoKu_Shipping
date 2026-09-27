@@ -117,5 +117,41 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   assert.equal(queued.protected, 2);
   assert.equal(changes.length, 1);
   assert.equal(changes[0][0], queueRecords[0]);
-  console.log("Listing batch recovery: 7 scenarios passed");
+
+  const admissionStart = source.indexOf('      const activeStates = ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"];');
+  const admissionEnd = source.indexOf('      // Resume orchestrations whose self-chain', admissionStart);
+  assert(admissionStart > 0 && admissionEnd > admissionStart, "sweep admission exists");
+  async function admission(active, failFirst = false) {
+    let submitted = 0;
+    const open = [
+      ...Array.from({ length: active }, (_, i) => ({ batchName: `batch_running_${i}`,
+        state: "JOB_STATE_RUNNING", collected: false })),
+      ...Array.from({ length: 25 }, (_, i) => ({ batchName: `batch_failed_${i}`,
+        state: "JOB_STATE_FAILED", collected: false, retryRequested: true, retryAttempt: 0 })),
+    ];
+    const context = {
+      open, retriesSubmitted: 0, normState: (s) => s,
+      isFinal: (s) => s === "JOB_STATE_FAILED", sweepStart: Date.now(),
+      SWEEP_BUDGET_MS: 11 * 60 * 1000,
+      inProcess: async (payload) => {
+        if (payload.kind === "batch_retry_missing") {
+          submitted++;
+          return { batchName: `batch_new_${submitted}`, ok: true };
+        }
+        return failFirst && submitted === 1
+          ? { state: "JOB_STATE_FAILED", providerError: "Enqueued token limit reached" }
+          : { state: "JOB_STATE_PENDING" };
+      },
+      db: { collection: () => ({ doc: () => ({ set: async () => {} }) }) },
+      BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
+      console: { warn: () => {} },
+    };
+    const outcome = await vm.runInNewContext(
+      `(async () => { ${source.slice(admissionStart, admissionEnd)} return { activeCount, retriesSubmitted }; })()`, context);
+    return { submitted, outcome };
+  }
+  assert.equal((await admission(10)).submitted, 20, "fills twenty open places");
+  assert.equal((await admission(28)).submitted, 2, "stops at thirty active jobs");
+  assert.equal((await admission(10, true)).submitted, 1, "stops on provider refusal");
+  console.log("Listing batch recovery: 10 scenarios passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

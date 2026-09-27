@@ -14082,10 +14082,20 @@ async function _handlerImpl(event) {
         !b.collected && !b.responsesFile && isFinal(b.state) && b.batchName &&
         Number(b.retryAttempt || 0) < 5);
       for (const b of waiting) {
-        if (activeCount >= 12 || retriesSubmitted >= 4 || Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (activeCount >= 30 || retriesSubmitted >= 20 || Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         const retry = await inProcess({ kind: "batch_retry_missing", batchName: b.batchName });
         if (retry?.batchName && retry.batchName !== b.batchName) {
-          activeCount++; retriesSubmitted++;
+          retriesSubmitted++;
+          // The provider can reject a newly created batch during validation.
+          // Stop this sweep at the first observed quota refusal instead of
+          // sending the rest of the queue into the same rejection.
+          const fresh = await inProcess({ kind: "batch_status", batchName: retry.batchName });
+          if (fresh?.state === "JOB_STATE_FAILED") {
+            console.warn("[batch_sweep] provider rejected retry:", retry.batchName,
+              fresh.providerError || "reason pending");
+            break;
+          }
+          activeCount++;
         } else if (retry?.complete || /already in Completed_Listing_Sets/i.test(retry?.error?.message || "")) {
           await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
             retryRequested: false, retryStatus: "complete_or_protected",
@@ -14093,6 +14103,7 @@ async function _handlerImpl(event) {
           }, { merge: true });
         } else if (!retry?.ok) {
           console.warn("[batch_sweep] retry postponed:", b.batchName, retry?.error?.message || "unknown error");
+          break;
         }
       }
 
@@ -14848,7 +14859,7 @@ async function _handlerImpl(event) {
       }
       if (pending) await writes.commit();
       return json(200, { ok: true, queued, alreadyQueued, protected: protectedCount,
-        message: "The scheduled collector submits up to four repairs every ten minutes when fewer than twelve jobs are active." });
+        message: "The scheduled collector refills open places up to thirty active listing jobs every ten minutes." });
     }
 
     // Retry only slots absent from a terminal listing batch, using its

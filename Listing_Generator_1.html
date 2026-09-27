@@ -13216,7 +13216,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       try {
         if (status) status.textContent = `Saving ${targets.length} retry requests…`;
         const r = await postJson("geminiImageProxy", { kind: "batch_retry_queue", sessionId });
-        if (status) status.textContent = `${r.queued || 0} sets queued · ${r.alreadyQueued || 0} already queued. The scheduled collector submits up to four retries every ten minutes when fewer than twelve jobs are active.`;
+        if (status) status.textContent = `${r.queued || 0} sets queued · ${r.alreadyQueued || 0} already queued. The scheduled collector refills open places up to thirty active listing jobs every ten minutes.`;
       } catch (err) {
         if (status) status.textContent = `Could not queue retries: ${err?.message || err}. No saved images were changed.`;
       } finally {
