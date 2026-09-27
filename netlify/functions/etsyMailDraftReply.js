@@ -2500,8 +2500,9 @@ Workflow:
   6. If the active question is about sizes, materials or options for a
      CUSTOM piece (a design we make), set attach_line_sheet to the family
      (necklace, stud or huggie) on compose_draft_reply; the sheet attaches
-     as an image. For an existing listing, answer from that listing and
-     point to it, with no line sheet (owner's rule)
+     as an image. For an existing listing as it is, answer from that
+     listing and point to it, with no line sheet (owner's rule); a custom
+     piece based on a listing is custom work and gets the sheet
   6b. If the question is about gold types, care or tarnish, necklace fit
      or bracelet sizing, set the matching guide flag (see COLLATERAL
      ATTACHMENT FLAGS), on placed orders too, and name each attached
@@ -2601,7 +2602,10 @@ choose size, metal or chain.
 OWNER'S RULE: a customer interested in an existing listing (they linked
 it or named it and ask its price, metal, size, chain, or how to order)
 stays with that listing. Answer from the listing and point to it; no
-line sheet.
+line sheet. Judge by context, not by the link: a custom piece based on
+a listing (a size, metal, chain or design it doesn't offer, two designs
+combined, their own photo or name in that style) is custom work and
+gets the sheet, with the listing as the reference.
 
 For custom work, these patterns trigger attach_line_sheet on
 compose_draft_reply:
@@ -3146,7 +3150,7 @@ const TOOL_SPECS = [
         attach_line_sheet: {
           type: "string",
           enum: ["necklace", "stud", "huggie"],
-          description: "Set to the product family only for custom work: the customer is choosing sizes, metals, chains or prices for a design we make. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Owner's rule: a customer interested in an existing listing (its price, metal, size, chain, or ordering it) stays with that listing, with no line sheet. Leave it out for those and for delivery, shipping, return, order-status or complaint questions."
+          description: "Set to the product family only for custom work: the customer is choosing sizes, metals, chains or prices for a design we make. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Owner's rule, judged by context: a customer interested in an existing listing as it is (its price, metal, size, chain, or ordering it) stays with that listing, with no line sheet; a custom piece based on a listing (something it doesn't offer) is custom work and gets the sheet. Leave it out for those and for delivery, shipping, return, order-status or complaint questions."
         }
       },
       required: ["investigation", "text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
