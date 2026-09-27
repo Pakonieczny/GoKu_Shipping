@@ -154,5 +154,26 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   assert.equal((await admission(10)).submitted, 20, "fills twenty open places");
   assert.equal((await admission(28)).submitted, 2, "stops at thirty active jobs");
   assert.equal((await admission(10, true)).submitted, 1, "stops on provider refusal");
-  console.log("Listing batch recovery: 10 scenarios passed");
+
+  const dedupeStart = source.indexOf('      const submitSessionId = String(body?.sessionId || "");');
+  const dedupeEnd = source.indexOf('      // Step A: Run all "copy" tasks', dedupeStart);
+  assert(dedupeStart > 0 && dedupeEnd > dedupeStart, "idempotent original submission exists");
+  async function dedupe(path) {
+    const old = { sessionId: "sess_live", batchName: "batch_existing",
+      sets: [{ outputBasePath: base }], routes: Array(6).fill({}) };
+    return vm.runInNewContext(`(async () => { ${source.slice(dedupeStart, dedupeEnd)} return { ok: false, newSubmission: true }; })()`, {
+      body: { sessionId: "sess_live", displayName: "part254of300" },
+      displayName: "part254of300", sets: [{ outputBasePath: path }],
+      getDb: () => ({ collection: () => ({ where: () => ({ limit: () => ({
+        get: async () => ({ docs: [{ id: "old-id", data: () => old }] }),
+      }) }) }) }), BATCHES_COLL: "batches",
+      json: (statusCode, data) => ({ statusCode, ...data }),
+    });
+  }
+  const reused = await dedupe(base);
+  assert.equal(reused.batchName, "batch_existing", "reuses a persisted identical provider job");
+  assert.equal(reused.alreadySubmitted, true);
+  const unrelated = await dedupe(base + "_different");
+  assert.equal(unrelated.newSubmission, true, "does not reuse a job for a different set");
+  console.log("Listing batch recovery: 12 scenarios passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

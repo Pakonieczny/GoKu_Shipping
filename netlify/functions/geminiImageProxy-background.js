@@ -14563,6 +14563,26 @@ async function _handlerImpl(event) {
         }
       }
 
+      // Browser network timeouts can cause the same chunk to be sent again
+      // after its first job was created. Reuse the persisted job for the same
+      // session, display name and output folders; another provider batch
+      // would charge twice and race to populate the same set.
+      const submitSessionId = String(body?.sessionId || "");
+      if (submitSessionId && body?.displayName) {
+        const existing = await getDb().collection(BATCHES_COLL)
+          .where("displayName", "==", displayName).limit(20).get();
+        const requestedPaths = sets.map((s) => String(s.outputBasePath)).sort().join("\n");
+        const match = existing.docs.map((doc) => ({ doc, data: doc.data() })).find(({ data }) =>
+          data.sessionId === submitSessionId && data.batchName &&
+          Array.isArray(data.sets) && data.sets.length === sets.length &&
+          data.sets.map((s) => String(s.outputBasePath)).sort().join("\n") === requestedPaths);
+        if (match) {
+          return json(200, { ok: true, batchName: match.data.batchName,
+            docId: match.doc.id, requestCount: match.data.routes?.length || 0,
+            setsCount: sets.length, alreadySubmitted: true });
+        }
+      }
+
       // Step A: Run all "copy" tasks synchronously. They don't go through
       // Gemini and shouldn't wait for batch turnaround. This mirrors what
       // copy_to_slot does, but inline so we don't double-network-trip.

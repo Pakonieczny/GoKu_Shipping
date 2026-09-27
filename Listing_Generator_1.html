@@ -13049,8 +13049,17 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // problem cases.
       const effective = session.batches.filter((b) => !b.retryBatchName);
       const states = effective.map((b) => _normBatchState(b.state));
-      const total = effective.length;
-      const finished = effective.filter((b) => b.collected).length;
+      // A timed-out submit can create two provider jobs for one display
+      // part. Count that set once for progress, while showing both active
+      // jobs when describing provider capacity.
+      const uniqueEffective = new Map();
+      for (const b of effective) {
+        const key = b.retryOf ? b.batchName : (b.displayName || b.batchName);
+        if (!uniqueEffective.has(key) || (b.collected && !uniqueEffective.get(key).collected))
+          uniqueEffective.set(key, b);
+      }
+      const total = uniqueEffective.size;
+      const finished = [...uniqueEffective.values()].filter((b) => b.collected).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const running = states.filter((st) => st === "JOB_STATE_RUNNING" || st === "JOB_STATE_PENDING").length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
@@ -13075,9 +13084,24 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
 
+      const originals = session.batches.filter((b) => !b.retryOf);
+      const partNumbers = new Set();
+      let plannedSets = 0;
+      for (const b of originals) {
+        const match = /-(\d+)sets-.*-part(\d+)of(\d+)$/.exec(String(b.displayName || ""));
+        if (match) {
+          partNumbers.add(Number(match[2]));
+          plannedSets = Math.max(plannedSets, Number(match[1]), Number(match[3]));
+        }
+      }
+      const originalSubmitted = partNumbers.size || originals.length;
+      const duplicateJobs = partNumbers.size ? Math.max(0, originals.length - partNumbers.size) : 0;
+      plannedSets = Math.max(plannedSets, totalSets - duplicateJobs);
+      const notSubmitted = partNumbers.size ? Math.max(0, plannedSets - originalSubmitted) : 0;
+
       const startStr = session.earliest && isFinite(session.earliest)
         ? new Date(session.earliest).toLocaleString() : "—";
-      const allDone = (finished + cancelled) === total;
+      const allDone = (finished + cancelled) === total && notSubmitted === 0;
       const elapsedMs = allDone && session.latest
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
@@ -13111,10 +13135,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           .map((id) => getImageModelConfig(id).label)
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
-      rows.push(["Sets requested",   String(totalSets)]);
+      rows.push(["Sets planned", String(plannedSets)]);
+      if (partNumbers.size) rows.push(["Original submission", `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
       rows.push(["Progress", `${finished} saved · ${running} processing · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
-      if (waitingRetries) rows.push(["Retry capacity", `${running}/${_batchRetryLimit} active in this submission`]);
+      if (waitingRetries) rows.push(["Retry admission", `${running} active provider jobs · queued retries start below ${_batchRetryLimit}`]);
       if (lastProviderCheck) rows.push(["Provider checked", new Date(lastProviderCheck).toLocaleTimeString()]);
       const sweep = _batchSweepInfo;
       const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
@@ -13137,19 +13162,19 @@ Click the button again to permanently delete eligible temporary files, or cancel
         `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${_batchSafeText(k)}</span><span style="color:var(--text); font-weight:500; overflow-wrap:anywhere;">${_batchSafeText(v)}</span></div>`
       ).join("");
 
-      const progressPct = totalSets ? Math.min(100, Math.round(100 * finished / totalSets)) : 0;
-      const progressHtml = totalSets ? `<div style="margin:12px 0 8px;">
+      const progressPct = plannedSets ? Math.min(100, Math.round(100 * finished / plannedSets)) : 0;
+      const progressHtml = plannedSets ? `<div style="margin:12px 0 8px;">
         <div style="height:7px; background:var(--inset); border-radius:6px; overflow:hidden; border:1px solid var(--line);">
-          <div role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${totalSets}" aria-valuenow="${finished}"
+          <div role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}"
             style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>
-        <div class="muted" style="font-size:10px; margin-top:4px;">${finished} of ${totalSets} sets saved (${progressPct}%)</div>
+        <div class="muted" style="font-size:10px; margin-top:4px;">${finished} of ${plannedSets} planned sets saved (${progressPct}%)</div>
       </div>` : "";
       let queueExplanation = "";
       if (waitingRetries) {
         const needToFinish = Math.max(0, running - _batchRetryLimit + 1);
         const reason = running >= _batchRetryLimit
-          ? `${running} provider jobs are still processing. ${needToFinish} must finish before a retry can be submitted under the ${_batchRetryLimit}-job cap.`
+          ? `${running} provider jobs are still processing. At least ${needToFinish} must finish before a queued retry can enter the ${_batchRetryLimit}-job retry admission limit.`
           : `${_batchRetryLimit - running} retry place(s) are available. The collector will fill them at the next sweep.`;
         const sweepProblem = sweep?.lastError ? ` Last collector error: ${sweep.lastError}.` :
           sweep?.runningSince && !sweepIsRunning ? " The collector has not completed its last sweep; check its status." :
@@ -13157,7 +13182,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           sweep?.lastResult?.collectErrors ? ` ${sweep.lastResult.collectErrors} collection attempt(s) failed on the last sweep.` : "";
         queueExplanation = `<div role="status" style="margin:10px 0; padding:10px; border-radius:6px; background:var(--inset); border:1px solid var(--line); font-size:11px; line-height:1.5;">
           <strong>${running >= _batchRetryLimit ? "Waiting for provider capacity" : "Retries ready for the next sweep"}</strong><br>
-          ${_batchSafeText(reason + sweepProblem)} The ${waitingRetries} queued sets are saved and need no open browser tab.
+          ${_batchSafeText(reason + sweepProblem)}${notSubmitted ? ` The original submission still has ${notSubmitted} planned parts without a provider job; its browser may continue submitting them independently of the retry limit.` : ""} The ${waitingRetries} queued retries are saved and need no open browser tab.
         </div>`;
       }
 
