@@ -12963,6 +12963,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
     let _batchPollTimer = null;
     let _batchPollInFlight = false;
     let _lastBatchList = [];
+    let _batchSweepInfo = null;
+    let _batchNextSweepAt = null;
+    let _batchRetryLimit = 30;
     let _recoveryInFlight = false;
     let _retryInFlight = false;
     const _batchSafeText = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
@@ -12975,6 +12978,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         _lastBatchList = batches;
+        _batchSweepInfo = resp?.sweep || null;
+        _batchNextSweepAt = Number(resp?.nextSweepAt || 0) || null;
+        _batchRetryLimit = Number(resp?.retryActiveLimit || 30);
         if (batches.length === 0) {
           listEl.innerHTML = `<div class="muted" style="font-size: 11px; padding: 6px 0; line-height: 1.5;">No batch jobs yet. Click <b>Submit batch</b> above to create one.</div>`;
           return;
@@ -13049,6 +13055,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const running = states.filter((st) => st === "JOB_STATE_RUNNING" || st === "JOB_STATE_PENDING").length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
       const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
+      const lastProviderCheck = Math.max(0, ...effective.filter((b) =>
+        ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state)))
+        .map((b) => Number(b.updatedAt || 0)));
 
       let totalSets = 0;
       let totalImagesGen = 0;
@@ -13082,7 +13091,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
-      } else if (running > 0) {
+      } else if (waitingRetries && running >= _batchRetryLimit) {
+        headline = "Processing · retries waiting"; headlineColor = "#93c5fd";
+      } else if (running > 0 || waitingRetries > 0) {
         headline = "In progress"; headlineColor = "#93c5fd";
       } else {
         headline = "Pending"; headlineColor = "#fde68a";
@@ -13101,8 +13112,20 @@ Click the button again to permanently delete eligible temporary files, or cancel
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets requested",   String(totalSets)]);
-      rows.push(["Batches",          `${session.batches.length} submitted (${total} current) · ${running} running · ${succeeded} ready · ${finished} saved · ${failed} failed${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
-      if (waitingRetries) rows.push(["Waiting to retry", `${waitingRetries} sets · admitted as provider capacity opens`]);
+      rows.push(["Progress", `${finished} saved · ${running} processing · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
+      rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
+      if (waitingRetries) rows.push(["Retry capacity", `${running}/${_batchRetryLimit} active in this submission`]);
+      if (lastProviderCheck) rows.push(["Provider checked", new Date(lastProviderCheck).toLocaleTimeString()]);
+      const sweep = _batchSweepInfo;
+      const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
+      const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
+      if (waitingRetries) {
+        rows.push(["Collector", sweepIsRunning ? `Running · ${sweep.stage || "checking jobs"}` :
+          sweep?.lastError ? `Error: ${sweep.lastError}` : sweep?.lastSweepAt ?
+          `Last completed ${new Date(sweep.lastSweepAt).toLocaleTimeString()} · ${sweep.lastResult?.retriesSubmitted || 0} retries submitted${sweep.lastResult?.collectErrors ? ` · ${sweep.lastResult.collectErrors} collection errors` : ""}` :
+          "Waiting for first recorded sweep"]);
+        if (_batchNextSweepAt) rows.push(["Next sweep", new Date(_batchNextSweepAt).toLocaleTimeString()]);
+      }
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
       if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
@@ -13111,8 +13134,32 @@ Click the button again to permanently delete eligible temporary files, or cancel
       rows.push([allDone ? "Total time" : "Elapsed", _formatDuration(elapsedMs)]);
 
       const statsHtml = rows.map(([k, v]) =>
-        `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${k}</span><span style="color:var(--text); font-weight:500;">${v}</span></div>`
+        `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${_batchSafeText(k)}</span><span style="color:var(--text); font-weight:500; overflow-wrap:anywhere;">${_batchSafeText(v)}</span></div>`
       ).join("");
+
+      const progressPct = totalSets ? Math.min(100, Math.round(100 * finished / totalSets)) : 0;
+      const progressHtml = totalSets ? `<div style="margin:12px 0 8px;">
+        <div style="height:7px; background:var(--inset); border-radius:6px; overflow:hidden; border:1px solid var(--line);">
+          <div role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${totalSets}" aria-valuenow="${finished}"
+            style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
+        </div>
+        <div class="muted" style="font-size:10px; margin-top:4px;">${finished} of ${totalSets} sets saved (${progressPct}%)</div>
+      </div>` : "";
+      let queueExplanation = "";
+      if (waitingRetries) {
+        const needToFinish = Math.max(0, running - _batchRetryLimit + 1);
+        const reason = running >= _batchRetryLimit
+          ? `${running} provider jobs are still processing. ${needToFinish} must finish before a retry can be submitted under the ${_batchRetryLimit}-job cap.`
+          : `${_batchRetryLimit - running} retry place(s) are available. The collector will fill them at the next sweep.`;
+        const sweepProblem = sweep?.lastError ? ` Last collector error: ${sweep.lastError}.` :
+          sweep?.runningSince && !sweepIsRunning ? " The collector has not completed its last sweep; check its status." :
+          sweepStale ? " No sweep has completed in over 25 minutes; the scheduled collector needs attention." :
+          sweep?.lastResult?.collectErrors ? ` ${sweep.lastResult.collectErrors} collection attempt(s) failed on the last sweep.` : "";
+        queueExplanation = `<div role="status" style="margin:10px 0; padding:10px; border-radius:6px; background:var(--inset); border:1px solid var(--line); font-size:11px; line-height:1.5;">
+          <strong>${running >= _batchRetryLimit ? "Waiting for provider capacity" : "Retries ready for the next sweep"}</strong><br>
+          ${_batchSafeText(reason + sweepProblem)} The ${waitingRetries} queued sets are saved and need no open browser tab.
+        </div>`;
+      }
 
       // Action buttons: only show what's actionable. Cancel-all if
       // anything is still running. Recover-all if there are failed /
@@ -13172,6 +13219,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
           <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
             ${statsHtml}
           </div>
+          ${progressHtml}
+          ${queueExplanation}
           ${buttonsHtml}
           <details style="margin-top:10px; font-size:11px;">
             <summary style="cursor:pointer; color:var(--text-2);">Details for ${total} batches · individual states, times and errors</summary>
@@ -13388,6 +13437,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const anyOpen = _lastBatchList.some((b) => {
           const st = _normState(b.state);
           if (b.collected) return false;
+          if (b.retryRequested && !b.retryBatchName) return true;
           if (st === "JOB_STATE_FAILED" || st === "JOB_STATE_CANCELLED" || st === "JOB_STATE_EXPIRED") return false;
           return true;
         });

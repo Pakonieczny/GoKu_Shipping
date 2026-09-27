@@ -14029,7 +14029,11 @@ async function _handlerImpl(event) {
       if (runningSince && Date.now() - runningSince < 12 * 60 * 1000) {
         return json(200, { ok: true, skipped: "sweep already running" });
       }
-      await guardRef.set({ runningSince: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await guardRef.set({
+        runningSince: admin.firestore.FieldValue.serverTimestamp(),
+        stage: "checking provider jobs",
+        lastError: null,
+      }, { merge: true });
 
       const normState = (st) => {
         const x = String(st || "");
@@ -14065,12 +14069,16 @@ async function _handlerImpl(event) {
           const st = await inProcess({ kind: "batch_status", batchName: b.batchName });
           statusChecked++;
           state = st?.state || state;
+          // Admission below must use the state we just fetched, not the
+          // snapshot from before this sweep started.
+          b.state = state;
         }
         if (isSucceeded(state)) {
           const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
-          if (col?.ok) collected++; else collectErrors++;
+          if (col?.ok) { collected++; b.collected = true; } else collectErrors++;
         }
       }
+      await guardRef.set({ stage: "checking retry capacity" }, { merge: true });
 
       // Token-based provider admission can reject a large submission before
       // it starts. Keep requested repairs durable, and admit a few only when
@@ -14106,6 +14114,7 @@ async function _handlerImpl(event) {
           break;
         }
       }
+      await guardRef.set({ stage: "checking stalled orchestrations" }, { merge: true });
 
       // Resume orchestrations whose self-chain got dropped (no update in 20m).
       const orchSnap = await db.collection(ORCH_COLL).where("status", "==", "running").limit(20).get();
@@ -14130,13 +14139,17 @@ async function _handlerImpl(event) {
 
       await guardRef.set({
         runningSince: null,
+        stage: "idle",
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted },
+        lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
+          waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length },
       }, { merge: true });
       return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
         retriesSubmitted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {
-      try { await guardRef.set({ runningSince: null }, { merge: true }); } catch (_) {}
+      try { await guardRef.set({ runningSince: null, stage: "failed",
+        lastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastError: String(err?.message || err).slice(0, 500) }, { merge: true }); } catch (_) {}
       console.error("[batch_sweep] failed", safeErr(err));
       return json(502, { ok: false, error: safeErr(err) });
     }
@@ -15440,7 +15453,30 @@ async function _handlerImpl(event) {
           results: d.results || null,
         });
       });
-      return json(200, { ok: true, batches: out });
+      let sweep = null;
+      try {
+        const sweepSnap = await db.collection("LG1_Config").doc("batchSweep").get();
+        if (sweepSnap.exists) {
+          const d = sweepSnap.data();
+          const millis = (v) => v?.toMillis?.() || null;
+          sweep = {
+            stage: d.stage || "unknown",
+            runningSince: millis(d.runningSince),
+            lastSweepAt: millis(d.lastSweepAt),
+            lastFailureAt: millis(d.lastFailureAt),
+            lastError: d.lastError || null,
+            lastResult: d.lastResult || null,
+          };
+        }
+      } catch (err) {
+        console.warn("[batch_list] sweep status unavailable:", err?.message || err);
+      }
+      // Cron runs at :04, :14, :24, :34, :44, :54 UTC. Date.now() is
+      // timezone-independent; the browser formats this in the user's zone.
+      const minute = Math.floor(Date.now() / 60000);
+      const nextSweepAt = (Math.floor((minute - 4) / 10) * 10 + 14) * 60000;
+      return json(200, { ok: true, batches: out, sweep, nextSweepAt,
+        retryActiveLimit: 30 });
     }
 
     if (kind === "batch_cancel") {

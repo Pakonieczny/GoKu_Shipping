@@ -143,6 +143,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
           : { state: "JOB_STATE_PENDING" };
       },
       db: { collection: () => ({ doc: () => ({ set: async () => {} }) }) },
+      guardRef: { set: async () => {} },
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       console: { warn: () => {} },
     };
