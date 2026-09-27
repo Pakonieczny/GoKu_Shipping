@@ -2243,6 +2243,16 @@ function normalizeOpenAIBatch(raw) {
     providerStatus: raw.status, errors: raw.errors || null };
 }
 
+function batchFailureDetails(data) {
+  const providerErrors = data?.errors?.data || data?.errors || data?.error || [];
+  const entries = Array.isArray(providerErrors) ? providerErrors : [providerErrors];
+  return entries.slice(0, 8).map((entry) => {
+    if (typeof entry === "string") return entry.slice(0, 500);
+    const message = entry?.message || entry?.code || entry?.type;
+    return message ? String(message).slice(0, 500) : "";
+  }).filter(Boolean).join("; ") || null;
+}
+
 // Cleanup is scoped to this application's recorded, collected batches.
 // Never list/delete an entire provider account or touch Firebase image objects.
 async function cleanupBatchFiles(body) {
@@ -14019,7 +14029,11 @@ async function _handlerImpl(event) {
       if (runningSince && Date.now() - runningSince < 12 * 60 * 1000) {
         return json(200, { ok: true, skipped: "sweep already running" });
       }
-      await guardRef.set({ runningSince: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      await guardRef.set({
+        runningSince: admin.firestore.FieldValue.serverTimestamp(),
+        stage: "checking provider jobs",
+        lastError: null,
+      }, { merge: true });
 
       const normState = (st) => {
         const x = String(st || "");
@@ -14028,11 +14042,22 @@ async function _handlerImpl(event) {
       const isFinal = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(st));
       const isSucceeded = (st) => normState(st) === "JOB_STATE_SUCCEEDED";
 
-      let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0;
+      let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
 
-      const openSnap = await db.collection(BATCHES_COLL).where("collected", "==", false).limit(250).get();
       const open = [];
-      openSnap.forEach((d) => open.push(d.data()));
+      // A 250-document first page can be saturated by failed jobs forever,
+      // hiding later live jobs from the scheduled collector. Page the whole
+      // uncollected set, with a finite ceiling for a single sweep invocation.
+      let cursor = null;
+      while (open.length < 2000) {
+        let query = db.collection(BATCHES_COLL).where("collected", "==", false)
+          .orderBy(admin.firestore.FieldPath.documentId()).limit(250);
+        if (cursor) query = query.startAfter(cursor);
+        const page = await query.get();
+        page.forEach((d) => open.push(d.data()));
+        if (page.size < 250) break;
+        cursor = page.docs[page.docs.length - 1].id;
+      }
       // Oldest first so long-waiting batches are served before fresh ones.
       open.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
 
@@ -14044,12 +14069,52 @@ async function _handlerImpl(event) {
           const st = await inProcess({ kind: "batch_status", batchName: b.batchName });
           statusChecked++;
           state = st?.state || state;
+          // Admission below must use the state we just fetched, not the
+          // snapshot from before this sweep started.
+          b.state = state;
         }
         if (isSucceeded(state)) {
           const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
-          if (col?.ok) collected++; else collectErrors++;
+          if (col?.ok) { collected++; b.collected = true; } else collectErrors++;
         }
       }
+      await guardRef.set({ stage: "checking retry capacity" }, { merge: true });
+
+      // Token-based provider admission can reject a large submission before
+      // it starts. Keep requested repairs durable, and admit a few only when
+      // the number of active listing batches has drained. A child that fails
+      // carries retryRequested and is eligible again on a later sweep.
+      const activeStates = ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"];
+      let activeCount = open.filter((b) => !b.collected && activeStates.includes(normState(b.state))).length;
+      const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName &&
+        !b.collected && !b.responsesFile && isFinal(b.state) && b.batchName &&
+        Number(b.retryAttempt || 0) < 5);
+      for (const b of waiting) {
+        if (activeCount >= 30 || retriesSubmitted >= 20 || Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        const retry = await inProcess({ kind: "batch_retry_missing", batchName: b.batchName });
+        if (retry?.batchName && retry.batchName !== b.batchName) {
+          retriesSubmitted++;
+          // The provider can reject a newly created batch during validation.
+          // Stop this sweep at the first observed quota refusal instead of
+          // sending the rest of the queue into the same rejection.
+          const fresh = await inProcess({ kind: "batch_status", batchName: retry.batchName });
+          if (fresh?.state === "JOB_STATE_FAILED") {
+            console.warn("[batch_sweep] provider rejected retry:", retry.batchName,
+              fresh.providerError || "reason pending");
+            break;
+          }
+          activeCount++;
+        } else if (retry?.complete || /already in Completed_Listing_Sets/i.test(retry?.error?.message || "")) {
+          await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
+            retryRequested: false, retryStatus: "complete_or_protected",
+            retryError: retry?.error?.message || null,
+          }, { merge: true });
+        } else if (!retry?.ok) {
+          console.warn("[batch_sweep] retry postponed:", b.batchName, retry?.error?.message || "unknown error");
+          break;
+        }
+      }
+      await guardRef.set({ stage: "checking stalled orchestrations" }, { merge: true });
 
       // Resume orchestrations whose self-chain got dropped (no update in 20m).
       const orchSnap = await db.collection(ORCH_COLL).where("status", "==", "running").limit(20).get();
@@ -14074,12 +14139,17 @@ async function _handlerImpl(event) {
 
       await guardRef.set({
         runningSince: null,
+        stage: "idle",
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastResult: { statusChecked, collected, collectErrors, resumed },
+        lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
+          waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length },
       }, { merge: true });
-      return json(200, { ok: true, statusChecked, collected, collectErrors, resumed, openBatches: open.length });
+      return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
+        retriesSubmitted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {
-      try { await guardRef.set({ runningSince: null }, { merge: true }); } catch (_) {}
+      try { await guardRef.set({ runningSince: null, stage: "failed",
+        lastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastError: String(err?.message || err).slice(0, 500) }, { merge: true }); } catch (_) {}
       console.error("[batch_sweep] failed", safeErr(err));
       return json(502, { ok: false, error: safeErr(err) });
     }
@@ -14493,6 +14563,26 @@ async function _handlerImpl(event) {
         }
       }
 
+      // Browser network timeouts can cause the same chunk to be sent again
+      // after its first job was created. Reuse the persisted job for the same
+      // session, display name and output folders; another provider batch
+      // would charge twice and race to populate the same set.
+      const submitSessionId = String(body?.sessionId || "");
+      if (submitSessionId && body?.displayName) {
+        const existing = await getDb().collection(BATCHES_COLL)
+          .where("displayName", "==", displayName).limit(20).get();
+        const requestedPaths = sets.map((s) => String(s.outputBasePath)).sort().join("\n");
+        const match = existing.docs.map((doc) => ({ doc, data: doc.data() })).find(({ data }) =>
+          data.sessionId === submitSessionId && data.batchName &&
+          Array.isArray(data.sets) && data.sets.length === sets.length &&
+          data.sets.map((s) => String(s.outputBasePath)).sort().join("\n") === requestedPaths);
+        if (match) {
+          return json(200, { ok: true, batchName: match.data.batchName,
+            docId: match.doc.id, requestCount: match.data.routes?.length || 0,
+            setsCount: sets.length, alreadySubmitted: true });
+        }
+      }
+
       // Step A: Run all "copy" tasks synchronously. They don't go through
       // Gemini and shouldn't wait for batch turnaround. This mirrors what
       // copy_to_slot does, but inline so we don't double-network-trip.
@@ -14515,6 +14605,8 @@ async function _handlerImpl(event) {
             try {
               const dst = `${base}/Slot_${slot + 1}.png`;
               const dstFile = bucket.file(dst);
+              const [alreadyPresent] = await dstFile.exists();
+              if (alreadyPresent) return;
               await bucket.file(src).copy(dstFile);
               const token = newDownloadToken();
               await dstFile.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
@@ -14726,6 +14818,9 @@ async function _handlerImpl(event) {
         docId,
         displayName,
         sessionId: String(body?.sessionId || ""),
+        retryOf: String(body?.retryOf || "") || null,
+        retryRequested: body?.retryRequested === true,
+        retryAttempt: Number(body?.retryAttempt || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
@@ -14748,6 +14843,7 @@ async function _handlerImpl(event) {
           setKind: String(s.setKind || "") || null,
           manifest: (s.manifest && typeof s.manifest === "object") ? s.manifest : null,
           tasks: s.tasks, // store the raw task list so we can write a faithful manifest later
+          allTasks: Array.isArray(s.allTasks) ? s.allTasks : null,
         })),
         routes,
         copyStats: { copied: copiedCount, errors: copyErrors },
@@ -14769,6 +14865,133 @@ async function _handlerImpl(event) {
       });
     }
 
+    if (kind === "batch_retry_queue") {
+      const sessionId = String(body?.sessionId || "").trim();
+      if (!/^sess_[A-Za-z0-9_-]{8,80}$/.test(sessionId)) {
+        return json(400, { error: { message: "A valid listing submission ID is required" } });
+      }
+      const db = getDb();
+      const snap = await db.collection(BATCHES_COLL).where("sessionId", "==", sessionId).limit(1000).get();
+      let queued = 0, alreadyQueued = 0, protectedCount = 0;
+      let writes = db.batch();
+      let pending = 0;
+      for (const doc of snap.docs) {
+        const d = doc.data();
+        const state = String(d.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
+        if (!(["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(state)) ||
+            d.collected || d.responsesFile || d.retryBatchName ||
+            d.sets?.length !== 1 || d.sets[0]?.setKind === "charm_maker") {
+          protectedCount++;
+          continue;
+        }
+        if (d.retryRequested) { alreadyQueued++; continue; }
+        writes.set(doc.ref, { retryRequested: true,
+          retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        pending++; queued++;
+        if (pending >= 250) { await writes.commit(); writes = db.batch(); pending = 0; }
+      }
+      if (pending) await writes.commit();
+      return json(200, { ok: true, queued, alreadyQueued, protected: protectedCount,
+        message: "The scheduled collector refills open places up to thirty active listing jobs every ten minutes." });
+    }
+
+    // Retry only slots absent from a terminal listing batch, using its
+    // original prompts and charm. Never reallocate a set or copy an image
+    // onto an occupied slot. A repeat request returns the existing retry.
+    if (kind === "batch_retry_missing") {
+      const originalName = String(body?.batchName || "").trim();
+      if (!/^(batch_[A-Za-z0-9_-]+|batches\/[A-Za-z0-9_-]+)$/.test(originalName)) {
+        return json(400, { error: { message: "Invalid original batch identifier" } });
+      }
+      const db = getDb();
+      const originalRef = db.collection(BATCHES_COLL).doc(batchDocIdFromName(originalName));
+      const originalSnap = await originalRef.get();
+      if (!originalSnap.exists) return json(404, { error: { message: "Original batch record is missing" } });
+      const original = originalSnap.data();
+      if (Number(original.retryAttempt || 0) >= 5) {
+        return json(409, { error: { message: "Five retry attempts reached; inspect the provider failure before submitting again" } });
+      }
+      if (!Array.isArray(original.sets) || original.sets.length !== 1 ||
+          original.sets[0].setKind === "charm_maker") {
+        return json(409, { error: { message: "Selective retry supports one listing set per batch" } });
+      }
+      const live = await getGeminiBatchJob(batchApiKey(originalName), originalName);
+      const state = live?.metadata?.state || live?.state;
+      if (!["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED"].includes(state)) {
+        return json(409, { error: { message: `Original job is ${state}; wait for collection before retrying` } });
+      }
+      if (live?.response?.responsesFile && !original.collected) {
+        return json(409, { error: { message: "Original job has provider results. Recover them before retrying missing slots." } });
+      }
+      const set = original.sets[0];
+      assertAllowedOutputBase(set.outputBasePath);
+      const bucket = admin.storage().bucket();
+      // Approval moves files away from Ready_To_List. Do not interpret that
+      // move as an empty set and silently create a second unapproved copy.
+      const approvedPath = `listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/${set.category}_Set_${set.setN}/`;
+      const [approved] = await bucket.getFiles({ prefix: approvedPath, maxResults: 1 });
+      if (approved.length) return json(409, { error: { message: "This set is already in Completed_Listing_Sets; retry is blocked" } });
+      const [presentFiles] = await bucket.getFiles({ prefix: `${set.outputBasePath}/` });
+      const presentSlots = new Set(presentFiles.map((f) =>
+        /^Slot_(\d+)\.png$/i.exec(f.name.slice(set.outputBasePath.length + 1))?.[1]).filter(Boolean).map(Number));
+      const allTasks = Array.isArray(set.allTasks) ? set.allTasks : set.tasks;
+      const missingTasks = allTasks.filter((t) => Number.isInteger(Number(t?.slotIndex)) &&
+        !presentSlots.has(Number(t.slotIndex) + 1));
+      if (!missingTasks.length) return json(200, { ok: true, complete: true, missing: 0, present: presentSlots.size });
+      if (body?.preview) return json(200, { ok: true, missing: missingTasks.length, present: presentSlots.size,
+        providerError: batchFailureDetails(live) });
+      if (missingTasks.every((t) => t.type === "copy")) {
+        for (const t of missingTasks) {
+          const dest = bucket.file(`${set.outputBasePath}/Slot_${Number(t.slotIndex) + 1}.png`);
+          const [exists] = await dest.exists();
+          if (!exists) await bucket.file(t.source_storage_path).copy(dest);
+        }
+        return json(200, { ok: true, complete: true, missing: 0,
+          present: presentSlots.size + missingTasks.length });
+      }
+
+      const claimed = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(originalRef);
+        const d = snap.data();
+        if (d.retryBatchName) return { batchName: d.retryBatchName };
+        const lastStart = d.retryStartedAt?.toMillis?.() || 0;
+        if (lastStart && Date.now() - lastStart < 10 * 60 * 1000) return { submitting: true };
+        tx.set(originalRef, { retryStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+          retryError: null, retryStatus: "submitting" }, { merge: true });
+        return { claimed: true };
+      });
+      if (!claimed.claimed) return json(200, { ok: true, ...claimed });
+      try {
+        const retrySet = { ...set, tasks: missingTasks, allTasks };
+        const response = await module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify({
+          kind: "batch_submit", model: original.model, sets: [retrySet],
+          imageSize: original.imageSize, sessionId: original.sessionId,
+          retryOf: originalName,
+          retryRequested: original.retryRequested === true,
+          retryAttempt: Number(original.retryAttempt || 0) + 1,
+          displayName: `retry-${set.category}-Set_${set.setN}`,
+        }) });
+        const result = JSON.parse(response.body || "{}");
+        if (response.statusCode === 200 && result.ok && result.copyOnly) {
+          await originalRef.set({ retryStatus: "complete", retryMissing: 0,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          return json(200, { ok: true, complete: true, missing: 0, present: presentSlots.size });
+        }
+        if (response.statusCode !== 200 || !result.ok || !result.batchName) {
+          throw new Error(result.error?.message || "Retry submission returned no batch ID");
+        }
+        await originalRef.set({ retryBatchName: result.batchName, retryStatus: "submitted",
+          retryMissing: missingTasks.length,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return json(200, { ok: true, batchName: result.batchName, missing: missingTasks.length,
+          present: presentSlots.size });
+      } catch (err) {
+        await originalRef.set({ retryStatus: "failed", retryError: String(err?.message || err).slice(0, 500),
+          retryStartedAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return json(502, { error: { message: `Selective retry failed: ${err?.message || err}` } });
+      }
+    }
+
     if (kind === "batch_status") {
       let apiKey;
       try { apiKey = batchApiKey(body?.batchName); }
@@ -14786,6 +15009,7 @@ async function _handlerImpl(event) {
       const state = data?.metadata?.state || data?.state || "UNKNOWN";
       const stats = data?.metadata?.batchStats || data?.batchStats || null;
       const respFile = data?.response?.responsesFile || data?.dest?.fileName || null;
+      const providerError = batchFailureDetails(data);
 
       // Mirror state into Firestore so the dashboard can show it without
       // the user having a tab open during the polling phase.
@@ -14795,6 +15019,7 @@ async function _handlerImpl(event) {
         await firestoreRetry(
           () => db.collection(BATCHES_COLL).doc(docId).set({
             state, batchStats: stats || null, responsesFile: respFile || null,
+            providerError,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.statusMirror"
@@ -14803,7 +15028,7 @@ async function _handlerImpl(event) {
 
       return json(200, {
         ok: true, batchName, state,
-        batchStats: stats, responsesFile: respFile,
+        batchStats: stats, responsesFile: respFile, providerError,
         done: state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_FAILED" ||
               state === "JOB_STATE_CANCELLED" || state === "JOB_STATE_EXPIRED",
         succeeded: state === "JOB_STATE_SUCCEEDED",
@@ -14845,7 +15070,8 @@ async function _handlerImpl(event) {
       const respFileName = live?.response?.responsesFile || live?.dest?.fileName;
       if (!respFileName) {
         if (forceMode) {
-          return json(400, { error: { message: `Force download: no result file available yet for state=${state}. Try again later or cancel.` } });
+          const reason = batchFailureDetails(live);
+          return json(409, { error: { message: `No provider result file for state=${state}.${reason ? ` Provider: ${reason}` : ""} Refresh status to inspect the failure before retrying.` } });
         }
         return json(500, { error: { message: "Succeeded batch has no responsesFile/fileName" } });
       }
@@ -14917,15 +15143,24 @@ async function _handlerImpl(event) {
           if (embed) buffer = embedPngTextMetadata(buffer, embed);
           const storagePath = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
           const file = bucket.file(storagePath);
+          const [exists] = await file.exists();
+          if (exists) {
+            recordResult(route, true, storagePath);
+            return;
+          }
           const token = newDownloadToken();
           await file.save(buffer, {
             resumable: false,
             contentType: "image/png",
+            preconditionOpts: { ifGenerationMatch: 0 },
             metadata: { metadata: { firebaseStorageDownloadTokens: token } },
           });
           recordResult(route, true, storagePath);
         } catch (e) {
-          recordResult(route, false, null, String(e?.message || e));
+          // A concurrent collector can win the create-only precondition.
+          const path = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
+          const [exists] = await bucket.file(path).exists().catch(() => [false]);
+          recordResult(route, !!exists, exists ? path : null, exists ? null : String(e?.message || e));
         }
         // Buffer drops out of scope once this fn returns; GC reclaims it.
       };
@@ -14989,11 +15224,15 @@ async function _handlerImpl(event) {
       // gen slots; we preserve that field here for cross-mode parity.
       for (let setIdx = 0; setIdx < setsMeta.length; setIdx++) {
         const s = setsMeta[setIdx];
+        const plannedTasks = Array.isArray(s.allTasks) ? s.allTasks : (s.tasks || []);
         const slotResults = (perSetSlotResults.get(setIdx) || []).sort((a, b) => a.slotIndex - b.slotIndex);
+        const [alreadySavedFiles] = await bucket.getFiles({ prefix: `${s.outputBasePath}/` });
+        const savedSlots = new Set(alreadySavedFiles.map((f) =>
+          /^Slot_(\d+)\.png$/i.exec(f.name.slice(s.outputBasePath.length + 1))?.[1]).filter(Boolean).map(Number));
 
         // Build a slotIndex → original-task lookup so we can pull source/newCharm.
         const taskBySlot = new Map();
-        for (const t of (s.tasks || [])) {
+        for (const t of plannedTasks) {
           if (Number.isFinite(Number(t?.slotIndex))) taskBySlot.set(Number(t.slotIndex), t);
         }
 
@@ -15002,7 +15241,7 @@ async function _handlerImpl(event) {
         // tab can render every slot with its source label even if a
         // particular gen failed.
         const planSlotsByIndex = new Map();
-        for (const t of (s.tasks || [])) {
+        for (const t of plannedTasks) {
           if (Number.isFinite(Number(t?.slotIndex))) planSlotsByIndex.set(Number(t.slotIndex), t);
         }
         const allSlotIndices = Array.from(planSlotsByIndex.keys()).sort((a, b) => a - b);
@@ -15029,12 +15268,12 @@ async function _handlerImpl(event) {
           // (e.g., upstream filtering); we still emit the slot for UI consistency.
           return {
             slot,
-            type: r?.ok === false ? "error" : "gen",
+            type: savedSlots.has(slot) ? "gen" : "error",
             source: t?.input_storage_path || null,
             originalSource: t?.input_storage_path || null,
             newCharm: t?.input_charm_storage_path || null,
-            output: (r?.ok && r?.storagePath) ? r.storagePath : null,
-            error: r?.error || null,
+            output: savedSlots.has(slot) ? `${s.outputBasePath}/Slot_${slot}.png` : null,
+            error: savedSlots.has(slot) ? null : (r?.error || "Image missing"),
           };
         });
 
@@ -15079,7 +15318,7 @@ async function _handlerImpl(event) {
           // batch mode every gen task in a set shares the same charm
           // (one charm per listing).
           sourceCharm: (() => {
-            for (const t of (s.tasks || [])) {
+            for (const t of plannedTasks) {
               if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
                 return t.input_charm_storage_path;
               }
@@ -15087,7 +15326,7 @@ async function _handlerImpl(event) {
             return null;
           })(),
           sourceCharmName: (() => {
-            for (const t of (s.tasks || [])) {
+            for (const t of plannedTasks) {
               if (String(t?.type) !== "copy" && t?.input_charm_storage_path) {
                 return String(t.input_charm_storage_path).split("/").pop() || null;
               }
@@ -15218,6 +15457,14 @@ async function _handlerImpl(event) {
           state: d.state,
           collected: !!d.collected,
           batchStats: d.batchStats || null,
+          providerError: d.providerError || null,
+          responsesFile: d.responsesFile || null,
+          retryOf: d.retryOf || null,
+          retryBatchName: d.retryBatchName || null,
+          retryRequested: !!d.retryRequested,
+          retryAttempt: Number(d.retryAttempt || 0),
+          retryStatus: d.retryStatus || null,
+          retryError: d.retryError || null,
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,
           updatedAt: d.updatedAt?.toMillis ? d.updatedAt.toMillis() : null,
           collectedAt: d.collectedAt?.toMillis ? d.collectedAt.toMillis() : null,
@@ -15226,7 +15473,30 @@ async function _handlerImpl(event) {
           results: d.results || null,
         });
       });
-      return json(200, { ok: true, batches: out });
+      let sweep = null;
+      try {
+        const sweepSnap = await db.collection("LG1_Config").doc("batchSweep").get();
+        if (sweepSnap.exists) {
+          const d = sweepSnap.data();
+          const millis = (v) => v?.toMillis?.() || null;
+          sweep = {
+            stage: d.stage || "unknown",
+            runningSince: millis(d.runningSince),
+            lastSweepAt: millis(d.lastSweepAt),
+            lastFailureAt: millis(d.lastFailureAt),
+            lastError: d.lastError || null,
+            lastResult: d.lastResult || null,
+          };
+        }
+      } catch (err) {
+        console.warn("[batch_list] sweep status unavailable:", err?.message || err);
+      }
+      // Cron runs at :04, :14, :24, :34, :44, :54 UTC. Date.now() is
+      // timezone-independent; the browser formats this in the user's zone.
+      const minute = Math.floor(Date.now() / 60000);
+      const nextSweepAt = (Math.floor((minute - 4) / 10) * 10 + 14) * 60000;
+      return json(200, { ok: true, batches: out, sweep, nextSweepAt,
+        retryActiveLimit: 30 });
     }
 
     if (kind === "batch_cancel") {
