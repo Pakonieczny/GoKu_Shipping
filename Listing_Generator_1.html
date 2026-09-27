@@ -3258,12 +3258,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
           <div id="batchJobsPanel" style="display: none; margin-top: 14px; padding: 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
               <label style="margin: 0; font-size: 12px; font-weight: 600;">Your batch jobs</label>
-              <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 10px; padding: 2px 8px;">↻ Refresh</button>
+              <button type="button" class="btn btnSmall" id="batchJobsRefreshBtn" style="font-size: 12px; padding: 6px 12px;">↻ Refresh</button>
             </div>
             <div class="muted" style="font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
               OpenAI jobs and queued repairs continue if you close this tab. The scheduled collector saves finished images to Firebase; this panel refreshes every 60 seconds while open.
             </div>
-            <div id="batchRefreshStatus" role="status" aria-live="polite" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px; color: var(--text-2);">
+            <div id="batchRefreshStatus" role="status" aria-live="polite" style="font-size: 12px; line-height: 1.5; margin-bottom: 10px; padding: 10px; background: var(--card-2); border: 1px solid var(--line); border-radius: 6px; color: #93c5fd;">
               Loading saved job records…
             </div>
             <div id="batchRecoveryStatus" role="status" aria-live="polite" style="font-size: 11px; line-height: 1.5; margin-bottom: 8px;"></div>
@@ -13037,7 +13037,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         _startBatchAutoPoll();
         const checkStatus = document.getElementById("batchRefreshStatus");
         if (checkStatus && checkStatus.textContent.includes("Loading saved"))
-          checkStatus.textContent = `Saved jobs loaded at ${new Date(_batchListLoadedAt).toLocaleTimeString()}. Checking provider states every 60 seconds; Refresh checks them now.`;
+          checkStatus.textContent = `Saved jobs loaded at ${new Date(_batchListLoadedAt).toLocaleTimeString()} · Provider states checked every 60 seconds; Refresh checks them now.`;
         return { ok: true, batches };
       } catch (err) {
         listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${_batchSafeText(err?.message || err)}</div>`;
@@ -13475,7 +13475,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const el = document.getElementById("batchRefreshStatus");
       if (!el) return;
       el.textContent = message;
-      el.style.color = error ? "#fca5a5" : "var(--text-2)";
+      el.style.color = error ? "#fca5a5" : message.includes("check finished") ? "#7fdb96" : "#93c5fd";
     }
 
     async function _checkBatchJobsNow(manual = false) {
