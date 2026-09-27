@@ -169,7 +169,7 @@ async function browserChecks() {
     assert(chips.some(t => /^Custom Orders5$/.test(t)), 'one Custom Orders chip counting the five lines: ' + chips.join(' | '));
     assert(!chips.some(t => /Material/.test(t)), 'no Material chip any more');
     assert(chips.some(t => /^Options\d/.test(t)), 'a regular line whose metal was not read is under Options');
-    assert(chips.some(t => /^Everything\d+/.test(t)));
+    assert(!chips.some(t => /^Everything/.test(t)), 'no Everything chip: Open is everything');
     const state = await page.evaluate(() => ({ chain: B.orders.byKey.get('4176744752_41767447521').state, pool: B.orders.byKey.get('4176744752_41767447521').poolIds.length, decisions: Review.count() }));
     assert.equal(state.chain, 'noDesign', 'chain only never goes into the pool'); assert.equal(state.pool, 0);
     await page.click('#reviewView .egTab[data-k="customOrder"]');
@@ -182,10 +182,11 @@ async function browserChecks() {
     assert.deepEqual(chainRow.buttons, ['Print QR label'], 'nothing to decide: only its label');
     for (const r of list.filter(x => x.rid !== '4176744752')) assert.deepEqual(r.buttons, ['Print QR label', 'Review & resolve'], r.rid + ' keeps Review & resolve');
     // one Open / Completed switch at the front of the bar, for every filter (Paul, 27 Sep)
-    const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: document.querySelector('#reviewView .egTab[data-k=""]').textContent.trim() }));
-    assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar');
-    assert.deepEqual(seg.b, ['Open' + seg.all.replace('Everything', ''), 'Completed0'], 'Open counts everything that waits: ' + JSON.stringify(seg));
-    const openAll = +seg.all.replace('Everything', '');
+    // no Everything chip (Paul, 27 Sep: it always read the same as Open)
+    const seg = await page.evaluate(() => ({ first: document.querySelector('#reviewView .ordBar').firstElementChild.className, b: [...document.querySelectorAll('#reviewView .ordBar .rvSeg button')].map(b => b.textContent.trim()), all: !!document.querySelector('#reviewView .egTab[data-k=""]'), n: Review.count() }));
+    assert.equal(seg.first, 'rvSeg', 'the switch comes first in the bar'); assert.equal(seg.all, false, 'no Everything chip');
+    const openAll = +seg.b[0].replace('Open', '');
+    assert.deepEqual(seg.b, ['Open' + openAll, 'Completed0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
     // Review & resolve still opens the question's own controls
@@ -233,10 +234,11 @@ async function browserChecks() {
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     list = await rows();
     assert.deepEqual(list.map(x => x.rid).sort(), ['4174476673', '4176744752'], 'both under Completed');
-    // Completed holds every filter: Everything under it lists what Custom Orders does (nothing else was answered here)
-    await page.click('#reviewView .egTab[data-k=""]');
-    assert.deepEqual((await rows()).map(x => x.rid).sort(), ['4174476673', '4176744752'], 'Everything under Completed');
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim())), ['Everything2', 'Custom Orders2'], 'only the kinds completed, with their counts');
+    // Completed holds every filter: pressing it again shows all it holds (here what Custom Orders does: nothing else was answered)
+    await page.click('#reviewView .rvSeg [data-cseg="done"]');
+    assert.equal(await page.evaluate(() => Review.view().filter), null, 'Completed pressed lets go of the filter');
+    assert.deepEqual((await rows()).map(x => x.rid).sort(), ['4174476673', '4176744752'], 'all of Completed');
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#reviewView .ordBar .egTab')].map(b => b.textContent.trim())), ['Custom Orders2'], 'only the kinds completed, with their counts');
     // a decision answered under another filter joins the same Completed folder, under its own chip (put back after)
     const opt = await page.evaluate(() => {
       const it = Review.items().find(x => x.kind === 'needsMaterial' || x.kind === 'needsMapping'); Review.remove(it.key, 'Test Operator'); Review.view().filter = null; Review.render();
@@ -244,14 +246,15 @@ async function browserChecks() {
       document.querySelector('#reviewView .egTab[data-k="needsMapping"]').click(); out.only = [...document.querySelectorAll('#rvList .reviewListRow')].map(n => n.dataset.rid);
       Review.settled().shift(); Review.add(it); return out;
     });
-    assert.deepEqual(opt.chips, ['Everything3', 'Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
+    assert.deepEqual(opt.chips, ['Custom Orders2', 'Options1'], JSON.stringify(opt)); assert.equal(opt.seg, 'Completed3');
     assert.match(opt.row, /^Resolved\s*Test Operator · /, 'who answered it and when'); assert.deepEqual(opt.only, ['4178000003'], 'Options under Completed: its answer only');
     await page.click('#reviewView .egTab[data-k="customOrder"]');
     for (const r of list) { assert.match(r.cls, /cuDone/); assert.deepEqual(r.buttons, ['Print again', 'Reopen']); assert.match(r.why, /QR label printed by Test Operator/); }
     // a completed line whose SKU has since got a design (no longer special) is still listed, to be reopened
     assert(await page.evaluate(() => { const row = B.orders.byKey.get('4174476673_41744766731'), sp = row.spec.special; delete row.spec.special; Review.render(); const has = !!document.querySelector('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]'); row.spec.special = sp; Review.render(); return has; }), 'listed under Completed without its special reading');
-    // another chip and back: Completed is still the one chosen
-    await page.click('#reviewView .egTab[data-k=""]'); await page.click('#reviewView .egTab[data-k="customOrder"]');
+    // the chip pressed again lets go of it, and back: Completed is still the one chosen
+    await page.click('#reviewView .egTab[data-k="customOrder"]'); assert.equal(await page.evaluate(() => Review.view().filter), null);
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
     assert.equal(await page.evaluate(() => Review.view().cseg), 'done', 'the Open / Completed choice is kept');
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-completed.png') });
     // printed again: the same sticker, counted

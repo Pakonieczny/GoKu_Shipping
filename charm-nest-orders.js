@@ -129,12 +129,37 @@
   /** The transaction's SKU, or the alias learned for its listing. The alias also stands in for a SKU of the line's own
    *  that no master file holds (when the master can be asked): "Use this charm" on an unknown SKU saved an alias that the
    *  unknown SKU then always beat, so the decision said "remembered" and the line stayed unmatched. */
+  /* Etsy puts on each transaction the SKU of the variation bought: a listing whose variations each have a SKU gives each
+     line its variation's own, one whose variations have none gives every line the listing's (Paul, 27 Sep: nobody keeps a
+     list of which listings are which, so each line is read as it comes).
+     · A variation SKU that is a catalogue SKU with the shop's charm-only mark ("MAPLE_8065-CO": MAPLE_8065 bought without a
+       chain) is that catalogue design.
+     · "Use this charm" is remembered for the listing and the SKU the line came with (bySku): on a listing whose variations
+       each have a SKU, one variation's answer used to stand in for every other SKU of the listing the master did not hold.
+       One saved for a line with no SKU is the listing's own (sku); one saved before 27 Sep (no v) stands in as it did.
+     · A listing whose variations share one SKU while an option picks the charm (Zodiac Sign: Pisces) is answered under
+       Options, once per listing and value (optionDesign). */
+  const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   function resolveSku(line, aliases, masterEntry, noDesign) {
     const raw = String(line.sku || "").trim().toUpperCase();
-    const a = aliases && aliases[String(line.listingId)], aliased = a && a.sku ? String(a.sku).trim().toUpperCase() : "";
-    if (raw && !(aliased && masterEntry && !masterEntry(raw) && !isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
-    if (aliased) return { sku: aliased, source: "alias" };
-    return { sku: "", source: null };
+    const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
+    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = a && a.sku && (!raw || !a.v) ? up(a.sku) : "";
+    if (raw && (!masterEntry || masterEntry(raw) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
+    if (own) return { sku: own, source: "alias" };
+    const base = raw && variationBase(raw);
+    if (base && masterEntry(base)) return { sku: base, source: "variation" };
+    if (whole) return { sku: whole, source: "alias" };
+    return raw ? { sku: raw, source: "transaction" } : { sku: "", source: null };
+  }
+  /** The charm an option picks on this listing ({ sku, name, value }), when a person said so under Options, or null. */
+  function optionDesign(line, maps) {
+    for (const v of line.variations || []) {
+      const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
+      if (!name || !value) continue;
+      const hit = optionLookup(maps, line.listingId, name, value);
+      if (hit && hit.field === "design" && hit.value) return { sku: String(hit.value).trim().toUpperCase(), name, value };
+    }
+    return null;
   }
 
   /* ═══ 3b · special orders: not a regular listing purchase ══════════════
@@ -285,7 +310,10 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
-    const { sku, source: skuSource } = resolveSku(line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
+    let { sku, source: skuSource } = resolveSku(line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
+    // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
+    const picked = optionDesign(line, ctx.optionMaps);
+    if (picked) { sku = picked.sku; skuSource = "option"; }
     const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
@@ -320,15 +348,18 @@
       }
       spec.options.push({ name, value, mapped });
       if (!mapped) { if (!noDesign) problems.push({ kind: "needsMapping", listingId: String(line.listingId || ""), optionName: name, optionValue: value, title: line.title || "" }); continue; }
-      if (mapped.field === "ignore") continue;
+      if (mapped.field === "ignore" || mapped.field === "design") continue;
       if (mapped.field === "form" && !spec.form) spec.form = mapped.value;
       else if (mapped.field === "size" && !spec.size) spec.size = mapped.value;
       else if (mapped.field === "chain" && !spec.chain) spec.chain = mapped.value;
     }
-    if (!noDesign && !sku) problems.push({ kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
+    // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
+    // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
+    const optionOpen = problems.some(p => p.kind === "needsMapping");
+    if (!noDesign && !sku && !optionOpen) problems.push({ kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
     if (ctx.masterEntry && sku && !noDesign) {
       const entry = ctx.masterEntry(sku);
-      if (!entry) problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" });
+      if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
@@ -663,7 +694,7 @@
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
-  return { SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, interpretLine, lineKey, poolId,
+  return { SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, interpretLine, lineKey, poolId,
     orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

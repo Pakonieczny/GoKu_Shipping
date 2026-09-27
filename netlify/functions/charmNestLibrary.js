@@ -1767,7 +1767,16 @@ async function mapDocs(name) {
   }
 }
 async function op_aliasGet() { const { docs, truncated } = await mapDocs(ALIASES); const out = {}; docs.forEach(d => { out[d.id] = d.data(); }); return { aliases: out, truncated }; }
-async function op_aliasPut(b) { const lid = str(b.listingId, 30).replace(/\D/g, ""); const sku = String(b.sku || "").trim().toUpperCase(); if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" }; await db.collection(ALIASES).doc(lid).set({ listingId: lid, sku, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() }, { merge: true }); return { ok: true }; }
+/* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
+   variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
+   v: 2 marks a listing answered this way (charm-nest-orders.js resolveSku). */
+async function op_aliasPut(b) {
+  const lid = str(b.listingId, 30).replace(/\D/g, ""), sku = String(b.sku || "").trim().toUpperCase(), from = String(b.fromSku || "").trim().toUpperCase().slice(0, 120);
+  if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
+  const doc = { listingId: lid, v: 2, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
+  if (from) doc.bySku = { [from]: sku }; else doc.sku = sku;
+  await db.collection(ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };
+}
 async function op_noDesignGet() { const { docs, truncated } = await mapDocs(NODESIGN); const rows = docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }; }
 async function op_noDesignPut(b) { const doc = { by: str(b.by || "operator", 80), note: str(b.note, 200), createdAt: FV.serverTimestamp() }; if (b.pattern) { try { new RegExp(String(b.pattern)); } catch (_) { return { error: "bad pattern" }; } doc.pattern = str(b.pattern, 120); } else if (b.sku) doc.sku = String(b.sku).trim().toUpperCase().slice(0, 40); else return { error: "pattern or sku required" }; const ref = await db.collection(NODESIGN).add(doc); return { ok: true, id: ref.id }; }
 async function op_noDesignDelete(b) { if (!isId(b.id)) return { error: "bad id" }; await db.collection(NODESIGN).doc(b.id).delete(); return { ok: true }; }
@@ -1775,9 +1784,12 @@ async function op_optionMapGet() { const { docs, truncated } = await mapDocs(OPT
 async function op_optionMapPut(b) {
   const lid = b.listingId === "*" ? "*" : str(b.listingId, 30).replace(/\D/g, ""); const name = str(b.optionName, 80).toLowerCase().trim(), value = str(b.optionValue, 200).toLowerCase().replace(/\s+/g, " ").trim();
   if (!lid || !name || !value) return { error: "listingId, optionName and optionValue required" };
-  const m = b.map || {}; const field = ["form", "size", "chain", "ignore"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain or ignore" };
+  const m = b.map || {}; const field = ["form", "size", "chain", "ignore", "design"].includes(m.field) ? m.field : null; if (!field) return { error: "map.field must be form, size, chain, ignore or design" };
+  // design: the option picks the charm (Zodiac Sign: Pisces), for one listing, a SKU of the master index
+  const design = field === "design" ? String(m.value || "").trim().toUpperCase() : "";
+  if (field === "design" && (lid === "*" || !Master.isSku(design))) return { error: "the charm an option picks is saved for one listing, as a master SKU" };
   const ref = db.collection(OPTMAP).doc(lid); const snap = await ref.get(); const cur = snap.exists ? (snap.data().map || {}) : {};
-  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
+  cur[name] = cur[name] || {}; cur[name][value] = { field, value: field === "ignore" ? null : design || str(m.value, 80), by: str(b.by || "operator", 80), at: Date.now() };
   await ref.set({ listingId: lid, map: cur, updatedAt: FV.serverTimestamp() }, { merge: true });
   return { ok: true };
 }

@@ -817,7 +817,9 @@ const Orders = window.Orders = (() => {
   function inputsOf(row) {
     const o = row.order, l = row.line, m = B.maps, a = m.aliases && m.aliases[String(l.listingId)];
     return [o, +o.updateTs, o.staffNote, l, l.staffNote, row.materialOverride, row.sizeOverride, m.optionMaps, m.aliases, m.noDesign, m.customDone,
-      m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : "")];
+      m.customRead && m.customRead[row.key], m.customDecided && m.customDecided[row.key], libFacts(String(l.sku || "").trim().toUpperCase()), libFacts(a && a.sku ? String(a.sku).trim().toUpperCase() : ""),
+      // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
+      libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku)];
   }
   function interpretAll() {
     for (const row of rowsOf()) {
@@ -5523,6 +5525,22 @@ const Review = window.Review = (() => {
     const sync = () => { const empty = !String(f.value || "").trim(); b.disabled = empty; b.title = empty ? "fill the field beside it first" : ""; };
     f.addEventListener("input", sync); f.addEventListener("change", sync); sync();
   }
+  /** The master's SKUs an option value names ("Pisces" → PISCES_68933): every word of the value is a word of the SKU. */
+  function optionCharms(value) {
+    const words = CharmNestOrders.norm(value).toUpperCase().split(/[^A-Z0-9]+/).filter(w => w.length >= 3 && !/^\d+$/.test(w));
+    if (!words.length) return [];
+    const out = [];
+    for (const k of B.master.entries.keys()) { const has = new Set(k.split(/[^A-Z0-9]+/)); if (words.every(w => has.has(w))) out.push(k); if (out.length > 12) break; }
+    return out.sort((a, b) => a.length - b.length || a.localeCompare(b)).slice(0, 3);
+  }
+  /** One list of the master's SKUs for every field that picks a charm, made again when the index changes. */
+  let skuListFor = null;
+  function masterSkuList() {
+    let dl = document.getElementById("cnMasterSkus");
+    if (!dl) { dl = document.createElement("datalist"); dl.id = "cnMasterSkus"; document.body.appendChild(dl); }
+    if (skuListFor === B.master.entries && dl.childElementCount === B.master.entries.size) return;
+    skuListFor = B.master.entries; dl.innerHTML = [...B.master.entries.keys()].sort().map(s => `<option value="${esc(s)}">`).join("");
+  }
   function card(it) {
     const c = el("div", "rvItem hoverItem"); c.dataset.kind = it.kind; if (it.row) { c.dataset.row = it.row.key; c.dataset.rid = String(it.row.order.receiptId); }
     const r = it.row, sp = r && r.spec, p = it.problem || {};
@@ -5556,9 +5574,13 @@ const Review = window.Review = (() => {
       const lids = [...new Set(group.map(x => String(x.line.listingId)))];
       const CHOICES = [["necklace", "form", "Necklace"], ["earrings", "form", "Earrings"], ["huggie", "form", "Huggie"], ["charm", "form", "Charm only"], ["bracelet", "form", "Bracelet"], ["keychain", "form", "Keychain"]];
       const guess = CharmNestOrders.FORM_VALUES[CharmNestOrders.norm(p.optionValue)] || null;
+      // the option may pick the charm itself (Zodiac Sign: Pisces on a listing whose signs share one SKU): the master's
+      // SKUs named by the value are offered, and the answer is kept for this listing and value
+      const cands = guess ? [] : optionCharms(p.optionValue), designFirst = !guess && cands.length > 0;
       c.innerHTML = head("Needs mapping", `${p.optionName}: ${p.optionValue}`, `${lids.length === 1 ? "listing " + p.listingId : lids.length + " listings"} · ${p.title || r.line.title}`) +
         `<div class="ask">What does this option decide?</div>
-        <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
+        <div class="fixes pick">${CHOICES.map(([v, f, lbl]) => `<button class="btn ${v === guess ? "gold" : "ghost"} sm" data-pick="${v}" data-field="${f}">${lbl}</button>`).join("")}<button class="btn ${designFirst ? "gold" : "ghost"} sm" data-a="design" title="each value of this option is its own charm (a zodiac sign, a birthstone…)">The charm itself…</button><button class="btn ghost sm" data-a="ignore" title="it changes nothing about what gets made">Nothing — ignore it</button><button class="btn ghost sm" data-a="other">Something else…</button></div>
+        <div class="fixes design${designFirst ? "" : " hidden"}"><span class="dsFor">“${esc(p.optionValue)}” on listing ${esc(p.listingId)} is</span>${cands.map(k => `<button class="btn ghost sm dsPick" data-dsku="${esc(k)}" title="use ${esc(k)} from the master index">${Master.thumbOf(Master.entryFor(k) || {}) ? `<img alt="" src="${esc(Master.thumbOf(Master.entryFor(k)))}">` : ""}${esc(k)}</button>`).join("")}<input list="cnMasterSkus" data-f="dsku" placeholder="${cands.length ? "or another charm…" : "pick the charm from the master index…"}"><button class="btn gold sm" data-a="dsku">Use this charm</button></div>
         <div class="fixes other hidden"><select data-f="field"><option value="form">form</option><option value="size">size</option><option value="chain">chain length</option></select><input data-f="val" placeholder="the value to remember"><button class="btn gold sm" data-a="map">Remember it</button></div>
         ${lids.length > 1 ? `<label class="scopeOne"><input type="checkbox" data-f="one"> only for listing ${esc(p.listingId)} — otherwise all ${lids.length} are mapped together</label>` : ""}`;
       const oneOnly = () => { const b = c.querySelector("[data-f=one]"); return !!(b && b.checked); };
@@ -5575,15 +5597,34 @@ const Review = window.Review = (() => {
       };
       c.querySelectorAll("[data-pick]").forEach(b => { b.onclick = () => put(b.dataset.field, b.dataset.pick); });
       c.querySelector("[data-a=other]").onclick = () => { c.querySelector(".fixes.other").classList.toggle("hidden"); const f = c.querySelector("[data-f=val]"); if (f) f.focus(); };
+      masterSkuList();
+      c.querySelector("[data-a=design]").onclick = () => { c.querySelector(".fixes.design").classList.toggle("hidden"); c.querySelector("[data-f=dsku]").focus(); };
+      // one listing at a time: the same value on another listing may be another charm (a stud's Pisces is not a disc's)
+      const pickCharm = k => saving(c, async () => {
+        const sku = String(k || "").trim().toUpperCase(); if (!sku) return;
+        if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
+        const who = by(); if (!who) return;
+        await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "design", value: sku }, by: who });
+        await Orders.loadMaps(true);
+        toast(`“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
+        for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
+      })();
+      c.querySelectorAll("[data-dsku]").forEach(b => { b.onclick = () => pickCharm(b.dataset.dsku); });
+      bindNeeds(c, "dsku", "dsku");
+      c.querySelector("[data-a=dsku]").onclick = () => pickCharm(c.querySelector("[data-f=dsku]").value);
       bindNeeds(c, "map", "val");
       c.querySelector("[data-a=map]").onclick = () => { const val = c.querySelector("[data-f=val]").value.trim(); if (!val) return; put(c.querySelector("[data-f=field]").value, val); };
       c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); });
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>
-        <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every line of this listing uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this line never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
+        <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every line of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this line never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
-      c.querySelector("[data-a=alias]").onclick = saving(c, async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(rowsOf(it).map(x => String(x.line.listingId)))]; for (const lid of lids) await api("charmNestLibrary", { op: "aliasPut", listingId: lid, sku, by: who, title: r.line.title }); await Orders.loadMaps(true); toast(`${lids.length} listing${lids.length === 1 ? "" : "s"} → ${sku} remembered`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
+      c.querySelector("[data-a=alias]").onclick = saving(c, async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(rowsOf(it).map(x => String(x.line.listingId)))];
+        // for the listing and the SKU each line came with: on a listing whose variations each have a SKU, the others keep theirs
+        const pairs = new Map(rowsOf(it).map(x => { const from = String(x.line.sku || "").trim().toUpperCase(); return [String(x.line.listingId) + "\u0000" + from, { lid: String(x.line.listingId), from, title: x.line.title }]; }));
+        for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, by: who, title: q.title });
+        await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); });
       const mb = c.querySelector("[data-a=master]");
       if (mb) mb.onclick = () => {
@@ -5797,16 +5838,18 @@ const Review = window.Review = (() => {
     const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open, cl.recent);
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
-    // Open or Completed first, then the filters: the switch holds for every chip
+    // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
-    const seg = `<span class="rvSeg" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="what still waits, in every filter">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished, in every filter: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
+    const seg = `<span class="rvSeg${f ? "" : " all"}" role="group" aria-label="Open or completed"><button type="button" data-cseg="open" class="${!doneMode ? "on" : ""}" aria-pressed="${!doneMode}" title="everything that still waits">Open<b>${openN}</b></button><button type="button" data-cseg="done" class="${doneMode ? "on" : ""}" aria-pressed="${doneMode}" title="everything finished: custom orders whose QR label was printed (print again or reopen) and every decision answered">Completed<b>${finished.length}</b></button></span>`;
     const chips = ORDER.filter(k => kinds.has(k)).map(k => doneMode ? chip(k, KIND_WORDS[k] || k, kinds.get(k), "ok", `${KIND_WORDS[k] || k} completed`)
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
-    v.querySelector('.ordBar').innerHTML = `${seg}${chip("", "Everything", doneMode ? finished.length : openN, doneMode ? "ok" : "info")}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
+    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
-    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k || null; render(); });
-    v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; render(); });
+    // a chip pressed again lets go of its filter
+    v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
+    v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
     const host = v.querySelector("#rvList");
     const what = f ? (KIND_WORDS[f] || f) : "";
     if (!list.length) host.innerHTML = `<div class="libEmpty">${doneMode ? (f === "customOrder" ? "No custom order completed yet — print its QR label from Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}</div>`;
