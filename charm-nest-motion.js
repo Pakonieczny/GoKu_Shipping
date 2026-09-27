@@ -327,7 +327,7 @@
       const rot = parseFloat(getComputedStyle(seal).getPropertyValue("--rot")) || -8;
       const t = doc.createElement("span"); t.className = "sealTool"; t.innerHTML = tool(kind);
       Object.assign(t.style, { position: "fixed", left: r.left - size * .02 + "px", top: r.top - size * .02 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
-      layer().appendChild(t);
+      layer(seal).appendChild(t);
       const down = t.animate([
         { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0, filter: "drop-shadow(30px 40px 18px rgba(20,14,6,.26))" },
         { opacity: 1, offset: .22 },
@@ -336,7 +336,7 @@
       await down.finished.catch(() => {});
       seal.classList.remove("pending"); seal.classList.add("wet");
       const btn = btnOf(seal); if (btn) btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
-      const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;--ink:${INK[kind]}`; layer().appendChild(ring);
+      const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;--ink:${INK[kind]}`; layer(seal).appendChild(ring);
       ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }).finished.then(() => ring.remove(), () => ring.remove());
       const up = t.animate([
         { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
