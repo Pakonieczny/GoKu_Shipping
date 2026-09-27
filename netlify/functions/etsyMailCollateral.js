@@ -253,6 +253,27 @@ function sanitizePatch(rawPatch) {
  *
  *  Returns: { matches: [trimForCaller(doc)], count, totalScored }
  */
+const CATEGORY_ALIASES = {
+  necklace        : ["necklace", "pendant"],
+  huggie          : ["huggie", "hoop"],
+  stud            : ["stud"],
+  earring         : ["stud", "huggie", "earring"],
+  metals_education: ["metal_comparison", "metal", "gold filled"],
+  metal_comparison: ["metal_comparison", "metal"],
+  aftercare       : ["care_instructions", "care"],
+  care            : ["care_instructions", "care"],
+  care_instructions: ["care_instructions", "care"],
+  bracelet        : ["bracelet"],
+  bracelet_sizing : ["bracelet"],
+  fit_reference   : ["fit_reference", "fit"],
+  fit             : ["fit_reference", "fit"]
+};
+function categoryAliases(category) {
+  const c = String(category || "").trim().toLowerCase();
+  const key = Object.keys(CATEGORY_ALIASES).find(k => c === k || c === k + "s" || c.replace(/[\s-]+/g, "_") === k);
+  return key ? CATEGORY_ALIASES[key] : [c];
+}
+
 async function searchCollateral({ category, kind, keywords, limit } = {}) {
   const cap = Math.max(1, Math.min(parseInt(limit, 10) || SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT));
 
@@ -264,7 +285,19 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
   if (category && typeof category === "string" && category.trim()) {
     q = q.where("category", "==", category.trim());
   }
-  const snap = await q.limit(200).get();
+  let snap = await q.limit(200).get();
+
+  // The AI asks by family ("necklace", "huggie", "stud", "metals_education",
+  // "aftercare") but staff store display names ("Custom Necklace Charm",
+  // "metal_comparison"). An exact category miss used to return nothing, so
+  // get_collateral("necklace") never found the necklace line sheet. On a
+  // miss, keep the active items whose category, name or keywords carry the
+  // family word or one of its aliases.
+  let looseCategory = null;
+  if (snap.empty && category && String(category).trim()) {
+    looseCategory = categoryAliases(category);
+    snap = await db.collection(COLLATERAL_COLL).where("active", "==", true).limit(200).get();
+  }
 
   if (snap.empty) return { matches: [], count: 0, totalScored: 0 };
 
@@ -277,8 +310,18 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
     const data = d.data() || {};
     let score = 1;   // base score for being active + (optionally) category-filtered
 
+    if (looseCategory) {
+      const hay = [data.category, data.name, ...(data.keywords || [])].map(v => String(v || "").toLowerCase()).join(" | ");
+      if (!looseCategory.some(a => hay.includes(a))) return;
+    }
+
     if (kind && data.kind === kind) score += 5;
     else if (kind && data.kind !== kind) return;   // kind requested but mismatch → skip
+
+    // Every stored guide also carries kind "line_sheet", so a line-sheet
+    // request for "necklace" would tie the real sheet with the necklace
+    // fit guide. The item actually named a line sheet wins.
+    if (kind === "line_sheet" && /line\s*sheet/i.test(String(data.name || ""))) score += 3;
 
     if (wantKeywords.length > 0) {
       const itemKeywords = (data.keywords || []).map(k => String(k).toLowerCase());
@@ -321,6 +364,47 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
   }
 
   return { matches, count: matches.length, totalScored: scored.length };
+}
+
+// A line sheet or guide pasted into a reply as a raw storage URL shows the
+// customer a long link instead of the picture. Find those URLs, match each to
+// its uploaded collateral item, and return the text without them plus the
+// items to attach as images. Unknown URLs are left in place.
+const COLLATERAL_URL_RX = /\(?\bhttps?:\/\/[^\s<>"']*etsymail-collateral\/[^\s<>"'()]+\)?/gi;
+
+function removeUrlFromText(text, raw) {
+  let out = text.split(raw).join(" ");
+  return out
+    .replace(/[ \t]*[:\-\u2013\u2014][ \t]+(?=[,.;!?]|\s*$)/gm, "")
+    .replace(/[ \t]*[:\-\u2013\u2014][ \t]*\n/g, "\n")
+    .replace(/[ \t]+([,.;!?])/g, "$1")
+    .replace(/([,;])(?=[,.;!?])/g, "")
+    .replace(/:\s*,/g, ",")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+async function pullCollateralUrlsFromText(text) {
+  const src = String(text || "");
+  const found = src.match(COLLATERAL_URL_RX) || [];
+  if (!found.length) return { text: src, hits: [] };
+  let pool = [];
+  try { pool = (await searchCollateral({ limit: 50 })).matches || []; } catch { pool = []; }
+  let out = src;
+  const hits = [];
+  for (const raw of found) {
+    const url = raw.replace(/^\(|\)$/g, "").replace(/[.,;:!?]+$/, "");
+    let tail = "";
+    try { tail = decodeURIComponent(url.split("/etsymail-collateral/")[1] || "").split(/[?#]/)[0]; } catch { tail = ""; }
+    const hit = pool.find(c => c && c.storagePath && c.uploadedContentType &&
+      (c.url === url || (tail && String(c.storagePath).endsWith("/" + tail))));
+    if (!hit) continue;
+    if (!hits.some(h => h.id === hit.id)) hits.push(hit);
+    const cut = raw.startsWith("(") && raw.endsWith(")") ? raw : raw.slice(0, raw.indexOf(url) + url.length);
+    out = removeUrlFromText(out, cut);
+  }
+  return { text: hits.length ? out.trim() : src, hits };
 }
 
 // ─── v2.5: Direct file upload to Firebase Storage ──────────────────────
@@ -687,3 +771,4 @@ exports.handler = async (event) => {
 
 // Exposed for direct import by etsyMailSalesAgent (Step 2 + 3 use this).
 module.exports.searchCollateral = searchCollateral;
+module.exports.pullCollateralUrlsFromText = pullCollateralUrlsFromText;

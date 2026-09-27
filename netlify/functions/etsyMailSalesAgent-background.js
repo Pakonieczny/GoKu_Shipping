@@ -153,8 +153,9 @@ const {
 // model can reason about and escalate from, rather than throwing.
 
 let searchListings = null;
+let getServiceListingsBlock = null;
 try {
-  ({ searchListings } = require("./etsyMailListingsCatalog"));
+  ({ searchListings, getServiceListingsBlock } = require("./etsyMailListingsCatalog"));
 } catch (e) {
   console.warn("salesAgent: etsyMailListingsCatalog not loadable — search_shop_listings tool will return graceful empty.", e.message);
 }
@@ -197,8 +198,9 @@ try {
 // throw at module load. Guard around it so the agent still works
 // without collateral.
 let searchCollateral = null;
+let pullCollateralUrlsFromText = null;
 try {
-  ({ searchCollateral } = require("./etsyMailCollateral"));
+  ({ searchCollateral, pullCollateralUrlsFromText } = require("./etsyMailCollateral"));
 } catch (e) {
   console.warn("salesAgent: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
 }
@@ -2663,6 +2665,17 @@ exports.handler = async (event) => {
       // investigation protocol will note the missing context block.
     }
 
+    // Add-on and service listing links (chain replacement, longer chain,
+    // extender, re-work fee...). Firestore mirror reads only.
+    if (getServiceListingsBlock) {
+      try {
+        const svc = await getServiceListingsBlock();
+        if (svc) rawContextBlock = (rawContextBlock ? rawContextBlock + "\n\n" : "") + svc;
+      } catch (e) {
+        console.warn(`[salesAgent] service listings block failed for ${threadId}: ${e.message}`);
+      }
+    }
+
     const initialMessages = buildInitialMessages({
       contextSummary, latestInboundText, referenceAttachments, rawContextBlock
     });
@@ -2729,12 +2742,14 @@ Examples of INCORRECT reply text (DO NOT do this — these are exactly the failu
    - ❌ "Here's the rundown for necklace charms. Charm size + metal: 9-10mm, 11-12mm, 14mm..." (reciting the sheet in text)
    - ❌ Any reply that includes prices like "$24" or "$45" before the customer has chosen options
    - ❌ Any reply that lists chain types, metals, lengths, or bulk discounts in prose
-   - ❌ Embedding the line sheet URL in the text — the IMAGE attaches automatically, no URL needed
+   - ❌ Embedding the line sheet URL in the text — the IMAGE attaches automatically, no URL needed. This replaces any older instruction to "put the URL in your reply text" or a "<line sheet URL>" placeholder in the examples; a pasted collateral link is removed from the text anyway.
 
 The customer will SEE the line sheet image rendered in their Etsy conversation. Trust the attachment to convey the information; your job in the reply text is just to invite them to look at it and respond.
 
 ## When NOT to send the line sheet
 
+- The question is only about delivery, shipping time, returns, production time, an order already placed, or a complaint. Answer that; a line sheet there is noise.
+- The customer is ordering a standard listing as it is (their choices are the listing's own dropdowns). Point them to the listing instead.
 - The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote with resolveQuote.
 - The customer has explicitly declined to see options ("just quote me X").
 - A line-sheet collateral image is not available for the family (you can tell by checking context.summary.recommendedCollateral — if empty, fall back to asking which family or to a brief verbal exchange).
@@ -3882,7 +3897,7 @@ ${validationResult.message}
 
     // The sign-off always sits on its own lines ("...? Many Thanks," ran on
     // the last sentence in replayed drafts).
-    const customerFacingReply = (typeof parsed.reply === "string" && parsed.reply.trim())
+    let customerFacingReply = (typeof parsed.reply === "string" && parsed.reply.trim())
       ? parsed.reply.trim()
           // No em or en dashes (the shop's #1 AI tell); ranges keep a hyphen.
           .replace(/(\d)\s*[\u2013\u2014]\s*(?=\$?\d)/g, "$1-")
@@ -3893,6 +3908,21 @@ ${validationResult.message}
 
     // Draft body: ALWAYS the customer-facing reply (or empty). The
     // synopsis lives only in `needsReviewSynopsis` on the draft doc.
+    // A line sheet or guide pasted as a raw storage link (replayed drafts
+    // did this while also attaching the image) leaves the text and
+    // attaches as an image instead.
+    let pulledCollateral = [];
+    if (pullCollateralUrlsFromText && customerFacingReply) {
+      try {
+        const pulled = await pullCollateralUrlsFromText(customerFacingReply);
+        if (pulled.hits.length) {
+          customerFacingReply = pulled.text;
+          pulledCollateral = pulled.hits;
+        }
+      } catch (e) {
+        console.warn(`[salesAgent] collateral link check failed for ${threadId}: ${e.message}`);
+      }
+    }
     const replyText = customerFacingReply;
 
     const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
@@ -4074,6 +4104,28 @@ ${validationResult.message}
         if (kind === "line_sheet") lineSheetAttachInfo = info;
         console.warn(`salesAgent: ${flag}=true but no attachable ${label} collateral for thread ${threadId}`);
       }
+    }
+    for (const hit of pulledCollateral) {
+      if (attachmentsToWrite.some(a => a.collateralId && a.collateralId === hit.id)) continue;
+      const kind = /line\s*sheet/i.test(String(hit.name || "")) ? "line_sheet" : (hit.category || hit.kind || "collateral");
+      const ct = hit.uploadedContentType;
+      attachmentsToWrite.push({
+        attachmentId : "att_collateral_" + (hit.id || Math.random().toString(36).slice(2, 10)),
+        type         : "image",
+        storagePath  : hit.storagePath,
+        proxyUrl     : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(hit.storagePath),
+        contentType  : ct,
+        bytes        : typeof hit.uploadedSizeBytes === "number" ? hit.uploadedSizeBytes : null,
+        filename     : hit.uploadedFilename || ((hit.name || kind) + "." + ((ct.split("/")[1] || "png"))),
+        source       : "collateral",
+        collateralId : hit.id || null,
+        collateralName : hit.name || null,
+        collateralKind : kind
+      });
+      const info = { kind, label: kind.replace(/_/g, " "), decided: true, attached: true,
+                     collateralId: hit.id || null, collateralName: hit.name || null, fromPastedLink: true };
+      collateralAttachInfo.push(info);
+      if (kind === "line_sheet" && !lineSheetAttachInfo) lineSheetAttachInfo = info;
     }
     // ──────────────────────────────────────────────────────────────────
 

@@ -578,6 +578,53 @@ async function searchListings(query, limit = AI_RESULT_LIMIT) {
   return { matches, count: matches.length, totalScored: scored.length };
 }
 
+// ─── Add-on and service listings ──────────────────────────────────────
+// The shop's utility listings staff link in replies (read from real staff
+// messages, 2026-09-27). The AI used to know only the Priority and
+// Re-Shipping ones and invented or skipped the rest. Titles, prices and
+// links come from the mirror at run time, so an item turned inactive drops
+// out on its own. Firestore reads only; no Etsy calls.
+const SERVICE_LISTINGS = [
+  { id: "479975460",  use: "Paid change to an order already placed or to a piece the customer sends back: an engraving added after checkout (staff quote $5), a letter or wording change, shortening or adding chain. The customer picks the total dollar amount already quoted in this thread and writes what to change in the checkout note." },
+  { id: "816278941",  use: "A new or replacement chain: a broken or lost chain, a different chain style, or one chain to hang several of our pendants together. The customer picks metal and length and adds a note at checkout." },
+  { id: "770835682",  use: "A longer chain than the necklace listing offers, on a necklace being ordered or already ordered but not yet made. The customer picks the length range and writes the exact length per piece in the checkout note." },
+  { id: "628970499",  use: "An extender added to a piece the customer is ordering now (1, 2 or 3 inches)." },
+  { id: "559716663",  use: "An extender on its own, for a necklace the customer already has (for example one that sits too tight)." },
+  { id: "1699154208", use: "Upgrade a necklace to the beady chain (gold filled or sterling silver, not rose gold). The customer says which necklace in the personalization box." },
+  { id: "718177133",  use: "Add an engraved disc or bar to a new purchase; staff also use it to sell a single disc to add to a necklace the customer already owns (ask for a photo of the original discs to match size and font)." },
+  { id: "1713156673", use: "Checkout for a custom charm ONLY after a person has already quoted its price in this thread (usually right after a proof is approved). The customer picks the quoted dollar option and puts the design instructions in the personalization box. Never quote a custom price yourself." },
+  { id: "487548109",  use: "Paid shipping upgrade (Priority or Express), added before the order ships." },
+  { id: "486325751",  use: "Re-shipping fee when a package came back to us or must be sent again at the customer's cost." }
+];
+const SERVICE_TTL_MS = 15 * 60 * 1000;
+let _serviceCache = { at: 0, block: "" };
+
+async function getServiceListingsBlock() {
+  if (_serviceCache.block && Date.now() - _serviceCache.at < SERVICE_TTL_MS) return _serviceCache.block;
+  try {
+    const snaps = await db.getAll(...SERVICE_LISTINGS.map(s => db.collection(LISTINGS_COLL).doc(s.id)));
+    const lines = [];
+    snaps.forEach((snap, i) => {
+      if (!snap.exists) return;
+      const d = snap.data() || {};
+      if (d.active !== true || !d.listingUrl) return;
+      const price = d.priceUsd != null ? ` (from $${Number(d.priceUsd).toFixed(2).replace(/\.00$/, "")})` : "";
+      lines.push(`- ${d.title || "Listing " + SERVICE_LISTINGS[i].id}${price}: ${d.listingUrl}\n  When: ${SERVICE_LISTINGS[i].use}`);
+    });
+    const block = lines.length ? [
+      "=== ADD-ON AND SERVICE LISTINGS (live shop links) ===",
+      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A brand-new custom design still goes through the custom listing, not these.",
+      ...lines,
+      "=== END ADD-ON AND SERVICE LISTINGS ==="
+    ].join("\n") : "";
+    _serviceCache = { at: Date.now(), block };
+    return block;
+  } catch (e) {
+    console.warn("listingsCatalog: service listings read failed:", e.message);
+    return _serviceCache.block || "";
+  }
+}
+
 // ─── List op (UI) ──────────────────────────────────────────────────────
 
 async function listListings({ offset = 0, limit = 50, activeOnly = false }) {
@@ -682,6 +729,7 @@ exports.handler = meter.wrapHandler(async (event) => {
 // avoiding HTTP overhead and keeping search logic single-sourced.
 module.exports.searchListings = searchListings;
 module.exports.trimForAI      = trimForAI;
+module.exports.getServiceListingsBlock = getServiceListingsBlock;
 // Also used by etsyMailListingLookup's catalogStatus / catalogSync ops: Netlify
 // refuses direct calls to this scheduled function on the live site, so the
 // inbox's Settings line and Sync now button reach the same code through it.

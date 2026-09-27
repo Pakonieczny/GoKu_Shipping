@@ -93,8 +93,9 @@ const {
 } = require("./_etsyMailEtsy");
 
 let searchListings = null;
+let getServiceListingsBlock = null;
 try {
-  ({ searchListings } = require("./etsyMailListingsCatalog"));
+  ({ searchListings, getServiceListingsBlock } = require("./etsyMailListingsCatalog"));
 } catch (e) {
   searchListings = null;
 }
@@ -118,8 +119,9 @@ try {
 // isn't deployed yet, the get_collateral tool returns a graceful empty
 // result rather than crashing.
 let searchCollateral = null;
+let pullCollateralUrlsFromText = null;
 try {
-  ({ searchCollateral } = require("./etsyMailCollateral"));
+  ({ searchCollateral, pullCollateralUrlsFromText } = require("./etsyMailCollateral"));
 } catch (e) {
   console.warn("draftReply: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
   searchCollateral = null;
@@ -2428,14 +2430,12 @@ You have seven tools:
     customer names specific shop products they want to order with
     standard variants (see POINTING TO EXISTING LISTINGS below) — the
     URLs you return become the answer.
-  - get_collateral(category, kind?, keywords?) — retrieves operator-
-    curated collateral (line sheets, product cards, lookbooks, image
-    sets, care guides) by category. Returns URLs you reference in your
-    reply. Use this whenever a pre-purchase question is better answered
-    with a reference attachment than typed-out prose (see WHEN TO
-    SEND A LINE SHEET below). Useful categories: "necklace", "huggie",
-    "stud", "metals_education", "aftercare". For line sheets
-    specifically, call with kind:"line_sheet".
+  - get_collateral(category, kind?, keywords?) — lists operator-
+    curated collateral (line sheets, guides) by category ("necklace",
+    "huggie", "stud", "metals_education", "aftercare") so you can see
+    what exists. You don't need it to send one: line sheets attach via
+    attach_line_sheet and the guides via the attach_* flags below. Never
+    paste a collateral URL into the reply.
   - compose_draft_reply(...) — THE TERMINAL TOOL. Call this exactly
     ONCE when you've completed all lookups and are ready to commit the
     reply. This ends the draft generation.
@@ -2453,9 +2453,9 @@ Workflow:
      question and no exact listing is already clear from the thread,
      call search_shop_listings before suggesting products or prices
   6. If the active question is about sizes, materials, available variants,
-     or any other "what's available" topic that benefits from a reference
-     attachment, call get_collateral(category, kind:"line_sheet") and
-     include the returned URL in your reply
+     or any other "what's available" topic for a custom or configurable
+     piece, set attach_line_sheet to the family (necklace, stud or huggie)
+     on compose_draft_reply; the sheet attaches as an image
   7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
@@ -2541,13 +2541,13 @@ never scanned, or no order found), write your reply in prose. Do NOT
 write that something is attached when it isn't — see the ATTACHMENT-
 CLAIM RULE below.
 
-WHEN TO SEND A LINE SHEET (use get_collateral):
+WHEN TO SEND A LINE SHEET (use attach_line_sheet):
 
 A line sheet is a single reference image showing every size, metal,
 chain length, and engraving option for a product family on one page.
 Operators send it constantly because one image answers a paragraph of
 follow-up questions before they get asked. The following patterns
-should trigger a get_collateral(category, kind:"line_sheet") call:
+should trigger attach_line_sheet on compose_draft_reply:
 
   - "What sizes do your charms come in?"
   - "What size are your <design> charms?"
@@ -2558,29 +2558,24 @@ should trigger a get_collateral(category, kind:"line_sheet") call:
   - "I'm not sure which one to pick" (after they've named the family)
 
 Identify the family from the customer's message or the listing they
-linked. "Charms" / "pendant" / "necklace" → category "necklace".
-"Huggies" / "hoops" → category "huggie". "Studs" / "earrings"
-(non-hoop) → category "stud". Then call:
+linked. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
+"hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud". Then set
+attach_line_sheet: "<family>" on compose_draft_reply. The sheet
+attaches to the draft as an image, the same way the sales team sends
+it, and you mention it in one short sentence:
 
-  get_collateral({ category: "<family>", kind: "line_sheet" })
+  "Our standard necklace charms are 9-10mm. I've attached our charm
+  line sheet with every size, metal and chain laid out, so just tell
+  me which you'd like."
 
-When matches come back, pick the most-relevant one and include its
-URL in your reply naturally:
+Never paste a line-sheet or guide URL into the text; the image carries
+it. Sending the line sheet does NOT count as a soft promise or holding
+reply. Mention it briefly, don't recite the prices or options in prose.
 
-  "Our standard necklace charms are 9-10mm. Here's our charm sheet
-  with all the sizes laid out: [URL]. Larger sizes are available if
-  you're after a specific size."
-
-Sending the line sheet does NOT count as a soft promise or holding
-reply — you're providing the actual reference the customer asked for.
-Mention it briefly, don't over-explain it. A line sheet is sent as a
-LINK in your text, not as an attachment, so say "here's our charm
-sheet: [URL]", never "please see the attached sheet" (nothing is
-attached, and the attachment check will hold the reply).
-
-If get_collateral returns no matches for the family, fall back to
-typing the answer in prose. Do NOT promise an attachment that
-doesn't exist (see the ATTACHMENT-CLAIM RULE below).
+Don't attach a line sheet when the question is only about delivery,
+shipping, returns, production time, an order already placed, or a
+complaint, or when the customer is simply ordering a standard listing
+as it is (point to the listing instead).
 
 COLLATERAL ATTACHMENT FLAGS (set these on your compose_draft_reply call):
 
@@ -2591,7 +2586,18 @@ When the customer's question would be better answered with a visual reference, s
   - attach_fit_reference: true — customer asks about necklace fit on the body, chain length, how it sits
   - attach_bracelet_sizing: true — customer asks about wrist sizing, bracelet length, how to measure a wrist
 
-The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT paste the URL of these four flagged images into your reply text — they attach automatically as chips, and a raw URL in prose shows the customer URL characters with no image. (Line sheets from get_collateral are different: they are sent as a link, see above.)
+The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT paste the URL of these four flagged images into your reply text — they attach automatically as chips, and a raw URL in prose shows the customer URL characters with no image. Line sheets work the same way through attach_line_sheet.
+
+ADD-ON AND SERVICE LISTINGS: the context carries an "ADD-ON AND SERVICE
+LISTINGS" block with the shop's live links for a replacement chain, a
+longer chain, an extender, the beady chain upgrade, an added disc, the
+re-work/modification fee, custom-charm checkout, priority shipping and
+the re-shipping fee, each with when to use it. When the customer needs
+one of those, link it from that block (don't search for it and never
+build a link yourself) and say what to select and what to note at
+checkout, the way staff do: "You can add a longer chain with this
+listing: [link]. Pick the length range and note the exact length at
+checkout."
 
 POINTING TO EXISTING LISTINGS (use search_shop_listings):
 
@@ -2961,7 +2967,7 @@ const TOOL_SPECS = [
   },
   {
     name: "get_collateral",
-    description: "Retrieve operator-curated collateral (line sheets, product cards, lookbooks, image sets, terms/care/material guides) by category. Returns URLs you can reference in your reply. Use this for pre-purchase product information that's better answered with an attached reference than typed-out prose: 'what sizes do your charms come in', 'what metals do you offer', 'do you have a chart showing the necklace options', 'how do I care for sterling silver'. Useful categories: 'necklace', 'huggie', 'stud', 'metals_education', 'aftercare'. The line sheet is the go-to attachment for any 'what's available' question — operators send it constantly because one image beats a paragraph of description.",
+    description: "List operator-curated collateral (line sheets, metals card, care, fit and bracelet guides) by category: 'necklace', 'huggie', 'stud', 'metals_education', 'aftercare'. For looking only: to send a line sheet set attach_line_sheet on compose_draft_reply, and for a guide set its attach_* flag. The images attach to the draft. Never paste a collateral URL into the reply.",
     input_schema: {
       type: "object",
       properties: {
@@ -3078,6 +3084,11 @@ const TOOL_SPECS = [
         attach_bracelet_sizing: {
           type: "boolean",
           description: "Set true when the customer is asking about bracelet/wrist sizing — wrist measurement, bracelet length, 'will a 7-inch fit me', how to measure a wrist. Sets the bracelet sizing chart. Default false."
+        },
+        attach_line_sheet: {
+          type: "string",
+          enum: ["necklace", "stud", "huggie"],
+          description: "Set to the product family when the customer is choosing sizes, metals, chains or prices for a custom or configurable piece. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Leave it out for delivery, shipping, return, order-status or complaint questions, and when the customer is simply ordering a standard listing."
         }
       },
       required: ["investigation", "text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
@@ -4372,6 +4383,18 @@ answering. Do not guess about the order's contents.`;
       }
     }
 
+    // Add-on and service listing links (chain replacement, longer chain,
+    // extender, re-work fee...), in the first user message so the cached
+    // system prompt stays byte-identical.
+    if (getServiceListingsBlock) {
+      try {
+        const svc = await getServiceListingsBlock();
+        if (svc) initialMessages[0].content.push({ type: "text", text: svc });
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] service listings block failed (non-fatal): ${e.message}`);
+      }
+    }
+
     // v3.29 — Append pre-fetched listing data (if any) to system prompt.
     // The AI sees authoritative listing data the same way it sees any
     // other system context. If the customer pasted no URL, this is a no-op.
@@ -4926,6 +4949,8 @@ answering. Do not guess about the order's contents.`;
         attach_care_instructions: composeCall.input.attach_care_instructions === true,
         attach_fit_reference    : composeCall.input.attach_fit_reference     === true,
         attach_bracelet_sizing  : composeCall.input.attach_bracelet_sizing   === true,
+        attach_line_sheet       : ["necklace", "stud", "huggie"].includes(composeCall.input.attach_line_sheet)
+                                    ? composeCall.input.attach_line_sheet : null,
         // Rush-flag pass-through (existing behavior preserved)
         customerAcceptedRush    : composeCall.input.customerAcceptedRush     === true,
         customerRemovedRush     : composeCall.input.customerRemovedRush      === true,
@@ -5052,6 +5077,36 @@ answering. Do not guess about the order's contents.`;
       }
     }
 
+    // ─── Line sheets and pasted collateral links attach as images ──
+    // A line sheet used to go out as a long storage link in the text, and
+    // get_collateral("necklace") found nothing anyway. Now the model names
+    // the family (attach_line_sheet) and the sheet attaches as an image,
+    // the same way the sales agent sends it. Any collateral link still
+    // pasted into the text becomes an attachment and leaves the text.
+    const earlyCollateral = [];
+    if (pullCollateralUrlsFromText && parsed.text) {
+      try {
+        const pulled = await pullCollateralUrlsFromText(parsed.text);
+        if (pulled.hits.length) {
+          parsed.text = pulled.text;
+          earlyCollateral.push(...pulled.hits);
+        }
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] collateral link check failed (non-fatal): ${e.message}`);
+      }
+    }
+    if (parsed.attach_line_sheet && searchCollateral
+        && !earlyCollateral.some(h => /line\s*sheet/i.test(String(h.name || "")))) {
+      try {
+        const r = await searchCollateral({ category: parsed.attach_line_sheet, kind: "line_sheet", limit: 3 });
+        const hit = ((r && r.matches) || []).find(c =>
+          c && c.storagePath && c.uploadedContentType && /line\s*sheet/i.test(String(c.name || "")));
+        if (hit) earlyCollateral.push(hit);
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] line sheet lookup failed (non-fatal): ${e.message}`);
+      }
+    }
+
     // ─── v3.26 — Attachment-claim sanity check ─────────────────────
     //
     // The AI sometimes produces a reply whose prose claims an
@@ -5075,7 +5130,7 @@ answering. Do not guess about the order's contents.`;
     // We do NOT modify parsed.text — the operator might want to keep
     // the prose and attach manually. Letting them see the dissonance
     // and decide is better than silently rewriting the AI's words.
-    const _hasRealAttachment = (toolContext.trackingImages || []).some(img =>
+    const _hasRealAttachment = earlyCollateral.length > 0 || (toolContext.trackingImages || []).some(img =>
       img && (img.status === "ready" || img.status === "pending")
             && (img.imageUrl || img.jobId)
     ) ||
@@ -5310,12 +5365,28 @@ answering. Do not guess about the order's contents.`;
     // resolves each set flag to a collateral image via findAttachableForKind.
     const collateralAttachments = [];
     const collateralAttachInfo  = [];
+    for (const hit of earlyCollateral) {
+      const kind = /line\s*sheet/i.test(String(hit.name || "")) ? "line_sheet" : (hit.category || hit.kind || "collateral");
+      collateralAttachments.push(buildCollateralAttachment(hit, kind));
+      collateralAttachInfo.push({
+        kind, label: kind.replace(/_/g, " "), decided: true, attached: true,
+        collateralId: hit.id || null,
+        collateralName: hit.name || null
+      });
+    }
+    if (parsed.attach_line_sheet && !collateralAttachInfo.some(i => i.kind === "line_sheet")) {
+      collateralAttachInfo.push({
+        kind: "line_sheet", label: "line sheet", decided: true, attached: false,
+        reason: "no_active_line_sheet_for_" + parsed.attach_line_sheet
+      });
+    }
     for (const { flag, kind, label } of COLLATERAL_KINDS_REQUESTED) {
       if (parsed[flag] !== true) continue;
       const prefetchPool = (kind === "care_instructions" || kind === "metal_comparison")
         ? prefetchedCareCollateral
         : prefetchedSizingCollateral;
       const hit = await findAttachableForKind(kind, prefetchPool);
+      if (hit && collateralAttachInfo.some(i => i.attached && i.collateralId && i.collateralId === hit.id)) continue;
       if (hit) {
         collateralAttachments.push(buildCollateralAttachment(hit, kind));
         collateralAttachInfo.push({
@@ -5426,7 +5497,8 @@ answering. Do not guess about the order's contents.`;
         attach_care_instructions: parsed.attach_care_instructions === true,
         attach_metal_comparison : parsed.attach_metal_comparison  === true,
         attach_fit_reference    : parsed.attach_fit_reference     === true,
-        attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
+        attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true,
+        attach_line_sheet       : parsed.attach_line_sheet || null
       },
       // ────────────────────────────────────────────────────────────
       generatedByAI         : true,
