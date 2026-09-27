@@ -2097,7 +2097,7 @@ dialog.cuDlg{width:min(900px,96vw)}
 .cuSum{font:12px var(--sans);color:var(--ink70);gap:12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
 @media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 28px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuRm{grid-column:3;grid-row:1}}
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
-#motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
+#motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
 .mGhost>.mCopy{border-radius:10px}
 .mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}

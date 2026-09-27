@@ -23,7 +23,11 @@
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const resolve = to => { try { const e = typeof to === "function" ? to() : typeof to === "string" ? doc.querySelector(to) : to; return e && e.isConnected ? e : null; } catch (_) { return null; } };
   const visible = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
-  function layer() {
+  /** The layer copies fly on: the page's own, or, for something inside an open window (a modal dialog sits above the
+   *  whole page), one inside that window. near: the element the motion starts from or its list. */
+  function layer(near) {
+    const dlg = near && near.closest ? near.closest("dialog[open]") : null;
+    if (dlg) { let l = dlg.querySelector(":scope > .motionLayer"); if (!l) { l = doc.createElement("div"); l.className = "motionLayer"; l.setAttribute("aria-hidden", "true"); dlg.appendChild(l); } return l; }
     let l = doc.getElementById("motionLayer");
     if (!l) { l = doc.createElement("div"); l.id = "motionLayer"; l.setAttribute("aria-hidden", "true"); doc.body.appendChild(l); }
     return l;
@@ -35,7 +39,7 @@
   }
   const innerWidthOf = c => { const cs = getComputedStyle(c); return c.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0); };
   /** A still copy of `node` where it stands, on the motion layer (canvases carry their pixels over). */
-  function ghost(node, rect, cw) {
+  function ghost(node, rect, cw, near) {
     rect = rect || node.getBoundingClientRect();
     const g = node.cloneNode(true);
     g.removeAttribute("id"); for (const x of g.querySelectorAll("[id]")) x.removeAttribute("id");
@@ -48,7 +52,7 @@
     if (cw) box.style.containerType = "inline-size";
     Object.assign(g.style, { width: rect.width + "px", height: rect.height + "px", margin: "0", boxSizing: "border-box", animation: "none", transform: "none" });
     g.classList.add("mCopy");
-    box.appendChild(g); box.inert = true; layer().appendChild(box);
+    box.appendChild(g); box.inert = true; layer(near || (node.isConnected ? node : null)).appendChild(box);
     box._rect = rect; box._card = g;
     return box;
   }
@@ -59,7 +63,7 @@
     t.classList.remove("mGot"); void t.offsetWidth; t.classList.add("mGot"); setTimeout(() => t.classList.remove("mGot"), 1600);
     if (opts.plus !== false && !reduced()) {
       const r = t.getBoundingClientRect(), p = doc.createElement("span"); p.className = "mPlus" + (opts.tone ? " " + opts.tone : ""); p.textContent = opts.plus || "+1";
-      Object.assign(p.style, { left: r.left + r.width / 2 + "px", top: r.top + "px" }); layer().appendChild(p);
+      Object.assign(p.style, { left: r.left + r.width / 2 + "px", top: r.top + "px" }); layer(t).appendChild(p);
       p.animate([{ transform: "translate(-50%,0) scale(.7)", opacity: 0 }, { transform: "translate(-50%,-14px) scale(1)", opacity: 1, offset: .3 }, { transform: "translate(-50%,-30px) scale(1)", opacity: 0 }], { duration: 1300, easing: "ease-out", fill: "forwards" }).finished.then(() => p.remove(), () => p.remove());
     }
     if (opts.note) note(to, opts.note);
@@ -146,7 +150,7 @@
       if (now.has(k)) continue;
       const spec = take(leaves, k) || (opts.leave ? opts.leave(k, b.node) : null);
       if (!seen(b.rect)) { if (spec && spec.to) arrive(spec.to, spec); continue; }
-      const g = ghost(b.node, b.rect, cw);
+      const g = ghost(b.node, b.rect, cw, host);
       const h = spec && spec.stamp ? T.stamp + T.hold : 0; hold = Math.max(hold, h);
       gone.push([g, spec]);
     }
