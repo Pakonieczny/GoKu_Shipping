@@ -13000,6 +13000,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (b.updatedAt) s.latest = Math.max(s.latest, b.updatedAt);
           if (b.collectedAt) s.latest = Math.max(s.latest, b.collectedAt);
         }
+        // The API returns the newest 1000 jobs. If it reaches that limit,
+        // the oldest visible session may have earlier records outside the
+        // page; don't label those unseen jobs as unsubmitted.
+        if (batches.length >= 1000) {
+          const oldestVisible = batches[batches.length - 1];
+          const oldestSession = sessions.get(oldestVisible.sessionId || "(unsessioned)");
+          if (oldestSession) oldestSession.historyTruncated = true;
+        }
         const sessionList = [...sessions.values()].sort((a, b) => b.earliest - a.earliest);
         listEl.innerHTML = sessionList.map((s) => _renderSessionBlock(s)).join("");
 
@@ -13097,7 +13105,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const originalSubmitted = partNumbers.size || originals.length;
       const duplicateJobs = partNumbers.size ? Math.max(0, originals.length - partNumbers.size) : 0;
       plannedSets = Math.max(plannedSets, totalSets - duplicateJobs);
-      const notSubmitted = partNumbers.size ? Math.max(0, plannedSets - originalSubmitted) : 0;
+      const notSubmitted = partNumbers.size && !session.historyTruncated
+        ? Math.max(0, plannedSets - originalSubmitted) : 0;
 
       const startStr = session.earliest && isFinite(session.earliest)
         ? new Date(session.earliest).toLocaleString() : "—";
@@ -13109,7 +13118,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
       // Headline.
       let headline, headlineColor;
-      if (allDone && cancelled === total) {
+      if (session.historyTruncated) {
+        headline = "Earlier history · partial view"; headlineColor = "#a3a3a3";
+      } else if (allDone && cancelled === total) {
         headline = "All batches cancelled"; headlineColor = "#a3a3a3";
       } else if (allDone && failed > 0) {
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
@@ -13136,7 +13147,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets planned", String(plannedSets)]);
-      if (partNumbers.size) rows.push(["Original submission", `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
+      if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
+        ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
+        : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
       rows.push(["Progress", `${finished} saved · ${running} processing · ${waitingRetries} queued${Math.max(0, failed - waitingRetries) ? ` · ${Math.max(0, failed - waitingRetries)} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (waitingRetries) rows.push(["Retry admission", `${running} active provider jobs · queued retries start below ${_batchRetryLimit}`]);
@@ -13154,16 +13167,16 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
       if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
-      rows.push(["Started",   startStr]);
-      if (allDone && endStr) rows.push(["Finished", endStr]);
-      rows.push([allDone ? "Total time" : "Elapsed", _formatDuration(elapsedMs)]);
+      rows.push([session.historyTruncated ? "First visible" : "Started", startStr]);
+      if (!session.historyTruncated && allDone && endStr) rows.push(["Finished", endStr]);
+      if (!session.historyTruncated) rows.push([allDone ? "Total time" : "Elapsed", _formatDuration(elapsedMs)]);
 
       const statsHtml = rows.map(([k, v]) =>
         `<div style="display:flex; gap:8px;"><span style="color:var(--text-2); min-width:130px;">${_batchSafeText(k)}</span><span style="color:var(--text); font-weight:500; overflow-wrap:anywhere;">${_batchSafeText(v)}</span></div>`
       ).join("");
 
       const progressPct = plannedSets ? Math.min(100, Math.round(100 * finished / plannedSets)) : 0;
-      const progressHtml = plannedSets ? `<div style="margin:12px 0 8px;">
+      const progressHtml = plannedSets && !session.historyTruncated ? `<div style="margin:12px 0 8px;">
         <div style="height:7px; background:var(--inset); border-radius:6px; overflow:hidden; border:1px solid var(--line);">
           <div role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}"
             style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
@@ -13248,7 +13261,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           ${queueExplanation}
           ${buttonsHtml}
           <details style="margin-top:10px; font-size:11px;">
-            <summary style="cursor:pointer; color:var(--text-2);">Details for ${total} batches · individual states, times and errors</summary>
+            <summary style="cursor:pointer; color:var(--text-2);">Details for ${session.batches.length} batches · individual states, times and errors</summary>
             <div style="max-height:360px; overflow:auto; margin-top:6px;">${stateDetail}</div>
           </details>
         </div>
