@@ -1093,39 +1093,116 @@ const Orders = window.Orders = (() => {
      screen: one used to be kept for every line ever drawn, until its line left the list. */
   const orderNodes=new Map(),NODES_KEPT=200;
   const dayMemo=new WeakMap(),dayOf=r=>{const at=O.orderPlacedAt(r),m=dayMemo.get(r);if(m&&m.at===at)return m.day;const day=O.orderDay(r);dayMemo.set(r,{at,day});return day;};
+  /* ── motion (Paul, 27 Sep 20:09-20:24): what a click in this tab moves from one pile to another is seen going there.
+     Each row carries its line's key as its motion name (data-mkey) and the list is one keyed update (Motion.reconcile).
+     A row that leaves just after a person acted on its order (its Release hold, or the order window opened on it) lifts
+     and flies to the pill that holds it now, which answers, and a note says what happened, with Show; a row that leaves
+     on its own (a refresh, another station, the run) folds away where it was; what stays glides into the gap. Only a
+     redraw of the pile and view already on screen moves: a pile switch, a filter, a sort or the tab shown draws at once. */
+  const PILL = p => `#ordChips [data-pile="${p || ""}"]`, ORDERS_TAB = '#modeSeg [data-mode="orders"]';
+  // the pill, or while it has none (its count was 0; it is drawn with the same redraw) the Orders tab button itself
+  const pillOf = (p, rid) => Object.assign(() => document.querySelector(PILL(p)) || document.querySelector(ORDERS_TAB), { ordRid: rid });
+  const acted = new Map();                                        // receipt id → { t, win, lit }: what a person acted on
+  const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
+  let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
+  /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
+   *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
+  function watch(v) {
+    document.addEventListener("click", e => {
+      const t = e.target; if (!t || !t.closest || v.classList.contains("hidden")) return;
+      const now = Date.now(); for (const [k, a] of acted) if (now - a.t > 60000) acted.delete(k);
+      const row = t.closest('#ordItems [data-mkey^="ord:"]');
+      if (row) { if (t.closest("button")) acted.set(row.dataset.rid, { t: now }); return; }
+      const r = t.closest("#orderWin") && window.OrderWin && OrderWin.isOpen() ? rowsOf().find(x => x.key === OrderWin.key()) : null;
+      if (r) acted.set(String(r.order.receiptId), { t: now, win: true });
+    }, true);
+    if (window.MutationObserver) new MutationObserver(() => { if (v.classList.contains("hidden")) drawnOn = ""; }).observe(v, { attributes: true, attributeFilter: ["class"] });
+  }
+  const lit = n => { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); };
+  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"]')].find(n => n.dataset.key === key) || null;
+  /** "Show" in a note: the pile that holds the line now, scrolled to it and marked (filters let go when they hide it). */
+  function showLine(key, pile) {
+    OV.pile = pile || null;
+    if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = null; OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; }
+    if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
+    const i = visibleRows().findIndex(x => x.key === key);
+    if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
+    const n = lineNode(key); if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); lit(n); }
+  }
+  /** "Show" for a cancelled order: the Cancelled pile (read from the library), at that order. */
+  function showCancelled(rid) {
+    OV.pile = "cancelled";
+    if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
+    let n = 0;
+    const look = () => { const c = [...document.querySelectorAll("#ordBody .cxRow")].find(x => x.dataset.rid === String(rid)); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); lit(c); } else if (++n < 30 && OV.pile === "cancelled") setTimeout(look, 150); };
+    look();
+  }
+  /** Where a row that left went, when a person's click sent it; null (it folds away where it was) otherwise. One note an
+   *  order: its other lines fly with it in silence. */
+  function leaveFor(noted) {
+    return (mk, node) => {
+      const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
+      // a newer move of the same order says what is true now: the note its last move left goes
+      const note = (text, fn, title) => { if (!first) return null; for (const n of document.querySelectorAll(".mNote")) if (n._anchor && n._anchor.ordRid === rid && n.close) n.close(); return { text, actions: [{ label: "Show", title, fn }] }; };
+      if (!r || r.state === "gone")
+        return window.Cancelled && Cancelled.has(rid) ? { to: pillOf("cancelled", rid), plus: first ? "+1" : false, note: note(`Order ${rid} is cancelled · kept under Cancelled`, () => showCancelled(rid), "open Cancelled at this order") } : null;
+      // off hold: back in line under Open Orders (which counted it already: no "+1")
+      if (OV.pile === "hold" && !r.hold) {
+        const still = rowsOf().filter(x => String(x.order.receiptId) === rid && x.hold && x.state !== "gone").length;
+        return { to: pillOf("", rid), plus: false, note: note(still ? `A line of order ${rid} is back in line · ${still} still on hold` : `Order ${rid} is back in line`, () => showLine(key, ""), "open Open Orders at this order") };
+      }
+      if (visibleRows().some(x => x.key === key)) return null;   // only further down: the sort took it past what is drawn
+      // still in this pile, outside the filters now (a material or a kind chosen in the order window)
+      return { to: pillOf(OV.pile, rid), plus: false, note: note(`Order ${rid} is outside these filters now`, () => showLine(key, OV.pile), "show it, letting go of the filters") };
+    };
+  }
+  const empties = new Map();                                      // one node for each empty state, kept like the rows
+  function blank(id, html, wire) {
+    let n = empties.get(id);
+    if (!n) { n = el("div", "libEmpty"); n.dataset.mkey = "ordEmpty:" + id; n.innerHTML = html; if (wire) wire(n); empties.set(id, n); }
+    return n;
+  }
+  /** The same list update without motion (no Motion script): nodes in order, the rest taken out, none rebuilt. */
+  function put(list, nodes) {
+    nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+    const keep = new Set(nodes); for (const c of [...list.children]) if (!keep.has(c)) c.remove();
+  }
   function renderBody() {
     if(window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
+    // the order window open over the list: the list is drawn when it closes, so what was done in it is seen going where
+    // it went (drawn behind the window, it moved where nobody could see it)
+    const win = document.getElementById("orderWin");
+    if (win && win.open && drawnOn && window.Motion && !Motion.reduced()) {
+      if (!win._ordLater) { win._ordLater = true; win.addEventListener("close", () => { win._ordLater = false; const now = Date.now(); for (const a of acted.values()) if (a.win) { a.t = now; a.win = false; } renderBody(); }, { once: true }); }
+      return;
+    }
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
-    if (OV.pile === "cancelled") { listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
+    if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
     const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
     const restore = () => { if (at) host.scrollTop = at; };
-    if (!rowsOf().length) {
-      host.innerHTML = '<div class="libEmpty"><span>Nothing pulled yet \u2014 press <b>Pull orders</b> above.</span></div>';   // one line: .libEmpty stacks its children
-      return;
-    }
-    if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) { host.innerHTML = '<div class="libEmpty">No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.</div>'; return; }
-    if (!rows.length) {
-      host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
-      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; render(); };
-      return;
-    }
     const cards = viewMode() === "cards";
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
-    const wanted=[],place=node=>{const index=wanted.length;wanted.push(node);if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);};
+    // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
+    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
+    if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
+    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.'));
+    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
+    else {
     let lastDay=null;
-    const shown=rows.slice(0,OV.limit || 48);
+    shown=rows.slice(0,OV.limit || 48);
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
     if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const r of shown) {
       const date=dayOf(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -1134,29 +1211,42 @@ const Orders = window.Orders = (() => {
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team]);
       const cached=orderNodes.get(r.key);
-      if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
+      if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
-      node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key;
+      node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key; node.dataset.mkey = "ord:" + r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
-      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
+      // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
+      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
-      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
-      place(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
+      // (the old node's decoded pictures move over once the update has measured where the old node stood)
+      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)pairs.push([node,pair]);rebuilt.push(node);}
+      wanted.push(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});mounts.push([node,r]);
     }
     if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.map(r=>r.key));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
-    const keep=new Set(wanted);for(const child of [...list.children])if(!keep.has(child))child.remove();
+    }
+    // the pile and view on screen, drawn before: what changed is seen changing (not "Show more", which only adds below)
+    const same = drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;
+    // the scroll is put back as soon as the list holds its new rows (Motion.reconcile reads `clip` then, before it
+    // measures where the rows now stand), so what stays glides from where it was seen, not from where the scroll put it
+    let settled = false;
+    const settle = () => { if (settled) return; settled = true; restore(); if(anchorKey){const same2=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same2)host.scrollTop+=same2.getBoundingClientRect().top-anchorTop;} };
+    if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
+    else put(list, wanted);
+    for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
+    for (const [node, r] of mounts) ListMedia.mount(node, r);
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
-
-    restore();
-    if(anchorKey){const same=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same)host.scrollTop+=same.getBoundingClientRect().top-anchorTop;}
+    settle();
+    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
+    // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
+    if (same) { const now = rebuilt.filter(n => { const a = acted.get(n.dataset.rid); return a && !a.lit && mine(n.dataset.rid); }); for (const n of now) { lit(n); acted.get(n.dataset.rid).lit = true; } }
   }
   /* The tab used to be one `v.innerHTML = …` on every call, and it is called from fifteen places — RunCtl.renderBanner's
      last line among them, which itself has eighteen callers, and Pool.addAll every five rows. Pooling two hundred lines
@@ -1189,6 +1279,7 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
     v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
     Sandbox.mountPanel(v);
+    watch(v);
   }
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
@@ -1214,9 +1305,16 @@ const Orders = window.Orders = (() => {
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     const heldN = new Set(all.filter(r => r.hold).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
-    v.querySelector("#ordChips").innerHTML = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
+    const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
       + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
       + (cxN || OV.pile === "cancelled" ? chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Orders cancelled from the sorter, kept as a record; restore one to bring it back") : "");
+    // redrawn only when a count or the pile changes, so a pill a row just flew into keeps its answer (Paul, 27 Sep); a
+    // pill that was not there (the first order put on hold, the first one cancelled) opens where it stands
+    if (pills._html !== pillsHtml) {
+      const had = new Set([...pills.querySelectorAll("[data-pile]")].map(b => b.dataset.pile));
+      pills.innerHTML = pillsHtml; pills._html = pillsHtml;
+      if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
+    }
     const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
     v.querySelector("#ordMetalHost").innerHTML =
       sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
@@ -1240,11 +1338,20 @@ const Orders = window.Orders = (() => {
   function renderNow() {
     window.CNFrame?.cancel("orders");
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
-    if (!v || (v.classList.contains("hidden") && !wanted)) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : ""; return; }
+    if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
     renderHead(v);
     renderBody();
-    const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
+    tabCount();
+  }
+  /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
+   *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
+  function tabCount() {
+    const tb = document.getElementById("tabOrdersN"); if (!tb) return;
+    const t = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "", was = tb.textContent;
+    if (was === t) return;
+    tb.textContent = t;
+    if (was && t && window.Motion && !Motion.reduced() && tb.animate) tb.animate([{ boxShadow: "0 0 0 0 rgba(169,130,63,.7)" }, { boxShadow: "0 0 0 6px rgba(169,130,63,0)" }], { duration: 1200, easing: "cubic-bezier(.2,.7,.3,1)" });
   }
   /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given. */
   function showPile(pile, q) {
