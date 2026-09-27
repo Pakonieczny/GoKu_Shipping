@@ -1909,6 +1909,15 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   const existingOrder = parsed && parsed.known_facts && parsed.known_facts.existingOrder;
   if (existingOrder && (existingOrder.orderId || existingOrder.receiptId)) return { force: false };
   if (!inboundLooksLikeCustomSalesSpecRequest(validationContext.latestInboundText)) return { force: false };
+  // Owner's rule: interest in an existing listing stays with that listing;
+  // the sheet is for custom work only.
+  const payload = parsed && parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
+  if (payload.kind === "listing_url") return { force: false };
+  const inboundText = String(validationContext.latestInboundText || "");
+  if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
+      && !/\b(custom|design|make|made|create|personali[sz]e|instead|different|change|mix|combine)\b/i.test(inboundText)) {
+    return { force: false };
+  }
 
   const selectableMissing = customerSelectableMissingItems(parsed);
   const noCodesYet = selectedCodesCount(parsed) === 0;
@@ -2755,7 +2764,7 @@ exports.handler = async (event) => {
 
 ## When to send the line sheet
 
-When the customer signals interest in pricing or options — even WEAKLY — your default action is to send the line sheet for that family. Examples of triggering signals:
+For CUSTOM work (a design we make, not an existing listing), when the customer signals interest in pricing or options — even WEAKLY — your default action is to send the line sheet for that family. Examples of triggering signals:
 - "do you have a pricing sheet"
 - "what are my options"
 - "what sizes / metals / chains do you offer"
@@ -2790,7 +2799,7 @@ The customer will SEE the line sheet image rendered in their Etsy conversation. 
 ## When NOT to send the line sheet
 
 - The question is only about delivery, shipping time, returns, production time, an order already placed, or a complaint. Answer that; a line sheet there is noise.
-- The customer is ordering a standard listing as it is (their choices are the listing's own dropdowns). Point them to the listing instead.
+- The customer is interested in an existing listing (asking about it, its price, metal, size or chain choices, or ordering it as it is). Owner's rule: stay with that listing, answer from it and point to it, and send NO line sheet. The sheet is only for custom work, a design we make where they must choose size, metal or chain.
 - The customer has already given you all the spec codes and is ready to lock in (no choosing happening). Then proceed to quote with resolveQuote.
 - The customer has explicitly declined to see options ("just quote me X").
 - A line-sheet collateral image is not available for the family (you can tell by checking context.summary.recommendedCollateral — if empty, fall back to asking which family or to a brief verbal exchange).

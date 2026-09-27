@@ -2477,10 +2477,11 @@ Workflow:
   5. If the active question is a product availability, variant, or price
      question and no exact listing is already clear from the thread,
      call search_shop_listings before suggesting products or prices
-  6. If the active question is about sizes, materials, available variants,
-     or any other "what's available" topic for a custom or configurable
-     piece, set attach_line_sheet to the family (necklace, stud or huggie)
-     on compose_draft_reply; the sheet attaches as an image
+  6. If the active question is about sizes, materials or options for a
+     CUSTOM piece (a design we make), set attach_line_sheet to the family
+     (necklace, stud or huggie) on compose_draft_reply; the sheet attaches
+     as an image. For an existing listing, answer from that listing and
+     point to it, with no line sheet (owner's rule)
   7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
@@ -2570,26 +2571,30 @@ WHEN TO SEND A LINE SHEET (use attach_line_sheet):
 
 A line sheet is a single reference image showing every size, metal,
 chain length, and engraving option for a product family on one page.
-Operators send it constantly because one image answers a paragraph of
-follow-up questions before they get asked. The following patterns
-should trigger attach_line_sheet on compose_draft_reply:
+It is for CUSTOM work only: a design we make where the customer must
+choose size, metal or chain.
 
-  - "What sizes do your charms come in?"
-  - "What size are your <design> charms?"
-  - "Do you have a chart / sheet / breakdown of the options?"
-  - "What metals do you offer?" (when scoped to a specific family)
-  - "What chain lengths can I pick from?"
-  - "Show me what's available" / "what are my options"
-  - "I'm not sure which one to pick" (after they've named the family)
+OWNER'S RULE: a customer interested in an existing listing (they linked
+it or named it and ask its price, metal, size, chain, or how to order)
+stays with that listing. Answer from the listing and point to it; no
+line sheet.
 
-Identify the family from the customer's message or the listing they
-linked. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
+For custom work, these patterns trigger attach_line_sheet on
+compose_draft_reply:
+
+  - "Can you make a <design> charm? What sizes/metals are there?"
+  - "How much would a custom <design> be?"
+  - "Do you have a chart / sheet / breakdown of the custom options?"
+  - "What chain lengths can I pick from?" (for a custom piece)
+  - "I'm not sure which one to pick" (custom piece, family named)
+
+Identify the family from the customer's message. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
 "hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud". Then set
 attach_line_sheet: "<family>" on compose_draft_reply. The sheet
 attaches to the draft as an image, the same way the sales team sends
 it, and you mention it in one short sentence:
 
-  "Our standard necklace charms are 9-10mm. I've attached our charm
+  "Yes, we can make that as a custom charm. I've attached our charm
   line sheet with every size, metal and chain laid out, so just tell
   me which you'd like."
 
@@ -3113,7 +3118,7 @@ const TOOL_SPECS = [
         attach_line_sheet: {
           type: "string",
           enum: ["necklace", "stud", "huggie"],
-          description: "Set to the product family when the customer is choosing sizes, metals, chains or prices for a custom or configurable piece. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Leave it out for delivery, shipping, return, order-status or complaint questions, and when the customer is simply ordering a standard listing."
+          description: "Set to the product family only for custom work: the customer is choosing sizes, metals, chains or prices for a design we make. The family's line sheet (sizes, metals, chains and prices on one image) attaches to the draft as an image. Owner's rule: a customer interested in an existing listing (its price, metal, size, chain, or ordering it) stays with that listing, with no line sheet. Leave it out for those and for delivery, shipping, return, order-status or complaint questions."
         }
       },
       required: ["investigation", "text", "reasoning", "referencedReceiptIds", "confidence", "difficulty"]
