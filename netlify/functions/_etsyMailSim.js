@@ -122,7 +122,27 @@ function threadAsOf(data, asOfMs, future) {
     drop(/^(salesCompletedAt|salesSynopsis)$/);
     if (out.status === "sales_completed") { out.status = "open"; changed = true; }
   }
+  // Summaries written after the cut carry later messages and decisions
+  // (searchableText holds the whole conversation): take them off.
+  if (later("updatedAt")) {
+    drop(/^(searchable|intent|aiReview|aiConfidence|aiDifficulty|aiDraftStatus|salesSynopsis|lastResolverResult|lastAuto|riskFlags|needsHumanReview|needsOperatorReview|readyForHumanApproval|latestDraftId|lastSalesAgentBlockReason)/);
+    for (const k of ["lastInboundAt", "lastOutboundAt", "lastOperatorReplyAt", "lastReadAt", "lastSyncedAt", "gmailReceivedAt"]) {
+      if (later(k)) { delete out[k]; changed = true; }
+    }
+  }
   return { data: out, changed };
+}
+
+/** A customer doc as it stood at asOfMs: no orders placed later. */
+function customerAsOf(data, asOfMs) {
+  if (!data || !Array.isArray(data.recentReceipts)) return { data, changed: false };
+  const kept = data.recentReceipts.filter(r => !r || !toMs(r.orderedAt) || toMs(r.orderedAt) <= asOfMs);
+  if (kept.length === data.recentReceipts.length) return { data, changed: false };
+  const out = { ...data, recentReceipts: kept, orderCount: kept.length, isRepeatBuyer: kept.length > 1,
+                totalSpent: Math.round(kept.reduce((a, r) => a + (Number(r && r.grandTotal) || 0), 0) * 100) / 100 };
+  const last = kept.map(r => toMs(r && r.orderedAt) || 0).sort((a, b) => b - a)[0];
+  if (!last) { delete out.lastOrderAt; delete out.firstOrderAt; }
+  return { data: out, changed: true };
 }
 
 /** A sales context as it stood at asOfMs: no later completion, abandonment
@@ -272,6 +292,10 @@ function install() {
       const future = await futureListingIds(s, admin.firestore().collection("EtsyMail_Threads").doc(ref.id), origGet);
       const v = salesCtxAsOf(snap.data(), s.asOfMs, future);
       if (v === null) return wrapSnap(snap, undefined);
+      return v.changed ? wrapSnap(snap, v.data) : snap;
+    }
+    if (/^EtsyMail_Customers\/[^/]+$/.test(path)) {
+      const v = customerAsOf(snap.data(), s.asOfMs);
       return v.changed ? wrapSnap(snap, v.data) : snap;
     }
     if (/^EtsyMail_Listings\//.test(path) && s.futureAll && s.futureAll.has(ref.id)) return wrapSnap(snap, undefined);

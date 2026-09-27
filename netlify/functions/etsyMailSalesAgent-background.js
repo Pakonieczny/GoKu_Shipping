@@ -1474,7 +1474,7 @@ function repairTrailingCommas(s) {
 
 // ─── Validate AI's chosen quote (post-loop server-side gate) ──────────
 
-async function validateQuotedPriceIfPresent({ threadId, parsed, salesCtx }) {
+async function validateQuotedPriceIfPresent({ threadId, parsed, salesCtx, recentThreadMessages = null }) {
   // v2.1 — Option-sheet validation. The AI's quoted_total_usd MUST
   // exactly match (within 1 cent for rounding) the resolver's total
   // for the same family + selectedCodes + quantity. If the AI claims
@@ -1491,6 +1491,13 @@ async function validateQuotedPriceIfPresent({ threadId, parsed, salesCtx }) {
     // No price stated this turn (e.g. discovery, spec, or close stage
     // when no quote needs to be re-stated). Skip validation.
     return { skip: true };
+  }
+
+  // A price a person already typed in this conversation ("$24 each") is the
+  // shop's own quote, not an AI guess: the resolver may not know that
+  // design, so don't block the customer's acceptance of it.
+  if (staffQuotedTotal(quotedTotalUsd, recentThreadMessages) != null) {
+    return { skip: true, staffQuoted: true };
   }
 
   // Pull family + selectedCodes + quantity from the cached resolver
@@ -3793,7 +3800,7 @@ ${validationResult.message}
 
 
     // ── Validate quote if present (server-side gate) ──
-    const quoteValidation = await validateQuotedPriceIfPresent({ threadId, parsed, salesCtx });
+    const quoteValidation = await validateQuotedPriceIfPresent({ threadId, parsed, salesCtx, recentThreadMessages });
     if (quoteValidation && quoteValidation.valid === false && !quoteValidation.skip) {
       await writeAudit({
         threadId, eventType: "sales_agent_quote_invalid",
