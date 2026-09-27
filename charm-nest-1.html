@@ -864,70 +864,213 @@ dialog.cmDlg .owBox{height:100%}
 .sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetInclude{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px}.sheetInclude input{width:17px;height:17px;margin:0;accent-color:var(--m-rose)}.sheetOptionStatus:empty{display:none}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
 .solidSize{display:grid;grid-template-columns:1fr 1fr;gap:14px}.solidSize label{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:12px}.solidSize label span,.roseAllowance>span{color:var(--ink45);font-size:11px}.solidSize input{grid-column:1/-1;width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono);color:var(--ink)}.solidOptions input:focus-visible,.solidOptions select:focus-visible{outline:2px solid #c08578;outline-offset:2px}.solidOptions input:disabled{background:var(--paper);color:var(--ink45)}.solidOptions [hidden]{display:none!important}.solidOptions .roseAllowance{display:grid;grid-template-columns:1fr auto 88px;gap:10px;align-items:center}.solidOptions .roseAllowance input{width:88px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono)}.solidOptions .roseStockOptions p{margin:0;font-size:11px;line-height:1.5}.solidOptions [data-rose-stock-choice]{display:grid;gap:10px}.solidOptions [data-rose-picker] select{width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:12px}
 
-/* the door back into every run that ever ran */
+/* the door back into every run that ever ran (dialog.hist is the Sets menu's read-only preview, SetPicker.preview) */
 dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.26);padding:0;width:min(980px,94vw);max-height:88vh;background:var(--card);color:var(--ink)}
 dialog.hist[open]{display:flex;flex-direction:column}
 dialog.hist::backdrop{background:rgba(24,20,16,.4)}
 dialog.hist h2{font:22px var(--serif);font-weight:400;margin:0;padding:16px 18px 0}
 dialog.hist .x{position:absolute;top:12px;right:14px;margin:0}
-dialog.hist .hq{display:flex;gap:8px;padding:11px 18px 12px;border-bottom:1px solid var(--line)}
-dialog.hist .hq input{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:9px;padding:8px 11px;font-size:13px;background:var(--card2);color:var(--ink)}
-dialog.hist .hWhen{display:flex;gap:6px;padding:9px 18px 0;flex-wrap:wrap}
-dialog.hist .hWhen:empty{display:none}
-dialog.hist .hBody{flex:1 1 auto;overflow:auto;padding:8px 12px 12px}
-.hDay{font:700 10.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);padding:11px 4px 3px}
-.hDay:first-child{padding-top:3px}
-dialog.hist .hFoot{flex:0 0 auto;padding:7px 18px 12px;font-size:11px;color:var(--ink45);font-family:var(--mono)}
-.hRun{border:1px solid var(--line);border-radius:11px;margin:6px 0;background:var(--card2);overflow:hidden}
-.hRun.cur{border-color:var(--gold2);background:var(--goldSoft)}
-.hRun .hRow{display:flex;align-items:center;gap:9px;padding:9px 11px;min-width:0;flex-wrap:wrap}
-.hRun .nm{font:700 13px var(--sans);white-space:nowrap}
-.hRun .dy{font:11.5px var(--mono);color:var(--ink70);white-space:nowrap}
-.hRun .ct{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.hRun .sp{flex:1 1 auto;min-width:4px}
-.hRun .hHits{padding:0 11px 8px;font-size:11.5px;color:var(--ink70)}
-.hRun .hHits b{font-family:var(--mono);font-weight:700}
-.hLines{padding:2px 11px 10px;display:grid;gap:5px;max-height:320px;overflow:auto}
-.hLines.bad{color:#8a3a26}
-.hOrd{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11.5px}
-.hOrd .oid{font:700 11.5px var(--mono);min-width:12ch}
-.hOrd .ln{display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--line);border-radius:7px;padding:2px 8px;font-family:var(--mono);cursor:pointer;max-width:42ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.hOrd .ln:hover{border-color:var(--ink45)}
-.hOrd .ln i{width:6px;height:6px;border-radius:50%;background:var(--clay);flex:0 0 auto}
-.hOrd .ln i.ok{background:var(--sage)}
-.hLines .more{font-size:11px;color:var(--ink45)}
-.hSheets{margin-top:12px;border-top:1px solid var(--line);padding-top:9px}
-.hSheets .hHead{font:700 10.5px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink45);padding:0 4px 5px}
-.hSheet{display:flex;align-items:center;gap:9px;padding:5px 8px;font-size:12px;border-radius:8px}
-.hSheet:hover{background:var(--card2)}
-.hSheet .nm{font:600 12px var(--mono)}
-.hSheet .ct{font:11px var(--mono);color:var(--ink45)}
-.hSheet .sp{flex:1 1 auto}
 .hEmpty{padding:34px;text-align:center;color:var(--ink45);font-size:13px}
-/* the sets a person can recall: a picture of each (its GF sheet), or one line each */
-dialog.hist .hWhen .sp{flex:1 1 auto}
-dialog.hist .hWhen .viewSeg{display:inline-flex;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px}
-dialog.hist .hWhen .viewSeg button{border:0;background:transparent;border-radius:999px;padding:4px 11px;font:700 11.5px var(--sans);color:var(--ink70);cursor:pointer}
-dialog.hist .hWhen .viewSeg button.on{background:var(--ink);color:#fff}
-.hSets.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:4px 2px}
-.hSets.cards .hDay{grid-column:1/-1}
-.hSets.list{display:grid;gap:5px}
-.hSet{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0;cursor:pointer;box-shadow:var(--sh)}
-.hSet.cur{border-color:var(--gold2);background:var(--goldSoft)}
-.hSet.card{padding:8px;display:grid;gap:6px}
-.hSet.row{padding:6px 10px}
-.hThumb{display:block;width:100%;aspect-ratio:2/1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:9px}
-.hThumb.ph{display:flex;align-items:center;justify-content:center;color:var(--ink45);font-size:11.5px}
-.hMini{width:56px;height:28px;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:5px;flex:0 0 auto}
-.hMini.ph{display:inline-block}
-.hSet .hRow{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
-.hSet .hRow.sub{margin-top:-2px}
-.hSet .nm{font:700 13px var(--sans);white-space:nowrap}
-.hSet .ct{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.hSet .sp{flex:1 1 auto;min-width:4px}
-.hSet .pill{padding:2px 7px;font-size:10px}
-
 .hEmpty.bad{color:#8a3a26}
+/* ── the Sets window (RunHistory, charm-nest-bridge.js). Paul, 27 Sep: "The UI is broken. The cards are overlapping … make
+   it match the elegance of the rest of the platform." Drawn in the sheet window's hand: its header, its segmented
+   switches, its spinner and its fade. Every picture sits in a box of a fixed size, every card is a cell of a grid, and
+   every long word stops at an ellipsis, so nothing lies under anything at any width. ── */
+dialog.setsWin{width:min(1400px,calc(100vw - 32px));height:min(90vh,960px);max-width:none;max-height:none;border:0;border-radius:16px;padding:0;overflow:hidden;background:var(--card);color:var(--ink);box-shadow:0 30px 80px rgba(20,16,10,.28)}
+dialog.setsWin[open]{display:flex;animation:hsIn .26s cubic-bezier(.2,.8,.2,1) both}
+dialog.setsWin::backdrop{background:rgba(20,18,15,.5);animation:hsFade .22s ease both}
+dialog.setsWin.closing{animation:hsOut .17s ease both}
+dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
+@keyframes hsIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
+@keyframes hsOut{to{opacity:0;transform:translateY(6px) scale(.99)}}
+@keyframes hsFade{from{opacity:0}}
+@keyframes hsFadeOut{to{opacity:0}}
+@keyframes hsDrop{from{opacity:0;transform:translateY(-4px)}}
+.setsWin .hBox{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;width:100%;height:100%;min-width:0}
+.setsWin .hHead{display:flex;align-items:center;gap:12px;padding:10px 12px 10px 20px;border-bottom:1px solid var(--line);min-width:0}
+.setsWin .hTitle{display:flex;flex-direction:column;min-width:0;flex:0 0 auto;line-height:1.2}
+.setsWin .hTitle h2{margin:0;font:22px var(--serif);font-weight:500;color:var(--ink)}
+.setsWin .hTitle span{font:10.5px var(--mono);color:var(--ink45);white-space:nowrap}
+.setsWin .hFind{position:relative;flex:1 1 auto;min-width:0;max-width:560px;margin-left:auto}
+.setsWin .hFind svg{position:absolute;left:11px;top:50%;width:14px;height:14px;transform:translateY(-50%);color:var(--ink45);pointer-events:none}
+.setsWin .hFind input{width:100%;border:1px solid var(--line);border-radius:10px;padding:8px 11px 8px 32px;font:13px var(--sans);background:var(--card2);color:var(--ink);transition:border-color .15s,background .15s}
+.setsWin .hFind input:focus{outline:2px solid rgba(74,107,120,.3);outline-offset:0;border-color:var(--slate);background:var(--card)}
+.setsWin .hIcon{display:inline-grid;place-items:center;width:32px;height:32px;flex:0 0 auto;border-radius:9px;border:1px solid transparent;background:transparent;color:var(--ink70);cursor:pointer}
+.setsWin .hIcon svg{width:16px;height:16px}
+.setsWin .hIcon:hover{background:var(--paper2);color:var(--ink)}
+.setsWin .hBar{display:flex;align-items:center;gap:12px;padding:9px 20px;border-bottom:1px solid var(--line2);min-width:0}
+.setsWin .hSeg{display:flex;gap:3px;background:var(--paper2);border-radius:9px;padding:3px;min-width:0;flex:0 0 auto}
+.setsWin .hSeg button{border:0;background:transparent;border-radius:7px;padding:5px 11px;font:600 12px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background .15s,color .15s,box-shadow .15s}
+.setsWin .hSeg button i{font-style:normal;font:600 10.5px var(--mono);color:var(--ink45);margin-left:6px}
+.setsWin .hSeg button:hover{color:var(--ink)}
+.setsWin .hSeg button[aria-pressed=true]{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.10)}
+.setsWin .hView{margin-left:auto}
+.setsWin .hState{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;font:12px var(--sans);color:var(--ink45)}
+.setsWin .hState span:not(.owSpin){min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hState .bad{color:#8a3a26}
+.setsWin .hBody{min-height:0;overflow:auto;overscroll-behavior:contain;background:var(--paper);padding:0 20px 20px;container-type:inline-size}
+.setsWin .hFootBar{display:flex;align-items:center;gap:12px;min-height:40px;padding:6px 14px 6px 20px;border-top:1px solid var(--line2);background:var(--card);min-width:0}
+.setsWin .hFoot{flex:1 1 auto;min-width:0;font:10.5px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hFootBar .btn{flex:0 0 auto}
+.setsWin .hEmpty{display:grid;justify-items:center;gap:12px;padding:72px 20px}
+/* a day's heading stays at the top while its sets scroll under it */
+.setsWin .hDay{position:sticky;top:0;z-index:2;display:flex;align-items:baseline;gap:9px;margin:0 -20px;padding:14px 22px 8px;background:var(--paper);font:650 12.5px var(--sans);color:var(--ink);box-shadow:0 7px 9px -9px rgba(30,26,20,.35)}
+.setsWin .hDay span{font-weight:400;color:var(--ink45);font-size:12px}
+.setsWin .hDay i{margin-left:auto;font:600 10.5px var(--mono);font-style:normal;color:var(--ink45)}
+.setsWin .hGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(292px,1fr));gap:14px;padding:4px 0 12px}
+.setsWin .hRows{display:flex;flex-direction:column;gap:6px;padding:4px 0 12px}
+/* a set as a card */
+.setsWin .hSet.card{position:relative;display:flex;flex-direction:column;gap:10px;min-width:0;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--sh);transition:border-color .15s,box-shadow .18s}
+.setsWin .hSet.card:hover{border-color:var(--ink25);box-shadow:var(--hoverLift)}
+.setsWin .hSet.card.cur{border-color:var(--gold2);box-shadow:0 0 0 3px rgba(202,168,97,.18),var(--sh)}
+.setsWin .hMedia{height:114px;min-width:0;position:relative}
+.setsWin .hStripWrap{position:relative;height:100%;min-width:0}
+.setsWin .hStrip{display:grid;grid-auto-flow:column;grid-auto-columns:var(--tw,100%);gap:6px;height:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;scroll-behavior:smooth}
+.setsWin .hStrip::-webkit-scrollbar{display:none}
+.setsWin .hStripWrap[data-n="2"]{--tw:calc((100% - 6px) / 2)}
+.setsWin .hStripWrap[data-n="3"]{--tw:max(calc((100% - 12px) / 3),100px)}
+.setsWin .hStripWrap[data-n="4"]{--tw:max(calc((100% - 12px) / 3.3),100px)}
+.setsWin .hStripWrap:is([data-at=start],[data-at=mid])::after{content:"";position:absolute;top:0;right:0;bottom:0;width:28px;border-radius:0 10px 10px 0;background:linear-gradient(90deg,rgba(255,254,251,0),var(--card));pointer-events:none}
+.setsWin .hArrow{position:absolute;top:calc(50% - 25px);z-index:1;display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:rgba(255,254,251,.95);color:var(--ink70);cursor:pointer;box-shadow:0 2px 8px rgba(30,26,20,.16);opacity:0;transition:opacity .15s}
+.setsWin .hArrow svg{width:14px;height:14px}
+.setsWin .hArrow.l{left:5px}.setsWin .hArrow.r{right:5px}
+.setsWin .hStripWrap:hover .hArrow{opacity:1}
+.setsWin .hStripWrap:is([data-at=start],[data-at=none]) .hArrow.l,.setsWin .hStripWrap:is([data-at=end],[data-at=none]) .hArrow.r{opacity:0;pointer-events:none}
+/* one sheet: its picture on a mat, and a caption with its metal, number, fill and QR label */
+.setsWin .hTile{position:relative;display:grid;grid-template-rows:minmax(0,1fr) auto;min-width:0;height:100%;padding:0;border:1px solid var(--line2);border-radius:10px;background:var(--paper2);color:inherit;text-align:left;cursor:pointer;scroll-snap-align:start;overflow:hidden;container-type:inline-size;transition:border-color .15s,box-shadow .18s,background-color .15s}
+.setsWin .hTile:hover,.setsWin .hTile:focus-visible{border-color:var(--ink25);background:#e7e0d2;box-shadow:0 4px 12px rgba(30,26,20,.10);outline:none}
+.setsWin .hTile.hit{border-color:var(--gold2);box-shadow:0 0 0 2px rgba(202,168,97,.42)}
+.setsWin .hPlate{position:relative;min-height:0;margin:7px 7px 2px}
+.setsWin .hPlate img{position:absolute;inset:0;margin:auto;max-width:100%;max-height:100%;border-radius:4px;background:#fffefb;box-shadow:0 0 0 1px rgba(30,26,20,.08),0 2px 6px rgba(30,26,20,.10);opacity:0;transition:opacity .25s ease,transform .2s ease}
+.setsWin .hPlate img.on{opacity:1}
+.setsWin .hTile:hover .hPlate img{transform:scale(1.035)}
+.setsWin .hNoPv{position:absolute;inset:0;margin:auto;width:max-content;height:max-content;max-width:100%;padding:3px 8px;border:1px dashed var(--ink25);border-radius:5px;font:10.5px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hCap{display:flex;align-items:center;gap:6px;min-width:0;padding:3px 8px 6px;font:600 10.5px var(--mono);color:var(--ink70);white-space:nowrap}
+.setsWin .hCap b{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;font-weight:700;color:var(--ink)}
+.setsWin .hCap b i{flex:0 0 7px;width:7px;height:7px;border-radius:50%;background:var(--c)}
+.setsWin .hCap .hFill{margin-left:auto;color:var(--ink45)}
+.setsWin .hQr,.setsWin .hDone{display:inline-grid;flex:0 0 12px;width:12px;height:12px;color:var(--ink25)}
+.setsWin .hQr svg,.setsWin .hDone svg{width:12px;height:12px}
+.setsWin .hQr.ok,.setsWin .hDone{color:var(--sage)}
+.setsWin .hQr.no{color:var(--clay)}
+@container (max-width:96px){.setsWin .hCap .hFill{display:none}.setsWin .hCap .hQr{margin-left:auto}}
+/* a set with no sheet has a quiet mark in the same box, never a blank one */
+.setsWin .hPh{display:flex;align-items:center;justify-content:center;gap:12px;height:100%;min-width:0;padding:0 16px;border:1px dashed var(--ink25);border-radius:10px;background:var(--card2);color:var(--ink45)}
+.setsWin .hPh svg{flex:0 0 34px;width:34px;height:24px;color:var(--ink25)}
+.setsWin .hPh span{display:grid;gap:1px;min-width:0;font:11.5px/1.35 var(--sans)}
+.setsWin .hPh b{font:600 12px var(--sans);color:var(--ink70)}
+.setsWin .hInfo{display:grid;gap:6px;min-width:0}
+.setsWin .hTop{display:flex;align-items:center;gap:8px;min-width:0}
+.setsWin .hName{margin:0;flex:1 1 auto;min-width:0;font:600 14px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hPill{flex:0 0 auto;min-width:0;max-width:70%;padding:3px 9px 3px 8px;font-size:10.5px;gap:5px}
+.setsWin .hPill i{flex:0 0 6px;width:6px;height:6px;border-radius:50%;background:currentColor}
+.setsWin .hPill span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hMeta{display:flex;align-items:center;flex-wrap:wrap;gap:5px 6px;min-width:0;font:11.5px var(--sans);color:var(--ink45)}
+.setsWin .hDate{font:11px var(--mono);color:var(--ink45);white-space:nowrap;margin-right:2px}
+.setsWin .hMeta b{font:700 11px var(--mono);color:var(--ink)}
+.setsWin .hCount{flex:0 0 auto;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:2px 9px;font:600 11px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background .15s,border-color .15s,color .15s}
+.setsWin .hCount:hover:not(:disabled){border-color:var(--ink25);color:var(--ink)}
+.setsWin .hCount[aria-pressed=true]{background:var(--velvet);border-color:var(--velvet);color:#e9e2d4}
+.setsWin .hCount[aria-pressed=true] b{color:#fff}
+.setsWin .hCount:disabled{cursor:default;opacity:.55}
+.setsWin .hCut{display:inline-flex;align-items:center;gap:3px;border-radius:999px;padding:1px 7px 1px 5px;background:var(--sageSoft);color:#3f5b3c;font:600 10.5px var(--sans);white-space:nowrap}
+.setsWin .hCut svg{width:11px;height:11px}
+.setsWin .hMats{display:flex;flex-wrap:wrap;gap:4px;min-width:0}
+.setsWin .hMat{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 8px 2px 6px;background:var(--paper2);font:600 10.5px var(--mono);color:var(--ink70);white-space:nowrap}
+.setsWin .hMat i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.setsWin .hMat b{color:var(--ink)}
+.setsWin .hHit{min-width:0;font:11.5px var(--sans);color:var(--ink70);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hHit>span{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--gold);margin-right:3px}
+.setsWin mark{background:rgba(202,168,97,.4);color:inherit;border-radius:3px;padding:0 1px}
+.setsWin .hNoteBox:empty{display:none}
+.setsWin .hNote{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:7px 8px 7px 10px;border:1px solid var(--line2);border-radius:9px;background:var(--card2);font:11.5px/1.45 var(--sans);color:var(--ink70);animation:hsDrop .2s cubic-bezier(.2,.8,.2,1) both}
+.setsWin .hNote .t{flex:1 1 170px;min-width:0}
+.setsWin .hNote .a{display:flex;gap:6px;flex:0 0 auto;margin-left:auto}
+.setsWin .hNote.bad{background:var(--claySoft);border-color:#e7b9aa;color:#8a3a26}
+.setsWin .hNote.ok{background:var(--sageSoft);border-color:#cfdcc8;color:#3f5b3c}
+.setsWin .hNote.wait .owSpin{width:11px;height:11px;flex-basis:11px}
+.setsWin .hX{display:inline-grid;place-items:center;flex:0 0 22px;width:22px;height:22px;margin-left:auto;border:0;border-radius:50%;background:transparent;color:currentColor;opacity:.6;cursor:pointer}
+.setsWin .hX svg{width:11px;height:11px}
+.setsWin .hX:hover{opacity:1;background:rgba(30,26,20,.06)}
+.setsWin .hActs{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}
+.setsWin .hSet.card .hActs{margin-top:auto;padding-top:10px;border-top:1px solid var(--line2)}
+.setsWin .hActs .sp{flex:1 1 auto}
+.setsWin .hActs .btn{display:inline-flex;align-items:center;gap:6px}
+.setsWin .hActs .btn svg{width:13px;height:13px}
+.setsWin .hActs .btn .spin{margin-right:0}
+.setsWin .btn[aria-disabled=true]{opacity:.5;cursor:not-allowed}
+.setsWin .hOn{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:4px 10px 4px 8px;background:var(--goldSoft);color:#6f531c;font:650 11.5px var(--sans);white-space:nowrap}
+.setsWin .hOn svg{width:12px;height:12px}
+/* its order numbers, in the same box as its pictures */
+.setsWin .hOrders{display:grid;grid-template-rows:auto minmax(0,1fr);height:100%;min-width:0;border:1px solid var(--line2);border-radius:10px;background:var(--card2);overflow:hidden;animation:hsDrop .18s ease both}
+.setsWin .hOrdHead{display:flex;align-items:center;gap:8px;min-width:0;padding:4px 5px 4px 10px;border-bottom:1px solid var(--line2);font:11.5px var(--sans);color:var(--ink70);white-space:nowrap}
+.setsWin .hOrdHead b{font:700 11px var(--mono);color:var(--ink)}
+.setsWin .hOrdHead em{font-style:normal;color:var(--gold)}
+.setsWin .hLink{display:inline-flex;align-items:center;gap:5px;margin-left:auto;border:0;background:transparent;border-radius:7px;padding:4px 8px;font:650 11px var(--sans);color:var(--slate);cursor:pointer;white-space:nowrap}
+.setsWin .hLink svg{width:12px;height:12px}
+.setsWin .hLink:hover{background:var(--slateSoft)}
+.setsWin .hOrdList{display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px;min-height:0;overflow:auto;overscroll-behavior:contain;padding:6px 8px 8px}
+.setsWin .hOrd{border:1px solid var(--line);background:var(--card);border-radius:7px;padding:2px 7px;font:600 11px var(--mono);color:var(--ink);cursor:copy;white-space:nowrap;transition:border-color .12s,background-color .12s,color .12s}
+.setsWin .hOrd:hover{border-color:var(--ink45)}
+.setsWin .hOrd.hit{border-color:var(--gold2);background:var(--goldSoft)}
+.setsWin .hOrd.done{border-color:#b9cdb1;background:var(--sageSoft);color:#3f5b3c}
+.setsWin .hWait{display:flex;align-items:center;justify-content:center;gap:8px;height:100%;padding:12px;font:12px var(--sans);color:var(--ink45)}
+/* a set as one line, opening under itself the way the Library's Completed rows do */
+.setsWin .hSet.row{min-width:0;border-radius:12px}
+.setsWin .hLine{display:grid;grid-template-columns:74px minmax(0,1fr) minmax(0,max-content) max-content 18px;align-items:center;gap:6px 16px;min-height:66px;padding:6px 12px 6px 6px;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent,var(--ink25));border-radius:12px;cursor:pointer;transition:background-color .13s,border-color .13s,box-shadow .16s}
+.setsWin .hLine:hover,.setsWin .hLine:focus-visible{border-color:var(--ink25);border-left-color:var(--accent,var(--ink45));box-shadow:var(--hoverLift);outline:none}
+.setsWin .hSet.row.cur .hLine{box-shadow:0 0 0 2px rgba(202,168,97,.35)}
+.setsWin .hSet.row.open .hLine{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom-color:transparent;box-shadow:none}
+.setsWin .hWho{display:grid;gap:4px;min-width:0}
+.setsWin .hWho .hName{flex:0 1 auto;font-size:13.5px}
+.setsWin .hWho .hMeta{flex-wrap:nowrap;gap:10px;overflow:hidden}
+.setsWin .hWho .hMeta>span{white-space:nowrap}
+.setsWin .hLine .hMats{flex-wrap:nowrap;overflow:hidden}
+.setsWin .hLine .hActs{flex-wrap:nowrap}
+.setsWin .hLine .hActs .sp{display:none}
+.setsWin .hLine .hHit{grid-column:2/-1;margin-top:-2px}
+.setsWin .hChev{display:grid;place-items:center;width:18px;height:18px;color:var(--ink45);transition:transform .22s cubic-bezier(.2,.8,.2,1)}
+.setsWin .hChev svg{width:16px;height:16px}
+.setsWin .hSet.open .hChev{transform:rotate(180deg)}
+.setsWin .hStack{position:relative;width:74px;height:54px}
+.setsWin .hMini{position:absolute;width:60px;height:44px;border-radius:7px;background:var(--paper2);border:1px solid var(--line2);overflow:hidden;box-shadow:0 1px 3px rgba(30,26,20,.14)}
+.setsWin .hMini:nth-child(1){left:0;top:10px;z-index:3}.setsWin .hMini:nth-child(2){left:7px;top:5px;z-index:2}.setsWin .hMini:nth-child(3){left:14px;top:0;z-index:1}
+.setsWin .hMini img{position:absolute;inset:3px;margin:auto;max-width:calc(100% - 6px);max-height:calc(100% - 6px);border-radius:3px;background:#fffefb;opacity:0;transition:opacity .25s ease}
+.setsWin .hMini img.on{opacity:1}
+.setsWin .hMini.ph{display:grid;place-items:center;border-style:dashed;border-color:var(--ink25);background:var(--card2);box-shadow:none}
+.setsWin .hMini.ph svg{width:26px;height:18px;color:var(--ink25)}
+.setsWin .hSet.row .hNoteBox{margin:6px 0 0 4px}
+.setsWin .hPanel{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.2,.8,.2,1)}
+.setsWin .hSet.open>.hPanel{grid-template-rows:1fr}
+.setsWin .hPanelIn{min-height:0;overflow:hidden}
+.setsWin .hSet.open .hPanelIn{border:1px solid var(--line);border-top:0;border-left:4px solid var(--accent,var(--ink25));border-radius:0 0 12px 12px;background:var(--card)}
+.setsWin .hPanelBody{display:grid;gap:12px;padding:6px 14px 14px}
+.setsWin .hTiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.setsWin .hTiles .hTile{height:112px}
+.setsWin .hPanelBody .hPh{height:84px}
+.setsWin .hPanelBody .hOrders{height:auto;max-height:168px}
+@container (max-width:1000px){.setsWin .hLine .hMats{display:none}.setsWin .hLine{grid-template-columns:74px minmax(0,1fr) max-content 18px}}
+@container (max-width:640px){.setsWin .hLine .hActs [data-a=resume]{display:none}}
+/* the first read: the cards' shapes, shimmering, while the records come */
+.setsWin .hSkel{background:var(--card);border:1px solid var(--line2);border-radius:14px;display:grid;gap:9px;padding:10px}
+.setsWin .hSkel i{display:block;height:10px;border-radius:5px;background:linear-gradient(90deg,var(--paper2) 25%,var(--card2) 50%,var(--paper2) 75%);background-size:200% 100%;animation:ldShine 1.1s linear infinite}
+.setsWin .hSkel.card i:first-child{height:114px;border-radius:10px}
+.setsWin .hSkel.card i:nth-child(2){width:55%;height:13px}
+.setsWin .hSkel.card i:nth-child(3){width:75%}
+.setsWin .hSkel.card i:nth-child(4){height:28px;margin-top:6px}
+.setsWin .hSkel.row{grid-template-columns:60px minmax(0,1fr) 160px;align-items:center;min-height:66px;border-radius:12px;padding:6px 12px 6px 8px}
+.setsWin .hSkel.row i:first-child{height:44px;border-radius:7px}
+/* the Download menu, inside the window */
+.setsWin .hMenu{position:absolute;z-index:20;min-width:264px;max-width:320px;padding:6px;display:grid;gap:1px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgba(30,26,20,.2);transform-origin:top right;animation:hsPop .16s cubic-bezier(.2,.8,.2,1) both}
+.setsWin .hMenu[data-up="1"]{transform-origin:bottom right}
+.setsWin .hMenu[hidden]{display:none}
+@keyframes hsPop{from{opacity:0;transform:scale(.96)}}
+.setsWin .hMenu button{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;width:100%;text-align:left;border:0;background:transparent;border-radius:8px;padding:7px 10px;font:13px var(--sans);color:var(--ink);cursor:pointer}
+.setsWin .hMenu button svg{grid-row:1/span 2;width:15px;height:15px;color:var(--ink45)}
+.setsWin .hMenu button small{grid-column:2;font:11px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.setsWin .hMenu button:hover,.setsWin .hMenu button:focus-visible{background:var(--paper2);outline:none}
+.setsWin .hMenu .sep{height:1px;background:var(--line);margin:4px 6px}
+@media (prefers-reduced-motion:reduce){dialog.setsWin[open],dialog.setsWin.closing,dialog.setsWin::backdrop,.setsWin .hMenu,.setsWin .hNote,.setsWin .hOrders{animation:none}.setsWin .hPanel,.setsWin .hChev,.setsWin .hPlate img,.setsWin .hTile{transition:none}.setsWin .hStrip{scroll-behavior:auto}}
 /* ── Orders tab ── */
 .ordBar{display:flex;gap:6px 8px;align-items:center;flex-wrap:wrap;min-width:0}
 .ordBar>.grp{display:inline-flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:999px;background:var(--card2);padding:2px}
@@ -3102,6 +3245,45 @@ function topupSettle(sh, result, full) {
   }
   return false;
 }
+/** The orders a sheet filling its gaps can still take for a try: 35 less those that have tried it and (waiting) less
+    those already on it waiting for their try; any other sheet has no such limit. A big batch used to wait on the full
+    sheet, all of it, and try its gaps three orders at a time, the count of charms on a sheet shown as full growing while
+    the next sheet waited (Paul, 27 Sep: "the charms were continuously being added to a full sheet"). The rest of a
+    batch now goes on to the next sheet at once (LiveNest.intakePage, feedOn), and the few owed a try try it together. */
+function topupRoom(sh, waiting = true) {
+  const t = sh.topup; if (!t || t.closedAt || !["gold", "silver"].includes(sh.metal)) return Infinity;
+  const tried = new Set((t.tried || []).map(String));
+  let room = TOPUP.orders - tried.size;
+  if (waiting) { const placed = new Set(sh.placements.map(p => p.id)); room -= new Set(activeCharms(sh).filter(c => !placed.has(c.id)).map(orderKey).filter(o => !tried.has(o))).size; }
+  return room;
+}
+/* Gap fill also ends when no more orders will come to try it (Paul, 27 Sep: a sandbox batch ended with its Gold sheet 73%
+   full, 29 of 35 orders tried, and the sheet never got its QR label). topupSettle closes a gap fill only when the sheet
+   is nested again, and with nothing more arriving it never was. Once every order of the sandbox stream is in and taken
+   in, a sheet still filling its gaps and at rest is released as it stands and joins its set with its label. A run in
+   production keeps Paul's rule (75% or 35 later orders); the sheet window's "Make QR label" releases one by hand. */
+let settlingTopups = false;
+async function settleTopups() {
+  const run = window.B?.run;
+  if (settlingTopups || !run || !window.Sandbox?.done?.() || ["complete", "abandoned"].includes(run.status) || window.Arrivals?.held?.() || window.Arrivals?.state?.().pending) return;
+  const resting = sh => ["gold", "silver"].includes(sh.metal) && sh.topup && !sh.topup.closedAt && sh.runId === run.runId && ["complete", "partial"].includes(sh.status) && !sh.dirty && !!sh.persistedDone &&
+    !sh.feedWait?.length && !!sh.verification?.ok && !sh.runHold && !sh.problem && !sh._operationStarting && !sh.keepRelease && activeCharms(sh).every(c => sh.placements.some(p => p.id === c.id));
+  const pages = allSheets().filter(resting); if (!pages.length) return;
+  settlingTopups = true;
+  try {
+    for (const sh of pages) {
+      const t = sh.topup; t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4);
+      sh.releaseFull = true; sh._renderAreas = null;
+      log(sh, `Gap fill done, every order of the stream is in: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`);
+      agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: every order of the stream is in, so its gap fill ends (${(t.tried || []).length} of ${TOPUP.orders} later orders tried) · released at ${fmt.pct(sh.density || 0)} with its QR label`);
+      renderCard(sh);
+      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: t } }, { quiet: true });
+    }
+    if (window.Gate && Gate.modern(run.runId)) await Gate.assemble(run);
+    window.Session?.schedule?.();
+  } catch (e) { agent({ bridge: true }, "warn", `Gap fill release: ${e.message} · the sheet window's "Make QR label" can finish it`); }
+  finally { settlingTopups = false; }
+}
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
   if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
@@ -3350,7 +3532,8 @@ function feedTurn(sh, items) {
   if (!carefulNest(sh) || sh.metal === "rose" || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
   const placed = new Set(sh.placements.map(p => p.id));
   const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b)));
-  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
+  // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
+  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
   sh.feedWait = wait.map(c => c.id);
   const later = new Set(sh.feedWait);
@@ -3370,6 +3553,14 @@ function feedOn(sh) {
   const placed = new Set(sh.placements.map(p => p.id)), left = activeCharms(sh).filter(c => later.has(c.id) && !placed.has(c.id));
   if (!left.length || sh.problem || sh.runHold || sh.endedBy === "stopped" && !sh.resumeWait) return false;
   if ((sh.releaseFull || !sh.verification?.ok) && sh.placements.length && sh.endedBy !== "stopped") { sh.rejects = left.map(c => c.id); overflowToNextSheet(sh, false); return true; }
+  // a sheet filling its gaps keeps only the orders it still owes a try, oldest first; the rest of the batch goes on to the
+  // next sheet now, which starts on them at once (topupRoom)
+  if (sh.topup && !sh.topup.closedAt && sh.placements.length && sh.endedBy !== "stopped") {
+    const keep = new Set([...new Set(left.slice().sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b))).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
+    const pass = left.filter(c => !keep.has(orderKey(c)));
+    if (pass.length) { sh.rejects = pass.map(c => c.id); overflowToNextSheet(sh, false); }
+    if (pass.length === left.length) return true;
+  }
   // (already on its way: the run's Stop put it back in line for Resume, resumeLater)
   if (["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting) return true;
   sh.appendOnly = sh.intakeAppend = sh.placements.length > 0; sh.dirty = true; sh.status = "ready";
@@ -3938,6 +4129,9 @@ async function persistSheet(sh, items, context) {
   sh.folderPath = base;
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
+  // a label made by hand for a sheet outside any set (the sheet window's Make QR label) names the orders it was made for:
+  // once they change it goes, rather than stay on record wrong
+  if (sh.label?.own && [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))].sort().join() !== (sh.label.orders || []).map(String).sort().join()) sh.label = null;
   const record = (outputs) => ({
     id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, searchMetrics:sh.searchMetrics||null, gpu:sh.gpuProgress||null, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
@@ -4942,13 +5136,13 @@ async function boot() {
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
-    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue };   // for tests, the console and charm-nest-bridge.js
+    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups };   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260926-relabel"></script>
-<script src="charm-nest-sheetwin.js?v=20260926-sw9"></script>
+<script src="charm-nest-bridge.js?v=20260927-sets"></script>
+<script src="charm-nest-sheetwin.js?v=20260927-sw10"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

@@ -231,11 +231,17 @@ assert.equal(O.intakePlan({count:40,density:.5,optimized:true,area:99,capacity:1
  vm.runInContext(html.slice(html.indexOf('function manualSheetClosed('),html.indexOf('/** New artwork waits outside the live job.')),c);
  vm.runInContext(html.slice(html.indexOf('function overflowToNextSheet('),html.indexOf('function inflatedArea(')),c);
  c.overflowToNextSheet(sheet);assert.deepEqual(second.charms.map(p=>p.id),['second','x'],'the overflow joins the next sheet in line');assert.equal(third.charms.length,1);assert.equal(pages.length,3);
- vm.runInContext(bridge.slice(bridge.indexOf('  function intakePage(m, run)'),bridge.indexOf('  async function add(run)')).replace(/\bclosed\(/g,'window.LiveNest.closed('),c);
+ vm.runInContext(bridge.slice(bridge.indexOf('  function intakePage('),bridge.indexOf('  async function add(run)')).replace(/\bclosed\(/g,'window.LiveNest.closed('),c);
  const run={runId:'existing'};
  assert.equal(c.intakePage('gold',run),sheet,'arrivals try the earliest open sheet of the run');
  sheet.releaseFull=true;assert.equal(c.intakePage('gold',run),second,'a full sheet is skipped');
  sheet.releaseFull=false;assert.equal(c.intakePage('gold',{runId:'another'}),third,'another run starts from the newest sheet');
+ // a sheet filling its gaps takes only the orders it still owes a try (Paul, 27 Sep): the rest of a batch starts the next sheet
+ c.window.CN={topupRoom:p=>p.topup?p.topup.room:Infinity};
+ sheet.topup={room:0};assert.equal(c.intakePage('gold',run),second,'a sheet with no tries left to give is passed over');
+ sheet.charms.push({id:'y',order:'pair2'});assert.equal(c.intakePage('gold',run,'pair2'),sheet,'a line joins its order already waiting on a sheet');
+ sheet.topup={room:2};assert.equal(c.intakePage('gold',run),sheet,'tries still owed: it stays first in line');
+ delete sheet.topup;delete c.window.CN;
 }
 (async()=>{
  const {c,sheet}=setup();let id=0;Object.assign(c,{uid:()=> 'file-'+(++id),performance,pumpParse(){},routeByName:()=>null});

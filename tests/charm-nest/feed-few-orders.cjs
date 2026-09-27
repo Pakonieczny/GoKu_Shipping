@@ -72,6 +72,31 @@ for (const [state, going] of [[{ endedBy: 'stopped' }, false], [{ problem: 'not 
   ctx.allSheets = () => [sh]; const n = starts.length; assert.equal(ctx.feedOn(sh), going, JSON.stringify(state)); assert.equal(starts.length, n + (going ? 1 : 0));
 }
 
+/* ── 1b · a sheet filling its gaps (Paul, 27 Sep: a whole batch waited on the full sheet, three orders at a time) ── */
+{
+  vm.runInContext(slice('function topupRoom(', '/* Gap fill also ends'), ctx);
+  ctx.TOPUP = { orders: 35, target: .75 };
+  const placed = [charm('p1', 'old1', 1), charm('p2', 'old2', 2)];
+  const waiting = Array.from({ length: 5 }, (_, i) => charm('w' + i, 'w' + i, 10 + i));
+  const gap = { metal: 'gold', runId: 'run-1', page: 1, status: 'complete', log: [], charms: placed.concat(waiting), rejects: [], endedBy: 'no-room', verification: { ok: true },
+    placements: placed.map((c, i) => ({ id: c.id, cxPt: 10 + 10 * i, cyPt: 10, angle: 0 })), feedWait: waiting.map(c => c.id), topup: { at: 1, base: .73, tried: Array.from({ length: 33 }, (_, i) => 't' + i) } };
+  ctx.allSheets = () => [gap];
+  assert.equal(ctx.topupRoom(gap), -3, 'five waiting on a sheet that owes two more tries: three too many');
+  assert.equal(ctx.topupRoom(gap, false), 2);
+  assert.equal(ctx.topupRoom({ ...gap, topup: null }), Infinity, 'a sheet not filling its gaps has no such limit');
+  const n = starts.length;
+  assert.equal(ctx.feedOn(gap), true);
+  assert.deepEqual(plain(moved.at(-1)).sort(), ['w2', 'w3', 'w4'], 'the orders past its last tries go on to the next sheet at once');
+  assert.equal(starts.at(-1), gap, 'the two it still owes try it'); assert.equal(starts.length, n + 1);
+  gap.status = 'ready'; ctx.startNestReady(gap, {});
+  assert.deepEqual(jobs.at(-1).pieces.map(p => p.id).sort(), ['p1', 'p2', 'w0', 'w1']); assert.equal(gap.feedWait, null);
+  // tries still owed: the orders waiting try it together, in one search, not three at a time
+  const many = Array.from({ length: 8 }, (_, i) => charm('m' + i, 'm' + i, 20 + i));
+  const open = { ...gap, charms: placed.concat(many), rejects: [], placements: gap.placements.slice(0, 2), feedWait: null, status: 'ready', topup: { at: 1, base: .73, tried: [] } };
+  gap.status = 'complete'; ctx.allSheets = () => [open]; ctx.startNestReady(open, {});
+  assert.equal(jobs.at(-1).pieces.length, 10, 'eight orders try its gaps in one search'); assert.equal(open.feedWait, null);
+}
+
 /* ── 2 · an overflow joins the next sheet in line, even while it is placing ── */
 {
   const pages = [], c = { S: { sheets: {} }, Set, Map, agent() {}, labelOf: () => 'Gold', orderSummary: () => ({ text: 'one order' }), toast() {}, renderRail() {}, updateTopSub() {}, renderCard() {}, computeSaturation() {},
@@ -110,4 +135,4 @@ for (const [state, going] of [[{ endedBy: 'stopped' }, false], [{ problem: 'not 
   assert.equal(strokes.filter(s => /40,90,180/.test(s)).length, 1, 'the one being tried has a thin blue line round it');
 }
 
-console.log('Feed few orders OK: a big batch goes on three orders at a time, oldest first and orders whole; each few is placed on top of the last, a full sheet passes the rest to the next sheet in line (which takes them after its own, no new sheet); stops and problems keep them waiting; charms that land and the one being tried are drawn in their own colours');
+console.log('Feed few orders OK: a big batch goes on three orders at a time, oldest first and orders whole; each few is placed on top of the last, a full sheet passes the rest to the next sheet in line (which takes them after its own, no new sheet); a sheet filling its gaps keeps only the orders it still owes a try and they try it together; stops and problems keep them waiting; charms that land and the one being tried are drawn in their own colours');

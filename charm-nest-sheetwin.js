@@ -953,39 +953,91 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const rec = W.rec, E = W.el, f = (rec.label?.files || [])[0];
     const n = (rec.label?.orders || rec.orders || []).length;
     const qr = f ? `<div class="swQr" data-r2="qr"><figure class="qrPart" style="margin:0"><div class="qrTile"><img data-big title="Sheet QR label" data-label-sheet="${esc(rec.id)}" data-label-path="${esc(f.path || "")}" data-label-part="${+f.part || 1}" crossorigin="anonymous"${f.url ? ` src="${esc(cors(f.url))}"` : ""} alt="Sheet QR code"></div></figure><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label${(rec.label.files || []).length > 1 ? ` · ${(rec.label.files || []).length} parts` : ""}</b><span data-r2="qrText">${n} order${n === 1 ? "" : "s"} · click to enlarge</span></span></div>`
-      : `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">Made when the sheet joins a set</span></span>${canRelease() ? `<button type="button" class="btn sage xs" data-r2="release" title="Put this sheet in its set now and make its QR label for the orders on it, without waiting for it to fill again">Release now</button>` : ""}</div>`;
+      : (plan => `<div class="swQr" data-r2="qr"><span class="qrWaiting" style="width:72px;height:72px">No QR yet</span><span class="busy"><span class="owSpin"></span></span><span class="cap"><b>QR label</b><span data-r2="qrText">${esc(plan ? plan.note : rec.metal === "rose" && !(rec.label?.files || []).length ? "Made when you press Cut Sheet" : "Made when the sheet joins a set")}</span></span>${plan ? `<button type="button" class="btn sage xs" data-r2="label" title="${esc(plan.title)}">Make QR label</button>` : ""}</div>`)(labelPlan());
     const files = [["ai", ".ai", "Download the sheet with its back engravings"], ["dxf", ".dxf", "DXF · millimetres"]].map(([fmt2, label, title]) => `<button class="btn ghost xs" data-export-one="${esc(rec.id)}" data-format="${fmt2}" title="${title}">${label}</button>`).join("") +
       (rec.outputs?.labelled?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.labelled.url)}" target="_blank" rel="noopener" title="Every charm numbered, as a PDF">Proof</a>` : "") +
       (rec.outputs?.report?.url ? `<a class="btn ghost xs" href="${esc(rec.outputs.report.url)}" target="_blank" rel="noopener" title="The nest report (JSON)">Report</a>` : "");
     E.foot.innerHTML = `<div class="row">${qr}</div><div class="row"><span class="fLabel">Files</span><span class="swFiles">${files}</span></div>`;
-    const rb = E.foot.querySelector("[data-r2=release]"); if (rb) rb.onclick = () => releaseNow(rb);
+    const rb = E.foot.querySelector("[data-r2=label]"); if (rb) rb.onclick = () => makeLabel(rb);
   }
-  /* A Gold or Silver sheet that charms were taken off before 26 Sep left its set and lost its QR label, and waited to
-     fill again before it got one (Paul: "The QR code never got correctly remade"). Changes made here keep a released
-     sheet in its set now (holdRelease); such a sheet, still filling with freed room marked on it, can be put back by hand. */
-  function canRelease() {
+  /* Make QR label (Paul, 27 Sep: "The user should also have the ability to manually generate a QR code for the sheet,
+     even though the system may have opted not to"). What it does depends on where the sheet stands:
+     · a Gold or Silver sheet of the open run, still filling or filling its gaps, is released as it stands and joins its
+       set with the set's label (it used to be offered only after charms were taken off it here, as "Release now");
+     · a 10K or 14K sheet of the open run: its metal is included in the set, as the Include switch does;
+     · a sheet in its set whose label is missing (an upload that failed) gets it made again;
+     · a sheet no open run can take into a set (an earlier or given-up run, a record restored from the Library) gets a
+       label of its own: the same code of the orders placed on it, named by the sheet, saved beside its files.
+     Rose Gold gets its label with Cut Sheet, and a sheet being changed or saved waits until it is done. */
+  function labelPlan() {
+    const rec = W.rec; if (!rec || W.flow) return null;
     const sh = allSheets().find(p => p.sheetId === W.id), run = window.B && B.run;
-    return !!sh && !W.flow && ["gold", "silver"].includes(sh.metal) && sh.draft && !sh.releaseFull && FREED.has(W.id) &&
-      sh.placements.length > 0 && !!sh.verification?.ok && !!sh.persistedDone && !busy(sh) && !sh.roseCutAt && !sh.laserDoneAt && !sh.recalled &&
-      !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status);
+    if (sh && busy(sh)) return null;
+    const openRun = !!sh && !!run && sh.runId === run.runId && !!window.Gate && Gate.modern(run.runId) && !["complete", "abandoned"].includes(run.status) && !sh.recalled && !sentToStation(sh);
+    if (openRun) {
+      if (!sh.placements.length || !sh.verification?.ok || !sh.persistedDone || sh.roseCutAt || sh.laserDoneAt || sh.metal === "rose") return null;
+      if (sh.setId && !sh.draft) return { kind: "relabel", note: "Its set has no label for it yet", title: "Make this sheet's QR label for the orders on it again" };
+      if (["gold", "silver"].includes(sh.metal)) {
+        const gap = sh.topup && !sh.topup.closedAt;
+        return { kind: "release", note: gap ? `Filling its gaps · ${(sh.topup.tried || []).length} of 35 later orders tried` : "Made when the sheet is full and joins a set",
+          title: `Release this sheet as it stands (${fmt.pct(sh.density || 0)} full): it joins its set now and gets its QR label, without waiting to fill${gap ? " its gaps" : ""}` };
+      }
+      if (["gold10k", "gold14k"].includes(sh.metal)) return { kind: "include", note: "Made when its metal is included in the set", title: `Include ${sh.metal === "gold10k" ? "10K" : "14K"} in this set, as the Include switch does (every ${sh.metal === "gold10k" ? "10K" : "14K"} sheet of the run), and make the label` };
+      return null;
+    }
+    if ((rec.label?.files || []).length || !(rec.placements || []).length || !rec.verification?.ok) return null;
+    return { kind: "own", note: "Not in an open set", title: "Make a QR label of the orders on this sheet, saved beside its files" };
   }
-  async function releaseNow(btn) {
-    const sh = allSheets().find(p => p.sheetId === W.id), run = B.run, id = W.id; if (!sh || !canRelease()) return;
+  async function makeLabel(btn) {
+    const plan = labelPlan(), id = W.id, rec = W.rec; if (!plan) return;
+    const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
     const box = W.el.foot.querySelector("[data-r2=qr]"), text = box && box.querySelector("[data-r2=qrText]");
     btn.disabled = true; if (box) box.classList.add("remaking"); if (text) text.textContent = "Making the QR label…";
-    const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
-    sh.releaseFull = true; if (topup) topup.closedAt = Date.now();
+    const reason = () => { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return set ? Gate.policy(sh, set.seq).reason : "there is no open set to join"; };
+    let undo = null;
     try {
-      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
-      await Gate.assemble(run);
-      if (sh.draft) { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); throw new Error(set ? Gate.policy(sh, set.seq).reason : "no open set to join"); }
-      agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with a new QR label for its ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
+      if (plan.kind === "release") {
+        const topup = sh.topup && !sh.topup.closedAt ? sh.topup : null;
+        sh.releaseFull = true; if (topup) { topup.closedAt = nowT(); topup.byHand = true; }
+        undo = () => { if (!sh.draft) return; sh.releaseFull = false; if (topup) { delete topup.closedAt; delete topup.byHand; } api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); };
+        await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: sh.topup || null } }, { quiet: true });
+        await Gate.assemble(run);
+        if (sh.draft) throw new Error(reason());
+        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with its QR label for ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
+      } else if (plan.kind === "include") {
+        await Gate.changeMembership(sh.metal, true);
+        if (sh.draft) throw new Error(reason());
+      } else if (plan.kind === "relabel") {
+        await Gate.assemble(run);
+        if (!(sh.label?.files || []).length) throw new Error(reason());
+      } else await ownLabel(rec, sh);
       if (window.Session) Session.schedule();
+      if (S.mode === "library") CN.loadLibrary().catch(() => {});
     } catch (e) {
-      if (sh.draft) { sh.releaseFull = false; if (topup) delete topup.closedAt; api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: false, topup: sh.topup || null } }, { quiet: true }).catch(() => {}); }
-      toast("Not released: " + e.message, "bad", 8000);
+      if (undo) undo();
+      toast("No QR label made: " + e.message, "bad", 8000);
     }
     if (W.id === id && W.dlg.open && !W.flow) open2(id);
+  }
+  /** A label of its own for a sheet outside any open set: the orders placed on it, in the code the set labels use. */
+  async function ownLabel(rec, sh) {
+    const O = window.CharmNestOrders, byId = new Map((rec.charms || []).map(c => [c.id, c]));
+    const ids = [...new Set((rec.placements || []).map(p => byId.get(p.id)).filter(Boolean).map(ridOf).filter(Boolean))];
+    if (!ids.length) throw new Error("no order is placed on this sheet");
+    const metal = O.CARD_TO_METAL[rec.metal] || rec.metal, parts = O.safeChunks(ids, metal, 1000, 500, 8), name = rec.fileBase || rec.folder || rec.id;
+    const base = rec.outputs?.ai?.path ? rec.outputs.ai.path.replace(/\/[^/]*$/, "") : `charmnest/sheets/${rec.day}/${name}`;
+    const files = [];
+    for (const [i, slice] of parts.entries()) {
+      const payload = O.encodeOrderList(slice, metal);
+      const label = `${CN.METAL_TAG[rec.metal] || ""} · ${name}${parts.length > 1 ? ` [${i + 1}/${parts.length}]` : ""} · ${slice.length} order${slice.length === 1 ? "" : "s"}`;
+      const png = await Sets.renderLabelPng(payload, label);
+      const up = await CN.uploadBytes(`${base}/${name}_label${parts.length > 1 ? `_${i + 1}of${parts.length}` : ""}.png`, png.blob, "image/png", "Saving the sheet label");
+      files.push({ path: up.path, url: up.url, sheet: name, part: i + 1, parts: parts.length, orders: slice, payload, ecc: png.ecc, label });
+    }
+    const made = { files, orders: ids, own: true, at: Date.now() };
+    await api("charmNestLibrary", { op: "putSheet", sheet: { id: rec.id, label: made } });
+    if (sh) sh.label = made;
+    agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);
   }
   function renderMenu() {
     const rec = W.rec, E = W.el, live = typeof openRunPage === "function" && openRunPage(rec.id);
@@ -1443,6 +1495,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       try { await Gate.assemble(run); } catch (e) { st.state = "bad"; st.detail = e.message; }
     }
     for (const sh of pages) if (allSheets().includes(sh) && sh.draft && sh.label && sh.sheetId) {
+      // a label made by hand for a sheet outside any set is made again for its new orders; a set's old label goes
+      if (sh.label.own) { try { const r = await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true }); if (r.sheet) { await ownLabel(r.sheet, sh); continue; } } catch (e) { console.warn("sheet window: own label", e); } }
       sh.label = null;
       await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, label: null } }, { quiet: true }).catch(e => console.warn("sheet window: label", e));
     }

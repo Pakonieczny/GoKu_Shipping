@@ -1359,7 +1359,9 @@ async function op_runList(b) {
    Every query is a single-field equality, range or array-contains: no composite index is needed. */
 const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
 const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders", "laserDoneAt", "laserDoneBy"];
-const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "createdAt"];
+// (label: the Sets window says of each sheet whether its QR label is made — Paul, 27 Sep: "add all the appropriate
+// functionality to this pop-up"; the label record is a few small entries, not the sheet's charms)
+const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "label", "cardStartedAt", "createdAt"];
 const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "liveLines", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
 const dayOf = x => (isDay(x && x.day) ? x.day : "");
 const dayShift = (day, n) => { const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
