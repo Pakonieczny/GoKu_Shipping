@@ -1057,7 +1057,21 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         Otherwise say the price comes with the proof or custom listing.
       - When the customer approves a proof or accepts a price for a
         custom piece, the custom listing made for them is the checkout.
-        Never send a generic custom-charm checkout listing instead.
+        Never send a generic custom-charm checkout listing instead, and
+        never send the re-work/modification listing for a new or
+        replacement piece.
+      - You cannot start a custom listing yourself. When the customer
+        has approved a proof or a price and the thread shows no custom
+        listing yet, confirm what is settled (design, metal, price),
+        say the custom listing comes next, and set
+        ready_for_human_approval:true with a note "Create custom listing
+        at $X" (or "needs price" when none was given, plus a request
+        for the missing size or metal in the reply). A person makes it.
+      - A search miss or a missing dropdown option is not a no. Never
+        tell the customer we can't do something because a listing or
+        search didn't show it, and never contradict what staff already
+        said yes to in this thread. Never mention "our system" or any
+        internal tool in the reply.
 
 5.1 GENTLE UPSELL. When the customer's question is answered and the
     mood is good (a pre-purchase question, a happy customer, a
@@ -2088,6 +2102,12 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     DIDN'T address. If everything is resolved and they're closing out,
     close out with them. Don't manufacture a problem.
 
+    One such open item: the shop promised a custom listing (or a link,
+    proof or quote) in this thread and none has gone out yet. Then the
+    thanks is not trivial: reply briefly, set
+    ready_for_human_approval:true and name what is still owed
+    ("Custom listing for the $75 set promised, not created yet").
+
 15. RUSH PRODUCTION OFFER ($15) — STRICT ELIGIBILITY.
     CustomBrites offers a $15 flat-fee rush production upgrade that
     cuts production time from the standard 4-6 business days down to
@@ -2482,6 +2502,10 @@ Workflow:
      (necklace, stud or huggie) on compose_draft_reply; the sheet attaches
      as an image. For an existing listing, answer from that listing and
      point to it, with no line sheet (owner's rule)
+  6b. If the question is about gold types, care or tarnish, necklace fit
+     or bracelet sizing, set the matching guide flag (see COLLATERAL
+     ATTACHMENT FLAGS), on placed orders too, and name each attached
+     image in one clause of the reply
   7. Call compose_draft_reply with the final text + reasoning +
      referenced receiptIds + any listing suggestions
 
@@ -2589,7 +2613,9 @@ compose_draft_reply:
   - "I'm not sure which one to pick" (custom piece, family named)
 
 Identify the family from the customer's message. "Charms" / "pendant" / "necklace" → "necklace". "Huggies" /
-"hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud". Then set
+"hoops" → "huggie". "Studs" / "earrings" (non-hoop) → "stud": for an
+earring with no hoop named, send the stud sheet and add that it can be
+made as a huggie charm too, rather than asking which first. Then set
 attach_line_sheet: "<family>" on compose_draft_reply. The sheet
 attaches to the draft as an image, the same way the sales team sends
 it, and you mention it in one short sentence:
@@ -2611,18 +2637,20 @@ COLLATERAL ATTACHMENT FLAGS (set these on your compose_draft_reply call):
 
 When the customer's question would be better answered with a visual reference, set the matching boolean flag and the image will attach as a chip on the draft:
 
-  - attach_metal_comparison: true — customer asks about metals (gold filled vs gold plated vs solid gold, gold purity, what kind of gold, is it real gold, what karat, tarnish, hypoallergenic)
-  - attach_care_instructions: true — customer asks about care, cleaning, water/shower exposure, daily wear, durability, longevity, storage, maintenance
+  - attach_metal_comparison: true — customer asks about GOLD types (gold filled vs gold plated vs solid gold, gold purity, what kind of gold, is it real gold, what karat, whether gold filled tarnishes, hypoallergenic gold). The card shows gold only: never send it for a sterling silver question.
+  - attach_care_instructions: true — customer asks about care, cleaning, water/shower exposure, lotion or sunscreen, daily wear, durability, longevity, storage, maintenance, or sterling silver tarnishing
   - attach_fit_reference: true — customer asks about necklace fit on the body, chain length, how it sits
   - attach_bracelet_sizing: true — customer asks about wrist sizing, bracelet length, how to measure a wrist
+These guides apply on placed orders too: a customer weighing 16 vs 18 inches on an order gets the fit reference with the answer.
 
 The decision is YOURS based on the MEANING of the customer's question. The question can be in any language — translate conceptually before deciding; English keywords are not the trigger, the customer's actual question is. Each flag you set must be tied to a specific reason named in your reply prose (e.g., "I've attached our metals comparison card so you can see the three side by side"). Do NOT paste the URL of these four flagged images into your reply text — they attach automatically as chips, and a raw URL in prose shows the customer URL characters with no image. Line sheets work the same way through attach_line_sheet.
 
 ADD-ON AND SERVICE LISTINGS: the context carries an "ADD-ON AND SERVICE
 LISTINGS" block with the shop's live links for a replacement chain, a
 longer chain, an extender, the beady chain upgrade, an added disc, the
-re-work/modification fee, custom-charm checkout, priority shipping and
-the re-shipping fee, each with when to use it. When the customer needs
+re-work/modification fee, a huggie charm without hoop, an extra charm
+at a price staff quoted, priority shipping and the re-shipping fee,
+each with when to use it. When the customer needs
 one of those, link it from that block (don't search for it and never
 build a link yourself) and say what to select and what to note at
 checkout, the way staff do: "You can add a longer chain with this
@@ -5000,7 +5028,17 @@ answering. Do not guess about the order's contents.`;
       // Fallback — model produced text but never called compose_draft_reply.
       // Extract the last text content block as the reply.
       const finalContent = Array.isArray(loopResult.finalResponse.content) ? loopResult.finalResponse.content : [];
-      const lastText = finalContent.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
+      let lastText = finalContent.filter(b => b.type === "text").map(b => b.text).join("\n\n").trim();
+      // A reply written as a JSON object in plain text (tool arguments typed
+      // out instead of called) would put raw JSON in the composer: keep
+      // only its reply text. Still confidence 0 below, so a person reviews it.
+      if (/^(?:```(?:json)?\s*)?\{/.test(lastText)) {
+        try {
+          const j = JSON.parse(lastText.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""));
+          const t = j && (typeof j.text === "string" ? j.text : typeof j.reply === "string" ? j.reply : null);
+          if (t && t.trim()) lastText = t.trim();
+        } catch {}
+      }
       parsed = {
         text                : postProcessDraft(lastText) || "(Model finished without producing a draft. Try again.)",
         reasoning           : "(Model did not call compose_draft_reply — using last text block as reply.)",

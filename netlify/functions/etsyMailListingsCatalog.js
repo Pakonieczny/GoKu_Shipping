@@ -585,13 +585,15 @@ async function searchListings(query, limit = AI_RESULT_LIMIT) {
 // links come from the mirror at run time, so an item turned inactive drops
 // out on its own. Firestore reads only; no Etsy calls.
 const SERVICE_LISTINGS = [
-  { id: "479975460",  use: "Paid change to an order already placed or to a piece the customer sends back: an engraving added after checkout (staff quote $5), a letter or wording change, shortening or adding chain. The customer picks the total dollar amount already quoted in this thread and writes what to change in the checkout note." },
+  { id: "479975460",  use: "Paid change to an order already placed or to a piece the customer sends back: an engraving added after checkout (staff quote $5), a letter or wording change, shortening or adding chain. The customer picks the total dollar amount already quoted in this thread and writes what to change in the checkout note. Not for a new or replacement piece (that gets a custom listing)." },
   { id: "816278941",  use: "A new or replacement chain: a broken or lost chain, a different chain style, or one chain to hang several of our pendants together. The customer picks metal and length and adds a note at checkout." },
   { id: "770835682",  use: "A longer chain than the necklace listing offers, on a necklace being ordered or already ordered but not yet made. The customer picks the length range and writes the exact length per piece in the checkout note." },
   { id: "628970499",  use: "An extender added to a piece the customer is ordering now (1, 2 or 3 inches)." },
   { id: "559716663",  use: "An extender on its own, for a necklace the customer already has (for example one that sits too tight)." },
   { id: "1699154208", use: "Upgrade a necklace to the beady chain (gold filled or sterling silver, not rose gold). The customer says which necklace in the personalization box." },
   { id: "718177133",  use: "Add an engraved disc or bar to a new purchase; staff also use it to sell a single disc to add to a necklace the customer already owns (ask for a photo of the original discs to match size and font)." },
+  { id: "1777293722", use: "A huggie charm on its own, without a hoop: an extra or replacement charm for hoops the customer already has, when that charm's own listing has no charm-only option. The customer notes the design and metal at checkout." },
+  { id: "1697987362", use: "An extra charm added to an order or to a piece the customer already has, only after staff quoted its price in this thread. The customer selects that quoted total in the dropdown (never multiply the 'from' price) and writes the design details in the personalization box. With no quoted price, don't send it. Not for a new custom design or an approved proof, which get their own custom listing." },
   { id: "487548109",  use: "Paid shipping upgrade (Priority or Express), added before the order ships." },
   { id: "486325751",  use: "Re-shipping fee when a package came back to us or must be sent again at the customer's cost." }
 ];
@@ -612,7 +614,7 @@ async function getServiceListingsBlock() {
     });
     const block = lines.length ? [
       "=== ADD-ON AND SERVICE LISTINGS (live shop links) ===",
-      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A custom design or proof the customer approves gets its own custom listing (the sales flow makes it); never send a generic custom-charm checkout listing for it.",
+      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never name one of these without its link. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A custom design or proof the customer approves gets its own custom listing (the sales flow makes it); never send a generic custom-charm checkout listing for it.",
       ...lines,
       "=== END ADD-ON AND SERVICE LISTINGS ==="
     ].join("\n") : "";

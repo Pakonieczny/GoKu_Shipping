@@ -401,7 +401,11 @@ async function resolveListingSpecs({ query }) {
     // agent has thickness/gauge info available for any follow-up
     // question without a second tool call. metalSpecs is universal
     // across the product line (same value on every family doc).
-    metalSpecs: (familySheet && familySheet.metalSpecs) || null,
+    // Minus the stored collateral note (it says to paste card URLs; the
+    // cards attach from their flags).
+    metalSpecs: (familySheet && familySheet.metalSpecs)
+      ? Object.fromEntries(Object.entries(familySheet.metalSpecs).filter(([k]) => !/collateral/i.test(k)))
+      : null,
     availableMetals: Array.isArray(entry.availableMetals) ? entry.availableMetals : null,
     basePriceUsd: typeof entry.basePriceUsd === "number" ? entry.basePriceUsd : null,
     regularPriceUsd: typeof entry.regularPriceUsd === "number" ? entry.regularPriceUsd : null,

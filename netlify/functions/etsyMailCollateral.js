@@ -315,8 +315,11 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
       if (!looseCategory.some(a => hay.includes(a))) return;
     }
 
-    if (kind && data.kind === kind) score += 5;
-    else if (kind && data.kind !== kind) return;   // kind requested but mismatch → skip
+    // Guides are stored as kind "line_sheet", so the AI asking for a care or
+    // metals guide as "terms" or "product_card" used to get nothing. A kind
+    // mismatch is dropped only when something of the asked kind exists.
+    const kindMatch = !kind || data.kind === kind;
+    if (kind && kindMatch) score += 5;
 
     // Every stored guide also carries kind "line_sheet", so a line-sheet
     // request for "necklace" would tie the real sheet with the necklace
@@ -336,8 +339,11 @@ async function searchCollateral({ category, kind, keywords, limit } = {}) {
       score += kwHits;
     }
 
-    scored.push({ score, doc: { id: d.id, ...data } });
+    scored.push({ score, kindMatch, doc: { id: d.id, ...data } });
   });
+  if (kind && scored.some(x => x.kindMatch)) {
+    for (let i = scored.length - 1; i >= 0; i--) if (!scored[i].kindMatch) scored.splice(i, 1);
+  }
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
