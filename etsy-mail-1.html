@@ -12675,11 +12675,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return c;
     }
     function smartFolderBadge(id, c) {
-      if (id === "x_inbox" && c.inbox) {
-        return {
-          html : c.fresh ? "<b>" + c.fresh + "</b> · " + c.inbox : String(c.inbox),
-          title: (c.fresh ? c.fresh + " new · " : "") + c.inbox + " waiting on you"
-        };
+      // One number, like a mail app: unopened conversations waiting on you.
+      // The full waiting count stays in the hover text.
+      if (id === "x_inbox" && c.fresh) {
+        return { html: String(c.fresh), title: c.fresh + " new · " + c.inbox + " waiting on you" };
       }
       if (id === "x_waiting" && c.waitingAi) {
         return { html: c.waitingAi + " AI", title: c.waitingAi + " AI " + (c.waitingAi === 1 ? "reply" : "replies") + " nobody has opened" };
