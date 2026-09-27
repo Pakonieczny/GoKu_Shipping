@@ -3102,6 +3102,45 @@ function topupSettle(sh, result, full) {
   }
   return false;
 }
+/** The orders a sheet filling its gaps can still take for a try: 35 less those that have tried it and (waiting) less
+    those already on it waiting for their try; any other sheet has no such limit. A big batch used to wait on the full
+    sheet, all of it, and try its gaps three orders at a time, the count of charms on a sheet shown as full growing while
+    the next sheet waited (Paul, 27 Sep: "the charms were continuously being added to a full sheet"). The rest of a
+    batch now goes on to the next sheet at once (LiveNest.intakePage, feedOn), and the few owed a try try it together. */
+function topupRoom(sh, waiting = true) {
+  const t = sh.topup; if (!t || t.closedAt || !["gold", "silver"].includes(sh.metal)) return Infinity;
+  const tried = new Set((t.tried || []).map(String));
+  let room = TOPUP.orders - tried.size;
+  if (waiting) { const placed = new Set(sh.placements.map(p => p.id)); room -= new Set(activeCharms(sh).filter(c => !placed.has(c.id)).map(orderKey).filter(o => !tried.has(o))).size; }
+  return room;
+}
+/* Gap fill also ends when no more orders will come to try it (Paul, 27 Sep: a sandbox batch ended with its Gold sheet 73%
+   full, 29 of 35 orders tried, and the sheet never got its QR label). topupSettle closes a gap fill only when the sheet
+   is nested again, and with nothing more arriving it never was. Once every order of the sandbox stream is in and taken
+   in, a sheet still filling its gaps and at rest is released as it stands and joins its set with its label. A run in
+   production keeps Paul's rule (75% or 35 later orders); the sheet window's "Make QR label" releases one by hand. */
+let settlingTopups = false;
+async function settleTopups() {
+  const run = window.B?.run;
+  if (settlingTopups || !run || !window.Sandbox?.done?.() || ["complete", "abandoned"].includes(run.status) || window.Arrivals?.held?.() || window.Arrivals?.state?.().pending) return;
+  const resting = sh => ["gold", "silver"].includes(sh.metal) && sh.topup && !sh.topup.closedAt && sh.runId === run.runId && ["complete", "partial"].includes(sh.status) && !sh.dirty && !!sh.persistedDone &&
+    !sh.feedWait?.length && !!sh.verification?.ok && !sh.runHold && !sh.problem && !sh._operationStarting && !sh.keepRelease && activeCharms(sh).every(c => sh.placements.some(p => p.id === c.id));
+  const pages = allSheets().filter(resting); if (!pages.length) return;
+  settlingTopups = true;
+  try {
+    for (const sh of pages) {
+      const t = sh.topup; t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4);
+      sh.releaseFull = true; sh._renderAreas = null;
+      log(sh, `Gap fill done, every order of the stream is in: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`);
+      agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: every order of the stream is in, so its gap fill ends (${(t.tried || []).length} of ${TOPUP.orders} later orders tried) · released at ${fmt.pct(sh.density || 0)} with its QR label`);
+      renderCard(sh);
+      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: t } }, { quiet: true });
+    }
+    if (window.Gate && Gate.modern(run.runId)) await Gate.assemble(run);
+    window.Session?.schedule?.();
+  } catch (e) { agent({ bridge: true }, "warn", `Gap fill release: ${e.message} · the sheet window's "Make QR label" can finish it`); }
+  finally { settlingTopups = false; }
+}
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
   if(sh.roseStock?.profileJson){const key=[sh.roseStock.id,sh.roseStock.revision,inset,clearance].join(':');if(sh._roseUsableKey!==key){sh._roseUsable=CharmNestSolver.makeSheetGrid({...st,insetPt:inset,remnant:JSON.parse(sh.roseStock.profileJson)},clearance,2).usableCells/4;sh._roseUsableKey=key;}return sh._roseUsable;}
@@ -3350,7 +3389,8 @@ function feedTurn(sh, items) {
   if (!carefulNest(sh) || sh.metal === "rose" || !sh.runId || (S.settings.engine || "solver") === "ai") return items;
   const placed = new Set(sh.placements.map(p => p.id));
   const fresh = items.filter(c => !placed.has(c.id)).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b)));
-  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
+  // a sheet filling its gaps: the orders it still owes a try try it together, in one search (topupRoom)
+  const turn = new Set([...new Set(fresh.map(orderKey))].slice(0, sh.topup && !sh.topup.closedAt ? Math.max(1, topupRoom(sh, false)) : FEED_ORDERS)), wait = fresh.filter(c => !turn.has(orderKey(c)));
   if (!wait.length) return items;
   sh.feedWait = wait.map(c => c.id);
   const later = new Set(sh.feedWait);
@@ -3370,6 +3410,14 @@ function feedOn(sh) {
   const placed = new Set(sh.placements.map(p => p.id)), left = activeCharms(sh).filter(c => later.has(c.id) && !placed.has(c.id));
   if (!left.length || sh.problem || sh.runHold || sh.endedBy === "stopped" && !sh.resumeWait) return false;
   if ((sh.releaseFull || !sh.verification?.ok) && sh.placements.length && sh.endedBy !== "stopped") { sh.rejects = left.map(c => c.id); overflowToNextSheet(sh, false); return true; }
+  // a sheet filling its gaps keeps only the orders it still owes a try, oldest first; the rest of the batch goes on to the
+  // next sheet now, which starts on them at once (topupRoom)
+  if (sh.topup && !sh.topup.closedAt && sh.placements.length && sh.endedBy !== "stopped") {
+    const keep = new Set([...new Set(left.slice().sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0) || orderKey(a).localeCompare(orderKey(b))).map(orderKey))].slice(0, Math.max(0, topupRoom(sh, false))));
+    const pass = left.filter(c => !keep.has(orderKey(c)));
+    if (pass.length) { sh.rejects = pass.map(c => c.id); overflowToNextSheet(sh, false); }
+    if (pass.length === left.length) return true;
+  }
   // (already on its way: the run's Stop put it back in line for Resume, resumeLater)
   if (["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting) return true;
   sh.appendOnly = sh.intakeAppend = sh.placements.length > 0; sh.dirty = true; sh.status = "ready";
@@ -3938,6 +3986,9 @@ async function persistSheet(sh, items, context) {
   sh.folderPath = base;
   if (window.Engrave) Engrave.reconcileSheet(sh);
   const byId = new Map(items.map(c => [c.id, c]));
+  // a label made by hand for a sheet outside any set (the sheet window's Make QR label) names the orders it was made for:
+  // once they change it goes, rather than stay on record wrong
+  if (sh.label?.own && [...new Set(sh.placements.map(p => byId.get(p.id)).filter(Boolean).map(c => String(c.order || c.id).split("/")[0]))].sort().join() !== (sh.label.orders || []).map(String).sort().join()) sh.label = null;
   const record = (outputs) => ({
     id: sh.sheetId, cardStartedAt: sh.cardStartedAt || null, metal: sh.metal, metalLabel: sheetName(sh), day, folder: name, fileBase: name, seq: sh.seq || sh.page, runId: sh.runId || null, status: sh.status, endedBy: sh.endedBy, trials: sh.trials, searchMetrics:sh.searchMetrics||null, gpu:sh.gpuProgress||null, elapsedMs: Math.round(sh.elapsedMs || 0), totalMs: Math.round(sh.totalMs || 0),
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
@@ -4942,13 +4993,13 @@ async function boot() {
   refreshAllCards(); updateTopSub();
   window.CN = { S, AG, DEFAULTS, METALS, showPage, startNest, intake, flushManualIntake, api, agent, agentUpdate, agentCall, uploadBytes, buildJob, setMode, renderLibrary, loadLibrary, applyGroupingReview, reviewGrouping, renderOverview, aiRenderSheet, aiPockets, reviewLayout: m => reviewLayout(S.sheets[m], activeCharms(S.sheets[m])), setAgent: fn => { agentCallImpl = fn; },
     activePage, allSheets, pagesOf, addPage, sheetDirty, activeCharms, renderCard, inflatedArea, usableArea, renderRail, updateTopSub, refreshAllCards, toast, openDlg, closeDlg, download, openLibrarySheet, dataUrlToBytes, toBase64, sha256, labelOf, stockFor, cutLinesOf, ensurePdfJs, sourceOf, openReport, openCharm, drawPreview, paintPreview, saveSettings, openSettings, today, sheetFileBase, cloudProbe, persistSheet, computeSaturation, esc, uid, fmt, MM_PER_PT, METAL_TAG, autoNest, startNest, stopNest, log,
-    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue };   // for tests, the console and charm-nest-bridge.js
+    RESUME_STAGE, heldForResume, resumeQueueChanged, dropResumeQueue, topupRoom, settleTopups };   // for tests, the console and charm-nest-bridge.js
   window.CharmNestOperations?.subscribe(()=>flushManualIntake());
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260926-relabel"></script>
-<script src="charm-nest-sheetwin.js?v=20260926-sw9"></script>
+<script src="charm-nest-bridge.js?v=20260927-qr"></script>
+<script src="charm-nest-sheetwin.js?v=20260927-sw10"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

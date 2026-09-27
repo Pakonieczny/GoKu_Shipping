@@ -1880,7 +1880,7 @@ const Pool = window.Pool = (() => {
     const { sp, pools, charms } = prep;
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
-    let page=window.LiveNest ? LiveNest.intakePage(sp.material, run) : pagesOf(sp.material).at(-1);
+    let page=window.LiveNest ? LiveNest.intakePage(sp.material, run, row.order.receiptId) : pagesOf(sp.material).at(-1);
     if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
     S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);if(!page.el)window.CN?.showPage(sp.material,S.sheets[sp.material].active);   // the card shows the page its buttons act on
     if (run) page.runId = run.runId;
@@ -2092,6 +2092,8 @@ const Gate = window.Gate = (() => {
   }
   // a sheet the sheet window is rewriting (charms taken off or moved onto it) keeps its set: see holdRelease there
   const holding = p => !!p.keepRelease && Date.now() - (+p.keepRelease.at || 0) < 600000;
+  /** A released sheet that pieces are taken off keeps its set and gets its label made again (see holding). */
+  const keep = p => { if ((p.releaseFull || (p.setId && !p.draft)) && !p.roseCutAt && !p.laserDoneAt && !p.recalled) p.keepRelease = { full: !!p.releaseFull, at: Date.now() }; };
   let assemblyQueue = Promise.resolve();
   function assemble(run, context) {
     const ops = window.CharmNestOperations;
@@ -2392,7 +2394,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -5476,7 +5478,9 @@ const Review = window.Review = (() => {
     }
     if(row.repoolChanged){
       const old=new Set(row.poolIds || []);
-      for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
+      // (a sheet already released keeps its set and gets its QR label made again for the orders left on it: it used to leave
+      // the set without a label and wait to fill again, as a sheet did after charms were taken off by hand, 26 Sep)
+      for(const sh of allSheets())if(sh.charms.some(c=>old.has(c.poolId))){Gate.keep(sh);sh.charms=sh.charms.filter(c=>!old.has(c.poolId));sh.placements=sh.placements.filter(pl=>sh.charms.some(c=>c.id===pl.id));Orders.keepRest(sh);}
       await Pool.update([...old],{state:"superseded",sheetId:null,setId:null});for(const id of old)B.pool.rows.delete(id);
       row.poolIds=[];row.repoolChanged=false;
     }
@@ -7389,7 +7393,7 @@ const Arrivals = window.Arrivals = (() => {
       if (Date.now() >= state.nextCheck && !held()) {
         if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
         else check();
-      } else processPending().catch(e => { state.error = e.message; });
+      } else { processPending().catch(e => { state.error = e.message; }); window.CN?.settleTopups?.(); }   // (a gap fill ends once every order of the stream is in)
     }, streaming() ? 250 : 1000);   // a stream step is 12 s at 50x: a whole second late would be most of a simulated minute
   }
   /** A sandbox reset deletes the records under the checks: none starts meanwhile, and one still out is waited for and its
@@ -7416,16 +7420,24 @@ const LiveNest = window.LiveNest = (() => {
     return plan;
   }
   // the page's own marks first; the sets of its run are looked at only when none says so
-  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!Gate.holding(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
+  const closed = p => !!p.roseCutAt || !!p.recalled || !!p.releaseFull || !!window.Gate?.holding?.(p) || !!p.laserDoneAt || (!(p.metal==='rose'&&(p.rosePlan||p.roseProtected)) && (!!p.runHold || !!p.intakeFinalized)) ||
     Sets.ofRun(p.runId).some(set=>set.committedAt && set.sheetIds.includes(p.sheetId));
   /* Gold and Silver arrivals go to the run's earliest open sheet first (the pool puts them on the same one). An order
      that misses its gaps moves on to the next sheet, and the earlier sheet stays first in line: once a newer page existed
      it used to be passed over for good, short of full, so it was never released and its orders, the oldest, never cut.
      Rose Gold keeps the newest sheet, where its green line is. */
-  function intakePage(m, run) {
+  function intakePage(m, run, orderId) {
     const pages = pagesOf(m), newest = pages.at(-1);
     if (!O.FAST_MATERIALS.has(m)) return newest;
-    return pages.find(p => p !== newest && p.charms.length && run && p.runId === run.runId && !closed(p)) || newest;
+    const open = p => p.charms.length && run && p.runId === run.runId && !closed(p);
+    // an order goes onto one sheet whole: a line joins the order's lines already waiting on a sheet in line
+    const home = orderId != null && pages.find(p => open(p) && p.charms.some(c => String(c.order) === String(orderId)));
+    if (home) return home;
+    // a sheet filling its gaps takes only the orders it still owes a try; the rest of a batch starts the next sheet at once
+    // (CN.topupRoom; Paul, 27 Sep: a whole batch waited on the full sheet and the next sheet was not started)
+    const room = p => !window.CN?.topupRoom || window.CN.topupRoom(p) > 0;
+    const pick = pages.find(p => p !== newest && open(p) && room(p)) || newest;
+    return pick === newest && open(newest) && !room(newest) ? addPage(m) : pick;
   }
   async function add(run) {
     const prepare=async()=>{
