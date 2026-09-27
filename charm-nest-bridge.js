@@ -3858,6 +3858,7 @@ const LaserReview = window.LaserReview = (()=>{
     frame=0;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
+      if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
@@ -4166,8 +4167,56 @@ const Sets = window.Sets = (() => {
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
-    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; try { const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set; if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`); const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st); byRun().set(local.runId || st.setId, local); await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
+    // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
+    // the station reopens its orders, and says so at its title; that line then goes to the Orders tab, where the orders
+    // are open again, the card settles, and a note under Orders says what happened. What changed is drawn again after
+    // (onUndo: the Library's Current glides; a set opened under Completed is read again in place).
+    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => {
+      if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return;
+      const menu = ub.closest("details"); if (menu) menu.open = false;
+      const U = undoing(card);
+      try {
+        const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set;
+        if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`);
+        const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st);
+        byRun().set(local.runId || st.setId, local);
+        const n = (local.committed || []).length;       // (what the station reopens: undo empties the list)
+        U.says(n ? `Reopening ${n} order${n === 1 ? "" : "s"} at the station…` : "Undoing the completion…");
+        await undo(local);
+        await U.done(st, n);
+        if (onUndo) onUndo(card);
+      } catch (e) { U.fail(); toast(e.message, "bad", 6000); }
+    };
     return card;
+  }
+  /** A set card whose completion is being undone: lifted, with what is happening at its title, until done() sends its
+   *  line to the Orders tab (the orders are open there again) and it settles, or fail() sets it down as it was. */
+  function undoing(card) {
+    const M = window.Motion, still = !M || M.reduced(), head = card.querySelector(":scope > .sh"), title = head && head.querySelector(".nm");
+    const chip = el("span", "setUndoChip"); chip.setAttribute("role", "status"); chip.innerHTML = `<i class="spin" aria-hidden="true"></i><span></span>`;
+    if (title) title.after(chip);
+    card.setAttribute("aria-busy", "true");
+    const lift = still || !card.animate ? null : card.animate([{ translate: "0 0" }, { translate: "0 -4px", boxShadow: "0 18px 38px rgba(30,24,16,.2)" }], { duration: 380, easing: "cubic-bezier(.3,.1,.2,1)", fill: "forwards" });
+    const settle = () => { card.removeAttribute("aria-busy"); if (!lift) return Promise.resolve(); lift.reverse(); return lift.finished.then(() => lift.cancel(), () => {}); };
+    const seen = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+    return {
+      says(text) { chip.querySelector("span").textContent = text; },
+      async done(st, n) {
+        const name = O.setLabel(st.seq) || st.name, orders = document.querySelector('#modeSeg button[data-mode="orders"]');
+        const here = () => { const c = [...document.querySelectorAll(".setCard")].find(x => x._laserSet && x._laserSet.setId === st.setId); return c && c.querySelector("[data-set-title]"); };
+        if (n && M && seen(orders) && seen(chip)) {
+          chip.classList.add("ok"); chip.innerHTML = `<span>${n} order${n === 1 ? "" : "s"} open again</span>`;
+          const g = M.ghost(chip, chip.getBoundingClientRect(), null, chip); chip.remove();
+          M.fly(g, orders, { plus: false }).then(() => M.note(orders, { text: `${name}: completion undone · its ${n} order${n === 1 ? " is" : "s are"} open again at the station, every file kept`, actions: typeof setMode === "function" ? [{ label: "Show", title: "Open the Orders tab", fn: () => setMode("orders") }] : [], ms: 9000 }));
+        } else {
+          chip.remove();
+          const text = n ? `${name}: completion undone · its ${n} order${n === 1 ? " is" : "s are"} open again at the station, every file kept` : `${name}: completion undone · awaiting review again, every file kept`;
+          if (M && seen(here())) M.note(here, { text, ms: 7000 }); else toast(text, "ok", 5000);
+        }
+        await settle();
+      },
+      fail() { chip.remove(); settle(); }
+    };
   }
   async function renderLibrary(body, opts) {
     // the Completed tab is drawn by charm-nest-library.js; this is the Current tab's Sets view
@@ -4205,7 +4254,8 @@ const Sets = window.Sets = (() => {
       LaserReview.sections(body);
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
-        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => renderLibrary(body)});
+        // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
+        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
       }
       LaserReview.changed();

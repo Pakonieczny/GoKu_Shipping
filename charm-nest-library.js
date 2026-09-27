@@ -34,7 +34,10 @@
     list: null,             // the Completed list on screen
     scroll: { current: 0, done: 0 },
     currentQ: null, located: '', flash: null, entered: '',
-    timer: 0, leftAt: 0, busy: new Set(), io: null
+    timer: 0, leftAt: 0, busy: new Set(), io: null,
+    flying: { sheets: 0, sets: 0 },   // marked, still on their way to the Completed tab: its count takes them as they land
+    coming: new Map(),      // Completed row key → { from, until }: a row an Undo brings back, flying in from that tab
+    flew: new Map()         // "sheet:<id>" | "set:<id>" → when it was seen fly back in (the Undo's note is then not needed)
   };
 
   /* ── which tab ── */
@@ -168,11 +171,12 @@
     if (!S.cloud.ok) { toast('Nothing was marked: the cloud is offline', 'bad', 5000); throw new Error('The cloud is offline'); }
     L.busy.add(key);
     const ids = kind === 'sheet' ? [id] : setSheets(id), was = new Map([key, ...ids.map(x => 'sheet:' + x)].map(k => [k, L.marks.get(k)]));
-    const at = Date.now(), name = nameOf(kind, id), setOfSheet = kind === 'sheet' ? ((recordOf(id) || {}).setId || null) : null;
+    const at = Date.now(), name = o.name || nameOf(kind, id), setOfSheet = kind === 'sheet' ? ((recordOf(id) || {}).setId || null) : null;
     note(key, done, at, by); for (const x of ids) note('sheet:' + x, done, at, by);
     pages(ids, done ? at : null); records(ids, done ? at : null);
-    bump(kind === 'set' ? 'sets' : 'sheets', done ? 1 : -1);
-    leave(kind, id, done, ids, setOfSheet);
+    // it leaves at once (seen going to the tab that now holds it); the Completed tab counts it as it lands there
+    const landed = leave(kind, id, done, ids, setOfSheet), landAt = Date.now() + landed;
+    const unbump = bump(kind === 'set' ? 'sets' : 'sheets', done ? 1 : -1, false, done && L.tab !== 'done' ? landed : 0);
     try {
       const r = await api('charmNestLibrary', { op: 'laserDone', kind, id, done, by: by || undefined }, { label: done ? 'Marking completed' : 'Moving back to Current' });
       const t = r.at || at;
@@ -184,40 +188,67 @@
       for (const [k, st] of L.lists) if (st !== L.list || L.tab !== 'done') dropList(k);
       if (!done && r.setId && r.setChanged && L.list && L.list.kind === 'sets') removeRows(L.list, ['set:' + r.setId]);
       if (!done) keepCurrent(r.sheetIds || ids);
-      if (L.tab === 'done' && done && L.list) freshen(L.list, true);
+      // (marked again from Completed, an Undo of a move back: its row comes in at the top, from the Current tab)
+      if (L.tab === 'done' && done && L.list) { expectRows([key, ...(r.sheetIds || ids).map(x => 'sheet:' + x), r.setId && r.setDone ? 'set:' + r.setId : ''], 'current'); freshen(L.list, true); }
       // a set's sheets this page did not know of until the cloud said: their cards leave as well
       if (done && L.tab !== 'done' && S.mode === 'library') for (const x of r.sheetIds || []) if (!ids.includes(x)) leave('sheet', x, true, [x], null);
-      if (!o.undo) undoToast(kind, id, done, r, name, ids);
-      else toast(done ? `${name} is completed again` : `${name} is back in Current`, 'ok', 3200, 'ld-undo');
+      if (!o.undo) undoNote(kind, id, done, r, name, ids, landAt);
+      else said(done ? `${name} is completed again` : `${name} is back in Current`, done ? 'done' : 'current', [key, ...(r.sheetIds || ids).map(x => 'sheet:' + x), r.setId ? 'set:' + r.setId : '']);
       return r;
     } catch (e) {
       for (const [k, m] of was) { if (m) L.marks.set(k, m); else L.marks.delete(k); }
       const back = ids.filter(x => !(was.get('sheet:' + x) || {}).done);
       pages(done ? back : ids, done ? null : at); records(done ? back : ids, done ? null : at);
-      bump(kind === 'set' ? 'sets' : 'sheets', done ? -1 : 1, true);
+      unbump(); bump(kind === 'set' ? 'sets' : 'sheets', done ? -1 : 1, true);
       if (L.tab === 'done') { dropList(L.list && L.list.key); showDone(true); } else renderCurrent();
       toast(`${done ? 'Not marked completed' : 'Not moved back'}: ${e.message}`, 'bad', 8000);
       throw e;
     } finally { L.busy.delete(key); }
   }
-  /** "Sheet 2 marked completed · Undo". Undoing a set marks back only the sheets this mark changed. */
-  function undoToast(kind, id, done, r, name, ids) {
+  /** "Sheet 2 marked completed · Undo", under the tab it went to, once it has landed there (Paul, 27 Sep 20:09-20:24:
+      the tab says what arrived; one Undo, no toast beside it). With the Library out of sight, or under an open window,
+      the toast says it as before. Undoing a set marks back only the sheets this mark changed. */
+  function undoNote(kind, id, done, r, name, ids, landAt) {
     const setNote = kind === 'sheet' && r.setId && r.setChanged ? (r.setDone ? ' · its set is complete' : ' · its set is back in Current') : '';
     const text = done ? `${name} marked completed${setNote}` : `${name} moved back to Current${setNote}`;
     const undo = () => {
       if (kind === 'set' && done) {
         // (the set's sheets as they were when it was marked: its card has left since)
         const all = ids && ids.length ? ids : setSheets(id), touched = r.sheetIds || [];
-        if (!touched.length || (all.length && touched.length >= all.length)) return mark('set', id, false, { undo: true }).catch(() => {});
+        if (!touched.length || (all.length && touched.length >= all.length)) return mark('set', id, false, { undo: true, name }).catch(() => {});
         return touched.reduce((p, x) => p.then(() => mark('sheet', x, false, { undo: true })), Promise.resolve()).catch(() => {});
       }
-      return mark(kind, id, !done, { undo: true }).catch(() => {});
+      return mark(kind, id, !done, { undo: true, name }).catch(() => {});   // (its card may have left: the name it had)
     };
-    const el = toast(text, 'ok', 8000, 'ld-undo'); if (!el) return;
-    let b = el.querySelector('.toastUndo');
-    if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'toastUndo'; b.textContent = 'Undo'; el.querySelector('.c').before(b); }
-    b.onclick = e => { e.stopPropagation(); if (el._go) el._go(); undo(); };
+    const tab = done ? 'done' : 'current', title = done ? 'Move it back to Current' : 'Mark it completed again';
+    const show = () => {
+      const n = noteOn(tab, { text, actions: [{ label: 'Undo', fn: undo, title }], ms: 8000 });
+      if (n) { n.dataset.ld = kind + ':' + id; return; }
+      const el = toast(text, 'ok', 8000, 'ld-undo'); if (!el) return;
+      let b = el.querySelector('.toastUndo');
+      if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'toastUndo'; b.textContent = 'Undo'; el.querySelector('.c').before(b); }
+      b.onclick = e => { e.stopPropagation(); if (el._go) el._go(); undo(); };
+    };
+    // (after the copy has come down on the tab and faded: the note answers what arrived)
+    const wait = landAt - Date.now() + (landAt > Date.now() ? 260 : 0);
+    if (wait > 0) setTimeout(show, wait); else show();
   }
+  /** A note under a Library tab (the tab something went to, or its sign), or nothing when it cannot be seen there. */
+  function noteOn(t, spec) {
+    if (!window.Motion || S.mode !== 'library' || covered()) return null;
+    const at = tabTarget(t); if (!onScreen(at)) return null;
+    const n = Motion.note(at, spec); if (n && at.classList.contains('ldSign')) at._note = n;
+    return n;
+  }
+  /** What an Undo did, said under the tab it went back to (a toast where the tab cannot be seen), but only when it was
+      not seen come back: a card that flew into its place has said it already (asked once its flight is over). */
+  function said(text, t, keys) {
+    setTimeout(() => {
+      if (keys.some(k => k && Date.now() - (L.flew.get(k) || 0) < 6000)) return;
+      if (!noteOn(t, { text, ms: 3200 })) toast(text, 'ok', 3200, 'ld-undo');
+    }, window.Motion ? Motion.T.fly + 150 : 0);
+  }
+  const flewIn = keys => { for (const k of keys) L.flew.set(k, Date.now()); while (L.flew.size > 200) L.flew.delete(L.flew.keys().next().value); };
   /** A sheet taken back that Current's list may not hold (it reads the newest 300): its record is kept for Current. */
   async function keepCurrent(ids) {
     if (!ids || !ids.length) return;
@@ -225,12 +256,63 @@
       const r = await api('charmNestLibrary', { op: 'laserStatus', sheetIds: ids.slice(0, 200) }, { quiet: true });
       for (const s of r.sheets || []) { LaserReview.record(s); if (!isDone(s)) L.extra.set(s.id, { r: s, t: Date.now() }); }
       const body = byId('libBody'), shown = body && (r.sheets || []).every(s => isDone(s) || body.querySelector(`.libCard[data-id="${CSS.escape(s.id)}"]`));
-      if (L.tab !== 'done' && S.mode === 'library' && !shown) renderCurrent();
+      // (drawn now: it comes in from Completed as it would have at once)
+      if (L.tab !== 'done' && S.mode === 'library' && !shown) comeBack(body, (r.sheets || []).filter(s => !isDone(s)).map(s => s.id), 'done');
     } catch (_) { /* Current reads it at its next refresh if it is among the newest */ }
   }
 
-  /* ── cards leaving and coming back ── */
-  function collapse(el, then) {
+  /* ── cards leaving and coming back ──
+     Paul, 27 Sep 20:09-20:24: nothing a click moves may just vanish or pop up. A card marked completed lifts and flies to
+     the Completed tab, which counts it as it lands; a row moved back flies to the Current tab and its day folds after it;
+     a card an Undo brings back flies in from the tab it was in. What stays glides into the room left (or out of the way),
+     slowly enough to follow (charm-nest-motion.js). Under an open window (the sheet window marks too) nobody sees the
+     list: it folds away there as it did. Nothing waits on a motion: the marks and the cloud go on at once. */
+  const tabBtn = t => doc.querySelector(`#libTab button[data-t="${t === 'done' ? 'done' : 'current'}"]`);
+  const covered = () => { try { return !!doc.querySelector('dialog:modal'); } catch (_) { return !!doc.querySelector('dialog[open]'); } };
+  const moving = () => !!window.Motion && !Motion.reduced() && S.mode === 'library' && !covered();
+  const onScreen = el => { if (!el || !el.isConnected) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  /** In sight in the Library's scroller (a card scrolled away is not flown: its tab only answers). */
+  const inView = el => { if (!onScreen(el)) return false; const r = el.getBoundingClientRect(), s = stage().getBoundingClientRect(); return r.bottom > s.top && r.top < s.bottom; };
+  /** Where a tab is for what goes to it or comes from it: the tab, or, with the list scrolled past the bar that holds
+      it, a small sign at the top of the list under where the tab is ("↑ Completed"). What goes there is seen go up to
+      it, and its note stands under it; the sign leaves once that is over. */
+  const signs = {};
+  function tabTarget(t) {
+    const tab = tabBtn(t); if (!tab) return null;
+    if (onScreen(tab)) { const r = tab.getBoundingClientRect(), s = stage().getBoundingClientRect(); if (r.top + r.height / 2 > s.top && r.bottom < s.bottom) return tab; }
+    let s = signs[t];
+    if (!s || !s.isConnected) {
+      s = signs[t] = doc.createElement('span'); s.className = 'ldSign'; s.setAttribute('aria-hidden', 'true'); s._until = 0;
+      s.innerHTML = `<svg viewBox="0 0 16 16"><path d="M8 13V3.5M3.8 7.4L8 3.2l4.2 4.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>${t === 'done' ? 'Completed' : 'Current'}`;
+      doc.body.appendChild(s); signOff(s);
+    }
+    const sr = stage().getBoundingClientRect(), r = tab.getBoundingClientRect();
+    Object.assign(s.style, { left: Math.max(sr.left + 8, r.left) + 'px', top: sr.top + 10 + 'px' });
+    s._until = Math.max(s._until, Date.now() + (window.Motion ? Motion.T.fly : 0) + 1800);
+    return s;
+  }
+  function signOff(s) {
+    const t = setInterval(() => {
+      if (Date.now() < s._until || (s._note && s._note.isConnected)) return;
+      clearInterval(t);
+      const gone = () => { s.remove(); for (const k in signs) if (signs[k] === s) delete signs[k]; };
+      if (reduced() || !s.animate) return gone();
+      s.animate([{ opacity: 1 }, { opacity: 0, transform: 'translateY(-6px)' }], { duration: 320, easing: 'ease-in', fill: 'forwards' }).finished.then(gone, gone);
+    }, 300);
+  }
+  /** A copy of `el` flies to the tab `to`; the time until it lands there (0: it could not be seen go, the tab only answers). */
+  function flyOff(el, to, opts) {
+    if (!inView(el) || !onScreen(to)) { Motion.arrive(to, opts || {}); return 0; }
+    const g = Motion.ghost(el, el.getBoundingClientRect(), null, el), c = g._card || g;
+    // (the copy as it looked at rest: no spinner on its button, no search glow)
+    for (const n of [c, ...c.querySelectorAll('.busy, .ldHit, .ldIn')]) n.classList.remove('busy', 'ldHit', 'ldIn');
+    Motion.fly(g, to, opts || {});
+    return Math.round(Motion.T.fly * .86);
+  }
+  /** Folds a card or a row away where it stood. o.gone: its copy has already lifted off, so only its room closes, as
+      slowly as the rest glides (o.ms); else it fades as it folds, quickly (a day heading after its last row, a card
+      under an open window). */
+  function collapse(el, then, o = {}) {
     if (!el || !el.isConnected) { if (then) then(); return; }
     if (el.dataset.leaving) return;                     // (already on its way out)
     el.dataset.leaving = '1';
@@ -241,16 +323,20 @@
     const from = row ? { width: box.width + 'px', flexBasis: box.width + 'px', minWidth: '0px', marginRight: '0px' } : { height: box.height + 'px', marginBottom: '0px' };
     const to = row ? { width: '0px', flexBasis: '0px', minWidth: '0px', marginRight: -gap + 'px' } : { height: '0px', marginBottom: -gap + 'px' };
     el.style.overflow = 'hidden'; el.style.pointerEvents = 'none'; el.style.boxSizing = 'border-box';
-    const a = el.animate([Object.assign({ opacity: 1, transform: 'none' }, from), Object.assign({ opacity: 0, transform: 'scale(.96)', offset: .4 }, from), Object.assign({ opacity: 0, transform: 'scale(.96)' }, to)], { duration: 230, easing: 'ease-in-out', fill: 'forwards' });
+    const ms = o.ms || 230;
+    const frames = o.gone ? [Object.assign({ opacity: 0 }, from), Object.assign({ opacity: 0 }, to)]
+      : [Object.assign({ opacity: 1, transform: 'none' }, from), Object.assign({ opacity: 0, transform: 'scale(.96)', offset: .4 }, from), Object.assign({ opacity: 0, transform: 'scale(.96)' }, to)];
+    const a = el.animate(frames, { duration: ms, easing: o.gone ? 'cubic-bezier(.3,.1,.2,1)' : 'ease-in-out', fill: 'forwards' });
     let over = false; const end = () => { if (over) return; over = true; el.remove(); if (then) then(); };
-    a.onfinish = end; setTimeout(end, 600);
+    a.onfinish = end; setTimeout(end, ms + 400);
   }
-  /** The card or row of what was just marked leaves the tab it is in; one taken back comes into view again. */
+  /** The card or row of what was just marked leaves the tab it is in; one taken back comes into view again. The time
+      until what left lands on its tab (0 when nothing was seen fly). */
   function leave(kind, id, done, ids, setOfSheet) {
-    if (S.mode !== 'library') return;
+    if (S.mode !== 'library') return 0;
     if (L.tab !== 'done') {
-      const body = byId('libBody'); if (!body) return;
-      if (!done) { L.flash = ids; renderCurrent(); return; }
+      const body = byId('libBody'); if (!body) return 0;
+      if (!done) { comeBack(body, ids, 'done'); return 0; }
       const gone = [];
       if (kind === 'set') { for (const c of body.querySelectorAll('.setCard')) if (c._laserSet && c._laserSet.setId === id) gone.push(c); }
       else for (const c of body.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)) {
@@ -258,12 +344,10 @@
         const left = set ? [...set.querySelectorAll('.librarySheet')].filter(x => x !== item && !gone.includes(x) && !x.dataset.leaving).length : 1;
         gone.push(left ? item : set);
       }
-      gone.forEach(el => collapse(el, () => { partials(body); LaserReview.changed(); emptyCurrent(body); }));
-      partials(body);
-      return;
+      return goCurrent(body, gone);
     }
-    const st = L.list; if (!st) return;
-    if (done) return;                                   // (an undo of a move back: freshen brings it in at the top)
+    const st = L.list; if (!st) return 0;
+    if (done) return 0;                                 // (an undo of a move back: freshen brings it in at the top)
     const keys = kind === 'set' ? ['set:' + id, ...ids.map(x => 'sheet:' + x)] : ['sheet:' + id];
     // a sheet moved back from an opened set takes its set out of Completed: the set is not complete any more
     if (kind === 'sheet') {
@@ -271,8 +355,95 @@
       const item = inSet && inSet.closest('.ldItem'); if (item && item.dataset.set) keys.push('set:' + item.dataset.set);
       if (setOfSheet) keys.push('set:' + setOfSheet);
     }
-    removeRows(st, keys);
+    return removeRows(st, keys, 'current');
   }
+  /** Current: the cards marked completed fly to the Completed tab and the rest glide into their room. */
+  function goCurrent(body, gone) {
+    gone = [...new Set(gone)].filter(el => el && el.isConnected && !el.dataset.leaving);
+    if (!gone.length) return 0;
+    if (!moving()) { gone.forEach(el => collapse(el, () => { partials(body); LaserReview.changed(); emptyCurrent(body); })); partials(body); return 0; }
+    const before = snapshot(body), to = tabTarget('done'); let landed = 0;
+    for (const el of gone) { landed = Math.max(landed, flyOff(el, to)); el.dataset.leaving = '1'; }
+    for (const el of gone) el.remove();
+    partials(body); emptyCurrent(body); LaserReview.changed();
+    // (after LaserReview's own frame has shown or hidden its sections: the glide starts from the page as it will be drawn)
+    requestAnimationFrame(() => glideFrom(body, before));
+    return landed;
+  }
+  /** Current is drawn again with these sheets back in it: they fly in from the tab `from`, the rest glide aside. */
+  function comeBack(body, ids, from) {
+    if (!body || !ids || !ids.length) return;
+    L.flash = { ids: new Set(ids), from, before: moving() ? snapshot(body) : null, at: Date.now() };
+    renderCurrent();
+  }
+  /** (decorate) The sheets an Undo brought back: from the tab they were in, into their place; the others glide. */
+  function landBack(body, f) {
+    const run = () => {
+      if (f.before && Date.now() - f.at < 2500) glideFrom(body, f.before);
+      const seen = new Set(); let from = null;
+      for (const c of body.querySelectorAll('.libCard[data-id]')) {
+        if (!f.ids.has(c.dataset.id)) continue;
+        // a set card that was not here comes back whole; else the sheet into its set, or on its own
+        const item = c.closest('.librarySheet') || c, set = item.closest('.setCard');
+        const el = set && f.before && !f.before.has(gkey(set)) ? set : item;
+        if (seen.has(el)) continue; seen.add(el);
+        if (moving() && inView(el) && onScreen(from = from || tabTarget(f.from))) { Motion.flyIn(from, el); flewIn([...el.querySelectorAll('.libCard[data-id]')].map(x => 'sheet:' + x.dataset.id).concat(el._laserSet && el._laserSet.setId ? ['set:' + el._laserSet.setId] : [])); }
+        else { c.classList.add('ldIn'); setTimeout(() => c.classList.remove('ldIn'), 400); }
+      }
+    };
+    if (moving()) requestAnimationFrame(run); else run();
+  }
+
+  /* ── Current glides: what stays moves from where it stood to where it is now ──
+     Current's two sections, its cards and the sheets in a set card are known by what they show (gkey), so a card drawn
+     again under the same name glides rather than jumps. A card inside a set card that glides too moves only its own part
+     of the way; a set card's height follows its sheets. */
+  const GLIDE = '.laserSection, .laserAreaItems > .librarySheet, .laserAreaItems > .setCard, .sheetsRow > .librarySheet';
+  function gkey(el) {
+    if (el.classList.contains('laserSection')) return 'area:' + (el.dataset.laserArea || '');
+    if (el.classList.contains('setCard')) { const s = el._laserSet; return s ? (s.setId ? 'set:' + s.setId : 'group:' + (s.key || s.name || '')) : ''; }
+    const c = el.querySelector(':scope > .libCard[data-id]'); return c ? 'sheet:' + c.dataset.id : '';
+  }
+  function snapshot(body) {
+    const m = new Map();
+    for (const el of body.querySelectorAll(GLIDE)) {
+      const k = gkey(el); if (!k || m.has(k) || el.dataset.leaving) continue;
+      const r = el.getBoundingClientRect(); if (r.width || r.height) m.set(k, { x: r.left, y: r.top, h: r.height });
+    }
+    return m;
+  }
+  function glideFrom(body, before) {
+    if (!before || !before.size || !moving() || !body.isConnected) return;
+    const now = []; for (const el of body.querySelectorAll(GLIDE)) { const k = gkey(el); if (k && before.has(k)) now.push([k, el]); }
+    // a glide still under way is let go first: each card is measured where it stands now
+    for (const [, el] of now) if (el._glide) { el._glide.forEach(a => a.cancel()); el._glide = null; }
+    const s = stage().getBoundingClientRect(), T = Motion.T.slide, ease = 'cubic-bezier(.3,.1,.2,1)', moved = new Map();
+    for (const [k, el] of now) {
+      const b = before.get(k), r = el.getBoundingClientRect(); if (!r.width && !r.height) continue;
+      let p = el.parentElement; while (p && p !== body && !moved.has(p)) p = p.parentElement;
+      const pd = p && p !== body ? moved.get(p) : { dx: 0, dy: 0 };
+      const dx = b.x - r.left, dy = b.y - r.top, own = { dx: dx - pd.dx, dy: dy - pd.dy }, dh = b.h - r.height;
+      if (Math.max(r.bottom, r.bottom + dy) < s.top || Math.min(r.top, r.top + dy) > s.bottom) continue;   // (out of sight)
+      const anims = [];
+      if (Math.abs(own.dx) >= 1 || Math.abs(own.dy) >= 1) { anims.push(el.animate([{ transform: `translate(${own.dx}px,${own.dy}px)` }, { transform: 'none' }], { duration: T, easing: ease, fill: 'backwards' })); moved.set(el, { dx, dy }); }
+      if (el.classList.contains('setCard') && Math.abs(dh) >= 1) {
+        const clip = dh < 0 ? 'hidden' : 'visible';     // (growing, what it makes room for is kept inside it)
+        anims.push(el.animate([{ height: b.h + 'px', alignContent: 'start', overflow: clip }, { height: r.height + 'px', alignContent: 'start', overflow: clip }], { duration: T, easing: ease }));
+      }
+      if (anims.length) el._glide = anims;
+    }
+  }
+  /** Current changed by `change` (it may wait for the cloud): what stays glides, once it is drawn. For a view drawn again
+      in one piece (the Sets view after Undo set, charm-nest-bridge.js). */
+  async function glide(body, change) {
+    const before = moving() && body ? snapshot(body) : null, y = stage().scrollTop, t = Date.now();
+    await change();
+    // (the list scrolled meanwhile, or the answer was long in coming: it is shown as it is)
+    if (!before || stage().scrollTop !== y || Date.now() - t > 8000) return;
+    LaserReview.changed(); requestAnimationFrame(() => glideFrom(body, before));
+  }
+  /** Completed rows an Undo brings back: they fly in from the tab `from` when drawn (prepend). */
+  function expectRows(keys, from) { for (const k of keys) if (k) L.coming.set(k, { from, until: Date.now() + 10000 }); }
   function emptyCurrent(body) {
     if (body.querySelector('.libCard')) return;
     const f = focus(); if (f) return decorate(body);
@@ -319,12 +490,24 @@
   function setCounts(c) { if (!c) return; L.counts = { sheets: +c.sheets || 0, sets: +c.sets || 0 }; L.countsAt = Date.now(); paintCount(); }
   function paintCount(pulse) {
     const n = byId('libDoneCount'); if (!n) return;
-    const kind = S.library.kind === 'sets' ? 'sets' : 'sheets', v = L.counts ? L.counts[kind] : null;
+    // (what is still on its way to the tab is counted as it lands: bump)
+    const kind = S.library.kind === 'sets' ? 'sets' : 'sheets', v = L.counts ? Math.max(0, L.counts[kind] - (L.flying[kind] || 0)) : null;
     n.textContent = v == null ? '' : v > 9999 ? Math.round(v / 1000) + 'k' : String(v);
     n.setAttribute('aria-label', v == null ? 'completed' : `${v} completed ${kind}`);
     if (pulse && !reduced()) { n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse'); }
   }
-  function bump(kind, d, quiet) { if (!L.counts) return; L.counts[kind] = Math.max(0, (L.counts[kind] || 0) + d); paintCount(!quiet); }
+  /** The count moves by d: at once, or `after` ms later, when what was marked comes down on the Completed tab (it pulses
+      and counts up then). Hands back what lets that wait go (a mark the cloud refused). */
+  function bump(kind, d, quiet, after) {
+    if (!L.counts) return () => {};
+    L.counts[kind] = Math.max(0, (L.counts[kind] || 0) + d);
+    if (!after) { paintCount(!quiet); return () => {}; }
+    L.flying[kind] = (L.flying[kind] || 0) + d; paintCount();
+    let over = false;
+    const land = pulse => { if (over) return; over = true; clearTimeout(t); L.flying[kind] -= d; paintCount(pulse); };
+    const t = setTimeout(() => land(!quiet), after);
+    return () => land(false);
+  }
   async function refreshCounts(force) {
     if (L.countsBusy || !S.cloud.ok || (!force && Date.now() - L.countsAt < FRESH)) return;
     L.countsBusy = true;
@@ -487,7 +670,7 @@
     const empty = body.querySelector(':scope > .libEmpty'); if (empty && !empty.textContent.trim()) empty.remove();
     const line = foundLine('current'); if (line) body.prepend(line);
     locate(body);
-    if (L.flash) { const ids = new Set(L.flash); L.flash = null; for (const c of body.querySelectorAll('.libCard[data-id]')) if (ids.has(c.dataset.id)) { c.classList.add('ldIn'); setTimeout(() => c.classList.remove('ldIn'), 400); } }
+    if (L.flash) { const f = L.flash; L.flash = null; landBack(body, f); }
     paintCount(); refreshCounts(); syncSearching(); fitPlaceholder();
   }
 
@@ -613,16 +796,23 @@
       if (!empty && text) st.rowsEl.insertAdjacentHTML('beforeend', `<div class="libEmpty">${text}</div>`);
     } else if (empty) empty.remove();
   }
-  function removeRows(st, keys) {
-    const want = new Set(keys);
+  /** Rows taken out of a Completed list. `t` (a Move back: 'current'): each seen flies to that tab while its room closes,
+      as slowly as Current glides, and a day left empty folds after its last row. The time until they land (0: none). */
+  function removeRows(st, keys, t) {
+    const want = new Set(keys), fly = !!t && moving() && L.list === st, to = fly ? tabTarget(t) : null; let landed = 0;
     for (const k of want) st.byKey.delete(k);
     st.rows = st.rows.filter(r => !want.has(rowKey(r)));
     for (const it of st.rowsEl.querySelectorAll('.ldItem')) {
       const k = it.dataset.kind === 'set' ? 'set:' + it.dataset.set : 'sheet:' + it.dataset.id;
-      if (!want.has(k)) continue;
+      if (!want.has(k) || it.dataset.leaving) continue;
       const day = it.closest('.ldDay');
-      collapse(it, () => { if (day && !day.querySelector('.ldItem')) collapse(day, () => more(st)); else if (day) countDay(day, st); more(st); paintFound(st); });
+      const after = () => { if (day && !day.querySelector('.ldItem')) collapse(day, () => more(st), { ms: fly ? 520 : 230 }); else if (day) countDay(day, st); more(st); paintFound(st); };
+      const flew = fly ? flyOff(it, to) : 0; landed = Math.max(landed, flew);
+      // (its copy on its way: only its room closes; one not seen go fades as its room closes, as slowly)
+      collapse(it, after, flew ? { gone: true, ms: Motion.T.slide } : fly ? { ms: Motion.T.slide } : {});
+      if (day && day.querySelector('.ldItem:not([data-leaving])')) countDay(day);   // (its day counts one less as the row lifts off; one left empty folds as it is)
     }
+    return landed;
   }
 
   /* ── Completed: the rows ── */
@@ -657,7 +847,7 @@
     return `<section class="ldDay" data-day="${esc(day)}"><h3 class="ldDayHead">${esc(title)}<span>${esc(date)}</span><i data-kind="${kind}"></i></h3><div class="ldDayRows"></div></section>`;
   }
   function countDay(sec) {
-    const n = sec.querySelectorAll('.ldDayRows > .ldItem').length, i = sec.querySelector('.ldDayHead i');
+    const n = sec.querySelectorAll('.ldDayRows > .ldItem:not([data-leaving])').length, i = sec.querySelector('.ldDayHead i');
     if (i) i.textContent = plural(n, i.dataset.kind === 'set' ? 'set' : 'sheet');
   }
   /** Rows drawn in one piece per day: a page added below never draws the list again. */
@@ -675,14 +865,24 @@
   }
   function prepend(st, list) {
     st.rowsEl.querySelectorAll(':scope > .skel, :scope > .libEmpty').forEach(n => n.remove());
-    const added = [];
+    const added = [], fresh = new Set();
     for (const r of list.slice().reverse()) {
       st.rows.unshift(r); st.byKey.set(rowKey(r), r);
       const day = r.at ? realDay(r.at) : 'undated'; let sec = st.rowsEl.firstElementChild;
-      if (!sec || sec.dataset.day !== day) { st.rowsEl.insertAdjacentHTML('afterbegin', dayHead(day, st.kind === 'sets' ? 'set' : 'sheet')); sec = st.rowsEl.firstElementChild; }
-      sec.lastElementChild.insertAdjacentHTML('afterbegin', rowHtml(r)); countDay(sec); added.push(sec.lastElementChild.firstElementChild);
+      if (!sec || sec.dataset.day !== day) { st.rowsEl.insertAdjacentHTML('afterbegin', dayHead(day, st.kind === 'sets' ? 'set' : 'sheet')); sec = st.rowsEl.firstElementChild; fresh.add(sec); }
+      sec.lastElementChild.insertAdjacentHTML('afterbegin', rowHtml(r)); countDay(sec); added.push([r, sec.lastElementChild.firstElementChild, sec]);
     }
-    for (const it of added) { it.classList.add('ldIn'); setTimeout(() => it.classList.remove('ldIn'), 400); }
+    // a row an Undo brought back flies in from the tab it was in while its room opens (its day's too, when new);
+    // any other row new since the list was read comes in where it is
+    const on = L.list === st && moving(), grown = new Set();
+    for (const [r, it, sec] of added) {
+      const k = rowKey(r), c = L.coming.get(k); if (c) L.coming.delete(k);
+      const from = on && c && c.until > Date.now() && inView(it) ? tabTarget(c.from) : null;
+      if (from && onScreen(from)) {
+        Motion.flyIn(from, it); flewIn([k]);
+        const room = fresh.has(sec) ? sec : it; if (!grown.has(room)) { grown.add(room); Motion.grow(room, { ms: Motion.T.slide }); }
+      } else { it.classList.add('ldIn'); setTimeout(() => it.classList.remove('ldIn'), 400); }
+    }
     settle(st.el); paintFound(st);
   }
   /** A thumbnail already loaded (from the cache, or while its list was off screen) is shown without waiting. */
@@ -695,12 +895,20 @@
     if (!open || (inner.firstElementChild && !inner.querySelector('.ldWait'))) { if (open) LaserReview.changed(); return; }
     const r = L.list && L.list.byKey.get('set:' + item.dataset.set); if (!r) return;
     inner.innerHTML = '<div class="ldWait"><i class="spin" aria-hidden="true"></i> Opening the set…</div>';
+    return fillSet(item, r);
+  }
+  /** The set's card in its opened row: read, and put in (again, after its Undo set: in place, the list as it was). */
+  async function fillSet(item, r) {
+    const inner = item.querySelector('.ldPanelIn');
     try {
       const ids = (r.sheetIds && r.sheetIds.length ? r.sheetIds : (r.sheets || []).map(s => s.id)).slice(0, 300);
       const [st, got] = await Promise.all([api('charmNestLibrary', { op: 'laserStatus', sheetIds: ids, setIds: [r.setId] }, { quiet: true }), api('charmNestLibrary', { op: 'setGet', setId: r.setId }, { quiet: true })]);
       const sheets = (st.sheets || []).map(s => LaserReview.record(s)).sort((a, b) => String(a.metal || '').localeCompare(String(b.metal || '')) || (a.sheetIndex || 0) - (b.sheetIndex || 0));
       const set = Object.assign({ setId: r.setId, seq: r.seq, day: r.day, name: r.name, sheetIds: ids, materials: r.materials, status: r.status }, got.set || {}, { setId: r.setId });
-      const card = Sets.libraryCard(set, sheets, sheets, { onUndo: () => { for (const k of [...L.lists.keys()]) dropList(k); showDone(true); } });
+      if (got.set && got.set.status) r.status = got.set.status;
+      // Undo set (Paul, 27 Sep 20:09-20:24): the whole list was read again and drawn in one piece, the set closed under
+      // the hand. Its row stays where it is and its card is read again in place; the lists not on screen are read anew.
+      const card = Sets.libraryCard(set, sheets, sheets, { onUndo: () => { for (const [k, x] of [...L.lists]) if (x !== L.list) dropList(k); if (item.isConnected && item.classList.contains('open')) return fillSet(item, r); } });
       const h0 = inner.offsetHeight;
       inner.replaceChildren(card); cards(inner, 'done'); LaserReview.changed();
       if (!reduced() && inner.animate && item.classList.contains('open')) { const h1 = inner.offsetHeight; inner.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' }); }
@@ -754,6 +962,8 @@
     while (L.marks.size > 2000) L.marks.delete(L.marks.keys().next().value);
     for (const [k, x] of L.extra) if (t - x.t > 30 * 60000) L.extra.delete(k);
     for (const [k, f] of L.finds) if ((f.res || f.error) && t - f.at > 10 * 60000) L.finds.delete(k);
+    for (const [k, c] of L.coming) if (c.until < t) L.coming.delete(k);
+    for (const [k, at] of L.flew) if (t - at > 60000) L.flew.delete(k);
     if (S.mode === 'library') { L.leftAt = 0; return; }
     if (!L.leftAt) L.leftAt = t;
     else if (t - L.leftAt > AWAY && L.lists.size) {
@@ -787,6 +997,6 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();
