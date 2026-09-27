@@ -481,6 +481,23 @@ async function loadRecentThreadMessages(threadId, limit = 12) {
   }
 }
 
+/** A price the customer accepted that a person typed (not the resolver):
+ *  usable only when the shop's own recent messages state it, alone or
+ *  times a small quantity ("$24 each" for 2 = 48). */
+function staffQuotedTotal(accepted, messages) {
+  const v = Number(accepted);
+  if (!Number.isFinite(v) || v <= 0 || v > 5000) return null;
+  const amounts = [];
+  for (const m of (Array.isArray(messages) ? messages : [])) {
+    if (!m || m.direction !== "outbound" || !m.text) continue;
+    for (const x of String(m.text).matchAll(/\$\s?(\d{1,4}(?:\.\d{1,2})?)/g)) amounts.push(Number(x[1]));
+  }
+  for (const a of amounts) {
+    for (let k = 1; k <= 20; k++) if (Math.abs(a * k - v) < 0.01) return Math.round(v * 100) / 100;
+  }
+  return null;
+}
+
 function recentOutboundTextsFromMessages(messages) {
   return (Array.isArray(messages) ? messages : [])
     .filter(m => m && m.direction === "outbound" && m.text)
@@ -2799,6 +2816,12 @@ When to set \`customer_accepted: true\`:
 - A complete spec exists in lastResolverResult (family + line items + total).
 - You're about to commit to sending the listing in your reply text.
 
+Proofs and prices a person typed:
+- Approving a proof or design the shop sent ("looks perfect, yes please", "love it, let's do it", "option B please, 2 of them") IS acceptance when the price is known: quoted earlier in this conversation (by you, or by a staff member in plain text such as "the cost is $24 each"), or computable now with resolveQuote from the spec already in the conversation. Set current_state "quote", customer_accepted: true and next_action confirm_acceptance_and_create_listing. The custom listing is then created and sent automatically, so your reply is one short warm line.
+- When the accepted price was typed by staff rather than produced by your resolver, also set \`"accepted_quote_usd": <total>\` (for example 2 charms at $24 each = 48). The system checks that figure against the shop's own messages.
+- Never send a generic "Custom Charm + Shipping" or other checkout listing for a custom piece; the custom listing made for this customer is the checkout.
+- If no price was ever given and the spec is too incomplete to price, don't accept yet: ask for the one missing detail.
+
 When NOT to set \`customer_accepted: true\`:
 - Customer is still asking questions or comparing options.
 - Customer accepted but specs are incomplete (no resolved quote, codes unclear).
@@ -4486,7 +4509,10 @@ ${validationResult.message}
             if (h && typeof h.total === "number" && h.total > 0) { fromHistory = h.total; break; }
           }
         }
-        const resolvedQuote = fromCurrentTurn ?? fromInMemLrr ?? fromPersistedLrr ?? fromTotalQuoted ?? fromHistory;
+        // A price a person typed in the conversation ("$24 each") that the
+        // customer said yes to; only when the shop's own messages state it.
+        const fromStaffQuote = staffQuotedTotal(parsed.accepted_quote_usd, recentThreadMessages);
+        const resolvedQuote = fromCurrentTurn ?? fromStaffQuote ?? fromInMemLrr ?? fromPersistedLrr ?? fromTotalQuoted ?? fromHistory;
         // Pick the family from current/persisted resolver result, in same
         // priority order as the price.
         const fromInMemFamily = (inMemLrr && inMemLrr.success && typeof inMemLrr.family === "string") ? inMemLrr.family : null;

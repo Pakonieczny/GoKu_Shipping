@@ -592,7 +592,6 @@ const SERVICE_LISTINGS = [
   { id: "559716663",  use: "An extender on its own, for a necklace the customer already has (for example one that sits too tight)." },
   { id: "1699154208", use: "Upgrade a necklace to the beady chain (gold filled or sterling silver, not rose gold). The customer says which necklace in the personalization box." },
   { id: "718177133",  use: "Add an engraved disc or bar to a new purchase; staff also use it to sell a single disc to add to a necklace the customer already owns (ask for a photo of the original discs to match size and font)." },
-  { id: "1713156673", use: "Checkout for a custom charm ONLY after a person has already quoted its price in this thread (usually right after a proof is approved). The customer picks the quoted dollar option and puts the design instructions in the personalization box. Never quote a custom price yourself." },
   { id: "487548109",  use: "Paid shipping upgrade (Priority or Express), added before the order ships." },
   { id: "486325751",  use: "Re-shipping fee when a package came back to us or must be sent again at the customer's cost." }
 ];
@@ -613,7 +612,7 @@ async function getServiceListingsBlock() {
     });
     const block = lines.length ? [
       "=== ADD-ON AND SERVICE LISTINGS (live shop links) ===",
-      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A brand-new custom design still goes through the custom listing, not these.",
+      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A custom design or proof the customer approves gets its own custom listing (the sales flow makes it); never send a generic custom-charm checkout listing for it.",
       ...lines,
       "=== END ADD-ON AND SERVICE LISTINGS ==="
     ].join("\n") : "";
