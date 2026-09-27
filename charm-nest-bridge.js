@@ -6647,135 +6647,586 @@ const OrderWin = window.OrderWin = (() => {
    Tuesday, the sheet a charm was cut on — none of it had a door. This is the door: one list of runs, one search box over
    all of them, and two ways in — carry on with a run that never finished, or load a finished one back onto the cards to
    look at, download and print. It is reachable from the run banner, from Orders and from Engraving, because the question
-   "which run was that?" is asked from wherever you happen to be standing. */
+   "which run was that?" is asked from wherever you happen to be standing.
+
+   Paul, 27 Sep: "The UI is broken. The cards are overlapping, and this is an old card with very [little] functionality from
+   beta testing. Please add all the appropriate functionality to this pop-up and fix all of the UI issues and make it match
+   the elegance of the rest of the platform." It is drawn now in the sheet window's hand (charm-nest-sheetwin.js). Each set
+   is a card: a strip of its sheets (each one's picture, metal, fill and QR label; a press opens that sheet in the sheet
+   window), its state in plain words, its day, sheets, orders and materials, and what can be done with it — open it on
+   the cards, download its files, see and copy its order numbers, pick an unfinished run up again. A search says what it
+   found in each set and lights the sheets it found it on. Nothing overlaps at any width: the cards are a grid, every
+   picture sits in a box of a fixed size, and a long name stops at an ellipsis with the whole of it on hover. Nothing
+   opens over it: the sheet window takes its place and gives it back when it closes, every question is asked inside the
+   card it is about, and every wait says what it is waiting for. */
 const RunHistory = window.RunHistory = (() => {
-  const H = { q: "", when: "all", view: localStorage.getItem("cn.histView") || "cards", runs: [], sheets: [], sets: [], scanned: null, loading: false, err: null, dlg: null, open: new Set(), lines: new Map() };
+  const H = { q: "", when: "all", view: "cards", runs: [], sheets: [], sets: [], shown: [], scanned: null, loading: false, more: false, err: null, dlg: null,
+    open: new Set(), media: new Map(), orders: new Map(), fetching: new Set(), busy: new Map(), notes: new Map(), noteT: new Map(), menu: null, back: false, scroll: 0, tile: null };
+  try { H.view = localStorage.getItem("cn.histView") === "list" ? "list" : "cards"; } catch (_) {}
   /* "Select previous run sets or days" is a filing question, so the dialog files them: four ways to narrow by time and
      state, and a heading for every day, because a flat list of eighty runs is a wall whatever order it is in. */
   const WHEN = [["all", "All"], ["today", "Today"], ["week", "Last 7 days"], ["open", "Unfinished"]];
   const DAY_MS = 86400000;
-  function inWhen(r) {
-    if (H.when === "open") return !["complete", "abandoned", "superseded"].includes(r.status);
-    if (H.when === "all" || !r.day) return H.when === "all";
+  function inWhen(r, when = H.when) {
+    if (when === "open") return !["complete", "abandoned", "superseded"].includes(r.status);
+    if (when === "all" || !r.day) return when === "all";
     const age = (Date.parse(today() + "T12:00:00") - Date.parse(r.day + "T12:00:00")) / DAY_MS;
-    return H.when === "today" ? age === 0 : age >= 0 && age < 7;
+    return when === "today" ? age === 0 : age >= 0 && age < 7;
   }
+  const ICON = {
+    search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    close: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>',
+    back: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    chev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    down: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.8 7.5 8 10.7l3.2-3.2M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    qr: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M9.5 9.5h2v2h-2zM11.5 11.5h2v2h-2z" fill="currentColor"/></svg>',
+    copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10.5 3.5v-.4a1.6 1.6 0 0 0-1.6-1.6H4.1a1.6 1.6 0 0 0-1.6 1.6v4.8a1.6 1.6 0 0 0 1.6 1.6h.4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
+    file: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.8h5.2L12.5 5v9.2H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 2v3.2h3.3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>',
+    plate: '<svg viewBox="0 0 34 24" aria-hidden="true"><rect x="1" y="1" width="32" height="22" rx="3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="3.2 2.6"/><circle cx="10" cy="9.5" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M17 8h9M17 12h6M8 16.5h18" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>'
+  };
+  const TONE = { ok: "var(--sage)", warn: "var(--gold2)", bad: "var(--clay)", info: "var(--slate)", neutral: "var(--ink25)" };
+  /* The words a person reads for each state, and the one line that says what it means (the pill's tooltip). */
+  const STATUS = {
+    complete: ["ok", "finished", "Every order in it is finished"],
+    committed: ["ok", "finished", "Every order in it is finished"],
+    processed: ["warn", "follow-up", "Processing is complete; something in it still asks for a follow-up"],
+    running: ["info", "running", "The run is at work"],
+    review: ["warn", "waiting for a person", "The run waits for a decision in Review or Engraving"],
+    paused: ["warn", "paused", "Paused: it carries on when it is resumed"],
+    stopped: ["bad", "stopped", "The run stopped before it finished"],
+    abandoned: ["neutral", "given up", "The run was put down unfinished"],
+    held: ["warn", "held", "Sheets held back until they are full enough to join a set"],
+    standalone: ["neutral", "standalone", "Solid gold sheets, cut on their own"],
+    superseded: ["neutral", "replaced", "A later set took its place"],
+    open: ["info", "open", "The set is still being filled"],
+    labelled: ["info", "labelled", "Its QR labels are made; it waits to be committed"]
+  };
+  const n = (k, one, many) => `${(+k || 0).toLocaleString()} ${+k === 1 ? one : many || one + "s"}`;
+  const nb = (k, one, many) => `<b>${(+k || 0).toLocaleString()}</b> ${+k === 1 ? one : many || one + "s"}`;
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
+  const codeOf = m => METAL_TAG[m] || labelOf(m);
+  const metalRank = m => { const i = METALS.findIndex(x => x.key === m); return i < 0 ? 99 : i; };
+  const keyOf = g => g.key || g.setId || "run:" + (g.runId || "");
+  const idOf = s => s.id || s.sheetId;
+  const runOf = g => (g.runId && H.runs.find(r => r.runId === g.runId)) || null;
+  const groupByKey = k => H.shown.find(g => keyOf(g) === k) || H.sets.find(g => keyOf(g) === k) || null;
+  const dateOf = d => new Date(d + "T12:00:00");
+  const dayWord = d => d ? dateOf(d).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+  const dayShort = d => d ? dateOf(d).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "no date";
+  const ordersCount = g => +g.orders || new Set((g.orderIds || []).map(String)).size;
+  /** Plain words for a group's name: a numbered set is "Set 3"; held sheets, a solid sheet and a run that wrote no sheet
+      say what they are rather than "Working sheets". */
+  function nameOf(g) {
+    if (g.standalone) return g.name || "Standalone sheets";
+    if (g.draft) return "Sheets waiting to be filled";
+    if (g.seq) return `Set ${g.seq}`;
+    if (g.name && !/^Set\s*$/.test(g.name)) return g.name;
+    const r = runOf(g), t = r && (r.createdAt || r.updatedAt);
+    return t ? `Run started ${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : g.runId ? `Run ${String(g.runId).slice(-6)}` : "Working sheets";
+  }
+  const fullName = g => [nameOf(g), g.draft && g.name ? g.name : "", g.day ? dayWord(g.day) : ""].filter(Boolean).join(" · ");
+  function statusOf(g) {
+    const s = String(g.status || "").toLowerCase(), r = runOf(g);
+    let [tone, word, why] = STATUS[s] || (s.startsWith("complete") ? STATUS.complete : ["neutral", s || "unknown", ""]);
+    if (s === "stopped" && r && r.stoppedBy) why = `Stopped · ${r.stoppedBy}`;
+    return { tone, word, why };
+  }
+  /** Why the cards cannot take another set just now (Recall.open's own guards, asked before it is pressed). */
+  function blockedWhy() {
+    if (B.run && !["complete", "abandoned"].includes(B.run.status)) return "A run is open on the cards. Finish it or put it down before opening another set; its work stays as it is. The sheets and downloads here work meanwhile.";
+    if (allSheets().some(p => p.metal === "rose" && !p.roseCutAt && (p.rosePlan || p.roseProtected))) return "The uncut Rose Gold contour is on the cards. Record its cut before another set takes the cards.";
+    return "";
+  }
+  function ctxOf(g, hits) {
+    const cur = B.run && B.run.runId, rc = Recall.state(), r = runOf(g);
+    return {
+      hits,
+      isCur: !!((cur && g.runId === cur) || (Recall.on() && (rc.setId ? g.setId === rc.setId : rc.runId && g.runId === rc.runId))),
+      resumable: !!(r && ["running", "review", "paused", "stopped"].includes(r.status) && r.runId !== cur),
+      blocked: blockedWhy()
+    };
+  }
+  /** What a search found in one group: the order numbers, the SKUs and the engraved words, and the sheets they are on. */
+  function hitsOf(g) {
+    const q = H.q.trim().toLowerCase(); if (!q) return null;
+    const has = v => String(v == null ? "" : v).toLowerCase().includes(q);
+    const orders = new Set(), skus = new Set(), words = [], sheets = new Set(), r = runOf(g);
+    for (const o of g.orderIds || []) if (has(o)) orders.add(String(o));
+    for (const s of g.sheets || []) {
+      let hit = false;
+      for (const o of s.orderIds || []) if (has(o)) { orders.add(String(o)); hit = true; }
+      // a sheet's names are "<order> · <SKU>[ · k/n]" for each of its pieces
+      const names = String(s.names || "");
+      if (has(names)) { hit = true; for (const m of names.matchAll(/\d{4,}\s·\s([^\s·]+)/g)) if (has(m[1])) skus.add(m[1]); }
+      for (const bk of s.backs || []) { const t = bk.text || (bk.lines || []).join(" "); if (t && has(t)) { hit = true; if (!words.some(w => w.text === t)) words.push({ text: t, order: bk.order }); } }
+      if (has(s.fileBase)) hit = true;
+      if (hit) sheets.add(idOf(s));
+    }
+    // the run's own lines answer for a run that wrote no sheet, and name the SKUs its sheets' names do not spell out
+    for (const k of (r && r.hitSkus) || []) if (!(g.sheets || []).length || (g.sheets || []).some(s => String(s.names || "").includes(k))) skus.add(k);
+    if (r && !(g.sheets || []).length) for (const o of r.hitOrders || []) orders.add(String(o));
+    return { orders: [...orders], skus: [...skus], words, sheets };
+  }
+  /** The text with each place the search matches marked. */
+  function mark(text) {
+    const s = String(text == null ? "" : text), q = H.q.trim(); if (!q) return esc(s);
+    const low = s.toLowerCase(), ql = q.toLowerCase(); let out = "", i = 0;
+    for (let j = low.indexOf(ql); j >= 0; j = low.indexOf(ql, i)) { out += esc(s.slice(i, j)) + "<mark>" + esc(s.slice(j, j + ql.length)) + "</mark>"; i = j + ql.length; }
+    return out + esc(s.slice(i));
+  }
+
+  /* ── the window ── */
   function ensure() {
     if (H.dlg) return H.dlg;
-    const d = el("dialog", "hist"); d.id = "histDlg";
-    d.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm" value="cancel">Close</button></form>
-      <h2>Sets</h2>
-      <div class="hq"><input id="hQ" type="search" placeholder="order number, SKU, engraved words, a date, a set…" autocomplete="off">
-        <button class="btn ghost sm" id="hRefresh" title="read the records again">Refresh</button></div>
-      <div class="hWhen" id="hWhen"></div>
+    const d = el("dialog", "setsWin"); d.id = "histDlg"; d.setAttribute("aria-labelledby", "hTitle");
+    d.innerHTML = `<div class="hBox">
+      <header class="hHead">
+        <div class="hTitle"><h2 id="hTitle">Sets</h2><span>every run and set on record</span></div>
+        <label class="hFind">${ICON.search}<input id="hQ" type="search" placeholder="Order number, SKU, engraved words, a date, a set…" autocomplete="off" spellcheck="false" aria-label="Search every set"></label>
+        <button type="button" class="btn ghost sm" id="hRefresh" title="Read the records again">Refresh</button>
+        <button type="button" class="hIcon" data-close title="Close" aria-label="Close">${ICON.close}</button>
+      </header>
+      <div class="hBar">
+        <div class="hSeg" id="hWhen" role="group" aria-label="Which sets"></div>
+        <span class="hState" id="hState" aria-live="polite"></span>
+        <div class="hSeg hView" role="group" aria-label="View">${["cards", "list"].map(v => `<button type="button" data-view="${v}" aria-pressed="${H.view === v}" title="${v === "cards" ? "A card for each set, with its sheets" : "One line for each set"}">${v === "cards" ? "Cards" : "List"}</button>`).join("")}</div>
+      </div>
       <div class="hBody" id="hBody"></div>
-      <div class="hFoot" id="hFoot"></div><button class="btn ghost sm" id="hMore" hidden>Load older sets</button>`;
+      <footer class="hFootBar"><span class="hFoot" id="hFoot"></span><button type="button" class="btn ghost xs" id="hMore" hidden>Load older sets</button></footer>
+    </div><div class="hMenu" id="hMenu" role="menu" hidden></div>`;
     document.body.appendChild(d); H.dlg = d;
-    const q = d.querySelector("#hQ");
+    const q = d.querySelector("#hQ"), body = d.querySelector("#hBody");
     let t = 0;
     q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
-    d.querySelector("#hWhen").onclick = e => { const b = e.target.closest("[data-when]"); if (b) { H.when = b.dataset.when; render(); return; } const v = e.target.closest("[data-view]"); if (v) { H.view = v.dataset.view; try { localStorage.setItem("cn.histView", H.view); } catch (_) {} render(); } };
-    d.querySelector("#hMore").onclick = () => load(true);
-    d.querySelector("#hRefresh").onclick = e => { e.preventDefault(); load(); };
+    q.onkeydown = e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); clearTimeout(t); H.q = q.value; load(); } };
+    d.addEventListener("click", onClick);
+    d.addEventListener("keydown", onKey);
+    // Escape closes an open menu first, then the window, with the same fade the sheet window has
+    d.addEventListener("cancel", e => { e.preventDefault(); if (H.menu) { const b = H.menu.btn; menu(null); b?.focus?.(); return; } close(); });
+    d.addEventListener("close", () => { menu(null); d.classList.remove("closing"); });
+    // a picture shows when it has loaded; one that cannot load becomes the quiet "no preview" mark, never a blank box
+    d.addEventListener("load", e => { const i = e.target; if (i && i.classList && i.classList.contains("hThumb")) i.classList.add("on"); }, true);
+    d.addEventListener("error", e => { const i = e.target; if (!(i && i.classList && i.classList.contains("hThumb"))) return; if (i.closest(".hPlate")) i.replaceWith(el("span", "hNoPv", "no preview")); else i.remove(); }, true);
+    body.addEventListener("scroll", e => { if (e.target === body) { if (H.menu) menu(null); } else if (e.target.classList && e.target.classList.contains("hStrip")) atEnds(e.target.parentElement); }, { capture: true, passive: true });
+    addEventListener("resize", () => { if (d.open) { menu(null); atEnds(body); } });
+    window.addEventListener("cn-cloud-back", () => { if (d.open) load(); });
     return d;
   }
   function show(q) {
-    const d = ensure();
+    const d = ensure(); H.back = false;
     if (q != null) { H.q = q; d.querySelector("#hQ").value = q; }
-    if (!d.open) d.showModal();
+    if (!d.open) { d.classList.remove("closing"); d.showModal(); }
     d.querySelector("#hQ").focus();
     load();
   }
+  async function close(now) {
+    const d = H.dlg; if (!d || !d.open) return;
+    menu(null);
+    if (!now && !still() && !d.classList.contains("closing")) { d.classList.add("closing"); await new Promise(r => setTimeout(r, 160)); }
+    d.classList.remove("closing");
+    try { d.close(); } catch (_) { d.removeAttribute("open"); }
+  }
   async function load(more = false) {
-    if (!S.cloud.ok) { H.err = "the cloud is not connected, so there is nothing to read"; H.runs = []; H.sheets = []; render(); return; }
-    H.loading = true; H.err = null; H.readAt = Date.now(); render();
+    const d = H.dlg; if (!d) return;
+    if (!S.cloud.ok) { H.err = "The cloud is not connected, so there is nothing to read. It is read again when the cloud is back."; H.loading = false; H.more = false; H.runs = []; H.sheets = []; H.sets = []; render(); return; }
+    const query = H.q, request = (H.request || 0) + 1; H.request = request;
+    H.loading = true; H.more = !!more; H.err = null; H.readAt = Date.now();
+    if (!H.sets.length && !H.runs.length) render(); else paintBar();
     try {
-      const query = H.q, request = (H.request || 0) + 1; H.request = request;
       // one page of the newest records (a search looks through 30 days of them, ending at this station's today);
       // `next` is where the older ones start, read only when asked for
       const r = await api("charmNestLibrary", { op: "history", q: query, limit: 60, today: today(), cursor: more ? H.next || null : null }, { quiet: true });
       if (H.request !== request || H.q !== query) return;
-      const had = more ? H : { runs: [], sheets: [], sets: [] }, runIds = new Set(had.runs.map(x => x.runId)), sheetIds = new Set(had.sheets.map(x => x.id)), keys = new Set(had.sets.map(g => g.key || g.setId || ""));
+      const had = more ? H : { runs: [], sheets: [], sets: [] }, runIds = new Set(had.runs.map(x => x.runId)), sheetIds = new Set(had.sheets.map(x => x.id)), keys = new Set(had.sets.map(g => keyOf(g)));
       // each sheet comes once, in its group (a second list of them doubled the answer)
       H.runs = had.runs.concat((r.runs || []).filter(x => !runIds.has(x.runId))); H.sheets = had.sheets.concat((r.sheets || (r.sets || []).flatMap(g => g.sheets || [])).filter(x => !sheetIds.has(x.id)));
       H.scanned = more && H.scanned && r.scanned ? Object.fromEntries(Object.keys(r.scanned).map(k => [k, (H.scanned[k] || 0) + (r.scanned[k] || 0)])) : r.scanned;
       H.next = r.next || null; H.from = r.window?.from || null;
-      const groups = (r.sets || []).filter(g => !keys.has(g.key || g.setId || "")).map(g => {
-        g.sheets.sort((a, b) => (a.sheetIndex || 0) - (b.sheetIndex || 0));
-        const preview = g.sheets.find(x => x.metal === "gold" && x.preview) || g.sheets.find(x => x.preview);
-        g.thumb = preview ? cors(preview.preview) : null; g.thumbOf = preview?.fileBase || null;
-        return g;
-      });
+      const groups = (r.sets || []).filter(g => !keys.has(keyOf(g))).map(g => { (g.sheets = g.sheets || []).sort((a, b) => metalRank(a.metal) - metalRank(b.metal) || (a.sheetIndex || 0) - (b.sheetIndex || 0)); return g; });
       // a run shown alone on one page and with its set on another is shown once, with its set
       const all = had.sets.concat(groups), named = new Set(all.filter(g => !String(g.key || "").startsWith("run:")).map(g => g.runId).filter(Boolean));
       H.sets = all.filter(g => !(String(g.key || "").startsWith("run:") && named.has(g.runId))).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")));
-      const moreButton = H.dlg.querySelector("#hMore"); moreButton.hidden = !H.next; moreButton.textContent = query ? "Search older records" : "Load older sets";
-
-    } catch (e) { H.err = e.message; H.runs = []; H.sheets = []; }
-    H.loading = false; render();
+      H.lastQ = query;
+    } catch (e) {
+      if (H.request !== request) return;
+      H.err = e.message;
+      // a failed refresh keeps what was on screen; a failed new search does not leave another search's answer up
+      if (!more && query !== H.lastQ) { H.runs = []; H.sheets = []; H.sets = []; }
+    }
+    H.loading = false; H.more = false; render();
   }
-  const dayWord = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
-  const STATUS = { processed: ["warn", "processing complete · follow-up"], complete: ["ok", "finished"], running: ["warn", "running"], review: ["warn", "waiting for a person"], paused: ["warn", "paused"], stopped: ["bad", "stopped"], abandoned: ["neutral", "given up"] };
+
+  /* ── drawing ── */
+  function paintBar() {
+    const d = H.dlg; if (!d) return;
+    d.querySelector("#hWhen").innerHTML = WHEN.map(([k, lbl]) => `<button type="button" data-when="${k}" aria-pressed="${H.when === k}">${lbl}<i>${H.sets.filter(g => inWhen(g, k)).length}</i></button>`).join("");
+    d.querySelectorAll(".hView [data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === H.view)));
+    const found = H.q.trim() && !H.loading && !H.err ? H.sets.length : -1;
+    d.querySelector("#hState").innerHTML = H.loading
+      ? `<span class="owSpin"></span><span>${esc(H.more ? (H.q ? "Searching older records…" : "Reading older sets…") : H.q.trim() ? `Searching every set for “${H.q.trim()}”…` : "Reading the records…")}</span>`
+      : H.err && (H.sets.length || H.runs.length) ? `<span class="bad" title="${esc(H.err)}">Could not read the records: ${esc(H.err)}</span>`
+      : found > 0 ? `<span>${n(found, "set")} found</span>` : "";
+    const rf = d.querySelector("#hRefresh"); rf.disabled = H.loading;
+    const mb = d.querySelector("#hMore"); mb.hidden = !H.next || (!H.sets.length && !H.q); mb.disabled = H.loading;
+    mb.innerHTML = H.loading && H.more ? `<span class="spin"></span>Reading older…` : H.q ? "Search older records" : "Load older sets";
+    d.querySelector("#hFoot").textContent = H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets${H.from ? ` back to ${dayWord(H.from)}` : ""}` : "";
+  }
+  /** What the filter shows: the groups, and an unfinished run with no group of its own (it can still be picked up). */
+  function entries() {
+    const cur = B.run && B.run.runId, sets = H.sets.filter(g => inWhen(g));
+    const lone = H.runs.filter(r => inWhen(r) && ["running", "review", "paused", "stopped"].includes(r.status) && r.runId !== cur && !sets.some(g => g.runId === r.runId))
+      .map(r => ({ key: "run:" + r.runId, runId: r.runId, setId: r.setId || null, seq: r.seq || null, day: r.day, status: r.status, sheets: [], materials: [], orderIds: [], orders: r.orders || 0 }));
+    return sets.concat(lone).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")));
+  }
   function render() {
-    const b = H.dlg && H.dlg.querySelector("#hBody"); if (!b) return;
-    const f = H.dlg.querySelector("#hFoot");
-    if (H.loading && !H.runs.length) { b.innerHTML = `<div class="hEmpty"><span class="spin"></span> reading the records…</div>`; f.textContent = ""; return; }
-    if (H.err) { b.innerHTML = `<div class="hEmpty bad">${esc(H.err)}</div>`; f.textContent = ""; return; }
-    if (!H.sets.length && !H.runs.length && !H.sheets.length) {
-      b.innerHTML = `<div class="hEmpty">${H.q ? `nothing matches “${esc(H.q)}”${H.from ? ` since ${esc(dayWord(H.from))}` : ""}` : "no runs on record yet"}</div>`;
-      H.dlg.querySelector("#hWhen").innerHTML = "";
-      f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets` : "", H.next ? "older records below" : ""].filter(Boolean).join(" · ");
+    const d = H.dlg; if (!d) return;
+    const b = d.querySelector("#hBody");
+    menu(null); paintBar();
+    if (H.err && !H.sets.length && !H.runs.length) { H.shown = []; b.innerHTML = `<div class="hEmpty bad"><span>${esc(H.err)}</span>${S.cloud.ok ? `<button type="button" class="btn ghost sm" data-a="retry">Try again</button>` : ""}</div>`; return; }
+    if (H.loading && !H.sets.length && !H.runs.length) { H.shown = []; b.innerHTML = skeleton(); return; }
+    if (!H.sets.length && !H.runs.length) {
+      H.shown = [];
+      b.innerHTML = `<div class="hEmpty"><span>${H.q ? `nothing matches “${esc(H.q)}”${H.from ? ` since ${esc(dayWord(H.from))}` : ""}` : "no runs on record yet"}</span>${H.q && H.next ? `<button type="button" class="btn ghost sm" data-a="older">Search older records</button>` : ""}</div>`;
       return;
     }
-    const cur = B.run && B.run.runId;
-    const seenRuns = H.runs.filter(inWhen);
-    const seenSets = H.sets.filter(inWhen);
-    const wsel = H.dlg.querySelector("#hWhen");
-    const countIn = (k, arr) => arr.filter(r => { const was = H.when; H.when = k; const yes = inWhen(r); H.when = was; return yes; }).length;
-    wsel.innerHTML = WHEN.map(([k, lbl]) => `<button class="egTab${H.when === k ? " on" : ""}" data-when="${k}">${lbl}<b>${countIn(k, H.sets)}</b></button>`).join("")
-      + `<span class="sp"></span><span class="viewSeg">${["cards", "list"].map(v => `<button data-view="${v}"${H.view === v ? ' class="on"' : ""} title="${v === "cards" ? "a picture of each set" : "one line per set"}">${v === "cards" ? "Cards" : "List"}</button>`).join("")}</span>`;
-    if (!seenSets.length && !seenRuns.length) { b.innerHTML = `<div class="hEmpty">no sets ${H.when === "today" ? "today" : H.when === "week" ? "in the last seven days" : H.when === "open" ? "left unfinished" : "on record"}</div>`; f.textContent = ""; return; }
-    const openRuns = seenRuns.filter(r => ["running", "review", "paused", "stopped"].includes(r.status) && r.runId !== cur);
-    let lastDay = null, html = "";
-    for (const g of seenSets) {
-      if (g.day !== lastDay) { html += `<div class="hDay">${esc(dayWord(g.day) || "no date")}</div>`; lastDay = g.day; }
-      const name = g.name || (g.seq ? `Set ${g.seq}` : "Working sheets");
-      const mats = g.materials.map(m => labelOf(m)).join(" \u00b7 ");
-      const isCur = g.runId && g.runId === cur;
-      const openBtn = g.sheets.length ? `<button class="btn gold sm" data-a="open" title="Preview the saved sheets without replacing your current workspace">Preview</button>` : "";
-      const exportButtons = g.sheets.length ? `<button class="btn ghost sm" data-export-set="${esc(JSON.stringify(g.sheets.map(sh => sh.id || sh.sheetId)))}" data-format="ai">Download .ai</button><button class="btn ghost sm" data-export-set="${esc(JSON.stringify(g.sheets.map(sh => sh.id || sh.sheetId)))}" data-format="dxf">.dxf</button>` : "";
-      const resumeBtn = g.runId && openRuns.some(r => r.runId === g.runId) ? `<button class="btn ghost sm" data-a="resume" title="pick the unfinished run this set belongs to up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button>` : "";
-      html += H.view === "cards"
-        ? `<div class="hSet card hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" tabindex="0">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hThumb" loading="lazy" alt="" src="${esc(cors(g.thumb))}" title="${esc(g.thumbOf || "")}">` : `<div class="hThumb ph">no preview</div>`}
-            <div class="hRow"><span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span><span class="ct">${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span></div>
-            <div class="hRow sub"><span class="ct">${esc(mats)}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${exportButtons}${resumeBtn}</div>
-          </div>`
-        : `<div class="hSet row hoverItem${isCur ? " cur" : ""}" data-group="${esc(g.key || g.setId || "")}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}"><div class="hRow">
-            ${g.thumb ? `<img crossorigin="anonymous" class="hMini" loading="lazy" alt="" src="${esc(cors(g.thumb))}">` : `<span class="hMini ph"></span>`}
-            <span class="nm">${esc(name)}</span><span class="pill ${g.status === "complete" ? "ok" : "bad"}">${g.status}</span>
-            <span class="ct">${esc(mats)} \u00b7 ${g.sheets.length} sheet${g.sheets.length === 1 ? "" : "s"} \u00b7 ${g.orders} order${g.orders === 1 ? "" : "s"}</span><span class="sp"></span>${isCur ? `<span class="pill neutral">on the cards</span>` : openBtn}${exportButtons}${resumeBtn}</div></div>`;
+    const shown = entries(); H.shown = shown;
+    if (!shown.length) { b.innerHTML = `<div class="hEmpty"><span>no sets ${H.when === "today" ? "today" : H.when === "week" ? "in the last seven days" : H.when === "open" ? "left unfinished" : "on record"}</span><button type="button" class="btn ghost sm" data-when="all">Show every set</button></div>`; return; }
+    const days = []; for (const g of shown) { const last = days[days.length - 1]; if (last && last.day === (g.day || "")) last.list.push(g); else days.push({ day: g.day || "", list: [g] }); }
+    const one = H.view === "list" ? rowHtml : cardHtml;
+    b.innerHTML = `<div class="hSets ${H.view}">${days.map(x => `<section class="hDaySec">${dayHead(x.day, x.list.length)}<div class="${H.view === "list" ? "hRows" : "hGrid"}">${x.list.map(g => one(g, ctxOf(g, hitsOf(g)))).join("")}</div></section>`).join("")}</div>`;
+    settle(b); atEnds(b);
+  }
+  function dayHead(day, count) {
+    const what = n(count, "set");
+    if (!day) return `<h3 class="hDay">No date<i>${what}</i></h3>`;
+    const d = dateOf(day), age = Math.round((Date.parse(today() + "T12:00:00") - d.getTime()) / DAY_MS);
+    const title = age === 0 ? "Today" : age === 1 ? "Yesterday" : d.toLocaleDateString(undefined, { weekday: "long" });
+    const date = d.toLocaleDateString(undefined, Object.assign({ month: "short", day: "numeric" }, d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}));
+    return `<h3 class="hDay">${esc(title)}<span>${esc(date)}</span><i>${what}</i></h3>`;
+  }
+  const skeleton = () => H.view === "list"
+    ? `<div class="hSets list"><div class="hRows">${Array.from({ length: 6 }, () => `<div class="hSkel row" aria-hidden="true"><i></i><i></i><i></i></div>`).join("")}</div></div>`
+    : `<div class="hSets cards"><div class="hGrid">${Array.from({ length: 6 }, () => `<div class="hSkel card" aria-hidden="true"><i></i><i></i><i></i><i></i></div>`).join("")}</div></div>`;
+  const pillHtml = st => `<span class="pill ${st.tone} hPill"${st.why ? ` title="${esc(st.why)}"` : ""}><i></i><span>${esc(st.word)}</span></span>`;
+  const cutHtml = g => g.laserDoneAt ? `<span class="hCut" title="${esc(`Cut on the laser${g.laserDoneBy ? " by " + g.laserDoneBy : ""} · ${new Date(g.laserDoneAt).toLocaleString()}`)}">${ICON.check}cut</span>` : "";
+  function matsHtml(g) {
+    const per = new Map(); for (const s of g.sheets || []) per.set(s.metal, (per.get(s.metal) || 0) + 1);
+    const keys = METALS.map(m => m.key).filter(k => per.has(k) || (g.materials || []).includes(k));
+    if (!keys.length) return `<span class="hMats"></span>`;
+    return `<span class="hMats">${keys.map(k => { const c = per.get(k) || 0, m = METALS.find(x => x.key === k); return `<span class="hMat" style="--c:${colorOf(k)}" title="${esc(m.long + (c ? " · " + n(c, "sheet") : ""))}"><i></i>${esc(codeOf(k))}${c ? `<b>${c}</b>` : ""}</span>`; }).join("")}</span>`;
+  }
+  function hitsHtml(h) {
+    if (!h) return "";
+    const bits = [], plain = [];
+    const list = (arr, max) => arr.slice(0, max).map(mark).join(", ") + (arr.length > max ? ` +${arr.length - max}` : "");
+    if (h.orders.length) { bits.push(`${h.orders.length > 1 ? "orders" : "order"} ${list(h.orders, 3)}`); plain.push(`${h.orders.length > 1 ? "orders" : "order"} ${h.orders.join(", ")}`); }
+    if (h.skus.length) { bits.push(`SKU ${list(h.skus, 2)}`); plain.push(`SKU ${h.skus.join(", ")}`); }
+    if (h.words.length) { const w = h.words[0]; bits.push(`engraved “${mark(w.text)}”${w.order ? ` · ${esc(w.order)}` : ""}`); plain.push(h.words.map(x => `engraved “${x.text}”${x.order ? " · " + x.order : ""}`).join(", ")); }
+    if (!bits.length) return "";
+    return `<div class="hHit" title="${esc("Found " + plain.join(" · "))}"><span>Found</span> ${bits.join(" · ")}</div>`;
+  }
+  /** A sheet's QR label, as the record has it: made, not made yet, or none to make (a held or solid sheet). */
+  function qrOf(s, g) {
+    const files = (s.label && s.label.files) || [];
+    if (files.length) return { st: "ok", text: files.length > 1 ? `${files.length} QR labels made` : "QR label made" };
+    if (g.standalone) return { st: "na", text: "no QR label: a standalone sheet" };
+    if (s.draft || g.draft || !g.setId) return { st: "na", text: "no QR label yet: made when the sheet joins a set" };
+    return { st: "no", text: "QR label not made yet" };
+  }
+  function tileHtml(s, g, h) {
+    const id = idOf(s), code = codeOf(s.metal), no = s.sheetIndex || s.page || 1, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
+    const facts = [`${code} Sheet ${no}`, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
+    return `<button type="button" class="hTile${h && h.sheets.has(id) ? " hit" : ""}" data-sheet="${esc(id)}" style="--c:${colorOf(s.metal)}" title="${esc(facts + " — open it in the sheet window")}" aria-label="${esc(`Open ${code} Sheet ${no} in the sheet window`)}">`
+      + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
+      + `<span class="hCap"><b><i></i>${esc(code)} ${esc(no)}</b><span class="hFill">${esc(fill)}</span><span class="hQr ${qr.st}" title="${esc(qr.text)}">${ICON.qr}</span>${s.laserDoneAt ? `<span class="hDone" title="cut on the laser">${ICON.check}</span>` : ""}</span></button>`;
+  }
+  function placeholderHtml(g) {
+    const s = String(g.status || "");
+    const why = s === "running" ? "Its sheets show here once they are nested" : ["stopped", "paused", "review"].includes(s) ? "It stopped before a sheet was written" : "No sheet was written";
+    return `<div class="hPh">${ICON.plate}<span><b>No sheets yet</b>${esc(why)}</span></div>`;
+  }
+  function stripHtml(g, h) {
+    const sh = g.sheets || []; if (!sh.length) return placeholderHtml(g);
+    return `<div class="hStripWrap" data-n="${Math.min(sh.length, 4)}"><div class="hStrip">${sh.map(s => tileHtml(s, g, h)).join("")}</div>`
+      + (sh.length > 2 ? `<button type="button" class="hArrow l" data-a="left" tabindex="-1" aria-label="Earlier sheets">${ICON.back}</button><button type="button" class="hArrow r" data-a="right" tabindex="-1" aria-label="More sheets">${ICON.next}</button>` : "") + `</div>`;
+  }
+  function orderIdsOf(g) {
+    const own = [...new Set((g.orderIds || []).map(String))];
+    if (own.length || !g.runId) return own;
+    return H.orders.has(keyOf(g)) ? H.orders.get(keyOf(g)) : null;
+  }
+  function ordersHtml(g, h) {
+    const ids = orderIdsOf(g);
+    if (!ids) { fetchOrders(g); return `<div class="hOrders"><div class="hWait"><span class="owSpin"></span>Reading the run's orders…</div></div>`; }
+    if (!ids.length) return `<div class="hOrders"><div class="hWait">No order numbers on record</div></div>`;
+    const hit = new Set(h ? h.orders : []), list = ids.filter(o => hit.has(o)).concat(ids.filter(o => !hit.has(o)));
+    return `<div class="hOrders"><div class="hOrdHead"><span>${nb(ids.length, "order")}${hit.size ? ` · <em>${hit.size} found</em>` : ""}</span><button type="button" class="hLink" data-a="copy" title="Copy every order number, one per line">${ICON.copy}Copy all</button></div>`
+      + `<div class="hOrdList">${list.map(o => `<button type="button" class="hOrd${hit.has(o) ? " hit" : ""}" data-a="copy-one" data-order="${esc(o)}" title="Copy ${esc(o)}">${mark(o)}</button>`).join("")}</div></div>`;
+  }
+  function noteHtml(g) {
+    const k = keyOf(g), busy = H.busy.get(k), nt = H.notes.get(k);
+    if (busy) return `<div class="hNote wait" role="status"><span class="owSpin"></span><span class="t">${esc(busy.text)}</span></div>`;
+    if (!nt) return "";
+    return `<div class="hNote ${nt.tone || ""}" role="status"><span class="t">${esc(nt.text)}</span>${nt.acts ? `<span class="a">${nt.acts.map(([a, label, cls]) => `<button type="button" class="btn ${cls || "ghost"} xs" data-a="${a}">${esc(label)}</button>`).join("")}</span>` : `<button type="button" class="hX" data-a="unnote" title="Dismiss" aria-label="Dismiss">${ICON.close}</button>`}</div>`;
+  }
+  function actsHtml(g, c) {
+    const busy = H.busy.get(keyOf(g)), out = [];
+    if (c.isCur) out.push(`<span class="hOn" title="These sheets are on the material cards now">${ICON.check}on the cards</span>`);
+    else if ((g.sheets || []).length) out.push(`<button type="button" class="btn gold sm" data-a="open"${c.blocked ? ` aria-disabled="true"` : ""}${busy ? " disabled" : ""} title="${esc(c.blocked || "Put these sheets back on the material cards and their orders on Orders. Nothing is rebuilt and nothing is read from Etsy.")}">${busy && busy.a === "open" ? `<span class="spin"></span>Opening…` : "Open on the cards"}</button>`);
+    if (c.resumable) out.push(`<button type="button" class="btn ghost sm" data-a="resume" title="Pick the unfinished run up where it stopped">Resume the run…</button>`);
+    out.push(`<span class="sp"></span>`);
+    if ((g.sheets || []).length) out.push(`<button type="button" class="btn ghost sm hDl" data-a="files" aria-haspopup="menu" aria-expanded="false"${busy ? " disabled" : ""}>${busy && busy.a !== "open" ? `<span class="spin"></span>Preparing…` : `${ICON.down}Download`}</button>`);
+    return out.join("");
+  }
+  function cardHtml(g, c) {
+    const k = keyOf(g), show = H.media.get(k) === "orders" ? "orders" : "sheets", sheets = (g.sheets || []).length;
+    return `<article class="hSet card${c.isCur ? " cur" : ""}" data-group="${esc(k)}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}">`
+      + `<div class="hMedia" data-show="${show}">${show === "orders" ? ordersHtml(g, c.hits) : stripHtml(g, c.hits)}</div>`
+      + `<div class="hInfo"><div class="hTop"><h4 class="hName" title="${esc(fullName(g))}">${esc(nameOf(g))}</h4>${pillHtml(statusOf(g))}</div>`
+      + `<div class="hMeta"><span class="hDate" title="${esc(dayWord(g.day))}">${esc(dayShort(g.day))}</span>`
+      + `<button type="button" class="hCount" data-a="sheets" aria-pressed="${show === "sheets"}"${sheets ? "" : " disabled"} title="Its sheets' pictures">${nb(sheets, "sheet")}</button>`
+      + `<button type="button" class="hCount" data-a="orders" aria-pressed="${show === "orders"}" title="Its order numbers, to see and copy">${nb(ordersCount(g), "order")}</button>${cutHtml(g)}</div>`
+      + matsHtml(g) + hitsHtml(c.hits) + `</div>`
+      + `<div class="hNoteBox">${noteHtml(g)}</div><div class="hActs">${actsHtml(g, c)}</div></article>`;
+  }
+  function stackHtml(g) {
+    const sh = (g.sheets || []).slice(0, 3);
+    if (!sh.length) return `<span class="hStack"><span class="hMini ph">${ICON.plate}</span></span>`;
+    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
+  }
+  function panelHtml(g, h) {
+    const sh = g.sheets || [];
+    return `<div class="hPanelBody">${sh.length ? `<div class="hTiles">${sh.map(s => tileHtml(s, g, h)).join("")}</div>` : placeholderHtml(g)}${ordersHtml(g, h)}</div>`;
+  }
+  function rowHtml(g, c) {
+    const k = keyOf(g), st = statusOf(g), open = H.open.has(k);
+    return `<div class="hSet row${c.isCur ? " cur" : ""}${open ? " open" : ""}" data-group="${esc(k)}" data-set="${esc(g.setId || "")}" data-run="${esc(g.runId || "")}" style="--accent:${TONE[st.tone]}">`
+      + `<div class="hLine" role="button" tabindex="0" aria-expanded="${open}" aria-label="${esc(nameOf(g))}: show its sheets and orders">${stackHtml(g)}`
+      + `<span class="hWho"><span class="hTop"><b class="hName" title="${esc(fullName(g))}">${esc(nameOf(g))}</b>${pillHtml(st)}</span>`
+      + `<span class="hMeta"><span class="hDate" title="${esc(dayWord(g.day))}">${esc(dayShort(g.day))}</span><span>${nb((g.sheets || []).length, "sheet")}</span><span>${nb(ordersCount(g), "order")}</span>${cutHtml(g)}</span></span>`
+      + matsHtml(g) + `<span class="hActs">${actsHtml(g, c)}</span><span class="hChev">${ICON.chev}</span>${hitsHtml(c.hits)}</div>`
+      + `<div class="hNoteBox">${noteHtml(g)}</div><div class="hPanel"><div class="hPanelIn">${open ? panelHtml(g, c.hits) : ""}</div></div></div>`;
+  }
+  /** One card drawn again in part, where a press changed it: the rest of the list, its pictures and scroll, stay. */
+  function patch(k, parts) {
+    const node = H.dlg && H.dlg.querySelector(`.hSet[data-group="${CSS.escape(k)}"]`), g = groupByKey(k); if (!node || !g) return;
+    const hits = hitsOf(g);
+    for (const p of parts) {
+      if (p === "media") {
+        const m = node.querySelector(".hMedia"), show = H.media.get(k) === "orders" ? "orders" : "sheets";
+        if (m) { m.dataset.show = show; m.innerHTML = show === "orders" ? ordersHtml(g, hits) : stripHtml(g, hits); settle(m); atEnds(m); }
+        node.querySelectorAll(".hCount[data-a]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.a === show)));
+      } else if (p === "panel") {
+        const inner = node.querySelector(".hPanelIn"); if (inner && node.classList.contains("open")) { inner.innerHTML = panelHtml(g, hits); settle(inner); }
+      } else if (p === "note") {
+        const box = node.querySelector(".hNoteBox"); if (box) box.innerHTML = noteHtml(g);
+      } else if (p === "acts") {
+        const box = node.querySelector(".hActs"); if (box) box.innerHTML = actsHtml(g, ctxOf(g, hits));
+      }
     }
-    // unfinished runs that wrote no sheet yet have nothing to picture, but can still be picked up
-    for (const r of openRuns.filter(r => !seenSets.some(g => g.runId === r.runId))) html += `<div class="hSet row" data-run="${esc(r.runId)}"><div class="hRow"><span class="nm">${r.seq ? "Set " + r.seq : "run " + r.runId.slice(-8)}</span><span class="pill warn">${esc(r.status)}${r.stoppedBy ? " \u00b7 " + esc(r.stoppedBy) : ""}</span><span class="ct">${r.lines} line${r.lines === 1 ? "" : "s"} \u00b7 no sheet written yet</span><span class="sp"></span><button class="btn ghost sm" data-a="resume" title="pick it up where it stopped \u2014 it re-reads every order from Etsy first">Resume the run\u2026</button></div></div>`;
-    b.innerHTML = `<div class="hSets ${H.view}">${html}</div>`;
-    f.textContent = [H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets${H.from ? ` back to ${dayWord(H.from)}` : ""}` : "",
-      H.next ? `${H.sets.length} groups shown — older records below` : ""].filter(Boolean).join(" · ");
-    b.querySelectorAll(".hSet").forEach(node => {
-      const setId = node.dataset.set || null, runId = node.dataset.run || null;
-      const o = node.querySelector("[data-a=open]"); if (o) o.onclick = e => { e.stopPropagation(); if (H.dlg.open) H.dlg.close(); SetPicker.preview(H.sets.find(g => node.dataset.group ? (g.key || g.setId || "") === node.dataset.group : g.setId === setId && g.runId === runId)); };
-      const rs = node.querySelector("[data-a=resume]"); if (rs) rs.onclick = e => {
-        e.stopPropagation(); const r2 = H.runs.find(x => x.runId === runId) || {};
-        if (!confirm(`Pick run ${r2.seq ? "Set " + r2.seq : String(runId).slice(-8)} up again?\n\nIt re-reads all ${r2.orders || ""} orders from Etsy through the Design Station before it can carry on, which takes a few minutes.\n\nTo look at what it already made, press Preview instead \u2014 that reads nothing from Etsy.`)) return;
-        H.dlg.close(); RunCtl.resumeRun(runId).catch(err => toast(err.message, "bad", 7000));
-      };
-      if (o) node.onclick = e => { if (e.target.closest("button")) return; o.click(); };
+  }
+  /** A picture already loaded (from the cache) shows at once; a strip says which way it can still scroll. */
+  function settle(root) { requestAnimationFrame(() => { for (const i of root.querySelectorAll("img.hThumb:not(.on)")) if (i.complete && i.naturalWidth) i.classList.add("on"); }); }
+  function atEnds(root) {
+    requestAnimationFrame(() => {
+      const wraps = root.classList && root.classList.contains("hStripWrap") ? [root] : root.querySelectorAll(".hStripWrap");
+      for (const w of wraps) { const s = w.querySelector(".hStrip"); if (!s) continue; const max = s.scrollWidth - s.clientWidth; w.dataset.at = max <= 1 ? "none" : s.scrollLeft <= 1 ? "start" : s.scrollLeft >= max - 1 ? "end" : "mid"; }
     });
   }
-  // every step of a run asks for a refresh; while the list is open it is read again at most once a minute
+
+  /* ── what a press does ── */
+  function onClick(e) {
+    const t = e.target; if (!(t instanceof Element)) return;
+    const d = H.dlg;
+    if (t === d) { close(); return; }                                 // the backdrop
+    if (H.menu && !t.closest("#hMenu") && !t.closest('[data-a="files"]')) menu(null);
+    const mi = t.closest("#hMenu [data-m]"); if (mi) { if (!mi.disabled) menuAct(mi.dataset.m); return; }
+    if (t.closest("[data-close]")) { close(); return; }
+    const w = t.closest("[data-when]"); if (w) { H.when = w.dataset.when; render(); return; }
+    const v = t.closest("[data-view]"); if (v) { if (H.view !== v.dataset.view) { H.view = v.dataset.view; try { localStorage.setItem("cn.histView", H.view); } catch (_) {} render(); } return; }
+    if (t.closest("#hRefresh")) { load(); return; }
+    if (t.closest("#hMore")) { load(true); return; }
+    const tile = t.closest(".hTile[data-sheet]"); if (tile) { openSheet(tile.dataset.sheet, tile); return; }
+    const node = t.closest(".hSet"), a = t.closest("[data-a]");
+    if (a) { if (!a.disabled) act(a.dataset.a, node, a); return; }
+    if (node && t.closest(".hLine")) toggleRow(node);
+  }
+  function onKey(e) {
+    const t = e.target; if (!(t instanceof Element)) return;
+    if ((e.key === "Enter" || e.key === " ") && t.classList.contains("hLine")) { e.preventDefault(); toggleRow(t.closest(".hSet")); return; }
+    if (H.menu && (e.key === "ArrowDown" || e.key === "ArrowUp") && t.closest("#hMenu")) {
+      e.preventDefault(); const items = [...H.dlg.querySelectorAll("#hMenu [data-m]:not(:disabled)")], i = items.indexOf(t);
+      (items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length] || items[0])?.focus();
+    }
+  }
+  function act(a, node, btn) {
+    const g = node ? groupByKey(node.dataset.group) : null;
+    if (a === "retry") return load();
+    if (a === "older") return load(true);
+    if (!g && a !== "copy-one") return;
+    switch (a) {
+      case "open": return openOnCards(g);
+      case "resume": return askResume(g);
+      case "resume-yes": return resume(g);
+      case "unnote": return note(g, null);
+      case "files": return menu(H.menu && H.menu.key === keyOf(g) ? null : { key: keyOf(g), btn });
+      case "sheets": case "orders": { const k = keyOf(g); if (a === "orders") H.media.set(k, "orders"); else H.media.delete(k); return patch(k, ["media"]); }
+      case "copy": return copyOrders(g);
+      case "copy-one": return copyOne(btn);
+      case "left": case "right": { const s = btn.closest(".hStripWrap")?.querySelector(".hStrip"); if (s) s.scrollBy({ left: (a === "left" ? -1 : 1) * s.clientWidth * 0.8, behavior: still() ? "auto" : "smooth" }); return; }
+    }
+  }
+  function toggleRow(node) {
+    if (!node) return;
+    const k = node.dataset.group, g = groupByKey(k); if (!g) return;
+    const open = !H.open.has(k); if (open) H.open.add(k); else H.open.delete(k);
+    node.classList.toggle("open", open); node.querySelector(".hLine").setAttribute("aria-expanded", String(open));
+    if (open) { const inner = node.querySelector(".hPanelIn"); inner.innerHTML = panelHtml(g, hitsOf(g)); settle(inner); }
+  }
+  function note(g, text, tone = "", acts = null) {
+    const k = keyOf(g); clearTimeout(H.noteT.get(k));
+    if (text) H.notes.set(k, { text, tone, acts }); else H.notes.delete(k);
+    patch(k, ["note"]);
+    // a line that only says something went well goes by itself
+    if (text && tone === "ok") H.noteT.set(k, setTimeout(() => { if (H.notes.get(k)?.text === text) { H.notes.delete(k); patch(k, ["note"]); } }, 4500));
+  }
+  function busy(g, text, a) { const k = keyOf(g); if (text) { H.notes.delete(k); H.busy.set(k, { text, a }); } else H.busy.delete(k); patch(k, ["note", "acts"]); }
+  // What the app's own tools said while one of them ran (their toasts sit under this window): read here, said in the card
+  // it is about, and taken off the toast pile so it is not said twice.
+  const toastsNow = () => new Map([...document.querySelectorAll("#toasts .toast")].map(x => [x, x.dataset.n]));
+  function saidSince(was) {
+    const fresh = [...document.querySelectorAll("#toasts .toast")].filter(x => was.get(x) !== x.dataset.n);
+    const bad = fresh.filter(x => x.dataset.kind === "bad").pop(), ok = fresh.filter(x => x.dataset.kind === "ok").pop();
+    return { fresh, bad: bad ? bad.dataset.msg : "", ok: ok ? ok.dataset.msg : "", drop: () => fresh.forEach(x => x._go && x._go()) };
+  }
+  async function openOnCards(g) {
+    const why = blockedWhy(); if (why) { note(g, why, "bad"); return; }
+    if (H.busy.has(keyOf(g))) return;
+    busy(g, `Opening ${nameOf(g)} on the cards: reading its sheets…`, "open");
+    const was = toastsNow();
+    try { await Recall.open({ setId: g.setId || null, runId: g.runId || null }); }
+    catch (e) { busy(g, null); note(g, "It could not be opened: " + e.message + ". Nothing on the cards was changed.", "bad"); return; }
+    busy(g, null);
+    const rc = Recall.state();
+    if (Recall.on() && (g.setId ? rc.setId === g.setId : rc.runId === g.runId)) { H.back = false; close(); return; }
+    const said = saidSince(was); said.drop();
+    note(g, said.bad || "It was not opened. Nothing on the cards was changed.", "bad");
+  }
+  function askResume(g) {
+    const r = runOf(g) || {};
+    note(g, `Resuming re-reads its ${r.orders ? n(r.orders, "order") : "orders"} from Etsy through the Design Station before it carries on, which takes a few minutes. To look at what it made, open it on the cards instead: that reads nothing.`, "", [["resume-yes", "Resume the run", "gold"], ["unnote", "Not now", "ghost"]]);
+  }
+  function resume(g) {
+    if (!g.runId) return;
+    note(g, null); H.back = false; close(true);
+    RunCtl.resumeRun(g.runId).catch(err => toast(err.message, "bad", 7000));
+  }
+  async function exportAs(g, format) {
+    const ids = [...new Set((g.sheets || []).map(idOf).filter(Boolean))]; if (!ids.length) return;
+    if (!window.ProductionExports) { note(g, "The download tools are still loading. Try again in a moment.", "bad"); return; }
+    busy(g, `Preparing ${n(ids.length, "sheet")} as .${format}${ids.length > 1 ? ", in one .zip" : ""}, with their back engravings…`, format);
+    const was = toastsNow();
+    try { await ProductionExports.run(ids, format); } finally { busy(g, null); }
+    const said = saidSince(was); said.drop();
+    // (one download at a time: a press while another is being made starts nothing and says nothing)
+    if (!said.fresh.length) note(g, "Another download is being prepared. Try again when it has finished.", "");
+    else note(g, said.bad || said.ok || `Downloaded .${format}`, said.bad ? "bad" : "ok");
+  }
+  async function qrLabels(g) {
+    busy(g, `Finding the QR labels of ${nameOf(g)}…`, "qr");
+    try {
+      const r = await api("charmNestLibrary", { op: "setGet", setId: g.setId }, { quiet: true });
+      const set = r.set || {}, pdf = set.labels && set.labels.pdf, url = typeof pdf === "string" ? pdf : pdf && pdf.url;
+      if (!url) { busy(g, null); note(g, "No QR labels PDF is saved for this set yet: it is made when the set is labelled.", ""); return; }
+      busy(g, "Downloading the QR labels PDF…", "qr");
+      const bytes = await CharmNestAssets.bytes(url);
+      CN.download(bytes, `${String(set.name || nameOf(g)).replace(/[\\/:*?"<>|\s]+/g, "-")}_labels.pdf`, "application/pdf");
+      busy(g, null); note(g, "QR labels PDF downloaded", "ok");
+    } catch (e) { busy(g, null); note(g, "Could not get the QR labels: " + e.message, "bad"); }
+  }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+    // (the page's clipboard may be refused: a hidden box inside this window is copied from instead)
+    const box = el("textarea"); box.value = text; box.setAttribute("readonly", ""); box.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+    H.dlg.appendChild(box); box.select(); let ok = false; try { ok = document.execCommand("copy"); } catch (_) {} box.remove(); return ok;
+  }
+  async function copyOrders(g) {
+    const ids = orderIdsOf(g);
+    if (!ids) { H.media.set(keyOf(g), "orders"); patch(keyOf(g), ["media"]); note(g, "The run's orders are being read: press Copy all when they show."); return; }
+    if (!ids.length) { note(g, "No order numbers on record"); return; }
+    const ok = await copyText(ids.join("\n"));
+    note(g, ok ? `Copied ${n(ids.length, "order number")}, one per line` : "The browser did not allow copying: select the numbers and copy them instead.", ok ? "ok" : "bad");
+  }
+  async function copyOne(btn) {
+    const o = btn.dataset.order; if (!o) return;
+    if (await copyText(o)) { btn.classList.add("done"); btn.title = `Copied ${o}`; setTimeout(() => { btn.classList.remove("done"); btn.title = `Copy ${o}`; }, 1400); }
+  }
+  async function fetchOrders(g) {
+    const k = keyOf(g); if (H.fetching.has(k) || !g.runId) return; H.fetching.add(k);
+    try {
+      const r = await api("charmNestLibrary", { op: "runGet", runId: g.runId }, { quiet: true }), run = r.run || {};
+      H.orders.set(k, [...new Set([...(run.orders || []), ...Object.values(run.lines || {}).map(l => l && l.orderId)].filter(x => x != null && x !== "").map(String))]);
+    } catch (e) { H.orders.set(k, []); note(g, "Could not read the run's orders: " + e.message, "bad"); }
+    finally { H.fetching.delete(k); patch(k, ["media", "panel"]); }
+  }
+  /** The Download menu: the files the app can make of a set, and its order numbers. Inside this window, never over it. */
+  function menu(spec) {
+    const m = H.dlg && H.dlg.querySelector("#hMenu"); if (!m) return;
+    if (H.menu && H.menu.btn) H.menu.btn.setAttribute("aria-expanded", "false");
+    H.menu = spec || null;
+    if (!spec) { m.hidden = true; m.innerHTML = ""; return; }
+    const g = groupByKey(spec.key); if (!g) { H.menu = null; m.hidden = true; return; }
+    const count = (g.sheets || []).length, isSet = !!(g.setId && !g.draft && !g.standalone), labelled = (g.sheets || []).some(s => s.label && (s.label.files || []).length);
+    m.innerHTML = `<button type="button" role="menuitem" data-m="ai">${ICON.file}<span>Download .ai</span><small>${count > 1 ? `all ${count} sheets in one .zip` : "the sheet"} · with back engravings</small></button>`
+      + `<button type="button" role="menuitem" data-m="dxf">${ICON.file}<span>Download .dxf</span><small>millimetres · original colours and layers</small></button>`
+      + (isSet ? `<button type="button" role="menuitem" data-m="qr">${ICON.qr}<span>QR labels PDF</span><small>${labelled ? "one page for each sheet's label" : "made when the set is labelled"}</small></button>` : "")
+      + `<div class="sep"></div><button type="button" role="menuitem" data-m="copy">${ICON.copy}<span>Copy order numbers</span><small>${n(ordersCount(g), "order")}, one per line</small></button>`;
+    m.hidden = false; spec.btn.setAttribute("aria-expanded", "true");
+    // under its button, or above it where the window ends
+    const box = H.dlg.getBoundingClientRect(), r = spec.btn.getBoundingClientRect(), mh = m.offsetHeight, mw = m.offsetWidth, below = r.bottom + 6 + mh <= box.bottom - 8;
+    m.style.top = Math.max(8, below ? r.bottom - box.top + 6 : r.top - box.top - mh - 6) + "px";
+    m.style.left = Math.max(8, Math.min(box.width - mw - 8, r.right - box.left - mw)) + "px";
+    m.dataset.up = below ? "" : "1";
+    m.querySelector("[data-m]").focus({ preventScroll: true });
+  }
+  function menuAct(what) {
+    const spec = H.menu; if (!spec) return;
+    const g = groupByKey(spec.key); menu(null); if (!g) return;
+    if (what === "ai" || what === "dxf") exportAs(g, what);
+    else if (what === "qr") qrLabels(g);
+    else if (what === "copy") copyOrders(g);
+  }
+  /* A sheet opens in the sheet window, which takes this window's place (never one window over another), and this one
+     comes back where it was when the sheet window closes — unless something else has opened meanwhile. */
+  function openSheet(id, tile) {
+    const img = tile && tile.querySelector("img.hThumb.on"), rect = (img || tile) && (img || tile).getBoundingClientRect();
+    H.scroll = H.dlg.querySelector("#hBody").scrollTop; H.tile = id; H.back = true;
+    close(true);
+    if (window.SheetWin) {
+      SheetWin.open(id, rect && rect.width ? { fromRect: rect } : {});
+      const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
+    } else if (typeof openLibrarySheet === "function") {
+      openLibrarySheet(id);
+      const w = document.getElementById("dlgSheet"); if (w) w.addEventListener("close", comeBack, { once: true });
+    }
+  }
+  function comeBack() {
+    if (!H.back) return; H.back = false;
+    setTimeout(() => {
+      const d = H.dlg; if (!d || d.open || document.querySelector("dialog[open]")) return;
+      d.classList.remove("closing"); d.showModal();
+      const body = d.querySelector("#hBody"); body.scrollTop = H.scroll || 0;
+      const t = H.tile && body.querySelector(`.hTile[data-sheet="${CSS.escape(H.tile)}"]`); if (t) t.focus({ preventScroll: true });
+    }, 30);
+  }
+  // every step of a run asks for a refresh; while the list is open it is read again at most once a minute (and not while
+  // its Download menu is open or one of its cards is at work: that waits until they are done)
   let refreshTimer = 0;
-  const refreshIfOpen = () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (H.dlg?.open) load(); }, Math.max(700, (H.readAt || 0) + 60000 - Date.now())); };
-  return { show, load, refreshIfOpen, runs: () => H.runs };
+  const refreshIfOpen = () => { if (H.dlg?.open && !refreshTimer) refreshTimer = setTimeout(() => { refreshTimer = 0; if (!H.dlg?.open) return; if (H.menu || H.busy.size) refreshIfOpen(); else load(); }, Math.max(700, (H.readAt || 0) + 60000 - Date.now())); };
+  return { show, load, close, refreshIfOpen, runs: () => H.runs };
 })();
 
 /* ═══ 24d · Recall — a saved set back on the cards, from what was saved ═══════════════════════════════════════════════
