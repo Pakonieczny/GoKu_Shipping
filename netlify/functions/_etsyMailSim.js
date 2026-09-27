@@ -125,6 +125,9 @@ function threadAsOf(data, asOfMs, future) {
   // Summaries written after the cut carry later messages and decisions
   // (searchableText holds the whole conversation): take them off.
   if (later("updatedAt")) {
+    // The reaper marks a dead lead abandoned with only updatedAt, so an
+    // abandonment after the cut was not there yet.
+    if (out.status === "sales_abandoned") { out.status = "open"; if (out.salesStage === "abandoned") delete out.salesStage; changed = true; }
     drop(/^(searchable|intent|aiReview|aiConfidence|aiDifficulty|aiDraftStatus|salesSynopsis|lastResolverResult|lastAuto|riskFlags|needsHumanReview|needsOperatorReview|readyForHumanApproval|latestDraftId|lastSalesAgentBlockReason)/);
     for (const k of ["lastInboundAt", "lastOutboundAt", "lastOperatorReplyAt", "lastReadAt", "lastSyncedAt", "gmailReceivedAt"]) {
       if (later(k)) { delete out[k]; changed = true; }

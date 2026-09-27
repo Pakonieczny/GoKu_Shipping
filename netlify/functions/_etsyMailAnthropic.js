@@ -308,11 +308,13 @@ async function runToolLoop({
     cache_creation_input_tokens : 0
   };
   let finalResponse = null;
+  let limit = maxIterations;
+  let finishNudged = false;
 
-  for (let iter = 1; iter <= maxIterations; iter++) {
+  for (let iter = 1; iter <= limit; iter++) {
     let tools = toolSpecs;
     const last = messages[messages.length - 1];
-    if (finishTool && iter === maxIterations && iter > 1 && last && last.role === "user" && Array.isArray(last.content)) {
+    if (finishTool && iter === limit && iter > 1 && last && last.role === "user" && Array.isArray(last.content)) {
       const only = (toolSpecs || []).filter(t => t && t.name === finishTool);
       if (only.length) {
         tools = only;
@@ -340,8 +342,28 @@ async function runToolLoop({
     const assistantContent = Array.isArray(response.content) ? response.content : [];
     messages.push({ role: "assistant", content: assistantContent });
 
-    // If Claude didn't request a tool call, we're done.
-    if (response.stop_reason !== "tool_use") break;
+    // If Claude didn't request a tool call, we're done, unless it stopped
+    // without the finish tool and without any reply text: then ask once
+    // more for the finished reply instead of returning nothing.
+    if (response.stop_reason !== "tool_use") {
+      const saidSomething = assistantContent.some(b => b && b.type === "text" && String(b.text || "").trim());
+      const finished = toolCalls.some(tc => tc.name === finishTool);
+      if (finishTool && !finishNudged && !finished && !saidSomething) {
+        finishNudged = true;
+        if (!assistantContent.some(b => b && (b.type === "text" || b.type === "tool_use"))) messages.pop();
+        const tail = messages[messages.length - 1];
+        const nudge = { type: "text", text: `[You stopped without a reply. Call ${finishTool} now with the best complete reply you can give from what you already have.]` };
+        if (tail && tail.role === "user") {
+          const content = Array.isArray(tail.content) ? tail.content : [{ type: "text", text: String(tail.content || "") }];
+          messages[messages.length - 1] = { ...tail, content: [...content, nudge] };
+        } else {
+          messages.push({ role: "user", content: [nudge] });
+        }
+        if (iter >= limit) limit = iter + 1;
+        continue;
+      }
+      break;
+    }
 
     // Gather every tool_use block and execute each one; Claude may emit
     // multiple tool calls in one turn.

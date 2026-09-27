@@ -630,7 +630,10 @@ async function prefetchLineSheetCollateral({ latestInboundText, salesCtx, recent
       if (family) break;
     }
   }
-  if (!family || !searchCollateral) return [];
+  // No family named: staff send the necklace sheet on a new custom
+  // inquiry (most custom pieces are necklace charms), so offer it.
+  if (!family) family = "necklace";
+  if (!searchCollateral) return [];
   try {
     // v4.3.12 — Don't pass `category` as an exact-match filter. Operator-
     // created collateral entries have friendly display-name categories
@@ -1833,6 +1836,8 @@ function familyFromParsedAndContext(parsed, validationContext = {}) {
   if (/\b(huggie|huggy|hoop)\b/.test(inbound)) return "huggie";
   if (/\b(necklace|chain|pendant)\b/.test(inbound)) return "necklace";
   if (/\b(stud|studs|earring|earrings)\b/.test(inbound)) return "stud";
+  // A new custom design with no family named: the necklace sheet, as staff do.
+  if (/\b(custom|design|make|create)\b/.test(inbound)) return "necklace";
   return null;
 }
 
@@ -2750,6 +2755,8 @@ When the customer signals interest in pricing or options — even WEAKLY — you
 - ANY question that asks about choices, prices for variants, or what's possible
 
 The ONE thing you may need before sending the line sheet is which family (necklace, stud earring, or huggie hoop earring). If conversation context already tells you this — a prior round, an earlier message in this round, an explicit listing reference — USE that, don't re-ask.
+
+When the family is still unknown on a new custom design or price request, do NOT hold the sheet back to ask first: attach the necklace line sheet (most custom pieces are necklace charms, and it is what staff send), and add one short line that the design can also be made as huggie hoops or studs if they prefer. The same holds the first time you give a custom price in a conversation where no line sheet has gone out yet: attach the family's sheet so the customer sees the other sizes and metals.
 
 ## How to send the line sheet — CRITICAL
 
