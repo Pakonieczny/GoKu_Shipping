@@ -2863,7 +2863,13 @@ const Engrave = window.Engrave = (() => {
     refresh(job);if(measure)Session.schedule();return true;
   }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lineInput=pick.slice(); job.lineMode="preserve"; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
-  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
+  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return;
+    // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
+    // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
+    revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
+    job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
+    if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
     if(job.backSaving || job.approvalPreparing) return;
@@ -2887,6 +2893,7 @@ const Engrave = window.Engrave = (() => {
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    goes(job, { to: EG_TAB("done") });                     // the card in front flies up into Decided, which counts it (Paul, 27 Sep)
     job.state = "approved"; job.approvedBy = by; job.approvedAt = Date.now(); job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: by });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
@@ -3285,6 +3292,94 @@ const Engrave = window.Engrave = (() => {
     v?.querySelectorAll(".rvItem").forEach(c => { c._dispose?.(); clearTimeout(c._wordsTimer); c._ro?.disconnect(); });
     EG.card = null; EG.cardKey = null;
   }
+  /* ── motion (Paul, 27 Sep 20:09-20:24: nothing a click moves may just vanish or pop up; slow enough to follow). The card
+     in front is seen going where its job went: Approve and No engraving send a copy of it up into Decided, which counts
+     it; Close on a back being edited folds it away where it stood (the edit is dropped); Close on a placement folds it
+     back down into its row in the list, and a row opened grows into the card. The next card slides in under the copy
+     from the queue's side, where the Placements tab is. Only copies move: the next card is there and answers its keys at
+     once, so someone pressing A again and again never waits for any of it (copies still in the air hurry to make way). */
+  const MO = () => window.Motion && !Motion.reduced() ? Motion : null;
+  const EG_TAB = id => `#engraveView .ordBar .egTab[data-tab="${id}"]`;
+  const ENTER = { slide: { ms: 640, delay: 90 }, fade: { ms: 420, delay: 40 }, grow: { ms: 620, delay: 0 } };
+  let outgoing = null, unlaunched = null, entering = null, growsFrom = null;
+  const inAir = new Set();
+  /** The card in front is about to go (its job decided, dropped or closed): the next drawing of the tab, which takes it
+   *  away, sends a copy of it where spec says (spec.to a tab, spec.fold, spec.row, else it fades). */
+  function goes(job, spec, card = EG.card) {
+    if (!MO() || !card || card !== EG.card || EG.cardKey !== job.key || !card.isConnected || !card.getClientRects().length) return;
+    outgoing = Object.assign({ key: job.key, card, until: Date.now() + 10000 }, spec);
+  }
+  /** Just before the tab is drawn again: a copy of the card that goes, where it stands (its scrolled panes as they were). */
+  function copyOutgoing() {
+    const o = outgoing; outgoing = null;
+    if (!o || o.until < Date.now() || !o.card.isConnected || !MO()) return null;
+    const r = o.card.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return null;
+    const g = Motion.ghost(o.card, r, null, o.card), a = [o.card, ...o.card.querySelectorAll("*")], b = [g._card, ...g._card.querySelectorAll("*")];
+    a.forEach((n, i) => { if (n.scrollTop && b[i]) b[i].scrollTop = n.scrollTop; });
+    return (unlaunched = { g, o });
+  }
+  /** Once the tab is drawn again: the copy goes, and the card now in front comes in. */
+  function launch({ g, o }) {
+    unlaunched = null;
+    if (EG.cardKey === o.key && EG.card && EG.card.isConnected) { g.remove(); return; }   // the same card is back in front: nothing left
+    for (const x of inAir) for (const an of x.getAnimations({ subtree: true })) an.playbackRate = Math.max(an.playbackRate, 2.4);
+    inAir.add(g); const landed = () => { inAir.delete(g); };
+    if (o.to) Motion.fly(g, o.to, { plus: o.plus, note: o.note }).then(() => { landed(); if (EG.tab === "done") mark(doneRowOf(o.key)); });
+    else if (o.row) intoRow(g, o.key).then(landed);
+    else if (o.quick) g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" }).finished.catch(() => {}).then(() => { g.remove(); landed(); });   // Back / Next: a quick crossfade
+    else Motion.fade(g).then(landed);
+    if (EG.card && EG.card.isConnected && EG.cardKey !== o.key) enter(EG.card, o.enter || "slide");
+  }
+  /** The card now in front comes in: from the queue's side, faded in, or grown out of the row it was opened from. A card
+   *  drawn again while it is still coming in carries on from where it was (play), rather than jumping into place. */
+  function enter(card, kind, rect) { entering = { key: card.dataset.key, kind, rect, t: performance.now() }; play(card); }
+  function play(card) {
+    const e = entering; if (!e || !MO() || card.dataset.key !== e.key) return;
+    const k = ENTER[e.kind], el = performance.now() - e.t; if (el >= k.delay + k.ms) { entering = null; return; }
+    // (only transforms toward the page's start, clips and fades: nothing that could make the page scroll or the back redraw)
+    const frames = e.kind === "grow" ? [{ clipPath: clipTo(card.getBoundingClientRect(), e.rect), opacity: .55 }, { clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 }]
+      : e.kind === "fade" ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: "translateX(-26px)" }, { opacity: 1, transform: "none" }];
+    const an = card.animate(frames, { duration: k.ms, delay: k.delay, easing: "cubic-bezier(.25,.1,.2,1)", fill: "backwards" });
+    an.currentTime = el;
+  }
+  /** A card drawn: it carries on coming in, or grows out of the row a person opened it from. */
+  function cardShown(card) {
+    const f = growsFrom; growsFrom = null;
+    if (f && f.key === card.dataset.key && f.until > Date.now() && MO()) enter(card, "grow", f.rect); else play(card);
+  }
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  /** The clip that shows only the part of `box` (a rect, or a width with a rect) that lies over `r`. */
+  function clipTo(box, r, w = box.width) {
+    const t = clamp(r.top - box.top, 0, box.height), b = clamp(box.top + box.height - r.bottom, 0, box.height - t), l = clamp(r.left - box.left, 0, w), ri = clamp(box.left + w - r.right, 0, w - l);
+    return `inset(${t}px ${ri}px ${b}px ${l}px round 10px)`;
+  }
+  /** Close: the card folds back down into its row in the list, which is brought into view and marked. */
+  function intoRow(g, key) {
+    const list = document.querySelector("#engraveView .egPlacementList"), row = list && [...list.children].find(n => n.dataset.mkey === "eg:" + key);
+    if (!row) return Motion.fade(g);
+    const lr = list.getBoundingClientRect(); let r = row.getBoundingClientRect();
+    if (r.top < lr.top || r.bottom > lr.bottom) { row.scrollIntoView({ block: "nearest" }); r = row.getBoundingClientRect(); }
+    const to = clipTo(g._rect, r, parseFloat(g.style.width) || g._rect.width);
+    setTimeout(() => mark(row), Motion.T.slide * .8);
+    return g.animate([{ clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 }, { clipPath: to, opacity: .9, offset: .78 }, { clipPath: to, opacity: 0 }], { duration: Motion.T.slide, easing: "cubic-bezier(.45,.05,.2,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
+  }
+  /** A row opened: a copy of the list around it, which dissolves while the row grows into its card. */
+  function listCopy(row) {
+    const list = row.closest(".egPlacementList"); if (!list) return null;
+    const r = list.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return null;
+    const g = Motion.ghost(list, r, null, list); g._card.scrollTop = list.scrollTop; return g;
+  }
+  /** Where something landed, marked with a soft glow that fades. */
+  function mark(n) { if (!n || !n.isConnected) return; n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  const doneRowOf = key => [...document.querySelectorAll("#egDone .doneRow")].find(n => n.dataset.key === key) || null;
+  /** "Show" in a note: Decided, at this job, opened. */
+  function showDecided(key) {
+    const v = document.getElementById("engraveView"); if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("engrave");
+    EG.tab = "done"; EG.chosen = true; EG.openDone = key;
+    const i = decidedOrder().findIndex(j => j.key === key); if (i >= doneLimit) doneLimit = i + 1;
+    render();
+    const rw = doneRowOf(key); if (rw) { rw.scrollIntoView({ block: "nearest", behavior: "smooth" }); mark(rw); }
+  }
   function renderWorking(v, jobs) {
     const host = v.querySelector("[data-eg-working]"); if (!host) return;
     const n = jobs.filter(isWorking).length;
@@ -3343,19 +3438,18 @@ const Engrave = window.Engrave = (() => {
   const placementRows = new WeakMap();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   function renderPlacementRows(list, queue) {
-    const wanted = new Set();
     if(placementQuery!==EG.q){placementLimit=40;placementQuery=EG.q;}
-    queue.slice(0,placementLimit).forEach((job,index) => {
+    const shown = queue.slice(0,placementLimit), nodes = shown.map(job => {
       let row = placementRows.get(job);
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
-        row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
+        row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key; row.dataset.mkey="eg:"+job.key;
         row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">Words on the back</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
-        const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
+        // (the card it opens grows out of this row: where it stands is kept for the next drawing, see cardShown)
+        const open=()=>{if(isWorking(job))return;const lg=MO()&&listCopy(row);if(lg)growsFrom={key:job.key,rect:row.getBoundingClientRect(),until:Date.now()+3000};EG.focus=job.key;EG.list=false;render();if(lg)lg.animate([{opacity:1},{opacity:0}],{duration:300,easing:"ease-out",fill:"forwards"}).finished.catch(()=>{}).then(()=>lg.remove());};
         row.onclick=e=>{if(!e.target.closest('[data-vector][role=button],[data-listing][role=button]'))open();}; row.onkeydown=e=>{if(e.target===row && (e.key==="Enter" || e.key===" ")){e.preventDefault();open();}};
         placementRows.set(job,row);
       }
-      wanted.add(row);
       const busy=isWorking(job), receipt=String(job.row.order.receiptId), sku=job.row.spec.designSku || "";
       row.dataset.rid=receipt; row.setAttribute("aria-busy",String(busy)); row.setAttribute("aria-disabled",String(busy));
       row.setAttribute("aria-label",`${busy ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}`);
@@ -3366,10 +3460,16 @@ const Engrave = window.Engrave = (() => {
       const purchase=purchaseMarkup(job.row);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
-      if(list.children[index] !== row) list.insertBefore(row,list.children[index] || null);
-      ListMedia.mount(row,job.row);
+      return row;
     });
-    [...list.children].forEach(row=>{if(!wanted.has(row))row.remove();});
+    /* One keyed update (Motion.reconcile; Paul, 27 Sep 20:09-20:24): a placement that leaves the list is seen going, up
+       into Decided when it was decided there (the sheet window's approvals), otherwise fading where it stood (read as
+       needing no engraving, its order gone); the rows under it glide up into the gap, and one that arrives opens its
+       room. A new search is another list, drawn as it is. */
+    const same = list._egQ === EG.q; list._egQ = EG.q;
+    if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = items().get(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
+    else { nodes.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); }); const keep = new Set(nodes); [...list.children].forEach(row => { if (!keep.has(row)) row.remove(); }); }
+    shown.forEach((job, i) => ListMedia.mount(nodes[i], job.row));
     ListMedia.more(list,queue.length,Math.min(placementLimit,queue.length),()=>{placementLimit+=40;render();});
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
@@ -3427,8 +3527,9 @@ const Engrave = window.Engrave = (() => {
         v.querySelector("[data-eg-list]").onclick = () => { EG.list = true; EG.tab = "place"; EG.chosen = true; render(); };
       }
       console.error("Engrave preview could not render", error);
-    } finally { rendering = false; }
+    } finally { rendering = false; if (unlaunched) { unlaunched.g.remove(); unlaunched = null; } }   // (a copy never left on the screen)
   }
+  const decidedOrder = () => decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
   function renderView() {
     LiveStrip.render();
     const v = document.getElementById("engraveView");
@@ -3474,6 +3575,7 @@ const Engrave = window.Engrave = (() => {
     // so does the search box: a rebuild used to drop its focus, the new card took it, and the next letters typed into the
     // search were read as the card's shortcuts (A approves, S skips)
     const searching = (() => { const a = document.activeElement; return a && a.id === "egQ" && v.contains(a) ? { start: a.selectionStart, end: a.selectionEnd } : null; })();
+    const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
         <span class="controlGroup">${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
@@ -3484,7 +3586,8 @@ const Engrave = window.Engrave = (() => {
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     renderWorking(v, jobs);
-    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
     { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
@@ -3494,7 +3597,7 @@ const Engrave = window.Engrave = (() => {
         renderPlacementRows(q.firstElementChild,queue);
       }
       else if (focus) {
-        const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key;
+        const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; cardShown(c);
         const ta = typing && typing.key === focus.key && c.querySelector('[data-f="words"]');
         if (ta) { const n = ta.value.length; ta.focus({ preventScroll: true }); ta.setSelectionRange(Math.min(typing.start, n), Math.min(typing.end, n)); }
       }
@@ -3507,7 +3610,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
-      const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
+      const decided = decidedOrder();
       const stateWord = j2 => j2.state === "written" ? "Saved to sheet" : j2.state === "skipped" ? "No engraving" : j2.backPending ? "Approved · back file waits for the cloud" : "Approved";
       const stateWhy = j2 => j2.state === "written" ? "the back file is saved with the sheet" : j2.state === "skipped" ? "cut plain, nothing on the back" : j2.backPending ? "approved — the back file is written when the cloud answers again (" + esc(j2.backPending) + ")" : "approved — the back file is written when the sheet is";
       const fmtT = t => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
@@ -3552,13 +3655,22 @@ const Engrave = window.Engrave = (() => {
         const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
         const who = employeeName() || askEmployee(); if (!who) return;
         if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
-        const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); };
+        // (Paul, 27 Sep 20:09-20:24) the row is seen leaving Decided for Placements, which counts it back in, and the card
+        // it opens as is marked where it landed
+        const go = () => {
+          const rw = doneRowOf(j2.key), r = rw && MO() && rw.getBoundingClientRect(), g = r && r.height ? Motion.ghost(rw, r, null, rw) : null;
+          try { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); } catch (e) { if (g) g.remove(); throw e; }
+          if (!g) return;
+          if (EG.cardKey === j2.key && EG.card && EG.card.isConnected) enter(EG.card, "slide");
+          Motion.fly(g, EG_TAB("place"), {}).then(() => { if (EG.cardKey === j2.key && EG.card) mark(EG.card.querySelector(".pvWords") || EG.card); });
+        };
         // a recalled set's sheet is rebuilt from the master files first: the button says so while it runs (it used to
         // sit there as if nothing had been pressed)
         if (j2.recalledFrom && j2.recalledFrom.recalled) { if (b.disabled) return; b.disabled = true; b.textContent = "Rebuilding the sheet…"; Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => { if (b.isConnected) { b.disabled = false; b.textContent = "Reopen"; } toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000); }); return; }
         go();
       });
     }
+    if (out) launch(out);
   }
   /* The card's messages: Team and Customer, two tabs like the order window's, with the one last chosen in front. Both
      panes are kept per line (TeamCard, CustomerMail.cardPane): drawing the card again only puts them back. */
@@ -3801,7 +3913,7 @@ const Engrave = window.Engrave = (() => {
       group.style.setProperty('--spacing',pending/100);
     }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { card._flushSpacing?.(); if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "turnLeft" || a === "turnRight") {rotateTo(job,(job.fit?.angle || 0)+(a === "turnLeft" ? 90 : -90));} else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone")); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { card._flushSpacing?.(); if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "turnLeft" || a === "turnRight") {rotateTo(job,(job.fit?.angle || 0)+(a === "turnLeft" ? 90 : -90));} else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {goes(job, { fold: true }, card);items().delete(job.key);Review.remove("eng:"+job.key);} else goes(job, { row: true }, card); EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone")); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     const lineControl=card.querySelector('[data-a="linecount"]');
     if(lineControl) lineControl.onchange=async()=>{
@@ -3810,7 +3922,7 @@ const Engrave = window.Engrave = (() => {
       await applyWords();
     };
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {goes(job, { fold: true }, card);items().delete(job.key);Review.remove("eng:"+job.key);} else goes(job, { row: true }, card); EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue.
     // It never takes focus from a field someone is typing in: the card's single-key shortcuts (A approve, S no engraving,
     // arrows nudge) would otherwise receive the rest of what they type.

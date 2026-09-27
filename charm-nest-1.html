@@ -1358,6 +1358,8 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .egChip:hover{background:var(--paper2)}
 .egChip b{font:600 11.5px var(--mono)}
 .egChip span{font:11.5px var(--serif);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the Engraving tab that takes a card in (Motion.arrive) keeps its dark face while it is open, so its light words stay readable */
+#engraveView .egTab.on.mGot{background-color:var(--ink)!important}
 .rvItem{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px;--accent:var(--gold2);border-left:5px solid var(--accent)}
 .rvItem[data-kind=placement]{--accent:var(--slate);container-type:inline-size}
 .rvItem.full{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}.rvItem[data-kind=flipFailed],.rvItem[data-kind=notRepresentable],.rvItem[data-kind=orderChanged]{--accent:var(--clay)}
