@@ -441,6 +441,16 @@ async function browserChecks() {
     await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat, .btn.working'), printedBefore, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 3, 'printed from the record');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum), '4176744752', 'the same sticker');
+    // a decision answered with "Hold order": the card is seen flying to the Orders tab, and a note says where it is
+    await page.click('#reviewView .rvSeg [data-cseg="open"]');
+    const optCard = '#rvList .reviewListRow[data-rid="4178000003"]';
+    const optKey = await page.getAttribute(optCard, 'data-mkey');
+    await page.click(optCard + ' [data-review-open]');
+    await page.click(optCard + ' [data-a=hold]');
+    await page.waitForFunction(() => document.querySelector('#motionLayer .mGhost'), null, { timeout: 5000 });
+    if (shots) { await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, 'decision-hold-flight.png') }); }
+    await page.waitForFunction(() => [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4178000003 is on hold under Orders/.test(n.textContent)) && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
+    assert.equal(await page.evaluate(k => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.mkey === k), optKey), false, 'it left Review');
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Review → Custom Orders, QR label, Completed, Reopen, the order window and its notes (Chromium)');
   } finally { await browser.close(); srv.close(); }

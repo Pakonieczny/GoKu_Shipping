@@ -5838,8 +5838,12 @@ const Review = window.Review = (() => {
     if (n === items().length) return;
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
-      const d0 = settled[0], rid = d0.orders[0] || "";
-      if (window.Motion) Motion.expect(mkeyOf(gone), { to: DONE_SW, note: { text: `${rid ? "Order " + rid : "The decision"} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
+      const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
+      // held: the order is under Orders › On hold (its decision is kept under Completed); answered: under Completed
+      const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
+      if (window.Motion) Motion.expect(mkeyOf(gone), held
+        ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold under Orders · release ${d0.orders.length > 1 ? "them" : "it"} there`, actions: [{ label: "Show", fn: () => showHeld() }] } }
+        : { to: DONE_SW, note: { text: `${who} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
     }
     if (settled.length > 200) settled.length = 200;
     redraw();
@@ -5916,6 +5920,11 @@ const Review = window.Review = (() => {
   }
   /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
   function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** "Show" for a held order: the Orders tab, its On hold pile. */
+  function showHeld() {
+    if (typeof setMode === "function") setMode("orders");
+    const b = document.querySelector('#ordChips [data-pile="hold"]'); if (b && !b.classList.contains("on")) b.click();
+  }
   /** "Show" in a note: Review, the folder (and chip) the card is in now, scrolled to it and marked. */
   function showCard(mk, seg, kind) {
     const v = document.getElementById("reviewView");
@@ -6150,7 +6159,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
     return c;
   }
   async function row_material(it, m, who) {
@@ -6361,15 +6370,21 @@ const Review = window.Review = (() => {
     const where = new Map();
     for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: tabOf(it), it });
     for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: tabOf(it), it });
+    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: tabOf(it), mk: mkeyOf(it) });
     const leave = (mk, node) => {
       const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
       const who = rid ? "Order " + rid : "The decision";
       if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
       if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (!w && mine && rid && ridWhere.has(rid) && ridWhere.get(rid).mk !== mk) {
+        // read again as another kind of question (e.g. "Not a custom order"): it is under that chip now
+        const o = ridWhere.get(rid);
+        return { to: chipSel(o.kind), note: { text: `${who} is now under ${KIND_WORDS[o.kind] || o.kind}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
+      }
       if (!w && mine) {
         // answered: its lines went back to the orders (on hold, or in line for the sheets)
         const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
-        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold under Orders` : `${who} is back in line for the sheets`, actions: [] } };
+        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold under Orders` : `${who} is back in line for the sheets`, actions: held ? [{ label: "Show", fn: () => showHeld() }] : [] } };
       }
       return null;
     };
@@ -7155,7 +7170,11 @@ const OrderWin = window.OrderWin = (() => {
       if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
       Review.cardIn(slot, item);
     } else {
+      // an answered question folds away where it was (the room closes as it fades), never vanishing at once
+      const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
+      const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
       fix.innerHTML = "";
+      if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
       if (r.engrave && r.engrave.needed && !r.engrave.approved) {
         const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
         const b = el("button", "btn ghost sm", "Open it in Engraving");
