@@ -1362,7 +1362,8 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    to proceed.
 
    ─── Shipping destinations, costs, and timing ───
-   The shop ships from the United States (origin ZIP 14305, New York).
+   The shop ships from the United States, out of Buffalo, NY (see
+   section 8 for what to say about where pieces come from).
    Eligible destinations are LIMITED to the regions below. If a
    customer asks "do you ship to <country>?", consult this list and
    answer DIRECTLY in this turn. Do not escalate. Do not defer. Do not
@@ -1806,12 +1807,12 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    later from someone else.
 
 8. HARD CONTENT BANS — NEVER mention any of the following anywhere in
-   a draft reply, under any circumstances, even if the customer asks
-   about them directly:
+   a draft reply, under any circumstances (the one exception is the
+   point-blank "where are they made?" answer below):
       - Where our packages ship FROM: never say or imply that orders
-        are made in, ship from, or pass through Canada (or any other
-        country), and never mention a border crossing, origin
-        facility, or handoff between countries
+        ship from or pass through Canada (or any other country), and
+        never mention a border crossing, origin facility, or handoff
+        between countries
       - "Chit Chats", "ChitChats", or any variant (it's our shipping
         partner — customers don't need to know)
       - Any shipping-partner facility, sorting hub, or intermediary
@@ -1821,8 +1822,24 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    The customer's DESTINATION is fine to name. If a customer asks "do
    you ship to Canada?", answer yes and quote the Canada rate and
    transit time from section 7 ("Yes, we ship to Canada! ...").
-   If the customer specifically asks "where is it shipping from?" answer
-   honestly that it's on its way via USPS and focus on when it'll arrive.
+   WHERE OUR PIECES COME FROM (owner's rule, 2026-09-27):
+      - A soft or general question ("where are you located?", "where do
+        you ship from?", "are you in the US?", "where is it coming
+        from?"): we ship out of Buffalo, NY, via USPS. Say only that.
+        Don't bring up where pieces are made.
+      - Only when the customer asks point blank where the pieces are
+        made or manufactured ("are they made in the US?", "made in the
+        states?", "what country are they made in?", "are these made by
+        you or just distributed?"): "We source all of our materials from
+        the US, and each piece is assembled in Canada." Add nothing
+        about a studio, a city or other countries.
+      - Never say or imply the pieces are made in the US, the USA, the
+        states, America, New York, Buffalo or Niagara Falls. Never name
+        Niagara Falls; the ship-from city is Buffalo, NY. Don't pass on
+        materials claims from a listing description ("from the US and
+        Italy"); the materials answer is the sentence above.
+   The rest of this ban stands: no Chit Chats, border crossings, origin
+   facilities or handoffs between countries.
    Customs: for a US address, no customs apply. For an address outside
    the US, never claim that no customs or duties apply: say "Any import
    duties or taxes depend on your country's rules." and self-rate
@@ -4892,6 +4909,8 @@ answering. Do not guess about the order's contents.`;
       // physical address, so the Canada/Mississauga mention is operationally
       // necessary in that one context.
       const RETURN_TEMPLATE_SIGNAL = /450\s*Matheson\s*Blvd/i;
+      // The ship-from city is Buffalo, NY (owner, 2026-09-27); never Niagara Falls.
+      s = s.replace(/\bNiagara\s+Falls,?\s*(?:NY|New\s+York)\b/gi, "Buffalo, NY").replace(/\bNiagara\s+Falls\b/gi, "Buffalo");
       if (!RETURN_TEMPLATE_SIGNAL.test(s)) {
         // Standard scrubs apply to all other replies
         // Origin phrasing only. The customer's DESTINATION must survive:
@@ -5075,7 +5094,20 @@ answering. Do not guess about the order's contents.`;
           ` | Contains one-time ${issued.percent || 10}% code ${issued.code}; create it in Etsy before sending.`;
       }
     }
-    if (parsed.text && !/450\s*Matheson\s*Blvd/i.test(parsed.text)
+    // Where pieces are made (owner, 2026-09-27): only the approved sentence,
+    // only when the customer asked point blank; never "made in the US".
+    const _madeAsked = /\b(?:made|manufactur\w*|produc\w*|assembl\w*|craft\w*|distribut\w*)\b[^.!]{0,60}\b(?:the\s+us|u\.s\.?|usa|united\s+states|states|america|country|canada|china|where)\b|\bwhere\b[^.?!]{0,30}\b(?:made|manufactur\w*)\b/i
+      .test(unansweredInboundText(messages.slice().reverse()) || "");
+    const _approvedOrigin = /\bassembled\s+in\s+Canada\b/i;
+    if (parsed.text && /\b(?:made|manufactured|produced|handmade|crafted)\s+(?:right\s+)?(?:here\s+)?in\s+(?:the\s+)?(?:US|U\.S\.|USA|United\s+States|states|America|New\s+York|NY|Buffalo)\b|\bAmerican[-\s]made\b|\bmade\s+in\s+America\b/i.test(parsed.text)) {
+      parsed.aiOriginClaimReview = true;
+      parsed.confidence = Math.min(typeof parsed.confidence === "number" ? parsed.confidence : 0.5, 0.3);
+      parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+        " | Reply says the pieces are made in the US; they are assembled in Canada from US materials. Held for review.";
+    }
+    const _canadaOk = _madeAsked && _approvedOrigin.test(parsed.text || "")
+      && !/\b(?:ship\w*|sent|mail\w*)\b[^.!?]{0,30}\bCanad/i.test(parsed.text || "");
+    if (parsed.text && !_canadaOk && !/450\s*Matheson\s*Blvd/i.test(parsed.text)
         && /\b(?:from|in|via|through|across|out\s+of)\s+Canad(?:a|ian)\b|\bCanadian\s+(?:facility|warehouse|studio|workshop|team|border|customs)\b|\bCanada\s+Post\b/i.test(parsed.text)) {
       parsed.aiCanadaMentionReview = true;
       if (typeof parsed.confidence === "number" && parsed.confidence > 0.5) {
@@ -5472,6 +5504,7 @@ answering. Do not guess about the order's contents.`;
       // Audit 2026-09
       aiEscalationRequested : !!parsed.aiEscalationRequested,
       aiCanadaMentionReview : !!parsed.aiCanadaMentionReview,
+      aiOriginClaimReview   : !!parsed.aiOriginClaimReview,
       aiDiscountCode        : parsed.aiDiscountCode || null,
       aiDeliveryDateReview  : !!parsed.aiDeliveryDateReview,
       aiInventedCodeReview  : !!parsed.aiInventedCodeReview,

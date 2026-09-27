@@ -3475,6 +3475,15 @@ from your investigation, not from the default sales script.
     // The raw context payload (thread doc, customer doc, recent
     // receipts, messages) is injected into the user message via
     // formatContextForPrompt(ctx); see the runToolLoop call below.
+    // Owner's rule (2026-09-27) on where pieces come from.
+    const originAddendum = `
+# WHERE OUR PIECES COME FROM (system addendum, owner's rule)
+
+- A soft or general question ("where are you located?", "where do you ship from?", "are you in the US?"): we ship out of Buffalo, NY, via USPS. Say only that; don't bring up where pieces are made.
+- Only when the customer asks point blank where the pieces are made ("are they made in the US?", "made in the states?", "what country are they made in?"): "We source all of our materials from the US, and each piece is assembled in Canada." Nothing about a studio, a city or other countries.
+- Never say or imply the pieces are made in the US, the states, America, New York, Buffalo or Niagara Falls. Never name Niagara Falls. Don't repeat materials claims from a listing description ("from the US and Italy").
+`.trim();
+
     const fullSystemPrompt = String(promptLoad.prompt || "").trim()
       + "\n\n---\n\n"
       + lineSheetEagernessAddendum
@@ -3505,7 +3514,9 @@ from your investigation, not from the default sales script.
       + "\n\n---\n\n"
       + INVESTIGATION_PROTOCOL_TEXT
       + "\n\n---\n\n"
-      + salesAgentInvestigationAddendum;
+      + salesAgentInvestigationAddendum
+      + "\n\n---\n\n"
+      + originAddendum;
 
     // ════════════════════════════════════════════════════════════════════
     // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
@@ -3934,6 +3945,8 @@ ${validationResult.message}
           .replace(/(\w)\u2013(?=\w)/g, "$1-")
           .replace(/\s*[\u2014\u2013]\s*/g, ", ")
           .replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites")
+          // The ship-from city is Buffalo, NY (owner, 2026-09-27).
+          .replace(/\bNiagara\s+Falls,?\s*(?:NY|New\s+York)\b/gi, "Buffalo, NY").replace(/\bNiagara\s+Falls\b/gi, "Buffalo")
       : "";
 
     // Draft body: ALWAYS the customer-facing reply (or empty). The
