@@ -18,6 +18,8 @@
  */
 "use strict";
 
+const { isAwayMessage } = require("./_etsyMailKnowledge");
+
 // ─── v1.2: Deterministic veto rules ─────────────────────────────────────
 //
 // Self-rated AI confidence is not enough for high-stakes scenarios. Even
@@ -158,6 +160,9 @@ function unansweredInboundText(messagesNewestFirst, { maxMessages = 10, maxChars
     if (!m) continue;
     if (m.direction === "outbound") {
       if (m.localOptimistic === true) continue;
+      // The shop's automatic away reply answers nothing (the snapshot no
+      // longer counts it as our reply, so the question before it is drafted).
+      if (isAwayMessage(m.text)) continue;
       break;
     }
     if (m.direction !== "inbound") continue;
@@ -169,7 +174,21 @@ function unansweredInboundText(messagesNewestFirst, { maxMessages = 10, maxChars
   return texts.reverse().join("\n---\n").slice(-maxChars);
 }
 
+/** Owner's rule: no concrete delivery timeline. The first sentence that ties
+ *  arrival to a calendar date or weekday, or null. The one allowed date is
+ *  the lost-package "if it hasn't arrived by <date>". */
+const _MON = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?";
+const _DAY = "(?:mon|tues|wednes|thurs|fri|satur|sun)day|tomorrow|next\\s+week|this\\s+week|the\\s+\\d{1,2}(?:st|nd|rd|th)";
+const DATE_RX = new RegExp("\\b(?:" + _MON + "|\\d{1,2}/\\d{1,2}|" + _DAY + ")\\b", "i");
+const ARRIVE_RX = /\b(?:arriv\w*|land\w*|deliver\w*|get\s+(?:it|there|to\s+you)|be\s+there|reach\w*|expect\w*|have\s+it|in\s+your\s+hands|show\s+up|at\s+your\s+door|receive\s+(?:it|them|your\s+\w+)|(?:you['’]?ll|you\s+will|you\s+should)\s+(?:get|have)\s+(?:them|your\s+\w+))\b/i;
+const LOST_RX = /\b(?:hasn['’]?t|has\s+not|haven['’]?t|have\s+not|not|doesn['’]?t|does\s+not)\s+(?:yet\s+)?(?:arrived|shown\s+up|received|come|reached|delivered|got(?:ten)?)\b/i;
+function deliveryDateSentence(text) {
+  return String(text || "").split(/(?<=[.!?])\s+|\n+/)
+    .find(t => DATE_RX.test(t) && ARRIVE_RX.test(t) && !LOST_RX.test(t)) || null;
+}
+
 module.exports = {
+  deliveryDateSentence,
   DETERMINISTIC_VETO_PATTERNS,
   runVetoPatterns,
   applyDeterministicVetoes,
