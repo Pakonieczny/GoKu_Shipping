@@ -8997,6 +8997,40 @@ const OrderWin = window.OrderWin = (() => {
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
     if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
+    // hovering the seal or a stamp says what the step needs (timeline-ui's step explainer); a click pins it on the Timeline
+    const rid = String(r.order.receiptId);
+    if (UI && UI.explainOn) tryDo(() => UI.explainOn(card, () => ({ events: W.evFor === rid ? shownEvents() || [] : [], cancelled: W.cancelled, context: tlContext(rid), stages: tlStages(rid, true) }), stp => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(stp)); }));
+  }
+  /** The order's own steps (stagesFor its lines: Welded only when a piece is a stud earring); the piece shown's own when
+   *  one is picked (piece). null while the order's row is not read. */
+  function tlStages(rid, piece) {
+    const r = rowOf(W.key), UI = window.OrderTimelineUI; if (!r || String(r.order.receiptId) !== String(rid) || !UI || !UI.stagesFor) return null;
+    const p = piece && W.piece && (W.pieces || []).find(x => x.key === W.piece);
+    return tryDo(() => UI.stagesFor(p ? p.line : linesOf(r))) || null;
+  }
+  /* What this page already knows of the order, for the timeline's step explainer (OrderTimelineUI.requirementsOf):
+     each line's state, hold, wait and engraving, and the readiness of the sheets its pieces sit on
+     (CharmNestReadiness, as validateRelease reads it). Nothing is fetched. */
+  function tlContext(rid) {
+    const r = rowOf(W.key); if (!r || String(r.order.receiptId) !== String(rid)) return null;
+    const R = window.CharmNestReadiness, all = tryDo(() => linesOf(r)) || [r], pages = new Set();
+    // one piece shown (the piece switcher): its own line only
+    const rows = W.piece && all.some(x => x.key === W.piece) ? all.filter(x => x.key === W.piece) : all;
+    const lines = rows.map(x => {
+      const sp = x.spec || {}, ids = x.poolIds || [];
+      let onSheet = ids.length > 0;
+      for (const id of ids) { const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(id)) : null; if (pg) pages.add(pg); else onSheet = false; }
+      const pb = (x.problems || [])[0];
+      return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold,
+        problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
+    });
+    const dec = pages.size && R && R.decisions ? tryDo(() => R.decisions(Orders.rows())) : null;
+    const sheets = [...pages].map(pg => {
+      const placed = (pg.placements || []).length;
+      const rep = dec && R.sheet ? tryDo(() => R.sheet(Object.assign({}, pg, { roseStockId: pg.roseStock && pg.roseStock.id, id: pg.sheetId, poolIds: (pg.placements || []).map(p => ((pg.charms || []).find(c => c.id === p.id) || {}).poolId).filter(Boolean), placedCount: placed, outputs: pg.cloud || {}, engraving: dec }))) : null;
+      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt };
+    });
+    return { lines, sheets };
   }
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
@@ -9035,8 +9069,8 @@ const OrderWin = window.OrderWin = (() => {
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring
-      stages: () => { const r = rowOf(W.key), UI = window.OrderTimelineUI; return r && String(r.order.receiptId) === rid && UI && UI.stagesFor ? UI.stagesFor(linesOf(r)) : null; },
-      onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
+      stages: () => tlStages(rid),
+      context: () => tlContext(rid), onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
   function mountRail(rid) {
     const host = byId("owRail"), UI = window.OrderTimelineUI; if (!host) return;
