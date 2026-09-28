@@ -2730,7 +2730,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 
 <!-- ═══ Sheet report / contact sheet ═══ -->
 <dialog id="dlgReport" class="wide"><div class="dlg">
-  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
+  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button type="button" class="btn ghost xs hidden" id="rpOrder" title="open this charm's order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
   <div class="dlgBody" id="rpBody"></div>
 </div></dialog>
 
@@ -5555,6 +5555,51 @@ function cardOrigin(sh, cv) {
 }
 
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
+/* "Open order" (Paul, 28 Sep): the order's detailed view from wherever a charm of a sheet is shown. The order view grows
+   out of the button; the pop-up it was pressed in hands over, never one pop-up over another: it fades and settles back
+   underneath in the same motion, kept open as it was (the same charm, the same scroll, anything typed), and comes back
+   up as the order view shrinks back into the button. A button on a page (not in a pop-up) just grows the view.
+   Only opacity and transform move here; the order view's own clip does the rest. */
+function openOrderFrom(btn, rid, opts = {}) {
+  const OW = window.OrderWin; rid = String(rid || "").replace(/\D/g, "");
+  if (!OW || typeof OW.openOrder !== "function" || !rid || !btn) return false;
+  const src = btn.closest("dialog[open]"), ow = document.getElementById("orderWin");
+  const still = window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EASE = "cubic-bezier(.2,.8,.2,1)";
+  let out = null, back = false;
+  const bring = () => {
+    if (back || !src) return; back = true; ow && ow.removeEventListener("cancel", early, true); ow && ow.removeEventListener("click", early, true);
+    const was = out ? out.effect.getComputedTiming().progress : src.style.opacity === "0" ? 1 : 0; if (out) { try { out.cancel(); } catch (_) {} out = null; }
+    src.style.opacity = ""; src.style.willChange = "";
+    if (!src.open || still || !was) return;
+    // (as long as the order view's shrink back into the button: the two meet)
+    src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 420, easing: EASE, fill: "backwards" });
+  };
+  // the close begins (the ×, Esc): the source is set straight before the view measures the button to go back into, and
+  // comes up from the next frame; an Esc that only ended the view's search leaves it where it was
+  function early(e) {
+    if (back || !src) return;
+    if (e.type === "click" && !(e.target.closest && e.target.closest("#owClose"))) return;
+    if (out) { try { out.cancel(); } catch (_) {} out = null; } src.style.opacity = "0";
+    requestAnimationFrame(() => {
+      if (back) return;
+      if (OW.isOpen && OW.isOpen()) { src.style.opacity = ""; out = src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 0, transform: "scale(.97)" }], { duration: 1, fill: "forwards" }); return; }
+      bring();
+    });
+  }
+  if (src && ow && src !== ow) {
+    ow.addEventListener("close", bring, { once: true });
+    ow.addEventListener("cancel", early, true); ow.addEventListener("click", early, true);
+  }
+  let p;
+  try { p = OW.openOrder(rid, Object.assign({ from: btn }, opts)); }
+  catch (e) { bring(); toast(`Order ${rid} did not open: ${e.message}`, "bad", 6000); return false; }
+  if (src && src !== ow && ow && ow.open) {
+    src.style.willChange = "opacity, transform";
+    out = src.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: still ? 1 : 320, easing: EASE, fill: "forwards" });
+  } else if (src && src !== ow) bring();
+  return p || true;
+}
 function openCharm(sh, c, placement) {
   if (!c) return;
   /* An order line's metal is the customer's choice and its name is its order and SKU. The inspector offered it the
@@ -5564,6 +5609,9 @@ function openCharm(sh, c, placement) {
   const pl = placement || sh.placements.find(p => p.id === c.id);
   const dlg = $("#dlgReport"); $("#rpTitle").textContent = c.name || `Charm #${c.index + 1}`;
   $("#rpDownloadJson").classList.add("hidden");
+  // an order's charm: its order opens from the heading, and the inspector comes back as it was when that closes
+  const rid = line ? String(c.orderInfo?.receiptId || c.order || "").split("/")[0].replace(/\D/g, "") : "", ob = $("#rpOrder");
+  ob.classList.toggle("hidden", !rid || !window.OrderWin); ob.onclick = rid ? () => openOrderFrom(ob, rid, { poolId: c.poolId, row: c.lineKey ? { key: c.lineKey } : null }) : null;
   $("#rpBody").innerHTML = `
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
@@ -5596,7 +5644,7 @@ function openCharm(sh, c, placement) {
 function openReport(sh) {
   const items = sh.charms; const dlg = $("#dlgReport");
   $("#rpTitle").textContent = `${labelOf(sh.metal)} · ${sh.sheetId || "sheet"} · report`;
-  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs);
+  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs); $("#rpOrder").classList.add("hidden");
   $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
   const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal, sh);
   const byId = new Map(items.map(c => [c.id, c]));
@@ -6079,7 +6127,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=m23"></script>
-<script src="charm-nest-bridge.js?v=m23"></script>
+<script src="charm-nest-bridge.js?v=20260928-oo-c"></script>
 <script src="charm-nest-sheetwin.js?v=m23"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
