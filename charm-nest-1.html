@@ -1147,6 +1147,13 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .setsWin .hPlate img{position:absolute;inset:0;margin:auto;max-width:100%;max-height:100%;border-radius:4px;background:#fffefb;box-shadow:0 0 0 1px rgba(30,26,20,.08),0 2px 6px rgba(30,26,20,.10);opacity:0;transition:opacity .25s ease,transform .2s ease}
 .setsWin .hPlate img.on{opacity:1}
 .setsWin .hTile:hover .hPlate img{transform:scale(1.035)}
+/* Front | Back · engraving: every sheet turned over at once, each drawn from behind in its picture's own box — every
+   charm's own words in full ink, mirrored as the laser sees them, nothing laid over the sheet (RunHistory turnFace) */
+.setsWin .hBack{position:absolute;inset:0;margin:auto;display:grid;place-items:center;visibility:hidden;pointer-events:none;transition:transform .2s ease}
+.setsWin .hBack canvas{display:block;border-radius:4px;background:#fffefb;box-shadow:0 0 0 1px rgba(30,26,20,.08),0 2px 6px rgba(30,26,20,.10)}
+.setsWin[data-face=back] .hBack{visibility:visible}
+.setsWin[data-face=back] .hPlate>img.hThumb,.setsWin[data-face=back] .hPlate>.hNoPv{visibility:hidden}
+.setsWin .hTile:hover .hBack{transform:scale(1.035)}
 .setsWin .hNoPv{position:absolute;inset:0;margin:auto;width:max-content;height:max-content;max-width:100%;padding:3px 8px;border:1px dashed var(--ink25);border-radius:5px;font:10.5px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .setsWin .hCap{display:flex;align-items:center;gap:6px;min-width:0;padding:3px 8px 6px;font:600 10.5px var(--mono);color:var(--ink70);white-space:nowrap}
 .setsWin .hCap b{display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden;font-weight:700;color:var(--ink)}
@@ -5837,8 +5844,8 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-backface2"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-backface2"></script>
+<script src="charm-nest-bridge.js?v=20260928-bkS"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-bkS"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

@@ -3795,8 +3795,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Sizes the plate to its box (the sheet at its shape, its rulers along the top and the left). */
   function layoutOrder(G) {
     const cv = G.cv, st = G.st, host = cv.parentElement; if (!cv.isConnected || !st || !host || cv._order !== G) return false;
-    const dpr = Math.min(2.5, devicePixelRatio || 1), aw = host.clientWidth - 44, ah = host.clientHeight - 24; if (aw < 40 || ah < 30) return false;
-    const R = Math.round(Math.max(14, Math.min(22, aw * 0.022))), s = Math.min((aw - R) / st.wPt, (ah - R) / st.hPt);
+    // (a thumbnail — the Sets window's back of a sheet — fills its box to the edge, with no rulers: G.thumb)
+    const dpr = Math.min(2.5, devicePixelRatio || 1), aw = host.clientWidth - (G.thumb ? 0 : 44), ah = host.clientHeight - (G.thumb ? 0 : 24); if (G.thumb ? aw < 16 || ah < 12 : aw < 40 || ah < 30) return false;
+    const R = G.thumb ? 0 : Math.round(Math.max(14, Math.min(22, aw * 0.022))), s = Math.min((aw - R) / st.wPt, (ah - R) / st.hPt);
     const w = Math.floor(R + st.wPt * s), hh = Math.floor(R + st.hPt * s), cw = Math.round(w * dpr), ch = Math.round(hh * dpr);
     if (cv.style.width !== w + "px") cv.style.width = w + "px";
     if (cv.style.height !== hh + "px") cv.style.height = hh + "px";
@@ -3812,7 +3813,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ctx = b.getContext("2d"), R = G.R, dpr = G.dpr, mine = new Set(G.mine), drawn = G.pieces.some(x => x.c);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, b.width, b.height);
     ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, b.width, b.height);
-    tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
+    if (!G.thumb) tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
     ctx.save(); ctx.translate(R, R);
     if (G.backSide) { ctx.translate(G.Wp, 0); ctx.scale(-1, 1); }
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, G.Wp, G.Hp); ctx.clip();
@@ -3908,7 +3909,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       roseCutAt: (rec && rec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true });
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
-    const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, backs: backsOf(rec, live), backsAsked: false };
+    const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, thumb: !!opts.thumb, backs: backsOf(rec, live), backsAsked: false };
     // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
     // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
     const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
@@ -3931,7 +3932,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (opts.onInfo) tryDo(() => opts.onInfo(info));
     if (G.backSide) ensureBacks(G, opts);
     const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
-    if (url && !live) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
+    if (url && !live && !G.thumb) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
     redraw();
     if (live) { const byId = new Map((live.charms || []).map(c => [c.id, c])); for (const x of pieces) x.c = byId.get(x.id) || null; }
     const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
