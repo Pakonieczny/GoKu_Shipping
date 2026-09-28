@@ -2649,6 +2649,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           data: { reason, pieces: t.poolIds.length, poolIds: t.poolIds.slice(0, 40), auto: true }, id: `autocancel-${at}-${t.sh.sheetId || t.sh.metal + "-" + (t.sh.page || 1)}` });
         const d = read().done[rid];
         if (plan.left.length && !(d && +d.at === at) && +j.noticed !== at) { notify(rid, at, plan.left); j.noticed = at; upd(x => { x.noticed = at; }); }
+        // what became of it, sheet by sheet, on its cancel record (Orders › Cancelled reads it); kept in the journal until
+        // written, so a failed write goes again with the next try
+        const fates = new Map((j.fates || []).map(f => [f.sheet, f]));
+        for (const t of taken) fates.set(whereOf(t.sh), { sheet: whereOf(t.sh), fate: "removed", text: `taken off ${whereOf(t.sh)}` });
+        for (const l of plan.left) if (!fates.has(l.where)) fates.set(l.where, { sheet: l.where, fate: "cut", text: l.cut ? `already cut on ${l.where}: set aside` : `stays on ${l.where} (${l.why}): set aside once cut` });
+        if (fates.size !== (j.fates || []).length || taken.length) { j.fates = [...fates.values()]; j.fatesSaved = false; }
+        if (j.fates && j.fates.length && !j.fatesSaved) {
+          j.fatesSaved = await api("charmNestLibrary", { op: "cancelFates", orderId: rid, fates: j.fates }, { quiet: true }).then(() => true, () => false);
+          upd(x => { x.fates = j.fates; x.fatesSaved = j.fatesSaved; });
+        }
         // 4 · each page it came off nested again as it now stands, its QR label remade, and what was saved read back
         const pages = j.sheets.map(pageOf).filter(Boolean);
         let saving = false;
