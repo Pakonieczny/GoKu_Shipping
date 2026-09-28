@@ -2266,6 +2266,29 @@ async function fireDeferredThread(threadId) {
   }
 }
 
+async function runLearningTrigger() {
+  const ref = db.collection(CONFIG_COLL).doc("learnState");
+  const snap = await ref.get();
+  const st = snap.exists ? (snap.data() || {}) : {};
+  const now = Date.now();
+  if (st.runningSinceMs && now - st.runningSinceMs < 15 * 60000) return { skipped: "running" };
+  if (st.lastRunAtMs && now - st.lastRunAtMs < 20 * 3600000) return { skipped: "ran today" };
+  const pend = await db.collection("EtsyMail_DraftOutcomes").where("learnStatus", "==", "pending").limit(1).get();
+  if (pend.empty) return { skipped: "nothing waiting" };
+  const headers = { "Content-Type": "application/json" };
+  if (process.env.ETSYMAIL_EXTENSION_SECRET) headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), DEFERRED_FIRE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${_functionsBase()}/.netlify/functions/etsyMailLearn-background`,
+      { method: "POST", headers, body: "{}", signal: controller.signal });
+    await ref.set({ triggeredAtMs: now }, { merge: true });
+    return { started: res.status === 202 || res.ok, status: res.status };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function runDeferredAutoPipelinePass() {
   const tStart = Date.now();
   const now    = Date.now();
@@ -2455,6 +2478,13 @@ exports.handler = async (event) => {
         try { results.orderLinks = await require("./_etsyMailOrderLink").reconcile({ budgetMs }); }
         catch (e) { errors.push({ pass: "order_links", error: e.message }); console.error("orderLinks pass:", e); }
       }
+    }
+
+    // Learning from staff corrections: starts etsyMailLearn-background.js
+    // at most once a day, and only when corrections are waiting.
+    if (!op || op === "learning") {
+      try { results.learning = await runLearningTrigger(); }
+      catch (e) { errors.push({ pass: "learning", error: e.message }); console.error("learning pass:", e); }
     }
 
     // Copies of Etsy messages stored by the old time-based dedupe

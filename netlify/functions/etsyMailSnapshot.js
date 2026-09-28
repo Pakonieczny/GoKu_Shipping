@@ -214,6 +214,35 @@ function unmangleObjectStrings(obj, _seen) {
   return out;
 }
 
+// Etsy page-change alarm. A scrape that reads no messages, only blank
+// ones, none with a time, or nothing matching the stored copy of a known
+// thread means Etsy changed its page (or signed the extension out).
+// Each scrape updates EtsyMail_Config/scrapeHealth; the inbox shows a red
+// line after three bad scrapes in a row.
+function scrapeProblem(body, messages, ctx) {
+  const d = body.diagnostics || {};
+  if (body.session && body.session.etsyLoggedIn === false) return "Etsy signed the extension out";
+  const real = messages.filter(Boolean);
+  if (!real.length) {
+    const why = Array.isArray(d.domMissReasons) && d.domMissReasons[0];
+    return why ? String(why).slice(0, 120) : "No messages read from the conversation page";
+  }
+  const blank = real.filter(m => !String(m.text || "").trim()
+    && !(Array.isArray(m.imageUrls) && m.imageUrls.length) && m.messageType !== "image").length;
+  if (blank * 2 > real.length) return "Messages came in without their text";
+  if (real.length >= 3 && real.every(m => typeof m.timestampMs !== "number")) return "Messages came in without times";
+  if (ctx && ctx.storedCount >= 3 && real.length >= 3 && ctx.matched === 0) return "Scraped messages matched none of the stored ones";
+  return null;
+}
+
+async function recordScrapeHealth(problem, threadId) {
+  const now = Date.now();
+  const patch = problem
+    ? { lastAtMs: now, lastBadAtMs: now, lastBadReason: problem, lastBadThreadId: threadId || null, consecutiveBad: FV.increment(1) }
+    : { lastAtMs: now, lastOkAtMs: now, consecutiveBad: 0 };
+  await db.collection("EtsyMail_Config").doc("scrapeHealth").set(patch, { merge: true });
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "ok" };
   if (event.httpMethod !== "POST")     return json(405, { error: "Method Not Allowed" });
@@ -439,6 +468,10 @@ exports.handler = async (event) => {
     }));
     const scrapeTimeMs = typeof scrapedAt === "number" ? scrapedAt : Date.now();
     const aligned = align.alignScrape(storedEtsy, incoming, { scrapedAt: scrapeTimeMs });
+    const scrapeIssue = scrapeProblem(body, messages, {
+      storedCount: threadExisted ? storedEtsy.length : 0,
+      matched: aligned.matchOf.filter(j => j >= 0).length
+    });
 
     // Copies stored by the old dedupe: proven by this scrape, or found by
     // the pattern the old bug left (findLegacyDuplicates).
@@ -892,6 +925,9 @@ exports.handler = async (event) => {
         `(no buyerUserId from scrape, no orderId in conversation heading) — skipping trigger`
       );
     }
+
+    await recordScrapeHealth(scrapeIssue, threadId)
+      .catch(e => console.warn("[snapshot] scrape health not recorded:", e.message));
 
     return json(200, {
       success         : true,

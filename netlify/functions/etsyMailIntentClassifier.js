@@ -454,6 +454,14 @@ function _formatTailForModel(tail) {
  *  string is used across the classifier, sales agent, and draft-reply
  *  — one source of truth for the investigation discipline.
  */
+// Added in code so it holds whatever the stored prompt's examples say.
+const PLACED_ORDER_ROUTING_NOTE = [
+  "PLACED-ORDER CHANGES ARE SUPPORT: paying an extra charge staff quoted on an order",
+  "already placed (a tariff, surcharge, price difference or re-work fee), or adding rush,",
+  "Priority or Express shipping to an order already paid for, is support, not sales_lead,",
+  "unless the customer also asks for a new or different piece."
+].join("\n");
+
 async function classifyThread(threadId, opts = {}) {
   // ─── Fetch the full raw-document context ──────────────────────────────
   // This call is shared across every AI component in the system; the
@@ -509,6 +517,8 @@ async function classifyThread(threadId, opts = {}) {
 
   const systemPrompt = [
     promptLoad.prompt,
+    "",
+    PLACED_ORDER_ROUTING_NOTE,
     "",
     INVESTIGATION_PROTOCOL_TEXT,
     "",

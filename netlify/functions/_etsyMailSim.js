@@ -136,6 +136,24 @@ function threadAsOf(data, asOfMs, future) {
   return { data: out, changed };
 }
 
+/** A tracking cache doc as it stood at asOfMs: only the scans made by
+ *  then, and the status those scans give. */
+function trackingAsOf(data, asOfMs) {
+  const all = Array.isArray(data && data.events) ? data.events : [];
+  const events = all.filter(e => e && (!e.at || (toMs(e.at) || 0) <= asOfMs));
+  if (!events.length) return null;
+  const latest = events.slice().sort((a, b) => (toMs(b.at) || 0) - (toMs(a.at) || 0))[0];
+  const t = `${latest.status || ""} ${latest.title || ""}`.toLowerCase();
+  const statusKey = /delivered/.test(t) && !/out for/.test(t) ? "delivered"
+    : /out.for.delivery/.test(t) ? "out_for_delivery"
+    : /return/.test(t) ? "returned"
+    : /pre.?transit|pre.?shipment|label|postage/.test(t) ? "pre_shipment"
+    : /exception|alert|undeliverable/.test(t) ? "exception" : "in_transit";
+  const out = { ...data, events, statusKey };
+  if (statusKey !== data.statusKey) { out.status = null; out.imageUrl = null; out.estimatedDelivery = statusKey === "delivered" ? null : data.estimatedDelivery; }
+  return out;
+}
+
 /** A customer doc as it stood at asOfMs: no orders placed later. */
 function customerAsOf(data, asOfMs) {
   if (!data || !Array.isArray(data.recentReceipts)) return { data, changed: false };
@@ -309,9 +327,34 @@ function install() {
     }
     if (/^EtsyMail_Customers\/[^/]+$/.test(path)) {
       const v = customerAsOf(snap.data(), s.asOfMs);
+      // The customer doc is rebuilt later: a receipt's shipped flag and
+      // status come from the receipt as it stood at asOfMs.
+      const data = v.data || {};
+      const list = Array.isArray(data.recentReceipts) ? data.recentReceipts : [];
+      let fixed = false;
+      const rr = [];
+      for (const r of list) {
+        if (!r || !r.receiptId || !r.isShipped) { rr.push(r); continue; }
+        try {
+          const rs = await origDocGet.call(admin.firestore().collection("EtsyMail_Receipts").doc(String(r.receiptId)));
+          const w = rs.exists ? receiptAsOf(rs.data(), s.asOfMs) : null;
+          if (w && w.changed) {
+            const d = w.data || {};
+            rr.push({ ...r, isShipped: !!d.is_shipped, status: d.status || r.status });
+            fixed = true;
+            continue;
+          }
+        } catch (_) { /* keep the stored summary */ }
+        rr.push(r);
+      }
+      if (fixed) return wrapSnap(snap, { ...data, recentReceipts: rr });
       return v.changed ? wrapSnap(snap, v.data) : snap;
     }
     if (/^EtsyMail_Listings\//.test(path) && s.futureAll && s.futureAll.has(ref.id)) return wrapSnap(snap, undefined);
+    if (/^EtsyMail_TrackingCache\//.test(path)) {
+      const v = trackingAsOf(snap.data(), s.nowMs || s.asOfMs);
+      return v === null ? wrapSnap(snap, undefined) : wrapSnap(snap, v);
+    }
     return snap;
   };
   DR.get = async function () {

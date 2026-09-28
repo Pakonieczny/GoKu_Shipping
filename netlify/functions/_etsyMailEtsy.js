@@ -276,7 +276,9 @@ async function getShopReceiptShipments(receiptId) {
 
   const shipments = Array.isArray(receipt.shipments) ? receipt.shipments : [];
   const slimShipments = shipments.map(s => ({
-    trackingCode: s.tracking_code  || null,
+    // The tracking number, not the full USPS barcode (_etsyMailTrackingCode.js).
+    trackingCode: s.tracking_code ? require("./_etsyMailTrackingCode").cleanTrackingCode(s.tracking_code) : null,
+    barcode     : s.tracking_code || null,
     carrier     : s.carrier_name   || null,
     trackingUrl : s.tracking_url   || null,
     shipDate    : s.shipment_notification_timestamp

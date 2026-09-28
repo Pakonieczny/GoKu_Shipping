@@ -333,6 +333,31 @@ const TERMINAL_THREAD_STATUSES = new Set([
 
 const SALES_PROMPT_DOC_ID = "sales";
 
+/** The stored sales prompt (EtsyMail_Prompts/sales) predates the owner's
+ *  2026-09-27 review. These lines contradict it, so they are corrected
+ *  when the prompt is used; each replacement is a no-op once the stored
+ *  text no longer has the old wording. Deterministic, so the prompt cache
+ *  still hits. */
+const SALES_PROMPT_PATCHES = [
+  ["If a customer wants a ring, bracelet, body jewelry, or anything else, gently say custom isn't available for that and offer to point them to existing Etsy listings.",
+   "Bracelets and rings are made too (see PRODUCT AND SHOP FACTS). If a customer wants something we don't make (body jewelry and the like), gently say custom isn't available for that and offer to point them to existing Etsy listings."],
+  ["**Off-catalog request** — ring, bracelet, body jewelry, etc.",
+   "**Off-catalog request** — body jewelry or anything else the facts say we don't make (bracelets and rings are not off-catalog)"],
+  ["USPS Priority Mail (+$18, 1-3 days)", "USPS Priority Mail (+$18, 2-4 days)"],
+  ["Rush is $15, drops production from 4-5 days to 2-3", "Rush is $15, drops production from 4-6 business days to 2-3"],
+  ["Clean no plus the list of regions we DO cover. **Do NOT escalate; the list is the policy.**",
+   "Checkout doesn't ship there at the moment: say so, list the regions we DO cover, and say we'll check whether we can arrange it (staff have arranged some, such as Australia). Never quote a price or transit time for it; put the country in missing_facts."],
+  ["\"Thanks for sending this over. I need to look at this carefully before I can speak to specifics.\"",
+   "a reply that names the customer's exact request and says what is already settled (never a holding line)"],
+  ["(\"Thanks for sending this over. I need to look at this carefully before I can speak to specifics.\")",
+   "(a reply that names the customer's exact request and says what is already settled, never a holding line)"]
+];
+function patchStoredSalesPrompt(text) {
+  let out = String(text || "");
+  for (const [from, to] of SALES_PROMPT_PATCHES) out = out.split(from).join(to);
+  return out;
+}
+
 async function loadSalesPrompt() {
   try {
     const doc = await db.collection(PROMPTS_COLL).doc(SALES_PROMPT_DOC_ID).get();
@@ -463,7 +488,10 @@ async function loadRecentThreadMessages(threadId, limit = 12) {
     for (const d of snap.docs) {
       const m = d.data() || {};
       // Etsy's scraped "Translate to English" button label is not the customer's words.
-      const text = String(m.text || "").replace(/\s*Translate to English\s*$/i, "").trim();
+      let text = String(m.text || "").replace(/\s*Translate to English\s*$/i, "").trim();
+      if (m.direction === "outbound" && require("./_etsyMailKnowledge").isAwayMessage(text)) {
+        text = require("./_etsyMailKnowledge").AWAY_NOTE + " " + text;
+      }
       const imageUrls = Array.isArray(m.imageUrls) ? m.imageUrls : [];
       const attachmentUrls = Array.isArray(m.attachmentUrls) ? m.attachmentUrls : [];
       if (!text && imageUrls.length === 0 && attachmentUrls.length === 0) continue;
@@ -536,16 +564,24 @@ function applySalesReplyGuard(reply, priorOutboundTexts = []) {
   }
   if (!priorSentenceSet.size) return raw;
 
-  const kept = [];
   const priorJoined = Array.from(priorSentenceSet).join(" | ");
-  for (const sent of splitSentencesLight(raw)) {
-    const n = normalizeForRepeat(sent);
-    const capabilityReset = /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(sent)
-      && /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(priorJoined);
-    if (n.length >= 32 && (priorSentenceSet.has(n) || capabilityReset)) continue;
-    kept.push(sent);
-  }
-  return kept.length ? kept.join(" ") : raw;
+  // Sentence by sentence within each paragraph, so the reply keeps its
+  // paragraph breaks (joining every sentence with a space used to turn a
+  // multi-paragraph reply into one block).
+  let removed = 0;
+  const paras = raw.split(/\n\s*\n/).map(para => {
+    const kept = [];
+    for (const sent of splitSentencesLight(para)) {
+      const n = normalizeForRepeat(sent);
+      const capabilityReset = /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(sent)
+        && /custom .*charm.*photo.*absolutely.*(do|possible|make)/i.test(priorJoined);
+      if (n.length >= 32 && (priorSentenceSet.has(n) || capabilityReset)) { removed++; continue; }
+      kept.push(sent);
+    }
+    return kept.join(" ");
+  }).filter(Boolean);
+  if (!removed) return raw;
+  return paras.length ? paras.join("\n\n") : raw;
 }
 
 function inferFamilyFromTextAndContext(text, salesCtx = {}) {
@@ -594,7 +630,7 @@ function compactOptionSheetForAi(sheet) {
     // dimensions per style). For EXISTING listings, the agent uses
     // lookup_listing_specs instead — that tool does the same resolution
     // internally.
-    charmStyles: sheet.charmStyles || null,
+    charmStyles: require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles),
     // v2.6: surface metalSpecs so the agent can answer thickness / gauge
     // questions directly without escalation. Same block is also returned
     // by lookup_listing_specs for existing-listing queries — either path
@@ -998,16 +1034,18 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId, 
           recommendation: "Acknowledge briefly and escalate to human review — do NOT estimate."
         };
       }
+      let result;
       try {
-        return await resolveListingSpecs({ query });
+        result = await resolveListingSpecs({ query });
       } catch (e) {
-        return {
-          found: false,
-          reason: "RESOLVER_ERROR",
-          error: e.message,
-          recommendation: "Acknowledge briefly and escalate to human review — do NOT estimate."
-        };
+        result = { found: false, reason: "RESOLVER_ERROR", error: e.message };
       }
+      if (result && result.found === true && !result.incomplete) return result;
+      // Most listings have no catalog entry of their own. The standard
+      // sizes and engraving capacity are in the fact sheet and the family
+      // option sheet, so a miss is not a reason to hold the whole answer.
+      return { ...result,
+        recommendation: "No catalog entry for this listing. Answer from the PRODUCT AND SHOP FACTS and get_option_sheet's universal sizes (engraving capacity, standard charm sizes, what can be engraved where). Only an exact mm figure that neither gives is unknown: name it in missing_facts and don't guess it." };
     },
 
     get_option_sheet: async ({ family }) => {
@@ -1250,7 +1288,7 @@ const TOOL_SPEC_REQUEST_DIMENSIONS = {
 
 const TOOL_SPEC_RESOLVE_QUOTE = {
   name: "resolveQuote",
-  description: "Compute the EXACT price for a Custom Brites custom order using the line-sheet option resolver. This is the ONLY way to quote a price — you MUST call this before stating any total. Returns the itemized line items, per-piece subtotal, bulk-tier discount, optional rush production fee, optional shipping summary, and final total. If a Quote-row code is in selectedCodes, the resolver returns escalations[] populated; you must then escalate to Needs Review (advance_stage:'human_review') and compose a needs_review_synopsis. Not Available codes return success:false with reason:'NOT_AVAILABLE' and a customer-facing message you should relay verbatim. RUSH PRODUCTION ($15 per order, gets to 2-3 days vs standard 4-5): pass wantsRush:true ONLY when the customer has expressed deadline pressure or asked about speeding things up. Rush + Quote-row code together returns reason:'RUSH_BLOCKED_BY_QUOTE_ROW' (operator must approve). Rush over qtyMaxForRush returns reason:'RUSH_QTY_OVER_CAP'. SHIPPING SUMMARY: pass includeShippingSummary:true only when the customer has asked about shipping speed or has expressed urgency — returns a read-only price range and fastest-days text you may quote verbatim, but you must NEVER bind to a specific shipping cost (the customer picks at Etsy checkout).",
+  description: "Compute the EXACT price for a Custom Brites custom order using the line-sheet option resolver. This is the ONLY way to quote a price — you MUST call this before stating any total. Returns the itemized line items, per-piece subtotal, bulk-tier discount, optional rush production fee, optional shipping summary, and final total. If a Quote-row code is in selectedCodes, the resolver returns escalations[] populated; you must then escalate to Needs Review (advance_stage:'human_review') and compose a needs_review_synopsis. Not Available codes return success:false with reason:'NOT_AVAILABLE' and a customer-facing message you should relay verbatim. RUSH PRODUCTION ($15 per order, gets to 2-3 business days vs standard 4-6): pass wantsRush:true ONLY when the customer has expressed deadline pressure or asked about speeding things up. Rush + Quote-row code together returns reason:'RUSH_BLOCKED_BY_QUOTE_ROW' (operator must approve). Rush over qtyMaxForRush returns reason:'RUSH_QTY_OVER_CAP'. SHIPPING SUMMARY: pass includeShippingSummary:true only when the customer has asked about shipping speed or has expressed urgency — returns a read-only price range and fastest-days text you may quote verbatim, but you must NEVER bind to a specific shipping cost (the customer picks at Etsy checkout).",
   input_schema: {
     type: "object",
     properties: {
@@ -1271,7 +1309,7 @@ const TOOL_SPEC_RESOLVE_QUOTE = {
       },
       wantsRush: {
         type: "boolean",
-        description: "Set to true ONLY when the customer has expressed deadline pressure or asked about rush/expedited production. Adds the $15 flat per-order rush production fee, switches production timing from 4-5 days to 2-3 days. Capped at 10 pieces per order. Hard-escalates if any selectedCode is a Quote-row. Default false."
+        description: "Set to true ONLY when the customer has expressed deadline pressure or asked about rush/expedited production. Adds the $15 flat per-order rush production fee, switches production timing from 4-6 business days to 2-3. Capped at 10 pieces per order. Hard-escalates if any selectedCode is a Quote-row. Default false."
       },
       includeShippingSummary: {
         type: "boolean",
@@ -1625,7 +1663,9 @@ function buildInitialMessages({ contextSummary, latestInboundText, referenceAtta
     textParts.push("");
   }
 
-  textParts.push("═══ Sales context (operator-curated summary) ═══");
+  // Its notes and spec were mostly written by earlier AI turns, so they
+  // are not the operator's word (an earlier turn's mistake would repeat).
+  textParts.push("═══ Sales context (stored summary: notes and spec fields were written by earlier AI turns and can be wrong; staff messages and the PRODUCT AND SHOP FACTS win) ═══");
   textParts.push(JSON.stringify(contextSummary, null, 2));
   textParts.push("");
   textParts.push("═══ Latest customer message ═══");
@@ -3015,7 +3055,7 @@ In every other case, the bias is forward. Don't manufacture clarifying questions
 
 # RUSH OFFER — READ THE LIVE CONVERSATION, NOT THE WHOLE THREAD
 
-The base playbook tells you to surface rush production ($15, 2-3 days vs 4-5) when the customer has expressed urgency or named a deadline, AND to suppress it during early discovery (before specs are chosen). When those rules collide on a single turn, use judgment, don't mechanically apply one or the other.
+The base playbook tells you to surface rush production ($15, 2-3 days vs 4-6) when the customer has expressed urgency or named a deadline, AND to suppress it during early discovery (before specs are chosen). When those rules collide on a single turn, use judgment, don't mechanically apply one or the other.
 
 ## What "live urgency" looks like
 
@@ -3447,7 +3487,9 @@ One customer can have several conversations in one thread. A sale that finished 
 
 Production is 4-6 business days for every order, whatever a listing's processing-time field says. When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
 
-Never give a concrete delivery timeline: no calendar date or date range for arrival ("by Friday", "Sep 28-29", "next week"). Give ranges in business days only, always followed by: "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen." That covers rush, Priority and Express too.
+Never give a concrete delivery timeline: no calendar date or date range for arrival ("by Friday", "Sep 28-29", "next week"). Give ranges in business days only, always followed by: "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen." That covers rush, Priority and Express too. Judge a date from the latest estimate: when it lands before the date, say it should arrive in time (never "tight", however short the window); "tight" is only for a date inside the range.
+
+A photo staff sent is one you can't see: answer from the staff text sent with it and never describe it. A photo sent with "we can send you a mock up" is not that mock-up; if the customer asks about it, say so and ask whether they'd still like the mock-up. An extra charge staff already quoted on a placed order (a tariff, surcharge or price difference) is support: its payment link is the Re-work / Modifications listing in the fact sheet.
 
 The worked examples earlier in this prompt were written before these rules; where they differ, these rules win. Replies say "we", not "I". A line sheet goes out through attach_line_sheet, never as a "<line sheet URL>" in the text, and "every conversation gets the line sheet before the quote" means every custom conversation, never an existing listing. The metals comparison card shows gold filled, gold plated and solid gold only (not sterling silver), whatever an older example says; describe it that way. An attach flag is all attach_collateral needs; the older "MUST call get_collateral" rule is relaxed. A turn that states a resolver price keeps next_action compute_quote and may still set attach_line_sheet: true. A spec change on an order the customer already paid (Example 3) is support: follow SELF-ESCAPE A, not the fast path. Example 7's holding line is banned: that reply names the customer's exact request (the Beady Chain in 14k solid gold with rush) and says what is settled, e.g. that this chain is priced individually and rush on it needs the shop's confirmation.
 
@@ -3560,7 +3602,40 @@ from your investigation, not from the default sales script.
 - Never say or imply the pieces are made in the US, the states, America, New York, Buffalo or Niagara Falls. Never name Niagara Falls. Don't repeat materials claims from a listing description ("from the US and Italy").
 `.trim();
 
-    const fullSystemPrompt = String(promptLoad.prompt || "").trim()
+    // Owner-approved corrections from the 2026-09-27 review of 18 wrong
+    // replies. The stored prompt (EtsyMail_Prompts/sales) still has the
+    // older wording in places; patchStoredSalesPrompt fixes the lines that
+    // contradict these, and this block states the rules.
+    const reviewLessonsAddendum = `
+# CORRECTIONS FROM THE OWNER'S REVIEW (system addendum, overrides older wording)
+
+- What we make: necklace charms, huggie earrings, stud earrings, and bracelets and rings too (see PRODUCT AND SHOP FACTS). A charm can be made on a bracelet: the customer orders the charm's necklace listing and writes in the note that it should be a bracelet. Off-catalog means only what the facts say we don't make (body jewellery and the like); never tell a customer we don't make bracelets or rings.
+- A variation of an existing listing (a bracelet instead of a necklace, another count of pearls or charms, a different metal) is answered from that listing plus a note: no line sheet. If the extra cost isn't on a listing, in the facts or in a staff message, never invent it: say we can make it, say how to order it (the listing, the option and the note), add "we'll confirm the price for that here", and list the price in missing_facts. That one clause is allowed with every next_action and is not a deferral.
+- Rush on every path: when a customer who hasn't bought yet names a date and $15 rush would change the answer, offer it, also on the existing-listing path (the listing becomes the base of a custom listing with rush added; preferring the existing listing never removes rush). Mention rush before any shipping upgrade, since production is the larger part of the wait, and give any shipping upgrade's business-day range (Priority 2-4 business days) when you name it.
+- Open every reply with "Hi <buyer first name>," when the name is known (the buyer, never a gift recipient or a name in a personalisation). No filler opener ("Good question").
+- Never state what a product can or can't have (front or back engraving, a back type, a clasp, a stone, a length, a size) unless the facts, the listing data, or staff in this thread say it. If the customer quotes a staff reply that isn't in the messages you were given, don't rebuild it from their words: answer from the facts, or list the detail in missing_facts. A date or a short name always fits on the back of a necklace charm (see the facts on engraving).
+- Never promise a piece suits an activity (sport, sleep, swimming) or won't come loose; state how it's made and name the closest thing we make when they want a feature we don't offer.
+- A thanks or "that's alright" after the shop's automatic away reply (marked in the messages) is not an answer to anything: the customer's questions before it are still open, answer them.
+- The escalation line "Thanks for sending this over. I need to look at this carefully before I can speak to specifics." is banned everywhere, including inside older examples.
+`.trim();
+
+    // The owner's fact sheet and rules learned from staff corrections
+    // (_etsyMailKnowledge.js), last in the prompt so it stays cached.
+    let salesKnowledgeBlock = "";
+    try { salesKnowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("sales"); }
+    catch (e) { console.warn("[salesAgent] fact sheet unavailable:", e.message); }
+    const missingFactsAddendum = [
+      "# MISSING FACTS (system addendum)",
+      "Add \"missing_facts\" to your JSON: an array of short questions, one per product, shipping or",
+      "policy detail the customer asked that the fact sheet, the listing data and this thread do not",
+      "give (e.g. \"Do the swan studs have silicone or butterfly backs?\"). Empty array when nothing is",
+      "missing. Never guess such a detail in the reply: answer everything else and add one clause",
+      "naming it (\"we'll confirm the price for the three-pearl version here\"); that clause is allowed",
+      "with every next_action and does not break the forward-promise or no-deferral rules. A",
+      "non-empty list holds the draft for a person."
+    ].join("\n");
+
+    const fullSystemPrompt = patchStoredSalesPrompt(String(promptLoad.prompt || "").trim())
       + "\n\n---\n\n"
       + lineSheetEagernessAddendum
       + "\n\n---\n\n"
@@ -3592,7 +3667,10 @@ from your investigation, not from the default sales script.
       + "\n\n---\n\n"
       + salesAgentInvestigationAddendum
       + "\n\n---\n\n"
-      + originAddendum;
+      + originAddendum
+      + "\n\n---\n\n"
+      + reviewLessonsAddendum
+      + (salesKnowledgeBlock ? "\n\n---\n\n" + salesKnowledgeBlock + "\n\n" + missingFactsAddendum : "");
 
     // ════════════════════════════════════════════════════════════════════
     // ─── v5.0 OPTION C — AI CALL WITH RETRY-ONCE-THEN-ESCALATE ────────
@@ -3653,7 +3731,11 @@ from your investigation, not from the default sales script.
           toolContext   : { threadId, salesCtx },
           effort        : AI_EFFORT,
           useThinking   : true,
-          maxIterations : MAX_TOOL_ITERATIONS
+          maxIterations : MAX_TOOL_ITERATIONS,
+          // The system prompt is the same for every thread (the fact sheet
+          // included), so it stays in the prompt cache for an hour between
+          // sales turns, as the support drafter's does.
+          cacheTtl      : process.env.ETSYMAIL_AI_CACHE_TTL === "5m" ? undefined : "1h"
         });
       } catch (e) {
         await writeAudit({
@@ -4054,8 +4136,12 @@ ${validationResult.message}
     }
     let replyText = customerFacingReply;
 
-    const aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
+    const salesMissingFacts = Array.isArray(parsed.missing_facts)
+      ? parsed.missing_facts.map(x => String(x || "").trim()).filter(Boolean).slice(0, 5) : [];
+    let aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
+    // A detail the fact sheet does not give waits for a person.
+    if (salesMissingFacts.length && aiConfidence > 0.5) aiConfidence = 0.5;
 
     // ─── v4.3.12: line-sheet attachment construction ──────────────────
     //
@@ -4299,6 +4385,7 @@ ${validationResult.message}
       aiReasoning           : String(parsed.reasoning || "").slice(0, 1000),
       aiNeedsPhoto          : !!parsed.needs_photo,
       aiMissingInputs       : Array.isArray(parsed.missing_inputs) ? parsed.missing_inputs.slice(0, 12) : [],
+      aiMissingFacts        : salesMissingFacts,
       aiCollateralReferenced: Array.isArray(parsed.collateral_referenced) ? parsed.collateral_referenced : [],
       aiRecommendedCollateral: recommendedCollateral,
       // v2.8.1 — Record the FULL prefetch diagnostic on the draft so
@@ -4408,6 +4495,10 @@ ${validationResult.message}
         payload  : { draftStatus: draftSlotBusy },
         outcome  : "skipped"
       });
+    }
+
+    if (!draftSlotBusy && salesMissingFacts.length) {
+      await require("./_etsyMailLearning").recordMissingFacts({ db, admin, threadId, facts: salesMissingFacts, route: "sales" });
     }
 
     // ── Persist sales context updates ──

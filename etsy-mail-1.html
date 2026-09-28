@@ -130,6 +130,20 @@
     }
 
     /* ─── Gmail watcher panel (topbar) ─── */
+    /* Etsy page-change alarm (EtsyMail_Config/scrapeHealth): shown only
+       after three bad scrapes in a row. */
+    .em-scrape-alarm {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 4px;
+      background: #3b2023; border: 1px solid #8a3a3a;
+      font-size: 12px; color: #ffd9d6; cursor: default; user-select: none;
+    }
+    .em-scrape-alarm[hidden] { display: none; }
+    .em-scrape-alarm .em-scrape-dot { width: 8px; height: 8px; border-radius: 50%; background: #e74c3c; }
+    .em-topbar-floating-toggle.em-alarm::after {
+      content: ""; position: absolute; top: 3px; right: 3px;
+      width: 7px; height: 7px; border-radius: 50%; background: #e74c3c;
+    }
     .em-gmail-pill {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 4px 10px; border-radius: 4px;
@@ -5069,6 +5083,70 @@ body.em-tabs-smart .em-smart-fwrap {
 .em-layout-opt:focus { background: #fff; outline: none; }
 .em-layout-opt.on, .em-layout-opt.on:focus { background: #0366d6; color: #fff; }
 .em-layout-opt:focus-visible { box-shadow: inset 0 0 0 2px rgba(3,102,214,.45); }
+/* The Settings dialog styles every button (padding, grey fill, and bigger
+   on phones); these controls keep their own look there. */
+#emSecretModal .em-layout-opt { padding: 5px 12px; min-height: 0; border: none; border-radius: 0; background: #fff; color: #24292f; font-size: 12px; line-height: 16px; }
+#emSecretModal .em-layout-opt + .em-layout-opt { border-left: 1px solid #d0d7de; }
+#emSecretModal .em-layout-opt:hover { background: #f6f8fa; }
+#emSecretModal .em-layout-opt.on, #emSecretModal .em-layout-opt.on:focus { background: #0366d6; color: #fff; }
+
+/* Settings: Learning (owner only) */
+.em-learn-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.em-learn-head .em-learn-run { margin-left: auto; }
+#emSecretModal .em-learn-btn {
+  padding: 3px 10px; min-height: 0; font-size: 11px; line-height: 16px; background: #fff; color: #24292f;
+  border: 1px solid #d0d7de; border-radius: 4px; cursor: pointer; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+#emSecretModal .em-learn-btn:hover { background: #f6f8fa; }
+#emSecretModal .em-learn-btn:focus { outline: none; }
+#emSecretModal .em-learn-btn:focus-visible { box-shadow: 0 0 0 2px rgba(3,102,214,.35); }
+#emSecretModal .em-learn-btn:disabled { opacity: .55; cursor: default; }
+#emSecretModal .em-learn-btn.primary { background: #0366d6; border-color: #0366d6; color: #fff; }
+#emSecretModal .em-learn-btn.primary:hover { background: #0359bd; }
+#emSecretModal .em-learn-btn .em-smart-spin { width: 9px; height: 9px; margin: 0; }
+.em-learn-tabs .em-layout-opt { white-space: nowrap; }
+.em-learn-stats { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #57606a; margin: 6px 0 8px; flex-wrap: wrap; }
+.em-learn-bar { display: flex; flex: 0 0 160px; height: 6px; border-radius: 3px; overflow: hidden; background: #eaeef2; }
+.em-learn-bar i { display: block; height: 100%; }
+.em-learn-bar .u { background: #2da44e; } .em-learn-bar .l { background: #bf8700; } .em-learn-bar .r { background: #cf222e; }
+.em-learn-key { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 3px 0 6px; vertical-align: 0; }
+.em-learn-stats b { color: #24292f; font-weight: 600; }
+.em-learn-tabs { margin: 2px 0 8px; }
+.em-learn-tabs .em-layout-opt .n { opacity: .7; margin-left: 3px; }
+.em-learn-panel { font-size: 12px; max-height: 420px; overflow-y: auto; padding-right: 2px; }
+.em-learn-empty { color: #6a737d; padding: 10px 2px; }
+.em-learn-item { padding: 8px 10px; background: #f6f8fa; border-radius: 6px; margin-bottom: 6px; }
+.em-learn-meta { font-size: 11px; color: #6a737d; margin-bottom: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.em-learn-chip { font-size: 10px; padding: 0 6px; border-radius: 3px; background: #eaeef2; color: #57606a; line-height: 16px; }
+.em-learn-chip.on { background: #dafbe1; color: #116329; }
+.em-learn-chip.sug { background: #fff8c5; color: #7d4e00; }
+.em-learn-ask { color: #57606a; margin: 0 0 6px; white-space: pre-wrap; }
+.em-learn-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.em-learn-cols > div { background: #fff; border: 1px solid #e1e4e8; border-radius: 4px; padding: 6px 8px; white-space: pre-wrap; line-height: 1.45; }
+.em-learn-cols .t { display: block; font-size: 10px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; color: #6a737d; margin-bottom: 3px; }
+.em-learn-cols del { color: #a40e26; background: #ffebe9; text-decoration: line-through; text-decoration-color: rgba(164,14,38,.5); }
+.em-learn-cols ins { color: #116329; background: #dafbe1; text-decoration: none; }
+.em-learn-row { display: flex; align-items: flex-start; gap: 8px; }
+.em-learn-row > .txt { flex: 1 1 auto; min-width: 0; line-height: 1.45; }
+.em-learn-row > .act { flex: 0 0 auto; display: flex; gap: 4px; align-items: center; }
+.em-learn-row.off > .txt { color: #8c959f; text-decoration: line-through; text-decoration-color: rgba(140,149,159,.6); }
+.em-learn-fam { font-size: 11px; font-weight: 700; color: #57606a; margin: 10px 2px 4px; letter-spacing: .3px; }
+.em-learn-fam:first-child { margin-top: 0; }
+.em-learn-fact { padding: 5px 8px; border-radius: 4px; }
+.em-learn-fact:hover { background: #f6f8fa; }
+.em-learn-panel textarea, .em-learn-panel input[type="text"], .em-learn-panel select {
+  width: 100%; box-sizing: border-box; font-size: 12px; line-height: 1.4; padding: 5px 7px; height: auto;
+  border: 1px solid #d0d7de; border-radius: 4px; background: #fff; margin: 0; box-shadow: none; font-family: inherit;
+}
+.em-learn-panel select { display: block; width: auto; max-width: 100%; }
+.em-learn-panel textarea { resize: vertical; min-height: 44px; }
+.em-learn-edit { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.em-learn-edit .btns { display: flex; gap: 6px; align-items: center; }
+.em-learn-note { font-size: 11px; color: #6a737d; margin: 6px 0 0; }
+.em-learn-err { color: #cf222e; }
+@media (max-width: 640px) { .em-learn-cols { grid-template-columns: 1fr; } }
+#emSecretModal .em-learn-panel p { margin: 0; }
 
 /* Phone: filter icon in the app bar (list screen, new layout only) */
 #mFilterIcon { display: none; position: relative; }
@@ -5387,6 +5465,22 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           <button type="button" class="em-layout-opt" role="radio" aria-checked="false" data-layout="legacy">Classic folders</button>
         </div>
         <p id="emInboxLayoutNote" style="font-size:11px;color:#6a737d;margin:6px 0 8px;"></p>
+
+        <!-- Learning: what the AI learned from the team's edits (owner only). -->
+        <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
+        <div class="em-learn-head">
+          <p style="margin:0;"><b>Learning</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— what the AI learns from your team's edits, and the facts it may state</span></p>
+          <button type="button" class="em-learn-btn em-learn-run" id="emLearnRunBtn" title="Turn this week's edits into rules and facts now (it also runs once a day)">Learn now</button>
+        </div>
+        <div id="emLearnStats" class="em-learn-stats"><span class="em-smart-spin"></span> Loading…</div>
+        <div class="em-layout-ctl em-learn-tabs" id="emLearnTabs" role="tablist" aria-label="Learning">
+          <button type="button" class="em-layout-opt on" role="tab" data-ltab="edits">Biggest edits<span class="n" data-lcount="edits"></span></button>
+          <button type="button" class="em-layout-opt" role="tab" data-ltab="rules">Learned rules<span class="n" data-lcount="rules"></span></button>
+          <button type="button" class="em-layout-opt" role="tab" data-ltab="facts">Fact sheet<span class="n" data-lcount="facts"></span></button>
+          <button type="button" class="em-layout-opt" role="tab" data-ltab="gaps">Unanswered<span class="n" data-lcount="gaps"></span></button>
+        </div>
+        <div id="emLearnPanel" class="em-learn-panel"></div>
+        <p id="emLearnNote" class="em-learn-note"></p>
 
         <hr style="margin:18px 0 10px;border:none;border-top:1px solid #e1e4e8;">
         <p style="margin-bottom:4px;"><b>Auto-pipeline</b> <span class="em-muted" style="font-weight:400;font-size:11px;">— shared with all operators (stored in Firestore)</span></p>
@@ -6217,6 +6311,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         <span id="emOperatorRoleLabel">unknown</span>
       </span>
       <span class="em-polling-indicator" id="emPollingIndicator">polling every 5s</span>
+      <span class="em-scrape-alarm" id="emScrapeAlarm" hidden>
+        <span class="em-scrape-dot"></span><span id="emScrapeAlarmLabel">Etsy page not read</span>
+      </span>
       <span id="emBackendStatus" title="Backend connection">
         <span class="em-status-dot" id="emBackendDot"></span>
         <span id="emBackendLabel" style="font-size:12px;margin-left:4px;">Backend: checking…</span>
@@ -10245,6 +10342,291 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         '<span class="em-muted">(' + esc(u.username) + ')</span> · ' + roleLabel + '</div>';
     }
 
+    // ── Settings > Learning (owner only) ─────────────────────────────
+    // What staff changed in the AI's drafts, the rules learned from it,
+    // the fact sheet both AIs answer from, and the questions the AI could
+    // not answer. Server: etsyMailLearning (owner session required).
+    const emLearn = { data: null, tab: "edits", busy: false, wired: false };
+
+    function emLearnApi(body) {
+      return api("etsyMailLearning", { method: "POST", body: Object.assign({ actor: getEmployeeName() }, body) });
+    }
+    function emLearnAgo(ms) {
+      if (!ms) return "";
+      const m = Math.round((Date.now() - ms) / 60000);
+      if (m < 1) return "just now";
+      if (m < 60) return m + " min ago";
+      const h = Math.round(m / 60);
+      if (h < 36) return h + " h ago";
+      return Math.round(h / 24) + " days ago";
+    }
+    // Word diff for the edits view: what staff removed (left) and added (right).
+    function emLearnDiff(a, b) {
+      const tok = s => String(s || "").match(/\s+|[^\s]+/g) || [];
+      const A = tok(a).slice(0, 700), B = tok(b).slice(0, 700);
+      const key = t => /^\s+$/.test(t) ? " " : t.toLowerCase().replace(/[.,!?;:]+$/, "");
+      const n = A.length, m = B.length;
+      const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+        L[i][j] = key(A[i]) === key(B[j]) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+      let i = 0, j = 0, left = "", right = "";
+      while (i < n && j < m) {
+        if (key(A[i]) === key(B[j])) { left += esc(A[i]); right += esc(B[j]); i++; j++; }
+        else if (L[i + 1][j] >= L[i][j + 1]) { left += /^\s+$/.test(A[i]) ? esc(A[i]) : "<del>" + esc(A[i]) + "</del>"; i++; }
+        else { right += /^\s+$/.test(B[j]) ? esc(B[j]) : "<ins>" + esc(B[j]) + "</ins>"; j++; }
+      }
+      for (; i < n; i++) left += /^\s+$/.test(A[i]) ? esc(A[i]) : "<del>" + esc(A[i]) + "</del>";
+      for (; j < m; j++) right += /^\s+$/.test(B[j]) ? esc(B[j]) : "<ins>" + esc(B[j]) + "</ins>";
+      return { left, right };
+    }
+
+    function emLearnRenderStats() {
+      const el = $("emLearnStats"); if (!el) return;
+      const d = emLearn.data;
+      if (!d) return;
+      const weeks = d.weeks || [];
+      const w = weeks[weeks.length - 1] || {}, pw = weeks[weeks.length - 2] || null;
+      const cnt = x => ({ u: x.unchanged || 0, l: x.light || 0, r: (x.rewrite || 0) + (x.replaced || 0) });
+      const c = cnt(w), total = c.u + c.l + c.r;
+      const pct = v => total ? Math.round(v * 100 / total) : 0;
+      let html;
+      if (!total) {
+        html = '<span>No AI drafts sent yet this week. Each reply sent from an AI draft is compared with what the AI wrote.</span>';
+      } else {
+        html = '<span class="em-learn-bar" aria-hidden="true"><i class="u" style="width:' + pct(c.u) + '%"></i><i class="l" style="width:' + pct(c.l) + '%"></i><i class="r" style="width:' + pct(c.r) + '%"></i></span>' +
+          '<span>This week <b>' + total + '</b> AI drafts sent:' +
+          '<span class="em-learn-key" style="background:#2da44e"></span><b>' + pct(c.u) + '%</b> as written' +
+          '<span class="em-learn-key" style="background:#bf8700"></span><b>' + pct(c.l) + '%</b> lightly edited' +
+          '<span class="em-learn-key" style="background:#cf222e"></span><b>' + pct(c.r) + '%</b> rewritten</span>';
+        if (pw) {
+          const p = cnt(pw), pt = p.u + p.l + p.r;
+          if (pt) html += '<span>Last week ' + Math.round(p.u * 100 / pt) + '% as written</span>';
+        }
+      }
+      el.innerHTML = html;
+    }
+
+    function emLearnRenderCounts() {
+      const d = emLearn.data || {};
+      const set = (k, v) => { const e = document.querySelector('#emLearnTabs [data-lcount="' + k + '"]'); if (e) e.textContent = v ? String(v) : ""; };
+      set("edits", (d.rewrites || []).length);
+      set("rules", (d.rules || []).filter(r => r.status === "active").length);
+      set("facts", (d.facts || []).filter(f => f.status === "active").length);
+      set("gaps", (d.gaps || []).length);
+      document.querySelectorAll("#emLearnTabs [data-ltab]").forEach(b => {
+        const on = b.dataset.ltab === emLearn.tab;
+        b.classList.toggle("on", on); b.setAttribute("aria-selected", on ? "true" : "false");
+      });
+    }
+
+    function emLearnFamilyOptions(sel) {
+      const fams = (emLearn.data && emLearn.data.families) || [];
+      return fams.map(f => '<option' + (f === sel ? " selected" : "") + '>' + esc(f) + '</option>').join("");
+    }
+
+    function emLearnRenderPanel() {
+      const el = $("emLearnPanel"); if (!el) return;
+      const d = emLearn.data;
+      if (!d) return;
+      let html = "";
+      if (emLearn.tab === "edits") {
+        const list = d.rewrites || [];
+        if (!list.length) html = '<div class="em-learn-empty">No big edits in the last 7 days. When staff rewrite an AI draft before sending, it shows here with what changed.</div>';
+        for (const o of list) {
+          const df = emLearnDiff(o.aiText, o.sentText);
+          const learned = (o.learnedInto || []).length ? '<span class="em-learn-chip on">learned</span>'
+            : o.learnStatus === "pending" ? '<span class="em-learn-chip">to learn</span>' : "";
+          html += '<div class="em-learn-item">' +
+            '<div class="em-learn-meta"><b style="color:#24292f">' + esc(o.customerName || "Customer") + '</b>' +
+              '<span>' + esc(emLearnAgo(o.atMs)) + '</span>' +
+              (o.employeeName ? '<span>sent by ' + esc(o.employeeName) + '</span>' : "") +
+              '<span>' + Math.round((o.similarity || 0) * 100) + '% kept</span>' +
+              '<span class="em-learn-chip">' + (o.route === "sales" ? "Sales" : "Support") + '</span>' + learned + '</div>' +
+            (o.customerAsked ? '<div class="em-learn-ask">' + esc(String(o.customerAsked).slice(0, 400)) + '</div>' : "") +
+            '<div class="em-learn-cols"><div><span class="t">AI wrote</span>' + df.left + '</div>' +
+              '<div><span class="t">Sent</span>' + df.right + '</div></div>' +
+          '</div>';
+        }
+      } else if (emLearn.tab === "rules") {
+        const list = (d.rules || []).slice().sort((a, b) =>
+          (a.status === "active" ? 0 : a.status === "suggested" ? 1 : 2) - (b.status === "active" ? 0 : b.status === "suggested" ? 1 : 2) || (b.support || 0) - (a.support || 0));
+        if (!list.length) html = '<div class="em-learn-empty">No rules yet. The AI learns a rule once staff make the same kind of correction in 3 different conversations. You can switch any rule off.</div>';
+        for (const r of list) {
+          const on = r.status === "active";
+          const chip = on ? '<span class="em-learn-chip on">on</span>' : r.status === "suggested" ? '<span class="em-learn-chip sug">suggested</span>' : '<span class="em-learn-chip">off</span>';
+          html += '<div class="em-learn-item"><div class="em-learn-row' + (r.status === "off" ? " off" : "") + '">' +
+            '<div class="txt">' + esc(r.text) +
+              '<div class="em-learn-meta" style="margin:3px 0 0">' + chip +
+                '<span>' + (r.scope === "sales" ? "Sales agent" : r.scope === "support" ? "Support drafter" : "Both AIs") + '</span>' +
+                '<span>from ' + (r.support || 0) + ' conversation' + ((r.support || 0) === 1 ? "" : "s") + '</span></div></div>' +
+            '<div class="act"><button type="button" class="em-learn-btn" data-lact="rule-toggle" data-id="' + esc(r.id) + '" data-to="' + (on ? "off" : "active") + '">' + (on ? "Turn off" : "Turn on") + '</button></div>' +
+          '</div></div>';
+        }
+      } else if (emLearn.tab === "facts") {
+        const facts = d.facts || [];
+        const fams = (d.families || []).slice();
+        for (const f of facts) if (!fams.includes(f.family)) fams.push(f.family);
+        html += '<div class="em-learn-note" style="margin:0 0 8px">Both AIs state product and shop details only from this sheet, the listing and order data, or what staff wrote in the thread. A detail missing here is held for a person and shows under Unanswered.</div>';
+        for (const fam of fams) {
+          const list = facts.filter(f => f.family === fam);
+          if (!list.length) continue;
+          html += '<div class="em-learn-fam">' + esc(fam) + '</div>';
+          for (const f of list) {
+            const on = f.status === "active", sug = f.status === "suggested";
+            html += '<div class="em-learn-fact" data-fact="' + esc(f.id) + '"><div class="em-learn-row' + (!on && !sug ? " off" : "") + '">' +
+              '<div class="txt">' + esc(f.text) + (sug ? ' <span class="em-learn-chip sug">suggested</span>' : "") +
+                (f.source === "owner" ? ' <span class="em-learn-chip">yours</span>' : f.source === "learned" && on ? ' <span class="em-learn-chip on">learned</span>' : "") + '</div>' +
+              '<div class="act"><button type="button" class="em-learn-btn" data-lact="fact-edit" data-id="' + esc(f.id) + '">Edit</button>' +
+              '<button type="button" class="em-learn-btn" data-lact="fact-toggle" data-id="' + esc(f.id) + '" data-to="' + (on ? "off" : "active") + '">' + (on ? "Don’t use" : "Use") + '</button></div>' +
+            '</div></div>';
+          }
+        }
+        html += '<div class="em-learn-item" style="margin-top:10px"><div class="em-learn-edit">' +
+          '<textarea id="emLearnNewFact" rows="2" placeholder="Add a fact, e.g. Stud earrings come with silicone backs."></textarea>' +
+          '<div class="btns"><select id="emLearnNewFam">' + emLearnFamilyOptions("What we make") + '</select>' +
+          '<button type="button" class="em-learn-btn primary" data-lact="fact-add">Add fact</button></div></div></div>';
+      } else {
+        const list = d.gaps || [];
+        if (!list.length) html = '<div class="em-learn-empty">Nothing unanswered. When a customer asks for a detail the fact sheet doesn’t cover, the AI holds that reply for a person and lists the question here. Answer it once and it becomes a fact.</div>';
+        for (const g of list) {
+          html += '<div class="em-learn-item" data-gap="' + esc(g.id) + '">' +
+            '<div class="em-learn-row"><div class="txt"><b style="font-weight:600">' + esc(g.question) + '</b>' +
+              '<div class="em-learn-meta" style="margin:3px 0 0"><span>asked ' + g.count + ' time' + (g.count === 1 ? "" : "s") + (g.threads > 1 ? ' in ' + g.threads + ' conversations' : "") + '</span><span>' + esc(emLearnAgo(g.lastAtMs)) + '</span></div></div>' +
+              '<div class="act"><button type="button" class="em-learn-btn" data-lact="gap-dismiss" data-id="' + esc(g.id) + '">Dismiss</button></div></div>' +
+            '<div class="em-learn-edit"><textarea rows="2" data-gap-answer="' + esc(g.id) + '" placeholder="The answer, written as a fact the AI can state"></textarea>' +
+              '<div class="btns"><select data-gap-fam="' + esc(g.id) + '">' + emLearnFamilyOptions("What we make") + '</select>' +
+              '<button type="button" class="em-learn-btn primary" data-lact="gap-answer" data-id="' + esc(g.id) + '">Add to fact sheet</button></div></div>' +
+          '</div>';
+        }
+      }
+      el.innerHTML = html;
+    }
+
+    function emLearnRenderNote(msg, isErr) {
+      const el = $("emLearnNote"); if (!el) return;
+      if (msg) { el.innerHTML = isErr ? '<span class="em-learn-err">' + esc(msg) + '</span>' : msg; return; }
+      const st = emLearn.data && emLearn.data.learnState;
+      if (st && st.runningSinceMs && Date.now() - st.runningSinceMs < 15 * 60000) {
+        el.innerHTML = '<span class="em-smart-spin"></span> Learning from this week’s edits…';
+      } else if (st && st.lastRunAtMs) {
+        const r = st.lastResult || {};
+        el.textContent = "Last learned " + emLearnAgo(st.lastRunAtMs) + " from " + (r.outcomes || 0) + " edited replies" +
+          (r.rulesTouched || r.factsTouched ? ": " + (r.rulesTouched || 0) + " rule" + (r.rulesTouched === 1 ? "" : "s") + ", " + (r.factsTouched || 0) + " fact" + (r.factsTouched === 1 ? "" : "s") + " updated." : ".") +
+          (st.lastError ? " Last error: " + st.lastError : "");
+      } else {
+        el.textContent = "Learns once a day from replies staff rewrote. Uses one small AI call per day at most.";
+      }
+    }
+
+    async function loadLearningPanel({ quiet = false } = {}) {
+      const stats = $("emLearnStats"), panel = $("emLearnPanel");
+      if (!stats || !panel) return;
+      if (!emLearn.wired) emLearnWire();
+      if (!quiet || !emLearn.data) {
+        stats.innerHTML = '<span class="em-smart-spin"></span> Loading…';
+        if (!emLearn.data) panel.innerHTML = "";
+      }
+      try {
+        const res = await emLearnApi({ op: "summary" });
+        emLearn.data = res;
+        emLearnRenderStats(); emLearnRenderCounts(); emLearnRenderPanel(); emLearnRenderNote();
+      } catch (e) {
+        stats.innerHTML = '<span class="em-learn-err">Couldn’t load learning: ' + esc(e.message || "error") + '</span>';
+      }
+    }
+
+    // One action at a time; the button shows a spinner while it runs and
+    // the panel refreshes from the server when it's done.
+    async function emLearnAct(btn, body, doneMsg) {
+      if (emLearn.busy) return;
+      emLearn.busy = true;
+      const label = btn ? btn.innerHTML : "";
+      if (btn) { btn.disabled = true; btn.innerHTML = '<span class="em-smart-spin"></span>' + label; }
+      try {
+        await emLearnApi(body);
+        await loadLearningPanel({ quiet: true });
+        if (doneMsg) emLearnRenderNote(esc(doneMsg));
+      } catch (e) {
+        if (btn) { btn.disabled = false; btn.innerHTML = label; }
+        emLearnRenderNote("Couldn’t save: " + (e.message || "error"), true);
+      } finally {
+        emLearn.busy = false;
+      }
+    }
+
+    function emLearnWire() {
+      emLearn.wired = true;
+      const tabs = $("emLearnTabs"), panel = $("emLearnPanel"), run = $("emLearnRunBtn");
+      if (tabs) tabs.addEventListener("click", ev => {
+        const b = ev.target.closest("[data-ltab]"); if (!b) return;
+        emLearn.tab = b.dataset.ltab;
+        emLearnRenderCounts(); emLearnRenderPanel();
+        if (panel) panel.scrollTop = 0;
+      });
+      if (run) run.addEventListener("click", async () => {
+        if (emLearn.busy) return;
+        emLearn.busy = true;
+        run.disabled = true; run.innerHTML = '<span class="em-smart-spin"></span>Learning…';
+        try {
+          await emLearnApi({ op: "learnNow" });
+          emLearnRenderNote('<span class="em-smart-spin"></span> Learning from this week’s edits… this takes about a minute.');
+          setTimeout(() => loadLearningPanel({ quiet: true }), 45000);
+        } catch (e) {
+          emLearnRenderNote("Couldn’t start: " + (e.message || "error"), true);
+        } finally {
+          emLearn.busy = false;
+          setTimeout(() => { run.disabled = false; run.textContent = "Learn now"; }, 3000);
+        }
+      });
+      if (!panel) return;
+      // Enter in a fact box must not submit the Settings form.
+      panel.addEventListener("keydown", ev => {
+        if (ev.key === "Enter" && !ev.shiftKey && ev.target.tagName === "TEXTAREA") {
+          ev.preventDefault();
+          const box = ev.target.closest(".em-learn-edit");
+          const primary = box && box.querySelector(".em-learn-btn.primary");
+          if (primary) primary.click();
+        }
+      });
+      panel.addEventListener("click", ev => {
+        const b = ev.target.closest("[data-lact]"); if (!b) return;
+        const id = b.dataset.id || "";
+        const act = b.dataset.lact;
+        if (act === "rule-toggle") return emLearnAct(b, { op: "setRule", id, status: b.dataset.to });
+        if (act === "fact-toggle") return emLearnAct(b, { op: "saveFact", id, status: b.dataset.to });
+        if (act === "fact-add") {
+          const t = $("emLearnNewFact"), f = $("emLearnNewFam");
+          if (!t || !t.value.trim()) { t && t.focus(); return; }
+          return emLearnAct(b, { op: "saveFact", family: f ? f.value : "", text: t.value.trim() }, "Fact added. Both AIs use it from the next draft.");
+        }
+        if (act === "fact-edit") {
+          const f = ((emLearn.data && emLearn.data.facts) || []).find(x => x.id === id); if (!f) return;
+          const row = panel.querySelector('[data-fact="' + CSS.escape(id) + '"]'); if (!row) return;
+          row.innerHTML = '<div class="em-learn-edit"><textarea rows="2">' + esc(f.text) + '</textarea>' +
+            '<div class="btns"><select>' + emLearnFamilyOptions(f.family) + '</select>' +
+            '<button type="button" class="em-learn-btn primary" data-lact="fact-save" data-id="' + esc(id) + '">Save</button>' +
+            '<button type="button" class="em-learn-btn" data-lact="fact-cancel">Cancel</button></div></div>';
+          const ta = row.querySelector("textarea"); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+          return;
+        }
+        if (act === "fact-cancel") return emLearnRenderPanel();
+        if (act === "fact-save") {
+          const box = b.closest(".em-learn-edit"); if (!box) return;
+          const text = box.querySelector("textarea").value.trim(), family = box.querySelector("select").value;
+          if (!text) return;
+          const f = ((emLearn.data && emLearn.data.facts) || []).find(x => x.id === id);
+          return emLearnAct(b, { op: "saveFact", id, family, text, status: f ? f.status : "active" }, "Saved. Both AIs use it from the next draft.");
+        }
+        if (act === "gap-answer") {
+          const ta = panel.querySelector('[data-gap-answer="' + CSS.escape(id) + '"]');
+          const fam = panel.querySelector('[data-gap-fam="' + CSS.escape(id) + '"]');
+          if (!ta || !ta.value.trim()) { ta && ta.focus(); return; }
+          return emLearnAct(b, { op: "answerGap", gapId: id, family: fam ? fam.value : "", answer: ta.value.trim() }, "Added to the fact sheet. Both AIs use it from the next draft.");
+        }
+        if (act === "gap-dismiss") return emLearnAct(b, { op: "dismissGap", gapId: id });
+      });
+    }
+
     async function loadOperatorsList() {
       const list = $("emOperatorsList");
       if (!list) return;
@@ -10962,6 +11344,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       applyRoleVisibility();
       populateMyAccountInfo();
       if (state.isOwner) loadOperatorsList();
+      if (state.isOwner) loadLearningPanel();
 
       if (errMsg) {
         errEl.textContent = errMsg;
@@ -11250,6 +11633,50 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     // so any remaining callers don't crash, but no callers should
     // remain — grep confirmed only the call site above referenced it.
     function updateTopbarPurgeBtn() { /* no-op since v0.9.35 */ }
+
+    /* ─── Etsy page-change alarm ─────────────────────────────────────
+       etsyMailSnapshot records each scrape in EtsyMail_Config/scrapeHealth.
+       Three bad scrapes in a row (no messages, blank messages, no times,
+       or nothing matching the stored thread) mean Etsy changed its page or
+       signed the extension out: a red line shows in the top bar, and a red
+       dot on the top-bar toggle when the bar is hidden. One Firestore read
+       a minute; no Etsy calls. */
+    (function initScrapeAlarm() {
+      const POLL_MS = 60000;
+      function ago(ms) {
+        const m = Math.round((Date.now() - ms) / 60000);
+        if (m < 60) return m + " min ago";
+        const h = Math.round(m / 60);
+        return h < 48 ? h + " h ago" : Math.round(h / 24) + " days ago";
+      }
+      function render(d) {
+        const el = document.getElementById("emScrapeAlarm");
+        const label = document.getElementById("emScrapeAlarmLabel");
+        const toggle = document.getElementById("emTopbarToggleBtn");
+        if (!el || !label) return;
+        const bad = !!d && (d.consecutiveBad || 0) >= 3
+          && typeof d.lastBadAtMs === "number" && Date.now() - d.lastBadAtMs < 24 * 3600000;
+        el.hidden = !bad;
+        if (toggle) toggle.classList.toggle("em-alarm", bad);
+        if (!bad) return;
+        label.textContent = d.lastBadReason === "Etsy signed the extension out"
+          ? "Extension signed out of Etsy" : "Etsy page not read";
+        el.title = "The last " + d.consecutiveBad + " scrapes failed: " + (d.lastBadReason || "no messages read") + ". "
+          + "Etsy may have changed its page, or the extension's Etsy tab is signed out. "
+          + (d.lastOkAtMs ? "Last good read " + ago(d.lastOkAtMs) + "." : "No good read recorded yet.");
+      }
+      async function poll() {
+        try {
+          const res = await api("firestoreProxy", {
+            method: "GET",
+            query : { op: "get", coll: "EtsyMail_Config", id: "scrapeHealth" }
+          });
+          render(res && res.exists ? res.doc : null);
+        } catch (e) { /* keep the last state; the backend dot shows outages */ }
+      }
+      setTimeout(poll, 4000);
+      visibleInterval(poll, POLL_MS);
+    })();
 
     /* ─── API meter (live Etsy API call counter) ─────────────────────
        Polls EtsyMail_Config/etsyApiCounters every 3 seconds via

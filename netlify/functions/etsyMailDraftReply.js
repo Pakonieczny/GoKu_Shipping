@@ -91,6 +91,9 @@ const {
   getShopReceiptFull,
   getShopReceiptShipments
 } = require("./_etsyMailEtsy");
+// USPS barcodes ("420" + ZIP + tracking number) become the tracking number
+// customers and USPS.com know.
+const { cleanTrackingCode: _cleanTrackingCode, cleanTrackingCodesInText: _cleanTrackingCodesInText } = require("./_etsyMailTrackingCode");
 
 let searchListings = null;
 let getServiceListingsBlock = null;
@@ -736,6 +739,7 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
   // below walks oldest → newest, so a photo-heavy thread used to run out
   // of budget before it reached the photos the customer just sent.
   const _isStaffMsg = (m) => m.direction === "outbound" || m.senderRole === "staff" || m.senderRole === "shop_owner";
+  const { isAwayMessage: _isAway, AWAY_NOTE: _AWAY_NOTE } = require("./_etsyMailKnowledge");
   const imageAllowance = new Map();
   let _imgLeft = MAX_IMAGES_TOTAL;
   for (let i = messages.length - 1; i >= 0 && _imgLeft > 0; i--) {
@@ -775,6 +779,7 @@ async function buildConversationMessages(messages, elidedCount, hasMore, include
 
     const msgBudget = { remaining: imageAllowance.get(m) || 0, attached: 0 };
     const msgContent = await messageToContent(m, msgBudget, includeImages, role);
+    if (isStaff && _isAway(m.text)) msgContent.unshift({ type: "text", text: _AWAY_NOTE });
     imageBudget.attached += msgBudget.attached;
     const _imgTotal = (role === "user" && includeImages && Array.isArray(m.storageImagePaths)) ? m.storageImagePaths.length : 0;
     if (_imgTotal > msgBudget.attached) {
@@ -942,7 +947,8 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         calendar days. Ignore their clock time, and never conclude
         something happened "this morning" from it.
       - Greet the customer by their own name (how they sign, or the
-        Etsy buyer name). Names in a personalisation, gift note or
+        Etsy buyer name); a placeholder such as "Sign in with Apple
+        user" is not a name, so use "Hi there". Names in a personalisation, gift note or
         shipping address may belong to someone else; never greet the
         customer with those, and never use a name or detail that
         appears nowhere in the thread or the order.
@@ -953,11 +959,16 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    refund step), the reply names that exact thing in the customer's own
    words, so they can see it was understood. A vague "we're looking into
    this" is wrong. If they asked the same thing more than once without
-   an answer, start by apologising for the wait. Do not promise when it
+   an answer, start by apologising for having to ask again (this is not
+   a delay apology, so the 40-minute rule doesn't block it). Do not promise when it
    will arrive; self-rate confidence at 0.5 or lower so an operator
    sends it. Example: "Hi Cathy, sorry you had to ask twice. We have
    your request for the commercial invoice for your return." Naming a
    document the customer named does not break section 8.
+   When a listing or fact gives the thing they asked for (a payment
+   link for a charge staff quoted is the Re-work / Modifications
+   listing in the fact sheet), send it in the reply, even when the
+   draft is held.
 
 3. IDENTIFY THE ORDER BEING DISCUSSED. If the customer asks about
    their order, figure out WHICH order:
@@ -972,16 +983,49 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         when you need to reference specific items or personalization
 
 4. TRACKING QUESTIONS. When a customer asks "where's my order?",
-   "hasn't arrived", "tracking number please":
+   "has it shipped?", "hasn't arrived", "tracking number please":
       - Call lookup_order_tracking with the relevant receiptId
-      - If tracking exists AND the order shipped, share it warmly
-      - If order is paid but not shipped, acknowledge we're still
-        making it, and give a realistic time range
-      - If no data comes back, DON'T fabricate. Say "Tracking isn't
-        showing on our side yet. We're looking into it now." and
-        self-rate confidence at 0.5 or lower so an operator reviews
-        it. (The old wording, "let me pull up your tracking details
-        and get back to you", is rejected by the promise checks.)
+      - A LABEL IS NOT A SHIPMENT. Etsy marks an order shipped the
+        moment the label is bought. Say it shipped, is on its way, or
+        count transit days from a ship date only when carrierStage (or
+        the tracking image's scans) shows USPS has scanned it
+        (in_transit, out_for_delivery, delivered).
+      - carrierStage label_created_not_scanned: say the label is made
+        and tracking starts updating once USPS scans it at pickup. If
+        the thread shows the shop is still waiting on something from
+        the customer (a font, a photo, an approval), say that is what
+        the piece is waiting on. If the label is more than 5 business
+        days old with no USPS scan, or the delivery estimate has
+        passed, say plainly that USPS never scanned it and write the
+        replacement the shop will send, with
+        ready_for_human_approval:true.
+      - carrierStage scan_status_unknown (also after the tracking
+        image): don't answer yes or no to "has it shipped / does USPS
+        have it", and don't use in-transit wording (tracking going
+        quiet, on its way, within its delivery window), which is only
+        for a package USPS has scanned. Say what the order shows and
+        set ready_for_human_approval:true naming the missing fact (the
+        USPS scan status).
+      - Give the tracking number only when the customer doesn't have
+        it; a customer quoting their scans or the number has it. Never
+        send a customer to the USPS website or tell them to follow the
+        scans themselves: the shop reads tracking and answers.
+      - Before the lost-package date (section 7), name no remedy: no
+        reship, refund or "whichever you prefer". Give the date; when
+        they ask for a replacement early, say plainly it's too early
+        for one and when it would be.
+      - A customer's own report of their tracking ("only says label
+        created") is current; believe it over older order data. After
+        staff promised a reship or replacement, a new label or number
+        the customer mentions is the replacement's.
+      - If the order is paid but not shipped, say we're still making it
+        and where it is in the 4-6 business days (count business days
+        from the order date: "it's 3 business days in, so it should
+        ship within the next 1-3 business days"), then the shipping
+        range and the disclaimer.
+      - If no data comes back, DON'T fabricate and don't write a holding
+        line: say what the order shows and set
+        ready_for_human_approval:true naming the missing fact.
 
 4.5. HELP REQUESTS ON EXISTING ORDERS. Etsy has a "Help with order"
    feature that lets a buyer flag a thread as a help request linked
@@ -1187,6 +1231,17 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         and immediately followed by the actual answer, not a meta-
         commentary preamble.
 
+        Separate from delay apologies: when the shop's own miss caused
+        the problem (USPS never scanned the label, the order is past
+        the shop's own production or delivery estimate, a wrong or
+        missing item, damage on arrival, something staff promised and
+        didn't send), open with one short apology ("Sorry about this.")
+        and then the remedy. Don't apologise for wear, the customer's
+        own address error, or a carrier delay still inside the estimate.
+        When the customer accepts an offer you can't find in the
+        messages, start with "Sorry for the confusion", then give what
+        policy allows, and hold the draft.
+
         The system blocks these phrasings via a soft-promise gate.
         Replies containing them will be force-routed to operator
         review, regardless of your other settings.
@@ -1222,7 +1277,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
                ship a one-line nudge, ship nothing, or wait.
 
         Do NOT manufacture a reply that summarizes what's already been
-        said, re-asks questions the customer has already answered, or
+        said, re-answers something the thread already settled ("we
+        have everything we need" after staff wrote "Photo received"),
+        re-asks questions the customer has already answered, or
         offers to "consolidate" / "pull together" / "clarify" things
         the shop already clarified in prior turns. The customer reads
         the whole thread; you don't need to recap it for them.
@@ -1348,19 +1405,25 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    Don't soften this into "let me check," the policy is firm.
 
    ─── Extra 10% code when policy says no ───
-   When you must refuse what the customer asked for because policy
-   does not allow it (an exchange, a return or refund outside the
-   14-day window or on a personalized item, a cancellation past 12
-   hours), soften the no with ONE offer, right after stating the
+   When you must refuse what the customer asked for about an order
+   they already placed because policy does not allow it (an exchange,
+   a return or refund outside the 14-day window or on a personalized
+   item, a cancellation past 12 hours), soften the no with ONE offer,
+   right after stating the
    policy: an extra 10% off their next order with a one-time code.
    Ask whether they would like it. Example: "We'd be happy to give
    you an extra 10% off your next order with a one-time code. Would
    you like us to send it?" Do not include a code in that first
    offer. Like every discount, the offer waits for staff approval.
    Never make this offer when the customer threatens a bad review,
-   a case or a dispute (section 7.4), on price haggling before a
-   purchase, or when this thread already shows the offer was made or
-   declined, or a code was already given.
+   a case or a dispute (section 7.4), to someone who hasn't bought
+   (a "can I return it?" before purchase just gets the policy), on
+   price haggling before a purchase, in place of a remedy the policy
+   gives (3.6), when another thing the customer asked for in the same
+   message is granted (lead with that yes instead), or when this thread
+   already shows the offer was made or declined, or a code was already
+   given. It is always "off your
+   next order", never off the order being discussed.
    When the customer accepts an offer we made earlier in this thread
    ("yes please", "sure, send the code"), call issue_discount_code
    and put the exact code it returns in the reply, with one line on
@@ -1383,6 +1446,13 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    back to your original payment method." Set
    ready_for_human_approval:true, since a person does the cancellation.
    If the order already shows as cancelled, just confirm it.
+   A cancel request sent within the 12 hours counts as on time even
+   when it is conditional ("if it can't arrive in time, I might need to
+   cancel"): answer the question, then offer "If you'd rather cancel,
+   just reply and we'll cancel it and refund you", held for approval.
+   Since a person approves it later, never put a relative deadline in
+   any cancel, refund, reship or remake offer ("tonight", "today", "in
+   the next few hours").
 
    ─── Refund without return: never ───
    The shop does not issue refunds without the item being physically
@@ -1433,18 +1503,19 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    "additional item" cost is $0). A 3-piece order ships at the same
    shipping price as a 1-piece order.
 
-   DESTINATIONS WE DO NOT SHIP TO: anything not listed above. Common
-   examples customers may ask about that we currently CANNOT ship to:
-   Switzerland, Norway, Iceland, Australia, New Zealand, Brazil,
+   DESTINATIONS NOT LISTED ABOVE: regular checkout doesn't ship there
+   (Switzerland, Norway, Iceland, Australia, New Zealand, Brazil,
    Argentina, China, India, South Africa, UAE, Singapore, Hong Kong,
-   Korea. When a customer asks about one of these, state plainly that
-   we don't currently ship to that destination, and list the regions
-   we do ship to so they know whether a workaround (e.g., a friend in
-   the US receiving the package) is feasible. Don't escalate.
+   Korea, and so on), but staff have arranged some by hand (Australia,
+   for example). When a customer asks about one of these, say checkout
+   doesn't ship there at the moment, list the regions we do ship to,
+   and say we'll check whether we can arrange it. Never quote a price
+   or transit time for it; hold the draft and name the country in
+   missing_facts.
 
    DOMESTIC SHIPPING UPGRADES (US ORDERS ONLY):
 
-     • USPS Priority Mail — 1-3 business days transit, +$18 per
+     • USPS Priority Mail — 2-4 business days transit, +$18 per
        item.
      • USPS Priority Mail Express — 1-2 business days transit, +$55
        per item.
@@ -1485,10 +1556,22 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         naming a country, ask them where they're shipping to (it
         depends on destination). One short clarifier.
 
-     5. If the customer is shipping somewhere we don't cover, the
-        answer is a clean no plus the list of regions we do cover.
-        Don't offer to "check with the team" — there is no checking;
-        the list is the policy.
+     5. If the customer is shipping somewhere checkout doesn't cover,
+        follow DESTINATIONS NOT LISTED ABOVE: checkout doesn't ship
+        there and that we'll check whether we can arrange it (a person
+        decides). No price, no transit time. List the regions we cover
+        only when the customer is still choosing where to ship or asks
+        where we ship.
+
+     6. When the order's destination isn't visible (no receipt, no
+        address in the thread), never assume the US. Give production
+        time, then standard shipping for each region in one clause,
+        offer Priority or Express only "for a US address", and name
+        the destination in missing_facts.
+
+     7. A place name that exists in more than one country (London,
+        Paris, Victoria): quote for the likely one and say which you
+        assumed, in a few words.
 
    ─── Lost or undelivered packages ───
    When a customer says their package hasn't arrived, the framework is:
@@ -1497,10 +1580,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       current tracking via lookup_order_tracking and lookup_order_details.
       State what tracking shows.
 
-   2. Per Etsy's platform rules, a buyer can only formally open a
-      non-delivery case 7+ days AFTER the EDD has passed. Before that
-      window closes, the package is still considered in transit by
-      the platform and refunds are not warranted.
+   2. Under the shop's policy, a package counts as lost only 7+ days
+      AFTER the EDD has passed. Before that, it is still in transit
+      and a reship or refund isn't offered yet. (This is the shop's
+      rule; never call it Etsy's.)
 
    3. If the customer is asking before the 7-days-past-EDD threshold
       has been reached, give them the honest tracking status and the
@@ -1511,19 +1594,56 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       "not lost", and don't hint at a replacement before then.
       Work out the threshold from the EDD and today's date yourself;
       a package is past it only when today is later than EDD plus 7.
+      No EDD in the data: use the order's own estimate if staff or the
+      receipt gave one; with a first USPS scan, that scan date plus the
+      region's upper shipping days is the EDD; with no scan and no
+      estimate, give no date (section 4 covers a label with no scan).
 
    3.4 If the package went to the address on the order and comes back
-      (wrong or old address entered at checkout, returned to sender),
-      the shop reships it once it is back for a $5.50 reshipping fee,
-      paid through the shop's re-shipping fee listing
-      (search_shop_listings "re-shipping fee" for its link). Say that
-      plainly; the shop shipped where it was told to.
+      because that address was wrong, old or incomplete (entered that
+      way at checkout, returned to sender),
+      the shop reships it once it is back for a reshipping fee, paid
+      through the shop's re-shipping fee listing (search_shop_listings
+      "re-shipping fee" for its link): the $5.50 option for a US
+      address, the international option (labelled UK) for any address
+      outside the US. Name the option by its label, tell them to write
+      the full corrected address in the note at checkout, and say that
+      plainly; the shop shipped where it was told to. Never work out
+      which option to pick from price ratios or quantities, and never
+      quote a USD amount to a customer who sees another currency.
+      A package the carrier sent back from a correct address is not
+      the customer's doing: a person approves a replacement or refund,
+      and no fee is asked.
 
    3.5 If tracking shows DELIVERED but the customer doesn't have it,
       say where tracking shows it was left and when, suggest checking
       mailbox, porch, neighbours and household for a day or two, and to
-      message us if it still doesn't turn up. Don't offer a reship or
-      refund in that reply: a delivered scan is not a lost package.
+      message us if it still doesn't turn up. For an address outside
+      the US, also name the local post office or pickup point and a
+      notice slip (the local postal service may be named, never our
+      shipping partner). Don't offer a reship or refund in that reply:
+      a delivered scan is not a lost package.
+
+   3.6 A PAID SHIPPING UPGRADE THAT MISSED ITS WINDOW. When the
+      customer paid for Priority or Express, USPS scanned the package,
+      and it has not arrived within that service's business-day window
+      (Priority 2-4, Express 1-2), that is a failed service, not a
+      "refund without return". Confirm which service they paid for and
+      its window, say we'll refund the upgrade charge, and set
+      ready_for_human_approval:true. Don't blame USPS, don't send them
+      to check tracking they already checked, and don't offer a
+      next-order discount instead. Section 3's lost-package date still
+      applies to the order itself. Put the no-guarantee sentence right
+      after the sentence naming the service's window, so the reply ends
+      on the refund, not on the disclaimer.
+
+   3.7 A receipt for the shop's Priority/Express shipping-upgrade
+      listing, or staff saying in this thread that the order ships
+      Priority, is proof of the upgrade: say the order ships with that
+      service (and its business-day window), with the in-time judgment
+      if the customer gave a date, and set
+      ready_for_human_approval:true so staff confirm the label. Never
+      write that the team is checking or confirming it.
 
    4. If the customer has crossed the 7-days-past-EDD threshold,
       don't hold them off: say it qualifies and offer the choice of a
@@ -1570,7 +1690,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
      - Any urgency phrasing ("urgently," "in a rush," "soon as possible")
 
    You MUST do the timeline math BEFORE answering anything else this
-   turn, AND your reply MUST include the no-guarantee disclaimer.
+   turn, AND your reply MUST include the no-guarantee disclaimer. The
+   exception is a plain thanks or acknowledgement that only mentions a
+   date the shop already answered: a thank-you gets a thank-you, with
+   no timing and no disclaimer.
    Skipping the math or the disclaimer when timing is on the table is
    a hard-rule violation, regardless of which language the customer is
    writing in.
@@ -1611,25 +1734,33 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    this into "we estimate N weeks total" — that's the internal assessment
    number, not the quote.
 
-   Rules by deadline distance from today, applied AGAINST THE INTERNAL
-   TOTAL WINDOW (not a generic window):
+   Rules by deadline, counted in business days. Start from the realistic
+   ship day: the next business day when the piece is already made or
+   staff said it is ready, otherwise today (or the order date for a
+   placed order) plus production 4-6 business days. Add the shipping
+   range for the service being discussed (standard, Priority or Express)
+   to get the earliest and latest estimate:
 
-   - Customer's deadline has ≥ 1 week of buffer beyond the internal
-     upper bound: framing is "should be workable" with the mandatory
-     no-guarantee disclaimer. Never specific-date confirmation. Never
-     "no problem." Never affirmative emphatic language.
+   - The latest estimate lands before the deadline: framing is "should
+     arrive in time" with the mandatory no-guarantee disclaimer. Never
+     call this tight, however short the window is (a 2-4 day Priority
+     window that lands before the date is not tight). In every bucket
+     refer to the deadline by its event or as "your date", never by
+     repeating the calendar date next to an arrival judgment (the
+     system holds any reply that ties arrival to a date). Never "no
+     problem." Never affirmative emphatic language.
 
-   - Customer's deadline is AT THE EDGE of the internal window (inside
-     it, but within 1 week of the upper bound): explicitly call it
-     tight, quote production + region-specific shipping broken out,
-     include the mandatory disclaimer. Forbidden to say "yes" or any
-     affirmative-confirming framing. The shape is "possible but tight,
-     can't guarantee."
+   - The deadline falls inside the range (the earliest estimate makes
+     it, the latest does not): call it tight, quote production +
+     shipping broken out, include the mandatory disclaimer. Forbidden
+     to say "yes" or any affirmative-confirming framing. The shape is
+     "possible but tight, can't guarantee."
 
-   - Customer's deadline is BEYOND the internal window: do NOT confirm.
-     Explain the production + shipping breakdown honestly, offer rush
-     as a choice if it would meaningfully help. Don't promise rush will
-     hit the deadline.
+   - Even the earliest estimate misses the deadline: do NOT confirm.
+     Say it's unlikely with standard timing, give the production +
+     shipping breakdown honestly, and offer rush or a faster service as
+     a choice if it would meaningfully help. Don't promise it will hit
+     the deadline.
 
    - Already past or impossible regardless of rush: state honestly in
      one or two sentences. Don't pad.
@@ -1878,9 +2009,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    The rest of this ban stands: no Chit Chats, border crossings, origin
    facilities or handoffs between countries.
    Customs: for a US address, no customs apply. For an address outside
-   the US, never claim that no customs or duties apply: say "Any import
-   duties or taxes depend on your country's rules." and self-rate
-   confidence at 0.5 or lower so an operator reviews the reply.
+   the US, never claim that no customs or duties apply. Only when the
+   reply quotes shipping to a confirmed non-US destination or the
+   customer asks about customs, say "Any import duties or taxes depend
+   on <that country>'s rules." (name the destination country) and
+   self-rate confidence at 0.5 or lower so an operator reviews it.
    Our shipping narrative is simple: "we ship via USPS" — period.
 
    EXCEPTION: the return address in the RETURN REQUESTS template
@@ -2022,7 +2155,8 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     verified by a tool call.
 
       - Don't say "your order is shipping Priority" unless
-        lookup_order_details returned that shipping method.
+        lookup_order_details returned that shipping method, a paid
+        upgrade-listing receipt shows it, or staff said so (3.7).
       - Don't say "expedited is already added" unless verified.
       - Don't say a delivery date is realistic unless tracking has been
         looked up AND production timing has been considered.
@@ -2032,8 +2166,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
       - Never work out an amount the tools didn't return (a shipping
         charge from a total minus an item price, a fee, a discount).
-        US shipping is free, so there is no free-shipping threshold to
-        mention.
+        Standard US shipping is free on current listings, so there is
+        no free-shipping threshold to mention; what an order was
+        actually charged for shipping is its receipt's shipping_charged.
       - Never say a package is or isn't lost without scan data; say
         what tracking shows.
       - Never invent a product detail (backing type, clasp, size, how a
@@ -2055,9 +2190,51 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - Mismatched pairs, a single earring and odd charm counts are
         priced, never refused; never contradict what staff already
         said yes to in this thread.
+      - Receipts in the THREAD CONTEXT are shop records: their items,
+        variations and status count as verified even when a lookup
+        fails. Never ask the customer for an order confirmation,
+        screenshot or receipt the shop already has; ask only for what
+        the customer knows and the shop doesn't.
+      - When two sources disagree about an order (the Recent receipts
+        line says a label was bought, the receipt row says not
+        shipped), state only what both support (paid, being made, the
+        business-day position) and hold, naming the conflict.
+      - When a customer says their tracking number doesn't work, never
+        explain why or rebuild the number yourself: give the tracking
+        number the tools return, say the team is checking it, and hold.
+        If they also say it hasn't arrived, answer that too.
+      - Name a drop-down option only when the listing data or a fact
+        shows it for that listing; otherwise name the missing option
+        in missing_facts.
+      - When an item the customer meant to buy isn't on their order,
+        say plainly it didn't go through at checkout (it may still be
+        in their Etsy cart) and give that item's listing link
+        (search_shop_listings with the name they used) so they can
+        order it. That is the fix, not an upsell.
+      - Never promise a piece will stay put, won't irritate, or suits
+        an activity (sport, sleep, swimming). State how it is made and
+        what we don't offer, from the facts; when the customer wants a
+        feature the listing doesn't have, answer yes or no and name the
+        closest thing the shop makes.
+      - Never state what a product can or can't have (front engraving,
+        a back type, a stone, a length) without a source: the fact
+        sheet, the listing, or staff in this thread. When staff's reply
+        the customer is quoting isn't in the conversation, don't
+        reconstruct it.
       - Shipping speeds are the ones in section 7 (USPS Priority Mail
-        1-3 business days, Priority Mail Express 1-2), never another
+        2-4 business days, Priority Mail Express 1-2), never another
         figure.
+      - A photo staff sent is one you can't see: answer from the staff
+        text sent with it and never describe it. A photo sent with "we
+        can send you a mock up" is not that mock-up; if the customer
+        asks about it, say so and ask whether they'd still like the
+        mock-up.
+      - When the customer names a use (sport, sleep, a sensitive neck)
+        that another product we make fits better, name it in one
+        sentence with its listing (search_shop_listings). That is part
+        of the answer, not an upsell.
+      - When you tell a customer to write the order number in a
+        checkout note, write the number.
 
     If the necessary tool call hasn't run or returned ambiguous data,
     answer what you can verify, ask the one question that settles the
@@ -2077,6 +2254,19 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     and screen calibration. The AI is not a physical inspector. Only an
     operator can judge whether a piece is actually defective and only
     an operator can authorize a remedy.
+
+    DAMAGE vs WEAR. Damage means the piece arrived broken, wrong, or
+    missing a part. A part that came off or broke after the piece was
+    worn ("has fallen off", "broke while wearing", reported days or
+    weeks after delivery) is wear, not damage: don't offer a free
+    replacement, part, remake or refund, and don't hold the draft for
+    it. Say sorry, give the order facts that settle it (what was
+    ordered; an extender not on the order was a free extra, so the
+    necklace is still the length ordered), and only if they ask how to
+    fix or replace it, give the paid listing from the facts (chain
+    replacement, extender, re-work). If they say they are only
+    letting you know, ask for nothing. The rest of this rule is about
+    damage and looks.
 
     The correct AI response still answers (rule 0) and sets
     ready_for_human_approval:true:
@@ -2120,6 +2310,20 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     reply and ship it normally. Do NOT set ready_for_human_approval.
     Do NOT write a NEEDS REVIEW synopsis. There is nothing to review.
 
+    Two cases that look like a thanks but are not:
+      - A thanks or "that's alright" written after the shop's AUTOMATIC
+        AWAY REPLY (marked as such in the conversation) answers
+        nothing: no person has replied yet. Every customer question
+        before it is still open; answer it (a deadline question gets
+        the production plus shipping business-day math and a plain
+        "that works / that won't make it"). Only an explicit "never
+        mind", "I no longer need it" or "I bought elsewhere" closes a
+        question.
+      - A thanks after staff said a date can't be met, from a customer
+        who hasn't bought yet: when $15 rush (section 15) would change
+        the answer, offer it in one sentence with the business-day math
+        and the no-guarantee line.
+
     Examples of trivial acknowledgments that do NOT need review:
       - "Hi, that is perfect! Thank you."
       - "That's great, thanks!"
@@ -2140,8 +2344,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
     DIDN'T address. If everything is resolved and they're closing out,
     close out with them. Don't manufacture a problem.
 
-    One such open item: the shop promised a custom listing (or a link,
-    proof or quote) in this thread and none has gone out yet. Then the
+    One such open item: the shop promised something in this thread (a
+    custom listing, link, proof, mock-up, quote, replacement, reship,
+    part, refund or remake) and it hasn't gone out yet. Then the
     thanks is not trivial: reply briefly, set
     ready_for_human_approval:true and name what is still owed
     ("Custom listing for the $75 set promised, not created yet").
@@ -2257,10 +2462,13 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         and shipping days from the order date, say plainly whether the
         date looks likely, tight or unlikely, add the no-guarantee
         sentence, and for a US order that hasn't shipped, mention the
-        shipping upgrade (Priority Mail, +$18, 1-3 business days
-        transit) the shop can set up through a shipping-upgrade
-        listing (search_shop_listings "priority shipping" for its
-        link). Do NOT mention rush production exists in
+        shipping upgrade (Priority Mail, +$18, 2-4 business days
+        transit, or Express, +$55, 1-2) the shop can set up through
+        the shipping-upgrade listing (its link is in the ADD-ON block
+        or the fact sheet; never search for it). Skip the upgrade when
+        no shipping speed can make the date, and when a label is
+        already bought say a person checks whether it can still be
+        changed. Do NOT mention rush production exists in
         these cases — it would falsely suggest it's still available.
         When the customer says they bought the shipping-upgrade
         listing, confirm the order will ship with that service.
@@ -2344,7 +2552,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
           actively invites another customer message instead of
           empowering the customer to self-serve.
 
-    FORBIDDEN — never write any of these or anything similar:
+    FORBIDDEN — never write any of these or anything similar (the two
+    set closes are allowed: the lost-package "if it hasn't arrived by
+    <date>, message us" and 3.5's "message us if it still doesn't turn
+    up"):
       "Message me back if..."
       "Reach out again if..."
       "Let me know if anything changes"
@@ -2613,7 +2824,11 @@ DO NOT skip the tracking image because:
     digits into a chat message is wrong even when the customer's
     literal request was for "the tracking number." Always generate
     the image. Never paste raw tracking digits into prose as a
-    substitute for the image.
+    substitute for the image. Only when the tool itself failed, give
+    the tracking number in the text (the draft then goes to a person).
+    A USPS code that starts with 420 and a ZIP is the label barcode:
+    the tracking number is what follows it (the tools already return
+    it that way), and it is the only number to give a customer.
 
 Workflow for these cases:
 
@@ -2905,7 +3120,7 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
       for (const r of customer.recentReceipts.slice(0, 10)) {
         const od = tsToDateStr(r.orderedAt);
         const statusBits = [];
-        if (r.isShipped) statusBits.push("shipped");
+        if (r.isShipped) statusBits.push("label bought (Etsy says shipped; check carrierStage before saying it shipped)");
         else if (r.isPaid) statusBits.push("paid, not yet shipped");
         else statusBits.push("unpaid");
         sections.push(
@@ -2996,7 +3211,7 @@ function slimReceiptForModel(receipt, receiptId) {
 const TOOL_SPECS = [
   {
     name: "lookup_order_tracking",
-    description: "Look up the current tracking status, carrier, tracking code, and shipping date for a specific Etsy order. Use this when the customer asks about where their order is, if it has shipped, or for a tracking number. The receiptId MUST be from the customer's cached order history — pick the most likely order being discussed.",
+    description: "Look up the shipping label(s), carrier, tracking code(s) and what USPS has scanned so far (carrierStage, latestScan) for a specific Etsy order. Etsy's isShipped/shippedAt only mean a label was bought; carrierStage says whether USPS actually has it. Use this when the customer asks about where their order is, if it has shipped, or for a tracking number. The receiptId MUST be from the customer's cached order history — pick the most likely order being discussed.",
     input_schema: {
       type: "object",
       properties: {
@@ -3202,6 +3417,11 @@ const TOOL_SPECS = [
           type: "boolean",
           description: "Set true when the customer is asking about bracelet/wrist sizing — wrist measurement, bracelet length, 'will a 7-inch fit me', how to measure a wrist. Sets the bracelet sizing chart. Default false."
         },
+        missing_facts: {
+          type: "array",
+          items: { type: "string" },
+          description: "Product, shipping or policy details the customer asked for that neither the PRODUCT AND SHOP FACTS sheet, the listing or order data you looked up, nor staff's messages in this thread give. One short question each, e.g. \"Do the swan studs have silicone or butterfly backs?\". Leave empty when nothing was missing. Anything listed here holds the draft for a person, who answers it once for every future customer."
+        },
         attach_line_sheet: {
           type: "string",
           enum: ["necklace", "stud", "huggie"],
@@ -3227,7 +3447,8 @@ async function mirrorShipmentsFor(receiptId) {
     const r = (m.raw && typeof m.raw === "object") ? m.raw : null;
     if (!r || !r.is_shipped) return null;
     const slim = (Array.isArray(r.shipments) ? r.shipments : []).map(s => ({
-      trackingCode: s.tracking_code || null,
+      trackingCode: s.tracking_code ? _cleanTrackingCode(s.tracking_code) : null,
+      barcode     : s.tracking_code && _cleanTrackingCode(s.tracking_code) !== String(s.tracking_code) ? String(s.tracking_code) : undefined,
       carrier     : s.carrier_name  || null,
       trackingUrl : s.tracking_url  || null,
       shipDate    : s.shipment_notification_timestamp ? new Date(s.shipment_notification_timestamp * 1000).toISOString() : null,
@@ -3251,6 +3472,50 @@ async function mirrorShipmentsFor(receiptId) {
   } catch (e) {
     return null;
   }
+}
+
+// Etsy marks an order "shipped" the moment the label is bought, before USPS
+// has the package. What the carrier has actually seen comes from the
+// tracking cache the tracking images fill (EtsyMail_TrackingCache, one
+// Firestore read per code, no Etsy or carrier call).
+const CARRIER_STAGE = {
+  pre_shipment: "label_created_not_scanned", in_transit: "in_transit", out_for_delivery: "out_for_delivery",
+  delivered: "delivered", returned: "returned", exception: "exception", rerouted: "in_transit", unknown: "scan_status_unknown"
+};
+async function addCarrierStage(data) {
+  if (!data || !Array.isArray(data.shipments) || !data.shipments.length) return data;
+  const out = { ...data, shipments: data.shipments.map(x => ({ ...x })) };
+  const withCode = out.shipments.filter(x => x.trackingCode).slice(0, 4);
+  // Scans are cached under the code the image was made for: the tracking
+  // number, or the full USPS barcode for images made before 2026-09-28.
+  const keysOf = x => Array.from(new Set([_cleanTrackingCode(x.trackingCode), String(x.barcode || x.trackingCode)]));
+  const refs = [];
+  withCode.forEach(x => keysOf(x).forEach(k => refs.push({ x, ref: db.collection("EtsyMail_TrackingCache").doc(k) })));
+  let snaps = [];
+  try {
+    if (refs.length) snaps = await db.getAll(...refs.map(r => r.ref));
+  } catch (_) { snaps = []; }
+  withCode.forEach(x => {
+    const found = refs.map((r, i) => r.x === x && snaps[i] && snaps[i].exists ? (snaps[i].data() || {}) : null).filter(Boolean)
+      .sort((a, b) => ((b.cachedAt && b.cachedAt.toMillis ? b.cachedAt.toMillis() : 0) - (a.cachedAt && a.cachedAt.toMillis ? a.cachedAt.toMillis() : 0)));
+    const c = found[0] || null;
+    const ev = c && Array.isArray(c.events) ? c.events.filter(e => e && e.at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)) : [];
+    const checked = c && c.cachedAt && typeof c.cachedAt.toMillis === "function" ? new Date(c.cachedAt.toMillis()).toISOString() : null;
+    x.carrierStage = c ? (CARRIER_STAGE[c.statusKey] || "scan_status_unknown") : "scan_status_unknown";
+    if (c) {
+      x.carrierStatusText = c.status || null;
+      x.latestScan = ev[0] ? { at: ev[0].at, event: ev[0].title || ev[0].status || null, location: ev[0].location || null } : null;
+      x.carrierEstimatedDelivery = c.estimatedDelivery || null;
+      x.scansCheckedAt = checked;
+    }
+  });
+  // The newest shipment decides (a reship has its own, later label).
+  const newest = out.shipments.slice().sort((a, b) => (Date.parse(b.shipDate || "") || 0) - (Date.parse(a.shipDate || "") || 0))[0];
+  out.carrierStage = (newest && newest.carrierStage) || "scan_status_unknown";
+  out.shippedMeans = "isShipped/shippedAt only mean Etsy has a shipping label for this order. Whether USPS has the package is carrierStage: "
+    + "label_created_not_scanned = the label is made, USPS hasn't scanned it yet (don't say shipped or on its way); "
+    + "in_transit / out_for_delivery / delivered = what USPS scanned; scan_status_unknown = no scan data yet, call generate_tracking_image to read the scans.";
+  return out;
 }
 
 /** Smaller raw-context payload for the drafter (ETSYMAIL_AI_SLIM_CONTEXT=1).
@@ -3278,6 +3543,7 @@ function slimContextForDraft(ctx) {
       is_paid           : !!r.is_paid,
       is_shipped        : !!r.is_shipped,
       grand_total       : money(r.grandtotal),
+      shipping_charged  : money(r.total_shipping_cost),
       currency          : (r.grandtotal && r.grandtotal.currency_code) || null,
       country_iso       : r.country_iso || null,
       is_gift           : !!r.is_gift,
@@ -3290,7 +3556,7 @@ function slimContextForDraft(ctx) {
         variations        : Array.isArray(t.variations) ? t.variations.map(v => `${v.formatted_name}: ${v.formatted_value}`) : [],
         personalization   : text(t.personalization || t.transaction_personalization || t.personalization_data, 300)
       })),
-      shipments: sh.map(s => ({ carrier: s.carrier_name || null, tracking_code: s.tracking_code || null, shipped_at: iso(s.shipment_notification_timestamp) }))
+      shipments: sh.map(s => ({ carrier: s.carrier_name || null, tracking_code: s.tracking_code ? _cleanTrackingCode(s.tracking_code) : null, shipped_at: iso(s.shipment_notification_timestamp) }))
     };
   };
   const msgs = Array.isArray(ctx.messages) ? ctx.messages : [];
@@ -3346,7 +3612,7 @@ function buildToolExecutors(ctx) {
       try { data = await shipmentsMemo.get(receiptId); }
       catch (e) { shipmentsMemo.delete(receiptId); throw e; }
       if (!trusted && !ownedByThreadBuyer(data && data.buyerUserId)) return notVerified(receiptId);
-      return data;
+      return addCarrierStage(data);
     },
 
     lookup_order_details: async (input) => {
@@ -3400,7 +3666,7 @@ function buildToolExecutors(ctx) {
           // standard and may be stated (replays read the two as a clash).
           result = { ...result,
             recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
-            familyFacts: { family, charmStyles: sheet.charmStyles || null, metalSpecs: ms,
+            familyFacts: { family, charmStyles: require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles), metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
       } catch {}
@@ -3521,7 +3787,7 @@ function buildToolExecutors(ctx) {
     // Either way, the AI's tool call completes in <2 seconds. The UI polls
     // EtsyMail_TrackingJobs/{jobId} for the final image.
     generate_tracking_image: async (input) => {
-      const trackingCode = String(input.trackingCode || "").trim();
+      const trackingCode = _cleanTrackingCode(String(input.trackingCode || "").trim());
       if (!trackingCode) {
         return { error: "trackingCode is required" };
       }
@@ -4314,6 +4580,13 @@ answering. Do not guess about the order's contents.`;
       "ambiguous situation.",
     ].join("\n");
 
+    // The owner's fact sheet and the rules learned from staff corrections
+    // (_etsyMailKnowledge.js). Last in the system prompt and unchanged
+    // between drafts, so it is read from the prompt cache.
+    let knowledgeBlock = "";
+    try { knowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("support"); }
+    catch (e) { console.warn("[draftReply] fact sheet unavailable:", e.message); }
+
     const system = [
       baseSystem,
       "",
@@ -4322,6 +4595,7 @@ answering. Do not guess about the order's contents.`;
       INVESTIGATION_JSON_SCHEMA,
       "",
       draftReplyInvestigationAddendum,
+      ...(knowledgeBlock ? ["", knowledgeBlock] : []),
     ].join("\n\n");
 
     // Audit 2026-09: tracking codes known to belong to this customer (their
@@ -4346,7 +4620,7 @@ answering. Do not guess about the order's contents.`;
       for (const r of (ctx && Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : [])) {
         const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
         for (const s of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
-          if (s && s.tracking_code) _knownTrackingCodes.add(String(s.tracking_code).replace(/\s+/g, ""));
+          if (s && s.tracking_code) { _knownTrackingCodes.add(String(s.tracking_code).replace(/\s+/g, "")); _knownTrackingCodes.add(_cleanTrackingCode(s.tracking_code)); }
         }
       }
       const rawContextBlock = formatContextForPrompt(AI_SLIM_CONTEXT ? slimContextForDraft(ctx) : ctx);
@@ -4459,7 +4733,9 @@ answering. Do not guess about the order's contents.`;
           if (lookupResult && !lookupResult.error) {
             // getShopReceiptShipments returns { shipments: [{ trackingCode, ... }], ... }
             const shipments = Array.isArray(lookupResult.shipments) ? lookupResult.shipments : [];
-            const firstWithCode = shipments.find(s => s && s.trackingCode);
+            // The newest label first: a reship has its own, later shipment.
+            const firstWithCode = shipments.filter(s => s && s.trackingCode)
+              .sort((a, b) => (Date.parse(b.shipDate || "") || 0) - (Date.parse(a.shipDate || "") || 0))[0];
             if (firstWithCode) {
               prefetchedCode = String(firstWithCode.trackingCode);
               prefetchedReceiptId = String(r.receiptId);
@@ -4568,7 +4844,7 @@ answering. Do not guess about the order's contents.`;
       // Audit 2026-09: sent in the first user message instead of appended
       // to the system prompt, so the ~23K-token system block stays
       // byte-identical and keeps its prompt-cache hit.
-      initialMessages[0].content.push({ type: "text", text: "=== PRE-FETCHED LISTING DATA (customer referenced these URLs) ===\n\n" + block + "\n\n=== END PRE-FETCHED LISTING DATA ===\n\nWhen answering questions about variants/options/metals/prices for these listings, USE THIS DATA — not guesses from the URL slug or general knowledge. If the customer asks about variants not in this data, those variants don't exist on the listing." });
+      initialMessages[0].content.push({ type: "text", text: "=== PRE-FETCHED LISTING DATA (customer referenced these URLs) ===\n\n" + block + "\n\n=== END PRE-FETCHED LISTING DATA ===\n\nWhen answering questions about variants/options/metals/prices for these listings, USE THIS DATA — not guesses from the URL slug or general knowledge. " + (prefetchedListings.some(r => r.found && Array.isArray((r.listing || {}).variants) && r.listing.variants.length) ? "If the customer asks about variants not in this data, those variants don't exist on the listing." : "No variants came back for these listings, so this data says nothing about which options exist: never tell a customer an option doesn't exist from it.") });
     }
 
     // Audit 2026-09 (A9, D9): drafts the auto-pipeline runs in-process get
@@ -4684,6 +4960,11 @@ answering. Do not guess about the order's contents.`;
       /\b(?:look\s+at|check)\s+(?:this|that|it)\s+(?:carefully|more\s+closely)\s+before\b/i,
       /\bpull\s+this\s+(?:one\s+)?up\s+before\b/i,
       /\bbefore\s+(?:I|we)\s+can\s+speak\s+to\s+(?:specifics|it|this)\b/i,
+      // 2026-09-27 review of 18 replies: "the team is confirming it" and
+      // promises to pass tracking along later.
+      /\b(?:our\s+|the\s+)?team\s+is\s+(?:confirming|checking|looking\s+into|reviewing|verifying)\b/i,
+      /\bpass\s+(?:the|your|it)\s+(?:new\s+)?(?:tracking|number)\s+(?:along|on)\b/i,
+      /\bsend\s+(?:you\s+)?(?:the\s+|your\s+)?(?:new\s+)?tracking(?:\s+number)?\s+(?:once|when|as\s+soon\s+as)\b/i,
     ];
 
     const SOFT_PROMISE_PATTERNS = [
@@ -5108,6 +5389,8 @@ answering. Do not guess about the order's contents.`;
         // decide; until now neither existed in the schema, so the request
         // was lost and a 0.9 self-rating still auto-sent.
         readyForHumanApproval   : composeCall.input.ready_for_human_approval === true,
+        missingFacts            : Array.isArray(composeCall.input.missing_facts)
+                                  ? composeCall.input.missing_facts.map(x => String(x || "").trim()).filter(Boolean).slice(0, 5) : [],
         investigation           : (composeCall.input.investigation && typeof composeCall.input.investigation === "object")
                                   ? composeCall.input.investigation : null
       };
@@ -5158,6 +5441,16 @@ answering. Do not guess about the order's contents.`;
       .filter(s => s.listingId && s.title)
       .slice(0, 5);
 
+    // A detail the fact sheet does not give waits for a person, who
+    // answers it in Settings > Learning so the next customer gets it.
+    if (Array.isArray(parsed.missingFacts) && parsed.missingFacts.length) {
+      parsed.aiEscalationRequested = true;
+      if (typeof parsed.confidence === "number" && parsed.confidence > 0.5) {
+        parsed.confidence = 0.5;
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+          " | Missing fact(s): " + parsed.missingFacts.join("; ") + "; confidence capped at 0.5.";
+      }
+    }
     // ─── Audit 2026-09 — model-requested review + origin mentions ─────
     if (parsed.readyForHumanApproval === true
         || (parsed.investigation && parsed.investigation.needs_human_review === true)) {
@@ -5363,13 +5656,14 @@ answering. Do not guess about the order's contents.`;
       img && (img.status === "ready" || img.status === "pending")
             && (img.imageUrl || img.jobId)
     );
+    if (parsed.text) parsed.text = _cleanTrackingCodesInText(parsed.text);
     const _rawTrackingDigitRx = /\b\d{12,}\b/;
     const _rawDigitMatch = parsed.text && parsed.text.match(_rawTrackingDigitRx);
     if (_rawDigitMatch && !_hasRealTrackingImage) {
       for (const tc of (loopResult.toolCalls || [])) {
         const out = tc && tc.output;
         for (const s of (out && Array.isArray(out.shipments) ? out.shipments : [])) {
-          if (s && s.trackingCode) _knownTrackingCodes.add(String(s.trackingCode).replace(/\s+/g, ""));
+          if (s && s.trackingCode) { _knownTrackingCodes.add(String(s.trackingCode).replace(/\s+/g, "")); _knownTrackingCodes.add(_cleanTrackingCode(s.trackingCode)); }
         }
       }
       for (const m of (messages || [])) {
@@ -5611,6 +5905,7 @@ answering. Do not guess about the order's contents.`;
         autoSendBlockers.push("production_question_open");
       }
       if (parsed.aiEscalationRequested) autoSendBlockers.push("model_requested_human_review");
+      if (Array.isArray(parsed.missingFacts) && parsed.missingFacts.length) autoSendBlockers.push("missing_fact");
     } catch (e) {
       autoSendBlockers = ["veto_check_failed: " + e.message];
     }
@@ -5647,6 +5942,7 @@ answering. Do not guess about the order's contents.`;
       aiDeliveryDateReview  : !!parsed.aiDeliveryDateReview,
       aiInventedCodeReview  : !!parsed.aiInventedCodeReview,
       aiInvestigation       : parsed.investigation || null,
+      aiMissingFacts        : Array.isArray(parsed.missingFacts) ? parsed.missingFacts : [],
       aiAutoSendBlockers    : autoSendBlockers,
       attachments,
       // v0.9.18 parity — mirror attachments into draftAttachments so
@@ -5738,6 +6034,10 @@ answering. Do not guess about the order's contents.`;
         text         : parsed.text,
         aiConfidence : parsed.confidence
       });
+    }
+
+    if (Array.isArray(parsed.missingFacts) && parsed.missingFacts.length) {
+      await require("./_etsyMailLearning").recordMissingFacts({ db, admin, threadId, facts: parsed.missingFacts, route: "support" });
     }
 
     // ─── v3.24: Rush production flag handling ─────────────────────

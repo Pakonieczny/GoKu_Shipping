@@ -1011,7 +1011,15 @@ exports.handler = async (event) => {
           threadFinalizeApplied = true;
         }
 
-        return { conflict: false, payload, threadFinalizeApplied };
+        // What the AI had drafted before this send, for learning (see
+        // _etsyMailLearning.js). Read here because the set above replaces it.
+        const learnPrev = prev ? {
+          text: prev.text || "", status: prev.status || null, generatedByAI: !!prev.generatedByAI,
+          generatedBySalesAgent: !!prev.generatedBySalesAgent, aiConfidence: prev.aiConfidence,
+          aiModel: prev.aiModel || null, aiActiveQuestion: prev.aiActiveQuestion || prev.activeQuestion || null,
+          aiMissingFacts: Array.isArray(prev.aiMissingFacts) ? prev.aiMissingFacts : []
+        } : null;
+        return { conflict: false, payload, threadFinalizeApplied, learnPrev };
       });
 
       if (result.conflict) {
@@ -1081,6 +1089,15 @@ exports.handler = async (event) => {
         attachmentTypes: normalized.map(a => a.type),
         skippedPendingTracking: recon.skippedPendingTracking || []
       });
+
+      // Learning: keep what the AI drafted next to what was sent. Not for a
+      // Charm Sorter question, whose words never came from the AI.
+      if (!orderLink) {
+        await require("./_etsyMailLearning").recordOutcome({
+          db, admin, draftId, threadId, prev: result.learnPrev, sentText: cleanText,
+          sendOrigin: inferredSendOriginForRecon, employeeName
+        });
+      }
 
       // v0.9.7: write the optimistic outbound message into the thread's
       // messages subcollection NOW — at enqueue time, before the extension

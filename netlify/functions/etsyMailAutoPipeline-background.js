@@ -860,6 +860,16 @@ async function loadLatestInbound(threadId) {
 const ACTIVE_SALES_STAGES = new Set([
   "discovery", "spec", "quote", "revision", "pending_close_approval"
 ]);
+/** A sales record still at "discovery" (nothing specified or quoted yet)
+ *  does not hold a thread when the classifier is sure the new message is
+ *  a support or order question: the sales agent would only hand it back
+ *  to the support drafter, costing two extra model calls. Stages past
+ *  discovery keep the thread in sales. */
+function supportOutranksSalesStage(stage, intent) {
+  return stage === "discovery" && !!intent
+    && (intent.classification === "support" || intent.classification === "post_purchase")
+    && typeof intent.confidence === "number" && intent.confidence >= 0.8;
+}
 async function loadActiveSalesContextStage(threadId) {
   try {
     const doc = await db.collection("EtsyMail_SalesContext").doc(threadId).get();
@@ -924,6 +934,7 @@ async function runSimulation(body) {
       let activeStage = null, freshLead = false;
       if (!isHelp && autoCfg.salesModeEnabled) {
         activeStage = saleDone ? null : await loadActiveSalesContextStage(threadId);
+        if (supportOutranksSalesStage(activeStage, intent)) activeStage = null;
         freshLead = !!(autoCfg.salesAutoEngage && intent && intent.classification === "sales_lead"
                        && typeof intent.confidence === "number" && intent.confidence >= 0.7);
       }
@@ -1306,7 +1317,16 @@ exports.handler = async (event) => {
       // "thank you" goes back into the sales funnel.
       const saleAlreadyDone = !!helpRequestData.salesCompletedAt
         || helpRequestData.customListingStatus === "created";
-      const activeSalesStage = saleAlreadyDone ? null : await loadActiveSalesContextStage(threadId);
+      let activeSalesStage = saleAlreadyDone ? null : await loadActiveSalesContextStage(threadId);
+      if (supportOutranksSalesStage(activeSalesStage, intentResp)) {
+        await writeAudit({
+          threadId,
+          eventType: "sales_routing_skipped_support_question",
+          payload  : { stage: activeSalesStage, classifierSaid: intentResp.classification,
+                       classifierConf: intentResp.confidence }
+        });
+        activeSalesStage = null;
+      }
 
 
       const freshSalesLead =
