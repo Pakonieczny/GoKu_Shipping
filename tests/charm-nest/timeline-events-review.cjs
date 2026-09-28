@@ -146,7 +146,8 @@ const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDS
     assert.deepEqual(ev.filter(e => SERVER.includes(e.type)).map(e => e.type), [], 'no server-stamped type from the page');
     await page.evaluate(() => OrderTimeline.flush());
     await page.waitForFunction(() => !OrderTimeline.pending(), null, { timeout: 30000 });
-    const saved = srv.st.list('Order_Timeline');
+    // (the server stamps its own events in the same store: placed, arrived, removed …; count the page's)
+    const saved = srv.st.list('Order_Timeline').filter(d => !SERVER.includes(d.type) && !['placed', 'setCommitted'].includes(d.type));
     assert.equal(saved.length, ids.length, `every event written once (${saved.length} of ${ids.length})`);
     assert(saved.some(d => d.type === 'decided' && d.orderId === '4179000001' && d.by === 'Test Operator'), 'a decision in the cloud with who made it');
     assert.equal(srv.st.list('Sandbox_Order_Timeline').length, 0, 'production, not the sandbox');
