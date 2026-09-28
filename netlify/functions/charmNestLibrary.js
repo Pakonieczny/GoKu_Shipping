@@ -794,6 +794,62 @@ async function op_startMaster(b) {
   return { ok: true, id };
 }
 
+/* ── order timeline stamps (Paul, 28 Sep, D1-D3: every change is recorded, every step passed is a milestone). The ops that
+   already know who did what record it on each order's timeline (_orderTimeline.js): customPut, laserDone, backPut,
+   poolUpdate, customDecide, roseRecordCut, arrivalRecord, cancelRestore. A stamp never fails its op: a failed write is
+   logged and the op answers as before. One batched write per op call (another only past 100 events). Each event's id is
+   made from what the op itself recorded (a time it stored, a sheet, a revision), so an op sent twice writes it once. ── */
+async function stamp(events, what) {
+  try {
+    // (events may be a function that builds them: whatever it throws is caught here too)
+    const made = typeof events === "function" ? events() : events, list = (Array.isArray(made) ? made : [made]).filter(Boolean);
+    if (!list.length) return 0;
+    const TL = require("./_orderTimeline");
+    for (let i = 0; i < list.length; i += 100) await TL.add(db, FV, list.slice(i, i + 100), { prefix: PREFIX, source: "sorter" });
+    return list.length;
+  } catch (e) { console.warn(`[charmNestLibrary] timeline not recorded (${what}):`, (e && e.message) || e); return 0; }
+}
+/** The order (receipt) of a line key or pool id ("rid_tid" / "rid_tid_copy"); lineOfCopy gives a pool id's line. */
+const orderOfKey = k => (/^(\d{1,30})_/.exec(String(k || "")) || [])[1] || "";
+/** "GF Sheet 2": a sheet record's metal and number, or those in its file name (GF_Sep.16.26_Set-3_Sheet-1). */
+function sheetLabel(d, name) {
+  const f = String(name || (d && (d.fileBase || d.folder)) || ""), m = /^([A-Za-z0-9]+)_.*_Sheet-(\d+)/.exec(f);
+  const code = (d && METAL_CODE[d.metal]) || (m && m[1]) || "", no = (d && (num(d.sheetIndex) || num(d.page))) || (m && +m[2]) || 0;
+  return code && no ? `${code} Sheet ${no}` : f.slice(0, 80);
+}
+const setLabel = id => { const m = /-(\d+)$/.exec(String(id || "")); return m ? `Set ${+m[1]}` : ""; };
+/** One event per order for a poolUpdate that says a charm left a sheet (removedBy/At), moved (movedBy/At), was committed
+    with its set (committedAt) or was written on a sheet (state "written" with a sheetId). `before` is each row as it was
+    (null when it could not be read): a row that already says so (a retry) records nothing again. */
+function poolEvents(ids, p, before, b) {
+  const kind = p.removedBy || p.removedAt ? "removed" : p.movedBy || p.movedAt ? "moved" : p.committedAt ? "setCommitted" : p.state === "written" && p.sheetId ? "placed" : null;
+  if (!kind) return [];
+  const at = (kind === "removed" ? num(p.removedAt) : kind === "moved" ? num(p.movedAt) : kind === "setCommitted" ? num(p.committedAt) : 0) || (kind === "placed" ? 0 : Date.now());
+  const groups = new Map();
+  for (const id of ids) {
+    const prev = before ? before.get(id) || null : null;
+    if (prev && (kind === "placed" ? prev.sheetId === p.sheetId : kind === "removed" ? num(prev.removedAt) === at : kind === "moved" ? num(prev.movedAt) === at : num(prev.committedAt) === at)) continue;
+    const orderId = String((prev && prev.orderId) || orderOfKey(id)); if (!orderId) continue;
+    if (!groups.has(orderId)) groups.set(orderId, []);
+    groups.get(orderId).push({ id, prev: prev || {} });
+  }
+  const by = str(b.by || (kind === "removed" ? p.removedBy : kind === "moved" ? p.movedBy : kind === "setCommitted" ? p.committedBy : "") || (kind === "placed" ? "System" : ""), 80);
+  const out = [];
+  for (const [orderId, rows] of groups) {
+    const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
+    const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
+    const e = { orderId, type: kind, by, station: "sorter", lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: { copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) } };
+    if (kind === "removed") Object.assign(e, { at, sheetId: was[0] || "", sheet: wasNames.join(", "), setId: rows[0].prev.setId || "", text: [wasNames.join(", "), p.removedReason].filter(Boolean).join(" · "), id: String(at) }, { data: Object.assign(e.data, { reason: str(p.removedReason, 300), sheets: was }) });
+    else if (kind === "moved") {
+      const from = wasNames.length ? wasNames : String(p.movedFrom || "").split(",").filter(Boolean), to = sheetLabel(null, p.sheetName) || str(p.movedTo, 100);
+      Object.assign(e, { at, sheetId: str(p.movedTo || p.sheetId, 100), sheet: to, setId: rows[0].prev.setId || "", text: `${from.join(", ") || "another sheet"} → ${to}`, id: String(at) }, { data: Object.assign(e.data, { from: String(p.movedFrom || was.join(",")), fromSheets: from, to: str(p.movedTo, 100) }) });
+    } else if (kind === "setCommitted") { const setId = rows[0].prev.setId || ""; Object.assign(e, { at, setId, sheetId: was[0] || "", sheet: wasNames.join(", "), text: setLabel(setId), id: String(at) }); }
+    else { const sheet = sheetLabel(null, p.sheetName) || str(p.sheetId, 80); Object.assign(e, { sheetId: str(p.sheetId, 100), sheet, setId: str(p.setId, 100), text: sheet, id: str(p.sheetId, 100) }); }
+    out.push(e);
+  }
+  return out;
+}
+
 // ── pool ──
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
@@ -823,9 +879,16 @@ async function op_poolPut(b) {
 }
 async function op_poolUpdate(b) {
   const ids = (Array.isArray(b.poolIds) ? b.poolIds : [b.poolId]).filter(isPoolId).slice(0, 400); if (!ids.length) return { error: "bad pool id" };
+  // a change the order's timeline records (poolEvents) reads the rows first: the sheet a charm leaves, its set, and
+  // whether the row already says so (a retry)
+  const p = b.patch && typeof b.patch === "object" ? b.patch : {}, told = !!(p.removedBy || p.removedAt || p.movedBy || p.movedAt || p.committedAt || (p.state === "written" && p.sheetId));
+  let before = null;
+  if (told) try { before = new Map(); for (let i = 0; i < ids.length; i += 100) (await db.getAll(...ids.slice(i, i + 100).map(id => col(POOL).doc(id)))).forEach((s, j) => before.set(ids[i + j], s.exists ? s.data() : null)); }
+  catch (e) { before = null; console.warn("[charmNestLibrary] pool rows not read for the timeline:", e.message || e); }
   let batch = db.batch(), n = 0;
   for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
+  if (told) await stamp(() => poolEvents(ids, p, before, b), "pool");
   return { ok: true, count: ids.length };
 }
 async function op_poolList(b) {
@@ -1046,7 +1109,7 @@ async function putBacks(tx, sheetId, list, expected) {
   const stored = new Map(priors.map((s, i) => [ids[i], s.exists ? s.data() : {}]));
   const formerIds = [...new Set([...stored.values()].map(r => r.sheetId).filter(id => id && id !== sheetId))];
   const formers = new Map(formerIds.length ? (await tx.getAll(...formerIds.map(id => col(SHEETS).doc(id)))).filter(s => s.exists).map(s => [s.id, s.data().backPool || []]) : []);
-  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [] };
+  const poolIds = sheet.exists ? sheet.data().poolIds || [] : [], patches = new Map(), leaving = new Set(), out = { written: 0, skipped: 0, errors: [], moved: [], sheet: sheet.exists ? sheetLabel(sheet.data()) : "" };
   let pool = sheet.exists ? sheet.data().backPool || [] : null;
   for (const x of list) {
     const old = stored.get(x.poolId), currentBack = pool && pool.find(v => v.poolId === x.poolId);
@@ -1079,7 +1142,7 @@ async function putBacks(tx, sheetId, list, expected) {
 }
 async function op_backPut(b) {
   const rows = (Array.isArray(b.backs) ? b.backs : [b.back]).filter(x => x && isPoolId(x.poolId)).slice(0, 400); if (!rows.length) return { error: "no back rows" };
-  const bySheet = new Map(), errors = [], moved = []; let written = 0, skipped = 0;
+  const bySheet = new Map(), errors = [], moved = [], labels = new Map(); let written = 0, skipped = 0;
   for (const x of rows) {
     if (!isId(x.sheetId) || !x.approvedAt || !x.approvedBy) { errors.push({ row: x, error: "approved back and sheet identity required", identity: true }); continue; }
     if (!bySheet.has(x.sheetId)) bySheet.set(x.sheetId, []); bySheet.get(x.sheetId).push(x);
@@ -1088,8 +1151,15 @@ async function op_backPut(b) {
     const part = list.slice(i, i + BACKS_PER_TX); let out;
     try { out = await db.runTransaction(tx => putBacks(tx, sheetId, part, b.expectedApprovedAt)); }
     catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
-    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors);
+    await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); labels.set(sheetId, out.sheet);
   }
+  // each approved back on its order's timeline, once per approval (a copy recorded again keeps its one event)
+  const refused = new Set(errors.map(x => x.row));
+  await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
+    const words = str(typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "", 180);
+    return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by: str(x.approvedBy, 80), station: "sorter", lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60) }, id: `${x.poolId}-${num(x.approvedAt)}` };
+  }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
   // what went wrong, back by back in the order sent; the rest were recorded. Refused as before: 400 when a back said
@@ -1250,16 +1320,20 @@ async function op_arrivalRecord(b) {
   const known = receipts.length ? await db.getAll(...receipts.map(o => collection.doc(String(o.id)))) : [];
   const missing = receipts.filter((o, i) => { if (!known[i].exists) return true; firstSeen[String(o.id)] = known[i].data().firstSeenAt; return false; });
   // Bound concurrency; transactions keep simultaneous stations from counting an order twice.
-  let cursor = 0;
+  let cursor = 0; const arrived = [];
   await Promise.all(Array.from({ length: Math.min(8, missing.length) }, async () => {
     while (cursor < missing.length) {
-      const o = missing[cursor++], id = String(o.id), ref = collection.doc(id);
+      const o = missing[cursor++], id = String(o.id), ref = collection.doc(id); let made = false;
       firstSeen[id] = await db.runTransaction(async t => {
-        const old = await t.get(ref); if (old.exists) return old.data().firstSeenAt;
-        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs), expireAt }); return now;
+        made = false; const old = await t.get(ref); if (old.exists) return old.data().firstSeenAt;
+        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs), expireAt }); made = true; return now;
       });
+      if (made) arrived.push(o);
     }
   }));
+  // an order's first arrival is the first milestone of its timeline (once: the ledger is written for it once)
+  await stamp(() => arrived.map(o => ({ orderId: String(o.id), type: "arrived", at: now, by: "System", station: "sorter", text: "First seen by the sorter",
+    data: { firstSeenAt: now, createTs: num(o.createTs) || null }, milestone: true, id: "first" })), "arrivals");
   const [day,hour]=await Promise.all([collection.where("firstSeenAt",">=",now-86400000).count().get(),collection.where("firstSeenAt",">=",now-3600000).count().get()]);
   // what the counts no longer read goes, a page per check: the sandbox stream's records first seen over 45 simulated days
   // ago (it plays days in hours; far past any order it still lists, and as long as the sorter keeps its own), production's
@@ -1552,7 +1626,8 @@ async function op_laserDone(b) {
     else if (isId(own.data().setId) && !own.data().draft && own.data().solidIncluded !== false) setRef = col(SETS).doc(own.data().setId);
     if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set") return { error: "There is no such set", status: 404 }; else setRef = null; }
     const ids = set ? [...new Set(set.sheetIds || [])].filter(isId).slice(0, 300) : [];
-    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "archived"] }) : [];
+    // (with what the orders' timelines say of each sheet: its orders, its label and the mark it had)
+    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     // every read is made: the writes follow
     const touched = [], write = ref => tx.set(ref, Object.assign({}, mark, { updatedAt: FV.serverTimestamp() }), { merge: true });
@@ -1564,9 +1639,20 @@ async function op_laserDone(b) {
       setDone = kind === "set" ? done : all; setChanged = setDone !== was;
       if (setDone !== was) tx.set(setRef, Object.assign({}, setDone ? { laserDoneAt: at, laserDoneBy: by || set.laserDoneBy || null } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() }, { updatedAt: FV.serverTimestamp() }), { merge: true });
     }
-    return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged };
+    const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
+    const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: Array.isArray(d.orders) ? d.orders : [], d }; });
+    return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks };
   });
   if (res.error) return res;
+  const marks = res.marks || []; delete res.marks;
+  /* every order on each sheet the call marked (laserDone, a milestone) or took the mark from (a note, "laser cut
+     undone"). Only a sheet whose mark changed: one marked again keeps its first event, a retry adds none. */
+  await stamp(() => marks.filter(m => (done ? !(m.was > 0) : m.was > 0)).flatMap(m => {
+    const sheet = sheetLabel(m.d), orders = [...new Set(m.orders.map(String))].slice(0, 300);
+    return orders.map(orderId => done
+      ? { orderId, type: "laserDone", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, id: `${m.sheetId}-${at}` }
+      : { orderId, type: "note", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy }, id: `laserUndone-${m.sheetId}-${m.was}` });
+  }), "laser done");
   return Object.assign(res, { counts: await doneCounts() });
 }
 /** A page of what the laser has done, newest first: sheets, or sets with a summary of their sheets (kind: "sets"). A
@@ -1853,6 +1939,9 @@ async function op_customPut(b) {
   const prev = cur && Array.isArray(cur.stamps) ? cur.stamps : legacyStamps(cur);
   doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-24);
   await ref.set(doc, { merge: true });
+  // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
+  await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
+    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 async function op_customDelete(b) { const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" }; await col(CUSTOM).doc(key).delete(); return { ok: true }; }
@@ -1862,7 +1951,7 @@ async function op_customDelete(b) { const key = String(b.key || ""); if (!lineKe
 async function op_customReadGet(b) { return require("./_charmNestCustomRead").lookup(db, b.items, !!PREFIX); }
 async function op_customDecide(b) { return require("./_charmNestCustomRead").decide(db, FV, b, !!PREFIX); }
 
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel});
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull. ── */
 const CANCELLED = "Charm_Nest_Cancelled";
@@ -1887,7 +1976,28 @@ const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
 async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX }); }
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX }); }
-async function op_cancelRestore(b) { const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" }; await col(CANCELLED).doc(id).delete(); return { ok: true }; }
+/* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
+   record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel. */
+async function op_cancelRestore(b) {
+  const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  const ref = col(CANCELLED).doc(id);
+  let rec = null; try { const s = await ref.get(); rec = s.exists ? s.data() : null; } catch (e) { console.warn("[charmNestLibrary] cancel record not read for the timeline:", e.message || e); }
+  if (rec) await stamp(() => { const c = cancelCopy(rec); return { orderId: id, type: "cancelRestored", by: str(b.by, 80) || "operator", station: "sorter", sheet: str((c.sheets || []).join(", "), 80),
+    text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
+  await ref.delete(); return { ok: true };
+}
+/** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
+function cancelCopy(r) {
+  const x = {}; for (const [k, v] of Object.entries(r || {})) if (k !== "createdAt") x[k] = v && typeof v.toMillis === "function" ? v.toMillis() : v;
+  const fits = () => JSON.stringify(x).length <= 1900, lines = () => Array.isArray(x.lines);
+  if (!fits()) x.why = str(x.why, 300);
+  if (!fits() && lines()) x.lines = x.lines.map(l => Object.assign({}, l, { title: str(l && l.title, 40) }));
+  if (!fits() && lines()) x.lines = x.lines.map(l => { const o = Object.assign({}, l); delete o.title; return o; });
+  if (!fits() && Array.isArray(x.sheets)) x.sheets = x.sheets.slice(0, 6);
+  while (!fits() && lines() && x.lines.length) { x.lines.pop(); x.linesLeftOut = (x.linesLeftOut || 0) + 1; }
+  if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source"].includes(k)) delete x[k];
+  return x;
+}
 const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDoneList, findSheets: op_findSheets, listingPhotos:op_listingPhotos, getShapeGuidance:op_getShapeGuidance, putShapeGuidance:op_putShapeGuidance, laserStatus:op_laserStatus, archiveEmptySheet: op_archiveEmptySheet, sheetPdf: op_sheetPdf, arrivalRecord: op_arrivalRecord, startAgent: op_startAgent, getAgent: op_getAgent, customReadGet: op_customReadGet, customDecide: op_customDecide, ping: op_ping, lookupCharms: op_lookupCharms, putCharms: op_putCharms, renameCharm: op_renameCharm, listCharms: op_listCharms, putSheet: op_putSheet, listSheets: op_listSheets, getSheet: op_getSheet, backPreview: op_backPreview, deleteSheet: op_deleteSheet, purgeHistory: op_purgeHistory, restoreSheet: op_restoreSheet, putCalibration: op_putCalibration, getCalibration: op_getCalibration, startJob: op_startJob, getJob: op_getJob, stopJob: op_stopJob,
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,

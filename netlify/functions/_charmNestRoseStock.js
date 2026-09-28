@@ -34,7 +34,7 @@ function sameOutline(a,b){
   const p=bounds(a?.paths),q=bounds(b?.paths);
   return !!(p&&q)&&p.every((v,i)=>Math.abs(v-q[i])<=OUTLINE_TOLERANCE_PT);
 }
-module.exports=function({db,col,FV,Readiness,decisionsOfRun}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
     if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
@@ -126,7 +126,7 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun}){
   }
   async function roseRecordCut(b){
     if(!id(b.sheetId)||!id(b.stockId)||!b.planHash)throw new Error('Prepare the cut contour first');
-    return db.runTransaction(async tx=>{
+    const out=await db.runTransaction(async tx=>{
       const ref=stocks().doc(b.stockId),sr=sheets().doc(b.sheetId),er=ref.collection('cuts').doc(b.sheetId);
       const d=await tx.get(ref),sd=await tx.get(sr),ed=await tx.get(er),stock=d.exists&&d.data(),sheet=sd.exists&&sd.data();
       if(ed.exists){if(ed.data().planHash!==b.planHash)throw new Error('This cut was already recorded with a different plan');return {ok:true,cut:ed.data(),stock};}
@@ -140,8 +140,13 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun}){
       const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};
       const next={...stock,revision,profileJson:JSON.stringify(plan.profile),owner:null,available:plan.remainingPt2>14*14,lastCutAt:at,updatedAt:FV.serverTimestamp()};
       tx.set(er,cut);tx.set(ref,next);tx.update(sr,{roseCutAt:at,roseCutRevision:revision,updatedAt:FV.serverTimestamp()});
-      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null}};
+      return {ok:true,cut:{...cut,createdAt:null},stock:{...next,updatedAt:null},cutSheet:sheet};
     });
+    // every order on the sheet gets the cut on its timeline (charmNestLibrary's stamp never throws); the revision is its id
+    const sheet=out.cutSheet;delete out.cutSheet;
+    if(sheet&&stamp)await stamp(()=>{const c=out.cut,label=sheetLabel?sheetLabel(sheet):String(sheet.fileBase||c.sheetId).slice(0,80);
+      return [...new Set((sheet.orders||[]).map(String))].slice(0,300).map(orderId=>({orderId,type:'roseCut',at:c.at,by:c.by,station:'laser',sheetId:c.sheetId,sheet:label,setId:sheet.setId||'',text:label,data:{stockId:c.stockId,revision:c.revision},id:`${c.sheetId}-${c.revision}`}));},'rose cut');
+    return out;
   }
   // A rehearsal has its own collection and cannot reserve physical stock,
   // create production-ready sheets, export jobs, or complete Etsy orders.
