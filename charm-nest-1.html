@@ -166,6 +166,9 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shControls{display:flex;align-items:center;gap:6px;padding:0 14px 7px;min-width:0;min-height:33px}   /* one height with or without Options or Cut Sheet, so the sheets of a row line up */
 .shControls .shTabs{flex:1;order:0;flex-wrap:nowrap;overflow-x:auto}
 .shControls .shGate{margin:0;padding:0;border:0;background:none;flex:0 0 auto}
+/* a Nest card's Front | Back · engraving: the order view's own switch (.owSeg), in the controls row, adding no height */
+.shControls .shFace{flex:0 0 auto;order:5;align-items:center;white-space:nowrap}.shControls .shFace[hidden]{display:none}
+.shFace .spin{width:9px;height:9px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--ink45);border-radius:50%;animation:spin .7s linear infinite;margin:0 5px 0 4px;flex:0 0 auto}.shFace .spin[hidden]{display:none}
 .sheetOptions{position:relative;font-size:11px}
 .sheetOptions>summary{cursor:pointer;list-style:none;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--ink70)}
 .sheetOptions[open] .solidOptions{position:absolute;right:0;top:calc(100% + 7px);z-index:30;width:min(390px,calc(100vw - 40px));padding:0;max-height:min(650px,75vh);overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:13px;background:var(--card);box-shadow:0 12px 32px #0002}
@@ -4935,7 +4938,7 @@ function buildCards() {
     const el = document.createElement("section"); el.className = "sheetCard"; el.dataset.m = m.key; el.style.setProperty("--ar", `${st.wPt}/${st.hPt}`);
     el.innerHTML = `
       <div class="shHead"><span class="sw"></span><span class="name">${m.label}</span><span class="stock" data-r="stock"></span><span class="prov" data-r="prov"></span><span class="pill neutral" data-r="pill">Idle</span></div>
-      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div></div>
+      <div class="shControls"><div class="shTabs" data-r="tabs"></div><div class="shGate hidden" data-r="gate"></div><div class="owSeg shFace" data-r="face" role="group" aria-label="Side of the sheet" hidden><span class="spin" hidden></span><button type="button" data-face="front" class="on" aria-pressed="true" title="The sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn the sheet over: every charm&#39;s back engraving, mirrored as the laser sees it">Back · engraving</button></div></div>
       <div data-r="backs"></div>
       <div class="shPreviewWrap"><canvas data-r="canvas"></canvas>
         <div class="dropHint" data-r="hint"><b>Drop ${m.label} artwork here</b><span>.ai · .pdf · .zip — anything dropped on this card belongs to ${m.long.toLowerCase()}</span><span class="k">or drop on the queue to route by file name</span></div>
@@ -4981,6 +4984,7 @@ function buildCards() {
       if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, m.key);
     });
     q("canvas").addEventListener("click", e => onPreviewClick(cur(), e));
+    q("face").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnCard(m.key, b.dataset.face); });
     q("agentTog").parentElement.onclick = () => { const pg = cur(); pg.agentOpen = !pg.agentOpen; renderAgent(pg); };
     renderCard(sh);
   }
@@ -5180,6 +5184,8 @@ function drawRecalled(sh, cv) {
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   wrap.style.aspectRatio = `${w}/${h}`;
   const ctx = cv.getContext("2d"); ctx.fillStyle = sw < w - 1 || sh2 < h - 1 ? TRAY : "#fff"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, sw, sh2);
+  // turned over: not the saved picture (that is its front) but each charm from behind, with its own words (12b)
+  if (faceOf(cv) === "back" && cardBack()) return drawRecalledBack(sh, cv, ctx, w / f.fw, sw, sh2);
   if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
     r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0) : "");
@@ -5200,7 +5206,7 @@ function drawPreviewNow(sh) {
   if(document.hidden || !sh.el || sh.el.closest('.hidden,[hidden]'))return;
   const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
   const wrap = cv.parentElement; const st = stockFor(sh.metal, sh);
-  if (sh.recalled && !sh.charms.length && !(sh.roseCutAt && sh.roseHistory?.length)) { if (wrap.clientWidth >= 40) drawRecalled(sh, cv); else requestAnimationFrame(() => { if (sh.el) drawPreview(sh); }); return; }
+  if (sh.recalled && !sh.charms.length && !(sh.roseCutAt && sh.roseHistory?.length)) { if (wrap.clientWidth >= 40) { drawRecalled(sh, cv); paintFace(sh, cv); } else requestAnimationFrame(() => { if (sh.el) drawPreview(sh); }); return; }
   // a card that is not laid out yet (view switch, collapsed rail, first paint) has no width: a bitmap drawn at that
   // size would be stretched to a blur later. Wait for a real width instead.
   if (wrap.clientWidth < 40) { if (!sh._redrawPending) { sh._redrawPending = true; requestAnimationFrame(() => { sh._redrawPending = false; if (sh.el) drawPreview(sh); }); } return; }
@@ -5209,7 +5215,8 @@ function drawPreviewNow(sh) {
   const f = trueFrame(st), h = R + Math.round((w - R) * f.fh / f.fw); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   wrap.style.aspectRatio = `${w}/${h}`;
   paintPreview(cv, sh, false, R);
-  const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
+  const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = !sh.placements.length ? "" : faceOf(cv) === "back" ? "back side, mirrored as the laser sees it" : "click a charm to inspect · pin";
+  paintFace(sh, cv);
 }
 /* A custom order's own design on a sheet (CustomSheet): a plum tint and a dashed plum ring just outside its outline, drawn
    on screen only — never into a sheet's files. */
@@ -5235,6 +5242,11 @@ function paintPreview(cv, sh, clean, R) {
     ctx.restore();
   }
   ctx.translate(R, R);
+  // turned over (12b): the sheet mirrored about its own middle, as it lies under the laser — each charm keeps its place on
+  // the metal, and is drawn from behind with its own words; never in the files' pictures or Claude's
+  const back = !clean && !sh._forClaude && faceOf(cv) === "back" && !!cardBack(), backs = back ? liveBacks(sh) : null;
+  const behind = (c, p, fill) => cardBack().piece(ctx, pieceOf(c, p, sh), backs, k, { dpr: devicePixelRatio, fill });
+  if (back) { ctx.translate(W, 0); ctx.scale(-1, 1); }
   // inset guide
   const ins = (+S.settings.insetPt || 0) * k;
   ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, 0.5 * k); ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
@@ -5243,6 +5255,7 @@ function paintPreview(cv, sh, clean, R) {
   const byId = new Map(sh.charms.map(c => [c.id, c]));
   const sel = sh.selected;
   if (!clean && !sh.placements.length && sh.charms.length && !sh.probe && !sh.probePlaced?.length) {
+    ctx.save(); if (back) { ctx.translate(W, 0); ctx.scale(-1, 1); }   // (words read the right way round on either side)
     const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(FW / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
     const ai = (S.settings.engine || "solver") === "ai";
     ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, FW / 2, FH / 2 - FW / 60);
@@ -5250,12 +5263,14 @@ function paintPreview(cv, sh, clean, R) {
     // a 10K or 14K sheet waits for a person to include it in a set (Options), even in Auto: "press Nest" was not the answer
     const waitsForYou = window.Gate && Gate.modern(sh.runId) && !Gate.nestable(sh, window.B?.run) && !["nesting", "queued"].includes(sh.status);
     ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", FW / 2, FH / 2 + FW / 40);
+    ctx.restore();
   }
   (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
     ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+    if (back) { behind(c, p, sel === c.id ? (c.custom ? "rgba(125,86,168,.42)" : "rgba(202,168,97,.35)") : null); ctx.restore(); return; }
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
       // a custom order's own design is plum, so it stands out on the sheet (Paul, 27 Sep: "clearly identified as Custom")
       ctx.fillStyle = c.custom ? (sel === c.id ? "rgba(125,86,168,.42)" : CUSTOM_TINT) : sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
@@ -5279,15 +5294,105 @@ function paintPreview(cv, sh, clean, R) {
       const c = byId.get(g.id); if (!c || onSheet.has(g.id)) continue;
       const live = g === sh.probe, cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       ctx.save(); ctx.translate(g.cxPt * k, g.cyPt * k); ctx.rotate(g.angle * Math.PI / 180);
+      // (turned over, the fill goes on landing charm by charm, each drawn from behind as it lands)
+      if (back) behind(c, g, null); else {
       ctx.fillStyle = c.custom ? CUSTOM_TINT : "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
       CharmNestPDF.drawCharm(ctx, c, tx, k);
-      if (c.custom && !live) customRing(ctx, c, tx, k);
+      if (c.custom && !live) customRing(ctx, c, tx, k); }
       if (live) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(40,90,180,.9)"; ctx.lineWidth = Math.max(1, .3 * k); ctx.stroke(); }
       ctx.restore();
     }
   }
   // largest open pocket
   if (!clean && sh.sat && sh.sat.pocket && sh.liveInfo && sh.sat.pocket.wPt > 6) { const p = sh.sat.pocket; ctx.setLineDash([3, 3]); ctx.strokeStyle = "rgba(95,122,91,.6)"; ctx.lineWidth = 1; ctx.strokeRect(p.xPt * k, p.yPt * k, p.wPt * k, p.hPt * k); ctx.setLineDash([]); }
+}
+/* ═══ 12b · a card turned over ═══════════════════════════════════════════
+   Every Nest card turns to its Back as the sheet window and the order view's Sheet tab do (Paul, 28 Sep: "I should be
+   able to see the backings everywhere … The sheet is visible"; "no haze, every charm perfectly visible"): the sheet
+   mirrored about its own middle, as it lies under the laser, each charm from behind with its own words in full ink (the
+   window's own back drawing, SheetWin.cardBack), a charm with no engraving its plain outline. The side belongs to the
+   card (its canvas), so a tab keeps it. A card that is filling goes on filling while it turns and once turned, and nothing
+   waits on the backs: the card is drawn at once, a small spinner in the switch says what is still coming, and the words
+   are drawn in as they land. A recalled sheet is drawn from its saved record and its saved backs, not its picture. */
+function cardBack() { return window.SheetWin && SheetWin.cardBack; }
+function faceOf(cv) { return cv && cv._face === "back" ? "back" : "front"; }
+/** Front | Back · engraving: the order view's own turn (OrderWin turnPlate) — the card's sheet goes to its edge, is drawn
+    from the other side, and comes round. */
+function turnCard(metal, face) {
+  const prim = S.sheets[metal], el = prim && prim.cardEl, cv = el && $(`[data-r="canvas"]`, el); if (!cv) return;
+  if (cv._turning || face === faceOf(cv)) return;
+  const sh = activePage(metal), d = face === "back" ? 1 : -1;
+  cv._faceTo = face; paintFace(sh, cv);
+  const swap = () => { cv._face = face; cv._faceTo = null; const pg = activePage(metal); if (pg.el) drawPreviewNow(pg); };
+  if (document.hidden || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || !cv.animate) return swap();
+  cv._turning = true;
+  cv.animate([{ transform: "perspective(1600px) rotateY(0)" }, { transform: `perspective(1600px) rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished
+    .then(() => { swap(); return cv.animate([{ transform: `perspective(1600px) rotateY(${-90 * d}deg)` }, { transform: "perspective(1600px) rotateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" }).finished; }, swap)
+    .catch(() => {}).then(() => { cv._turning = false; });
+}
+/** The switch: shown once the sheet has something on it, the side it is on, and a spinner while the backs come. */
+function paintFace(sh, cv) {
+  const seg = sh.el && $(`[data-r="face"]`, sh.el); if (!seg || !cv) return;
+  const face = cv._faceTo || faceOf(cv), has = !!cardBack() && !!(sh.placements.length || sh.probePlaced?.length || (sh.recalled && !sh.charms.length));
+  const B = sh.recalled && !sh.charms.length ? sh._backSheet : null, wait = face === "back" && (B ? !B.done : sh._backWait > 0);
+  const key = `${has}|${face}|${wait}`; if (seg._key === key) return; seg._key = key;
+  seg.hidden = !has && face === "front";
+  for (const b of $$("[data-face]", seg)) { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }
+  $(".spin", seg).hidden = !wait; seg.title = wait ? "Reading this sheet's back engraving…" : "";
+}
+/** A charm on a page, as the window's back drawing takes a piece (kept with the charm, so its words are laid out once). */
+const backPieces = new WeakMap();
+function pieceOf(c, p, sh) {
+  let x = backPieces.get(c); if (!x) { x = { id: c.id, poolId: c.poolId || null, c, p: null, eng: null, _at: 0 }; backPieces.set(c, x); }
+  x.p = p; x.c = c; const at = sh._backs ? sh._backs.at : 0;
+  if (x._at !== at) { x._at = at; x.eng = x.poolId ? cardBack().engOf(x, { backPool: sh.backPool || [] }) : null; }
+  return x;
+}
+/** Every back a page's charms carry: its own, Engrave's, and once it is saved the sheet's saved backs (read once, with the
+    engraving font); worked out again at most once a second while it fills. */
+function liveBacks(sh) {
+  const CB = cardBack(), now = Date.now(), key = sh.sheetId || "";
+  if (sh._backsAsked !== key) {
+    sh._backsAsked = key; const jobs = [], font = CB.font(); if (font) jobs.push(font);
+    if (key) jobs.push(CB.list(key).then(l => { if (sh.sheetId === key) sh._backList = l; }, () => {}));
+    if (jobs.length) { sh._backWait = (sh._backWait || 0) + 1; Promise.all(jobs).then(() => { sh._backWait--; sh._backs = null; if (sh.el) drawPreview(sh); }); }
+  }
+  const b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
+  sh._backs = { at: now, pool: sh.backPool, map: CB.ofPage(sh, sh._backList) };
+  return sh._backs.map;
+}
+/** A recalled sheet turned over: its saved record's pieces (their designs read as the window reads them) and its saved
+    backs, at true scale in the card's frame. Until the record is read, the bare sheet; each design is drawn as it comes. */
+function drawRecalledBack(sh, cv, ctx, k, sw, sh2) {
+  const CB = cardBack(), id = sh.sheetId || sh.recalled.id;
+  const B = sh._backSheet = CB.sheet(id, sh._onBack || (sh._onBack = () => { if (sh.el) drawPreview(sh); }));
+  sh._backView = { k, sw };
+  ctx.save(); ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, sw - 1, sh2 - 1);
+  if (B.pieces) {
+    const said = [];
+    ctx.save(); ctx.translate(sw, 0); ctx.scale(-1, 1);
+    for (const x of B.pieces) { const p = x.p; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); if (!CB.piece(ctx, x, B.backs, k, { dpr: devicePixelRatio })) said.push(x); ctx.restore(); }
+    ctx.restore();
+    // a charm whose design could not be read still says its words, in ink on its place (never left looking plain)
+    for (const x of said) {
+      const b = x.poolId && B.backs && B.backs.get(x.poolId), words = b && (b.lines && b.lines.length ? b.lines.join(" ") : b.text); if (!words) continue;
+      ctx.save(); ctx.fillStyle = "#2f2512"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `italic ${Math.max(9 * devicePixelRatio, Math.min(x.p.wPt, x.p.hPt) * k * .2)}px Georgia, serif`;
+      ctx.fillText(words, sw - x.p.cxPt * k, x.p.cyPt * k, x.p.wPt * k * .9); ctx.restore();
+    }
+  } else {
+    ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(cv.width / 40)}px sans-serif`; ctx.textAlign = "center";
+    ctx.fillText(B.error ? "the back of this sheet could not be read" : "reading the back of this sheet…", cv.width / 2, cv.height / 2);
+  }
+  ctx.restore();
+}
+/** A click on a recalled card turned over: the charm under it opens in the sheet window, as a click on a live card does. */
+function backClick(sh, e) {
+  const cv = e.currentTarget, B = sh._backSheet, v = sh._backView;
+  if (faceOf(cv) !== "back" || !sh.recalled || !B || !B.pieces || !v || !window.SheetWin) return;
+  const r = cv.getBoundingClientRect(), x = v.sw / v.k - (e.clientX - r.left) * cv.width / r.width / v.k, y = (e.clientY - r.top) * cv.height / r.height / v.k;
+  let best = null, bd = Infinity;
+  for (const pc of B.pieces) { const d = Math.hypot(pc.p.cxPt - x, pc.p.cyPt - y); if (d < bd && d < Math.max(pc.p.wPt, pc.p.hPt)) { bd = d; best = pc; } }
+  if (best) SheetWin.open(sh.sheetId || sh.recalled.id, { select: best.poolId || best.id, fromRect: r });
 }
 /** What a sheet holds while the careful fill puts its charms down one at a time (drawn as they land, before the layout does):
     its placements and those charms, counted, and how full they make it by their own areas. Null when there are none. */
@@ -5314,11 +5419,12 @@ function drawRulers(ctx, R, k, W, H) {
   ctx.restore();
 }
 function onPreviewClick(sh, e) {
-  if (!sh.placements.length) return;
+  if (!sh.placements.length) return backClick(sh, e);
   const cv = e.currentTarget, r = cv.getBoundingClientRect(); const v = sh._view || { R: 0, k: cv.width / stockFor(sh.metal, sh).wPt };
   const sx = cv.width / r.width, sy = cv.height / r.height;
-  const x = ((e.clientX - r.left) * sx - v.R) / v.k, y = ((e.clientY - r.top) * sy - v.R) / v.k;
+  let x = ((e.clientX - r.left) * sx - v.R) / v.k; const y = ((e.clientY - r.top) * sy - v.R) / v.k;
   if (x < 0 || y < 0) return;
+  if (faceOf(cv) === "back") x = stockFor(sh.metal, sh).wPt - x;   // turned over: the sheet is mirrored about its middle
   let best = null, bd = Infinity;
   for (const p of sh.placements) { const d = Math.hypot(p.cxPt - x, p.cyPt - y); if (d < bd && d < Math.max(p.wPt, p.hPt)) { bd = d; best = p; } }
   if (!best) return;
@@ -5883,8 +5989,8 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-m5"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-m5"></script>
+<script src="charm-nest-bridge.js?v=20260928-m6"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-m6"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
