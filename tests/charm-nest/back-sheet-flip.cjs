@@ -149,8 +149,38 @@ async function view() {
     // and back to the Front: the flip is still a flip, and the plate comes back
     await page.click('#owFace [data-face="front"]');
     await page.waitForFunction(() => /Hover a charm/.test(document.getElementById('owPlateFoot').textContent), null, { timeout: 15000 });
+
+    /* ── 3 · the sheet window's own plate: the same Front | Back, every charm's words from behind ── */
+    await page.click('#owSheetPanel [data-full]');
+    await page.waitForFunction(sh => SheetWin.isOpen() && SheetWin.current() === sh && SheetWin._W.geom && !SheetWin._W.flying
+      && !SheetWin._W.el.plate.getAnimations().some(a => a.playState === 'running'), SH, { timeout: 30000 });
+    // the middle of each charm: bare on the front (its drawing is an outline), inked from behind by its own words
+    const read = () => page.evaluate(() => {
+      const W = SheetWin._W, cv = W.el.base, ctx = cv.getContext('2d');
+      return W.pieces.map(x => { const cx = W.R + (W.face === 'back' ? W.st.wPt - x.p.cxPt : x.p.cxPt) * W.k, cy = W.R + x.p.cyPt * W.k, r = Math.round(x.p.wPt * W.k * .3);
+        const d = ctx.getImageData(Math.round(cx) - r, Math.round(cy) - r, 2 * r, 2 * r).data; let n = 0;
+        for (let j = 0; j < d.length; j += 4) if (d[j] + d[j + 1] + d[j + 2] < 330) n++;
+        return { poolId: x.poolId, ink: n }; });
+    });
+    const front = await read();
+    assert.deepEqual(front.map(p => p.ink), [0, 0, 0, 0], 'nothing inside the charms on the front: ' + JSON.stringify(front));
+    await page.click('.swStrip [data-r2=face]');
+    await page.waitForFunction(() => SheetWin._W.face === 'back' && !SheetWin._W.el.plate.getAnimations().some(a => a.playState === 'running'), null, { timeout: 20000 });
+    const behind = Object.fromEntries((await read()).map(p => [p.poolId, p.ink]));
+    for (const p of [PA, PB, PC]) assert(behind[p] >= 4, `${p}: its words in ink on the sheet window's back (${behind[p]})`);
+    assert.equal(behind[PD], 0, 'the copy with no engraving stays plain in the sheet window too');
+    assert.match(await page.textContent('.swStrip'), /Back side, mirrored as the laser sees it/);
+    // a click still finds the charm under the pointer on the mirrored plate
+    const hit = await page.evaluate(() => { const W = SheetWin._W, r = W.el.fx.getBoundingClientRect(), sx = W.el.fx.width / r.width;
+      const x = W.pieces[0], px = W.R + (W.st.wPt - x.p.cxPt) * W.k, py = W.R + x.p.cyPt * W.k;
+      return { want: x.poolId, at: [r.left + px / sx, r.top + py / sx] }; });
+    await page.mouse.move(hit.at[0], hit.at[1]);
+    await page.waitForFunction(p => SheetWin._W.hover && SheetWin._W.hover.poolId === p, hit.want, { timeout: 8000 });
+    await page.click('.swStrip [data-r2=face]');
+    await page.waitForFunction(() => SheetWin._W.face === 'front', null, { timeout: 20000 });
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ three orders on one sheet: each charm\'s own words in ink on its own charm, the plain charm plain');
+    console.log('  ✓ the sheet window turns the same way: bare fronts, words on every engraved charm from behind, hover still finds them');
   } finally { await browser.close(); srv.close(); }
 }
 

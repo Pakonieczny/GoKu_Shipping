@@ -1593,13 +1593,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Front | Back: the plate turns to its edge, is drawn from the other side, and turns back (the order view turns the
       same way: OrderWin turnPlate). Nothing is read before it turns — the words arrive on the plate as they come. */
   function turnPlate(face) {
-    if (face === W.face || !W.el.plate || W.flying) return;
+    if (face === W.face || !W.el.plate) return;
     W.face = face;
     const E = W.el, d = face === "back" ? 1 : -1;
     const paint = () => { E.pv.style.opacity = face === "back" || (W.pieces.length && W.pieces.every(x => x.c)) ? "0" : "1";
       paintRule(); if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx(); renderStrip(); };
     if (face === "back") sheetBacksReady();
-    if (still() || !W.st) return paint();
+    // (while the sheet is still flying to the plate its own animation holds the transform: it turns without the turn)
+    if (still() || !W.st || W.flying) return paint();
     E.plate.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" })
       .finished.then(() => { paint(); E.plate.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, () => paint());
   }
