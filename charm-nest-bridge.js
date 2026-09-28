@@ -1195,13 +1195,34 @@ const Orders = window.Orders = (() => {
     if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
     const n = lineNode(key); if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); lit(n); }
   }
-  /** "Show" for a cancelled order: the Cancelled pile (read from the library), at that order. */
+  /** "Show" for a cancelled order: the Cancelled pile (read from the library), at that order. The list pages down to it
+   *  (cxFocus), and a search that leaves it out lets go, as showLine does with the filters. */
+  let cxFocus = "";
   function showCancelled(rid) {
-    OV.pile = "cancelled";
+    rid = String(rid); OV.pile = "cancelled"; cxFocus = rid;
+    if (OV.q && !rid.includes(OV.q.trim())) { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; }
     if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
     let n = 0;
-    const look = () => { const c = [...document.querySelectorAll("#ordBody .cxRow")].find(x => x.dataset.rid === String(rid)); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); lit(c); } else if (++n < 30 && OV.pile === "cancelled") setTimeout(look, 150); };
+    const look = () => { const c = [...document.querySelectorAll("#ordBody .cxRow")].find(x => x.dataset.rid === rid); if (c) { cxFocus = ""; c.scrollIntoView({ behavior: "smooth", block: "center" }); lit(c); } else if (++n < 30 && OV.pile === "cancelled") setTimeout(look, 150); else cxFocus = ""; };
     look();
+  }
+  /** A cancel made elsewhere, seen live (Etsy's, found by the system, or a person's on another screen; Cancelled.load
+   *  finds it): it flies into the Cancelled tab, from its row when the list shows the order, and the count answers. The
+   *  Cancelled list, when it is the one shown, takes it in at the top instead. recs: [{ orderId, etsy, by }]. */
+  function cancelArrived(recs) {
+    render();
+    if (!onScreen() || !window.Motion || Motion.reduced() || !recs || !recs.length) return;
+    if (OV.pile === "cancelled") { setTimeout(() => { const b = document.querySelector(PILL("cancelled") + " b"); if (b && b.animate) b.animate([{ transform: "scale(1)", boxShadow: "0 0 0 0 rgba(176,86,63,.55)" }, { transform: "scale(1.25)", offset: .3 }, { transform: "scale(1)", boxShadow: "0 0 0 7px rgba(176,86,63,0)" }], { duration: 900, easing: "cubic-bezier(.2,.7,.3,1)" }); }, 60); return; }
+    const body = document.getElementById("ordBody"); if (!body) return;
+    recs.slice(0, 3).forEach((c, i) => setTimeout(() => {
+      const rid = String(c.orderId), row = [...document.querySelectorAll("#ordItems [data-rid]")].find(n => n.dataset.rid === rid), br = body.getBoundingClientRect();
+      const from = row ? (row.querySelector(".onum") || row).getBoundingClientRect() : { left: br.left + br.width / 2 - 110, top: br.top + 14 };
+      const wrap = el("div", "cxTokenWrap"), tok = el("div", "cxToken");
+      tok.innerHTML = `<b class="mono">${esc(rid)}</b><span>${esc(c.etsy ? "Cancelled on Etsy" : "Cancelled by " + (c.by || "someone"))}</span>`;
+      Object.assign(wrap.style, { left: Math.max(8, from.left) + "px", top: Math.max(8, from.top) + "px" }); wrap.appendChild(tok); document.body.appendChild(wrap);
+      const g = Motion.ghost(tok, tok.getBoundingClientRect(), null, body); wrap.remove();
+      Motion.fly(g, pillOf("cancelled", rid), { plus: "+1", ms: 1300 });
+    }, i * 240));
   }
   /** Where a row that left went, when a person's click sent it; null (it folds away where it was) otherwise. One note an
    *  order: its other lines fly with it in silence. */
@@ -1247,7 +1268,8 @@ const Orders = window.Orders = (() => {
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
-    if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
+    // (the Cancelled list is the sheet window script's: searched with this tab's search box, paged down to what "Show" asked for)
+    if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }, { q: OV.q, focus: cxFocus, live: () => OV.pile === "cancelled" && host.isConnected, clear: () => { OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; renderBody(); } }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
     const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
@@ -1375,9 +1397,12 @@ const Orders = window.Orders = (() => {
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     const heldN = new Set(all.filter(r => r.hold).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
+    // (Cancelled is always there, Paul 28 Sep A5: every cancelled order, Etsy's and a person's, whatever the pull holds)
     const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
       + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
-      + (cxN || OV.pile === "cancelled" ? chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Orders cancelled from the sorter, kept as a record; restore one to bring it back") : "");
+      + chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Every cancelled order: the ones Etsy cancelled and the ones a person cancelled here, newest first");
+    // on Cancelled the search reads order, buyer and SKU, and the narrowing and display controls (open lines only) step aside
+    { const bar = v.querySelector("#ordBar"), q = v.querySelector("#ordQ"), cx = OV.pile === "cancelled"; if (bar) bar.classList.toggle("onCx", cx); if (q) q.placeholder = cx ? "order, buyer, SKU…" : "order, SKU, words…"; }
     // redrawn only when a count or the pile changes, so a pill a row just flew into keeps its answer (Paul, 27 Sep); a
     // pill that was not there (the first order put on hold, the first one cancelled) opens where it stands
     if (pills._html !== pillsHtml) {
@@ -1390,7 +1415,13 @@ const Orders = window.Orders = (() => {
       sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
       + sel("ordForm", "narrow it to one kind of jewellery", "Any kind", forms.map(f => [f, FORM_LABEL[f] || (f === "none" ? "Kind not set" : f), byForm[f] || 0]), OV.form)
       + (engN && engN < all.length || OV.eng ? sel("ordEng", "engraved or not", "Engraved or not", [["yes", "Engraved", engN], ["no", "Not engraved", all.length - engN]], OV.eng) : "");
-    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => { OV.pile = b.dataset.pile || null; renderHead(v); renderBody(); document.getElementById("ordBody")?.scrollTo?.(0, 0); });
+    // another pile slides in softly from the side it lies on (pills left to right), so a switch is seen as one
+    v.querySelectorAll("[data-pile]").forEach(b => b.onclick = () => {
+      const PILES = ["", "hold", "cancelled"], was = PILES.indexOf(OV.pile || ""), to = PILES.indexOf(b.dataset.pile || "");
+      OV.pile = b.dataset.pile || null; renderHead(v); renderBody();
+      const body = document.getElementById("ordBody"); body?.scrollTo?.(0, 0);
+      if (body && was !== to && window.Motion && !Motion.reduced() && body.animate) body.animate([{ opacity: 0, transform: `translateX(${to > was ? 14 : -14}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: "cubic-bezier(.2,.8,.2,1)" });
+    });
     for (const [id, k] of [["ordMetal", "metal"], ["ordForm", "form"], ["ordEng", "eng"]]) { const n = v.querySelector("#" + id); if (n) n.onchange = () => { OV[k] = n.value || null; renderHead(v); renderBody(); }; }
     v.querySelector("#ordViewSeg").innerHTML = ["cards", "list"].map(k => `<button data-view="${k}"${viewMode() === k ? ' class="on"' : ""} title="${k === "cards" ? "a card for every line, with its picture" : "the same lines as rows"}">${k === "cards" ? "Cards" : "List"}</button>`).join("");
     v.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { OV.view = b.dataset.view; S.settings.orderView = OV.view; saveSettings(); renderHead(v); renderBody(); });
@@ -1429,7 +1460,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
