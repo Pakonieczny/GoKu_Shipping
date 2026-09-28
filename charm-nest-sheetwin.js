@@ -3757,7 +3757,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (G.backsAsked) return; G.backsAsked = true;
     const id = G.rec && G.rec.id, wait = t => { if (opts && opts.onWait) tryDo(() => opts.onWait(t)); };
     const F = window.Engrave && Engrave.fonts, jobs = [], what = [];
-    if (id) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => {})); what.push("this sheet's back engraving"); }
+    // (a Library card draws from the backs its record carries, which getSheet read in full: the sheet's list of backs is
+    //  read only when the record wants words and carries none, so a Library card is one read)
+    const listed = !G.bare || (!((G.rec && G.rec.backPool) || []).length && Object.values((G.rec && G.rec.engraving) || {}).some(e => e && e.needed));
+    if (id && listed) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => {})); what.push("this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(Engrave.loadFonts()).catch(() => {})); what.push("the engraving font"); }
     if (!jobs.length) return;
     wait("Reading " + what.join(" and ") + "…");
@@ -3795,7 +3798,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Sizes the plate to its box (the sheet at its shape, its rulers along the top and the left). */
   function layoutOrder(G) {
     const cv = G.cv, st = G.st, host = cv.parentElement; if (!cv.isConnected || !st || !host || cv._order !== G) return false;
-    const dpr = Math.min(2.5, devicePixelRatio || 1), aw = host.clientWidth - 44, ah = host.clientHeight - 24; if (aw < 40 || ah < 30) return false;
+    const dpr = Math.min(2.5, devicePixelRatio || 1);
+    // bare (a Library card's picture): the canvas is the sheet's own box at true scale, with no rulers round it
+    if (G.bare) {
+      const w = cv.clientWidth, hh = cv.clientHeight; if (w < 8 || hh < 8) return false;
+      const cw = Math.round(w * dpr), ch = Math.round(hh * dpr); if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+      G.dpr = dpr; G.R = 0; G.k = Math.min(cw / st.wPt, ch / st.hPt); G.Wp = st.wPt * G.k; G.Hp = st.hPt * G.k;
+      return true;
+    }
+    const aw = host.clientWidth - 44, ah = host.clientHeight - 24; if (aw < 40 || ah < 30) return false;
     const R = Math.round(Math.max(14, Math.min(22, aw * 0.022))), s = Math.min((aw - R) / st.wPt, (ah - R) / st.hPt);
     const w = Math.floor(R + st.wPt * s), hh = Math.floor(R + st.hPt * s), cw = Math.round(w * dpr), ch = Math.round(hh * dpr);
     if (cv.style.width !== w + "px") cv.style.width = w + "px";
@@ -3812,7 +3823,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ctx = b.getContext("2d"), R = G.R, dpr = G.dpr, mine = new Set(G.mine), drawn = G.pieces.some(x => x.c);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, b.width, b.height);
     ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, b.width, b.height);
-    tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
+    if (!G.bare) tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
     ctx.save(); ctx.translate(R, R);
     if (G.backSide) { ctx.translate(G.Wp, 0); ctx.scale(-1, 1); }
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, G.Wp, G.Hp); ctx.clip();
@@ -3908,7 +3919,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       roseCutAt: (rec && rec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true });
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
-    const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, backs: backsOf(rec, live), backsAsked: false };
+    const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, bare: !!opts.bare, backs: backsOf(rec, live), backsAsked: false };
     // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
     // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
     const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
@@ -3931,7 +3942,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (opts.onInfo) tryDo(() => opts.onInfo(info));
     if (G.backSide) ensureBacks(G, opts);
     const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
-    if (url && !live) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
+    if (url && !live && !opts.bare) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
     redraw();
     if (live) { const byId = new Map((live.charms || []).map(c => [c.id, c])); for (const x of pieces) x.c = byId.get(x.id) || null; }
     const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
@@ -3954,4 +3965,151 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
 
   window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, _W: W };
+})();
+
+/* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
+   visible … I should be able to see the backings everywhere").
+   One Front | Back · engraving switch in the Library's bar turns every sheet card at once, each with the sheet view's own
+   flip, one after another; each card carries the same small switch on its picture to turn it alone. The back is the sheet
+   window's own drawing (SheetWin.drawOrder, bare: the sheet's box at true scale, no rulers): mirrored as the laser sees
+   it, every charm's own engraving in full ink, a charm with none a plain outline, nothing laid over it.
+   Nothing is read until a card is turned and in view; then one sheet is read at a time (its record carries its backs), a
+   small spinner on the card while it comes, and what is drawn is kept for the next time the card is turned or rebuilt. */
+(() => {
+  "use strict";
+  const L = { face: "front", own: new Map(), drawn: new Map(), queue: [], busy: false, io: null, mo: null, frame: 0 };
+  const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EASE = "cubic-bezier(.2,.8,.2,1)", MAX_KEPT = 40;
+  const CSS = `
+#libFace{flex:0 0 auto;margin-left:auto}
+#libFace button{white-space:nowrap}
+.libCard .pvTurn{display:block;position:relative;border-radius:8px}
+.libCard .pvTurn>img.pv{display:block}
+.libCard .pvBack{position:absolute;inset:0;box-sizing:border-box;border:1px solid var(--line2);border-radius:8px;background:var(--card2);overflow:hidden;visibility:hidden}
+.libCard .pvTurn.back>.pvBack{visibility:visible}
+.libCard .pvTurn.back>img.pv{visibility:hidden}
+.libCard .pvBack canvas{display:block;width:100%;height:100%}
+.libCard .pvBack .pvNote{position:absolute;inset:0;display:grid;place-items:center;font:11px var(--sans);color:var(--ink45)}
+.libCard .pvSpin{position:absolute;left:7px;top:7px;z-index:1;width:11px;height:11px;border:2px solid var(--line);border-top-color:var(--gold2);border-radius:50%;animation:lbSpin .8s linear infinite;background:var(--card)}
+@keyframes lbSpin{to{transform:rotate(360deg)}}
+.libCard .pvFace{position:absolute;right:6px;bottom:6px;z-index:2;opacity:0;transform:translateY(3px);transition:opacity .18s ease,transform .18s ${EASE};box-shadow:0 1px 4px rgba(30,26,20,.14)}
+.libCard:hover .pvFace,.libCard:focus-within .pvFace{opacity:1;transform:none}
+.libCard .pvFace button{padding:1px 7px;font-size:10px}
+@media (hover:none){.libCard .pvFace{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.libCard .pvFace,.libCard .pvSpin{transition:none;animation:none}}`;
+
+  const faceOf = id => L.own.get(id) || L.face;
+  const cards = () => [...document.querySelectorAll("#libView .libCard[data-id]")];
+  // a card is drawn again when its sheet was saved since (the Library's row carries when)
+  const keyOf = id => { const St = typeof S !== "undefined" ? S : window.CN && CN.S, r = St && St.library && (St.library.rows || []).find(x => x.id === id); return id + "|" + ((r && r.updatedAt) || 0); };
+  const segHtml = (face, big) => `<button type="button" data-face="front" class="${face === "front" ? "on" : ""}" aria-pressed="${face === "front"}"${big ? "" : ' title="The front of this sheet"'}>Front</button><button type="button" data-face="back" class="${face === "back" ? "on" : ""}" aria-pressed="${face === "back"}" title="${big ? "Turn every sheet over: each charm's own back engraving, mirrored as the laser sees it" : "Turn this sheet over: each charm's own back engraving"}">${big ? "Back · engraving" : "Back"}</button>`;
+  const mark = (seg, face) => seg && seg.querySelectorAll("[data-face]").forEach(b => { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+
+  function bar() {
+    const b = document.querySelector("#libView > .libBar"); if (!b || b.querySelector("#libFace")) return;
+    const seg = document.createElement("div"); seg.className = "owSeg"; seg.id = "libFace"; seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Side of the sheets");
+    seg.innerHTML = segHtml(L.face, true);
+    seg.addEventListener("click", e => { const x = e.target.closest("[data-face]"); if (x) turnAll(x.dataset.face); });
+    b.appendChild(seg);
+  }
+  /** A card's picture in a turning box: the saved picture (front), the drawn back over its same box, and its own switch. */
+  function prep(card) {
+    if (card._lb && card._lb.turn.isConnected) return card._lb;
+    const img = card.querySelector("img.pv"); if (!img) return null;
+    const turn = document.createElement("span"); turn.className = "pvTurn";
+    img.before(turn); turn.appendChild(img);
+    // the back takes the picture's own frame: its padding (the rest of the 100 × 50 mm frame) and tray, so the sheet's
+    // content box is the same millimetres on both sides
+    const back = document.createElement("div"); back.className = "pvBack"; back.setAttribute("aria-hidden", "true");
+    back.setAttribute("style", img.getAttribute("style") || ""); back.style.aspectRatio = "auto";
+    const sw = document.createElement("div"); sw.className = "owSeg pvFace"; sw.setAttribute("role", "group"); sw.setAttribute("aria-label", "Side of this sheet");
+    sw.innerHTML = segHtml(faceOf(card.dataset.id), false);
+    sw.addEventListener("click", e => { e.stopPropagation(); const x = e.target.closest("[data-face]"); if (x) turnOne(card, x.dataset.face); });
+    turn.append(back, sw);
+    card._lb = { turn, back, sw, id: card.dataset.id, spin: null };
+    if (L.io) L.io.observe(card);
+    return card._lb;
+  }
+  function spin(lb, on) {
+    if (on && !lb.spin) { lb.spin = document.createElement("span"); lb.spin.className = "pvSpin"; lb.spin.title = "Reading this sheet's back engraving…"; lb.turn.appendChild(lb.spin); }
+    else if (!on && lb.spin) { lb.spin.remove(); lb.spin = null; }
+  }
+  /** The side a card shows, at once (no turn): the back asked for when it is not drawn yet. */
+  function setFace(card, face) {
+    const lb = prep(card); if (!lb) return;
+    lb.turn.classList.toggle("back", face === "back"); mark(lb.sw, face);
+    if (face === "back") want(card);
+  }
+  function want(card) {
+    const lb = prep(card); if (!lb) return;
+    const id = lb.id, kept = L.drawn.get(id);
+    if (kept && kept.key === keyOf(id)) {
+      if (kept.cv.parentElement !== lb.back) { lb.back.replaceChildren(kept.cv); if (kept.info) try { kept.info.redraw(); } catch (_) {} }
+      if (kept.pending) spin(lb, true);
+      return;
+    }
+    if (card._lbIn && !L.queue.includes(card)) { L.queue.push(card); pump(); }
+  }
+  /** One sheet at a time, only for a card still turned and still in view: a Library of hundreds is never a burst of reads. */
+  async function pump() {
+    if (L.busy) return;
+    let card; while ((card = L.queue.shift()) && !(card.isConnected && card._lbIn && faceOf(card.dataset.id) === "back")) {}
+    if (!card || !window.SheetWin || !SheetWin.drawOrder) return;
+    const lb = prep(card); if (!lb) return pump();
+    const id = lb.id, key = keyOf(id), cv = document.createElement("canvas"), kept = { cv, key, info: null, pending: true };
+    L.busy = true; L.drawn.set(id, kept); lb.back.replaceChildren(cv);
+    const spinning = () => { for (const c of cards()) if (c.dataset.id === id && c._lb) spin(c._lb, kept.pending || kept.waiting); };
+    spinning();
+    try {
+      kept.info = await SheetWin.drawOrder(cv, id, "", { back: true, bare: true, onWait: t => { kept.waiting = !!t; spinning(); } });
+    } catch (e) {
+      L.drawn.delete(id);
+      const n = document.createElement("span"); n.className = "pvNote"; n.textContent = "The back could not be read"; n.title = String((e && e.message) || e || ""); lb.back.replaceChildren(n);
+    } finally {
+      kept.pending = false; spinning(); L.busy = false;
+      while (L.drawn.size > MAX_KEPT) L.drawn.delete(L.drawn.keys().next().value);
+      setTimeout(pump, 40);
+    }
+  }
+  /** Front | Back on one card: its picture turns to its edge, is shown from the other side, and turns back. */
+  function turnCard(card, face, delay) {
+    const lb = prep(card); if (!lb) return;
+    if (lb.turn.classList.contains("back") === (face === "back")) return setFace(card, face);
+    const d = face === "back" ? 1 : -1, apply = () => setFace(card, face);
+    if (face === "back") want(card);   // asked for as the turn starts, so the drawing is on its way while it turns
+    if (still() || !card._lbIn || !lb.turn.animate) return apply();
+    lb.turn.animate([{ transform: "perspective(900px) rotateY(0)" }, { transform: `perspective(900px) rotateY(${90 * d}deg)` }], { duration: 300, delay: delay || 0, easing: "cubic-bezier(.4,0,1,1)" })
+      .finished.then(() => { apply(); lb.turn.animate([{ transform: `perspective(900px) rotateY(${-90 * d}deg)` }, { transform: "perspective(900px) rotateY(0)" }], { duration: 380, easing: EASE }); }, apply);
+  }
+  function turnOne(card, face) {
+    const id = card.dataset.id; if (face === L.face) L.own.delete(id); else L.own.set(id, face);
+    turnCard(card, face, 0);
+  }
+  /** The Library's switch: every card turns, those in view one after another (top left first), the rest at once. */
+  function turnAll(face) {
+    L.face = face; L.own.clear(); mark(document.getElementById("libFace"), face);
+    const all = cards(), seen = all.filter(c => c._lbIn).map(c => ({ c, r: c.getBoundingClientRect() })).sort((a, b) => (a.r.top - b.r.top) || (a.r.left - b.r.left));
+    L.queue = [];
+    seen.forEach(({ c }, i) => turnCard(c, face, Math.min(i * 45, 540)));
+    for (const c of all) if (!c._lbIn) setFace(c, face);
+  }
+  /** New cards (a search, a refresh, the Sets view) come in on the side the Library shows. */
+  function sync() {
+    L.frame = 0; bar();
+    for (const c of cards()) { const had = c._lb && c._lb.turn.isConnected; if (prep(c) && !had) setFace(c, faceOf(c.dataset.id)); }
+  }
+  const schedule = () => { if (!L.frame) L.frame = requestAnimationFrame(sync); };
+  function mount() {
+    if (!document.getElementById("libView")) return;
+    if (!document.getElementById("libBackCss")) { const s = document.createElement("style"); s.id = "libBackCss"; s.textContent = CSS; document.head.appendChild(s); }
+    L.io = window.IntersectionObserver ? new IntersectionObserver(es => {
+      for (const e of es) { const c = e.target; c._lbIn = e.isIntersecting; if (c._lbIn && faceOf(c.dataset.id) === "back") want(c); }
+    }, { rootMargin: "120px 0px" }) : null;
+    // (its own turning boxes, canvases and spinners are not new cards)
+    L.mo = new MutationObserver(list => { if (list.some(m => m.addedNodes.length && !(m.target.closest && m.target.closest(".pvTurn")))) schedule(); });
+    L.mo.observe(document.getElementById("libView"), { childList: true, subtree: true });
+    sync();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount, { once: true }); else mount();
+  window.LibraryBacks = { turnAll, face: () => L.face, faceOf, _L: L };
 })();
