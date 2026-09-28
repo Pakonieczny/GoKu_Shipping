@@ -23,12 +23,13 @@ function docRef(coll, id) {
     async create(data) { if (store.has(key)) throw new Error("ALREADY_EXISTS: " + key); store.set(key, clone(data)); },
     async delete() { store.delete(key); } };
 }
-function query(coll, filters = [], order = null, lim = 0) {
+function query(coll, filters = [], order = null, lim = 0, after = null) {
   return {
-    where: (f, op, v) => query(coll, filters.concat([[f, op, v]]), order, lim),
-    orderBy: (f, dir) => query(coll, filters, [f, dir || "asc"], lim),
-    limit: n => query(coll, filters, order, n),
-    select: () => query(coll, filters, order, lim),
+    where: (f, op, v) => query(coll, filters.concat([[f, op, v]]), order, lim, after),
+    orderBy: (f, dir) => query(coll, filters, [f, dir || "asc"], lim, after),
+    startAfter: v => query(coll, filters, order, lim, v),
+    limit: n => query(coll, filters, order, n, after),
+    select: () => query(coll, filters, order, lim, after),
     doc: id => docRef(coll, id),
     async get() {
       let rows = [...store.keys()].filter(k => k.startsWith(coll + "/")).map(k => docRef(coll, k.slice(coll.length + 1))._snap());
@@ -36,7 +37,9 @@ function query(coll, filters = [], order = null, lim = 0) {
         if (op === "in") assert(Array.isArray(v) && v.length >= 1 && v.length <= 30, "in takes 1 to 30 values");
         rows = rows.filter(r => { const x = r.data()[f]; return op === "==" ? x === v : op === "in" ? v.includes(x) : op === "array-contains" ? Array.isArray(x) && x.includes(v) : true; });
       }
-      if (order) rows.sort((a, b) => { const x = a.data()[order[0]], y = b.data()[order[0]]; const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === "desc" ? -c : c; });
+      const val = (r, f) => (f === "__name__" ? r.id : r.data()[f]);
+      if (order) rows.sort((a, b) => { const x = val(a, order[0]), y = val(b, order[0]); const c = x > y ? 1 : x < y ? -1 : 0; return order[1] === "desc" ? -c : c; });
+      if (after != null) { assert(order, "startAfter needs an orderBy"); rows = rows.filter(r => val(r, order[0]) > after); }
       if (lim) rows = rows.slice(0, lim);
       return { size: rows.length, docs: rows, empty: !rows.length };
     }
@@ -185,6 +188,43 @@ async function check(name, fn) {
     const calls = cost.cancelGetAll - g0;
     assert(calls <= 3, `each page's hook "took" 3 s; ${calls} pages were given it (≤ 3 fit in 8 s)`);
     assert.equal(lastDiag().etsyCancels.off, true, "the run notes the hook was stopped");
+  });
+
+  await check("missed pages wait in a backlog; the next run records them from the mirror, with no Etsy call of its own", async () => {
+    // the run above had no time left for its last three pages: their cancelled receipts were kept
+    const bl = store.get("Charm_Nest_Cancelled_Backlog/pending");
+    assert(bl, "a backlog was kept"); assert.deepEqual(bl.ids.slice().sort(), ["4210000300", "4210000400", "4210000500"]);
+    assert(!cancelDoc("4210000500"));
+    const e0 = etsyCalls; await runMirror([[]]);
+    assert.equal(etsyCalls - e0, 1, "only the mirror's own page");
+    for (const id of ["4210000300", "4210000400", "4210000500"]) assert.equal(cancelDoc(id).by, "Etsy", id);
+    assert(!store.has("Charm_Nest_Cancelled_Backlog/pending"), "done: the backlog is gone");
+    // capped at 200 ids, newest kept; a retry that fails keeps them all
+    await OrderCancel.keepBacklog(db, Array.from({ length: 250 }, (_, i) => String(4220000000 + i)));
+    const ids = store.get("Charm_Nest_Cancelled_Backlog/pending").ids; assert.equal(ids.length, 200); assert.equal(ids[199], "4220000249");
+    const realGetAll = db.getAll; db.getAll = async () => { throw new Error("UNAVAILABLE"); };
+    try { await assert.rejects(OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue)); } finally { db.getAll = realGetAll; }
+    assert.equal(store.get("Charm_Nest_Cancelled_Backlog/pending").ids.length, 200, "a failed retry keeps them all");
+    const r = await OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue); assert.equal(r.retried, 200);
+    assert(!store.has("Charm_Nest_Cancelled_Backlog/pending"), "ids not in the mirror are done too");
+  });
+
+  await check("cancelSweep resumes where it stopped: each call makes progress within its budget", async () => {
+    for (let i = 0; i < 450; i++) { const id = String(4230000000 + i); store.set("EtsyMail_Receipts/" + id, { receipt_id: id, status: "Canceled", is_shipped: false, updated_timestamp: T0, created_timestamp: T0 - 9, buyer_name: "B", raw: { receipt_id: id, status: "Canceled" } }); }
+    slowCancelRead = 4000;   // each page's reads "take" 8 s: over the 7 s budget after one page
+    let cursor, calls = 0, created = 0;
+    try {
+      do {
+        const r = await post({ op: "cancelSweep", cursor }); calls++;
+        assert.equal(r.status, 200, JSON.stringify(r.body)); created += r.body.created;
+        assert(r.body.scanned > 0, "every call reads on"); cursor = r.body.more ? r.body.next : null;
+        if (r.body.more) assert(r.body.next && Number.isInteger(r.body.next.s), "a resume point");
+      } while (cursor && calls < 20);
+    } finally { slowCancelRead = 0; }
+    assert(calls >= 3 && calls < 20, "calls: " + calls);
+    for (let i = 0; i < 450; i++) assert(cancelDoc(String(4230000000 + i)), "recorded: " + (4230000000 + i));
+    assert(created >= 450);
+    const again = await post({ op: "cancelSweep" }); assert.equal(again.body.created, 0); assert.equal(again.body.more, false);
   });
 
   await check("sandbox: the mirror and the sweep never write Sandbox_; sandbox ops never write production", async () => {

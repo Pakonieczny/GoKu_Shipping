@@ -186,24 +186,75 @@ async function fromReceipts(db, FV, receipts, opts = {}) {
   if (!recs.length) return { candidates: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [] };
   return putMany(db, FV, recs, Object.assign({ detectedBy: "mirror" }, opts, { prefix: "" }));
 }
-/** The one-off sweep of the mirror (production): every receipt the mirror keeps as cancelled gets its record. Idempotent;
-    stops at its time budget with more:true (call it again). */
+/** The one-off sweep of the mirror (production): every receipt the mirror keeps as cancelled gets its record. Idempotent.
+    Reads one status at a time in document order, 200 a page, and stops at its time budget (after one page at least) with
+    more:true and `next` ({ s: status index, after: last document id }): called again with that as `cursor`, it goes on
+    from there, so every call makes progress. opts: dryRun · budgetMs · cursor · docId (FieldPath.documentId()). */
 async function sweep(db, FV, opts = {}) {
-  const until = Date.now() + (n(opts.budgetMs) || 7000), seen = new Map();
-  let scanned = 0, truncated = false;
-  for (const st of SWEEP_STATUSES) {
-    const snap = await db.collection(RECEIPTS).where("status", "==", st).select(...SWEEP_FIELDS).limit(5000).get();
-    scanned += snap.size; if (snap.size >= 5000) truncated = true;
-    for (const d of snap.docs) { const x = d.data(); if (!x.receipt_id) x.receipt_id = d.id; if (isCancelled(x)) { const r = fromReceipt(x); if (r.orderId) seen.set(r.orderId, r); } }
-  }
-  const recs = [...seen.values()].sort((a, b) => a.at - b.at), out = { ok: true, dryRun: !!opts.dryRun, scanned, cancelled: recs.length, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], more: false, truncated };
-  for (let i = 0; i < recs.length; i += 200) {
-    if (Date.now() > until) { out.more = true; break; }
-    const r = await putMany(db, FV, recs.slice(i, i + 200), { prefix: "", detectedBy: "sweep", dryRun: !!opts.dryRun });
-    for (const k of ["created", "noted", "unchanged", "restored", "failed"]) out[k] += r[k];
-    out.ids.push(...r.ids); if (r.error) out.error = r.error;
+  const until = Date.now() + (n(opts.budgetMs) || 7000), PAGE = 200, docId = opts.docId || "__name__";
+  let c = opts.cursor; if (typeof c === "string") { try { c = JSON.parse(c); } catch (_) { c = null; } }
+  let si = Math.max(0, Math.min(SWEEP_STATUSES.length, Math.round(n(c && c.s)))), after = c && c.after ? String(c.after) : "", pages = 0;
+  const out = { ok: true, dryRun: !!opts.dryRun, scanned: 0, cancelled: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], more: false, truncated: false };
+  while (si < SWEEP_STATUSES.length) {
+    if (pages && Date.now() > until) { out.more = true; out.next = { s: si, after }; break; }
+    let q = db.collection(RECEIPTS).where("status", "==", SWEEP_STATUSES[si]).orderBy(docId);
+    if (after) q = q.startAfter(after);
+    const snap = await q.select(...SWEEP_FIELDS).limit(PAGE).get(); pages++;
+    out.scanned += snap.size;
+    const recs = [];
+    for (const d of snap.docs) { const x = d.data(); if (!x.receipt_id) x.receipt_id = d.id; if (isCancelled(x)) { const r = fromReceipt(x); if (r.orderId) recs.push(r); } }
+    out.cancelled += recs.length;
+    if (recs.length) {
+      const r = await putMany(db, FV, recs, { prefix: "", detectedBy: "sweep", dryRun: !!opts.dryRun });
+      for (const k of ["created", "noted", "unchanged", "restored", "failed"]) out[k] += r[k];
+      out.ids.push(...r.ids); if (r.error) out.error = r.error;
+    }
+    if (snap.size < PAGE) { si++; after = ""; } else after = snap.docs[snap.docs.length - 1].id;
   }
   out.ids = out.ids.slice(0, 200);
+  return out;
+}
+
+/* ── the mirror's backlog: a page whose cancels were not recorded (the hook failed, timed out or had no time left) keeps
+   their receipt ids here, and the next mirror run retries them first from the receipts the mirror already stored (no Etsy
+   call). One small document; the newest BACKLOG_MAX ids are kept (op cancelSweep catches up on any dropped). ── */
+const BACKLOG = "Charm_Nest_Cancelled_Backlog", BACKLOG_MAX = 200;
+const backlogRef = db => db.collection(BACKLOG).doc("pending");
+const idsOfDoc = snap => (snap && snap.exists && Array.isArray(snap.data().ids) ? snap.data().ids.map(idOf).filter(Boolean) : []);
+/** The ids of a page's cancelled receipts (no read). */
+const cancelledIds = receipts => [...new Set((Array.isArray(receipts) ? receipts : []).filter(isCancelled).map(r => idOf(r.receipt_id || rawOf(r).receipt_id)).filter(Boolean))];
+async function keepBacklog(db, ids) {
+  const add = [...new Set((Array.isArray(ids) ? ids : []).map(idOf).filter(Boolean))];
+  if (!add.length) return { kept: 0, dropped: 0 };
+  const ref = backlogRef(db);
+  return db.runTransaction(async t => {
+    const snap = await t.get(ref), all = [...new Set(idsOfDoc(snap).concat(add))], ids2 = all.slice(-BACKLOG_MAX);
+    t.set(ref, { ids: ids2, at: Date.now(), dropped: n(snap.exists && snap.data().dropped) + (all.length - ids2.length) });
+    return { kept: ids2.length, dropped: all.length - ids2.length };
+  });
+}
+/** Retries the backlog (null when there is none: one document read). Ids done (recorded, no longer cancelled, or not in
+    the mirror) leave it; on any failure they all stay for the next run. */
+async function retryBacklog(db, FV) {
+  const ref = backlogRef(db), ids = idsOfDoc(await ref.get()).slice(0, BACKLOG_MAX);
+  if (!ids.length) return null;
+  const recs = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    for (const d of await db.getAll(...ids.slice(i, i + 100).map(id => db.collection(RECEIPTS).doc(id)), { fieldMask: SWEEP_FIELDS })) {
+      if (!d.exists) continue;
+      const x = Object.assign({}, d.data()); if (!x.receipt_id) x.receipt_id = d.id;
+      if (isCancelled(x)) { const r = fromReceipt(x); if (r.orderId) recs.push(r); }
+    }
+  }
+  const out = recs.length ? await putMany(db, FV, recs, { prefix: "", detectedBy: "mirror" }) : { candidates: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [] };
+  out.retried = ids.length;
+  if (!out.failed) {
+    const done = new Set(ids);
+    await db.runTransaction(async t => {
+      const left = idsOfDoc(await t.get(ref)).filter(id => !done.has(id));
+      if (left.length) t.set(ref, { ids: left, at: Date.now() }, { merge: true }); else t.delete(ref);
+    });
+  }
   return out;
 }
 /** What became of a cancelled order's pieces, sheet by sheet (the sorter's AutoCancel as it takes them off or finds them
@@ -225,4 +276,4 @@ async function noteFates(db, orderId, fates, opts = {}) {
     return { ok: true, changed: true, fates: next };
   });
 }
-module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates };
+module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, BACKLOG, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates, cancelledIds, keepBacklog, retryBacklog };
