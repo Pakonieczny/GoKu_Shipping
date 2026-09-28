@@ -267,6 +267,89 @@
       border-radius:999px; font-size:.75em; margin-left:6px; background:#f9f9f9;
     }
 
+    /* ===== Order timeline: who is sorting, cancelled tiles, the cancelled-order alert ===== */
+    @keyframes stFade { from { opacity:0; } to { opacity:1; } }
+    @keyframes stSpin { to { transform:rotate(360deg); } }
+    #sortingAsChip {
+      position:absolute; left:270px; top:22px; z-index:5;
+      display:flex; align-items:center; gap:4px; height:24px; max-width:275px;
+      font-size:13px; line-height:24px; color:#6b7280; white-space:nowrap;
+      font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    }
+    #sortingAsChip .st-as-name {
+      height:24px; max-width:170px; margin:0; padding:0 6px; border:0; border-radius:6px;
+      background:transparent; font:inherit; font-weight:600; color:#111827; cursor:pointer;
+      overflow:hidden; text-overflow:ellipsis; animation:stFade 160ms ease;
+      transition:background-color 160ms ease, color 160ms ease;
+    }
+    #sortingAsChip .st-as-name:focus { background:transparent; outline:none; }
+    #sortingAsChip .st-as-name:hover,
+    #sortingAsChip .st-as-name:focus-visible { background:#f3f4f6; }
+    #sortingAsChip .st-as-name.st-unset { font-weight:500; color:#b45309; }
+    #sortingAsChip .st-as-input {
+      width:150px; height:24px; margin:0; padding:0 6px; box-sizing:border-box;
+      border:1px solid #d1d5db; border-radius:6px; outline:none; background:#fff;
+      font:inherit; color:#111827; animation:stFade 160ms ease;
+      transition:border-color 160ms ease, box-shadow 160ms ease;
+    }
+    #sortingAsChip .st-as-input:focus { border-color:#2196F3; box-shadow:0 0 0 3px rgba(33,150,243,.15); }
+    #sortingAsChip .st-wait {
+      position:absolute; left:0; top:100%; display:flex; align-items:center; gap:6px;
+      font-size:12px; line-height:18px; color:#6b7280; opacity:0; pointer-events:none;
+      transition:opacity 200ms ease;
+    }
+    #sortingAsChip .st-wait.on { opacity:1; }
+    #sortingAsChip .st-spin {
+      width:10px; height:10px; box-sizing:border-box; border-radius:50%;
+      border:1.5px solid #d1d5db; border-top-color:#6b7280; animation:stSpin 700ms linear infinite;
+    }
+    .preview-box.st-cancelled { outline:3px solid #d32f2f; outline-offset:-3px; }
+    .preview-box.st-cancelled img { opacity:.35; filter:grayscale(1); transition:opacity 240ms ease; }
+    .preview-box.st-cancelled::before {
+      content:""; position:absolute; z-index:1; left:-12%; top:50%; width:124%; height:2px;
+      background:#d32f2f; transform:rotate(-45deg); pointer-events:none; animation:stFade 240ms ease;
+    }
+    .preview-box.st-cancelled::after {
+      content:"CANCELLED \2014  DO NOT SORT"; position:absolute; z-index:2; left:0; right:0; top:50%;
+      transform:translateY(-50%); padding:5px 6px; background:rgba(211,47,47,.94); color:#fff;
+      font-size:11px; font-weight:700; line-height:1.25; letter-spacing:.02em; text-align:center;
+      pointer-events:none; animation:stFade 240ms ease;
+    }
+    .detail-box.st-cancelled { color:#d32f2f !important; background:#fdecea !important; text-decoration:line-through; }
+    /* the station alert of the design spec (order-view-spec §8, shot-alert.png): clay red, flashes twice, Understood */
+    @keyframes stAlarm { 0%, 100% { background:#7e2415; } 50% { background:#b1321c; } }
+    @keyframes stSlam { from { transform:scale(1.25); opacity:0; } }
+    #stCancelAlert {
+      position:fixed; inset:0; z-index:100000; display:grid; place-items:center; padding:48px 24px;
+      box-sizing:border-box; overflow:auto; background:#7e2415; color:#fff; text-align:center;
+      font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+      opacity:0; transition:opacity 240ms ease;
+    }
+    #stCancelAlert.on { opacity:1; animation:stAlarm 1.1s ease-in-out 2; }
+    #stCancelAlert .st-h1 {
+      margin:0; font-size:clamp(56px, 9vw, 132px); line-height:.95; font-weight:800; letter-spacing:.01em;
+      animation:stSlam 360ms cubic-bezier(.3,1.7,.5,1) both;
+    }
+    #stCancelAlert .st-h2 {
+      margin:18px 0 26px; font-size:clamp(24px, 3.2vw, 44px); font-weight:700; letter-spacing:.14em; color:#ffd9cf;
+    }
+    #stCancelAlert .st-who {
+      font:18px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric:tabular-nums;
+      color:#ffe9e3; opacity:.9; animation:stFade 240ms ease;
+    }
+    #stCancelAlert .st-scan { margin-top:6px; }
+    #stCancelAlert .st-ok {
+      margin-top:36px; padding:16px 48px; border:0; border-radius:14px; background:#fff; color:#7e2415;
+      font:700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+      cursor:pointer; transition:transform 120ms ease;
+    }
+    #stCancelAlert .st-ok:focus { background:#fff; outline:none; }
+    #stCancelAlert .st-ok:active { transform:scale(.97); }
+    @media (prefers-reduced-motion: reduce) {
+      #stCancelAlert.on, #stCancelAlert .st-h1 { animation:none; }
+      #stCancelAlert { transition-duration:120ms; }
+    }
+
   </style>
 </head>
 <body>
@@ -310,6 +393,15 @@
   Unmatched Images
 </div>
 <!-- ===== NEW TITLE ELEMENTS (END) ===== -->
+
+  <!-- Order timeline: who is sorting (one line, saved on this computer, click the name to change it) -->
+  <div id="sortingAsChip">
+    <span class="st-as-k">Sorting as:</span>
+    <button type="button" class="st-as-name st-unset" title="Click to set who is sorting">Set your name</button>
+    <input type="text" class="st-as-input browser-default" maxlength="40" autocomplete="off"
+           placeholder="Your name" aria-label="Who is sorting" hidden />
+    <span class="st-wait" aria-live="polite"><span class="st-spin"></span><span class="st-wait-t"></span></span>
+  </div>
 
   <!-- Etsy Order Number input -->
   <input
@@ -417,6 +509,11 @@
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js"
   ></script>
+
+  <!-- Order timeline: the shared client and the station module (every scan recorded, cancelled orders flagged).
+       If either is missing the page works exactly as before. -->
+  <script src="order-timeline.js?v=20260928-st-sorting"></script>
+  <script src="station-timeline.js?v=20260928-st-sorting"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -1063,6 +1160,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const etsyOrderInput = document.getElementById("etsyOrderNumber");
 etsyOrderInput.addEventListener("keydown", async function (e) {
   if (e.key === "Enter") {
+    // Order timeline: a batch from the sheet QR relay says so; anything else was typed or pasted here
+    const scanSrc = window.__sortScanSrc || null;
+    window.__sortScanSrc = null;
 
     // NEW: cancel *all* outstanding fetches / work from a previous run
     pendingFetchControllers.forEach(ctrl => ctrl.abort());
@@ -1097,7 +1197,10 @@ etsyOrderInput.addEventListener("keydown", async function (e) {
       .map((x) => x.trim())
       .filter((x) => x);
 
+    // Order timeline: record every order of the batch as scanned and check each for a cancel (never throws)
+    try { window.SortTL && window.SortTL.batchStart(orderNumbers, scanSrc); } catch (_) {}
     await loadBatchEtsyOrders(orderNumbers);
+    try { window.SortTL && window.SortTL.batchLoaded(); } catch (_) {}
     updateOrderItemCounter(); // total after load completes
     updatePrintRowButtonLabel();
   }
@@ -1262,7 +1365,17 @@ function updateSendMatchAvailability() {
 async function startScannedSortingListener() {
   try {
     const docRef = db.collection("Brites_Orders").doc("ScannedSortingOrder");
+    // The relay doc keeps the last batch the phone sent (nothing clears it) and Firestore hands it over again the moment
+    // this listener attaches, so every open or reload of this page used to load that old batch once more (one Etsy call
+    // per order, and now a second scan record for each). A batch is loaded once: the first snapshot is taken only when
+    // it was sent in the last few minutes and never loaded here (sent while this page was reloading), and a snapshot
+    // that repeats the batch already loaded (another field of the doc changed) is ignored.
+    const LAST_KEY = "sorting.lastRelayBatch";
+    let firstSnap = true, lastKey = "";
+    try { lastKey = localStorage.getItem(LAST_KEY) || ""; } catch (_) {}
     docRef.onSnapshot((docSnap) => {
+      const isFirst = firstSnap;
+      firstSnap = false;
       if (!docSnap.exists) {
         console.log("No 'ScannedSortingOrder' doc in Firestore yet.");
         return;
@@ -1273,6 +1386,28 @@ async function startScannedSortingListener() {
         return;
       }
       const scannedVal = docData["Order Number"];
+      const sentAt = String(docData["Shipping Label Timestamps"] || "");
+      const key = sentAt + "|" + scannedVal;
+      // on open, the last batch's numbers still wait in the field (as before), loaded only if Enter is pressed
+      const leaveInField = () => {
+        const el = document.getElementById("etsyOrderNumber");
+        if (isFirst && el && !el.value.trim()) el.value = scannedVal;
+      };
+      if (key === lastKey) {
+        console.log("Scanned batch already loaded here; not loading it again.");
+        leaveInField();
+        return;
+      }
+      lastKey = key;
+      try { localStorage.setItem(LAST_KEY, key); } catch (_) {}
+      if (isFirst) {
+        const t = Date.parse(sentAt);
+        if (!(t > 0 && Math.abs(Date.now() - t) < 10 * 60 * 1000)) {
+          console.log("Last scanned batch was sent earlier; not reloading it on open.");
+          leaveInField();
+          return;
+        }
+      }
       console.log("Scanned Sorting code =>", scannedVal);
 
       const input = document.getElementById("etsyOrderNumber");
@@ -1284,6 +1419,9 @@ async function startScannedSortingListener() {
       disableMatchPrintFlow();
       removeAllBlueHighlights();
 
+      // Order timeline: tell the Enter handler this batch came from a sheet QR scan (read once, synchronously)
+      window.__sortScanSrc = { how: "sheet QR", batch: "sort-" + (sentAt || new Date().toISOString()), sentAt };
+
       // Programmatically fire an Enter key
       const enterEvent = new KeyboardEvent("keydown", { key: "Enter" });
       input.dispatchEvent(enterEvent);
@@ -1292,6 +1430,275 @@ async function startScannedSortingListener() {
     console.error("Error starting scannedSortingListener:", err);
   }
 }
+
+/********************************************************
+ * Order timeline at the Sorting station (Paul, 28 Sep: A4, C5, C6)
+ *  - "Sorting as: <name>": who is sorting, saved on this computer; StationTimeline asks it through getEmployee
+ *  - every order of a scanned batch is recorded as scanned and checked for a cancel: the cancelled ones get ONE
+ *    full-screen alert for the whole batch, and their tiles are marked "CANCELLED — DO NOT SORT"
+ *  - a sticker is printed only after StationTimeline.guard(), and a printed sticker records the order as sorted
+ * Every call goes through call(), which never throws: with station-timeline.js missing, nothing here changes the page.
+ ********************************************************/
+window.SortTL = (function () {
+  const EMP_KEY = "sorting.employee";
+  let inited = false;
+  let cur = null;                      // the batch on screen
+  const waiting = new Map();           // what the small spinner under the chip is waiting for
+  const printing = new Set();          // single stickers being checked (a double click prints once)
+  const api = { alertsShown: 0 };
+
+  const lsGet = k => { try { return localStorage.getItem(k) || ""; } catch (_) { return ""; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+  const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const toast = html => { try { window.M && M.toast && M.toast({ html }); } catch (_) {} };
+  function getEmployee() { return lsGet(EMP_KEY).trim(); }
+
+  function tl() {
+    const S = window.StationTimeline;
+    if (!S) return null;
+    if (!inited) {
+      inited = true;
+      try { S.init({ station: "sorting", device: "sorting-1", getEmployee }); } catch (e) { console.warn("StationTimeline.init failed:", e); }
+    }
+    return S;
+  }
+  function call(fn, ...args) {
+    try {
+      const S = tl();
+      if (!S || typeof S[fn] !== "function") return undefined;
+      const r = S[fn](...args);
+      return r && typeof r.then === "function"
+        ? r.catch(e => { console.warn("StationTimeline." + fn + " failed:", e); return undefined; })
+        : r;
+    } catch (e) { console.warn("StationTimeline." + fn + " failed:", e); return undefined; }
+  }
+  const within = (p, ms, fallback) => Promise.race([Promise.resolve(p), new Promise(r => setTimeout(() => r(fallback), ms))]);
+
+  /* ---- the small spinner under the chip: says what it waits for ---- */
+  function busy(k, text) { waiting.set(k, text); paintWait(); }
+  function idle(k) { waiting.delete(k); paintWait(); }
+  function paintWait() {
+    const w = document.querySelector("#sortingAsChip .st-wait");
+    if (!w) return;
+    const texts = [...waiting.values()];
+    if (texts.length) w.querySelector(".st-wait-t").textContent = texts[texts.length - 1];
+    w.classList.toggle("on", texts.length > 0);
+  }
+
+  /* ---- "Sorting as: <name>" ---- */
+  function renderChip() {
+    const btn = document.querySelector("#sortingAsChip .st-as-name");
+    if (!btn) return;
+    const name = getEmployee();
+    btn.textContent = name || "Set your name";
+    btn.classList.toggle("st-unset", !name);
+    btn.title = name ? "Click to change who is sorting" : "Click to set who is sorting";
+  }
+  function wireChip() {
+    const chip = document.getElementById("sortingAsChip");
+    if (!chip || chip.dataset.wired) return;
+    chip.dataset.wired = "1";
+    const btn = chip.querySelector(".st-as-name"), inp = chip.querySelector(".st-as-input");
+    const close = save => {
+      if (inp.hidden) return;
+      const v = inp.value.replace(/\s+/g, " ").trim().slice(0, 40);
+      if (save && v) lsSet(EMP_KEY, v);
+      inp.hidden = true; btn.hidden = false;
+      renderChip();
+    };
+    btn.addEventListener("click", () => {
+      inp.value = getEmployee();
+      btn.hidden = true; inp.hidden = false;
+      inp.focus(); inp.select();
+    });
+    inp.addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); close(true); btn.focus(); }
+      else if (e.key === "Escape") { e.preventDefault(); close(false); btn.focus(); }
+      e.stopPropagation();
+    });
+    inp.addEventListener("blur", () => close(true));
+    renderChip();
+  }
+
+  /* ---- the batch on screen ---- */
+  const idsOfItem = it => [it && it.receipt_id, it && it.receiptId, it && it.typedOrderNumber]
+    .filter(v => v != null && v !== "").map(String);
+  function isKnownCancelled(id) {
+    id = String(id);
+    if (cur && cur.cancelled.has(id)) return true;
+    return call("isCancelled", id) === true;
+  }
+  function flag(me, id, record) {
+    if (me.cancelled.has(id)) return;
+    me.cancelled.set(id, record || {});
+    if (cur === me) markTiles();
+  }
+  // Every tile of a cancelled order: red, struck through, "CANCELLED — DO NOT SORT". A class, so it outlives the image
+  // arriving, the blue/orange borders, the search reflow and the filter.
+  function markTiles() {
+    const me = cur;
+    if (!me || !me.cancelled.size) return;
+    (window.cachedOrderItems || []).forEach((it, i) => {
+      if (!idsOfItem(it).some(x => me.cancelled.has(x))) return;
+      const pb = document.getElementById("previewCell" + i);
+      if (pb && !pb.classList.contains("st-cancelled")) {
+        pb.classList.add("st-cancelled");
+        pb.title = "Cancelled order — do not sort";
+      }
+      ["orderCell", "quantityCell", "metalCell", "matchCell"].forEach(p => {
+        const el = document.getElementById(p + i);
+        if (el) el.classList.add("st-cancelled");
+      });
+    });
+  }
+
+  // A batch arrives (sheet QR scan or typed): every order is recorded as scanned and checked for a cancel. The module
+  // is asked to stay quiet; this page shows one alert for all the cancelled orders of the batch.
+  function batchStart(orderIds, src) {
+    cur = null;
+    if (!tl()) return;
+    const ids = [...new Set((orderIds || []).map(x => String(x).trim()).filter(Boolean))];
+    const how = (src && src.how) || "typed";
+    const batch = (src && src.batch) || "typed-" + new Date().toISOString();
+    const me = cur = { ids, batch, how, cancelled: new Map(), alerted: new Set(), scansSettled: false, loadDone: false };
+    if (!ids.length) return;
+    const extra = { batch, batchSize: ids.length };
+    if (src && src.sentAt) extra.sentAt = src.sentAt;
+    const k = "scan:" + batch;
+    busy(k, "Checking " + ids.length + " order" + (ids.length === 1 ? "" : "s") + " for cancellations…");
+    Promise.all(ids.map(id =>
+      within(call("scanned", id, { how, extra, quiet: true }), 15000, undefined)
+        .then(res => { if (res && res.cancelled) flag(me, id, res.record); })
+    )).then(() => {
+      idle(k);
+      me.scansSettled = true;
+      if (cur !== me) return;
+      markTiles();
+      // one alert for the batch, once its orders are on screen too (a few seconds at most), so the tiles are marked
+      if (me.loadDone) raise(me); else setTimeout(() => raise(me), 6000);
+    });
+  }
+  // Etsy's own answer, already fetched for the batch (no extra call): a receipt Etsy shows as cancelled is flagged too.
+  function etsyReceipt(orderId, data) {
+    const me = cur;
+    if (!me || !data || !/^cancel/i.test(String(data.status || ""))) return;
+    flag(me, String(orderId), { why: "Cancelled on Etsy", source: "etsy" });
+  }
+  function batchLoaded() {
+    const me = cur;
+    if (!me) return;
+    me.loadDone = true;
+    markTiles();
+    if (me.scansSettled) raise(me);
+  }
+  function raise(me) {
+    if (cur !== me) return;
+    const fresh = [...me.cancelled.keys()].filter(id => !me.alerted.has(id));
+    if (!fresh.length) return;
+    fresh.forEach(id => me.alerted.add(id));
+    showAlert(fresh.map(id => ({ id, rec: me.cancelled.get(id) })), me.batch);
+  }
+
+  /* ---- the full-screen alert (design spec §8, shot-alert.png): one for the batch; a cancelled order found later
+     joins the open one, never a second alert on top. Closed only by Understood. ---- */
+  function when(at) {
+    let t = typeof at === "number" ? at : at && (at._seconds || at.seconds) ? (at._seconds || at.seconds) * 1000 : Date.parse(at);
+    if (!(t > 0)) return "";
+    if (t < 1e11) t *= 1000;                         // seconds
+    try { return new Date(t).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+    catch (_) { return ""; }
+  }
+  function alertLine(id, rec) {
+    rec = rec || {};
+    const etsy = /etsy/i.test(String(rec.source || "")) || rec.why === "Cancelled on Etsy";
+    const parts = ["Order " + id];
+    parts.push(((etsy ? "cancelled on Etsy" : "cancelled" + (rec.by ? " by " + rec.by : "")) + " " + when(rec.at)).trim());
+    if (rec.why && !etsy) parts.push(String(rec.why).slice(0, 120));
+    return parts.join(" · ");
+  }
+  function showAlert(list, batch) {
+    list.forEach(({ id }) => call("did", "cancelAlert", id, "Cancelled order alert shown at Sorting", { batch: batch || "" }));
+    let el = document.getElementById("stCancelAlert");
+    if (!el) {
+      api.alertsShown++;
+      el = document.createElement("div");
+      el.id = "stCancelAlert";
+      el.setAttribute("role", "alertdialog");
+      el.setAttribute("aria-modal", "true");
+      el.setAttribute("aria-label", "CANCELLED ORDER — DO NOT PROCEED");
+      el.innerHTML = '<div><div class="st-h1">CANCELLED ORDER</div><div class="st-h2">DO NOT PROCEED</div>' +
+        '<div class="st-list"></div><div class="st-who st-scan"></div>' +
+        '<button type="button" class="st-ok">Understood</button></div>';
+      el.querySelector(".st-ok").addEventListener("click", () => {
+        el.classList.remove("on");
+        el.id = "";                                  // a new alert may open while this one fades out
+        setTimeout(() => el.remove(), 250);
+      });
+      document.body.appendChild(el);
+      try { document.activeElement && document.activeElement.blur(); } catch (_) {}
+      requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("on")));
+    }
+    const box = el.querySelector(".st-list");
+    list.forEach(({ id, rec }) => {
+      if ([...box.children].some(c => c.dataset.order === String(id))) return;
+      const d = document.createElement("div");
+      d.className = "st-who";
+      d.dataset.order = String(id);
+      d.textContent = alertLine(id, rec);
+      box.appendChild(d);
+    });
+    const n = box.children.length, who = getEmployee();
+    el.querySelector(".st-scan").textContent = "Scanned at Sorting" + (who ? " by " + who : "") +
+      (n === 1 ? " · this scan is on the order's timeline" : " · " + n + " cancelled orders in this batch · each scan is on its order's timeline");
+  }
+
+  /* ---- printing: a cancelled order's sticker is never printed ---- */
+  // Resolves to the order ids that may be printed. For one sticker (alertKnown) the module's guard runs even for an
+  // order known to be cancelled, so the alert shows again; for a row, known cancelled orders are skipped with a toast.
+  async function allowPrint(orderIds, { alertKnown } = {}) {
+    const ids = (orderIds || []).map(String);
+    if (!tl()) return ids;
+    const k = "guard:" + ids.join(",");
+    busy(k, ids.length === 1 ? "Checking order " + ids[0] + " before printing…" : "Checking " + ids.length + " orders before printing…");
+    try {
+      const ok = new Set(), skipped = [];
+      await Promise.all(ids.map(async id => {
+        const known = isKnownCancelled(id);
+        if (known && !alertKnown) { skipped.push(id); return; }
+        const pass = await within(call("guard", id), 10000, undefined);
+        if (pass === false) return;                              // blocked, and the module alerted
+        if (known) { showAlert([{ id, rec: (cur && cur.cancelled.get(id)) || {} }], cur && cur.batch); return; }
+        ok.add(id);
+      }));
+      if (skipped.length) toast("Not printed — cancelled, do not sort: " + skipped.map(esc).join(", "));
+      return ids.filter(id => ok.has(id));
+    } finally { idle(k); }
+  }
+  // One sticker: printed right away with no StationTimeline (as before), else once the guard lets it through.
+  function printOne(orderId, go) {
+    const id = String(orderId || "");
+    if (!id || !tl()) return go();
+    if (printing.has(id)) return;
+    printing.add(id);
+    allowPrint([id], { alertKnown: true })
+      .then(ok => { if (ok.length) go(); })
+      .catch(e => console.warn("Print check failed:", e))
+      .finally(() => printing.delete(id));
+  }
+  function sorted(orderId, how) {
+    if (!orderId || !tl()) return;
+    call("did", "sorted", String(orderId), how === "row" ? "Sticker printed (Print Row) at Sorting" : "Sticker printed at Sorting",
+      { batch: (cur && cur.batch) || "", how });
+  }
+
+  function boot() { wireChip(); tl(); }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot); else boot();
+
+  return Object.assign(api, {
+    active: () => !!window.StationTimeline,
+    getEmployee, batchStart, etsyReceipt, batchLoaded, markTiles, allowPrint, printOne, sorted, isKnownCancelled
+  });
+})();
 
 /********************************************************
  * Enable Back and Next (NEW)
@@ -1698,7 +2105,7 @@ function buildQrDataForCell(cellIndex) {
 }
 
 
-function openIframePrinterForListing(cellIndex) {
+function openIframePrinterForListing(cellIndex, timelineChecked) {
   console.log("Opening QR Printer for cell:", cellIndex);
 
   if (!window.cachedOrderItems) {
@@ -1710,6 +2117,14 @@ function openIframePrinterForListing(cellIndex) {
   const item = window.cachedOrderItems[cellIndex];
   if (!item) {
     console.warn("No item found for cellIndex:", cellIndex);
+    return;
+  }
+
+  // Order timeline: a cancelled order's sticker is never printed (the guard alerts instead). With no StationTimeline
+  // on the page this prints right away, as before.
+  if (!timelineChecked && window.SortTL && window.SortTL.active()) {
+    window.SortTL.printOne(item.receipt_id || item.receiptId || item.typedOrderNumber,
+      () => openIframePrinterForListing(cellIndex, true));
     return;
   }
 
@@ -1795,6 +2210,9 @@ function openIframePrinterForListing(cellIndex) {
   hiddenIframe.style.border = "0";
   hiddenIframe.src = "QR Printer.html";
   document.body.appendChild(hiddenIframe);
+
+  // Order timeline: this order's sticker is printed → sorted
+  try { window.SortTL && window.SortTL.sorted(orderID, "print"); } catch (_) {}
 }
 
 async function printBatch(batchArr) {
@@ -1973,9 +2391,23 @@ async function handlePrintRowClick() {
       return;
     }
 
+    // Order timeline: a cancelled order's sticker is left out of the row (never printed). With no StationTimeline on
+    // the page every order prints, as before.
+    let printIndices = toPrintIndices;
+    const orderIdOfCell = (i) => {
+      const it = window.cachedOrderItems?.[i];
+      return String(it?.receipt_id ?? it?.receiptId ?? "");
+    };
+    if (window.SortTL && window.SortTL.active()) {
+      try {
+        const allowed = new Set(await window.SortTL.allowPrint(toPrintIndices.map(orderIdOfCell), { alertKnown: false }));
+        printIndices = toPrintIndices.filter(i => allowed.has(orderIdOfCell(i)));
+      } catch (e) { console.warn("Print Row check failed:", e); }
+    }
+
     // Build a single batch and print ONCE via QR Printer.html
     const batch = [];
-    for (const cellIndex of toPrintIndices) {
+    for (const cellIndex of printIndices) {
       const obj = buildQrDataForCell(cellIndex);
       if (obj) batch.push(obj);
     }
@@ -1989,6 +2421,8 @@ async function handlePrintRowClick() {
       ifr.style.border = "0";
       ifr.src = "QR Printer.html#batch";
       document.body.appendChild(ifr);
+      // Order timeline: each printed sticker's order → sorted
+      try { printIndices.forEach(i => window.SortTL && window.SortTL.sorted(orderIdOfCell(i), "row")); } catch (_) {}
     }
 
     // Advance to the next row (wraps to 0 after the last)
@@ -1996,7 +2430,7 @@ async function handlePrintRowClick() {
 
     // Tiny confirmation popup
     updatePrintRowButtonLabel();     // <- show NEXT row we will print
-    showRowPrintCompletedModal();
+    if (batch.length || printIndices === toPrintIndices) showRowPrintCompletedModal();   // not when every sticker was a cancelled order's
 
   } catch (err) {
     console.error("Print Row failed:", err);
@@ -3487,6 +3921,8 @@ async function loadBatchEtsyOrders(orderNumbers) {
       }
 
       const data = await resp.json();
+      // Order timeline: Etsy's answer, already here, flags an order Etsy shows as cancelled (no extra call)
+      try { window.SortTL && window.SortTL.etsyReceipt(ord, data); } catch (_) {}
       // ▼▼ build & cache *all* customer notes (buyer note + gift + personalisation) ▼▼
       window.customerNotesMap = window.customerNotesMap || {};
 
