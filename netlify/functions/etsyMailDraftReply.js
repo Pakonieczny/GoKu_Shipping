@@ -5488,7 +5488,8 @@ answering. Do not guess about the order's contents.`;
 
       // Remove forbidden shipping-origin references. If any slip through,
       // replace with graceful alternatives rather than leaving broken text.
-      s = s.replace(/\bChit\s*Chats?\b/gi, "our shipping partner");
+      // Never "our shipping partner" (owner rule 7): the plain word is enough.
+      s = s.replace(/\bChit\s*Chats?\b/gi, "the carrier");
 
       // EXCEPTION: when the return-policy template was emitted (detected
       // via the literal Mississauga address line), preserve the entire
