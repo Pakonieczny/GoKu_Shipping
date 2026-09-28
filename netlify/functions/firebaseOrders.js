@@ -66,7 +66,8 @@ exports.handler = async (event) => {
       if (Array.isArray(body.timeline)) {
         if (body.timeline.length > 100) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "at most 100 events a request" }) };
         // an event keeps the store it was recorded in: one marked sandbox never lands in production (nor the reverse)
-        const events = body.timeline.filter(e => e && typeof e === "object" && !!e.sandbox === !!PREFIX);
+        // (an event that says which store it belongs to must match the door it came through; one that does not say follows the door)
+        const events = body.timeline.filter(e => e && typeof e === "object" && (typeof e.sandbox !== "boolean" || e.sandbox === !!PREFIX));
         if (!flood.allow(event, events.length)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many timeline events, try again in a minute" }) };
         const out = await require("./_orderTimeline").add(db, admin.firestore.FieldValue, events, { prefix: PREFIX, source: "station", stationOnly: true });
         return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out, events.length < body.timeline.length ? { refused: body.timeline.length - events.length } : {})) };
