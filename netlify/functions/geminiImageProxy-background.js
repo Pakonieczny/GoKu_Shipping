@@ -14134,7 +14134,7 @@ async function _handlerImpl(event) {
       for (const b of open) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         if (b.state === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryRequested &&
-            b.retryStatus !== "capacity_refused" &&
+            b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted" &&
             !b.collected && !b.retryBatchName && !b.responsesFile && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") {
           await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({ retryRequested: true,
             retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -14161,6 +14161,21 @@ async function _handlerImpl(event) {
         }
       }
       await guardRef.set({ stage: "checking retry capacity" }, { merge: true });
+
+      // A set that has used its five retry attempts is never submitted
+      // again (the refill below skips it). Mark it stopped with its reason,
+      // as the token-limit stop does, so it is not shown as queued forever
+      // and the page stops polling for it.
+      for (const b of open) {
+        if (!b.retryRequested || b.retryBatchName || b.collected || !b.batchName ||
+            Number(b.retryAttempt || 0) < 5 ||
+            !["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(normState(b.state))) continue;
+        await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
+          retryRequested: false, retryStatus: "attempts_exhausted",
+          retryError: "Stopped after five retry attempts; this set will not retry automatically. Inspect the provider failure before submitting again.",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        b.retryRequested = false;
+      }
 
       // Token-based provider admission can reject a large submission before
       // it starts. Keep requested repairs durable, and admit a few only when
@@ -15039,6 +15054,7 @@ async function _handlerImpl(event) {
         const state = String(d.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
         if (!(["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(state)) ||
             d.collected || d.responsesFile || d.retryBatchName || d.retryStatus === "capacity_refused" ||
+            d.retryStatus === "attempts_exhausted" ||
             d.sets?.length !== 1 || d.sets[0]?.setKind === "charm_maker") {
           protectedCount++;
           continue;
@@ -15085,7 +15101,10 @@ async function _handlerImpl(event) {
         }) });
       }
       if (Number(original.retryAttempt || 0) >= 5) {
-        return json(409, { error: { message: "Five retry attempts reached; inspect the provider failure before submitting again" } });
+        const message = "Stopped after five retry attempts; this set will not retry automatically. Inspect the provider failure before submitting again.";
+        if (!original.retryBatchName) await originalRef.set({ retryRequested: false, retryStatus: "attempts_exhausted",
+          retryError: message, retryStartedAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return json(409, { attemptsExhausted: true, error: { message } });
       }
       if (!Array.isArray(original.sets) || original.sets.length !== 1 ||
           original.sets[0].setKind === "charm_maker") {
@@ -15242,7 +15261,7 @@ async function _handlerImpl(event) {
           const snap = await tx.get(ref);
           const d = snap.data();
           if (d && !d.collected && !d.retryBatchName && d.retryStatus !== "capacity_refused" &&
-              d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
+              d.retryStatus !== "attempts_exhausted" && d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
             tx.set(ref, { retryRequested: true, retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
         await admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp()).rejected(batchName);

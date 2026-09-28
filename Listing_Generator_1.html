@@ -13216,6 +13216,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
       // Sets the server stopped after too many token-limit refusals.
       const capacityStopped = effective.filter((b) => b.retryStatus === "capacity_refused" && !b.collected);
+      // Sets the server stopped after their five retry attempts.
+      const attemptsStopped = effective.filter((b) => b.retryStatus === "attempts_exhausted" && !b.collected);
       const attention = effective.filter((b) => !b.retryRequested &&
         (b.collected ? b.results?.failedCount > 0 :
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
@@ -13269,6 +13271,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "In progress"; headlineColor = "#93c5fd";
       } else if (capacityStopped.length) {
         headline = "Stopped: token limit"; headlineColor = "#fca5a5";
+      } else if (attemptsStopped.length) {
+        headline = "Stopped: retry limit"; headlineColor = "#fca5a5";
       } else {
         headline = "Pending"; headlineColor = "#fde68a";
       }
@@ -13339,12 +13343,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : "";
       const capacityNote = capacityStopped.length
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
+      const attemptsNote = attemptsStopped.length
+        ? `${attemptsStopped.length} set(s) stopped after five retry attempts and will not retry automatically.` : "";
       const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
         sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
         sweepStale ? "The image collector has not completed a check in over 25 minutes." :
         sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed. Open Details & actions.` : "");
       const queueExplanation = explanation ? `<p class="batch-note">${_batchSafeText(explanation)}</p>` : "";
-      const alertHtml = [capacityNote, sweepProblem].filter(Boolean)
+      const alertHtml = [capacityNote, attemptsNote, sweepProblem].filter(Boolean)
         .map((text) => `<div class="batch-alert" role="alert">${_batchSafeText(text)}</div>`).join("");
       // Action buttons: only show what's actionable. Cancel-all if
       // anything is still running. Recover-all if there are failed /
@@ -13361,7 +13367,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName;
       });
       const retryable = recoverableBatches.filter((b) => !b.responsesFile && !b.retryRequested &&
-        b.retryStatus !== "submitting" && b.retryStatus !== "capacity_refused");
+        b.retryStatus !== "submitting" && b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted");
 
       const buttons = [];
       if (cancellableBatches.length > 0) {
@@ -13388,7 +13394,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const done = counts.successfulRequestCount ?? counts.completed ?? counts.completed_count ?? 0;
         const failures = counts.failedRequestCount ?? counts.failed ?? counts.failed_count ?? 0;
         const results = b.results || {};
-        const message = (b.retryStatus === "capacity_refused" && b.retryError) ||
+        const message = (["capacity_refused", "attempts_exhausted"].includes(b.retryStatus) && b.retryError) ||
           b.providerError || b.error?.message || b.error || b.statusError ||
           b.retryError || results.failures?.[0]?.error || "";
         const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
