@@ -40,9 +40,11 @@ const STATIONS = new Set(["sorting", "welding", "assembly", "shipping", "design"
 const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
 const s = (v, n) => String(v == null ? "" : v).slice(0, n);
 const n = v => (Number.isFinite(+v) ? +v : 0);
+// Firestore keeps no array directly inside an array and refuses the whole batch for one: such a list is kept as its text
+const flat = (v, inList) => Array.isArray(v) ? (inList ? JSON.stringify(v) : v.map(x => flat(x, true))) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, flat(x, false)])) : v;
 function small(data) {
   if (!data || typeof data !== "object") return null;
-  try { const j = JSON.stringify(data); return j.length <= 2048 ? JSON.parse(j) : { note: "details too large to keep", size: j.length }; } catch (_) { return null; }
+  try { const j = JSON.stringify(data); return j.length <= 2048 ? flat(JSON.parse(j), false) : { note: "details too large to keep", size: j.length }; } catch (_) { return null; }
 }
 /** One event as it is stored, or null when it is not one. */
 function clean(e, opts = {}) {
@@ -75,22 +77,46 @@ async function add(db, FV, events, opts = {}) {
     the records the shop already keeps, so an order from before the timeline existed still has its history. Also its
     cancel record (null when it is not cancelled) and `where`: where the order is now.
     opts: { prefix: "Sandbox_" | "", sandboxed: charmNestLibrary's SANDBOXED set, derive: true } */
+/* An order's recorded events, a page at a time in document-id order: the one-field index its equality query already
+   runs on, so no composite index. Ids are orderId~type~key, so the unordered limit(2000) this replaced answered the
+   types in alphabetical order, and a long run of one type (a guard's cancelAlert loop) hid every later one: shipped,
+   sorted, welded. A type past PER_TYPE is skipped to its end, so every type is read; at most MAX_READ documents. */
+const PAGE = 500, PER_TYPE = 500, MAX_READ = 2000;
+async function recordedOf(c, id) {
+  const docs = [], per = new Map(); let after = null, truncated = false;
+  for (let pages = 0; pages < 12; pages++) {
+    const want = Math.min(PAGE, MAX_READ - docs.length); if (want <= 0) return { docs, truncated: true };
+    // (a query with no orderBy answers in document-id order already; a later page says so, to start past a document id)
+    let q = c.where("orderId", "==", id);
+    if (after) q = q.orderBy("__name__").startAfter(after);
+    const snap = await q.limit(want).get(); let jump = null;
+    for (const d of snap.docs) {
+      const t = String(d.id).split("~")[1] || "", k = (per.get(t) || 0) + 1; per.set(t, k);
+      if (k > PER_TYPE) { truncated = true; jump = `${id}~${t}~~`; break; }   // ("~" sorts after every key character)
+      docs.push(d);
+    }
+    if (jump) { after = jump; continue; }
+    if (snap.docs.length < want) return { docs, truncated };
+    after = snap.docs[snap.docs.length - 1].id;
+  }
+  return { docs, truncated: true };
+}
 async function get(db, orderId, opts = {}) {
   const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
   const [snap, can, derived] = await Promise.all([
-    colOf(db, opts.prefix).where("orderId", "==", id).limit(2000).get(),
+    recordedOf(colOf(db, opts.prefix), id),
     db.collection((opts.prefix || "") + CANCELLED).doc(id).get(),
     opts.derive === false ? null : withTimeout(deriveEvents(db, id, opts), DERIVE_MS)
   ]);
   const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
   const byTime = (a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id));
-  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.size >= 2000 }; }
+  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.truncated }; }
   const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
   const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
   const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
   const events = recorded.concat(kept).sort(byTime);
-  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.size >= 2000, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
+  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.truncated, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
   return out;
