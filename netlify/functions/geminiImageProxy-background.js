@@ -14128,7 +14128,14 @@ async function _handlerImpl(event) {
         Number(b.retryAttempt || 0) < 5);
       let refillNeedsContinuation = false;
       for (const b of waiting) {
-        if (activeCount >= 30) break;
+        if (activeCount >= 30) {
+          // Other jobs can finish while new ones validate. Recount before
+          // stopping so an old snapshot cannot leave free places unused.
+          const activeNow = await db.collection(BATCHES_COLL).where("state", "in",
+            ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "BATCH_STATE_PENDING", "BATCH_STATE_RUNNING"]).get();
+          activeCount = activeNow.docs.filter((doc) => !doc.data().collected).length;
+          if (activeCount >= 30) break;
+        }
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) {
           refillNeedsContinuation = true;
           break;

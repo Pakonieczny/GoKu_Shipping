@@ -11,8 +11,10 @@ assert(start > 0 && end > start, "scheduled sweep handler exists");
 
 async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 2,
   finishOne = true, validationPolls = 0, existingPending = false,
-  neverValidates = false, validationError = false } = {}) {
+  neverValidates = false, validationError = false, finishDuringRefill = false } = {}) {
   let clock = 1000000;
+  let providerActive = activeCount;
+  let originalFinished = false;
   class Clock extends Date { static now() { return clock; } }
   const jobs = [
     ...Array.from({ length: activeCount }, (_, i) => ({ batchName: `batch_running_${i}`,
@@ -34,7 +36,8 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       get: async () => ({ forEach: () => {} }),
     }) }) };
     if (name === "batches") return {
-      where: () => ({ orderBy: () => ({ limit: () => ({ get: async () => ({
+      where: (field) => field === "state" ? { get: async () => ({ docs:
+        Array.from({ length: providerActive }, () => ({ data: () => ({ collected: false }) })) }) } : ({ orderBy: () => ({ limit: () => ({ get: async () => ({
         size: jobs.length,
         forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })),
       }) }) }) }),
@@ -47,6 +50,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     let response;
     if (payload.kind === "batch_status") {
       const finished = finishOne && payload.batchName === "batch_running_0";
+      if (finished && !originalFinished) { providerActive--; originalFinished = true; }
       const rejected = rejectRetry && payload.batchName === "batch_new_1";
       const count = (checks.get(payload.batchName) || 0) + 1;
       checks.set(payload.batchName, count);
@@ -62,6 +66,9 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     } else if (payload.kind === "batch_retry_missing") {
       if (validating) return { body: JSON.stringify({ ok: true, queued: true, reason: "Waiting for provider validation" }) };
       submissions.push(payload.batchName);
+      providerActive++;
+      if (finishDuringRefill && submissions.length === 23) providerActive--;
+      assert(providerActive <= 30, "actual provider concurrency never exceeds thirty");
       validating = `batch_new_${submissions.length}`;
       response = { ok: true, batchName: validating };
     } else throw new Error(`unexpected call ${payload.kind}`);
@@ -109,6 +116,9 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
   assert.equal(refill.checks.get("batch_new_23"), 3, "each new job is confirmed before the next is submitted");
   assert(refill.stages.includes("validating new job"));
   assert.equal(refill.continuations.length, 0, "a full queue needs no continuation");
+  const finishedDuring = await runSweep({ activeCount: 7, waitingCount: 40, finishOne: false, validationPolls: 2, finishDuringRefill: true });
+  assert.equal(finishedDuring.submissions.length, 24, "a place freed during refill is filled before the worker stops");
+  assert.equal(finishedDuring.guard.lastResult.activeAtAdmission, 30);
 
   const resumed = await runSweep({ activeCount: 7, waitingCount: 40, finishOne: false, validationPolls: 2, existingPending: true });
   assert.equal(resumed.submissions.length, 23, "a job already validating when the worker starts does not strand the queue");

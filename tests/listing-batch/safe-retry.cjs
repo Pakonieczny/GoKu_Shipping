@@ -147,7 +147,9 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
           ? { state: "JOB_STATE_FAILED", providerError: "Enqueued token limit reached" }
           : { state: "JOB_STATE_PENDING" };
       },
-      db: { collection: () => ({ doc: () => ({ set: async () => {} }) }) },
+      db: { collection: () => ({ doc: () => ({ set: async () => {} }),
+        where: () => ({ get: async () => ({ docs: Array.from({ length: active + submitted },
+          () => ({ data: () => ({ collected: false }) })) }) }) }) },
       guardRef: { set: async () => {} },
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       console: { warn: () => {} },
