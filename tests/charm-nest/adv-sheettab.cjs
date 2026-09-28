@@ -4,7 +4,9 @@
 //  · Front/Back: the back words drawn are this charm's;
 //  · a sheet switched while the last one is still being drawn: the old drawing never repaints or resizes the plate;
 //  · "Open full sheet" hands over and comes back on the same sheet and charm, drawn from the record as it is now;
-//  · a large sheet (90 pieces) draws, and hover/click still find the charm.
+//  · a large sheet (90 pieces) draws, and hover/click still find the charm;
+//  · a sheet held live is drawn from its page; an RG sheet behind its green line cannot be taken off; a cancelled order on
+//    no sheet says which sheet it was taken off, or that it never reached one.
 //   node tests/charm-nest/adv-sheettab.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
 const path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
@@ -12,6 +14,7 @@ const { start } = require('./bridge-server.cjs');
 
 const DAY = 86400, SHIP = Math.floor(Date.UTC(2026, 9, 2, 17) / 1000);
 const S = { rid: '4177000001', t1: '41770000011', t2: '41770000012' }, O = { rid: '4177000002', tid: '41770000021' };
+const X1 = { rid: '4177000003', tid: '41770000031' }, X2 = { rid: '4177000004', tid: '41770000041' };   // cancelled, on no sheet
 const P1 = `${S.rid}_${S.t1}_1`, P2 = `${S.rid}_${S.t2}_1`, PO = `${O.rid}_${O.tid}_1`;
 const SH14 = 'sheet-adv-14k', SHRG = 'sheet-adv-rg', BIG = 'sheet-adv-big';
 const line = (tid, sku, metalKey, metalLabel) => ({ transactionId: tid, listingId: '18000' + tid.slice(-5), sku, title: sku + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: metalLabel }], metalKey, metalLabel, personalization: [], buyerMessage: '' });
@@ -48,12 +51,13 @@ async function main() {
     await page.waitForFunction(() => window.CN && window.Orders && window.OrderWin && window.SheetWin && SheetWin.drawOrder && CN.S.cloud.ok === true, null, { timeout: 60000 });
     await page.evaluate(async ({ orders }) => {
       await Orders.loadMaps(true);
-      for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [pools[i]], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
+      for (const [order, pools] of orders) order.lines.forEach((line, i) => { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: pools[i] ? 'pooled' : 'pulled', reason: null, claimedBy: null, poolIds: pools[i] ? [pools[i]] : [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); });
       Orders.interpretAll();
       // line 1 carries a back engraving; line 2 none
       const r1 = B.orders.rows.find(r => r.poolIds[0] === orders[0][1][0]); r1.engrave = { needed: true, text: 'For Mia', approved: true, state: 'approved' };
       CN.setMode('orders'); Orders.render();
-    }, { orders: [[order(S.rid, 'Mia Lund', [line(S.t1, 'TINY_TAG', 'gold14k', '14k Solid Gold'), line(S.t2, 'LEAF_CHARM', 'rose', 'Rose Gold Filled')]), [P1, P2]], [order(O.rid, 'Ola Berg', [line(O.tid, 'OTHER', 'gold', '14k Gold Filled')]), [PO]]] });
+    }, { orders: [[order(S.rid, 'Mia Lund', [line(S.t1, 'TINY_TAG', 'gold14k', '14k Solid Gold'), line(S.t2, 'LEAF_CHARM', 'rose', 'Rose Gold Filled')]), [P1, P2]], [order(O.rid, 'Ola Berg', [line(O.tid, 'OTHER', 'gold', '14k Gold Filled')]), [PO]],
+      [order(X1.rid, 'Xan One', [line(X1.tid, 'TINY_TAG', 'gold', '14k Gold Filled')]), [null]], [order(X2.rid, 'Xan Two', [line(X2.tid, 'TINY_TAG', 'gold', '14k Gold Filled')]), [null]]] });
     const drawn = (rid, sheet) => page.waitForFunction(([rid, sheet]) => { const i = OrderWin._sheet(); return i && i.sheet.id === sheet && i.mine.every(x => x.rid === rid) && document.getElementById('owPlateWait').hidden && !document.getElementById('owSheetCv').getAnimations().some(a => a.playState === 'running'); }, [rid, sheet]);
     const panel = () => page.evaluate(() => ({ chips: [...document.querySelectorAll('#owSheetPanel .owShTabs button')].map(b => b.textContent.trim()), on: document.querySelector('#owSheetPanel .owShTabs button.on')?.textContent.trim(),
       eng: document.querySelector('#owSheetPanel .owBackEng')?.textContent || '', charm: document.querySelector('#owSheetPanel .owCharm')?.textContent || '', mine: OrderWin._sheet()?.mine.map(x => x.poolId) }));
@@ -71,6 +75,9 @@ async function main() {
     assert.deepEqual(p.mine, [P2], 'the RG sheet shows line 2\'s piece');
     assert.doesNotMatch(p.eng, /For Mia/, 'line 1\'s back engraving is not shown for the RG charm: ' + p.eng);
     assert.doesNotMatch(p.charm, /14K|14k/, 'the RG charm is not labelled 14K: ' + p.charm);
+    // behind its saved green line, nothing comes off the RG sheet: Take off is disabled, and says why
+    const off = await page.evaluate(() => { const b = document.querySelector('#owSheetPanel [data-off]'); return { dis: b.disabled, title: b.title }; });
+    assert(off.dis && /green line/.test(off.title), 'Take off is disabled behind the green line: ' + JSON.stringify(off));
     // Back: no words on the RG charm (line 1's words belong to the 14K sheet)
     assert.equal(await page.evaluate(() => OrderWin._sheet().mine.filter(x => x.eng && x.eng.text).length), 0);
     await page.evaluate(() => [...document.querySelectorAll('#owSheetPanel .owShTabs button')].find(b => /14K/.test(b.textContent)).click());
@@ -130,8 +137,37 @@ async function main() {
     await page.mouse.click(pn.x, pn.y);
     await page.waitForFunction(() => /Order 4178000046/.test(document.getElementById('owTitle').textContent) && OrderWin._sheet() && OrderWin._sheet().sheet.id === 'sheet-adv-big', null, { timeout: 15000 });
     assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one window');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
+
+    // 6 · a sheet this sorter holds live is drawn as it is on its page (its piece moved since the save), not the saved copy
+    await page.evaluate(({ SH14, P1, PO, rid, orid }) => {
+      const sq = { kind: 'path', subpaths: [[['m', [0, 0]], ['l', [34, 0]], ['l', [34, 34]], ['l', [0, 34]], ['h']]], stroke: true, strokeRGB: [0, 0, 0], lwPt: .25 };
+      const ch = (id, poolId, order) => ({ id, name: `${order} · X`, poolId, order, centerPt: [17, 17], widthPt: 34, heightPt: 34, outline: sq, members: [] });
+      window.__livePage = { sheetId: SH14, metal: 'gold14k', sheetIndex: 1, page: 1, status: 'complete', placements: [{ id: 'a1', cxPt: 150, cyPt: 70, angle: 0, wPt: 34, hPt: 34 }, { id: 'ao', cxPt: 250, cyPt: 60, angle: 0, wPt: 34, hPt: 34 }], charms: [ch('a1', P1, rid), ch('ao', PO, orid)], rejects: [] };
+      S.sheets.gold14k.pages.push(window.__livePage);
+    }, { SH14, P1, PO, rid: S.rid, orid: O.rid });
+    await page.evaluate(k => OrderWin.open(k, { view: 'sheet' }), `${S.rid}_${S.t1}`);
+    await page.evaluate(() => OrderWin.view() === 'sheet' || document.querySelector('.owTabsV [data-ow-view="sheet"]').click());
+    await drawn(S.rid, SH14);
+    assert.deepEqual(await page.evaluate(() => { const x = OrderWin._sheet().mine[0]; return [x.p.cxPt, x.p.cyPt]; }), [150, 70], 'drawn from the live page');
+    assert.match(await page.textContent('#owSheetPanel .owBackEng'), /For Mia/, 'its back engraving still read from the saved record');
+    await page.evaluate(() => { const a = S.sheets.gold14k.pages; a.splice(a.indexOf(window.__livePage), 1); });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
+
+    // 7 · cancelled orders on no sheet: taken off the sheet its cancel record names, or cancelled before it reached one
+    for (const [x, fates, want] of [[X1, [{ sheet: 'GF Sheet 4', fate: 'removed', text: 'taken off GF Sheet 4' }], /^Cancelled · taken off GF Sheet 4/], [X2, [], /^Cancelled before it reached a sheet/]]) {
+      srv.st.put('Charm_Nest_Cancelled', x.rid, { orderId: x.rid, by: 'Test Operator', why: 'buyer asked', at: Date.now() - 60000, source: 'sorter', fates, sheets: fates.map(f => f.sheet) });
+      await page.evaluate(k => OrderWin.open(k, { view: 'sheet' }), `${x.rid}_${x.tid}`);
+      await page.evaluate(() => OrderWin.view() === 'sheet' || document.querySelector('.owTabsV [data-ow-view="sheet"]').click());
+      await page.waitForFunction(re => { const b = document.querySelector('#owPlateWrap .owPlateNone b'); return b && new RegExp(re).test(b.textContent); }, want.source, { timeout: 10000 })
+        .catch(async e => { throw new Error('no-sheet line for ' + x.rid + ': ' + await page.evaluate(() => document.querySelector('#owPlateWrap .owPlateNone')?.textContent)); });
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 });
+    }
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ split 14K/RG order, back words per charm, a stale drawing kept off the plate, full sheet and back, 90-piece sheet');
+    console.log('  ✓ split 14K/RG order, back words per charm, green line keeps Take off shut, a stale drawing kept off the plate, full sheet and back, 90-piece sheet, live page drawn, cancelled with no sheet');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Sheet tab (adversarial) OK')).catch(e => { console.error(e); process.exit(1); });

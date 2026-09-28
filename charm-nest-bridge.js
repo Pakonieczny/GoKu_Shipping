@@ -8807,6 +8807,8 @@ const OrderWin = window.OrderWin = (() => {
     if (!r) return;
     const n = nowOf(r), pill = byId("owNow");
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
+    // (the Sheet view's "no sheet" line follows the cancel record once it is read)
+    const noSh = byId("owPlateWrap") && byId("owPlateWrap").querySelector(".owPlateNone[data-none]"); if (noSh) { const h = noSheetHtml(r); if (noSh._h !== h) { noSh._h = h; noSh.innerHTML = h; } }
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
     const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
@@ -8932,8 +8934,7 @@ const OrderWin = window.OrderWin = (() => {
     const none = byId("owPlateWrap").querySelector(".owPlateNone"); if (none) none.remove();
     if (!s) {
       cv.style.visibility = "hidden"; plateWait(null);
-      const st = tryDo(() => Orders.statePill(r)) || ["", r.state || ""];
-      byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>Not on a sheet yet</b><span>${esc(String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn")} — its pieces are drawn here once they are placed on a sheet.</span></div>`);
+      byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone" data-none>${noSheetHtml(r)}</div>`);
       byId("owPlateFoot").innerHTML = ""; paintPanel(null); return;
     }
     if (!window.SheetWin || !SheetWin.drawOrder) { plateWait(null); byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))}</b><span>The sheet window is not loaded on this page.</span></div>`); return; }
@@ -8955,6 +8956,18 @@ const OrderWin = window.OrderWin = (() => {
       byId("owPlateWrap").querySelector(".owPlateNone button").onclick = () => sheetDraw();
     }
   }
+  /** An order on no sheet: waiting for one, or cancelled (taken off the sheets its cancel record names, else never on one). */
+  function noSheetHtml(r) {
+    const n = tryDo(() => nowOf(r)) || {};
+    if (n.cancelled) {
+      const rid = String(r.order.receiptId), c = W.cancelled && String(W.cancelled.orderId || rid) === rid ? W.cancelled : null;
+      const fates = c && window.Cancelled && Cancelled.fatesOf ? tryDo(() => Cancelled.fatesOf(c)) || [] : [];
+      // (until its cancel record is read, nothing is said about where it was)
+      return `<b>${esc(c ? (fates.length ? "Cancelled · " + fates.map(f => f.text).join(" · ") : "Cancelled before it reached a sheet") : "Cancelled")}</b><span>${esc(n.t || "")}</span>`;
+    }
+    const st = tryDo(() => Orders.statePill(r)) || ["", r.state || ""];
+    return `<b>Not on a sheet yet</b><span>${esc(String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn")} — its pieces are drawn here once they are placed on a sheet.</span>`;
+  }
   function paintFoot(inf) {
     const live = inf.pieces.length, orders = new Set(inf.pieces.map(x => x.rid).filter(Boolean)).size, rec = inf.rec;
     byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
@@ -8966,6 +8979,8 @@ const OrderWin = window.OrderWin = (() => {
     const o = r.order, placed = +o.createTs ? new Date(+o.createTs * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
     const rec = inf && inf.rec, cut = rec && (rec.laserDoneAt || rec.roseCutAt);
+    // (a Rose Gold sheet behind its saved green line keeps its pieces until it is cut: nothing comes off it)
+    const lined = rec && !cut && rec.metal === "rose" && !!(rec.roseLine || rec.rosePlan || rec.roseProtected || rec.rosePlanHash || rec.rosePlanJson || rec.roseProtectedJson);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
     const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
     // (the line of the charm shown: an order split over sheets and metals speaks of that charm, not of the line opened)
@@ -8995,7 +9010,7 @@ const OrderWin = window.OrderWin = (() => {
       `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
       `<section>${engHtml}</section>` +
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
-      (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut ? " disabled" : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : ""}</div>` : "");
+      (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
     const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr)); }
     // an approval-waiting back is drawn as Engrave fits it
