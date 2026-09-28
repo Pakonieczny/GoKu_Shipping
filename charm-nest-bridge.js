@@ -8383,7 +8383,7 @@ const OrderWin = window.OrderWin = (() => {
     // Previous and Next walk the Orders list, the view in front, what it grew out of, its motion, the timeline mounted
     // in it and the one in the header, and what the order's timeline has said so far
     row: null, rows: null, walk: true, view: "info", from: null, anims: [], closing: false, hl: null, tl: null, tlFor: null, rail: null,
-    events: null, evFor: null, cancelled: null, offRec: null, look: 0, back: null, face: "front" };
+    events: null, evFor: null, cancelled: null, feed: null, offRec: null, look: 0, back: null, face: "front" };
   const byId = id => document.getElementById(id);
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
@@ -8780,14 +8780,21 @@ const OrderWin = window.OrderWin = (() => {
      before it has answered, or where there is none, the line's own state says it. */
   const GROUP_NOW = { order: "Order in", review: "In review", engrave: "Engraving", sheet: "On a sheet", label: "Labelled", laser: "Laser cut", station: "At the stations", ship: "At shipping", done: "Completed", cancel: "Cancelled", note: "" };
   function lastOf(list, f) { for (let i = (list || []).length - 1; i >= 0; i--) if (f(list[i])) return list[i]; return null; }
+  /* One read of the order's timeline per open (timeline-ui's feed), shared by this card, the header rail and the
+     Timeline tab, and followed while the view is open (each used to read it for itself: three reads an open, and a
+     poll each). A new order, or the view closing, drops the feed: an answer for the order left behind paints nothing. */
   function loadEvents(rid) {
     W.events = null; W.evFor = rid; W.cancelled = null;
-    const T = window.OrderTimeline; if (!T || !T.get) return;
-    Promise.resolve().then(() => T.get(rid)).then(j => {
-      if (W.evFor !== rid) return;
+    if (W.feed) tryDo(() => W.feed.destroy()); W.feed = null;
+    const T = window.OrderTimeline, UI = window.OrderTimelineUI; if (!T || !T.get) return;
+    const f = UI && UI.feed ? tryDo(() => UI.feed(rid)) : null;
+    const take = j => {
+      if (W.evFor !== rid || W.feed !== f) return;
       W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
       const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r);
-    }).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
+    };
+    if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
+    Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
   }
   function nowOf(r) {
     const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? W.events : null;
@@ -8860,7 +8867,7 @@ const OrderWin = window.OrderWin = (() => {
 
   /* ── the timeline: timeline-ui's component, in the Timeline view and (compact) in the header ── */
   function tlOpts(rid, extra) {
-    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true,
+    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
@@ -8878,7 +8885,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!W.tl) host.innerHTML = `<div class="owTlNone"><b>The order's timeline</b><span>Every step this order takes, from the moment it came in to its shipping, is drawn here.</span></div>`;
   }
   function unmountTimeline() {
-    for (const k of ["tl", "rail"]) { if (W[k] && W[k].destroy) tryDo(() => W[k].destroy()); W[k] = null; }
+    for (const k of ["tl", "rail", "feed"]) { if (W[k] && W[k].destroy) tryDo(() => W[k].destroy()); W[k] = null; }
     W.tlFor = null; const t = byId("owTimeline"); if (t) t.innerHTML = ""; const r = byId("owRail"); if (r) r.innerHTML = "";
   }
 
@@ -9358,7 +9365,7 @@ const OrderWin = window.OrderWin = (() => {
     W.rows = rows;
     show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId });
   }
-  return { open, openOrder, focusSearch, paint, close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info };
+  return { open, openOrder, focusSearch, paint, close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════
