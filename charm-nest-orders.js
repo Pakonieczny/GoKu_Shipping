@@ -152,7 +152,9 @@
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
     // (the listing's answer is its necklace charm's: never a huggie set's)
     const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = a && a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
-    if (raw && (!masterEntry || masterEntry(raw) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
+    // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
+    const held = raw && masterEntry ? masterEntry(raw) : null;
+    if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     const base = raw && variationBase(raw);
     if (base && masterEntry(base)) return { sku: base, source: "variation" };

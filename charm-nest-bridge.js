@@ -7402,7 +7402,7 @@ const Review = window.Review = (() => {
   }
   function focus(rowKey) {
     const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
-    RV.filter=null;RV.cseg="open";RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
+    RV.filter=null;RV.cseg="open";RV.limit=RV.keep=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
     if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});found(c);}
   }
@@ -7417,7 +7417,8 @@ const Review = window.Review = (() => {
   function showCard(mk, seg, kind) {
     const v = document.getElementById("reviewView");
     if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
-    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.limit = Math.max(RV.limit, 400);
+    // (RV.keep: a new view starts at its first 40 cards, which left an older card undrawn, so Show found nothing)
+    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.limit = RV.keep = Math.max(RV.limit, 400);
     render();
     const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
@@ -7820,7 +7821,8 @@ const Review = window.Review = (() => {
     const doneMode = RV.cseg === "done";
     const view = RV.cseg + "|" + (RV.filter || "");
     let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
-    if(reviewFilter!==view){RV.limit=40;reviewFilter=view;oldScroll=0;}
+    if(reviewFilter!==view){RV.limit=Math.max(40,RV.keep||0);reviewFilter=view;oldScroll=0;}
+    RV.keep=0;
     const all = items().filter(it => mine(it) && !isNotice(it));
     const decided = new Set(); for (const it of all) if (it.kind === "customOrder") for (const r of rowsOf(it)) decided.add(r.key);
     const cl = customLists(decided);
