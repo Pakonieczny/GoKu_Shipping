@@ -137,6 +137,8 @@
     { k: "shipped", l: "Shipped", types: ["shipped"], kind: "shipped", lane: "shipping" },
     { k: "completed", l: "Completed", types: ["etsyCompleted"], kind: "etsyCompleted", lane: "etsy" }
   ];
+  // a piece's own steps, from its line (welding only for stud earrings)
+  const stagesFor = line => STAGES; // agent E replaces this
   const STOP_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STOP_OF[t] = i; }));
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
@@ -378,6 +380,44 @@
     return { W, stages, step, cur, stop: cancelled ? Math.min(step + 1, STAGES.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
   }
 
+  /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
+     A piece is one line of the order: { key (its lineKey), tid, qty, line, pools [poolIds], sheets [sheetIds] }. An event
+     is a piece's when it names it (its line, its transaction, one of its pool pieces); one that names no line belongs to
+     the whole order (arrived, a cancel, a note), or, when it names a sheet, to the pieces on that sheet. */
+  function ofPiece(e, p, pieces) {
+    if (!e || !p) return false;
+    if (e.lineKey) return e.lineKey === p.key;
+    if (e.transactionId) return !p.tid || e.transactionId === String(p.tid);
+    const d = e.data || {}, ids = [].concat(d.poolId || [], Array.isArray(d.poolIds) ? d.poolIds : []).map(String);
+    if (ids.length) return ids.some(id => (p.pools || []).includes(id) || id.startsWith(p.key + "_"));
+    if (e.sheetId && (pieces || []).some(q => (q.sheets || []).length)) return (p.sheets || []).includes(e.sheetId);
+    return true;
+  }
+  /** The order across its pieces: each piece where it stands (derive over its own events, its own steps), each rail step
+   *  with how many pieces reached it (a line of 2 counts 2) out of those that take it, and the step of the slowest piece,
+   *  which is where the order is. → { each: [{ p, D, steps, events }], rail: [{ s, i, n, of }], step } */
+  function summary(events, pieces, cancelRec) {
+    const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: stagesFor(p.line) || STAGES, events: list }; });
+    const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
+    for (const x of each) for (const s of x.steps) {
+      const i = STAGES.indexOf(s); if (i < 0) continue;
+      const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
+      if (x.D.step >= i || x.D.stages[i].first) rail[i].n += q;
+    }
+    return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => x.D.step)) : -1 };
+  }
+  /** The rail a view draws (list: its steps, oldest first), with the step being worked towards and, when cancelled,
+   *  where it stopped, both on that rail. */
+  function railed(D, list, sum) {
+    D.rail = (list && list.length ? list : STAGES).map(s => ({ s, i: STAGES.indexOf(s) })).filter(r => r.i >= 0);
+    const nx = D.rail.find(r => r.i > D.step);
+    D.cur = nx ? nx.i : -1;
+    D.stop = D.cancelled ? (nx ? nx.i : D.rail[D.rail.length - 1].i) : -1;
+    D.sum = sum || null;
+    return D;
+  }
+
   /* ════ the component's look (once per page) ════ */
   const CSS = `
 .tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
@@ -402,8 +442,8 @@
 .tlLink{border:0;background:none;padding:0;font:600 11px var(--sans);color:var(--gold);text-decoration:underline;text-underline-offset:2px;text-decoration-color:var(--goldLine)}
 .tlLink:hover{text-decoration-color:currentColor}
 .tlRail{position:relative;flex:3 1 520px;min-width:0;max-width:860px;margin-left:auto}
-.tlStops{position:relative;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));margin:0;padding:0}
-.tlTrack,.tlFill{position:absolute;top:17px;height:2px;border-radius:2px;left:calc(100% / 18);right:calc(100% / 18)}
+.tlStops{position:relative;display:grid;grid-template-columns:repeat(var(--n,9),minmax(0,1fr));margin:0;padding:0}
+.tlTrack,.tlFill{position:absolute;top:17px;height:2px;border-radius:2px;left:calc(100% / (2 * var(--n,9)));right:calc(100% / (2 * var(--n,9)))}
 .tlTrack{background:repeating-linear-gradient(90deg,var(--ink25) 0 4px,transparent 4px 8px)}
 .tlFill{background:var(--sage);transform-origin:0 50%;transform:scaleX(0);transition:transform .9s cubic-bezier(.3,.1,.2,1)}
 .tlRail.cx .tlFill{background:linear-gradient(90deg,var(--sage) 75%,var(--clay))}
@@ -420,6 +460,8 @@
 .tlStop.x>span{color:#8a3a26}
 .tlStop.gone{opacity:.45}.tlStop.gone>span{text-decoration:line-through}
 .tlStop .tlSeal.lifted{opacity:0}
+.tlStop .tlCnt{position:absolute;top:-5px;left:calc(50% + 9px);font:700 8px/1 var(--mono);letter-spacing:.02em;font-style:normal;padding:2px 5px;border-radius:999px;background:var(--goldSoft,#f6eedc);color:#7a5a1d;box-shadow:0 0 0 1px var(--goldLine,#e3cf9f);white-space:nowrap;pointer-events:none;z-index:2;animation:tlCntIn .36s var(--tlSpring) both}
+@keyframes tlCntIn{from{opacity:0;transform:scale(.6)}}
 @keyframes tlRing{0%{transform:scale(.85);opacity:.85}70%,100%{transform:scale(1.4);opacity:0}}
 .tlCxStamp{position:absolute;left:50%;top:50%;width:min(270px,40%);pointer-events:none;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
 .tlCxStamp svg{display:block;width:100%;height:auto;mix-blend-mode:multiply;opacity:.93}
@@ -528,7 +570,8 @@
 .tlUI.compact{height:100%;justify-content:center}
 .tlUI.compact .tlTop{border-bottom:0;padding:0;flex:1 1 auto;align-items:center;flex-wrap:nowrap}
 .tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
-.tlUI.compact .tlStops{grid-template-columns:repeat(9,minmax(0,1fr))!important;row-gap:0}
+.tlUI.compact .tlStops{grid-template-columns:repeat(var(--n,9),minmax(0,1fr))!important;row-gap:0}
+.tlUI.compact .tlStop .tlCnt{top:3px;left:calc(50% + 15px);font-size:7.5px;padding:1.5px 4px}
 .tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:11px}
 .tlUI.compact .tlStop{gap:2px}
 .tlUI.compact .tlStop .tlSeal{width:24px;height:24px}
@@ -634,7 +677,8 @@
     // a shared feed (the order view): its reads, its poll; this mount keeps its own live stamps (onRecord) alone
     const src = opts.feed && typeof opts.feed.subscribe === "function" && opts.feed.orderId === orderId ? opts.feed : null;
     const pollMs = Math.max(250, +opts.pollMs || POLL);   // pollMs: tests only
-    const S = { events: [], byKey: new Map(), cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
+    // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
+    const S = { events: [], byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
       loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
@@ -720,9 +764,9 @@
     function apply(j) {
       const next = new Map();
       for (const x of Array.isArray(j.events) ? j.events : []) { const e = norm(x); if (e) next.set(e.key, e); }
-      for (const [k, e] of S.byKey) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
-      const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.byKey.has(k));
-      S.byKey = next; S.events = [...next.values()].sort(byAt);
+      for (const [k, e] of S.allKeys) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
+      const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.allKeys.has(k));
+      S.allKeys = next; S.every = [...next.values()].sort(byAt); narrow();
       S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true; S.truncated = !!j.truncated;
       const sig = sigOf();
       if (!first && sig === S.sig) { paintNowSub(); paintSum(); return; }
@@ -733,7 +777,7 @@
     }
     /** What is drawn, in one string: an answer that says the same repaints nothing (a stamp still dropping keeps going). */
     function sigOf() {
-      return S.events.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
+      return S.every.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
     }
     function afterFirst() {
       if (S.pendingFocus != null) { const id = S.pendingFocus; S.pendingFocus = null; if (focus(id)) return; }
@@ -752,7 +796,7 @@
     /* ── painting ── */
     function repaint(o) {
       o = o || {};
-      const D = S.D = derive(S.events, S.cancelled, whereNow());
+      const D = S.D = deriveNow();
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
@@ -768,6 +812,38 @@
       } else if (S.sel && S.byKey.has(S.sel)) renderDetail(S.sel, 0, true);
       else if (S.events.length) select(S.events[S.events.length - 1].key, 0, { scroll: o.first, quiet: true });
       else $(".tlDetail").innerHTML = `<p class="tlEmpty">Nothing is recorded for this order yet. Each step shows here the moment it happens.</p>`;
+    }
+    /** One piece: its own events and steps. All pieces of an order of several: the order is where its slowest piece is,
+     *  on the steps any of its pieces takes, each counted. One piece only: as it always was. */
+    const pieceNow = () => (S.piece && S.pieces.find(p => p.key === S.piece)) || null;
+    function narrow() {
+      const p = pieceNow();
+      if (!p) { S.piece = null; S.events = S.every; S.byKey = S.allKeys; return; }
+      S.events = S.every.filter(e => ofPiece(e, p, S.pieces)); S.byKey = new Map(S.events.map(e => [e.key, e]));
+    }
+    function deriveNow() {
+      const p = pieceNow();
+      if (p) return railed(derive(S.events, S.cancelled), stagesFor(p.line));
+      const D = derive(S.events, S.cancelled, whereNow());
+      if (S.pieces.length < 2) return railed(D, STAGES);
+      const sum = summary(S.every, S.pieces, S.cancelled);
+      D.step = Math.min(D.step, sum.step);
+      return railed(D, sum.rail.map(r => r.s), sum);
+    }
+    /** The host's piece switcher: pieces (as opts.pieces; omitted keeps them) and the piece shown (null: all of them).
+     *  The rail, the lanes and the detail cross over to it, from the side it lies on (dir). */
+    function setPieces(list, key, dir) {
+      if (S.dead) return;
+      const ps = Array.isArray(list) ? list : S.pieces, sigP = x => JSON.stringify(x.map(p => [p.key, p.qty, p.pools, p.sheets]));
+      key = key || null;
+      const moved = key !== S.piece, changed = sigP(ps) !== sigP(S.pieces);
+      if (!moved && !changed) return;
+      S.pieces = ps; S.piece = key; narrow();
+      if (S.sel && !S.byKey.has(S.sel)) S.sel = null;
+      if (!S.loaded) return;
+      hideLoupe(true);
+      repaint({ first: moved });
+      if (moved) for (const x of [$(".tlRail"), compact ? null : $(".tlGrid"), compact ? null : $(".tlDetail")]) if (x) anim(x, [{ opacity: 0, transform: `translateX(${(dir || 0) * 14}px)` }, { opacity: 1, transform: "none" }], 340, { easing: E });
     }
     /** The server's `where`; while this page has steps the server has not answered for yet (live, or still in the
      *  outbox) it is worked out here from every step, never behind the server's own. */
@@ -811,18 +887,22 @@
         (W.sheetId ? `<span>on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(W.sheetId)}" data-pool="${esc(pool)}">Open sheet</button>` : ""}` : "");
     }
     function paintRail(D, o) {
-      const wrap = $(".tlStops"), rail = $(".tlRail");
-      if (!wrap.children.length) wrap.innerHTML = STAGES.map(s => `<button type="button" class="tlStop f" data-stage="${s.k}"><i class="tlSeal"></i><span>${esc(s.l)}</span></button>`).join("");
+      const wrap = $(".tlStops"), rail = $(".tlRail"), R = D.rail || STAGES.map((s, i) => ({ s, i }));
+      // (the steps of the piece shown, or of all of them: drawn again when they change)
+      const keys = R.map(r => r.s.k).join(" ");
+      if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span><em class="tlCnt" hidden></em></button>`).join(""); }
       const nodes = [...wrap.children];
-      STAGES.forEach((s, i) => {
-        const n = nodes[i], st = D.stages[i];
+      R.forEach(({ s, i }, j) => {
+        const n = nodes[j], st = D.stages[i];
+        // all pieces: a step some pieces reached and others not yet says how many ("2 of 3")
+        const sr = D.sum && D.sum.rail.find(r => r.i === i), part = sr && sr.n > 0 && sr.n < sr.of ? `${sr.n} of ${sr.of}` : "";
         let c;
         if (!S.loaded) c = "f";
         else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
         else c = i <= D.step ? "d" : i === D.cur ? "c" : "f";
         // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
-        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "");
+        const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part;
         if (n.dataset.sig === sig) return;
         const was = n.dataset.sig || "";
         n.dataset.sig = sig;
@@ -832,22 +912,23 @@
         seal.innerHTML = c === "d" ? stampSvg(ev || { key: "d-" + s.k, type: s.kind, at: 0 }, false) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at }, false)
           : stampSvg({ key: "g-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
-        const say = c === "d" ? (ev ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`;
+        const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
+        const say = (c === "d" ? (ev ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.title = say;
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
           else anim(seal, [{ transform: `rotate(${rot}deg) scale(.6)` }, { transform: `rotate(${rot}deg) scale(1.5)`, offset: .45 }, { transform: `rotate(${rot}deg) scale(1)` }], 700, { easing: SPRING });
         }
       });
-      const idx = D.cancelled ? D.stop : D.cur < 0 ? STAGES.length - 1 : Math.max(0, D.cur);
-      $(".tlFill").style.transform = `scaleX(${(idx / (STAGES.length - 1)).toFixed(4)})`;
+      const at = D.cancelled ? D.stop : D.cur < 0 ? R[R.length - 1].i : Math.max(0, D.cur), idx = Math.max(0, R.findIndex(r => r.i === at));
+      $(".tlFill").style.transform = `scaleX(${(idx / Math.max(1, R.length - 1)).toFixed(4)})`;
       rail.classList.toggle("cx", !!D.cancelled);
       let cx = rail.querySelector(".tlCxStamp:not(.out)");
       const cxK = D.cancelled ? [D.cancelled.at, D.cancelled.by, D.cancelled.source, D.stop].join("|") : "";
       const cxAt = () => {
         cx.dataset.k = cxK; cx.innerHTML = cancelSvg(D.cancelled);
         // over the steps it will not reach, so the ✕ where it stopped stays readable
-        const from = Math.min(D.stop + 1, STAGES.length - 1), mid = ((from + STAGES.length - 1) / 2 + .5) / STAGES.length;
+        const from = Math.min(Math.max(0, R.findIndex(r => r.i === D.stop)) + 1, R.length - 1), mid = ((from + R.length - 1) / 2 + .5) / R.length;
         cx.style.left = `clamp(135px, ${(mid * 100).toFixed(2)}%, calc(100% - 135px))`;
       };
       if (D.cancelled && cx && cx.dataset.k !== cxK) cxAt();
@@ -885,7 +966,7 @@
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1], fl = FILTER[S.filter] || FILTER.all;
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = D.cancelled ? [] : STAGES.map((s, i) => ({ s, i })).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
+      const ghosts = D.cancelled ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
       const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
@@ -1113,9 +1194,9 @@
     /* ── live ── */
     function onRecord(x) {
       if (S.dead || !x || digits(x.orderId) !== orderId) return;
-      const e = norm(x); if (!e || S.byKey.has(e.key)) return;
+      const e = norm(x); if (!e || S.allKeys.has(e.key)) return;
       e.live = Date.now(); e.pending = true;
-      S.byKey.set(e.key, e); S.events = [...S.byKey.values()].sort(byAt);
+      S.allKeys.set(e.key, e); S.every = [...S.allKeys.values()].sort(byAt); narrow();
       if (!S.loaded) return;   // the answer on its way merges it
       S.sig = sigOf();
       repaint({ fresh: [e.key] });
@@ -1141,7 +1222,7 @@
     /** Tells the host what is drawn: opts.onEvents(events, oldest first) and opts.onNow(where it is now). */
     function tell() {
       const D = S.D; if (S.dead || !D) return;
-      if (typeof opts.onEvents === "function") { try { opts.onEvents(S.events.map(pub)); } catch (err) { warn("onEvents", err); } }
+      if (typeof opts.onEvents === "function") { try { opts.onEvents(S.every.map(pub)); } catch (err) { warn("onEvents", err); } }
       if (typeof opts.onNow === "function") {
         const nt = nowText(D);
         try { opts.onNow({ text: nt.t, tone: nt.cls, where: D.W, step: D.step, next: D.cur >= 0 ? STAGES[D.cur].l : "", cancelled: D.cancelled, held: !!D.hold, last: D.last ? pub(D.last) : null }); } catch (err) { warn("onNow", err); }
@@ -1180,7 +1261,7 @@
     box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
-    paintRail(derive([], null), { first: true });
+    paintRail(railed(derive([], null), pieceNow() ? stagesFor(pieceNow().line) : STAGES), { first: true });
     if (!compact) paintLanes();
     if (src) {
       // what the feed has already: its answer drawn at once, its read on the way waited for; else it reads now
@@ -1194,7 +1275,7 @@
       try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unsub = root.OrderTimeline.onRecord(onRecord); } catch (_) {}
       if (!src) { doc.addEventListener("visibilitychange", onVis); arm(); }   // (a feed polls for every mount)
     }
-    return { refresh, destroy, focus };
+    return { refresh, destroy, focus, setPieces };
   }
 
   /* ════ the order view's "Where it is now" card (spec §3, §8) ════
@@ -1229,5 +1310,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow, iconOf };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, KIND, labelOf, nowStamps, wireNow, iconOf };
 })(typeof window !== "undefined" ? window : globalThis);

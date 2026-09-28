@@ -650,6 +650,32 @@ dialog.phv.layer.phvIn{background:transparent}
 .owSeg button{border:0;background:transparent;border-radius:6px;padding:2px 10px;font:11px var(--sans);color:var(--ink45);cursor:pointer;transition:background .2s,color .2s}
 .owSeg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.12)}
 @keyframes owUp{from{opacity:0;transform:translateY(6px)}}
+/* an order of several pieces: one calm switch in the tab row (Overview, Timeline), its thumb gliding to the piece shown */
+.owPieceSw{position:relative;align-self:center;display:inline-flex;align-items:center;gap:2px;margin-left:14px;padding:2px;border:1px solid var(--line);border-radius:999px;background:var(--card2);min-width:0;flex:0 1 auto;overflow-x:auto;scrollbar-width:none;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
+.owPieceSw::-webkit-scrollbar{display:none}
+.owPieceSw[hidden]{display:none}
+.owPieceSw button{position:relative;z-index:1;flex:none;display:inline-flex;align-items:center;gap:6px;max-width:230px;border:0;background:transparent;border-radius:999px;padding:3px 11px;font:11.5px var(--sans);color:var(--ink45);cursor:pointer;white-space:nowrap;transition:color .2s}
+.owPieceSw button>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.owPieceSw button small{font:10px var(--mono);letter-spacing:.02em;color:var(--ink45)}
+.owPieceSw button:hover{color:var(--ink70)}
+.owPieceSw button.on{color:var(--ink)}
+.owPieceSw button:focus-visible{outline:2px solid var(--slate);outline-offset:-2px}
+.owPieceSw .dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:none;box-shadow:0 0 0 1px rgba(30,26,20,.1)}
+.owPieceSw button.shown::after{content:"";position:absolute;left:50%;bottom:0;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:var(--gold)}
+.owPcThumb{position:absolute;z-index:0;top:2px;bottom:2px;left:0;width:0;border-radius:999px;background:var(--card);box-shadow:0 1px 2px rgba(30,26,20,.12),0 0 0 1px var(--line2);transition:left .34s cubic-bezier(.2,.8,.2,1),width .34s cubic-bezier(.2,.8,.2,1)}
+/* all pieces: each one on a row under "where it is now"; the slowest, where the order is, in gold */
+.owPcSum{display:grid;gap:2px;margin:-6px 0 20px;animation:owUp .3s cubic-bezier(.2,.8,.2,1) both}
+.owPcSum[hidden]{display:none}
+.owPcRow{display:grid;grid-template-columns:8px minmax(0,1.2fr) minmax(0,1fr) auto;align-items:center;gap:12px;border:0;background:transparent;text-align:left;padding:7px 10px;border-radius:10px;font:12.5px var(--sans);color:var(--ink70);cursor:pointer;transition:background .2s,transform .18s cubic-bezier(.2,.8,.2,1)}
+.owPcRow:hover{background:var(--card2);transform:translateX(2px)}
+.owPcRow:focus-visible{outline:2px solid var(--slate);outline-offset:-2px}
+.owPcRow .dot{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.owPcRow .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.owPcRow .nm b{font-weight:600;color:var(--ink)}
+.owPcRow .st{font:11px var(--mono);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.owPcRow.slow .st{color:#7a5a1d}
+.owPcRow .steps{display:inline-flex;gap:4px}
+.owPcRow .steps i{width:6px;height:6px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--ink25);transition:background .3s}
+.owPcRow .steps i.on{background:var(--sage);box-shadow:none}
 /* what is being waited for, said on one line */
 .owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
 .owLoading[hidden]{display:none}
@@ -2707,7 +2733,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20260928-ov1"></script>
-<script src="charm-nest-timeline-ui.js?v=20260928-w2i"></script>
+<script src="charm-nest-timeline-ui.js?v=20260928-tlF"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5837,7 +5863,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-haze1"></script>
+<script src="charm-nest-bridge.js?v=20260928-tlF"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-haze1"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
@@ -5864,6 +5890,7 @@ boot();
       <button type="button" role="tab" data-ow-view="timeline" aria-selected="false" tabindex="-1"><b>Timeline</b><span class="c" id="owTlCount"></span></button>
       <button type="button" role="tab" data-ow-view="sheet" aria-selected="false" tabindex="-1"><b>Sheet</b><span class="c" id="owShCount"></span></button>
       <span class="owInk" aria-hidden="true"></span>
+      <div class="owPieceSw" id="owPieceSw" role="group" aria-label="Which piece of the order" hidden></div>
       <div class="owTools">
         <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span><label class="owSkip" id="owSkipBox"><button type="button" class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this line"><i></i></button><span>Skip this line <span class="soft">— cut nothing for it</span></span></label></div>
         <div class="owGrp" data-for="timeline" id="owTlTools"></div>
@@ -5881,6 +5908,7 @@ boot();
         </div>
         <div class="owInfoMain">
           <div class="owNowCard" id="owNowCard" hidden></div>
+          <div class="owPcSum" id="owPcSum" hidden></div>
           <div id="owCustom" class="owCustom" aria-live="polite" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
