@@ -513,7 +513,7 @@
   <!-- Order timeline: the shared client and the station module (every scan recorded, cancelled orders flagged).
        If either is missing the page works exactly as before. -->
   <script src="order-timeline.js?v=20260928-st-sorting"></script>
-  <script src="station-timeline.js?v=20260928-st-quiet"></script>
+  <script src="station-timeline.js?v=20260928-adv-stations"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -1526,7 +1526,7 @@ window.SortTL = (function () {
   function isKnownCancelled(id) {
     id = String(id);
     if (cur && cur.cancelled.has(id)) return true;
-    return call("isCancelled", id) === true;
+    return !!call("isCancelled", id);                // the module answers the cancel record (or null), not true
   }
   function flag(me, id, record) {
     if (me.cancelled.has(id)) return;

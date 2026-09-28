@@ -26,6 +26,21 @@ async function sweepRealtime() {
   } catch (e) { console.warn("[firebaseOrders] realtime sweep:", e && e.message); return 0; }
 }
 
+/* The stations' timeline door is open (no sign-in): a sender (by IP, per warm instance) may write at most 600 events a
+   minute. A whole shop behind one address stays far below it (a scan is 1–3 events); a refused batch stays in the
+   station's outbox and is sent again later (order-timeline.js backs off). */
+const flood = {
+  seen: new Map(), PER_MIN: 600,
+  allow(event, n) {
+    const h = (event && event.headers) || {};
+    const ip = String(h["x-nf-client-connection-ip"] || h["client-ip"] || String(h["x-forwarded-for"] || "").split(",")[0] || "?").trim();
+    const now = Date.now(), w = this.seen.get(ip);
+    if (!w || now - w.t0 >= 60000) { if (this.seen.size > 5000) this.seen.clear(); this.seen.set(ip, { t0: now, n }); return true; }
+    if (w.n + n > this.PER_MIN) return false;
+    w.n += n; return true;
+  }
+};
+
 /* Global CORS headers */
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
@@ -49,8 +64,12 @@ exports.handler = async (event) => {
       /* the production stations' own events on an order's timeline (_orderTimeline.js): scans and what was done with
          them, by whom, where. Only station event types pass this open door. */
       if (Array.isArray(body.timeline)) {
-        const out = await require("./_orderTimeline").add(db, admin.firestore.FieldValue, body.timeline, { prefix: PREFIX, source: "station", stationOnly: true });
-        return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out)) };
+        if (body.timeline.length > 100) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "at most 100 events a request" }) };
+        // an event keeps the store it was recorded in: one marked sandbox never lands in production (nor the reverse)
+        const events = body.timeline.filter(e => e && typeof e === "object" && !!e.sandbox === !!PREFIX);
+        if (!flood.allow(event, events.length)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many timeline events, try again in a minute" }) };
+        const out = await require("./_orderTimeline").add(db, admin.firestore.FieldValue, events, { prefix: PREFIX, source: "station", stationOnly: true });
+        return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out, events.length < body.timeline.length ? { refused: body.timeline.length - events.length } : {})) };
       }
       const {
         orderNumber,
