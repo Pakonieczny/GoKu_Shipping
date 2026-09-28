@@ -302,6 +302,19 @@ async function browserChecks() {
     { const s = await page.$$('#rvList .reviewListRow[data-rid="4176744752"] .seal'); const bb = await s[1].boundingBox(); await page.mouse.click(bb.x + bb.width * .7, bb.y + bb.height / 2); }
     await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => [window.__printed || 0, !!document.querySelector('.seal.wobble'), OrderWin.isOpen()].join()), [pb0, true, false].join(), 'a press on the seal away from the button prints nothing and opens nothing');
+    // a cancelled order is never printed silently (adversarial, 28 Sep): the first press asks in the button itself (clay,
+    // no pop-up), a second within 4 s prints, and the order's timeline says it was printed although cancelled
+    await page.evaluate(() => Cancelled.absorb(['4176744752']));
+    const pc0 = await page.evaluate(() => window.__printed || 0);
+    await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
+    await page.waitForTimeout(400);
+    const asked = await page.evaluate(() => { const b = document.querySelector('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]'); return [b.textContent, b.classList.contains('danger'), window.__printed || 0, document.querySelectorAll('dialog[open]').length].join(); });
+    assert.equal(asked, ['Cancelled order: print anyway?', true, pc0, 0].join(), 'the first press prints nothing and asks in the button: ' + asked);
+    await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
+    await page.waitForFunction(pc0 => (window.__printed || 0) > pc0 && !document.querySelector('.cuStat, .btn.working'), pc0, { timeout: 30000 });
+    for (const t0 = Date.now(); !srv.st.list('Order_Timeline').some(x => x._id.startsWith('4176744752~note~cu-anyway-print-')); ) { if (Date.now() - t0 > 8000) throw new Error('no timeline note for the print despite the cancel'); await new Promise(r => setTimeout(r, 150)); }
+    assert.match(srv.st.list('Order_Timeline').find(x => x._id.startsWith('4176744752~note~cu-anyway-print-')).text, /although the order is cancelled/);
+    await page.evaluate(() => Cancelled.load(true));
     // reopened: back to Open, a decision again
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]');
     await page.waitForFunction(() => !B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
@@ -439,7 +452,7 @@ async function browserChecks() {
     const printedBefore = await page.evaluate(() => window.__printed || 0);
     await page.click('#rvList .reviewListRow[data-rid="4176744752"] [data-cu-print]');
     await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat, .btn.working'), printedBefore, { timeout: 30000 });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 3, 'printed from the record');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 4, 'printed from the record (the fourth: one was printed despite a cancel above)');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum), '4176744752', 'the same sticker');
     // a decision answered with "Hold order": the card is seen flying to the Orders tab, and a note says where it is
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
