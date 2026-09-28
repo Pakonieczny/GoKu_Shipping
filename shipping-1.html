@@ -998,7 +998,7 @@
   <!-- Order timeline: this station records each scan, label and shipment on the order's timeline and stops a
        cancelled order ("CANCELLED ORDER — DO NOT PROCEED"). Optional: without station-timeline.js nothing changes. -->
   <script src="order-timeline.js?v=20260928-ov2"></script>
-  <script src="station-timeline.js?v=20260928-ov2"></script>
+  <script src="station-timeline.js?v=20260928-a3-5"></script>
   <script>
     (function () {
       const soft = (p) => { try { if (p && typeof p.catch === "function") p.catch(e => console.warn("StationTimeline:", e)); } catch (_) {} };
@@ -1011,8 +1011,8 @@
       } catch (e) { console.warn("StationTimeline.init failed:", e); }
       window.shipTimeline = {
         /* scan, typing or paste: record it; the module checks for a cancel and shows its own full-screen alert */
-        scanned(orderId, how) {
-          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.scanned(String(orderId), { how })); }
+        scanned(orderId, how, extra) {
+          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.scanned(String(orderId), { how, extra })); }
           catch (e) { console.warn("StationTimeline.scanned failed:", e); }
         },
         did(type, orderId, text, data) {
@@ -2671,7 +2671,8 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
-        window.shipTimeline && window.shipTimeline.scanned(orderNumber, e.stHow || (e.isTrusted ? "typed" : "auto"));
+        window.shipTimeline && window.shipTimeline.scanned(orderNumber, e.stHow || (e.isTrusted ? "typed" : "auto"),
+          { etsyStatus: (orderData && typeof orderData.status === "string") ? orderData.status : "" });   // already read: an Etsy cancel alerts, no extra call
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
