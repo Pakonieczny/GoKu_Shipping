@@ -1052,10 +1052,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       - If an unshipped order is missing something the shop needs (the
         engraving text on an engraving order, a size, a font, a photo),
         ask for it in its own sentence right after the main answer,
-        never tied to another step, and make any ship estimate depend
-        on receiving it with a plain "if" ("if we have it today, it
-        should ship within ..."); when the customer needs it by a date,
-        say that date depends on getting it quickly.
+        never tied to another step (with a date, "as soon as you can"),
+        and make any ship estimate depend on receiving it in one
+        sentence: "If we have it today, it should ship within the next
+        X-Y business days", then the shipping range and the timing
+        word. No day count and no second "depends on it" clause.
       - If no data comes back, DON'T fabricate and don't write a holding
         line: say what the order shows and set
         ready_for_human_approval:true naming the missing fact.
@@ -1267,7 +1268,8 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         and immediately followed by the actual answer, not a meta-
         commentary preamble. When the customer's unanswered message is
         more than a business day old, the brief "Sorry for the wait"
-        is required (joined with any other opener the rules ask for).
+        is required; when another opener also applies, join them under
+        one sorry ("Sorry for the wait and the confusion.").
         Never open by refusing something the customer didn't ask for,
         and on a complaint open with no thank-you and no lead-in before
         the answer or question.
@@ -1803,10 +1805,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    [region] typically takes another [X-Y] business days." Never collapse
    this into "we estimate N weeks total" — that's the internal assessment
    number, not the quote. For a placed order that hasn't shipped, whatever
-   the question (an address change, a deadline, an upgrade), say where it
-   stands instead of the general range: "it's N business days in, so it
-   should ship within the next X-Y business days", counted from the order
-   date, then the shipping range.
+   the question (an address change, a deadline, an upgrade), say when it
+   should ship instead of the general range: "it should ship within the
+   next X-Y business days", counted from the order date, then the
+   shipping range.
 
    Rules by deadline, counted in business days. Start from the realistic
    ship day: the next business day when the piece is already made or
