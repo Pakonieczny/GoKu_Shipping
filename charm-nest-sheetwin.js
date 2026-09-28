@@ -1719,6 +1719,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const made = { files, orders: ids, own: true, at: Date.now() };
     await api("charmNestLibrary", { op: "putSheet", sheet: { id: rec.id, label: made } });
     if (sh) sh.label = made;
+    window.SheetEvents?.qrLabel({ sheetId: rec.id, sheet: `${CODE[rec.metal] || ""} Sheet ${sheetNoOf(rec)}`, setId: "", metal: rec.metal }, ids, files, { own: true, by: whoAmI() });
     agent({ metal: rec.metal, run: rec.runId || null }, "cloud", `${name}: QR label made by hand for its ${ids.length} order${ids.length === 1 ? "" : "s"} (not in an open set)`);
   }
   function renderMenu() {
@@ -2295,6 +2296,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
       await Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null, removedBy: who, removedReason: cancel ? "cancelled" + (note ? ": " + note : "") : note || "on hold", removedAt: Date.now() });
       for (const id of ids) B.pool.rows.delete(id);
+      // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
+      if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${sheetId}-${Date.now()}`, by: who, sheetId, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });
       // 3 · the set: the order leaves the sheets it was on (labels are remade when each sheet is saved again)
       for (const set of [...(B.sets?.values?.() || [])]) {
         let touched = false;
@@ -3054,6 +3057,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           for (const r of rows()) { r.heldAt = null; await Review.repool(r); }
           if (window.RunCtl) RunCtl.poke();
           agent({ bridge: true }, "DS", `Order ${rid} put back in line by ${whoAmI() || "someone"}`);
+          window.SheetEvents?.order({ type: "released", orderId: rid, id: `sw-release-${Date.now()}`, by: whoAmI(), text: "Hold released in the sheet window · back in line" });
           went = true;
         } catch (e) { toast("Hold not released: " + e.message, "bad", 7000); }
         b.disabled = false;

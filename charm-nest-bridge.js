@@ -2176,7 +2176,133 @@ const Carry = window.Carry = (() => {
   return { capture, adopt };
 })();
 
-/* ═══ 20b · Gate — what goes to the laser today ═══════════════════════════════════════════════════════════════════
+/* ═══ 20c · SheetEvents — the sheet side of each order's timeline ═══════════════════════════════════════════════════
+   Paul, 28 Sep (C2, C4, D1-D3): every change to the sheet an order is on. Recorded here, in the browser: a sheet nested
+   again by hand (renested), a merge, a size change, a sheet put in or taken out of the current set, each new Rose Gold
+   green line, a QR label made, a set's commit undone (a note), a saved set recalled, and an order held or released in
+   the sheet window. The server stamps its own (placed, setCommitted, removed, moved, laser, RG cut, seals, arrivals,
+   cancels); none of those are sent from here. Never in a nest's way: the orders are read at once (a few lookups), then
+   handed to OrderTimeline.record when the page is idle, which only queues them. Every event has a stable id, so a retry,
+   a re-render or a second save writes it once. */
+const SheetEvents = window.SheetEvents = (() => {
+  const KEY = "cn.tl.sheets" + (WORKSPACE_SANDBOX ? ":sandbox" : "");
+  let mem = null, saveT = 0;
+  const store = () => { if (mem) return mem; try { const j = JSON.parse(localStorage.getItem(KEY) || "{}"); mem = j && typeof j === "object" && !Array.isArray(j) ? j : {}; } catch (_) { mem = {}; } return mem; };
+  const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { const s = store(), keys = Object.keys(s); if (keys.length > 3000) keys.sort((a, b) => s[a] - s[b]).slice(0, keys.length - 2000).forEach(k => delete s[k]); localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) {} }, 600); };
+  /** true the first time a key is seen (kept across reloads, per side of the sandbox) */
+  const once = key => { const s = store(); if (s[key]) return false; s[key] = Date.now(); save(); return true; };
+  const idle = fn => { const go = () => { try { fn(); } catch (e) { console.warn("[SheetEvents]", e); } }; if (typeof requestIdleCallback === "function") requestIdleCallback(go, { timeout: 1500 }); else setTimeout(go, 0); };
+  const send = list => { if (list.length) idle(() => { const T = window.OrderTimeline; if (T && typeof T.record === "function") for (const e of list) T.record(e); }); };
+  const who = () => { try { return employeeName() || ""; } catch (_) { return ""; } };
+  const ridOf = c => { if (!c || !c.poolId) return ""; const v = String(c.order || c.orderInfo?.receiptId || "").split("/")[0]; return /^\d{4,}$/.test(v) ? v : ""; };
+  const label = sh => sh ? `${METAL_TAG[sh.metal] || sh.metal || ""} Sheet ${sh.sheetIndex || sh.page || 1}` : "";
+  const where = sh => ({ sheetId: sh.sheetId || "", sheet: label(sh), setId: sh.setId && !sh.draft ? sh.setId : "", metal: sh.metal });
+  /** The orders a sheet holds (its order pieces, placed or waiting): Map rid → { pieces, lineKey, transactionId } */
+  function ordersOf(sh) {
+    const out = new Map(); if (!sh) return out;
+    for (const c of sh.charms || []) {
+      const rid = ridOf(c); if (!rid) continue;
+      const o = out.get(rid); const lk = c.lineKey || "", tid = String(c.orderInfo?.transactionId || "");
+      if (!o) out.set(rid, { pieces: 1, lineKey: lk, transactionId: tid });
+      else { o.pieces++; if (o.lineKey !== lk) { o.lineKey = ""; o.transactionId = ""; } }
+    }
+    return out;
+  }
+  const ev = (type, rid, o, w, more) => Object.assign({ type, orderId: rid, sheetId: w.sheetId, sheet: w.sheet, setId: w.setId, lineKey: o && o.lineKey || "", transactionId: o && o.transactionId || "" }, more, { data: Object.assign({ metal: w.metal, pieces: o ? o.pieces : undefined }, more && more.data) });
+  /** A sheet nested again by hand from scratch (pieces placed before may move). Not a merge (merged says it), and not a
+   *  sheet that keeps what it placed and only adds to it (appendOnly: nothing already placed moves). */
+  function renested(sh) {
+    try {
+      if (!sh || sh.appendOnly || sh._mergeNext || !(sh.fileBase || (sh.placements || []).length)) return;
+      const w = where(sh), at = Date.now(), by = who();
+      send([...ordersOf(sh)].map(([rid, o]) => ev("renested", rid, o, w, { id: `${w.sheetId || sh.metal + "-" + sh.page}-${at}`, at, by, text: `${w.sheet} nested again by hand` })));
+    } catch (e) { console.warn("[SheetEvents] renested", e); }
+  }
+  /** Options → Merge sheets: each order that moves (move) or is nested again (renest), from its sheet to the target. */
+  function merged(kind, pages, target, at) {
+    try {
+      const to = where(target), by = who(), out = [];
+      for (const p of kind === "move" ? pages.filter(p => p !== target) : pages) {
+        const from = where(p);
+        for (const [rid, o] of ordersOf(p)) out.push(ev("merged", rid, o, from, { id: `${at}-${from.sheetId || p.page}`, at, by,
+          text: kind === "move" ? `Moved from ${from.sheet} onto ${to.sheet} (merge)` : p === target ? `${to.sheet} re-nested with its later sheets` : `${from.sheet} merged into ${to.sheet} and re-nested`,
+          data: { kind, from: from.sheet, to: to.sheet, fromSheetId: from.sheetId, toSheetId: to.sheetId } }));
+      }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] merged", e); }
+  }
+  /** Apply size (10K, 14K, Rose Gold): every order on the metal's sheets that change, with the old and new mm. */
+  function sizeChanged(pages, fromMm, toMm) {
+    try {
+      const r = v => Math.round(v * 100) / 100, a = fromMm.map(r), b = toMm.map(r); if (a[0] === b[0] && a[1] === b[1]) return;
+      const at = Date.now(), by = who(), out = [];
+      for (const p of pages) { const w = where(p); for (const [rid, o] of ordersOf(p)) out.push(ev("sizeChanged", rid, o, w, { id: `${at}-${w.sheetId || p.page}`, at, by, text: `${w.sheet}: ${a[0]} × ${a[1]} mm → ${b[0]} × ${b[1]} mm`, data: { fromMm: a, toMm: b } })); }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] size", e); }
+  }
+  /** "Include Sheet N in current set", ticked or unticked (10K, 14K; Rose Gold by its metal). Once per real change. */
+  const member = new Map();
+  function membership(pages, included) {
+    try {
+      const at = Date.now(), by = who(), out = [], type = included ? "included" : "excluded";
+      for (const p of pages) {
+        const k = p.sheetId || p.metal + "-" + p.page; if (member.get(k) === !!included) continue; member.set(k, !!included);
+        const w = where(p);
+        for (const [rid, o] of ordersOf(p)) out.push(ev(type, rid, o, w, { id: `${k}-${at}`, at, by, text: included ? `${w.sheet} included in the current set` : `${w.sheet} taken out of the current set` }));
+      }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] membership", e); }
+  }
+  const fnv = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+  /** A QR label made or made again for a sheet: each order on it, once per label (the same codes again are the same label). */
+  function qrLabel(w, ids, files, more) {
+    try {
+      const code = fnv((files || []).map(f => f.payload || "").join("|") + "|" + (ids || []).join()), at = Date.now(), out = [];
+      for (const rid of ids || []) {
+        if (!/^\d{4,}$/.test(String(rid)) || !once(`q~${rid}~${w.sheetId}~${code}`)) continue;
+        out.push(ev("qrLabel", String(rid), null, w, Object.assign({ id: `${w.sheetId}-${code}`, at, text: `QR label for ${w.sheet}${more && more.set ? ` · ${more.set}` : ""}` }, more && more.by ? { by: more.by } : {}, { data: { labels: (files || []).length, set: more && more.set || undefined, own: more && more.own || undefined } })));
+      }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] qrLabel", e); }
+  }
+  /** Each new Rose Gold green line: the orders whose pieces it covers (a line prepared again keeps its date and its event). */
+  function roseLines(sh) {
+    try {
+      const w = where(sh), byId = new Map((sh.charms || []).map(c => [c.id, c])), out = [];
+      for (const s of sh.rosePlan?.stages || []) {
+        const at = Number.isFinite(+s.at) && +s.at > 1e12 ? +s.at : 0;
+        if (!w.sheetId || !once(`r~${w.sheetId}~${s.n}~${at}`)) continue;
+        const mine = new Map(); for (const id of s.ids || []) { const rid = ridOf(byId.get(id)); if (rid) mine.set(rid, (mine.get(rid) || 0) + 1); }
+        for (const [rid, n] of mine) out.push(ev("roseLine", rid, { pieces: n }, w, Object.assign({ id: `${w.sheetId}-L${s.n}-${at}`, text: `RG green line ${s.n} on ${w.sheet}`, data: { line: s.n, stockId: sh.roseStock?.id || undefined } }, at ? { at } : {})));
+      }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] rose line", e); }
+  }
+  /** A set's commit undone: a note on each order it reopened (the commit itself is stamped by the server). */
+  function undone(set, rids) {
+    try {
+      const at = Date.now(), by = who(), w = { sheetId: "", sheet: "", setId: set.setId || "", metal: undefined };
+      send((rids || []).map(String).filter(rid => /^\d{4,}$/.test(rid)).map(rid => ev("note", rid, null, w, { id: `${set.setId}-undo-${at}`, at, by, text: `Set commit undone · ${set.name || set.setId} (reopened at the Design Station)`, data: { set: set.name || undefined, undo: true } })));
+    } catch (e) { console.warn("[SheetEvents] undo", e); }
+  }
+  /** A saved set or run put back on the cards by a person (the page's own reopening at boot is not one). */
+  function recalled(recs, name) {
+    try {
+      const at = Date.now(), by = who(), n = {}, out = [];
+      for (const rec of recs || []) {
+        n[rec.metal] = (n[rec.metal] || 0) + 1;
+        const w = { sheetId: rec.id || "", sheet: `${METAL_TAG[rec.metal] || rec.metal || ""} Sheet ${rec.sheetIndex || n[rec.metal]}`, setId: rec.setId || "", metal: rec.metal };
+        for (const rid of [...new Set((rec.orders || []).map(String))]) if (/^\d{4,}$/.test(rid)) out.push(ev("recalled", rid, null, w, { id: `${w.sheetId}-${Math.floor(at / 60000)}`, at, by, text: `${w.sheet} recalled onto the cards${name ? " · " + name : ""}` }));
+      }
+      send(out);
+    } catch (e) { console.warn("[SheetEvents] recall", e); }
+  }
+  /** One event of one order (the sheet window's hold and release). */
+  function order(e) { try { if (e && /^\d{4,}$/.test(String(e.orderId || ""))) send([Object.assign({ by: who() }, e, { orderId: String(e.orderId) })]); } catch (_) {} }
+  return { renested, merged, sizeChanged, membership, qrLabel, roseLines, undone, recalled, order, label, where, ordersOf };
+})();
+
+/* ═══ 20b · Gate — what goes to the laser today═══════════════════════════════════════════════════════════════════
    The rules live in CharmNestOrders.planRelease and are tested there. This is the part that knows the shop: the record
    of when each slow material last went out (shop-wide, in the cloud, not in one browser), the day a person opened one
    early, the footprint of a line from its master design, and the one line on each material's card that says what is
@@ -2373,9 +2499,12 @@ const Gate = window.Gate = (() => {
     }
     R.membershipError=null;R.membershipPending=true;
     Session.schedule();refreshMembership();
-    if(!run){R.membershipPending=false;refreshMembership();return Promise.resolve();}
+    // each order on the sheets ticked or unticked, with who, once the choice is saved (SheetEvents)
+    const onTimeline=()=>window.SheetEvents?.membership(list.length ? list : allSheets().filter(p=>p.metal===m && (!run || !p.runId || p.runId===run.runId)),!!included);
+    if(!run){R.membershipPending=false;refreshMembership();onTimeline();return Promise.resolve();}
     const revision=run.membershipRevision;
     const task=assemble(run).then(async()=>{await RunCtl.save(run);if(run.membershipRevision===revision){run.membershipDirty=false;R.membershipError=null;RunCtl.membershipUpdated?.(run);}}).catch(e=>{if(run.membershipRevision===revision){R.membershipError=e.message;toast('Set selection not saved: '+e.message+' — Retry in Options','bad');}throw e;}).finally(()=>{if(run.membershipRevision===revision){R.membershipPending=false;refreshMembership();RunCtl.poke();}});
+    task.then(onTimeline,()=>{});
     R.membershipTask=task;R.membershipRun=run.runId;return task;
   }
   async function flush(run) {
@@ -2471,10 +2600,13 @@ const Gate = window.Gate = (() => {
         // Recheck after any short, conflicting record write finishes. A solver
         // may have started, or the user may have opened a different run.
         if(B.run!==run || !editable(sh) || sh.roseCutAt || (m==='rose'&&pagesOf(m).some(p=>p.roseStock)))throw new Error('This material changed while saving. Apply its size again when it is ready.');
+        const was=stockFor(m);
         S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();
         if(+width.value===w)width._draft=false;
         if(+height.value===h)height._draft=false;
-        for(const p of pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt)){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
+        const resized=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt);
+        window.SheetEvents?.sizeChanged(resized,[was.wIn*25.4,was.hIn*25.4],[w,h]);   // on the orders' timelines (idle time)
+        for(const p of resized){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
         changed();
       };
       node._sizeApplying=true;renderRelease(sh,node);
@@ -2586,6 +2718,7 @@ const Gate = window.Gate = (() => {
       }
       // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is written again)
       if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { try { await assemble(run, ctx); } catch (e) { changed(); throw e; } }
+      window.SheetEvents?.merged(kind, pages, t, st.busy.at);   // each order that moves, from its sheet to Sheet 1 (idle time)
       const moving = sources.flatMap(p => p.charms), poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
       // onto Sheet 1 first, with their approved backs; only then is anything taken away
       for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
@@ -4803,6 +4936,7 @@ const Sets = window.Sets = (() => {
     set.labels = null; // A previously collected PDF/manifest no longer describes these sheet labels.
     if (!labelsOnly) set.status = "nesting";
     await save(set);
+    window.SheetEvents?.qrLabel(window.SheetEvents.where(sh), ids, files, { set: set.name });   // each order on the label (idle time)
     if (window.RunHistory) RunHistory.refreshIfOpen();
     agent({ metal: sh.metal, run: sh.runId }, "cloud", `${sh.fileBase}: ${files.length} label${files.length === 1 ? "" : "s"} saved (${ids.length} order${ids.length === 1 ? "" : "s"}) · set ${set.name} now ${set.sheetIds.length} sheet(s)`);
     Orders.render();
@@ -4929,6 +5063,7 @@ const Sets = window.Sets = (() => {
     const reopened = (set.committed || []).map(String);
     if (reopened.length) { await DesignLink.ensure(); await DesignLink.call("complete.undo", { receiptIds: reopened }, { timeoutMs: 180000 }); }
     set.status = "awaiting review"; set.committed = []; set.committedAt = null; set.completedAt = null; set.completionDay = null; await save(set);
+    window.SheetEvents?.undone(set, reopened);   // a note on each reopened order (idle time)
     await Pool.update([...B.pool.rows.keys()].filter(id => (B.pool.rows.get(id) || {}).setId === set.setId), { state: "written" });
     for (const row of Orders.rows()) if (row.state === "committed" && reopened.includes(String(row.order.receiptId))) row.state = "written";
     if (B.run && (B.run.setId === set.setId || (B.run.setIds || []).includes(set.setId))) { B.run.status = "review"; B.run.step = "engrave"; await RunCtl.save(B.run); RunCtl.renderBanner(); }
@@ -9038,6 +9173,7 @@ const Recall = window.Recall = (() => {
       prim.active = 0; prim.el = prim.cardEl; CN.showPage(m.key, 0);
     }
     CN.refreshAllCards(); CN.renderRail(); CN.updateTopSub();
+    if (!sel.quiet) window.SheetEvents?.recalled(sheets, sheets[0].setSeq ? "Set-" + sheets[0].setSeq : "");   // a person's recall, on each order (idle time)
     // and the run's orders, as the Orders tab's own rows
     if (RC.runId) await ordersOf(RC.runId, sheets).catch(e => agent({ run: RC.runId }, "warn", `orders of the run: ${e.message}`));
     Engrave.fromRecall(); Review.syncOrderItems(); Review.render();
