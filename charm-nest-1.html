@@ -2763,8 +2763,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=m15"></script>
-<script src="charm-nest-timeline-ui.js?v=m15"></script>
+<script src="charm-nest-motion.js?v=m18"></script>
+<script src="charm-nest-timeline-ui.js?v=m18"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -4954,7 +4954,10 @@ function fillSrcRow(el, src) {
     ${rv ? `<div class="srcState">${rv}</div>` : ""}
     <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${src.state === "master" ? `<button class="btn gold xs" data-tolib="1">Index into the charm library</button><button class="btn ghost xs" data-nestanyway="1">Nest these charms anyway</button>` : ""}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
   // the file and its charms not yet placed are gone for good: its row folds away (renderRail), and so do their thumbnails on the cards
-  $(".srcX", el).onclick = () => { const ids = new Set(src.charms.map(c => c.id)), gs = queueGhosts(document, id => ids.has(id)); removeSource(src); const went = !S.sources.includes(src); gs.forEach(g => went ? Motion.fade(g) : g.remove()); };
+  // (the cards it touched redraw once the fold is done: redrawn under it, their pictures stalled it by up to ~94 ms)
+  $(".srcX", el).onclick = () => { const ids = new Set(src.charms.map(c => c.id)), gs = queueGhosts(document, id => ids.has(id)); holdCards(window.Motion ? Motion.T.fade : 0, () => removeSource(src)); const went = !S.sources.includes(src);
+    if (went) for (const img of $$('[data-r="queue"] img[data-cid]')) if (ids.has(img.dataset.cid)) img.style.visibility = "hidden";   // its copies fade where they stood
+    gs.forEach(g => went ? Motion.fade(g) : g.remove()); };
   // the file goes to Master files: its row flies to that screen's place in the Workspace menu, which answers with a note
   { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes, key = "src:" + src.id;
     window.Motion?.expect(key, { to: masterSpot, plus: false, note: { text: `${name} went to Master files`, ms: 6000 } });
@@ -5094,9 +5097,22 @@ function tabMarks(sh) {
    drawn at each refresh, and a long day keeps many. renderCard still runs for each page: without a card it only notes
    when the card's work began and schedules the checkpoint. */
 function refreshAllCards() { for (const sh of allSheets()) { if (sh.el || sh.dirty) computeSaturation(sh); renderCard(sh); } }
+/* While `fn` runs, the cards it redraws wait `ms` (a fold that must stay smooth), then redraw one a frame: the state is
+   changed and saved at once, only the drawing waits. */
+var cardHold = null;   // (var: renderCard may run before this line)
+function holdCards(ms, fn) {
+  if (cardHold || !ms || !window.Motion || Motion.reduced()) return fn();
+  const held = cardHold = new Set();
+  try { return fn(); }
+  finally {
+    cardHold = null;
+    if (held.size) setTimeout(() => { const next = () => { const sh = held.values().next().value; if (!sh) return; held.delete(sh); renderCard(sh); if (held.size) requestAnimationFrame(next); }; next(); }, ms);
+  }
+}
 function renderCard(sh) {
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
+  if (cardHold && sh.el) { cardHold.add(sh); return; }
   const el = sh.el; if (!el) return; const q = r => $(`[data-r="${r}"]`, el); const st = stockFor(sh.metal, sh);
   if (q("backs")) q("backs").innerHTML = window.Engrave ? Engrave.backsMarkup(sh) : "";
   const rc = sh.recalled && !sh.charms.length ? sh.recalled : null;        // a saved sheet shown from its record
