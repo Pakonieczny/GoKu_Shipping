@@ -14055,6 +14055,21 @@ async function _handlerImpl(event) {
       };
       const isFinal = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(st));
       const isSucceeded = (st) => normState(st) === "JOB_STATE_SUCCEEDED";
+      const checkValidation = async (batchName, initialStatus) => {
+        let status = initialStatus || await inProcess({ kind: "batch_status", batchName });
+        if (normState(status?.state) === "JOB_STATE_PENDING") {
+          await guardRef.set({ stage: "validating new job" }, { merge: true });
+          while (normState(status?.state) === "JOB_STATE_PENDING" &&
+                 Date.now() - sweepStart + 5000 < SWEEP_BUDGET_MS) {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+            status = await inProcess({ kind: "batch_status", batchName });
+          }
+        }
+        if (!status?.ok || !status.state) {
+          throw new Error(status?.error?.message || "Could not confirm provider validation; remaining sets stay queued");
+        }
+        return status;
+      };
 
       let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
 
@@ -14086,7 +14101,8 @@ async function _handlerImpl(event) {
         if (!b.batchName || b.locallyQueued || isFinal(b.state)) continue;
         let state = b.state;
         if (!isSucceeded(state)) {
-          const st = await inProcess({ kind: "batch_status", batchName: b.batchName });
+          let st = await inProcess({ kind: "batch_status", batchName: b.batchName });
+          if (normState(st?.state) === "JOB_STATE_PENDING") st = await checkValidation(b.batchName, st);
           statusChecked++;
           state = st?.state || state;
           // Admission below must use the state we just fetched, not the
@@ -14110,22 +14126,39 @@ async function _handlerImpl(event) {
       const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName &&
         !b.collected && !b.responsesFile && (isFinal(b.state) || b.state === "JOB_STATE_QUEUED") && b.batchName &&
         Number(b.retryAttempt || 0) < 5);
+      let refillNeedsContinuation = false;
       for (const b of waiting) {
-        if (activeCount >= 30 || retriesSubmitted >= 20 || Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        if (activeCount >= 30) break;
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) {
+          refillNeedsContinuation = true;
+          break;
+        }
+        await guardRef.set({ stage: "submitting queued sets" }, { merge: true });
         const retry = await inProcess({ kind: "batch_retry_missing", batchName: b.batchName });
-        if (retry?.queued) break;
+        if (retry?.queued) {
+          refillNeedsContinuation = retry.reason === "Waiting for provider validation" &&
+            Date.now() - sweepStart + 5000 >= SWEEP_BUDGET_MS;
+          break;
+        }
         if (retry?.batchName && retry.batchName !== b.batchName) {
           retriesSubmitted++;
           // The provider can reject a newly created batch during validation.
           // Stop this sweep at the first observed quota refusal instead of
           // sending the rest of the queue into the same rejection.
-          const fresh = await inProcess({ kind: "batch_status", batchName: retry.batchName });
-          if (fresh?.state === "JOB_STATE_FAILED") {
+          // A newly created job normally starts in validation. Keep this
+          // background worker alive until validation finishes, so the next
+          // queued set does not have to wait for another ten-minute cron.
+          const fresh = await checkValidation(retry.batchName);
+          if (isFinal(fresh.state)) {
             console.warn("[batch_sweep] provider rejected retry:", retry.batchName,
               fresh.providerError || "reason pending");
             break;
           }
-          activeCount++;
+          if (!isSucceeded(fresh.state)) activeCount++;
+          if (normState(fresh.state) === "JOB_STATE_PENDING") {
+            refillNeedsContinuation = activeCount < 30;
+            break;
+          }
         } else if (retry?.complete || /already in Completed_Listing_Sets/i.test(retry?.error?.message || "")) {
           await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
             retryRequested: false, retryStatus: "complete_or_protected",
@@ -14164,8 +14197,22 @@ async function _handlerImpl(event) {
         stage: "idle",
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
-          waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length },
+          waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
+          refillContinuing: refillNeedsContinuation },
       }, { merge: true });
+      // Continue with a fresh background budget. The same shared admission
+      // guard still validates every job and enforces the global 30-job cap.
+      if (refillNeedsContinuation && origin) {
+        try {
+          const next = await fetch(`${origin}/.netlify/functions/geminiImageProxy-background`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "batch_sweep" }),
+          });
+          if (!next.ok) throw new Error(`HTTP ${next.status}`);
+        } catch (err) {
+          await guardRef.set({ lastError: `Queue continuation failed: ${err?.message || err}. The scheduled check will retry.` }, { merge: true });
+        }
+      }
       return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
         retriesSubmitted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {

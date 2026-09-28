@@ -13143,6 +13143,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
       const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : null;
+      const sweep = _batchSweepInfo;
+      const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
+      const refilling = waitingRetries > 0 && running < _batchRetryLimit && sweepIsRunning &&
+        ["submitting queued sets", "validating new job"].includes(sweep.stage);
 
       // Headline.
       let headline, headlineColor;
@@ -13156,6 +13160,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Complete"; headlineColor = "#7fdb96";
       } else if (cancelling) {
         headline = "Stopping jobs"; headlineColor = "#fde68a";
+      } else if (refilling) {
+        headline = "Filling queue"; headlineColor = "#93c5fd";
       } else if (providerWaiting) {
         headline = "Waiting for OpenAI"; headlineColor = "#fde68a";
       } else if (waitingRetries && running >= _batchRetryLimit) {
@@ -13190,8 +13196,6 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (lastProviderCheck) rows.push(["Last provider check", new Date(lastProviderCheck).toLocaleTimeString()]);
       const lastSavedAt = Math.max(0, ...session.batches.map((b) => Number(b.collectedAt || 0)));
       if (lastSavedAt) rows.push(["Last set saved", `${new Date(lastSavedAt).toLocaleTimeString()} · ${_formatDuration(Date.now() - lastSavedAt)} ago`]);
-      const sweep = _batchSweepInfo;
-      const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
       const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
       if (waitingRetries) {
         rows.push(["Collector", sweepIsRunning ? `Running · ${sweep.stage || "checking jobs"}` :
@@ -13222,6 +13226,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
+        : refilling ? (sweep.stage === "validating new job"
+          ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
         : providerWaiting
         ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`

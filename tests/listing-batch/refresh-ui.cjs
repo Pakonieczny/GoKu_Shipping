@@ -86,10 +86,10 @@ async function check({ queued = false, automatic = false } = {}) {
     { batchName: "batch_failed", displayName: "lg1-Beady_Necklace-300sets-test-part31of300",
       state: "JOB_STATE_FAILED", retryRequested: true, setsCount: 1 },
   ];
-  const render = (jobs) => vm.runInNewContext(`${source.slice(renderStart, renderEnd)}; _renderSessionBlock({
+  const render = (jobs, sweep = null) => vm.runInNewContext(`${source.slice(renderStart, renderEnd)}; _renderSessionBlock({
     sessionId: "sess_test", batches, earliest: Date.now() - 3 * 3600000, latest: Date.now()
   })`, {
-    batches: jobs, Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: now + 600000,
+    batches: jobs, Date, _batchRetryLimit: 30, _batchSweepInfo: sweep, _batchNextSweepAt: now + 600000,
     _normBatchState: (x) => x, _batchSafeText: (x) => String(x),
     _formatDuration: (ms) => `${Math.round(ms / 3600000)}h`,
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }),
@@ -121,5 +121,12 @@ async function check({ queued = false, automatic = false } = {}) {
   ]);
   assert.match(partial, /1 \/ 300/, "a partly saved set is not counted as complete");
   assert.match(partial, /1 need attention/, "missing images remain visible");
+  const filling = render([...batches.slice(0, 7), batches[30]], { runningSince: now - 5000, stage: "validating new job" });
+  const fillingSummary = filling.slice(0, filling.indexOf('<details class="batch-details"'));
+  assert.match(fillingSummary, /Filling queue/);
+  assert.match(fillingSummary, /OpenAI is validating the next set/);
+  assert.match(fillingSummary, /7 active jobs · 1 queued/);
+  const staleFilling = render([...batches.slice(0, 7), batches[30]], { runningSince: now - 15 * 60000, stage: "validating new job" });
+  assert(!staleFilling.includes('>Filling queue</div>'), "stale worker state cannot pretend the queue is filling");
   console.log("Listing refresh UI: provider check, feedback, collection, retry sweep passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });
