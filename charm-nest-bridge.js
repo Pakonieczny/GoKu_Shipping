@@ -8411,7 +8411,7 @@ const OrderWin = window.OrderWin = (() => {
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled");
+      unmountTimeline(); W.row = null; W.rows = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
@@ -8616,7 +8616,7 @@ const OrderWin = window.OrderWin = (() => {
     dot.hidden = !(W.rid && byId("owPaneTeam")?.hidden && TeamMail.isNew(W.rid, TeamMail.thread(W.rid).list));
   }
   function toggleSkip() {
-    const r = inPull(W.key); if (!r) return;
+    const r = inPull(W.key); if (!r || r.state === "gone") return;
     const who = me() || askEmployee(); if (!who) return;
     const on = r.state !== "skipped";
     if (on) { r.state = "skipped"; r.reason = "line skipped by " + who; r.problems = []; r.hold = r.reason; }
@@ -8643,7 +8643,7 @@ const OrderWin = window.OrderWin = (() => {
     const pv = byId("owPrev"), nx = byId("owNext");
     pv.hidden = nx.hidden = !on; pv.disabled = W.at <= 0; nx.disabled = W.at >= list.length - 1;
     // the Skip switch is the cutting flow's: a line of the pull
-    byId("owSkipBox").hidden = !inPull(r.key);
+    byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
   }
   /** Paint the window from the row it is showing. */
   function paint() {
@@ -8672,7 +8672,8 @@ const OrderWin = window.OrderWin = (() => {
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
     notes.className = said.length ? "owSaid" : "owSaid none";
-    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? "Reading the order…" : "— the customer wrote nothing —";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? "Reading the order…" : r.said || "— the customer wrote nothing —";
+    const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
     paintNote(r);
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], where = tryDo(() => Orders.placeOf(r));
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
@@ -9220,11 +9221,14 @@ const OrderWin = window.OrderWin = (() => {
     if (W.closing) { W.closing = false; stopMotion(); W.dlg.classList.remove("owBack"); }
     if (W.key && W.key !== key) { clearTimeout(W.noteTimer); saveNote(); }
     if (!W.dlg.open) W.key = null;
+    // (a look-up still running for the order this view showed before never draws its spinner line over this one)
+    if (!r.loading) lookDone();
     W.row = inPull(key) ? null : r;
     if (!W.row && !(W.rows || []).includes(r)) W.rows = null;
     if (fresh || opts.walk !== undefined) W.walk = opts.walk !== false && !W.row;
     const other = rid !== W.rid || fresh;
     if (other || opts.highlight !== undefined) W.hl = opts.highlight || null;
+    if (!fresh && (other || opts.dir)) W.from = null;
     showOrder(rid, r);
     W.key = key;
     if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
@@ -9274,12 +9278,12 @@ const OrderWin = window.OrderWin = (() => {
     row.problems = []; return row;
   }
   async function lookUp(rid, say) {
-    let pools = [];
-    try { pools = ((await api("charmNestLibrary", { op: "poolList", orderId: rid }, { quiet: true })).pools || []).filter(p => !["abandoned", "superseded"].includes(p.state)); } catch (e) { console.warn("order view: pool", e.message); }
+    let pools = [], failed = null;
+    try { pools = ((await api("charmNestLibrary", { op: "poolList", orderId: rid }, { quiet: true })).pools || []).filter(p => !["abandoned", "superseded"].includes(p.state)); } catch (e) { failed = e; console.warn("order view: pool", e.message); }
     const runs = [...new Set(pools.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(p => p.runId).filter(Boolean))];
     if (!runs.length) {
       say("Looking for the order on the Library's sheets…");
-      try { const f = await api("charmNestLibrary", { op: "findSheets", q: rid, fallback: false }, { quiet: true }); for (const s of (f.sheets || []).concat(f.rows || [])) if (s.runId && !runs.includes(s.runId)) runs.push(s.runId); } catch (e) { console.warn("order view: find", e.message); }
+      try { const f = await api("charmNestLibrary", { op: "findSheets", q: rid, fallback: false }, { quiet: true }); for (const s of (f.sheets || []).concat(f.rows || [])) if (s.runId && !runs.includes(s.runId)) runs.push(s.runId); } catch (e) { failed = failed || e; console.warn("order view: find", e.message); }
     }
     let rows = [];
     for (const runId of runs.slice(0, 3)) {
@@ -9287,7 +9291,7 @@ const OrderWin = window.OrderWin = (() => {
       try {
         const r = await api("charmNestLibrary", { op: "runGet", runId, archived: true, orders: [rid] }, { quiet: true });
         rows = Object.entries((r.run && r.run.lines) || {}).filter(([, l]) => String(l.orderId) === rid).map(([k, l]) => Orders.rowFromRecord(k, l));
-      } catch (e) { console.warn("order view: run", e.message); }
+      } catch (e) { failed = failed || e; console.warn("order view: run", e.message); }
       if (rows.length) break;
     }
     // no line kept: the pool's own pieces say what was cut for it
@@ -9295,7 +9299,8 @@ const OrderWin = window.OrderWin = (() => {
       const byLine = new Map(); for (const p of pools) { const k = p.lineKey || `${rid}_${p.transactionId || ""}`; if (!byLine.has(k)) byLine.set(k, p); }
       rows = [...byLine].map(([k, p]) => Orders.rowFromRecord(k, { orderId: rid, transactionId: p.transactionId, sku: p.sku, material: p.material, quantity: p.quantity, state: p.state === "complete" ? "committed" : p.state, createTs: p.orderDate ? Math.round(p.orderDate) : 0, arrivedAt: p.arrivedAt, poolIds: pools.filter(q => (q.lineKey || "") === k).map(q => q.poolId) }));
     }
-    if (!rows.length) return null;
+    // (nothing found because a read failed is not "nothing there": the view says the records could not be read)
+    if (!rows.length) { if (failed) throw failed; return null; }
     try { await Orders.loadMaps(); } catch (_) {}
     for (const row of rows) { specOf(row); row._pools = pools; if (!(row.poolIds || []).length) row.poolIds = pools.filter(p => p.lineKey === row.key).map(p => p.poolId); }
     // a custom order finished by hand keeps its own record
@@ -9303,14 +9308,18 @@ const OrderWin = window.OrderWin = (() => {
     await Promise.all(rows.map(async row => { try { const c = await api("charmNestLibrary", { op: "customGet", key: row.key }, { quiet: true }); if (c && c.record && !row.spec.customDone) row.spec.customDone = c.record; } catch (_) {} }));
     return rows;
   }
+  /** The look-up's spinner line put away, and whatever look-up is still running told to leave it so. */
+  function lookDone() { W.look++; const l = byId("owLoading"); if (l) l.hidden = true; }
   /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
    *  opts: { highlight, from, view } (a search passes highlight: the number is lit as the view opens). */
   async function openOrder(rid, opts = {}) {
     wire(); if (!W.dlg) return;
     rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
     const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from;
-    // (a search passes the line it found: that line of the pull, else the order's first)
-    const pulled = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid && r.state !== "gone");
+    // (a search passes the line it found: that line of the pull, else the order's first; an order whose lines are all
+    // gone from the pull, cancelled or no longer open, shows those lines as they are)
+    const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");
+    const pulled = live.length ? live : ofRid;
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
     if (pulled.length) return show(mine || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
@@ -9318,13 +9327,16 @@ const OrderWin = window.OrderWin = (() => {
     W.rows = null;
     say("Looking up order " + rid + " in the sorter's records…");
     show(stub, Object.assign({}, o, { view: o.view && o.view !== "sheet" ? o.view : o.view === "sheet" ? "sheet" : "info" }));
-    let rows = null;
-    try { rows = await lookUp(rid, say); } catch (e) { console.warn("order view: look-up", e); }
+    let rows = null, failed = null;
+    try { rows = await lookUp(rid, say); } catch (e) { failed = e; console.warn("order view: look-up", e); }
     if (tok !== W.look || !W.dlg.open || W.key !== stub.key) return;
     say(null);
     if (!rows || !rows.length) {
-      stub.loading = false; stub.state = ""; paint();
-      byId("owNotes").textContent = "This order has no line in the sorter's records: it was never pulled, or its run is gone. Its timeline and messages are still here.";
+      stub.loading = false; stub.state = "";
+      // (kept on the line, so a repaint of the view says it again; a read that failed can be tried again)
+      stub.said = failed ? `The order's records could not be read just now (${esc(String(failed.message || failed).slice(0, 160))}). Its timeline and messages are still here. <button type="button" class="btn ghost xs" data-ow-retry>Try again</button>`
+        : "This order has no line in the sorter's records: it was never pulled, or its run is gone. Its timeline and messages are still here.";
+      paint();
       TeamMail.load(rid, true); refreshNote(stub); try { window.CustomerMail?.orderShown(stub, {}); } catch (_) {}
       return;
     }
