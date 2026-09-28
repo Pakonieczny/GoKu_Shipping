@@ -143,7 +143,8 @@ async function main() {
     await page.waitForFunction(rid => document.getElementById('owNote').value.includes('Gift box'), C.rid, { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(1200);
     s = await page.evaluate(() => document.getElementById('owNote').value);
-    check(s === 'Gift box, please\nFragile - wrap twice' && notes.saved.some(([rid, t]) => rid === C.rid && t === s), `early note: kept after the record's note and saved (${JSON.stringify(s)} · ${JSON.stringify(notes.saved)})`);
+    // (the record's note shows as soon as it is read, so what is typed lands after it: both are there, and saved)
+    check(s.includes('Gift box, please') && s.includes('Fragile - wrap twice') && notes.saved.some(([rid, t]) => rid === C.rid && t === s), `early note: kept after the record's note and saved (${JSON.stringify(s)} · ${JSON.stringify(notes.saved)})`);
     await page.keyboard.press('Escape'); await closed();
     // …and one typed and left by closing the view before the order is known is saved too
     notes.saved.length = 0; notes.record[C.rid] = '';

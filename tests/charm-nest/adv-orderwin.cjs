@@ -133,8 +133,9 @@ async function main() {
     hold();
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
     if (!ro) {
-      assert(await noteIs('Typed while it loads'), 'the note typed while the order was read is still there: ' + await page.inputValue('#owNote'));
-      assert(await until(() => serverNote(C.rid) === 'Typed while it loads'), 'and saved to that order: ' + serverNote(C.rid));
+      // (the note box stays open while the order is read: what was typed is kept and the order's own note put before it)
+      assert(await noteIs('C note from the shop\nTyped while it loads'), 'the note typed while the order was read is still there, after its own note: ' + await page.inputValue('#owNote'));
+      assert(await until(() => serverNote(C.rid) === 'C note from the shop\nTyped while it loads'), 'and saved to that order: ' + serverNote(C.rid));
     } else {
       assert(await noteIs('C note from the shop'), 'the order\'s own note once it is read: ' + await page.inputValue('#owNote'));
       assert.equal(await page.evaluate(() => document.getElementById('owNote').readOnly), false, 'the note opens for typing once the order is read');

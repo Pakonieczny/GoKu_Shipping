@@ -8812,7 +8812,7 @@ const OrderWin = window.OrderWin = (() => {
   /** The order's notes as they stand now: another station, or another sorter, may have written since this pull. Read
    *  only; a note being typed, or one waiting to be saved, is never replaced by what the record said a moment ago. */
   async function refreshNote(r) {
-    const rid = String(r.order.receiptId); let known;
+    const rid = String(r.order.receiptId), t0 = Date.now(); let known;
     try {
       const res = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}${WORKSPACE_SANDBOX ? "&sandbox=1" : ""}`, { signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
       if (!res.ok) return;
