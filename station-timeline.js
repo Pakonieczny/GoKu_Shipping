@@ -13,7 +13,8 @@
  *        read from Etsy — also counts as a cancel when it says so (no extra Etsy call).
  *    StationTimeline.did(type, orderId, text, data)   welded · assembled · packed · labelPrinted · shipped ·
  *        etsyCompleted · sorted (any station type). Stable id `${device}-${orderId}-${type}-${minute}`.
- *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch)
+ *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch; a "cancelled"
+ *     that comes after the 2.5 s then goes to opts.onLate(record) instead of the module's alert)
  *    StationTimeline.isCancelled(orderId)  → the cached cancel record ({ at, by, why, source }) or null
  *    StationTimeline.guard(orderId, { action, anchor })  → Promise<boolean>: true to go on. For a cancelled order it
  *        asks "This order is cancelled. Do it anyway?" inline (inside the alert while it is up); a yes is recorded.
@@ -123,7 +124,7 @@
       opts = opts || {};
       const how = HOW.has(opts.how) ? opts.how : "scan", at = Date.now(), by = who();
       const extra = small(opts.extra);
-      const res = await check(id, extra, rec => { try { if (!opts.quiet) showAlert(id, rec); } catch (e) { warn("alert failed", e); } });
+      const res = await check(id, extra, rec => { try { if (!opts.quiet) showAlert(id, rec); else if (typeof opts.onLate === "function") opts.onLate(rec); } catch (e) { warn("alert failed", e); } });
       const data = { how, check: res.state };
       if (res.why) data.checkNote = res.why;
       if (extra) data.extra = extra;
