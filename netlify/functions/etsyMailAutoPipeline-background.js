@@ -109,7 +109,7 @@ const CONFIG_COLL  = "EtsyMail_Config";
 // deploy). Once the doc is written, these are ignored — the doc is the
 // single source of truth and the inbox UI is the only knob that matters.
 const FALLBACK_THRESHOLD = 0.80;
-const FALLBACK_ENABLED   = true;
+const FALLBACK_ENABLED   = false;   // auto-send OFF unless the owner saved it ON
 
 // Don't auto-reply to messages older than this when re-processing.
 // Protects against accidental backfills auto-sending to old threads.
@@ -162,7 +162,7 @@ async function getAutoPipelineConfig() {
       const rawQuiet = typeof d.quietPeriodMinutes === "number" ? d.quietPeriodMinutes : 5;
       const quietPeriodMinutes = Math.max(0, Math.min(60, rawQuiet));
       value = {
-        enabled  : d.enabled !== false,             // default true if doc exists but unset
+        enabled  : d.enabled === true,              // missing field => OFF; only a saved ON enables
         threshold: Math.max(0, Math.min(1, t)),
         quietPeriodMinutes,
         // v2.0 Step 1: explicit-true semantics. Missing field => false.
