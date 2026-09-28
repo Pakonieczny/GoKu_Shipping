@@ -927,7 +927,9 @@ async function op_sandboxStatus() {
 async function op_sandboxReset(b) {
   const until = Date.now() + 7000, late = () => Date.now() > until;
   let deleted = 0, files = 0;
-  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT];
+  // (Order_Timeline too: the replay plays the same order numbers, and the last rehearsal's events, a cancel among them,
+  //  would stand on each one's timeline)
+  const names = ["Brites_Orders", "Design_Completed Orders", "Design_RealTime_Selected_Orders", "Design_Order_Archive", ...SANDBOXED, "Order_Timeline", "Charm_Nest_Rose_Rehearsals", SHAPE_CACHE, AGENT];
   const SUBS = { Design_Bridge: ["log"], Brites_Orders: ["messages"], Charm_Nest_Rose_Stock: ["cuts"] };   // deleting a document never deletes its subcollections
   // an order's messages can sit under a Brites_Orders document that was never written (a message posted on its own),
   // which no query of that collection returns: they go with the order's other records, which name it
