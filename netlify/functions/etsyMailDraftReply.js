@@ -1389,7 +1389,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    relevant order (use lookup_order_details on the most recent shipped
    order if they don't specify), confirm via that tool call that no
    item in the order is personalized, and then provide the return
-   process inline. Don't escalate, this is straightforward.
+   process inline. Don't hand it off: write the whole return process
+   yourself, and set ready_for_human_approval:true, because a refund
+   promise always waits for a person. When the customer has more than
+   one order, name the order number.
 
    The return address MUST be provided exactly as below when applicable.
    The "Canada" mention here is the ONE allowed exception to the Hard
@@ -3459,7 +3462,7 @@ const TOOL_SPECS = [
           type: "number",
           minimum: 0,
           maximum: 1,
-          description: "Your confidence the drafted reply is correct, complete, and ready to send WITHOUT human review. 0 = unsure, would harm if sent. 1 = airtight, no reasonable operator would change it. Calibrate honestly: shipping/order questions you fully resolved with tool calls deserve high scores (>=0.85). Vague inquiries, refund requests, customization back-and-forth, missing information, or anything emotionally loaded should score low (<=0.6). When in doubt, score lower — humans review the borderline ones."
+          description: "Your confidence the drafted reply is correct, complete, and ready to send WITHOUT human review. 0 = unsure, would harm if sent. 1 = airtight, no reasonable operator would change it. Calibrate honestly: shipping/order questions you fully resolved with tool calls deserve high scores (>=0.85). Vague inquiries, refund requests, customization back-and-forth, missing information, or anything emotionally loaded should score low (<=0.5). When in doubt, score lower — humans review the borderline ones."
         },
         difficulty: {
           type: "number",
@@ -3762,7 +3765,7 @@ function buildToolExecutors(ctx) {
           // listing's own entry; the family sizes below are the shop's
           // standard and may be stated (replays read the two as a clash).
           result = { ...result,
-            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Where the fact sheet words a size more closely (a standard size and how far silhouettes reach), quote it the fact sheet's way. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Quote the fact sheet's standard size for the family first; add no specs the customer didn't ask for, and for a customer still choosing, add the fact sheet's larger-size-on-request clause. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
             familyFacts: { family, charmStyles: require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles), metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
@@ -5058,10 +5061,11 @@ answering. Do not guess about the order's contents.`;
       /\bpull\s+this\s+(?:one\s+)?up\s+before\b/i,
       /\bbefore\s+(?:I|we)\s+can\s+speak\s+to\s+(?:specifics|it|this)\b/i,
       // 2026-09-27 review of 18 replies: "the team is confirming it" and
-      // promises to pass tracking along later.
+      // promises to pass tracking along later. (A replacement's tracking
+      // sent in the conversation is a fact on the sheet, so that one is
+      // allowed.)
       /\b(?:our\s+|the\s+)?team\s+is\s+(?:confirming|checking|looking\s+into|reviewing|verifying)\b/i,
       /\bpass\s+(?:the|your|it)\s+(?:new\s+)?(?:tracking|number)\s+(?:along|on)\b/i,
-      /\bsend\s+(?:you\s+)?(?:the\s+|your\s+)?(?:new\s+)?tracking(?:\s+number)?\s+(?:once|when|as\s+soon\s+as)\b/i,
     ];
 
     const SOFT_PROMISE_PATTERNS = [
@@ -5561,10 +5565,9 @@ answering. Do not guess about the order's contents.`;
     // A reply that offers a remedy only a person can grant (refund, remake,
     // reship, replacement, free item) always waits for that person, even if
     // the model forgot to ask for review. Checked per sentence: "we" plus a
-    // remedy word; the return template's "once they arrive ... refund" is
-    // the policy itself, not an offer.
+    // remedy word. The return template's "once it arrives we'll process
+    // your refund" counts too: the owner wants every refund promise seen.
     const _remedySentence = (parsed.text || "")
-      .replace(/[^.!?\n]*\bonce\s+(?:they|it|the\s+\w+)\s+(?:arrives?|(?:is|are)\s+back)[^.!?\n]*refund[^.!?\n]*[.!?]?/gi, "")
       .split(/(?<=[.!?])\s+|\n+/)
       .find(t => /\b(?:we|we['\u2019](?:ll|d|re)|us)\b/i.test(t)
         && /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b|\b\d+\s*%\s*off\b/i.test(t));
