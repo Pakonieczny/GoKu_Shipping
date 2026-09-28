@@ -70,7 +70,7 @@
   const STATION_TYPES = new Set(["scan", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "cancelAlert", "note"]);
   const cfg = { mode: "sorter", sandbox: false, by: "", station: "", device: "", passcode: "" };
   const OUTBOX = "orderTimeline.outbox.v1", listeners = new Set(), KEEP = 2000;   // at most KEEP events wait in memory (500 across a reload)
-  let box = [], timer = 0, sending = false, backoff = 1000;
+  let box = [], timer = 0, due = 0, sending = false, backoff = 1000;
   /* One outbox for the whole site: the sorter and every station page (one origin), in as many tabs as are open. A save
      keeps what another page queued (only what this page delivered leaves), and a page sends only its own kind of event:
      a station's door keeps station types alone, so a sorter event sent through it was dropped and forgotten. */
@@ -92,7 +92,7 @@
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
     return j;
   }
-  function schedule(ms) { clearTimeout(timer); timer = setTimeout(flush, ms); }
+  function schedule(ms) { clearTimeout(timer); due = Date.now() + ms; timer = setTimeout(() => { timer = 0; flush(); }, ms); }
   async function flush() {
     const first = sending ? null : box.find(mine); if (!first) return;
     sending = true;
@@ -107,6 +107,8 @@
       if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch }, sb);
       else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: sb }, sb);
       const done = new Set(batch); box = box.filter(ev => !done.has(ev)); batch.forEach(ev => sent.add(keyOf(ev))); save(); backoff = 1000;
+      // (only the newest delivered keys can still be on the disk, which keeps 500: a long session's memory stays bounded)
+      if (sent.size > 3000) { let n = sent.size - 2000; for (const k of sent) { if (n-- <= 0) break; sent.delete(k); } }
       if (box.some(mine)) schedule(50);
     } catch (e) {
       backoff = Math.min(backoff * 2, 120000); schedule(backoff);
@@ -122,7 +124,9 @@
       const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       box.push(ev); if (box.length > KEEP) box.splice(0, box.length - KEEP);   // (a server refusing for days: memory stays bounded)
-      save(); schedule(900);
+      // (a send already due sooner is not put off: events a scanner records less than a second apart were never sent
+      //  while it kept on, and past KEEP the oldest were dropped)
+      save(); if (!timer || due > Date.now() + 900) schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }
       return ev;
     } catch (_) { return null; }
