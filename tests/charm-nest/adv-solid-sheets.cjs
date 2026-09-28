@@ -63,18 +63,19 @@ const { start } = require('./bridge-server.cjs');
         Object.assign(sh, { status: 'nesting', persistedDone: false, dirty: false, stage: 'Placing', progressKind: 'place', progress: [sh.placements.length, sh.charms.length] }); renderCard(sh);
         const keep = new Set(sh.appendOnly ? sh.placements.map(p => p.id) : []); if (!sh.appendOnly) sh.placements = [];
         let todo = sh.charms.filter(c => !keep.has(c.id));
-        if (sh._mergeNext && sh.appendOnly && todo.length > window.__room) {
+        // (window.__late: the nest says which fit only that long after it starts, as a slow real nest does)
+        const answer = () => { if (sh._mergeNext && sh.appendOnly && todo.length > window.__room) {
           const rest = todo.slice(window.__room), next = sh._mergeNext, gone = new Set(rest.map(c => c.id));
           todo = todo.slice(0, window.__room); sh.charms = sh.charms.filter(c => !gone.has(c.id)); next.charms.push(...rest);
           setTimeout(() => window.startNest(next), 30);
-        }
+        } };
         const step = () => {
           const c = todo.shift();
           if (!c) { Object.assign(sh, { status: 'complete', stage: '', verification: { ok: true } }); renderCard(sh); setTimeout(() => { sh.persistedDone = true; renderCard(sh); }, 60); return; }
           sh.placements.push(Object.assign(__lay(sh.charms)[sh.placements.length], { id: c.id }));
           sh.progress = [sh.placements.length, sh.charms.length]; renderCard(sh); setTimeout(step, 40);
         };
-        setTimeout(step, 60);
+        if (window.__late) setTimeout(() => { answer(); step(); }, window.__late); else { answer(); setTimeout(step, 60); }
       };
       showPage('gold14k', 0);
       document.querySelector('.sheetCard[data-m="gold14k"]').scrollIntoView({ block: 'start' });
@@ -86,14 +87,15 @@ const { start } = require('./bridge-server.cjs');
       await page.evaluate(() => {
         window.__props = new Set(); const an = Element.prototype.animate;
         Element.prototype.animate = function (k, o) { for (const f of (Array.isArray(k) ? k : [])) for (const p of Object.keys(f)) if (!['offset', 'easing', 'composite'].includes(p)) window.__props.add(String(this.className || this.tagName).split(' ').pop() + ':' + p); return an.call(this, k, o); };
-        window.__fx = { add: 0, gone: 0, glow: false, plus: false, frames: [], long: [] };
+        window.__fx = { add: 0, gone: 0, glow: false, plus: false, back: [], frames: [], long: [] };
         new PerformanceObserver(l => { for (const e of l.getEntries()) if (__fx.add && !__fx.gone) __fx.long.push(Math.round(e.duration)); }).observe({ entryTypes: ['longtask'] });
         new MutationObserver(recs => { for (const r of recs) {
           for (const n of r.addedNodes) {
             if (n.classList?.contains('mergeFx')) { __fx.add = performance.now(); let last = __fx.add; const f = t => { __fx.frames.push(t - last); last = t; if (!__fx.gone) requestAnimationFrame(f); }; requestAnimationFrame(f); }
-            if (n.classList?.contains('mergeFxGlow')) __fx.glow = true; if (n.classList?.contains('mergeFxPlus')) __fx.plus = n.textContent;
+            if (n.classList?.contains('mergeFxGlow')) __fx.glow = true;
+            if (n.classList?.contains('mergeFxPlus')) { if (n.classList.contains('mergeFxBack')) __fx.back.push({ text: n.textContent, at: performance.now() }); else { __fx.plus = n.textContent; __fx.plusAt = performance.now(); } }
           }
-          for (const n of r.removedNodes) if (n.classList?.contains('mergeFx')) __fx.gone = performance.now();
+          for (const n of r.removedNodes) if (n.classList?.contains('mergeFx')) { if (!__fx.gone) { __fx.gone = performance.now(); __fx.tags = [...n.querySelectorAll('.mergeFxTag')].map(t => t.textContent); } else __fx.lateGone = performance.now(); }
         } }).observe(document.body, { childList: true, subtree: true });
       });
       await opts();
@@ -105,14 +107,37 @@ const { start } = require('./bridge-server.cjs');
       assert.notEqual(await pose(), mid, 'the charms are seen moving mid-way');
       await page.waitForFunction(() => __fx.gone, null, { timeout: 15000 });
       await page.waitForFunction(() => { const [a, b] = CN.pagesOf('gold14k'); return a && b && a.placements.length === 8 && b.placements.length === 2 && a.persistedDone && b.persistedDone && !Gate.mergeFx().live; }, null, { timeout: 20000 });
-      const r = await page.evaluate(() => ({ life: Math.round(__fx.gone - __fx.add), glow: __fx.glow, plus: __fx.plus, worst: Math.round(Math.max(0, ...__fx.frames.slice(1))), over34: __fx.frames.slice(1).filter(d => d > 34).length, frames: __fx.frames.length, long: __fx.long,
+      const r = await page.evaluate(() => ({ life: Math.round(__fx.gone - __fx.add), glow: __fx.glow, plus: __fx.plus, back: __fx.back.map(b => b.text), tags: __fx.tags, worst: Math.round(Math.max(0, ...__fx.frames.slice(1))), over34: __fx.frames.slice(1).filter(d => d > 34).length, frames: __fx.frames.length, long: __fx.long,
         props: [...__props].filter(p => /^(mergeFx|shPreviewWrap|mPlus)/.test(p)), left: document.querySelectorAll('.mergeFx').length }));
       console.log('  · merge scene:', JSON.stringify({ life: r.life, frames: r.frames, worst: r.worst, over34: r.over34, long: r.long }));
-      // (its "+N" is the charms that set off, 4: the scene plays before the nest has said which fit)
-      assert(r.life >= 2800 && r.glow && r.plus === '+4', 'the scene plays to its end (glow, "+4"), not cut off: ' + JSON.stringify(r));
+      // only 2 of the 4 fit (the nest said so before they landed): Sheet 1 says "+2", and the 2 that did not fit are seen
+      // flying back to Sheet 2 with its own "+2" (it said "+4" while 2 went back)
+      assert(r.life >= 2800 && r.glow && r.plus === '+2', 'the scene plays to its end (glow, "+2" on Sheet 1), not cut off: ' + JSON.stringify(r));
+      assert.deepEqual(r.back, ['+2'], 'the 2 that did not fit fly back to Sheet 2, "+2": ' + JSON.stringify(r));
+      assert.deepEqual(r.tags, ['Sheet 18', 'Sheet 22'], 'the numbers end where the charms are: ' + JSON.stringify(r.tags));
       assert.deepEqual(r.props.filter(p => !/:(transform|opacity)$/.test(p)), [], 'only transform and opacity are animated');
       assert.equal(r.left, 0, 'nothing is left behind');
-      console.log(`  ✓ Move all: the merge is seen moving for ${r.life} ms to its glow and "+4", transform and opacity only, nothing left behind`);
+      console.log(`  ✓ Move all: the merge is seen moving for ${r.life} ms to its glow; "+2" on Sheet 1 and 2 fly back to Sheet 2 with "+2"; transform and opacity only, nothing left behind`);
+    }
+
+    /* ── 1b · the nest answers only after the scene: no count until it does, then the true one (1 fits, 1 goes back) ── */
+    {
+      await page.evaluate(() => { Object.assign(window.__fx, { add: 0, gone: 0, lateGone: 0, glow: false, plus: false, plusAt: 0, back: [], tags: null, frames: [], long: [] }); window.__room = 1; window.__late = 4200; window.__asked = performance.now(); });
+      await opts();
+      await page.click(`${card} [data-solid="merge-move"]:visible`);
+      await page.click(`${card} [data-solid="merge-go"]:visible`);
+      await page.waitForFunction(() => __fx.gone, null, { timeout: 15000 });
+      const during = await page.evaluate(() => ({ plus: __fx.plus, back: __fx.back.length, tags: __fx.tags }));
+      assert.equal(during.plus, false, 'no count while the nest has not said which fit: ' + JSON.stringify(during));
+      assert.equal(during.back, 0, 'and none is shown going back yet');
+      await page.waitForFunction(() => __fx.plus && __fx.back.length, null, { timeout: 12000 });
+      const late = await page.evaluate(() => ({ plus: __fx.plus, back: __fx.back.map(b => b.text), after: Math.round(__fx.plusAt - __asked) }));
+      assert.equal(late.plus, '+1', 'once it answers: "+1" on Sheet 1: ' + JSON.stringify(late));
+      assert.deepEqual(late.back, ['+1'], 'and "+1" for the one that went back to Sheet 2');
+      assert(late.after >= 4200, 'shown only once the nest answered: ' + late.after);
+      await page.waitForFunction(() => { const [a, b] = CN.pagesOf('gold14k'); return a && b && a.placements.length === 9 && b.placements.length === 1 && b.charms.length === 1 && a.persistedDone && b.persistedDone && !Gate.mergeFx().live && !document.querySelector('.mergeFx'); }, null, { timeout: 20000 });
+      await page.evaluate(() => { window.__late = 0; window.__room = 2; CN.showPage('gold14k', 0); document.querySelector('.sheetCard[data-m="gold14k"]').scrollIntoView({ block: 'start' }); });
+      console.log(`  ✓ Move all, a slow nest: no count during the scene; "+1" on Sheet 1 and "+1" back to Sheet 2 once it answered (${late.after} ms)`);
     }
 
     /* ── 2 · the split-order question: include both, only this one, or cancel ── */
