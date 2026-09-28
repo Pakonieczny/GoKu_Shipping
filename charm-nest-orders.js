@@ -142,16 +142,18 @@
   /* Charm-only listings (Paul, 27 Sep; about 1,000 of them): one SKU for all three Charm Type choices. "Necklace CHARM" and
      "CHARM + Engraving" are the necklace charm, the listing's SKU; "Huggie CHARM SET" is the small charms that hang from a
      pair of huggie hoops, drawn in the master under the same SKU with " (HUGGIE)" after it ("BUNNY_42980 (HUGGIE)"). A
-     huggie set is never cut as the necklace charm: without its huggie design it is asked about under that name. */
+     huggie set is never cut as the necklace charm: without its huggie design it is asked about under that name.
+     · "X-CO" (the charm-only mark) bought as a huggie set is "X (HUGGIE)": "X-CO (HUGGIE)" is in no master file.
+     · A huggie set with no SKU has its own "Use this charm" answer (the listing's huggie), never the listing's necklace. */
   const HUGGIE_SET = /\bhuggie\s+charms?\s+set\b/i;
   const huggieSet = line => (line.variations || []).some(v => HUGGIE_SET.test(String(v.value != null ? v.value : v.formatted_value || "")));
-  const huggieSku = raw => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); return !s ? "" : /\(HUGGIE\)$/.test(s) ? s : s + " (HUGGIE)"; };
+  const huggieSku = raw => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); return !s ? "" : /\(HUGGIE\)$/.test(s) ? s : (variationBase(s) || s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   function resolveSku(line, aliases, masterEntry, noDesign) {
     const raw = String(line.sku || "").trim().toUpperCase();
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
-    // (the listing's answer is its necklace charm's: never a huggie set's)
-    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = a && a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
+    // (the listing's answer is its necklace charm's: never a huggie set's, which has its own for a line with no SKU)
+    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = !a ? "" : huggieSet(line) ? (!raw ? up(a.huggie) : "") : a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     // a blocked SKU's card offers "Use this charm" too: the answer for that SKU is its design (the blocked entry beat it)
     const held = raw && masterEntry ? masterEntry(raw) : null;
     if (raw && (!masterEntry || (held && !(own && held.blocked)) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
@@ -370,7 +372,8 @@
     // an unknown SKU waits while an option is unanswered: the option may be what picks the charm (Zodiac Sign: Pisces on a
     // listing whose signs share one SKU), and a charm given to the SKU instead would be every sign's
     const optionOpen = problems.some(p => p.kind === "needsMapping");
-    if (!noDesign && !sku && !optionOpen) problems.push({ kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
+    if (!noDesign && !sku && !optionOpen) problems.push(set ? { kind: "unmatchedSku", reason: "no SKU on the transaction · Huggie CHARM SET: pick its huggie design", huggie: true, listingId: String(line.listingId || ""), title: line.title || "" }
+      : { kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
     if (ctx.masterEntry && sku && !noDesign) {
       const entry = ctx.masterEntry(sku);
       if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }

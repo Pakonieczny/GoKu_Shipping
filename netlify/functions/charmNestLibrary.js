@@ -1859,12 +1859,13 @@ async function op_aliasGet() { const { docs, truncated } = await mapDocs(ALIASES
 /* "Use this charm": for the listing and the SKU the line came with (fromSku, kept under bySku), so on a listing whose
    variations each have a SKU one variation's answer is never another's; a line with no SKU answers for the listing (sku).
    v: 2 marks the listing's sku as answered this way (charm-nest-orders.js resolveSku). An answer for one SKU leaves v as it
-   was: an alias saved before 27 Sep (sku, no v) goes on standing in for its SKU (v: 2 there silently dropped it). */
+   was: an alias saved before 27 Sep (sku, no v) goes on standing in for its SKU (v: 2 there silently dropped it).
+   A charm-only listing's Huggie CHARM SET with no SKU answers for the listing's huggie (huggie), never its necklace (sku). */
 async function op_aliasPut(b) {
   const lid = str(b.listingId, 30).replace(/\D/g, ""), sku = String(b.sku || "").trim().toUpperCase(), from = String(b.fromSku || "").trim().toUpperCase().slice(0, 120);
   if (!lid || !Master.isSku(sku)) return { error: "listingId and sku required" };
   const doc = { listingId: lid, by: str(b.by || "operator", 80), title: str(b.title, 200), updatedAt: FV.serverTimestamp() };
-  if (from) doc.bySku = { [from]: sku }; else { doc.sku = sku; doc.v = 2; }
+  if (from) doc.bySku = { [from]: sku }; else if (b.huggie === true) doc.huggie = sku; else { doc.sku = sku; doc.v = 2; }
   await db.collection(ALIASES).doc(lid).set(doc, { merge: true }); return { ok: true };
 }
 async function op_noDesignGet() { const { docs, truncated } = await mapDocs(NODESIGN); const rows = docs.map(d => Object.assign({ id: d.id }, d.data())); return { list: { patterns: rows.filter(r => r.pattern).map(r => r.pattern), skus: rows.filter(r => r.sku).map(r => r.sku), rows }, truncated }; }

@@ -5,6 +5,10 @@
 //      Run against charmNestLibrary's aliasPut/aliasGet with a Firestore fake that merges nested maps as Firestore does.
 //  2 · Review's "Show" (a card that moved to another folder or chip) and "Jump" find a card beyond the first 40: a new
 //      view reset the list to its first 40 after Show had raised it, so an older card was never drawn and Show did nothing.
+//  3 · A charm-only listing's "Huggie CHARM SET" (Paul, 27 Sep 19:14: "SKU (Huggie)" from the master, else Unknown SKU, never
+//      the necklace charm): a huggie set line with no SKU took the listing's necklace "Use this charm" answer, and its own
+//      answer was saved as the necklace's. It now has its own answer (listing + huggie) and its own Unknown SKU card.
+//      "X-CO" bought as a huggie set was asked for "X-CO (HUGGIE)", which no master holds: it is "X (HUGGIE)".
 // No network but the loopback.
 //   node tests/charm-nest/adv-skus.cjs   (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome> for part 2)
 const path = require('path'), assert = require('assert/strict');
@@ -71,6 +75,40 @@ async function part1() {
   console.log('  ✓ "Use this charm" on a blocked SKU takes, for that listing and SKU only');
 }
 
+async function part3() {
+  delete process.env.EDIT_PASSCODE;
+  const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
+  const O = require(path.join(root, 'charm-nest-orders.js'));
+  const post = body => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body) }).then(r => JSON.parse(r.body || '{}'));
+  const lib0 = { 'BR-ALS-02': {}, 'BUNNY_42980': {}, 'BUNNY_42980 (HUGGIE)': {} }, ctx = aliases => ({ optionMaps: {}, aliases, noDesign: {}, masterEntry: s => lib0[s] || null });
+  const order = { receiptId: '4300000001', updateTs: 1, staffNote: '', buyerMessage: '' };
+  const line = (sku, type, lid) => ({ transactionId: '43000000011', listingId: lid || '7101', sku, title: 'Bunny charm', quantity: 1, metalKey: 'gold', metalLabel: 'Gold',
+    personalization: [], variations: [{ name: 'Metal', value: 'Gold Filled' }, { name: 'Charm Type', value: type }] });
+  // the listing's necklace charm, answered for a line with no SKU
+  await post({ op: 'aliasPut', listingId: '7101', sku: 'BR-ALS-02', by: 'Ana', title: 'Bunny charm' });
+  let al = (await post({ op: 'aliasGet' })).aliases;
+  let sp = O.interpretLine(order, line('', 'Necklace CHARM'), ctx(al)); assert.equal(sp.designSku, 'BR-ALS-02', 'the necklace charm is the listing\'s answer');
+  sp = O.interpretLine(order, line('', 'Huggie CHARM SET'), ctx(al));
+  assert.notEqual(sp.designSku, 'BR-ALS-02', 'a Huggie CHARM SET with no SKU never takes the necklace charm');
+  assert.deepEqual(sp.problems.map(p => p.kind), ['unmatchedSku'], 'it is an Unknown SKU: ' + JSON.stringify(sp.problems));
+  assert.match(sp.problems[0].reason, /Huggie CHARM SET: pick its huggie design/);
+  // its answer is its own: the necklace charm stays the necklace's
+  const put = await post({ op: 'aliasPut', listingId: '7101', sku: 'BUNNY_42980 (HUGGIE)', huggie: true, by: 'Ben', title: 'Bunny charm' });
+  assert.equal(put.ok, true, JSON.stringify(put));
+  al = (await post({ op: 'aliasGet' })).aliases;
+  sp = O.interpretLine(order, line('', 'Huggie CHARM SET'), ctx(al)); assert.equal(sp.designSku, 'BUNNY_42980 (HUGGIE)', 'the huggie set\'s own answer'); assert.deepEqual(sp.problems, []);
+  sp = O.interpretLine(order, line('', 'Necklace CHARM'), ctx(al)); assert.equal(sp.designSku, 'BR-ALS-02', 'the necklace charm is untouched by the huggie answer');
+  sp = O.interpretLine(order, line('', 'CHARM + Engraving'), ctx(al)); assert.equal(sp.designSku, 'BR-ALS-02');
+  console.log('  ✓ a Huggie CHARM SET with no SKU has its own answer, never the listing\'s necklace charm');
+  // "X-CO" bought as a huggie set is X's huggie design
+  sp = O.interpretLine(order, line('Bunny_42980-CO', 'Huggie CHARM SET', '7102'), ctx({}));
+  assert.equal(sp.designSku, 'BUNNY_42980 (HUGGIE)', '"X-CO" as a huggie set is "X (HUGGIE)" (got ' + sp.designSku + ')'); assert.deepEqual(sp.problems, []);
+  sp = O.interpretLine(order, line('Bunny_42980-CO', 'Necklace CHARM', '7102'), ctx({})); assert.equal(sp.designSku, 'BUNNY_42980', 'and as a necklace charm "X"');
+  sp = O.interpretLine(order, line('DRAGON 11-CO', 'Huggie CHARM SET', '7102'), ctx({}));
+  assert.deepEqual(sp.problems.map(p => p.kind + ':' + p.sku), ['unmatchedSku:DRAGON 11 (HUGGIE)'], 'no huggie design: asked as "X (HUGGIE)"');
+  console.log('  ✓ "X-CO" bought as a Huggie CHARM SET reads as "X (HUGGIE)"');
+}
+
 async function part2() {
   const pwDir = process.env.PW_DIR || path.join(root, 'node_modules');
   let chromium; try { ({ chromium } = require(path.join(pwDir, 'playwright-core'))); } catch (_) { console.log('  – no playwright-core: the browser checks were not run'); return; }
@@ -108,12 +146,39 @@ async function part2() {
     assert(shown.open, 'Show opened the Open folder');
     assert(shown.found, `Show finds the card it names (${shown.drawn} cards drawn, the oldest of 60 not among them)`);
     console.log('  ✓ Review › Show from Completed finds a card beyond the first 40 under its chip (' + shown.drawn + ' drawn)');
+
+    // a Huggie CHARM SET with no SKU is its own Unknown SKU card, and its "Use this charm" is saved as the huggie set's
+    const sent = []; page.on('request', q => { if (/charmNestLibrary/.test(q.url()) && q.method() === 'POST') { try { const b = JSON.parse(q.postData() || '{}'); if (b.op === 'aliasPut') sent.push(b); } catch (_) {} } });
+    const h = await page.evaluate(() => {
+      B.master.entries.set('BUNNY_42980 (HUGGIE)', { sku: 'BUNNY_42980 (HUGGIE)' });
+      const mk = (i, type) => { const rid = String(4300000100 + i), order = { receiptId: rid, orderNumber: rid, createTs: 1789000000, updateTs: 1789000000, shipBy: 1790000000, buyer: { name: 'Hug ' + i }, buyerMessage: '', staffNote: '', messages: [],
+          lines: [{ transactionId: rid + '1', listingId: '1999101', sku: '', title: 'Bunny charm', quantity: 1, variations: [{ name: 'Metal', value: '14k Gold Filled' }, { name: 'Charm Type', value: type }], metalKey: 'gold', metalLabel: 'GF', personalization: [], buyerMessage: '' }] };
+        const line = order.lines[0], key = CharmNestOrders.lineKey(order, line);
+        const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
+        B.orders.rows.push(row); B.orders.byKey.set(key, row); return key; };
+      const neck = mk(0, 'Necklace CHARM'), hug = mk(1, 'Huggie CHARM SET');
+      Orders.interpretAll(); Review.syncOrderItems();
+      const its = Review.items().filter(it => it.kind === 'unmatchedSku' && (it.rows || [it.row]).some(r => r.key === neck || r.key === hug));
+      return { neck, hug, cards: its.map(it => ({ key: it.key, rows: (it.rows || [it.row]).map(r => r.key), why: it.why })) };
+    });
+    assert.equal(h.cards.length, 2, 'the necklace charm and the huggie set are two Unknown SKU cards: ' + JSON.stringify(h.cards));
+    const hc = h.cards.find(x => x.rows.includes(h.hug));
+    assert(hc && !hc.rows.includes(h.neck), 'the huggie set\'s card is its own');
+    assert.match(hc.why, /Huggie CHARM SET: pick its huggie design/);
+    await page.evaluate(k => { const it = Review.items().find(x => x.key === k); const c = Review.card(it); c.id = 'hugCard'; document.body.appendChild(c);
+      const f = c.querySelector('[data-f=sku]'); f.value = 'BUNNY_42980 (HUGGIE)'; f.dispatchEvent(new Event('input')); c.querySelector('[data-a=alias]').click(); }, hc.key);
+    await page.waitForFunction(k => B.orders.byKey.get(k).spec.designSku === 'BUNNY_42980 (HUGGIE)', h.hug, { timeout: 10000 }).catch(() => {});
+    const after = await page.evaluate(([n, g]) => ({ neck: B.orders.byKey.get(n).spec.designSku, hug: B.orders.byKey.get(g).spec.designSku, alias: B.maps.aliases['1999101'] || null }), [h.neck, h.hug]);
+    assert.deepEqual(sent.map(b => [b.listingId, b.sku, b.fromSku || '', !!b.huggie]), [['1999101', 'BUNNY_42980 (HUGGIE)', '', true]], 'saved as the huggie set\'s answer: ' + JSON.stringify(sent));
+    assert.equal(after.hug, 'BUNNY_42980 (HUGGIE)', 'the huggie set takes its answer');
+    assert.notEqual(after.neck, 'BUNNY_42980 (HUGGIE)', 'the necklace charm is not given the huggie design: ' + JSON.stringify(after));
+    console.log('  ✓ Review: a Huggie CHARM SET with no SKU is its own card, and its answer is the huggie set\'s alone');
     assert.deepEqual(errors, [], 'no page errors');
   } finally { await browser.close(); await srv.close(); }
 }
 
 (async () => {
   let failed = 0;
-  for (const [name, fn] of [['part 1', part1], ['part 2', part2]]) { try { await fn(); } catch (e) { failed++; console.log('  ✗ ' + name + ': ' + String(e.message).split('\n')[0]); } }
+  for (const [name, fn] of [['part 1', part1], ['part 3', part3], ['part 2', part2]]) { try { await fn(); } catch (e) { failed++; console.log('  ✗ ' + name + ': ' + String(e.message).split('\n')[0]); } }
   console.log(failed ? `adv-skus: ${failed} failed` : 'adv-skus: all passed'); process.exit(failed ? 1 : 0);
 })();

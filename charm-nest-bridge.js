@@ -7341,7 +7341,7 @@ const Review = window.Review = (() => {
    *  first and 79 of the second showed 259 items where 148 decisions were waiting. */
   const SEP = "\u0000";
   function decisionKey(row, p) {
-    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}` : `ord:listing:${p.listingId || row.key}`;
+    if (p.kind === "unmatchedSku") return p.sku ? `ord:sku:${p.sku}` : `ord:listing:${p.listingId || row.key}${p.huggie ? SEP + "huggie" : ""}`;   // a huggie set's is its own
     if (p.kind === "blockedSku") return `ord:blocked:${p.sku}`;
     if (p.kind === "needsMapping") return `ord:opt:${p.optionName}${SEP}${p.optionValue}`;
     if (p.kind === "needsMaterial") return `ord:mat:${p.listingId || row.key}${SEP}${p.metalLabel || ""}`;
@@ -7602,9 +7602,9 @@ const Review = window.Review = (() => {
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
       c.querySelector("[data-a=alias]").onclick = saving(c, async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(rowsOf(it).map(x => String(x.line.listingId)))];
         // for the listing and the SKU each line came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each
-        // have a SKU, the others keep theirs
-        const pairs = new Map(rowsOf(it).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(); return [String(x.line.listingId) + "\u0000" + from, { lid: String(x.line.listingId), from, title: x.line.title }]; }));
-        for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, by: who, title: q.title });
+        // have a SKU, the others keep theirs; a huggie set with no SKU answers for the listing's huggie, never its necklace
+        const pairs = new Map(rowsOf(it).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(), hug = !from && !!(x.spec && x.spec.huggieSet); return [String(x.line.listingId) + "\u0000" + from + (hug ? "\u0000huggie" : ""), { lid: String(x.line.listingId), from, hug, title: x.line.title }]; }));
+        for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, huggie: q.hug || undefined, by: who, title: q.title });
         answered(it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
         await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
