@@ -29,6 +29,8 @@
   const cfg = { station: "", device: "", getEmployee: null, sandbox: false };
   const known = new Map();     // orderId → cancel record (only cancelled orders are kept)
   const inflight = new Map();  // orderId → the cancel check under way
+  const cleared = new Map();   // orderId → when the server last said "not cancelled" (the guard asks again after FRESH_MS)
+  const FRESH_MS = 30000;
   let configured = false, keysOn = false;
 
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
@@ -69,19 +71,29 @@
   function remember(id, r) { known.delete(id); known.set(id, norm(r)); saveCache(); return known.get(id); }
   function forget(id) { if (known.delete(id)) saveCache(); }
 
-  /** Asks the server (and the Etsy status the page already has) whether one order is cancelled. Never rejects. */
-  function check(id, extra) {
+  /* the server's answer for one order: its cancel record, null when it is not cancelled; throws when it is no answer
+     (a 200 without a `cancelled` map must not count as "clear", nor wipe a cancel this page already knows) */
+  function answerOf(id, j) {
+    if (!j || typeof j !== "object" || !j.cancelled || typeof j.cancelled !== "object") throw new Error("no answer");
+    return j.cancelled[id] || null;
+  }
+  /** Asks the server (and the Etsy status the page already has) whether one order is cancelled. Never rejects.
+      late(record): an answer that comes after the 2.5 s and says cancelled (the scan went on unchecked) */
+  function check(id, extra, late) {
     const p = (async () => {
       let state = "unchecked", record = null, why = "";
       const o = ot();
       if (o && typeof o.cancelCheck === "function") {
+        let ask = null;
         try {
-          const j = await withTimeout(o.cancelCheck([id]), CHECK_MS);
-          const r = j && j.cancelled && j.cancelled[id];
-          if (r) { state = "cancelled"; record = remember(id, r); } else { state = "clear"; forget(id); }
+          ask = Promise.resolve(o.cancelCheck([id]));
+          const r = answerOf(id, await withTimeout(ask, CHECK_MS));
+          if (r) { state = "cancelled"; record = remember(id, r); } else { state = "clear"; forget(id); cleared.set(id, Date.now()); }
         } catch (e) {
           why = (navigator.onLine === false ? "offline" : String((e && e.message) || e || "failed")).slice(0, 80);
           if (known.has(id)) { state = "cancelled"; record = known.get(id); }   // a cancel we already knew still counts
+          else if (ask && why === "timeout")                                     // slow, not lost: a late "cancelled" still counts
+            ask.then(j => { const r = answerOf(id, j); if (!r || known.has(id)) return; const rec = remember(id, r); if (late) late(rec); }).catch(() => {});
         }
       } else why = "no timeline client";
       const es = extra && typeof extra.etsyStatus === "string" ? extra.etsyStatus : "";
@@ -99,7 +111,7 @@
       opts = opts || {};
       const how = HOW.has(opts.how) ? opts.how : "scan", at = Date.now(), by = who();
       const extra = small(opts.extra);
-      const res = await check(id, extra);
+      const res = await check(id, extra, rec => { try { if (!opts.quiet) showAlert(id, rec); } catch (e) { warn("alert failed", e); } });
       const data = { how, check: res.state };
       if (res.why) data.checkNote = res.why;
       if (extra) data.extra = extra;
@@ -131,6 +143,13 @@
       if (inflight.has(id)) {   // the scan's check is still on its way: wait for it (≤ 2.5 s), and say so
         const stop = waiting(`Checking whether order ${id} is cancelled…`);
         try { await withTimeout(inflight.get(id), CHECK_MS + 500); } catch (_) {} finally { stop(); }
+      } else if (!known.has(id) && !(Date.now() - (cleared.get(id) || 0) < FRESH_MS)) {
+        // no recent answer (never scanned here, the scan's check was slow or offline, or it was cancelled since): ask now
+        // (≤ 2.5 s); a cancel found here raises the full-screen alert first, and the question is asked inside it
+        const stop = waiting(`Checking whether order ${id} is cancelled…`);
+        let res = null;
+        try { res = await check(id); } catch (_) {} finally { stop(); }
+        if (res && res.state === "cancelled" && !opts.quiet) { try { showAlert(id, res.record); } catch (e) { warn("alert failed", e); } }
       }
       const r = known.get(id); if (!r) return true;
       const yes = await confirmCancelled(id, opts);
