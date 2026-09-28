@@ -939,6 +939,7 @@
 .tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
 .tlSt.ghost[data-stage]{cursor:pointer}
 .tlExp.side::before{display:none}
+.tlExp.on{pointer-events:auto}
 .tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 .tlStop.pinned>span{color:#7a5a1d}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
@@ -1057,7 +1058,7 @@
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll"), exp = $(".tlExp");
-    let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, hideA = null;
+    let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, loupeAt = null, hideA = null;
     // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
     let lanesHtml = "", detHtml = "";
     const detUid = "tlDet" + (++UID);
@@ -1188,8 +1189,11 @@
       if (p) return railed(derive(S.events, S.cancelled), withDone(stagesFor(p.line), S.events));
       const D = derive(S.events, S.cancelled, whereNow());
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
-      const sum = summary(S.every, S.pieces, S.cancelled);
+      const sum = summary(S.every, S.pieces, S.cancelled), far = D.step;
       D.step = Math.min(D.step, sum.step);
+      // a step that every piece taking it has passed is not what the order waits on (a stud's Welded, done, while the
+      // necklaces wait on Assembled): the next step is the first one some piece still has to reach
+      for (const r of sum.rail) { if (r.i <= D.step) continue; if (r.of && r.n >= r.of && r.i <= far) D.step = r.i; else break; }
       return railed(D, sum.rail.map(r => r.s), sum);
     }
     /** The host's piece switcher: pieces (as opts.pieces; omitted keeps them) and the piece shown (null: all of them).
@@ -1514,7 +1518,7 @@
       const r = { left: d.left, width: d.width, top: d.top, bottom: Math.max(d.bottom, bb.bottom) };
       // the seal alone: what the step is and still needs is the explainer card under the dot (it replaced the dark caption)
       loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>`;
-      zoomIn(loupe, r, quiet);
+      loupeAt = zoomIn(loupe, r, quiet);
       loupeFor = b; lift.classList.add("lifted");
     }
     function hideLoupe(now) {
@@ -1535,7 +1539,7 @@
        shows a small card BELOW its dot, what is done and what is still missing (the zoomed seal sits above: the dot stays
        seen); a click on a step not done yet pins the fuller version in the detail below, never a pop-up on a pop-up.
        Escape or a click elsewhere lets it go. opts.context() is what the host knows of the order (requirementsOf). ── */
-    let expFor = null, expA = null;
+    let expFor = null, expA = null, expT = 0;
     const ctxOf = () => { try { return (typeof opts.context === "function" ? opts.context() : opts.context) || null; } catch (err) { warn("context", err); return null; } };
     // (S.D is the rail drawn: the piece shown's own steps, or the order's)
     const reqOf = i => requirementsOf(i, { events: S.events, D: S.D || deriveNow(), context: ctxOf() });
@@ -1553,12 +1557,17 @@
       // an event that is not a step of its own says what it is first, then what the order needs to move on
       const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null;
       const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 9px">Then, for the order to move on</div>` : "";
-      expFor = b;
-      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, b);
+      expFor = b; expT = cancelT(expT);
+      // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
+      const lp = loupeFor === b && loupeAt && !loupeAt.up ? loupeAt : null;
+      const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
+      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole);
+      exp.classList.add("on");   // (the card takes the pointer: moving onto it keeps it)
     }
     function hideExp(now) {
+      expT = cancelT(expT);
       if (!expFor || !exp) return;
-      expFor = null;
+      expFor = null; exp.classList.remove("on");
       if (now) { if (expA) { try { expA.cancel(); } catch (_) {} } expA = null; exp.style.display = "none"; exp.innerHTML = ""; return; }
       expA = fadeExp(exp, expA);
     }
@@ -1568,7 +1577,10 @@
       return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
     }
     function expOver(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b !== expFor && box.contains(b)) showExp(b); }
-    function expOut(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b === expFor && !b.contains(ev.relatedTarget)) hideExp(); }
+    // the pointer leaving the step for its card (across the gap between them) keeps the card; leaving both lets it go
+    const expLater = () => { expT = cancelT(expT); expT = later(() => { expT = 0; if (expFor && !exp.matches(":hover") && !expFor.matches(":hover")) hideExp(); }, 160); };
+    function expOut(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b === expFor && !b.contains(ev.relatedTarget)) { if (ev.relatedTarget && exp.contains(ev.relatedTarget)) return; expLater(); } }
+    function expLeave(ev) { if (expFor && !(ev.relatedTarget && expFor.contains(ev.relatedTarget))) expLater(); }
     function expFocus(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b.matches(":focus-visible")) showExp(b); }
     function expBlur(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b === expFor) hideExp(); }
     /** Pins a step's fuller explainer in the detail below; → true when shown. */
@@ -1717,7 +1729,7 @@
       unsub = unfeed = null;
       doc.removeEventListener("visibilitychange", onVis);
       box.removeEventListener("click", onClick); box.removeEventListener("pointerover", onOver); box.removeEventListener("pointerout", onOut); box.removeEventListener("keydown", onKey);
-      box.removeEventListener("pointerover", expOver); box.removeEventListener("pointerout", expOut); box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur);
+      box.removeEventListener("pointerover", expOver); box.removeEventListener("pointerout", expOut); box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur); exp.removeEventListener("pointerleave", expLeave);
       doc.removeEventListener("pointerdown", onDocDown, true); doc.removeEventListener("keydown", onDocKey);
       scroller.removeEventListener("scroll", onScroll);
       try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
@@ -1726,7 +1738,7 @@
     }
 
     box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
-    box.addEventListener("pointerover", expOver); box.addEventListener("pointerout", expOut); box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
+    box.addEventListener("pointerover", expOver); box.addEventListener("pointerout", expOut); box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur); exp.addEventListener("pointerleave", expLeave);
     if (!compact) { doc.addEventListener("pointerdown", onDocDown, true); doc.addEventListener("keydown", onDocKey); }
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
