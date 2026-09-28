@@ -2745,6 +2745,8 @@ const Gate = window.Gate = (() => {
         // whether or not its set is committed: nesting it again would move pieces whose files already went out
         const cut=p=>!!(p.laserDoneAt||p.releaseFull||holding(p)||Sets.ofRun(p.runId).some(s=>s.committedAt&&(s.sheetIds||[]).includes(p.sheetId)));
         const pages=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt),resized=pages.filter(p=>!cut(p)),keptPages=pages.filter(cut);
+        // (and the size it was cut at: it was drawn, measured and shown in the sheet window at the new one)
+        for(const p of keptPages)if(!p.keptStock)p.keptStock={wPt:was.wPt,hPt:was.hPt};
         (R.sizeKept ||= {})[m]=keptPages.length?{at:Date.now(),text:keptPages.map(p=>`${window.SheetEvents?.label?.(p)||sheetName(p)} is cut: kept at its size`).join(' · ')}:null;
         window.SheetEvents?.sizeChanged(resized,[was.wIn*25.4,was.hIn*25.4],[w,h]);   // on the orders' timelines (idle time)
         for(const p of resized){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
@@ -2851,7 +2853,8 @@ const Gate = window.Gate = (() => {
       if (moveIn) {
         // nothing is re-arranged: every sheet taking part is only marked as changing, so the set lets it go (assemble)
         // while Sheet 1 takes the others; a later sheet remembers where its charms lay, for the ones that come back to it
-        for (const p of pages) p.dirty = true;
+        // (a sheet taking part is open again: it takes the metal's size, not one an Apply size kept for it)
+        for (const p of pages) { p.dirty = true; delete p.keptStock; }
         for (const p of sources) { p._mergeSpots = new Map((p.placements || []).filter(x => [x.cxPt, x.cyPt].every(Number.isFinite)).map(x => [x.id, { cxPt: x.cxPt, cyPt: x.cyPt, angle: x.angle || 0 }])); p.feedWait = null; }
       } else {
         // every sheet taking part is nested again from scratch: pins go, as with Apply size
