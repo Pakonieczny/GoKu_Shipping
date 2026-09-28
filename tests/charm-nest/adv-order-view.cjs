@@ -43,6 +43,13 @@ async function main() {
       }
       return r.continue();
     });
+    const notes = { saved: [], record: {} };
+    await context.route(/\/\.netlify\/functions\/firebaseOrders/, async r => {
+      const u = new URL(r.request().url()), q = u.searchParams.get('orderId');
+      if (r.request().method() === 'GET' && q && notes.record[q] != null) return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data: { 'Staff Note': notes.record[q] } }) });
+      if (r.request().method() === 'POST') { let b = {}; try { b = JSON.parse(r.request().postData() || '{}'); } catch (_) {} if (typeof b.staffNote === 'string') { notes.saved.push([String(b.orderNumber), b.staffNote]); notes.record[String(b.orderNumber)] = b.staffNote; return r.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' }); } }
+      return r.continue();
+    });
     await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
     const page = await context.newPage(), errors = [];
     page.setDefaultTimeout(20000);
@@ -123,6 +130,41 @@ async function main() {
       check(top != null && Math.abs(top - want) < 2, `after Next: it shrinks into the row on screen now (clip top ${top}, row top ${want})`);
       await closed();
     } else check(false, 'after Next: Next was not offered');
+
+    // 6 · a staff note typed while the order is still looked up: kept (focus gone or not), put after the record's own
+    //     note and saved once the order is known
+    notes.record[C.rid] = 'Gift box, please';
+    net.hold = 1500;
+    await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
+    await page.waitForFunction(() => !document.getElementById('owLoading').hidden);
+    await page.click('#owNote'); await page.keyboard.type('Fragile - wrap twice');
+    await page.click('#owSub');   // (the box loses the focus while the order is still read)
+    await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
+    await page.waitForFunction(rid => document.getElementById('owNote').value.includes('Gift box'), C.rid, { timeout: 5000 }).catch(() => {});
+    await page.waitForTimeout(1200);
+    s = await page.evaluate(() => document.getElementById('owNote').value);
+    check(s === 'Gift box, please\nFragile - wrap twice' && notes.saved.some(([rid, t]) => rid === C.rid && t === s), `early note: kept after the record's note and saved (${JSON.stringify(s)} · ${JSON.stringify(notes.saved)})`);
+    await page.keyboard.press('Escape'); await closed();
+    // …and one typed and left by closing the view before the order is known is saved too
+    notes.saved.length = 0; notes.record[C.rid] = '';
+    await page.evaluate(rid => { OrderWin.openOrder(rid, {}); }, C.rid);
+    await page.waitForFunction(() => !document.getElementById('owLoading').hidden);
+    await page.click('#owNote'); await page.keyboard.type('Rush');
+    await page.keyboard.press('Escape'); await closed();
+    await page.waitForTimeout(1500);
+    check(notes.saved.some(([rid, t]) => rid === C.rid && t === 'Rush'), `early note, view closed: saved (${JSON.stringify(notes.saved)})`);
+    net.hold = 0;
+
+    // 7 · Ctrl+K while the view shrinks closed opens no search over it
+    await page.click(rowA);
+    await page.waitForFunction(() => OrderWin.isOpen()); await page.waitForTimeout(700);
+    const was = await page.evaluate(() => { OrderWin.close(); return document.getElementById('orderWin').open; });
+    await page.keyboard.press('Control+k');
+    const during = await page.evaluate(() => document.getElementById('orderWin').open);
+    check(was && during, 'Ctrl+K pressed while the view was still shrinking');
+    await closed(); await page.waitForTimeout(300);
+    s = await page.evaluate(() => ({ search: !!(window.OrderSearch && OrderSearch.isOpen && OrderSearch.isOpen()), dialogs: document.querySelectorAll('dialog[open]').length }));
+    check(!s.search && s.dialogs === 0, `Ctrl+K while closing: ignored (${JSON.stringify(s)})`);
 
     check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
   } finally { await browser.close(); srv.close(); }
