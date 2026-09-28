@@ -82,7 +82,9 @@
       let scale = sw > 0 ? section.clientWidth / sw : 0;
       if (front && sw > 0 && sh > 0) {
         const box = front.getBoundingClientRect();
-        scale = Math.min(front.clientWidth / sw, front.clientHeight / sh);
+        // a saved picture at true scale sits in its frame's content box (the padding is the rest of the 100 × 50 mm frame)
+        const cs = getComputedStyle(front), padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0), padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+        scale = Math.min((front.clientWidth - padX) / sw, (front.clientHeight - padY) / sh);
         // Live canvas includes rulers; saved previews do not.
         if (front.tagName === 'CANVAS' && front._backSheetScale) scale = front._backSheetScale;
         if (!box.width) return;

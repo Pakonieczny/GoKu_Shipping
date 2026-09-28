@@ -73,6 +73,7 @@ async function originalSubmissionScenario() {
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
     storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
+    withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>{uploads++;return 'file-input';},
     createOpenAIImageBatch:async()=>{creates++;return {batchName:'batch_one',raw:{id:'batch_one'}};},
   });
@@ -108,4 +109,32 @@ async function quotaRecoveryScenario() {
   assert.deepEqual(db.data.get('batches/batch_refused').sets[0].tasks,[{prompt:'preserved'}]);
   assert.equal(db.data.get('LG1_Config/batchAdmission').blockedAtActive,35);
 }
-(async()=>{await unitScenarios();await originalSubmissionScenario();await quotaRecoveryScenario();console.log('Shared admission: concurrency, capacity, validation, quota cooldown, durable original queue, idempotency and timeout reconciliation passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+async function cancellationFeedbackScenario() {
+  const db=database(30);
+  let status='cancelling';
+  const normalized=()=>({state:status==='cancelling'?'JOB_STATE_RUNNING':'JOB_STATE_CANCELLED',providerStatus:status});
+  const context={body:{batchName:'batch_live_0'},batchApiKey:()=> 'test',
+    getDb:()=>db,BATCHES_COLL:'batches',batchDocIdFromName:x=>x,
+    getGeminiBatchJob:async()=>normalized(),cancelGeminiBatchJob:async()=>normalized(),batchFailureDetails:()=>null,
+    firestoreRetry:fn=>fn(),quotaFailure,admissionControl,
+    admin:{firestore:{FieldValue:{serverTimestamp:()=>123}}},json:(statusCode,data)=>({statusCode,...data})};
+  const cancelStart=src.indexOf('    if (kind === "batch_cancel") {',src.indexOf('    if (kind === "batch_list") {'));
+  const cancelEnd=src.indexOf('    // ------------------------------------------------------------',cancelStart);
+  const cancel=await vm.runInNewContext(`(async()=>{ ${src.slice(cancelStart,cancelEnd)} })()`,{...context,kind:'batch_cancel'});
+  assert.equal(cancel.cancellationRequested,true);
+  assert.equal(cancel.cancelled,false,'provider acknowledgement does not claim cancellation is complete');
+  assert.equal(cancel.providerStatus,'cancelling');
+  assert.equal(db.data.get('batches/batch_live_0').providerStatus,'cancelling');
+  assert.equal((await admissionControl(db,'batches',()=>123).reserve('next')).queued,true,'stopping jobs still consume capacity');
+
+  const statusStart=src.indexOf('    if (kind === "batch_status") {',src.indexOf('    if (kind === "batch_retry_missing") {'));
+  const statusEnd=src.indexOf('    if (kind === "batch_collect") {',statusStart);
+  const refresh=()=>vm.runInNewContext(`(async()=>{ ${src.slice(statusStart,statusEnd)} })()`,{...context,kind:'batch_status'});
+  assert.equal((await refresh()).providerStatus,'cancelling','refresh preserves cancellation feedback');
+  status='cancelled';
+  const stopped=await refresh();
+  assert.equal(stopped.done,true);
+  assert.equal(db.data.get('batches/batch_live_0').providerStatus,'cancelled');
+  assert((await admissionControl(db,'batches',()=>123).reserve('next')).token,'only confirmed cancellation frees capacity');
+}
+(async()=>{await unitScenarios();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();console.log('Shared admission: concurrency, capacity, validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});

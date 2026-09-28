@@ -2190,10 +2190,47 @@ const Gate = window.Gate = (() => {
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
   const solid = m => ["gold10k", "gold14k"].includes(m);
-  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || !!(run?.solidIncluded || selected())[sh.metal] || sh.isolated;
+  /* 10K and 14K go into the set a sheet at a time, each by its own "Include in current set" (Paul, 28 Sep: "The system
+     incorrectly takes all sheets even the ones that are partial ... each sheet should have to be toggled independently").
+     The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
+     tick was the metal's, keeps it until a sheet of its metal is ticked on its own (changeMembership hands it over). */
+  const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : choices[sh.metal] === true;
+  // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
+  const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
+  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
+  /* The one exception: an order with pieces on two 10K/14K sheets (Paul, 28 Sep: "if there is an order that spans two
+     sheets then you'd have to inform the user with a pop-up, and then let the user make the decision of what to do").
+     splitWith lists the other sheets that share an order with this one and would stay on the other side of the set. */
+  const ordersOn = sh => { const ids = new Set((sh.placements || []).map(p => p.id)); return new Set((sh.charms || []).filter(c => ids.has(c.id) && c.order).map(c => String(c.order).split("/")[0])); };
+  function splitWith(sh, included) {
+    const mine = ordersOn(sh); if (!mine.size) return [];
+    return allSheets().filter(p => p !== sh && solid(p.metal) && (p.runId || null) === (sh.runId || null) && picked(p) !== !!included && membershipEditable(p))
+      .map(p => ({ sheet: p, orders: [...ordersOn(p)].filter(id => mine.has(id)) })).filter(x => x.orders.length);
+  }
+  /** The choice, in a small window of its own (the Options panel closes first: never a pop-up over a pop-up). Resolves
+   *  to the sheets to change, or null when the person leaves things as they were. */
+  function askSplit(sh, included, split) {
+    const name = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+    const buyer = id => { const r = Orders.rows().find(r => String(r.order?.receiptId) === id); return r?.order?.buyer?.name || ""; };
+    const others = split.map(x => x.sheet), orders = [...new Set(split.flatMap(x => x.orders))], one = orders.length === 1;
+    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
+    return new Promise(resolve => {
+      const d = document.createElement("dialog"); d.className = "splitDlg"; d.setAttribute("aria-labelledby", "splitT"); d.setAttribute("aria-describedby", "splitP");
+      d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="splitT">${one ? "An order is" : orders.length + " orders are"} on two sheets</h3></div>
+        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. ${included ? "Included" : "Taken out"} on its own, ${one ? "the order is" : "these orders are"} cut in two parts, at different times.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
+        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn ghost sm" data-k="one">Only ${esc(name(sh))}</button><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
+      document.body.appendChild(d);
+      const done = v => { if (d.open) d.close(); d.remove(); resolve(v); };
+      d.querySelector("[data-k=all]").onclick = () => done([sh, ...others]);
+      d.querySelector("[data-k=one]").onclick = () => done([sh]);
+      d.querySelector("[data-k=cancel]").onclick = () => done(null);
+      d.addEventListener("cancel", e => { e.preventDefault(); done(null); });
+      d.showModal(); d.querySelector("[data-k=all]").focus();
+    });
+  }
   function policy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
-      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: choices });
+      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
   }
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
@@ -2244,7 +2281,7 @@ const Gate = window.Gate = (() => {
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
         await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
-        if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? !!choices[sh.metal] : null } });
+        if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? picked(sh, choices) : null } });
       } catch(e) { Object.assign(sh,previous); sh.problem="Set membership was not saved: "+e.message; throw e; }
       for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
       sh.problem=null;set.labels = null;
@@ -2273,7 +2310,7 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? !!choices[sh.metal] : null}});
+        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? picked(sh, choices) : null}});
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -2304,7 +2341,7 @@ const Gate = window.Gate = (() => {
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
-      const included=!!selected()[row.metal], live=allSheets().find(p=>p.sheetId===row.id);
+      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
@@ -2315,11 +2352,20 @@ const Gate = window.Gate = (() => {
       else {S.library.rows=projectLibraryRecords(S.library.rows || []);CN.renderLibrary();}
     }
   }
-  function changeMembership(m, included) {
+  function changeMembership(m, included, sh) {
     const run=B.run;
     if(run && (['complete','abandoned'].includes(run.status) || committing(run)))return Promise.reject(new Error(committing(run) ? 'The set is being committed · try again when it finishes' : 'This run is finished'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
-    choices[m]=!!included;
+    const list=(Array.isArray(sh) ? sh : [sh]).filter(Boolean);   // one sheet, or the sheets an order spans (askSplit)
+    if(solid(m) && list.length){
+      // the tick is each sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
+      // sheets' own are read (a new sheet starts out of the set)
+      for(const mm of new Set([m, ...list.map(p=>p.metal)].filter(solid))){
+        for(const p of allSheets().filter(p=>p.metal===mm && typeof p.solidPick!=='boolean'))p.solidPick=choices[mm]===true;
+        choices[mm]=false;
+      }
+      for(const p of list)p.solidPick=!!included;
+    } else choices[m]=!!included;
     if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
     if (run) {
       run.membershipRevision=(run.membershipRevision||0)+1;run.commitRequested=false;run.membershipDirty=true;
@@ -2361,7 +2407,7 @@ const Gate = window.Gate = (() => {
       node.className = "shGate hidden";
       return;
     }
-    const included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
+    const included = m === "rose" ? policy(sh,seq).include : picked(sh);
     const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && pagesOf(m).some(p=>p.roseStock)));
     // Keep the controls mounted: solver ticks, cloud replies and membership saves
     // must not replace a focused input, its draft value, or an open popup.
@@ -2369,7 +2415,7 @@ const Gate = window.Gate = (() => {
       node._sheetOptionsOwner=sh;
       node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options</summary><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options">
         <div class="sheetOptionsHead"><strong>${esc(labelOf(m))} options</strong><button type="button" class="sheetOptionsClose" aria-label="Close sheet options">×</button></div>
-        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set"> Include in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
+        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
         <section class="sheetOptionSection"><h4>Sheet dimensions</h4><div class="solidSize">
           <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
           <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
@@ -2389,8 +2435,18 @@ const Gate = window.Gate = (() => {
     node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked;
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
-    retry.onclick=()=>changeMembership(m,!!selected()[m]).catch(()=>{});
-    include.onchange=e=>{if(!membershipEditable(sh))return renderRelease(sh,node);changeMembership(m,e.target.checked).catch(()=>{});};
+    retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
+    include.onchange=async e=>{
+      if(!membershipEditable(sh))return renderRelease(sh,node);
+      const want=e.target.checked,split=solid(m)?splitWith(sh,want):[];let list=[sh];
+      if(split.length){
+        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        list=await askSplit(sh,want,split);
+        if(!list || !membershipEditable(sh))return renderRelease(sh,node);   // left as it was
+        list=list.filter(membershipEditable);
+      }
+      changeMembership(m,want,list).catch(()=>{});
+    };
     for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
       const input=node.querySelector('[data-solid="'+axis+'"]');
       input.disabled=sizeLocked;
@@ -2519,7 +2575,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -4169,7 +4225,7 @@ const Sets = window.Sets = (() => {
   }
   /** Every set of a run, in set order. */
   const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
+  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -4964,6 +5020,7 @@ const RunCtl = window.RunCtl = (() => {
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
+      if (["gold10k","gold14k"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K sheet's own Include tick
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
@@ -8118,11 +8175,13 @@ const RunHistory = window.RunHistory = (() => {
     if (s.draft || g.draft || !g.setId) return { st: "na", text: "no QR label yet: made when the sheet joins a set" };
     return { st: "no", text: "QR label not made yet" };
   }
+  // a sheet's picture at true scale: as wide as its millimetres against a 100 mm wide plate (Paul, 28 Sep)
+  const trueWidth = (s, of = "100%") => { const f = window.trueFrame?.(s.stock); return f && f.w < f.fw - .5 ? ` style="width:calc(${of} * ${+(f.w / f.fw).toFixed(4)});height:auto"` : ""; };
   function tileHtml(s, g, h) {
     const id = idOf(s), code = codeOf(s.metal), no = s.sheetIndex || s.page || 1, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
     const facts = [`${code} Sheet ${no}`, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
     return `<button type="button" class="hTile${h && h.sheets.has(id) ? " hit" : ""}" data-sheet="${esc(id)}" style="--c:${colorOf(s.metal)}" title="${esc(facts + " — open it in the sheet window")}" aria-label="${esc(`Open ${code} Sheet ${no} in the sheet window`)}">`
-      + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
+      + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s)} src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
       + `<span class="hCap"><b><i></i>${esc(code)} ${esc(no)}</b><span class="hFill">${esc(fill)}</span><span class="hQr ${qr.st}" title="${esc(qr.text)}">${ICON.qr}</span>${s.laserDoneAt ? `<span class="hDone" title="cut on the laser">${ICON.check}</span>` : ""}</span></button>`;
   }
   function placeholderHtml(g) {
@@ -8177,7 +8236,7 @@ const RunHistory = window.RunHistory = (() => {
   function stackHtml(g) {
     const sh = (g.sheets || []).slice(0, 3);
     if (!sh.length) return `<span class="hStack"><span class="hMini ph">${ICON.plate}</span></span>`;
-    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
+    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s, "calc(100% - 6px)")} src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
   }
   function panelHtml(g, h) {
     const sh = g.sheets || [];
@@ -9227,7 +9286,7 @@ const SetPicker = window.SetPicker = (() => {
     if (!g) return;
     mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}" alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     dialog.showModal();
   }
   return { mount, previewCurrent, preview };

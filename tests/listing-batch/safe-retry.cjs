@@ -133,6 +133,10 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
     const context = {
       open, retriesSubmitted: 0, normState: (s) => s,
       isFinal: (s) => s === "JOB_STATE_FAILED", sweepStart: Date.now(),
+      isSucceeded: (s) => s === "JOB_STATE_SUCCEEDED",
+      checkValidation: async () => failFirst && submitted === 1
+        ? { ok: true, state: "JOB_STATE_FAILED", providerError: "Enqueued token limit reached" }
+        : { ok: true, state: "JOB_STATE_RUNNING" },
       SWEEP_BUDGET_MS: 11 * 60 * 1000,
       inProcess: async (payload) => {
         if (payload.kind === "batch_retry_missing") {
@@ -143,7 +147,9 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
           ? { state: "JOB_STATE_FAILED", providerError: "Enqueued token limit reached" }
           : { state: "JOB_STATE_PENDING" };
       },
-      db: { collection: () => ({ doc: () => ({ set: async () => {} }) }) },
+      db: { collection: () => ({ doc: () => ({ set: async () => {} }),
+        where: () => ({ get: async () => ({ docs: Array.from({ length: active + submitted },
+          () => ({ data: () => ({ collected: false }) })) }) }) }) },
       guardRef: { set: async () => {} },
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       console: { warn: () => {} },

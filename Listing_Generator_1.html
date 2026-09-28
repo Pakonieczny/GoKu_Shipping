@@ -10107,6 +10107,44 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // 0. BEADY_NECKLACE
     // =========================================================================
 
+    // Charm size on the necklace model photos (slots 1 and 5) and on the
+    // sizing guide (slot 3). Regular necklaces, and any category that falls
+    // back to these prompts, keep the NECKLACE_ and SIZING_GUIDE_ rules as
+    // written. Beady necklace charms came out too large in Sunburst batch runs
+    // (2026-09-28), so Beady draws them 10% smaller on those three images:
+    // 0.675 instead of 0.75 on the models, 0.9 of the template charm on the
+    // sizing guide. Until 2026-10-05 the server also swaps the old wording in
+    // Beady requests sent from older tabs or queued earlier
+    // (withCurrentBeadyCharmSize in geminiImageProxy-background.js); change
+    // both together.
+    const NECKLACE_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 25% REDUCTION
+    The charm must be visibly 25% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75). For a product-only scene, or when those landmarks are not visible, use 0.75 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 75 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
+
+    const BEADY_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 32.5% REDUCTION
+    The charm must be visibly 32.5% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675). For a product-only scene, or when those landmarks are not visible, use 0.675 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 200 pixels tall must now be 135 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
+
+    const SIZING_GUIDE_CHARM_SIZE = `CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.`;
+
+    const SIZING_GUIDE_CHARM_SIZE_FAIL = `- Any charm size mismatch vs charm image.`;
+
+    const BEADY_SIZING_GUIDE_CHARM_SIZE = `CHARM POSITION + SIZE — REQUIRED 10% REDUCTION (NON-NEGOTIABLE)
+    • The new charm must sit in the same position as the original charm in the reference image, centred on the same point, with the pointer line still pointing to it.
+    • The new charm must be exactly 10% smaller than the original charm’s on-image size in BOTH width and height: scale it to fit 0.9 × the original charm’s height and 0.9 × its width, keeping the new charm’s own proportions. An original charm 400 pixels tall becomes a new charm 360 pixels tall.
+    • Apply this reduction exactly ONCE. Never match or exceed the original charm’s size. Resize nothing else: the text, pencil, pointer line, layout and background stay exactly as they are.`;
+
+    const BEADY_SIZING_GUIDE_CHARM_SIZE_FAIL = `- Any charm that is not 10% smaller than the original charm in the reference image.`;
+
     const SLOT2_DUPLICATE_PROMPT = 
     `${CHARM_GRAVITY_RULES}
 
@@ -10168,7 +10206,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
 
-    const SLOT3_SIZING_GUIDE_PROMPT =
+    const necklaceSizingGuidePrompt = (charmSize, charmSizeFail) =>
     `CRITICAL: Slot 3 is a sizing-guide charm replacement task.
 
     PROCESS ORDER (NON-NEGOTIABLE)
@@ -10187,10 +10225,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     • The short black pointer line MUST remain visible and MUST point to the charm exactly.
     • Do NOT crop, zoom, or reframe the image.
 
-    CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
-    • The new charm must sit in the EXACT same position as the original charm in the reference image.
-    • The new charm must match the original charm’s on-image size EXACTLY.
-    • This is a strict size match — no scaling up or down.
+    ${charmSize}
 
     CHARM FIDELITY (Charm Image IS SINGLE TRUTH SOURCE)
     • Preserve the exact outer perimeter, cutouts, engraving, and integrated hoop from Charm Image.
@@ -10239,23 +10274,21 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
         HARD FAIL CONDITIONS
     - Any text change.
-    - Any charm size mismatch vs charm image.
+    ${charmSizeFail}
     - Any weak or disconnected hoop connection.
     - Any pink/rose-gold colour cast on the charm.
     - Any gemstone, diamond, bead, dot, or decorative element added to the charm that is not in the source artwork.
     - Any second/phantom hoop added near the charm.`;
 
-    const DEFAULT_PROMPT =
+    const SLOT3_SIZING_GUIDE_PROMPT = necklaceSizingGuidePrompt(SIZING_GUIDE_CHARM_SIZE, SIZING_GUIDE_CHARM_SIZE_FAIL);
+    const BEADY_SLOT3_SIZING_GUIDE_PROMPT = necklaceSizingGuidePrompt(BEADY_SIZING_GUIDE_CHARM_SIZE, BEADY_SIZING_GUIDE_CHARM_SIZE_FAIL);
+
+    const necklaceModelPrompt = (charmSize) =>
     `${CHARM_GRAVITY_RULES}
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE — REQUIRED 25% REDUCTION
-    The charm must be visibly 25% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
-    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75). For a product-only scene, or when those landmarks are not visible, use 0.75 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
-    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 75 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
-    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
-    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    ${charmSize}
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10317,6 +10350,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     Focus on Charm Engraving details and ensure 100% accuracy to Charm Image
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const DEFAULT_PROMPT = necklaceModelPrompt(NECKLACE_MODEL_CHARM_SIZE);
+    const BEADY_DEFAULT_PROMPT = necklaceModelPrompt(BEADY_MODEL_CHARM_SIZE);
 
     const SLOT4_PROMPT =
     `${CHARM_GRAVITY_RULES}
@@ -10424,17 +10460,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     - Engraving rendered as pencil-drawn or flat with no recessed depth.
     - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.`;
 
-    const SLOT5_PROMPT =
+    const necklaceSecondModelPrompt = (charmSize) =>
     `${CHARM_GRAVITY_RULES}
 
       CRITICAL: This is a standard fashion product photo edit. Keep the subject modest. No nudity.
 
-    CHARM SIZE AND CAMERA SCALE — REQUIRED 25% REDUCTION
-    The charm must be visibly 25% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
-    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75). For a product-only scene, or when those landmarks are not visible, use 0.75 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
-    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 75 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
-    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
-    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    ${charmSize}
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10496,6 +10527,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     Focus on Charm Engraving details and ensure 100% accuracy to Reference image
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in Reference Image.`;
+
+    const SLOT5_PROMPT = necklaceSecondModelPrompt(NECKLACE_MODEL_CHARM_SIZE);
+    const BEADY_SLOT5_PROMPT = necklaceSecondModelPrompt(BEADY_MODEL_CHARM_SIZE);
 
     const SLOT7_PROMPT =
     `${CHARM_GRAVITY_RULES}
@@ -11546,7 +11580,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // =========================================================================
 
     const PROMPT_MAPS = {
-      // 1. Regular_Necklace (Uses identical prompts to Beady)
+      // 1. Regular_Necklace (Beady's prompts with the shared charm size)
       "Regular_Necklace": {
         1: REGULAR_DEFAULT_PROMPT,
         2: REGULAR_SLOT2_DUPLICATE_PROMPT,
@@ -11555,13 +11589,13 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         5: REGULAR_SLOT5_PROMPT,
         7: REGULAR_SLOT7_PROMPT
       },
-      // 2. Beady_Necklace (Original)
+      // 2. Beady_Necklace (Original; charm 10% smaller on slots 1, 3 and 5)
       "Beady_Necklace": {
-        1: DEFAULT_PROMPT,
+        1: BEADY_DEFAULT_PROMPT,
         2: SLOT2_DUPLICATE_PROMPT,
-        3: SLOT3_SIZING_GUIDE_PROMPT,
+        3: BEADY_SLOT3_SIZING_GUIDE_PROMPT,
         4: SLOT4_PROMPT,
-        5: SLOT5_PROMPT,
+        5: BEADY_SLOT5_PROMPT,
         7: SLOT7_PROMPT
       },
       // 3. Stud_Earrings
@@ -13076,10 +13110,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           uniqueEffective.set(key, b);
       }
       const total = uniqueEffective.size;
-      const finished = [...uniqueEffective.values()].filter((b) => b.collected).length;
+      const finished = [...uniqueEffective.values()].filter((b) => b.collected && !b.results?.failedCount).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
+      const cancelling = activeJobs.filter((b) => b.providerStatus === "cancelling").length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
       const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
       const lastProviderCheck = Math.max(0, ...activeJobs.map((b) => Number(b.updatedAt || 0)));
@@ -13116,8 +13151,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
 
-      const attention = effective.filter((b) => !b.collected && !b.retryRequested &&
-        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))).length;
+      const attention = effective.filter((b) => !b.retryRequested &&
+        (b.collected ? b.results?.failedCount > 0 :
+          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
       const originals = session.batches.filter((b) => !b.retryOf);
       const partNumbers = new Set();
       let plannedSets = 0;
@@ -13141,6 +13177,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
       const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : null;
+      const sweep = _batchSweepInfo;
+      const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
+      const refilling = waitingRetries > 0 && running < _batchRetryLimit && sweepIsRunning &&
+        ["submitting queued sets", "validating new job"].includes(sweep.stage);
 
       // Headline.
       let headline, headlineColor;
@@ -13152,6 +13192,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
+      } else if (cancelling) {
+        headline = "Stopping jobs"; headlineColor = "#fde68a";
+      } else if (refilling) {
+        headline = "Filling queue"; headlineColor = "#93c5fd";
       } else if (providerWaiting) {
         headline = "Waiting for OpenAI"; headlineColor = "#fde68a";
       } else if (waitingRetries && running >= _batchRetryLimit) {
@@ -13186,8 +13230,6 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (lastProviderCheck) rows.push(["Last provider check", new Date(lastProviderCheck).toLocaleTimeString()]);
       const lastSavedAt = Math.max(0, ...session.batches.map((b) => Number(b.collectedAt || 0)));
       if (lastSavedAt) rows.push(["Last set saved", `${new Date(lastSavedAt).toLocaleTimeString()} · ${_formatDuration(Date.now() - lastSavedAt)} ago`]);
-      const sweep = _batchSweepInfo;
-      const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
       const sweepStale = !!sweep?.lastSweepAt && Date.now() - sweep.lastSweepAt > 25 * 60 * 1000;
       if (waitingRetries) {
         rows.push(["Collector", sweepIsRunning ? `Running · ${sweep.stage || "checking jobs"}` :
@@ -13212,11 +13254,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
         <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const activity = [running ? `${running} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
+      const activity = [cancelling ? `${cancelling} stopping` : "",
+        running > cancelling ? `${running - cancelling} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
         attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      let explanation = providerWaiting
+      let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
+        : refilling ? (sweep.stage === "validating new job"
+          ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
+        : providerWaiting
         ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
@@ -13234,6 +13280,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // anything is still running. Recover-all if there are failed /
       // expired batches the user could pull partial results from.
       const cancellableBatches = session.batches.filter((b) => {
+        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });
@@ -13262,7 +13309,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : "";
 
       const stateDetail = session.batches.map((b) => {
-        const state = _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
+        const state = b.providerStatus === "cancelling" ? "stopping" : _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
         const name = _batchSafeText(b.displayName || b.batchName || "Unnamed batch");
         const updated = b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "No update yet";
         const counts = b.batchStats || b.requestCounts || {};
@@ -13307,6 +13354,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
     async function _cancelSession(sessionId) {
       const targets = _lastBatchList.filter((b) => {
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
+        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });
