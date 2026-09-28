@@ -10562,7 +10562,7 @@ const Arrivals = window.Arrivals = (() => {
       state.pending = true; save();
       if (B.run && !["complete", "abandoned"].includes(B.run.status)) { B.run.orders = [...new Set((B.run.orders || []).concat(added.map(r => r.order.receiptId)))]; RunCtl.save().catch(() => {}); }
       // one notice counts the arrivals while it shows, rather than one notice a batch
-      { const was = document.querySelector('#toasts .toast[data-key="arrivals"]'), n = (freshIds.length || new Set(added.map(r => r.order.receiptId)).size) + (was && was.style.opacity !== "0" ? +was.dataset.count || 0 : 0);
+      { const was = document.querySelector('#toasts .toast[data-key="arrivals"]'), ids = new Set(added.map(r => String(r.order.receiptId))), n = (freshIds.filter(id => ids.has(String(id))).length || ids.size) +(was && was.style.opacity !== "0" ? +was.dataset.count || 0 : 0);
         const note = toast(`${n} new order${n === 1 ? "" : "s"} arrived`, "ok", 6000, "arrivals"); if (note) note.dataset.count = n; }
       notifyPerson("New Etsy orders", `${added.length} new order line(s) added to the sorter`);
     }

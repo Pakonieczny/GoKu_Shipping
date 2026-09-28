@@ -2793,10 +2793,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }, 80);
     }
     const pause = ms => new Promise(r => setTimeout(r, ms));
-    /** The order's pieces on saved sheets not loaded here and not sent to the station yet, by sheet; null when the piece
-     *  records could not be read. */
-    async function farSheets(rid, plan) {
-      const r = await api("charmNestLibrary", { op: "poolList", orderId: rid, limit: 300 }, { quiet: true }).catch(() => null);
+    /** The order's pieces on saved sheets not loaded here and not sent to the station yet, by sheet, from its piece records
+     *  (r: poolList's answer, read with the cancel record); null when they could not be read. */
+    function farSheets(r, plan) {
       if (!r || !Array.isArray(r.pools)) return null;
       const loaded = new Set(allSheets().map(sh => sh.sheetId).filter(Boolean)), known = new Set(plan.left.map(l => l.sheetId).filter(Boolean)), out = new Map();
       for (const p of r.pools) {
@@ -2810,7 +2809,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     async function job(rid) {
       st = read();
       if (window.Recall?.on?.()) return "later";           // an earlier set on screen: its sheets and lines are history
-      let plan = planOf(rid), rec = null, bar = null;
+      let plan = planOf(rid), rec = null, bar = null, pools = null;
       const t0 = Date.now(), j0 = st.jobs[rid];
       const say = text => { if (!bar && window.CNProgress) bar = CNProgress.start(`Cancelled order ${rid}`); if (bar) bar.note(text); };
       try {
@@ -2819,8 +2818,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         for (;;) {
           const idle = !W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length;
           if (idle) {
-            const r = await api("charmNestLibrary", { op: "cancelCheck", orderIds: [rid] }, { quiet: true });
-            rec = r && r.cancelled && r.cancelled[rid];
+            // (its piece records are read here too: a read after the check below let a nest start on a page meanwhile)
+            const [r, pl] = await Promise.all([api("charmNestLibrary", { op: "cancelCheck", orderIds: [rid] }, { quiet: true }),
+              api("charmNestLibrary", { op: "poolList", orderId: rid, limit: 300 }, { quiet: true }).catch(() => null)]);
+            pools = pl; rec = r && r.cancelled && r.cancelled[rid];
             if (!rec) {
               if (j0 || plan.rows.length) agent({ bridge: true }, "DS", `Order ${rid} is not cancelled any more: left as it is`);
               st = read(); delete st.jobs[rid]; save(); forget(rid); return "restored";
@@ -2837,7 +2838,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // its pieces on a saved sheet this sorter has not loaded (an earlier set's, or one only in the Library), read from
         // their piece records (one read, no Etsy call). Not taken off from here (the sheet window leaves a sheet it has not
         // open as it is too): the run pill says to take them off before cutting, and the record says "open"
-        const far = await farSheets(rid, plan);
+        const far = farSheets(pools, plan);
         if (far) for (const l of far) plan.left.push(l);
         if (far && !j0 && !plan.ids.size && !plan.rows.length && !plan.left.length) { st = read(); st.done[rid] = { at, t: Date.now() }; delete st.jobs[rid]; save(); return "done"; }
         // the journal: written before anything moves, and each step as it is through (read afresh each time: a poll or a
