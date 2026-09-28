@@ -3704,6 +3704,7 @@ function startNestReady(sh, context) {
   sh.nestFlow = sh.roseProtected || sh.appendOnly ? "standard" : S.settings.nestFlow || "standard";
   cancelGPUComparison();
   sh.persistedDone = false;
+  if (sh._byHand) window.SheetEvents?.renested(sh);   // a person nested it again: on its orders' timelines (idle time)
   sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh.resumeWait;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   // a big batch: the oldest few orders now, the next few once they are placed (feedTurn)
@@ -5595,10 +5596,10 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-popups"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
+<script src="charm-nest-bridge.js?v=20260928-m1"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-m1"></script>
 <script src="charm-nest-mail.js?v=20260928-popups"></script>
-<script src="charm-nest-rose-ui.js?v=20260928-true"></script>
+<script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260927-moves"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

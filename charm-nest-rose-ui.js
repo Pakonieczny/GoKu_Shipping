@@ -69,6 +69,7 @@
       const result=await api('rosePlan',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseStock.revision,fingerprint:key,shapesJson:JSON.stringify(shapes),allowanceMm:sh.roseAllowanceMm||.2});
       if(fingerprint(sh)!==key||sh.dirty)throw new Error('Layout changed while saving its contour');
       sh.rosePlan=parse(result.planJson);sh.rosePlanHash=result.planHash;sh.rosePlanKey=key;sh.roseRevision=sh.roseStock.revision;
+      window.SheetEvents?.roseLines(sh);   // a new green line: on the timelines of the orders it covers (idle time)
     })();
     sh._rosePlanning=task;refresh(sh);
     try{await task;}catch(e){sh._roseError=e.message;throw e;}finally{sh._rosePlanning=null;refresh(sh);C.flushManualIntake?.('rose');}
