@@ -2003,7 +2003,7 @@ async function op_cancelFates(b) { return OrderCancel.noteFates(db, b.orderId, b
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
-async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX }); }
+async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false }); }   // recorded + derived from the records already kept
 async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
    record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel. */

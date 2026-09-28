@@ -126,8 +126,12 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     const recA = st.doc(SHEETS, 'gold-open-1');
     assert.deepStrictEqual(recA.charms.map(c => c.poolId).sort(), [pid(B, 2, 1), pid(C, 3, 1)], 'the saved sheet no longer lists it');
     for (const c of [1, 2]) { const p = st.doc(POOL, pid(A, 1, c)); assert(p.state === 'abandoned' && p.removedBy === 'Etsy' && p.removedReason === 'cancelled' && p.removedVerifiedAt > 0, 'its piece records: abandoned, removed by Etsy (cancelled), verified: ' + JSON.stringify(p)); }
-    const evA = st.doc(TL, `${A}~removed~autocancel-${atA}-gold-open-1`);
-    assert(evA && evA.sheetId === 'gold-open-1' && evA.sheet === 'GF Sheet 1' && evA.data && evA.data.reason === 'cancelled on Etsy' && evA.by === 'Etsy', 'the timeline has "removed" with its sheet and reason: ' + JSON.stringify(evA));
+    // one "removed": the server stamps it from the piece records, the sorter's own says it in full under the same id
+    const remA = st.doc(POOL, pid(A, 1, 1)).removedAt;
+    await until(() => { const e = st.doc(TL, `${A}~removed~${remA}`); return e && /^Taken off GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
+    const evsA = st.list(TL).filter(x => x._id.startsWith(`${A}~removed~`)), evA = evsA[0];
+    assert(evsA.length === 1 && evA.sheetId === 'gold-open-1' && evA.sheet === 'GF Sheet 1' && evA.data && evA.data.reason === 'cancelled on Etsy' && evA.by === 'Etsy', 'the timeline has one "removed" with its sheet and reason: ' + JSON.stringify(evsA));
+    assert.deepStrictEqual(st.doc(CANCELLED, A).fates, [{ sheet: 'GF Sheet 1', fate: 'removed', text: 'taken off GF Sheet 1' }], 'its cancel record says what became of it (Orders › Cancelled reads it)');
     const s1 = await page.evaluate(A => ({ notes: [...document.querySelectorAll('.mNote')].map(n => n.textContent), flies: window.__flies, has: Cancelled.has(A), acState: AutoCancel.state(), popups: document.querySelectorAll('dialog[open]').length }), A);
     assert(s1.notes.some(t => t.includes(`Order ${A} cancelled on Etsy · taken off GF Sheet 1`)), 'a note says so: ' + JSON.stringify(s1.notes));
     assert(s1.flies >= 2, 'its charms fly off the card: ' + s1.flies);
@@ -154,8 +158,11 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     assert.strictEqual(pill.item, TEXT, 'the pill menu says what to do: ' + pill.item);
     assert(/cancelled · set aside/.test(pill.text) && pill.n === '1', 'the pill itself says so: ' + JSON.stringify(pill));
     assert(pill.notes.some(t => t.includes(TEXT)), 'and a note: ' + JSON.stringify(pill.notes));
+    await until(() => st.doc(TL, `${D}~note~autocancel-aside-${atD}`), 8000, 'the timeline note');   // (the page's timeline queue sends it in a second or so)
     const noteD = st.doc(TL, `${D}~note~autocancel-aside-${atD}`);
     assert(noteD && noteD.text === TEXT, 'the timeline has the note: ' + JSON.stringify(noteD));
+    assert.deepStrictEqual(st.doc(CANCELLED, D).fates, [{ sheet: 'SS Sheet 1', fate: 'cut', text: 'already cut on SS Sheet 1: set aside' }], 'its cancel record says it was already cut');
+    assert(!st.list(TL).some(x => x._id.startsWith(`${D}~removed~`)), 'and nothing says it was taken off');
     // it stays: a reload keeps it, until someone presses Set aside
     assert.deepStrictEqual(await settle(), [], 'looked at once');
     await page.click('#runMenuToggle');
@@ -202,8 +209,10 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     assert(!st.doc(SHEETS, 'gold-open-1').charms.some(c => c.order === B), 'and saves it without the order');
     const pB = st.doc(POOL, pid(B, 2, 1));
     assert(pB.state === 'abandoned' && pB.removedBy === 'Tom' && pB.removedReason === 'cancelled' && pB.removedVerifiedAt > 0, 'its piece record: removed by Tom, verified: ' + JSON.stringify(pB));
+    await until(() => { const e = st.doc(TL, `${B}~removed~${pB.removedAt}`); return e && /^Taken off GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
     const evB = st.list(TL).filter(x => x._id.startsWith(`${B}~removed~`));
-    assert(evB.length === 1 && evB[0].data.reason === 'cancelled by Tom', 'one "removed" on its timeline: ' + JSON.stringify(evB));
+    assert(evB.length === 1 && evB[0].data.reason === 'cancelled by Tom' && evB[0].by === 'Tom', 'one "removed" on its timeline: ' + JSON.stringify(evB));
+    assert.deepStrictEqual(st.doc(CANCELLED, B).fates, [{ sheet: 'GF Sheet 1', fate: 'removed', text: 'taken off GF Sheet 1' }], 'and its record what became of it');
     const s4 = await page.evaluate(B => AutoCancel.state(), B);
     assert(s4.done[B] && +s4.done[B].at === atB, 'done: ' + JSON.stringify(s4.done[B]));
     assert.deepStrictEqual(await settle(), [], 'looked at again: nothing left to do');

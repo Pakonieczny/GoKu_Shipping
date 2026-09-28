@@ -13,6 +13,7 @@
  *        read from Etsy — also counts as a cancel when it says so (no extra Etsy call).
  *    StationTimeline.did(type, orderId, text, data)   welded · assembled · packed · labelPrinted · shipped ·
  *        etsyCompleted · sorted (any station type). Stable id `${device}-${orderId}-${type}-${minute}`.
+ *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch)
  *    StationTimeline.isCancelled(orderId)  → the cached cancel record ({ at, by, why, source }) or null
  *    StationTimeline.guard(orderId, { action, anchor })  → Promise<boolean>: true to go on. For a cancelled order it
  *        asks "This order is cancelled. Do it anyway?" inline (inside the alert while it is up); a yes is recorded.
@@ -105,7 +106,7 @@
       rec({ orderId: id, type: "scan", at, by, id: `${cfg.device}-${id}-${minute(at)}`, data,
             text: `Scanned at ${where()}${cfg.device ? " (" + cfg.device + ")" : ""}${how === "scan" ? "" : " · " + how}${res.state === "cancelled" ? " · cancelled order" : ""}` });
       if (res.state === "unchecked") warn("cancel check not done for", id, "—", res.why);
-      if (res.state === "cancelled") { try { showAlert(id, res.record); } catch (e) { warn("alert failed", e); } return { cancelled: true, record: res.record }; }
+      if (res.state === "cancelled") { try { if (!opts.quiet) showAlert(id, res.record); } catch (e) { warn("alert failed", e); } return { cancelled: true, record: res.record }; }
       return { cancelled: false };
     } catch (e) { warn("scan not recorded", e); return { cancelled: false }; }
   }
