@@ -563,12 +563,60 @@
   }
   const pathD = pts => { let d = ""; pts.forEach((e, i) => { if (!i) { d = `M${e.x} ${e.y}`; return; } const p = pts[i - 1], mx = (p.x + e.x) / 2; d += ` C${mx} ${p.y} ${mx} ${e.y} ${e.x} ${e.y}`; }); return d; };
 
+  /* ════ one order's timeline, read once and shared (adversarial wave 2) ════
+     feed(orderId, { pollMs }) → { orderId, answer, error, loading, refresh({ force }), subscribe(fn(kind)) → off, destroy() }
+     The order view's Overview, header rail and Timeline tab each read the order's timeline for themselves (three
+     timelineGet an open, a fourth at every return to the tab, and two polls): they now take one feed (mount's
+     opts.feed). A refresh while one is on its way joins it; one not forced reuses an answer younger than the poll (the
+     feed is live), so a return to the tab reads nothing; Retry and the poll force. While anyone listens it reads again
+     every pollMs with the tab visible; kinds: "wait", "data", "error". destroy() stops it, and an answer still on its
+     way is dropped. */
+  function feed(orderId, o) {
+    o = o || {};
+    const id = digits(orderId), pollMs = Math.max(250, +o.pollMs || POLL), subs = new Set();
+    const F = { orderId: id, answer: null, error: "", loading: null, at: 0, tried: 0, dead: false };
+    let pollT = 0, seq = 0;
+    const emit = kind => { for (const fn of [...subs]) { try { fn(kind, F); } catch (err) { warn("feed", err); } } };
+    function arm() {
+      clearTimeout(pollT); pollT = 0;
+      if (F.dead || !subs.size) return;
+      pollT = setTimeout(() => { pollT = 0; if (!F.dead && doc.visibilityState !== "hidden") F.refresh({ force: true }); }, pollMs);
+    }
+    function done(my, fn) { if (F.dead || my !== seq) return F.answer; F.loading = null; F.tried = Date.now(); fn(); arm(); return F.answer; }
+    F.refresh = r => {
+      if (F.dead) return Promise.resolve(F.answer);
+      if (F.loading) return F.loading;
+      if (!(r && r.force) && F.answer && Date.now() - F.at < pollMs) return Promise.resolve(F.answer);
+      const my = ++seq, api = root.OrderTimeline;
+      // (deferred: a throw before the read still reaches the subscribers after "wait", never before it)
+      const p = F.loading = Promise.resolve().then(() => {
+        if (!id) throw new Error("no order number");
+        if (!api || typeof api.get !== "function") throw new Error("the timeline is not loaded on this page");
+        return api.get(id);
+      }).then(j => done(my, () => { F.answer = j || {}; F.error = ""; F.at = F.tried; emit("data"); }),
+        e => done(my, () => { F.error = String((e && e.message) || e || "failed"); emit("error"); }));
+      emit("wait");
+      return p;
+    };
+    F.subscribe = fn => { subs.add(fn); if (!pollT && !F.loading) arm(); return () => { subs.delete(fn); if (!subs.size) { clearTimeout(pollT); pollT = 0; } }; };
+    const onVis = () => {
+      if (F.dead || !subs.size) return;
+      if (doc.visibilityState === "hidden") { clearTimeout(pollT); pollT = 0; return; }
+      if (!F.loading && Date.now() - F.tried >= pollMs) F.refresh({ force: true }); else if (!F.loading && !pollT) arm();
+    };
+    doc.addEventListener("visibilitychange", onVis);
+    F.destroy = () => { if (F.dead) return; F.dead = true; clearTimeout(pollT); pollT = 0; subs.clear(); doc.removeEventListener("visibilitychange", onVis); };
+    return F;
+  }
+
   /* ════ mount ════ */
   function mount(el, opts) {
     opts = opts || {};
     if (!el || typeof el.appendChild !== "function") throw new Error("OrderTimelineUI.mount needs an element");
     css();
     const orderId = digits(opts.orderId), live = opts.live !== false, compact = !!opts.compact;
+    // a shared feed (the order view): its reads, its poll; this mount keeps its own live stamps (onRecord) alone
+    const src = opts.feed && typeof opts.feed.subscribe === "function" && opts.feed.orderId === orderId ? opts.feed : null;
     const pollMs = Math.max(250, +opts.pollMs || POLL);   // pollMs: tests only
     const S = { events: [], byKey: new Map(), cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
       loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
@@ -587,7 +635,7 @@
     const $ = s => box.querySelector(s), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
-    let unsub = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
+    let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
     const pub = e => pubOf(e, orderId);
 
     /* ── loading ── */
@@ -598,14 +646,25 @@
       m.innerHTML = kind === "wait" ? `<i class="tlSpin"></i><span>${esc(text)}</span>` : kind === "err" ? `<span>${esc(text)}</span><button type="button" class="btn ghost sm tlRetry">Retry</button>` : `<span>${esc(text)}</span>`;
     }
     function busy(on) { const b = $(".tlBusy"); if (b) b.hidden = !on; }
-    function load() {
-      if (S.dead) return Promise.resolve();
-      if (S.loading) return S.loading;
-      const my = ++S.seq;
+    function waiting() {
       if (!S.loaded) {
         message("wait", compact ? "Loading the steps…" : `Loading the timeline of order ${orderId || "—"}…`);
         $(".tlNowS").innerHTML = `<i class="tlSpin"></i><span>Loading the timeline</span>`;
-      } else busyT = later(() => busy(true), 350);
+      } else if (!busyT) busyT = later(() => busy(true), 350);
+    }
+    /** The shared feed's news: its wait, its answer (merged as this mount's own would be), its failure. */
+    function onFeed(kind) {
+      if (S.dead) return;
+      if (kind === "wait") { waiting(); return; }
+      busyT = cancelT(busyT); busy(false); S.lastLoad = Date.now();
+      if (kind === "data") { S.error = ""; apply(src.answer || {}); } else if (kind === "error") { S.error = src.error || "failed"; failed(); }
+    }
+    function load(force) {
+      if (S.dead) return Promise.resolve();
+      if (src) return src.refresh({ force: force !== false }).then(() => undefined, () => undefined);
+      if (S.loading) return S.loading;
+      const my = ++S.seq;
+      waiting();
       const api = root.OrderTimeline;
       S.loading = (async () => {
         try {
@@ -642,7 +701,7 @@
       for (const [k, e] of S.byKey) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
       const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.byKey.has(k));
       S.byKey = next; S.events = [...next.values()].sort(byAt);
-      S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true;
+      S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true; S.truncated = !!j.truncated;
       const sig = sigOf();
       if (!first && sig === S.sig) { paintNowSub(); paintSum(); return; }
       S.sig = sig;
@@ -779,7 +838,8 @@
       const r = $(".tlSum"), lv = $(".tlLive"); if (!r) return;
       if (lv) lv.hidden = !live || !S.loaded;
       const e = S.events[S.events.length - 1];
-      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      // (the server reads at most 2000 recorded steps of an order: more than that, and it says so)
+      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"}${S.truncated ? " (more than 2000 recorded: not all shown)" : ""} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
     }
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
@@ -965,7 +1025,7 @@
       if (st) { const k = st.dataset.key, a = S.events.findIndex(e => e.key === S.sel), b = S.events.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
       const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
       const stop = t.closest(".tlStop"); if (stop) { stageClick(stop, ev); return; }
-      if (t.closest(".tlRetry")) { load(); return; }
+      if (t.closest(".tlRetry")) { load(true); return; }
     }
     function stageClick(stop, click) {
       const e = evOfEl(stop);
@@ -1009,7 +1069,7 @@
     }
 
     /* ── the handle ── */
-    function refresh() { return Promise.resolve(load()).then(() => undefined); }
+    function refresh() { return Promise.resolve(load(false)).then(() => undefined); }
     /** compact: the host opens the event on its Timeline — opts.onOpen(event), else a bubbling "timeline:focus". */
     function handOver(e) {
       if (typeof opts.onOpen === "function") { try { opts.onOpen(pub(e)); } catch (err) { warn("onOpen", err); } return; }
@@ -1044,7 +1104,8 @@
       for (const t of timers) clearTimeout(t);
       timers.clear(); pollT = busyT = 0;
       try { if (typeof unsub === "function") unsub(); } catch (_) {}
-      unsub = null;
+      try { if (typeof unfeed === "function") unfeed(); } catch (_) {}
+      unsub = unfeed = null;
       doc.removeEventListener("visibilitychange", onVis);
       box.removeEventListener("click", onClick); box.removeEventListener("pointerover", onOver); box.removeEventListener("pointerout", onOut); box.removeEventListener("keydown", onKey);
       scroller.removeEventListener("scroll", onScroll);
@@ -1056,11 +1117,17 @@
     scroller.addEventListener("scroll", onScroll, { passive: true });
     paintRail(derive([], null), { first: true });
     if (!compact) paintLanes();
-    load();
+    if (src) {
+      // what the feed has already: its answer drawn at once, its read on the way waited for; else it reads now
+      unfeed = src.subscribe(onFeed);
+      if (src.answer) { onFeed("data"); if (src.loading) waiting(); }
+      else if (src.loading) waiting();
+      else if (src.error) onFeed("error");
+      else src.refresh();
+    } else load();
     if (live) {
       try { if (root.OrderTimeline && typeof root.OrderTimeline.onRecord === "function") unsub = root.OrderTimeline.onRecord(onRecord); } catch (_) {}
-      doc.addEventListener("visibilitychange", onVis);
-      arm();
+      if (!src) { doc.addEventListener("visibilitychange", onVis); arm(); }   // (a feed polls for every mount)
     }
     return { refresh, destroy, focus };
   }
@@ -1094,5 +1161,5 @@
     card._tlLast = s ? s.dataset.key : null;
   }
 
-  root.OrderTimelineUI = { mount, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow };
 })(typeof window !== "undefined" ? window : globalThis);
