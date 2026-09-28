@@ -1188,7 +1188,7 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .setsWin .hTile{position:relative;display:grid;grid-template-rows:minmax(0,1fr) auto;min-width:0;height:100%;padding:0;border:1px solid var(--line2);border-radius:10px;background:var(--paper2);color:inherit;text-align:left;cursor:pointer;scroll-snap-align:start;overflow:hidden;container-type:inline-size;transition:border-color .15s,box-shadow .18s,background-color .15s}
 .setsWin .hTile:hover,.setsWin .hTile:focus-visible{border-color:var(--ink25);background:#e7e0d2;box-shadow:0 4px 12px rgba(30,26,20,.10);outline:none}
 .setsWin .hTile.hit{border-color:var(--gold2);box-shadow:0 0 0 2px rgba(202,168,97,.42)}
-.setsWin .hPlate{position:relative;min-height:0;margin:7px 7px 2px}
+.setsWin .hPlate{position:relative;min-height:0;margin:7px 7px 2px;container-type:size}
 .setsWin .hPlate img{position:absolute;inset:0;margin:auto;max-width:100%;max-height:100%;border-radius:4px;background:#fffefb;box-shadow:0 0 0 1px rgba(30,26,20,.08),0 2px 6px rgba(30,26,20,.10);opacity:0;transition:opacity .25s ease,transform .2s ease}
 .setsWin .hPlate img.on{opacity:1}
 .setsWin .hTile:hover .hPlate img{transform:scale(1.035)}

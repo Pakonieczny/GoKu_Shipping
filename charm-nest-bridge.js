@@ -9891,7 +9891,11 @@ const RunHistory = window.RunHistory = (() => {
     return { st: "no", text: "QR label not made yet" };
   }
   // a sheet's picture at true scale: as wide as its millimetres against a 100 mm wide plate (Paul, 28 Sep)
-  const trueWidth = (s, of = "100%") => { const f = window.trueFrame?.(s.stock); return f && f.w < f.fw - .5 ? ` style="width:calc(${of} * ${+(f.w / f.fw).toFixed(4)});height:auto"` : ""; };
+  // (a tile's plate is a fixed height and as wide as its strip gives it, so the 100 × 50 mm frame is fitted in it both
+  // ways — the plate is a size container: cqw, cqh. Against its width alone a lone small sheet in a wide, low plate came
+  // out larger per millimetre than a 100 × 50 mm sheet beside it, which the plate's height holds)
+  const frameW = f => `min(100cqw, 100cqh * ${+(f.fw / f.fh).toFixed(4)})`;
+  const trueWidth = (s, of) => { const f = window.trueFrame?.(s.stock); return f && (f.w < f.fw - .5 || (!of && f.h < f.fh - .5)) ? ` style="width:calc(${of || frameW(f)} * ${+(f.w / f.fw).toFixed(4)});height:auto"` : ""; };
   function tileHtml(s, g, h) {
     const id = idOf(s), code = codeOf(s.metal), no = s.sheetIndex || s.page || 1, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
     const facts = [`${code} Sheet ${no}`, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
@@ -10047,7 +10051,7 @@ const RunHistory = window.RunHistory = (() => {
     let host = plate.querySelector(".hBack");
     if (!host) {
       host = el("span", "hBack"); host.setAttribute("aria-hidden", "true");
-      const s = sheetOf(t.dataset.sheet), f = s && window.trueFrame?.(s.stock); if (f && f.w < f.fw - .5) host.style.width = `calc(100% * ${+(f.w / f.fw).toFixed(4)})`;
+      const s = sheetOf(t.dataset.sheet), f = s && window.trueFrame?.(s.stock); if (f && (f.w < f.fw - .5 || f.h < f.fh - .5)) host.style.width = `calc(${frameW(f)} * ${+(f.w / f.fw).toFixed(4)})`;
       plate.appendChild(host);
     }
     const e = H.backCv.get(t.dataset.sheet);
@@ -11133,7 +11137,9 @@ const SetPicker = window.SetPicker = (() => {
     const back = face === "back", s = F.sheets[+pl.dataset.sp]; pl.classList.toggle("back", back);
     let host = pl.querySelector(".spBack");
     if (!back || !s) { if (host) host.hidden = true; return; }
-    if (!host) { host = el("div", "spBack"); host.innerHTML = `<canvas role="img" aria-label="The back of this sheet: every charm's engraving, mirrored as the laser sees it"></canvas><span class="spWait" hidden></span>`; pl.appendChild(host); }
+    if (!host) { host = el("div", "spBack"); host.innerHTML = `<canvas role="img" aria-label="The back of this sheet: every charm's engraving, mirrored as the laser sees it"></canvas><span class="spWait" hidden></span>`; pl.appendChild(host);
+      // at true scale, in its picture's own box: a sheet smaller than the 100 × 50 mm frame is as wide as its picture
+      const f = window.trueFrame?.(s.stock); if (f && f.w < f.fw - .5) { host.style.width = +(f.w / f.fw * 100).toFixed(2) + "%"; host.style.right = "auto"; } }
     host.hidden = false;
     if (host._asked) { if (host._info) try { host._info.redraw(); } catch (_) {} return; }
     host._asked = true;
@@ -11142,7 +11148,9 @@ const SetPicker = window.SetPicker = (() => {
     const target = s.page || s.id || s.sheetId;
     if (!target || !window.SheetWin || !SheetWin.drawOrder) { host.insertAdjacentHTML("beforeend", `<div class="hEmpty">The back of this sheet can be drawn once it is saved</div>`); return; }
     say("Drawing the back…");
-    SheetWin.drawOrder(cv, target, "", { back: true, onInfo: inf => { host._info = inf; }, onWait: t => say(t), onProgress: (dn, n) => say(dn < n ? `Reading design ${dn + 1} of ${n}…` : null) })
+    // (a thumb: the sheet fills its box to the edge with no rulers, as its picture does, so it turns over at the
+    // picture's own scale — with rulers and a margin every back came out smaller than its front, a small sheet most)
+    SheetWin.drawOrder(cv, target, "", { back: true, thumb: true, onInfo: inf => { host._info = inf; }, onWait: t => say(t), onProgress: (dn, n) => say(dn < n ? `Reading design ${dn + 1} of ${n}…` : null) })
       .then(inf => { host._info = inf; say(null); host.dataset.engraved = String((inf && inf.engraved && inf.engraved()) || 0); },
         e => { say(null); host.insertAdjacentHTML("beforeend", `<div class="hEmpty bad">The back could not be drawn: ${esc((e && e.message) || String(e))}</div>`); });
   }

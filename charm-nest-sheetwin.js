@@ -1009,7 +1009,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.sel = null; W.hover = null; W.fx = []; W.set = W.set && opts.keepSet ? W.set : null;
     // the side it opens on (Paul, 28 Sep): a sheet looked at from its Back (a turned Nest or Library card, Sets window
     // tile or Sets menu preview, the order view's Sheet tab) opens on its Back, its engraving asked for at once
-    if (fresh && (opts.face || (origin && origin.face)) === "back") { W.face = "back"; sheetBacksReady(); }
+    if (fresh && (opts.face || (origin && origin.face)) === "back") { W.face = W.shown = "back"; sheetBacksReady(); }
     if (!fresh && W.view === "piece") showPane("sheet", "back");
     if (W.flow) W.work = W.flow; else if (!opts.keepWork) W.work = null;
     W.freed = (FREED.get(id) || []).filter(g => Date.now() - (g.at || 0) < 12 * 3600e3).map(g => Object.assign(g, { t0: 0 }));
@@ -1090,7 +1090,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function resetView() {
     W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = "";
-    W.face = "front"; W.backs = null; W.backsList = null; W.backsAsked = false; W.backsWait = "";
+    W.face = "front"; W.shown = "front"; W.backs = null; W.backsList = null; W.backsAsked = false; W.backsWait = "";
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
   async function close(opts = {}) {
@@ -1623,14 +1623,23 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   function turnPlate(face) {
     if (face === W.face || !W.el.plate) return;
     W.face = face;
-    const E = W.el, d = face === "back" ? 1 : -1;
-    const paint = () => { E.pv.style.opacity = face === "back" || (W.pieces.length && W.pieces.every(x => x.c)) ? "0" : "1";
-      paintRule(); if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx(); renderStrip(); };
     if (face === "back") sheetBacksReady();
+    // one turn at a time: a press while the plate turns is taken up by that turn — it comes round on the side asked for
+    // last, or turns once more if it had come round already — never a second turn started over it (pressed twice
+    // quickly, the plate snapped from one edge to the other and showed the side no longer asked for)
+    if (W.turning) return renderStrip();
+    turnNow();
+  }
+  function turnNow() {
+    const E = W.el, d = W.face === "back" ? 1 : -1;
+    const paint = () => { W.shown = W.face; E.pv.style.opacity = W.face === "back" || (W.pieces.length && W.pieces.every(x => x.c)) ? "0" : "1";
+      paintRule(); if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx(); renderStrip(); };
     // (while the sheet is still flying to the plate its own animation holds the transform: it turns without the turn)
     if (still() || !W.st || W.flying) return paint();
+    W.turning = true;
+    const done = () => { W.turning = false; if (W.shown !== W.face && W.el === E) turnNow(); };
     E.plate.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" })
-      .finished.then(() => { paint(); E.plate.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, () => paint());
+      .finished.then(() => { paint(); E.plate.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }).finished.then(done, done); }, () => { paint(); W.turning = false; });
   }
   /** The back side asked for: the sheet's backs read once, for the whole sheet, and the engraving font loaded. Neither is
       waited on — the plate is turned already, the strip says what is still coming, and it is drawn again as it lands. */
