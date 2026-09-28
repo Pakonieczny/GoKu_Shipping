@@ -7786,10 +7786,12 @@ const OrderWin = window.OrderWin = (() => {
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
-    // the decision this line is waiting on, answered here; its card stays while the decision is the same, so a repaint
-    // (a repool, another order arriving) never empties a field being typed in
+    // a custom order's question, answered here; its card stays while the question is the same, so a repaint (a repool,
+    // another order arriving) never empties a field being typed in. Every other decision a line waits on (an option to
+    // map, an unknown SKU) is made in Review, not in this window (Paul, 28 Sep: "remove this from the UI ... move up
+    // everything that is below to fill up the empty space"); a custom order's question has no other place.
     const fix = byId("owFix");
-    const item = Review.items().find(x => (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
+    const item = Review.items().find(x => x.kind === "customOrder" && (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
     if (item) {
       let slot = fix.querySelector(".owFix > .owFixCard");
       if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
