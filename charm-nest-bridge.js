@@ -8852,7 +8852,9 @@ const OrderWin = window.OrderWin = (() => {
       }
       for (const p of (x._pools || SV.pools || [])) if (p.sheetId && (p.lineKey === x.key || pools.includes(String(p.poolId)))) sheets.add(p.sheetId);
       return { key: x.key, tid: String(x.line.transactionId || ""), qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
-        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null }),
+        // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
+        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
+          engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign }),
         name: pieceName(x), metal: m, form: sp.form || "" };
     });
   }
@@ -9029,7 +9031,8 @@ const OrderWin = window.OrderWin = (() => {
     return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null, pieces: W.pieces, piece: W.piece,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
-      // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring
+      // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring,
+      // Engraved only when one carries a back engraving (or is not read yet)
       stages: () => { const r = rowOf(W.key), UI = window.OrderTimelineUI; return r && String(r.order.receiptId) === rid && UI && UI.stagesFor ? UI.stagesFor(linesOf(r)) : null; },
       onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
