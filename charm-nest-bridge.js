@@ -6152,6 +6152,7 @@ const CustomPrint = window.CustomPrint = (() => {
   const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
   const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
   const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
+  const armed = new Map();      // card key|act → until when a cancelled order's second press goes ahead
   const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
@@ -6207,12 +6208,28 @@ const CustomPrint = window.CustomPrint = (() => {
   /** What the cloud record of one line says about it. */
   const targetOf = (r, rec) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
   function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
+  /* A cancelled order is never printed or completed silently (Paul, 28 Sep): the first press turns the button clay,
+     "Cancelled order: print anyway?", for 4 s, with no pop-up; a second press meanwhile goes ahead, and the order's
+     timeline says so. Returns null (not cancelled), false (asked now) or the order's number (go ahead anyway). */
+  const ridOfCard = it => String(it.rid || (it.record && it.record.receiptId) || ((it.rows && it.rows[0]) || it.row || { order: {} }).order.receiptId || "");
+  function anyway(it, act) {
+    const rid = ridOfCard(it), k = it.key + "|" + act;
+    if (!rid || !(window.Cancelled && Cancelled.has(rid))) return null;
+    if ((armed.get(k) || 0) > Date.now()) { armed.delete(k); redraw(); return rid; }
+    armed.set(k, Date.now() + 4000); redraw();
+    setTimeout(() => { if ((armed.get(k) || 0) <= Date.now() && armed.delete(k)) redraw(); }, 4100);
+    return false;
+  }
+  function printedAnyway(rid, who, act, n) {
+    window.SheetEvents?.order({ type: "note", orderId: rid, by: who, id: `cu-anyway-${act}-${Date.now()}`, text: `${act === "print" ? "Custom QR label printed" : "Custom order completed"} by ${who} although the order is cancelled`.slice(0, 200), data: { cancelled: true, how: act === "print" ? "print" : "button", lines: n } });
+  }
   /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
     const key = it.key; if (busy.has(key) || asking.has(key)) return;
-    withName(key, who => printAs(it, who));
+    const go = anyway(it, "print"); if (go === false) return;
+    withName(key, who => printAs(it, who, go));
   }
-  function printAs(it, who) {
+  function printAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
     const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || null;
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
@@ -6246,6 +6263,7 @@ const CustomPrint = window.CustomPrint = (() => {
       // printed from Open: the seal is pressed on the button and the card flies to Completed, where a note offers Undo
       // (a dialog closed without printing looks the same here); printed again: a new seal is pressed on the card
       if (done.length) sealed(it, rows, saved, done, who, "print");
+      if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
       settle(); say(key, null); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
@@ -6258,9 +6276,10 @@ const CustomPrint = window.CustomPrint = (() => {
    *  still be printed from Completed. A line on its way to the laser is cut there: it is left as it is. */
   function complete(it) {
     const key = it.key; if (busy.has(key) || asking.has(key)) return;
-    withName(key, who => completeAs(it, who));
+    const go = anyway(it, "complete"); if (go === false) return;
+    withName(key, who => completeAs(it, who, go));
   }
-  function completeAs(it, who) {
+  function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
     const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
     if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
@@ -6279,6 +6298,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
       release(); busy.delete(key); acting.delete(key);
       if (done.length) sealed(it, rows, saved, done, who, "button");
+      if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
       settle(); say(key, null); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
@@ -6370,6 +6390,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
   function buttonHtml(it, act, cls, label, title, sz, attrs) {
     const w = working(it), more = attrs ? " " + attrs : "";
+    if (!w && (armed.get(it.key + "|" + act) || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
     if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
     return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
   }
@@ -6391,7 +6412,7 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
-  const stamp = it => [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
+  const stamp = it => [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key), armed.has(it.key + "|print"), armed.has(it.key + "|complete")].join("|");
   return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
 })();
 
