@@ -17919,7 +17919,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                 ? (t.lastInboundAt._ts ? t.lastInboundAt.ms : (t.lastInboundAt.toDate ? t.lastInboundAt.toDate().getTime() : 0))
                 : Date.now();
 
-              await api("etsyMailDraftSend", {
+              const sendResp = await api("etsyMailDraftSend", {
                 method: "POST",
                 body: {
                   op                  : "enqueue",
@@ -17952,7 +17952,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                   }
                 }
               });
-              toast(`High confidence (${Math.round(aiConf*100)}%) — sent ✓`);
+              // The reply had two different tracking numbers: say which one went.
+              const trkFix = (sendResp && sendResp.trackingResolution) || data.trackingResolution;
+              const trkNote = trkFix && Array.isArray(trkFix.dropped) && trkFix.dropped.length ? trackingResolutionText(trkFix) : "";
+              toast(`High confidence (${Math.round(aiConf*100)}%) — sent ✓` + (trkNote ? ". " + trkNote : ""), trkNote ? 7000 : 2200);
               // v0.9.7: optimistic-insert the AI's reply into the thread
               // view immediately, so the operator sees the message land
               // without waiting for the next M2 scrape.
@@ -18271,6 +18274,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
                          draftStatus === "failed" ||
                          draftStatus === "queued" ||
                          draftStatus === "sending";
+      // The drafter found two different tracking numbers and kept one.
+      if (!isSentLike) noteTrackingResolution(draft.threadId || state.selectedId, draft.trackingResolution, true);
       renderTrackingImages(
         Array.isArray(draft.trackingImages) ? draft.trackingImages : [],
         { autoPromoteToChips: !isSentLike }
@@ -19493,6 +19498,40 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
     }
 
+    // Tracking numbers the server took out of a thread's reply because the
+    // reply had two different ones (draft.trackingResolution, or the Send
+    // response). Their pictures never come back as chips.
+    const _droppedTracking = new Map();   // threadId → Set of tracking numbers
+    const _trackingNotesShown = new Set();
+    function trackingNumberOf(c) {
+      const x = String(c || "").replace(/\s+/g, "").toUpperCase();
+      const m = x.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
+      return m ? m[1] : x;
+    }
+    function trackingResolutionText(res) {
+      if (res.note) return res.note;
+      const s = c => { const x = trackingNumberOf(c); return x.length > 10 ? x.slice(0, 4) + "…" + x.slice(-4) : x; };
+      return "Kept tracking " + (res.kept || []).map(s).join(" + ") + (res.keptReason ? " (" + res.keptReason + ")" : "") +
+        "; removed " + res.dropped.map(d => s(d.code) + (d.reason ? " (" + d.reason + ")" : "")).join(", ");
+    }
+    /** Remember what was taken out and say so. fromDraft: the draft's own
+     *  decision, shown once however often the draft is drawn. */
+    function noteTrackingResolution(threadId, res, fromDraft) {
+      if (!threadId) return;
+      if (!res || !Array.isArray(res.dropped) || !res.dropped.length) {
+        if (fromDraft) _droppedTracking.delete(threadId);   // a new draft with one number
+        return;
+      }
+      const set = _droppedTracking.get(threadId) || new Set();
+      res.dropped.forEach(d => d && d.code && set.add(trackingNumberOf(d.code)));
+      (res.kept || []).forEach(k => set.delete(trackingNumberOf(k)));
+      _droppedTracking.set(threadId, set);
+      const key = threadId + ":" + (res.at || (res.codes || []).join(","));
+      if (fromDraft && _trackingNotesShown.has(key)) return;
+      if (fromDraft) _trackingNotesShown.add(key);
+      toast(trackingResolutionText(res), 7000);
+    }
+
     /** Called by the tracking-image card "Queue for send" button to promote
      *  a ready tracking image into a composer chip. Idempotent — calling
      *  twice just updates the existing chip. */
@@ -19500,11 +19539,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const threadId = state.selectedId;
       if (!threadId) return;
       const atts = getComposerAttachments(threadId);
+      const dropped = _droppedTracking.get(threadId);
       // Remove any existing tracking_image chips; we'll rebuild from truth
       const filtered = atts.filter(a => a.type !== "tracking_image");
       for (const img of (trackingImages || [])) {
         if (img.queuedForSend === false) continue;   // explicitly de-queued
         if (!img.imageUrl || img.status !== "ready") continue;  // only ready ones
+        if (dropped && dropped.has(trackingNumberOf(img.trackingCode))) continue;  // a second number the server took out
         // Path from Firebase URL: storage proxy wants the internal path.
         // We can use the same proxy URL the card uses (etsyMailTrackingImage).
         const code = img.trackingCode;
@@ -20827,12 +20868,18 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
       const patch = { _state: "queued", optimisticDraftId: resp && resp.draftId };
       const media = localSendMedia(sentAtts);
+      // The reply had two different tracking numbers: the server kept the
+      // real one, so the bubble shows the words and pictures that went.
+      const trackingFix = resp && resp.trackingResolution;
+      const sentText = trackingFix && typeof resp.text === "string" ? resp.text : text;
+      if (sentText !== text) Object.assign(patch, { text: sentText, optimisticTextKey: sentText.trim().toLowerCase().slice(0, 200) });
       // The server may have added a ready tracking image to this send.
-      if (media.imageUrls.length > (local.imageUrls || []).length) Object.assign(patch, media);
+      if (trackingFix || media.imageUrls.length > (local.imageUrls || []).length) Object.assign(patch, media);
       updateLocalSend(threadId, local.id, patch);
+      if (trackingFix) noteTrackingResolution(threadId, trackingFix, false);
       if (state.selectedId === threadId) drawThreadNow();
       // Audit fix S11: the phone keeps its own check after 8 s.
-      if (surface !== "mobile") watchSendOutcome(threadId, resp && resp.draftId, text);
+      if (surface !== "mobile") watchSendOutcome(threadId, resp && resp.draftId, sentText);
       // The enqueue wrote the optimistic doc server-side; showSendStatus
       // must not write it again for this draft in this session.
       state._optimInsertedFor = state._optimInsertedFor || new Set();
@@ -21076,6 +21123,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         }
         if (isHydratableState && d.text) aiTextMarkFresh(thread.id, d.text);
+        // The drafter found two different tracking numbers and kept one.
+        if (isHydratableState) noteTrackingResolution(thread.id, d.trackingResolution, true);
         // The draft's own chips first: the tracking sync below saves the
         // chip list, and run before them it saved an empty list over the
         // AI's line sheet (owner, 2026-09-28: "I've attached the necklace

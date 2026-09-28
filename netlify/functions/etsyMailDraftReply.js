@@ -97,6 +97,8 @@ const {
 // USPS barcodes ("420" + ZIP + tracking number) become the tracking number
 // customers and USPS.com know.
 const { cleanTrackingCode: _cleanTrackingCode, cleanTrackingCodesInText: _cleanTrackingCodesInText } = require("./_etsyMailTrackingCode");
+// Two different tracking numbers in one reply: which one is real.
+const _trk = require("./_etsyMailTrackingResolve");
 
 let searchListings = null;
 let getServiceListingsBlock = null;
@@ -4774,6 +4776,8 @@ answering. Do not guess about the order's contents.`;
     // tracking image is attached gets this one made if it has none.
     let _newestTrackingCode = null;
     let _newestTrackingAt = -1;
+    // Every label on the customer's orders, for the two-numbers check.
+    let _buyerShipments = [];
     // v5.0 — Fetch the raw-document context and prepend it to the
     // preamble. The model reads the actual Firestore documents alongside
     // the conversation turns. The investigation protocol in the system
@@ -4793,10 +4797,12 @@ answering. Do not guess about the order's contents.`;
         const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
         for (const s of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
           if (s && s.tracking_code) { _knownTrackingCodes.add(String(s.tracking_code).replace(/\s+/g, "")); _knownTrackingCodes.add(_cleanTrackingCode(s.tracking_code)); }
-          const at = s && s.tracking_code ? (Number(s.shipment_notification_timestamp) || 0) : -1;
+          // The context turns this timestamp into an ISO string.
+          const at = s && s.tracking_code ? (_trk.toMs(s.shipment_notification_timestamp) || 0) : -1;
           if (at > _newestTrackingAt) { _newestTrackingAt = at; _newestTrackingCode = _cleanTrackingCode(s.tracking_code); }
         }
       }
+      _buyerShipments = _trk.shipmentsFromReceipts(ctx && ctx.recentReceipts);
       const rawContextBlock = formatContextForPrompt(AI_SLIM_CONTEXT ? slimContextForDraft(ctx) : ctx);
       // Inject at the START of the first user message's text content.
       // initialMessages[0] is { role: "user", content: [{type:"text", text: preambleText}] }
@@ -5944,6 +5950,60 @@ answering. Do not guess about the order's contents.`;
     }));
 
     const usage = loopResult.usage || {};
+
+    // Owner's rule (2026-09-28): a reply carries one tracking number unless
+    // each one is a real package it is about. Two different numbers (an old
+    // and a replacement label, another order's label, a stale number in the
+    // words) are investigated and only the real one stays: its picture, its
+    // number in the words. See _etsyMailTrackingResolve.js.
+    let trackingResolution = null;
+    try {
+      const imgs = (toolContext.trackingImages || []).filter(t => t && t.trackingCode && t.status !== "failed");
+      const lookedUp = [];
+      for (const tc of (loopResult.toolCalls || [])) {
+        const out = tc && tc.output;
+        for (const s of (out && Array.isArray(out.shipments) ? out.shipments : [])) {
+          if (s && s.trackingCode) lookedUp.push({ code: s.barcode || s.trackingCode, carrier: s.carrier || null, shippedAt: s.shipDate || null, receiptId: out.receiptId || null });
+        }
+      }
+      const shipments = _buyerShipments.concat(lookedUp);
+      const textCodes = _trk.codesInText(parsed.text, imgs.map(t => t.trackingCode).concat(shipments.map(s => s.code)));
+      const distinct = new Set(imgs.map(t => _trk.normCode(t.trackingCode)).concat(textCodes));
+      if (distinct.size > 1) {
+        const raw = imgs.map(t => t.trackingCode).concat(textCodes, shipments.filter(s => distinct.has(_trk.normCode(s.code))).map(s => s.code));
+        trackingResolution = await _trk.resolveTrackingConflict({
+          imageCodes  : imgs.map(t => t.trackingCode),
+          textCodes,
+          shipments,
+          cache       : await _trk.loadTrackingCache(db, raw).catch(() => ({})),
+          history     : (messages || []).map(m => ({ direction: m.direction || (m.senderRole === "customer" ? "inbound" : "outbound"), text: m.text, at: m.timestamp || m.createdAt || null })),
+          customerText: unansweredInboundText(messages.slice().reverse()) || (latestCustomerMsg && latestCustomerMsg.text) || "",
+          draftText   : parsed.text
+        });
+      }
+      if (trackingResolution && trackingResolution.dropped.length) {
+        const gone = new Set(trackingResolution.dropped.map(d => d.code));
+        const hadImage = imgs.some(t => gone.has(_trk.normCode(t.trackingCode)));
+        const list = toolContext.trackingImages || [];
+        for (let i = list.length - 1; i >= 0; i--) {
+          if (list[i] && list[i].trackingCode && gone.has(_trk.normCode(list[i].trackingCode))) list.splice(i, 1);
+        }
+        parsed.text = _trk.fixTrackingText(parsed.text, trackingResolution);
+        // A reply that showed a tracking picture shows the kept number's.
+        if (hadImage) {
+          for (const k of trackingResolution.kept) {
+            if (list.some(t => t && t.trackingCode && _trk.normCode(t.trackingCode) === k && t.status !== "failed")) continue;
+            try { await toolExecutors.generate_tracking_image({ trackingCode: k }); }
+            catch (e) { console.warn(`[draftReply ${threadId}] tracking image for kept ${k} failed: ${e.message}`); }
+          }
+        }
+        parsed.confidenceReasoning = (parsed.confidenceReasoning || "") + " | " + _trk.describeResolution(trackingResolution) +
+          " (" + trackingResolution.method + (trackingResolution.why ? ": " + trackingResolution.why : "") + ").";
+        console.log(`[draftReply ${threadId}] tracking numbers resolved (${trackingResolution.method}): kept ${trackingResolution.kept.join(",")}, dropped ${trackingResolution.dropped.map(d => d.code).join(",")}`);
+      }
+    } catch (e) {
+      console.warn(`[draftReply ${threadId}] tracking-number check failed (non-fatal): ${e.message}`);
+    }
     const trackingImages = Array.isArray(toolContext.trackingImages) ? toolContext.trackingImages : [];
 
     // Build attachments array: any generated tracking images become attachments
@@ -6074,13 +6134,16 @@ answering. Do not guess about the order's contents.`;
           });
         }
         // A promised tracking image that was never made: make it from the
-        // newest label on the customer's orders.
-        if (fix.missing.some(c => c.kind === "tracking") && _newestTrackingCode &&
+        // newest label on the customer's orders (the number kept above when
+        // the reply had two, never one it dropped).
+        const _promisedCode = trackingResolution && trackingResolution.kept.length === 1 ? trackingResolution.kept[0]
+          : (trackingResolution && trackingResolution.dropped.some(d => d.code === _trk.normCode(_newestTrackingCode)) ? null : _newestTrackingCode);
+        if (fix.missing.some(c => c.kind === "tracking") && _promisedCode &&
             !attachments.some(a => a && a.type === "tracking_image")) {
           try {
-            const r = await toolExecutors.generate_tracking_image({ trackingCode: _newestTrackingCode });
+            const r = await toolExecutors.generate_tracking_image({ trackingCode: _promisedCode });
             const img = !r || r.error ? null
-              : (toolContext.trackingImages || []).find(t => t && String(t.trackingCode) === String(r.trackingCode || _newestTrackingCode));
+              : (toolContext.trackingImages || []).find(t => t && String(t.trackingCode) === String(r.trackingCode || _promisedCode));
             if (img) attachments.push(_trackingAttachmentFor(img));
           } catch (e) {
             console.warn(`[draftReply ${threadId}] promised tracking image could not be made: ${e.message}`);
@@ -6125,6 +6188,8 @@ answering. Do not guess about the order's contents.`;
       }
       if (parsed.aiEscalationRequested) autoSendBlockers.push("model_requested_human_review");
       if (Array.isArray(parsed.missingFacts) && parsed.missingFacts.length) autoSendBlockers.push("missing_fact");
+      // Two tracking numbers settled without the AI: a person checks the pick.
+      if (trackingResolution && trackingResolution.method === "fallback") autoSendBlockers.push("tracking_number_unconfirmed");
     } catch (e) {
       autoSendBlockers = ["veto_check_failed: " + e.message];
     }
@@ -6169,6 +6234,9 @@ answering. Do not guess about the order's contents.`;
       // above the staff reply textarea, same as the line-sheet path.
       draftAttachments      : attachments,
       trackingImages,
+      // Two different tracking numbers found in this reply and which one was
+      // kept (null when it had at most one). Send reuses it.
+      trackingResolution    : trackingResolution ? { ...trackingResolution, stage: "draft", at: new Date().toISOString() } : null,
       // ── v5.21 — Care/sizing diagnostic fields on the draft doc ──
       // topicDetected and aiAutoSetFlags are gone (keyword-driven flags
       // removed). The AI now sets parsed.attach_* directly via
@@ -6442,6 +6510,7 @@ answering. Do not guess about the order's contents.`;
       aiDiscountCode     : parsed.aiDiscountCode || null,
       trackingImages,
       attachments,
+      trackingResolution : draftDoc.trackingResolution,
       toolCalls          : toolCallLog,
       tokensUsed         : {
         input       : draftDoc.aiTokensInput,

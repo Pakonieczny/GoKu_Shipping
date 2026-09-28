@@ -80,6 +80,7 @@ const admin = require("./firebaseAdmin");
 const crypto = require("crypto");   // audit fix F16 (text fingerprint in audit rows)
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
+const _trk = require("./_etsyMailTrackingResolve");
 let attachClaimedCollateral = null;
 let missingAttachmentClaims = null;
 let describeClaims = null;
@@ -352,16 +353,19 @@ async function demoteThreadStandalone(threadId, reason) {
 // the newest label on the customer's orders (read from the stored receipts,
 // no Etsy call) and record it on the draft so the next send attempt waits
 // for it. Returns the tracking code, or null when there is no label.
-async function startPromisedTrackingImage(threadId, draftId) {
+//   code  : this label instead (the number a two-numbers check kept)
+//   avoid : labels never to use (the numbers it dropped)
+async function startPromisedTrackingImage(threadId, draftId, { code = null, avoid = [] } = {}) {
   try {
-    const { fetchClassificationContext } = require("./_etsyMailAnthropic");
-    const ctx = await fetchClassificationContext(threadId, { messageLimit: 1, perMessageCap: 200, receiptLimit: 10 });
-    let code = null, newest = -1;
-    for (const r of (ctx && Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : [])) {
-      const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
-      for (const sh of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
-        const at = sh && sh.tracking_code ? (Number(sh.shipment_notification_timestamp) || 0) : -1;
-        if (at > newest) { newest = at; code = String(sh.tracking_code).replace(/\s+/g, ""); }
+    if (!code) {
+      const { fetchClassificationContext } = require("./_etsyMailAnthropic");
+      const ctx = await fetchClassificationContext(threadId, { messageLimit: 1, perMessageCap: 200, receiptLimit: 10 });
+      const skip = new Set((avoid || []).map(_trk.normCode));
+      let newest = -1;
+      // The context turns the timestamp into an ISO string.
+      for (const sh of _trk.shipmentsFromReceipts(ctx && ctx.recentReceipts)) {
+        if (skip.has(_trk.normCode(sh.code))) continue;
+        if ((sh.shippedAt || 0) > newest) { newest = sh.shippedAt || 0; code = sh.code; }
       }
     }
     if (!code) return null;
@@ -388,7 +392,7 @@ async function startPromisedTrackingImage(threadId, draftId) {
         trackingCode: b.trackingCode, jobId: b.jobId || null, status: b.status || "pending",
         carrier: b.carrier || null, carrierDisplay: b.carrierDisplay || null, statusText: b.statusText || null,
         imageUrl: b.imageUrl || null, imageStoragePath: b.imageStoragePath || null, queuedForSend: true,
-        addedForClaim: true
+        addedForClaim: true, startedAt: new Date().toISOString()
       });
       tx.set(ref, { threadId, trackingImages: list, updatedAt: FV.serverTimestamp() }, { merge: true });
     });
@@ -701,6 +705,122 @@ async function reconcileTrackingAttachments(draftId, bodyAttachments, options = 
   };
 }
 
+// Owner's rule (2026-09-28): one reply carries one tracking number unless
+// each one is a real package it is about. Every send (inbox and automatic)
+// passes here, so a second number the drafter never saw (typed by hand, a
+// picture added later) is investigated before it reaches the customer:
+// _etsyMailTrackingResolve.js decides, the dropped numbers' pictures come
+// off, the words get the kept number, and the kept number gets its picture
+// when the reply had one. Firestore reads only, no Etsy calls. Returns null
+// when the reply has at most one number, else
+// { text, claimText, attachments, resolution, pending: [codes being drawn] }.
+async function resolveSendTracking({ threadId, draftId, text, claimText, attachments, startedAt }) {
+  const imgCodes = (attachments || []).filter(a => a && a.type === "tracking_image" && a.trackingCode).map(a => String(a.trackingCode));
+  const first = new Set(imgCodes.map(_trk.normCode).concat(_trk.codesInText(text, imgCodes)));
+  if (first.size < 2) return null;
+
+  let draft = {};
+  try {
+    const s = await db.collection(DRAFTS_COLL).doc(draftId).get();
+    draft = s.exists ? (s.data() || {}) : {};
+  } catch (e) { console.warn("[enqueue] tracking check: draft read failed:", e.message); }
+  let ctx = null;
+  try {
+    const { fetchClassificationContext } = require("./_etsyMailAnthropic");
+    ctx = await fetchClassificationContext(threadId, { messageLimit: 12, perMessageCap: 800, receiptLimit: 10 });
+  } catch (e) { console.warn("[enqueue] tracking check: context read failed:", e.message); }
+  const shipments = _trk.shipmentsFromReceipts(ctx && ctx.recentReceipts);
+  const textCodes = _trk.codesInText(text, imgCodes.concat(shipments.map(s => s.code)));
+  const codes = Array.from(new Set(imgCodes.map(_trk.normCode).concat(textCodes)));
+  if (codes.length < 2) return null;
+
+  // Numbers in the words that the AI's draft never had were typed by the
+  // person sending.
+  const aiImages = [].concat(draft.trackingImages || [], draft.attachments || []).map(a => a && a.trackingCode).filter(Boolean);
+  const aiCodes = new Set(_trk.codesInText(draft.text || "", codes).concat(aiImages.map(_trk.normCode)));
+  const typed = textCodes.filter(c => !aiCodes.has(c));
+
+  // The same numbers were already decided (by the drafter, or by the first
+  // try of this send): reuse that, unless the sender typed a dropped one back.
+  const prev = draft.trackingResolution;
+  const sameSet = prev && Array.isArray(prev.codes) && prev.codes.length === codes.length && codes.every(c => prev.codes.includes(c));
+  let res = null, reused = false;
+  if (sameSet && Array.isArray(prev.kept) && prev.kept.length && !typed.some(c => (prev.dropped || []).some(d => d && d.code === c))) {
+    res = prev; reused = true;
+  } else {
+    const msgs = (ctx && Array.isArray(ctx.messages)) ? ctx.messages : [];
+    const lastIn = msgs.slice().reverse().find(m => m && m.direction === "inbound");   // oldest first
+    const raw = imgCodes.concat(textCodes, shipments.filter(s => codes.includes(_trk.normCode(s.code))).map(s => s.code));
+    // Netlify gives this call about ten seconds; the AI gets what is left.
+    const left = 8500 - (Date.now() - (startedAt || Date.now()));
+    res = await _trk.resolveTrackingConflict({
+      imageCodes  : imgCodes,
+      textCodes,
+      typedCodes  : typed,
+      shipments,
+      cache       : await _trk.loadTrackingCache(db, raw).catch(() => ({})),
+      history     : msgs.map(m => ({ direction: m.direction, text: m.text, at: m.timestamp })),
+      customerText: lastIn ? lastIn.text : "",
+      draftText   : text,
+      timeoutMs   : left >= 4500 ? Math.min(3500, left - 3000) : 0
+    });
+  }
+  if (!res) return null;
+
+  const gone = new Set((res.dropped || []).map(d => d.code));
+  const out = _trk.dropTrackingAttachments(attachments, res);
+  const hadImage = imgCodes.some(c => gone.has(_trk.normCode(c)));
+  const images = Array.isArray(draft.trackingImages) ? draft.trackingImages : [];
+  const pending = [];
+  const toStart = [];
+  if (hadImage) {
+    for (const k of res.kept) {
+      if (out.some(a => a && a.type === "tracking_image" && _trk.normCode(a.trackingCode) === k)) continue;
+      const img = images.find(i => i && i.trackingCode && _trk.normCode(i.trackingCode) === k);
+      if (img && (img.status === "ready" || img.imageUrl || img.imageStoragePath)) {
+        const a = trackingImageEntryToAttachment(img);
+        if (a) out.push(a);
+      } else if (img && img.status === "failed") {
+        continue;                                    // the words carry the number
+      } else if (img && img.jobId && !(Date.now() - (Date.parse(img.startedAt || "") || 0) < 120000)) {
+        continue;                                    // still not drawn after the wait: the words carry it
+      } else {
+        pending.push(k);                             // being drawn: the retry waits for it
+        if (!(img && img.jobId)) toStart.push(k);
+      }
+    }
+  }
+
+  // Record the decision and take the dropped pictures off the draft, so a
+  // retry, the inbox and the promised-file check never bring them back.
+  if (!reused || images.some(i => i && i.trackingCode && gone.has(_trk.normCode(i.trackingCode)))) {
+    try {
+      await db.runTransaction(async (tx) => {
+        const ref = db.collection(DRAFTS_COLL).doc(draftId);
+        const snap = await tx.get(ref);
+        const cur = snap.exists ? (snap.data() || {}) : {};
+        const list = (Array.isArray(cur.trackingImages) ? cur.trackingImages : [])
+          .filter(i => !(i && i.trackingCode && gone.has(_trk.normCode(i.trackingCode))));
+        tx.set(ref, {
+          threadId, trackingImages: list,
+          trackingResolution: reused ? res : { ...res, stage: "send", at: new Date().toISOString() },
+          updatedAt: FV.serverTimestamp()
+        }, { merge: true });
+      });
+    } catch (e) { console.warn("[enqueue] tracking check: draft write failed:", e.message); }
+  }
+  for (const k of toStart) {
+    if (!(await startPromisedTrackingImage(threadId, draftId, { code: k }))) pending.splice(pending.indexOf(k), 1);
+  }
+  return {
+    text      : _trk.fixTrackingText(text, res),
+    claimText : typeof claimText === "string" ? _trk.fixTrackingText(claimText, res) : claimText,
+    attachments: out,
+    resolution: res,
+    pending
+  };
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") {
     return { statusCode: 200, headers: CORS, body: "ok" };
@@ -764,6 +884,7 @@ exports.handler = async (event) => {
      *                        //          queued by a different operator
      *  Output: { draftId, status:"queued" } */
     if (op === "enqueue") {
+      const enqueueStartedAt = Date.now();
       // v0.9.1 #8: kill-switch — global send disable
       const ks = await getKillSwitch();
       if (ks.disabled) {
@@ -832,7 +953,7 @@ exports.handler = async (event) => {
       if (!etsyConversationUrl || !URL_RE.test(etsyConversationUrl)) {
         return bad("etsyConversationUrl must be an Etsy conversation URL");
       }
-      const cleanText = String(text || "").trim();
+      let cleanText = String(text || "").trim();
 
       // v3.33 — Resolve origin BEFORE tracking reconciliation.
       // The inbox sends sendOrigin:"manual" + allowSendWithoutPendingTracking:true,
@@ -861,6 +982,44 @@ exports.handler = async (event) => {
         });
       }
       const normalized = normalizeAttachments(recon.merged);
+
+      // Two different tracking numbers in this reply: keep the real one
+      // (resolveSendTracking). Its picture, when still being drawn, is
+      // waited for like a promised one.
+      let trackingFix = null;
+      if (!orderLink) {
+        try {
+          trackingFix = await resolveSendTracking({
+            threadId, draftId: draftIdForRecon, text: cleanText, claimText: body.claimText,
+            attachments: normalized, startedAt: enqueueStartedAt
+          });
+        } catch (e) {
+          console.warn("enqueue: tracking-number check failed (non-fatal):", e.message);
+        }
+      }
+      const trackingNote = trackingFix && trackingFix.resolution.dropped.length ? {
+        kept: trackingFix.resolution.kept, dropped: trackingFix.resolution.dropped, method: trackingFix.resolution.method,
+        why: trackingFix.resolution.why || null, keptReason: trackingFix.resolution.keptReason || null,
+        note: _trk.describeResolution(trackingFix.resolution)
+      } : null;
+      if (trackingNote) {
+        cleanText = trackingFix.text.trim();
+        if (typeof body.claimText === "string") body.claimText = trackingFix.claimText;
+        normalized.splice(0, normalized.length, ...normalizeAttachments(trackingFix.attachments));
+        if (trackingFix.pending.length) {
+          await audit(threadId, draftIdForRecon, "draft_enqueue_waiting_kept_tracking_image", employeeName || "operator", {
+            trackingCodes: trackingFix.pending, trackingResolution: trackingNote
+          }).catch(() => {});
+          return json(409, {
+            error       : "waiting for the tracking image of the tracking number kept",
+            errorCode   : "PROMISED_ATTACHMENT_PENDING",
+            retryAfterMs: 5000,
+            trackingResolution: trackingNote
+          });
+        }
+      }
+      const droppedTrk = new Set(trackingNote ? trackingNote.dropped.map(d => d.code) : []);
+      const keptTrk = trackingNote && trackingNote.kept.length === 1 ? trackingNote.kept[0] : null;
 
       // Owner's rule (2026-09-28): a reply that promises a file goes out
       // with exactly that file, never without it and never a stand-in.
@@ -909,7 +1068,8 @@ exports.handler = async (event) => {
           }
           let still = missingNow();
           if (still.some(c => c.kind === "tracking")) {
-            const imgs = (Array.isArray(draftNow.trackingImages) ? draftNow.trackingImages : []).filter(i => i && i.trackingCode);
+            const imgs = (Array.isArray(draftNow.trackingImages) ? draftNow.trackingImages : [])
+              .filter(i => i && i.trackingCode && !droppedTrk.has(_trk.normCode(i.trackingCode)));
             const isReady = i => i.status === "ready" || !!i.imageUrl || !!i.imageStoragePath;
             // A made image the sender took off still goes: the words promise it.
             for (const img of imgs.filter(isReady)) {
@@ -922,9 +1082,10 @@ exports.handler = async (event) => {
           }
           if (missingNow().some(c => c.kind === "tracking")) {
             const waiting = (Array.isArray(draftNow.trackingImages) ? draftNow.trackingImages : [])
-              .filter(img => img && img.trackingCode && img.status !== "failed" && !(img.status === "ready" || img.imageUrl || img.imageStoragePath));
+              .filter(img => img && img.trackingCode && img.status !== "failed" && !(img.status === "ready" || img.imageUrl || img.imageStoragePath))
+              .filter(img => !droppedTrk.has(_trk.normCode(img.trackingCode)));
             let started = null;
-            if (!waiting.length) started = await startPromisedTrackingImage(threadId, draftIdForRecon);
+            if (!waiting.length) started = await startPromisedTrackingImage(threadId, draftIdForRecon, { code: keptTrk, avoid: [...droppedTrk] });
             if (waiting.length || started) {
               await audit(threadId, draftIdForRecon, "draft_enqueue_waiting_promised_attachment", employeeName || "operator", {
                 trackingCodes: waiting.length ? waiting.map(i => i.trackingCode) : [started], textPreview: cleanText.slice(0, 160)
@@ -1275,7 +1436,8 @@ exports.handler = async (event) => {
         attachmentCount: normalized.length,
         attachmentTypes: normalized.map(a => a.type),
         addedForClaim,
-        skippedPendingTracking: recon.skippedPendingTracking || []
+        skippedPendingTracking: recon.skippedPendingTracking || [],
+        trackingResolution: trackingNote
       });
 
       // Learning: keep what the AI drafted next to what was sent. Not for a
@@ -1329,6 +1491,8 @@ exports.handler = async (event) => {
         attachments : normalized,
         addedForClaim,
         skippedPendingTracking: recon.skippedPendingTracking || [],
+        // A second tracking number taken out, and the words as they went.
+        ...(trackingNote ? { trackingResolution: trackingNote, text: cleanText } : {}),
         pollUrl     : `/.netlify/functions/etsyMailDraftSend?op=status&draftId=${encodeURIComponent(draftId)}`
       });
     }
@@ -2092,3 +2256,4 @@ module.exports.isStaleHeartbeat           = isStaleHeartbeat;
 module.exports.MAX_CLAIM_LOOKBACK_MIN     = MAX_CLAIM_LOOKBACK_MIN;
 module.exports.STALE_HEARTBEAT_MS         = STALE_HEARTBEAT_MS;
 module.exports.normalizeAttachments       = normalizeAttachments;
+module.exports.resolveSendTracking        = resolveSendTracking;
