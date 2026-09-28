@@ -27,10 +27,28 @@
   const Bs = () => W.B || null;
   const MAX = 24, CLOUD_MIN = 6, CLOUD_MAX = 13, PAUSE = 250;   // (longer than any Etsy number: a paste of several, never looked up)
 
-  /* ── the milestone rail every card carries (the order view's own nine steps, in the design prototype's order) ── */
-  const RAIL = [["Arrived", "arrived"], ["On sheet", "onsheet"], ["Approved", "approved"], ["Laser cut", "lasercut"], ["Sorted", "sorted"], ["Welded", "welded"], ["Assembled", "assembled"], ["Shipped", "shipped"], ["Completed", "completed"]];
-  const STEP = { arrived: 0, pulled: 0, interpreted: 0, placed: 1, moved: 1, renested: 1, merged: 1, sizeChanged: 1, roseLine: 1, decided: 2, customDecided: 2, engraveApproved: 2, qrLabel: 2, setCommitted: 2, sealPrinted: 2, sealCompleted: 2,
-    laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 7, shipped: 7, etsyCompleted: 8 };
+  /* ── the milestone rail every card carries: the order view's own steps (OrderTimelineUI.STAGES, and stagesFor(lines):
+     Welded only for a stud earring), numbered as the server's where.step (0-7). A copy stands in while that script is
+     not on the page; keep it and STEP alike with STAGES and _orderTimeline.js's STEP. ── */
+  const RAIL0 = [{ k: "arrived", l: "Order in" }, { k: "sheet", l: "Nested" }, { k: "engraved", l: "Engraved" }, { k: "laser", l: "Laser cut" }, { k: "sorted", l: "Sorted" },
+    { k: "welded", l: "Welded", only: "stud" }, { k: "assembled", l: "Assembled" }, { k: "shipped", l: "Shipped" }];
+  const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
+    engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
+  const TUI = () => (W.OrderTimelineUI && Array.isArray(W.OrderTimelineUI.STAGES) && W.OrderTimelineUI.STAGES.length ? W.OrderTimelineUI : null);
+  const allSteps = () => { const U = TUI(); return U ? U.STAGES : RAIL0; };
+  /** The order's own steps, as its view draws them: every piece's line read for a stud (none known: every step). */
+  function stepsOf(e) {
+    const U = TUI(), all = allSteps();
+    if (e._steps && e._steps.gen === IX.gen && e._steps.all === all) return e._steps.list;
+    let list = all;
+    if (U && typeof U.stagesFor === "function") {
+      const rows = e.rows.filter(r => r.state !== "gone"), c = e.cloud;
+      const lines = rows.length ? rows : c && c.items && c.items.length ? c.items : e.cancel && e.cancel.lines && e.cancel.lines.length ? e.cancel.lines : [];
+      try { const r = U.stagesFor(lines); if (Array.isArray(r) && r.length) list = r; } catch (_) {}
+    }
+    e._steps = { gen: IX.gen, all, list };
+    return list;
+  }
 
   /* ═══ the index ═══ */
   const IX = { list: [], by: new Map(), gen: 0, ms: 0, at: 0, refs: [], sig: "", cloud: new Map() };
@@ -163,40 +181,52 @@
     const sheets = sheetsOf(e);
     let reached = 0;
     const reach = i => { if (i > reached) reached = i; };
+    // (the full rail's numbering, 0-7, as the server's where.step: nested, a set committed or a custom seal done is 1)
     if (sheets.length || rows.some(r => ["nested", "written", "labelled", "committed"].includes(r.state))) reach(1);
-    if (rows.length && rows.every(r => ["written", "labelled", "committed", "noDesign", "skipped"].includes(r.state)) && rows.some(r => r.state !== "noDesign" && r.state !== "skipped")) reach(2);
-    if (e.custom.length) reach(2);
+    if (e.custom.length) reach(1);
+    if (e.engrave.some(j => j.approvedAt && ["approved", "written"].includes(j.state))) reach(2);
     if (sheets.some(s => s.cut)) reach(3);
     let last = null;
     if (c) {
+      if (c.step >= 0) reach(Math.min(7, c.step));
       for (const ev of c.events) { if (STEP[ev.type] != null) reach(STEP[ev.type]); if (!last || ev.at >= last.at) last = ev; }
       if (c.shipped) reach(7);
     }
+    const all = allSteps(), stepName = (all[Math.min(reached, all.length - 1)] || {}).l || "";
     const review = e.review || rows.some(r => (r.problems || []).length);
     const eng = e.engrave.find(j => ["words", "review", "fitting", "ready", "classify"].includes(j.state));
     let tone = "warn", pill = "In progress", now = "";
+    // the pill names the step the rail has reached, as the order view does; before Nested it says where the order is
     if (cancel) { tone = "bad"; pill = "Cancelled"; now = `Cancelled${cancel.by ? " by " + cancel.by : ""}${cancel.at ? " · " + whenTxt(cancel.at) : ""}`; }
     else if (hold) { tone = "bad"; pill = "On hold"; now = `On hold · ${String(hold.hold)}`; }
     else if (review) { tone = "warn"; pill = "Decision"; now = "Needs a decision in Review"; }
-    else if (reached >= 8) { tone = "ok"; pill = "Completed"; now = "Completed on Etsy"; }
-    else if (reached >= 7) { tone = "ok"; pill = "Shipped"; now = last && STEP[last.type] === 7 ? `${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : "Shipped"; }
-    else if (last && STEP[last.type] >= 4) { tone = "ok"; pill = "Production"; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
-    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = "Completed"; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; }
-    else if (sheets.length) { tone = sheets.some(s => s.cut) ? "ok" : "info"; pill = sheets.some(s => s.cut) ? "Cut" : "On sheet"; now = sheets.some(s => s.cut) ? "Laser cut" : "On sheet"; }
+    else if (reached >= 7) { tone = "ok"; pill = stepName; now = last && STEP[last.type] === 7 ? `${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : stepName; }
+    else if (last && STEP[last.type] >= 4) { tone = "ok"; pill = stepName; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
+    else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = stepName; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; }
+    else if (reached >= 1) {
+      tone = reached >= 3 ? "ok" : "info"; pill = stepName;
+      now = eng && reached < 2 ? `Back engraving · ${eng.state === "words" ? "words to read" : eng.state}` : sheets.length ? (sheets.some(s => s.cut) ? "Laser cut" : "On sheet") : last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : stepName;
+    }
     else if (eng) { tone = "warn"; pill = "Engraving"; now = `Back engraving · ${eng.state === "words" ? "words to read" : eng.state}`; }
     else if (rows.length) { const st = rows[0].state; tone = "info"; pill = "In the pull"; now = st === "pooled" ? "Ready to nest" : st === "noDesign" ? "Nothing to cut" : st === "waiting" ? "Waiting" : "In this pull"; }
     else if (c) { tone = "info"; pill = "In the cloud"; now = last ? `${TYPE_LABEL(last.type)} · ${whenTxt(last.at)}` : c.archived ? "Design completed" : "Found in the cloud"; }
     else { tone = "neutral"; pill = "Seen"; now = ""; }
-    return { tone, pill, now, sheets, reached, cancelled: !!cancel, hold: !!hold };
+    return { tone, pill, now, sheets, reached, steps: stepsOf(e), stepName, cancelled: !!cancel, hold: !!hold };
   }
+  /** The card's dots: the order's own steps, done up to the step reached (a step the order skips, Welded for a piece that
+      is not a stud earring, is not drawn; one it has a record of anyway is kept, as the order view keeps it). */
   function rail(st) {
+    const all = allSteps(), steps = st.steps && st.steps.length ? st.steps : all;
+    const own = steps.length < all.length && all[st.reached] && !steps.includes(all[st.reached]) ? all.filter(s => steps.includes(s) || s === all[st.reached]) : steps;
+    // the position on its own steps of the furthest step reached (a step it passes over counts as passed)
+    const at = own.filter(s => { const i = all.indexOf(s); return i >= 0 && i <= st.reached; }).length - 1;
     let h = "";
-    for (let i = 0; i < RAIL.length; i++) {
-      const cls = st.cancelled ? (i <= st.reached ? "d" : i === st.reached + 1 ? "x" : "f") : i <= st.reached ? "d" : i === st.reached + 1 ? "c" : "";
-      h += (i ? `<b class="${i <= st.reached ? "d" : ""}"></b>` : "") + `<i class="${cls}" title="${esc(RAIL[i][0])}"></i>`;
+    for (let i = 0; i < own.length; i++) {
+      const cls = st.cancelled ? (i <= at ? "d" : i === at + 1 ? "x" : "f") : i <= at ? "d" : i === at + 1 ? "c" : "";
+      h += (i ? `<b class="${i <= at ? "d" : ""}"></b>` : "") + `<i class="${cls}" title="${esc(own[i].l)}"></i>`;
     }
-    const at = st.cancelled ? "Cancelled" : RAIL[Math.min(st.reached, RAIL.length - 1)][0];
-    return `<span class="cnsRail" aria-label="${esc(at)}">${h}</span>`;
+    const label = st.cancelled ? "Cancelled" : (own[Math.max(0, at)] || {}).l || st.stepName;
+    return `<span class="cnsRail" aria-label="${esc(label)}">${h}</span>`;
   }
   const mark = (text, q) => { const s = String(text || ""), i = q ? s.toLowerCase().indexOf(q) : -1; return i < 0 ? esc(s) : esc(s.slice(0, i)) + `<mark>${esc(s.slice(i, i + q.length))}</mark>` + esc(s.slice(i + q.length)); };
   function cardHtml(h, R, one) {
@@ -249,7 +279,10 @@
     let c = null;
     if (found) {
       c = { rid: q, buyer: (row && row.buyer && row.buyer.name) || (tl && tl.cancelled && tl.cancelled.buyer) || "", skus: [], titles: [], listings: [], sheets: [], events, cancel: tl && tl.cancelled || null, archived: !!row,
-        shipped: !!(row && Array.isArray(row.shipments) && row.shipments.length), at: 0 };
+        shipped: !!(row && Array.isArray(row.shipments) && row.shipments.length), at: 0,
+        // the server's own step (its where.step, 0-7) and the pieces ordered (read for a stud: its steps)
+        step: tl && tl.where && Number.isFinite(+tl.where.step) ? Math.round(+tl.where.step) : -1,
+        items: ((row && row.items) || []).filter(it => it && typeof it === "object").slice(0, 20).map(it => ({ title: it.title || "", variations: Array.isArray(it.variations) ? it.variations : [], sku: it.sku || "" })) };
       for (const it of (row && row.items) || []) { push(c.skus, it.sku); push(c.titles, it.title); push(c.listings, it.listingId && String(it.listingId)); }
       for (const p of pools) { push(c.skus, p.sku); if (p.sheetId || p.sheetName) c.sheets.push({ id: p.sheetId || p.sheetName, label: sheetWords(p.sheetName) || "on a sheet", cut: false }); }
       for (const s of onSheet) c.sheets.push({ id: s.id, label: `${CODE[s.metal] || ""} Sheet ${s.sheetIndex || s.page || 1}`.trim(), cut: +s.laserDoneAt > 0 });

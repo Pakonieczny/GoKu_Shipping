@@ -180,7 +180,10 @@ async function main() {
     await page.waitForSelector(`#cnsList .cnsCard[data-rid="${CLOUD}"]`, { timeout: 8000 });
     list = await cards(); const old = list.find(c => c.rid === CLOUD);
     assert.equal(old.who, 'Olive Archer'); assert.equal(old.cloud, true, 'marked as found in the cloud'); assert.equal(old.pill, 'Shipped'); assert.equal(old.sheet, 'GF Sheet 4'); assert.equal(old.mark, CLOUD);
-    assert(old.rail >= 8, 'shipped: eight steps passed: ' + old.rail);
+    // the order view's own steps: a charm (no stud) has no Welded, so seven dots, every one passed (Approved and Completed are gone)
+    const dots = await page.evaluate(id => [...document.querySelectorAll(`#cnsList .cnsCard[data-rid="${id}"] .cnsRail i`)].map(i => i.title), CLOUD);
+    assert.deepEqual(dots, ['Order in', 'Nested', 'Engraved', 'Laser cut', 'Sorted', 'Assembled', 'Shipped'], 'its steps: ' + dots);
+    assert.equal(old.rail, 7, 'shipped: every step passed: ' + old.rail);
     const ops = asked.filter(a => a.id === CLOUD).map(a => a.op).sort();
     assert.deepEqual(ops, ['findSheets', 'get', 'poolList', 'timelineGet'], 'each read once, for the whole number only: ' + JSON.stringify(asked));
     assert.equal(await page.evaluate(() => document.querySelectorAll('.cnsLift').length), 0, 'no card is left lifted over the box');

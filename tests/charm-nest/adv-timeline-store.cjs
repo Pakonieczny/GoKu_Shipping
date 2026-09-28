@@ -59,12 +59,13 @@ const FV = { serverTimestamp: () => ({ ts: 1 }) };
   assert(types.has('sorted'), 'sorted must not be hidden by 2,100 cancel alerts');
   assert(types.has('shipped'), 'shipped must not be hidden by 2,100 cancel alerts');
   assert.equal(tl.truncated, true, 'said to be cut short');
+  assert.deepEqual(tl.leftOut, { types: ['cancelAlert'], kept: 500, capped: false }, 'says what was left out: ' + JSON.stringify(tl.leftOut));
   assert(reads <= 2600, 'reads stay bounded: ' + reads);
   // a short history is whole and not called truncated
   const S = '4190000002';
   for (let i = 0; i < 30; i++) store.set(`Order_Timeline/${S}~moved~${t0 + i}-m`, { orderId: S, type: 'moved', at: t0 + i });
   const short = await TL.get(db, S, { derive: false });
-  assert.equal(short.events.length, 30); assert.equal(short.truncated, false);
+  assert.equal(short.events.length, 30); assert.equal(short.truncated, false); assert.equal(short.leftOut, null);
   // exactly one page long: all there, not truncated
   const P = '4190000003';
   for (let i = 0; i < 500; i++) store.set(`Order_Timeline/${P}~scan~${t0 + i}-s`, { orderId: P, type: 'scan', at: t0 + i });
