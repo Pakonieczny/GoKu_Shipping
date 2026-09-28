@@ -18,7 +18,8 @@
  *  Who wins: the first record stands. A later Etsy detection never overwrites a person's record: it adds etsyStatus and
  *  fills only what the record lacks. A person cancelling an order Etsy already cancelled keeps Etsy as the canceller and
  *  adds the sheets and lines the sorter knows. A person cancelling their own record again writes it anew (as before),
- *  keeping what Etsy said. An order a person restored after Etsy's last change is not cancelled again by a detection.
+ *  keeping what Etsy said. An order a person restored after Etsy's last change, or restored when Etsy already said what it
+ *  says now, is not cancelled again by a detection (a new Etsy status is news).
  *
  *  Timeline (_orderTimeline.js): Etsy's cancel is one `etsyCancelled` event keyed by the order id (so the mirror seeing
  *  the receipt again, the sweep and the sorter all land on the same event); a person's is a `cancelled` event with
@@ -116,26 +117,36 @@ function stage(w, db, FV, ref, p, prefix, create) {
 const tidy = r => { const x = Object.assign({}, r); delete x.createdAt; return x; };
 
 /** One cancel, in a transaction (a person's, the sorter's word that Etsy cancelled it, the sandbox's pretend one).
-    opts: prefix · person (who pressed it) · detectedBy · eventId. */
+    opts: prefix · person (who pressed it) · detectedBy · eventId · mustExist (putMany's retry of a record it read: gone
+    since means a person restored the order meanwhile, and a detection does not bring it back). */
 async function put(db, FV, inc, opts = {}) {
   if (!inc || !inc.orderId) return { error: "orderId required" };
   const ref = colOf(db, opts.prefix).doc(inc.orderId);
   const p = await db.runTransaction(async t => {
-    const snap = await t.get(ref), cur = snap.exists ? snap.data() : null, pl = plan(cur, inc, opts);
+    const snap = await t.get(ref), cur = snap.exists ? snap.data() : null;
+    if (!cur && opts.mustExist) return null;
+    const pl = plan(cur, inc, opts);
     stage(t, db, FV, ref, pl, opts.prefix, false);
     return pl;
   });
+  if (!p) return { ok: true, record: null, created: false, kept: false, changed: false, gone: true };
   return { ok: true, record: tidy(p.record), created: p.kind === "create", kept: p.kept, changed: !!p.kind };
 }
 
-/** Orders a person restored after Etsy's last change (a cancelRestored event at or after it): a detection leaves them be. */
+/** Orders a person restored after Etsy's last change (a cancelRestored event at or after it), or restored when Etsy
+    already said what it says now (the event keeps the record, with its etsyStatus: the person knew, and a later change to
+    the receipt, such as a note, is no news): a detection leaves them be. A new Etsy status after a restore cancels. */
 async function restoredSince(db, recs, prefix) {
-  const last = {}, ids = [...new Set(recs.map(r => r.orderId))];
+  const last = {}, knew = {}, ids = [...new Set(recs.map(r => r.orderId))], low = v => String(v || "").trim().toLowerCase();
   for (let i = 0; i < ids.length; i += 30) {
-    const snap = await db.collection((prefix || "") + Timeline.COL).where("orderId", "in", ids.slice(i, i + 30)).select("orderId", "type", "at").get();
-    for (const d of snap.docs) { const x = d.data(); if (x.type === "cancelRestored") last[x.orderId] = Math.max(last[x.orderId] || 0, n(x.at)); }
+    const snap = await db.collection((prefix || "") + Timeline.COL).where("orderId", "in", ids.slice(i, i + 30)).select("orderId", "type", "at", "data.cancelled.etsyStatus").get();
+    for (const d of snap.docs) {
+      const x = d.data(); if (x.type !== "cancelRestored") continue;
+      last[x.orderId] = Math.max(last[x.orderId] || 0, n(x.at));
+      const st = low(x.data && x.data.cancelled && x.data.cancelled.etsyStatus); if (st) (knew[x.orderId] = knew[x.orderId] || new Set()).add(st);
+    }
   }
-  return new Set(recs.filter(r => last[r.orderId] && last[r.orderId] >= (r.etsyAt || r.at)).map(r => r.orderId));
+  return new Set(recs.filter(r => (last[r.orderId] && last[r.orderId] >= (r.etsyAt || r.at)) || (knew[r.orderId] && knew[r.orderId].has(low(r.etsyStatus)))).map(r => r.orderId));
 }
 /** Etsy's cancels, many at once (the mirror's page, the sweep): one getAll of their records, then one batch.
     opts: prefix · detectedBy · dryRun. Returns counts and the ids it created. */
@@ -162,7 +173,7 @@ async function putMany(db, FV, recs, opts = {}) {
     try { await batch.commit(); part.forEach(count); }
     catch (e) {
       for (const x of part) {
-        try { const res = await put(db, FV, x.r, opts); if (res.created) { out.created++; out.ids.push(x.r.orderId); } else if (res.changed) out.noted++; else out.unchanged++; }
+        try { const res = await put(db, FV, x.r, Object.assign({}, opts, { mustExist: x.p.kind !== "create" })); if (res.created) { out.created++; out.ids.push(x.r.orderId); } else if (res.gone) out.restored++; else if (res.changed) out.noted++; else out.unchanged++; }
         catch (e2) { out.failed++; out.error = s(e2.message || e2, 200); }
       }
     }
