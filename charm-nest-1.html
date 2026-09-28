@@ -2451,7 +2451,7 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
-<script src="charm-nest-backs.js"></script>
+<script src="charm-nest-backs.js?v=20260928-true"></script>
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
@@ -2496,6 +2496,17 @@ const DEFAULT_STOCK = "A";
 const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const MM_PER_PT = 25.4 / PT_PER_IN;
+/* Every sheet is shown at one true scale beside the plate production uses most, 100 × 50 mm (Paul, 28 Sep: "the charms
+   must always be their real size and the sheet must always be the real size in comparison to our typical 50 x 100 mm
+   sheet"). A preview's frame is that plate, or the sheet where it is bigger; the sheet sits in it at its own size, so a
+   25 mm 14K sheet is a quarter of the width a 100 mm Gold sheet takes, and its charms are as big as theirs. */
+const REF_PT = [100 / MM_PER_PT, 50 / MM_PER_PT];
+function trueFrame(st) {
+  const w = +st?.wPt || (+st?.wIn || 0) * PT_PER_IN, h = +st?.hPt || (+st?.hIn || 0) * PT_PER_IN;
+  return w > 0 && h > 0 ? { w, h, fw: Math.max(w, REF_PT[0]), fh: Math.max(h, REF_PT[1]) } : null;
+}
+window.trueFrame = trueFrame;
+const TRAY = "#efe9de";   // the part of the 100 × 50 mm frame a smaller sheet leaves
 const fmt = { pct: v => Math.round(v * 100) + "%", area: v => Math.round(v * MM_PER_PT * MM_PER_PT).toLocaleString() + " mm²", mm: v => (v * MM_PER_PT).toFixed(1) + " mm", mmN: v => +(v * MM_PER_PT).toFixed(1), s: ms => ms < 60000 ? Math.round(ms / 1000) + "s" : Math.floor(ms / 60000) + "m " + Math.round(ms % 60000 / 1000) + "s" };
 /* Storage redirects are read through the same-origin production asset route. */
 const cors = u => CharmNestAssets.url(u);
@@ -4850,10 +4861,12 @@ function renderSat(sh) {
    once per page, with the record's own time on the address, so a sheet nested again shows its new picture. */
 function drawRecalled(sh, cv) {
   const r = sh.recalled, wrap = cv.parentElement, st = stockFor(sh.metal, sh);
-  const w = Math.round(wrap.clientWidth * devicePixelRatio), h = Math.round(w * st.hPt / st.wPt);
+  // at true scale, as a nested sheet is: the saved picture sits in the 100 × 50 mm frame at its own size
+  const f = trueFrame(st), w = Math.round(wrap.clientWidth * devicePixelRatio), h = Math.round(w * f.fh / f.fw), sw = Math.round(w * f.w / f.fw), sh2 = Math.round(w * f.h / f.fw);
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-  const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, w, h); return; }
+  wrap.style.aspectRatio = `${w}/${h}`;
+  const ctx = cv.getContext("2d"); ctx.fillStyle = sw < w - 1 || sh2 < h - 1 ? TRAY : "#fff"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, sw, sh2);
+  if (sh._img && sh._imgSource === r.previewSrc && sh._img.complete && sh._img.naturalWidth) { ctx.drawImage(sh._img, 0, 0, sw, sh2); return; }
   if (!sh._img || sh._imgSource !== r.previewSrc) {
     r.previewSrc = r.previewSrc || (r.preview ? r.preview + (r.preview.includes("?") ? "&" : "?") + "v=" + (r.updatedAt || 0) : "");
     const img = new Image(); img.crossOrigin = "anonymous"; img.decoding = "async"; sh._img = img; sh._imgSource=r.previewSrc;
@@ -4879,7 +4892,7 @@ function drawPreviewNow(sh) {
   if (wrap.clientWidth < 40) { if (!sh._redrawPending) { sh._redrawPending = true; requestAnimationFrame(() => { sh._redrawPending = false; if (sh.el) drawPreview(sh); }); } return; }
   const w = Math.round(wrap.clientWidth * devicePixelRatio);
   const R = Math.round(Math.max(14 * devicePixelRatio, w * 0.042));                  // mm rulers along the top and the left
-  const h = R + Math.round((w - R) * st.hPt / st.wPt); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const f = trueFrame(st), h = R + Math.round((w - R) * f.fh / f.fw); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
   wrap.style.aspectRatio = `${w}/${h}`;
   paintPreview(cv, sh, false, R);
   const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
@@ -4892,10 +4905,21 @@ function customRing(ctx, c, tx, k) {
   ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = Math.max(1.5, 1.6 * k); ctx.setLineDash([Math.max(3, 3 * k), Math.max(2, 2 * k)]); ctx.stroke(); ctx.restore();
 }
 function paintPreview(cv, sh, clean, R) {
-  R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
+  R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh);
+  // on screen the sheet sits at true scale in its 100 × 50 mm frame; the files' pictures (clean) are the sheet alone
+  const f = clean ? null : trueFrame(st), k = (cv.width - R) / (f ? f.fw : st.wPt);
+  const W = f ? st.wPt * k : cv.width - R, H = f ? st.hPt * k : cv.height - R, FW = cv.width - R, FH = cv.height - R, small = !!f && (W < FW - 1 || H < FH - 1);
   if (!clean) { sh._view = { R, k }; cv._backSheetScale = k * cv.clientWidth / cv.width; }   // the on-screen canvas only; offscreen renders must not disturb click mapping
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = sh._forClaude ? "#ece7dc" : "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
-  if (R) drawRulers(ctx, R, k, W, H);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = small ? TRAY : sh._forClaude ? "#ece7dc" : "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
+  if (small) { ctx.fillStyle = "#fffefb"; ctx.fillRect(R, R, W, H); }
+  if (R) drawRulers(ctx, R, k, FW, FH);
+  if (small && R) {   // what the frame is, in its free corner (left out where the corner is too small for it)
+    ctx.save(); ctx.fillStyle = "rgba(120,110,96,.62)"; ctx.textAlign = "right"; ctx.textBaseline = "top";
+    ctx.font = `${Math.max(9 * devicePixelRatio, Math.round(FW / 72))}px ${getComputedStyle(document.body).getPropertyValue("--mono") || "monospace"}`;
+    const note = `${fmt.mmN(st.wPt)} × ${fmt.mmN(st.hPt)} mm · true size`, pad = Math.round(FW / 90);
+    if (ctx.measureText(note).width + 2 * pad <= FW - W) ctx.fillText(note, cv.width - pad, R + pad);
+    ctx.restore();
+  }
   ctx.translate(R, R);
   // inset guide
   const ins = (+S.settings.insetPt || 0) * k;
@@ -4905,13 +4929,13 @@ function paintPreview(cv, sh, clean, R) {
   const byId = new Map(sh.charms.map(c => [c.id, c]));
   const sel = sh.selected;
   if (!clean && !sh.placements.length && sh.charms.length && !sh.probe && !sh.probePlaced?.length) {
-    const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(W / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
+    const n = activeCharms(sh).length; ctx.fillStyle = "rgba(147,140,128,.9)"; ctx.textAlign = "center"; ctx.font = `${Math.round(FW / 26)}px ${getComputedStyle(document.body).getPropertyValue("--serif")}`;
     const ai = (S.settings.engine || "solver") === "ai";
-    ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, W / 2, H / 2 - W / 60);
-    ctx.font = `${Math.round(W / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
+    ctx.fillText(sh.status === "nesting" ? (ai ? `Claude is planning round ${sh.aiRound || 1}` : "Preparing…") : `${n} charm${n === 1 ? "" : "s"} queued`, FW / 2, FH / 2 - FW / 60);
+    ctx.font = `${Math.round(FW / 44)}px ${getComputedStyle(document.body).getPropertyValue("--sans")}`; ctx.fillStyle = "rgba(147,140,128,.75)";
     // a 10K or 14K sheet waits for a person to include it in a set (Options), even in Auto: "press Nest" was not the answer
     const waitsForYou = window.Gate && Gate.modern(sh.runId) && !Gate.nestable(sh, window.B?.run) && !["nesting", "queued"].includes(sh.status);
-    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", W / 2, H / 2 + W / 40);
+    ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", FW / 2, FH / 2 + FW / 40);
   }
   (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
@@ -5124,7 +5148,13 @@ const sheetNo = r => r.sheetIndex || +((/_Sheet-(\d+)/.exec(r.folder || r.fileBa
 const dayShort = d => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 // a sheet preview is framed at its own plate's shape: the frame kept the old 181 × 153 mm reference box, and a 100 × 50 mm
 // sheet sat in the middle of a tall grey box (audit, 25 Sep)
-const pvRatio = r => { const st = r && r.stock; return st && st.wIn > 0 && st.hIn > 0 ? ` style="aspect-ratio:${+st.wIn.toFixed(4)}/${+st.hIn.toFixed(4)}"` : ""; };
+/** A saved sheet's picture at true scale: the image box is the 100 × 50 mm frame and the sheet, centred in it, is drawn in
+ *  its content box (padding in % of the width sizes both ways), so every card of a row shows millimetres alike. */
+const pvRatio = r => {
+  const f = trueFrame(r && r.stock); if (!f) return "";
+  const px = (f.fw - f.w) / f.fw * 50, py = (f.fh - f.h) / f.fw * 50, small = px > .05 || py > .05;
+  return ` style="aspect-ratio:${+f.fw.toFixed(3)}/${+f.fh.toFixed(3)}${small ? `;padding:${+py.toFixed(3)}% ${+px.toFixed(3)}%;background:${TRAY}` : ""}"${small ? ` title="${esc(`${fmt.mmN(f.w)} × ${fmt.mmN(f.h)} mm sheet, shown at true size in a 100 × 50 mm frame`)}"` : ""}`;
+};
 window.pvRatio = pvRatio;
 const swatch = (m, n) => `<span class="sw" style="--c:${m.color}" title="${esc(m.label)}${n > 1 ? ` · ${n} sheets` : ""}">${esc(CODE[m.key] || m.label)}${n > 1 ? `<i>${n}</i>` : ""}</span>`;
 function sheetHead(r, o) {
@@ -5514,10 +5544,10 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-split"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-split"></script>
+<script src="charm-nest-bridge.js?v=20260928-true"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-true"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
-<script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
+<script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260927-moves"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

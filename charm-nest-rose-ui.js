@@ -216,7 +216,7 @@
     // Positions follow the preview's ruler, so each mark lines up with the sheet.
     const width=sh.el.querySelector('.shPreviewWrap')?.clientWidth||0,dpr=window.devicePixelRatio||1,px=Math.round(width*dpr),ruler=px?Math.round(Math.max(14*dpr,px*.042))/px:.042,span=width||600,rows=[];
     for(const m of [...marks].sort((a,b)=>a.x-b.x)){
-      m.left=(ruler+(1-ruler)*Math.min(1,Math.max(0,m.x/st.wPt)))*100;
+      m.left=(ruler+(1-ruler)*Math.min(1,Math.max(0,m.x/(window.trueFrame?.(st)?.fw||st.wPt))))*100;   // the card draws the sheet at true scale in its frame
       const at=m.left/100*span,size=20+((m.kind==='cut'?'Cut ':'')+(when(m.at)||'Time not recorded')).length*5.6;
       m.flip=at-8+size>span;
       const lo=m.flip?at+8-size:at-8,hi=m.flip?at+8:at-8+size;

@@ -8175,11 +8175,13 @@ const RunHistory = window.RunHistory = (() => {
     if (s.draft || g.draft || !g.setId) return { st: "na", text: "no QR label yet: made when the sheet joins a set" };
     return { st: "no", text: "QR label not made yet" };
   }
+  // a sheet's picture at true scale: as wide as its millimetres against a 100 mm wide plate (Paul, 28 Sep)
+  const trueWidth = (s, of = "100%") => { const f = window.trueFrame?.(s.stock); return f && f.w < f.fw - .5 ? ` style="width:calc(${of} * ${+(f.w / f.fw).toFixed(4)});height:auto"` : ""; };
   function tileHtml(s, g, h) {
     const id = idOf(s), code = codeOf(s.metal), no = s.sheetIndex || s.page || 1, fill = s.density ? Math.round(s.density * 100) + "%" : "", qr = qrOf(s, g);
     const facts = [`${code} Sheet ${no}`, fill ? fill + " full" : "", s.placedCount ? n(s.placedCount, "piece") : "", s.orders != null ? n(s.orders, "order") : "", qr.text, s.laserDoneAt ? "cut on the laser" : ""].filter(Boolean).join(" · ");
     return `<button type="button" class="hTile${h && h.sheets.has(id) ? " hit" : ""}" data-sheet="${esc(id)}" style="--c:${colorOf(s.metal)}" title="${esc(facts + " — open it in the sheet window")}" aria-label="${esc(`Open ${code} Sheet ${no} in the sheet window`)}">`
-      + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
+      + `<span class="hPlate">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s)} src="${esc(cors(s.preview))}">` : `<span class="hNoPv">no preview</span>`}</span>`
       + `<span class="hCap"><b><i></i>${esc(code)} ${esc(no)}</b><span class="hFill">${esc(fill)}</span><span class="hQr ${qr.st}" title="${esc(qr.text)}">${ICON.qr}</span>${s.laserDoneAt ? `<span class="hDone" title="cut on the laser">${ICON.check}</span>` : ""}</span></button>`;
   }
   function placeholderHtml(g) {
@@ -8234,7 +8236,7 @@ const RunHistory = window.RunHistory = (() => {
   function stackHtml(g) {
     const sh = (g.sheets || []).slice(0, 3);
     if (!sh.length) return `<span class="hStack"><span class="hMini ph">${ICON.plate}</span></span>`;
-    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt="" src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
+    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s, "calc(100% - 6px)")} src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
   }
   function panelHtml(g, h) {
     const sh = g.sheets || [];
@@ -9284,7 +9286,7 @@ const SetPicker = window.SetPicker = (() => {
     if (!g) return;
     mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}" alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     dialog.showModal();
   }
   return { mount, previewCurrent, preview };

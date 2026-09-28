@@ -123,7 +123,7 @@ for (const [state, going] of [[{ endedBy: 'stopped' }, false], [{ problem: 'not 
   const drawn = [], fills = [], strokes = [];
   const canvas = new Proxy({}, { get: (t, k) => k in t ? t[k] : () => {}, set: (t, k, v) => { if (k === 'fillStyle') fills.push(v); if (k === 'strokeStyle') strokes.push(v); t[k] = v; return true; } });
   const cv = { width: 400, height: 200, clientWidth: 400, getContext: () => canvas };
-  const d = { S: { settings: { insetPt: 1 } }, Set, Map, Math, window: {}, stockFor: () => ({ wPt: 200, hPt: 100 }), activeCharms: sh => sh.charms, getComputedStyle: () => ({ getPropertyValue: () => 'serif' }),
+  const d = { S: { settings: { insetPt: 1 } }, Set, Map, Math, window: {}, stockFor: () => ({ wPt: 200, hPt: 100 }), trueFrame: () => null, TRAY: '#efe9de', activeCharms: sh => sh.charms, getComputedStyle: () => ({ getPropertyValue: () => 'serif' }),
     cutLinesOf: () => [], document: { body: {} }, CharmNestPDF: { pathToCanvas() {}, drawCharm: (x, c) => drawn.push(c.id) } };
   vm.createContext(d);
   vm.runInContext(slice('function paintPreview(cv, sh, clean, R) {', '/** What a sheet holds while the careful fill'), d);

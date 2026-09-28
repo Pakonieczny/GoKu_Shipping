@@ -946,7 +946,10 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const box = E.plateBox.getBoundingClientRect(); if (box.width < 40 || box.height < 40) return;
     const availW = box.width - 32, availH = box.height - 22;
     const R = Math.round(Math.max(14, Math.min(22, availW * 0.022)));
-    let w = availW, hh = R + (w - R) * st.hPt / st.wPt; if (hh > availH) { hh = availH; w = R + (hh - R) * st.wPt / st.hPt; }
+    // true scale (Paul, 28 Sep): the 100 × 50 mm frame fits the box, and the sheet is drawn at its own size in that scale
+    const f = window.trueFrame && trueFrame(st), fw = f ? f.fw : st.wPt, fh = f ? f.fh : st.hPt;
+    let s = (availW - R) / fw; if (R + fh * s > availH) s = (availH - R) / fh;
+    let w = R + st.wPt * s, hh = R + st.hPt * s;
     w = Math.floor(w); hh = Math.floor(hh);
     E.plate.style.width = w + "px"; E.plate.style.height = hh + "px";
     const dpr = Math.min(2.5, devicePixelRatio || 1);
