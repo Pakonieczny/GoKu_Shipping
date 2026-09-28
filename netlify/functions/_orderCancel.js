@@ -19,7 +19,8 @@
  *  fills only what the record lacks. A person cancelling an order Etsy already cancelled keeps Etsy as the canceller and
  *  adds the sheets and lines the sorter knows. A person cancelling their own record again writes it anew (as before),
  *  keeping what Etsy said. An order a person restored after Etsy's last change, or restored when Etsy already said what it
- *  says now, is not cancelled again by a detection (a new Etsy status is news).
+ *  says now, is not cancelled again by a detection (a new Etsy status is news). Only a restore of a record that carried
+ *  Etsy's word counts: a person restoring their own cancel did not know Etsy's, which is then recorded.
  *
  *  Timeline (_orderTimeline.js): Etsy's cancel is one `etsyCancelled` event keyed by the order id (so the mirror seeing
  *  the receipt again, the sweep and the sorter all land on the same event); a person's is a `cancelled` event with
@@ -135,13 +136,17 @@ async function put(db, FV, inc, opts = {}) {
 
 /** Orders a person restored after Etsy's last change (a cancelRestored event at or after it), or restored when Etsy
     already said what it says now (the event keeps the record, with its etsyStatus: the person knew, and a later change to
-    the receipt, such as a note, is no news): a detection leaves them be. A new Etsy status after a restore cancels. */
+    the receipt, such as a note, is no news): a detection leaves them be. A new Etsy status after a restore cancels, and so
+    does Etsy's cancel of an order whose restored record was a person's own, with no word from Etsy on it. */
 async function restoredSince(db, recs, prefix) {
   const last = {}, knew = {}, ids = [...new Set(recs.map(r => r.orderId))], low = v => String(v || "").trim().toLowerCase();
   for (let i = 0; i < ids.length; i += 30) {
-    const snap = await db.collection((prefix || "") + Timeline.COL).where("orderId", "in", ids.slice(i, i + 30)).select("orderId", "type", "at", "data.cancelled.etsyStatus").get();
+    const snap = await db.collection((prefix || "") + Timeline.COL).where("orderId", "in", ids.slice(i, i + 30)).select("orderId", "type", "at", "data.cancelled.etsyStatus", "data.cancelled.source", "data.cancelled.by").get();
     for (const d of snap.docs) {
       const x = d.data(); if (x.type !== "cancelRestored") continue;
+      // the restore of a person's own cancel, with no word from Etsy on it, says nothing of Etsy's cancel (the person did
+      // not know): Etsy's still counts. (A restore event that kept no record reads as before.)
+      const c = x.data && x.data.cancelled; if (c && typeof c === "object" && !etsyKnown(c)) continue;
       last[x.orderId] = Math.max(last[x.orderId] || 0, n(x.at));
       const st = low(x.data && x.data.cancelled && x.data.cancelled.etsyStatus); if (st) (knew[x.orderId] = knew[x.orderId] || new Set()).add(st);
     }
@@ -173,7 +178,12 @@ async function putMany(db, FV, recs, opts = {}) {
     try { await batch.commit(); part.forEach(count); }
     catch (e) {
       for (const x of part) {
-        try { const res = await put(db, FV, x.r, Object.assign({}, opts, { mustExist: x.p.kind !== "create" })); if (res.created) { out.created++; out.ids.push(x.r.orderId); } else if (res.gone) out.restored++; else if (res.changed) out.noted++; else out.unchanged++; }
+        try {
+          let res = await put(db, FV, x.r, Object.assign({}, opts, { mustExist: x.p.kind !== "create" }));
+          // gone: restored since it was read. Left be as any restore is (restoredSince): a person's own cancel restored
+          // unaware of Etsy's is not, and Etsy's cancel is recorded
+          if (res.gone && !(await restoredSince(db, [x.r], opts.prefix)).has(x.r.orderId)) res = await put(db, FV, x.r, opts);
+          if (res.created) { out.created++; out.ids.push(x.r.orderId); } else if (res.gone) out.restored++; else if (res.changed) out.noted++; else out.unchanged++; }
         catch (e2) { out.failed++; out.error = s(e2.message || e2, 200); }
       }
     }
