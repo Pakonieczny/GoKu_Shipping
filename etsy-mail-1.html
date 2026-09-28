@@ -19024,8 +19024,30 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return state.composerAttachments.get(threadId);
     }
 
+    // One chip per tracking label, file or listing: the same one can reach
+    // the box twice (the draft's own copy and the tracking sync).
+    function composerAttachmentKey(a) {
+      if (!a) return null;
+      if (a.type === "tracking_image" && a.trackingCode) {
+        const c = String(a.trackingCode).replace(/\s+/g, "").toUpperCase();
+        const m = c.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
+        return "trk:" + (m ? m[1] : c);
+      }
+      if (a.type === "image" && a.storagePath) return "img:" + a.storagePath;
+      if (a.type === "listing" && a.listingId) return "lst:" + a.listingId;
+      return a.attachmentId ? "id:" + a.attachmentId : null;
+    }
+
     function setComposerAttachments(threadId, arr) {
-      state.composerAttachments.set(threadId, Array.isArray(arr) ? arr : []);
+      const seen = new Set();
+      const list = (Array.isArray(arr) ? arr : []).filter(a => {
+        const k = composerAttachmentKey(a);
+        if (!k) return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      state.composerAttachments.set(threadId, list);
     }
 
     function trackingImageLooksReady(img) {
@@ -19133,6 +19155,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const box = $("emComposerChips");
       if (!box) return;
       const threadId = state.selectedId;
+      if (threadId) setComposerAttachments(threadId, getComposerAttachments(threadId));
       const atts = threadId ? getComposerAttachments(threadId) : [];
 
       if (!atts.length) {
@@ -19869,7 +19892,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       state.aiDraftFileIds = state.aiDraftFileIds || {};
       state.aiDraftFileIds[threadId] = aiFiles.map(a => a.attachmentId);
       const removedIds = Array.isArray(draft.removedAttachmentIds) ? draft.removedAttachmentIds : [];
-      const saved = Array.isArray(draft.draftAttachments) ? draft.draftAttachments : null;
+      // Tracking chips come only from draft.trackingImages (the sync below);
+      // the draft's own copy of a tracking file would show it twice.
+      const saved = Array.isArray(draft.draftAttachments)
+        ? draft.draftAttachments.filter(a => a && a.type !== "tracking_image")
+        : null;
       const lost = aiFiles.filter(a => !removedIds.includes(a.attachmentId) &&
         !(saved || []).some(x => x && x.attachmentId === a.attachmentId));
 

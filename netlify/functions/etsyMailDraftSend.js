@@ -401,11 +401,30 @@ async function startPromisedTrackingImage(threadId, draftId) {
 
 /** Normalize an attachments array for persistence. Strips sentinels,
  *  validates required fields per type, and ensures attachmentId is set. */
+// One tracking label, one file or one listing goes out once, however many
+// copies reach the send (a draft's own record plus the inbox's chip, 2026-09-28).
+function sameTrackingCode(code) {
+  const c = String(code || "").replace(/\s+/g, "").toUpperCase();
+  const m = c.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
+  return m ? m[1] : c;
+}
+function attachmentKey(a) {
+  if (!a) return null;
+  if (a.type === "tracking_image") return a.trackingCode ? "trk:" + sameTrackingCode(a.trackingCode) : (a.proxyUrl ? "url:" + a.proxyUrl : null);
+  if (a.type === "image") return a.storagePath ? "img:" + a.storagePath : null;
+  if (a.type === "listing") return a.listingId ? "lst:" + a.listingId : null;
+  return null;
+}
+
 function normalizeAttachments(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
+  const seen = new Set();
   for (const a of raw) {
     if (!a || typeof a !== "object") continue;
+    const key = attachmentKey(a);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
     const type = a.type;
     if (type !== "image" && type !== "listing" && type !== "tracking_image") continue;
 
@@ -549,7 +568,7 @@ async function reconcileTrackingAttachments(draftId, bodyAttachments, options = 
   const codesInBody = new Set();
   for (const a of bodyAtts) {
     if (a && a.type === "tracking_image" && a.trackingCode) {
-      codesInBody.add(String(a.trackingCode));
+      codesInBody.add(sameTrackingCode(a.trackingCode));
     }
   }
 
@@ -565,7 +584,7 @@ async function reconcileTrackingAttachments(draftId, bodyAttachments, options = 
     if (!img || !img.trackingCode) continue;
     if (img.queuedForSend === false) continue;                // operator opt-out
     if (img.status === "failed") continue;                    // tracking lookup failed; skip silently
-    if (codesInBody.has(String(img.trackingCode))) continue;   // already in send body
+    if (codesInBody.has(sameTrackingCode(img.trackingCode))) continue;   // already in send body
 
     const looksReady = img.status === "ready" || !!img.imageUrl || !!img.imageStoragePath;
     if (looksReady) {
@@ -881,7 +900,7 @@ exports.handler = async (event) => {
             // A made image the sender took off still goes: the words promise it.
             for (const img of imgs.filter(isReady)) {
               const a = trackingImageEntryToAttachment(img);
-              if (a && !normalized.some(x => x.type === "tracking_image" && String(x.trackingCode) === String(a.trackingCode))) {
+              if (a && !normalized.some(x => x.type === "tracking_image" && sameTrackingCode(x.trackingCode) === sameTrackingCode(a.trackingCode))) {
                 normalized.push(...normalizeAttachments([a]));
                 addedForClaim.push(a.filename || "tracking image");
               }
@@ -2051,3 +2070,4 @@ module.exports.isStaleQueued              = isStaleQueued;
 module.exports.isStaleHeartbeat           = isStaleHeartbeat;
 module.exports.MAX_CLAIM_LOOKBACK_MIN     = MAX_CLAIM_LOOKBACK_MIN;
 module.exports.STALE_HEARTBEAT_MS         = STALE_HEARTBEAT_MS;
+module.exports.normalizeAttachments       = normalizeAttachments;
