@@ -4284,7 +4284,7 @@ const dateTag = (d = new Date()) => CharmNestOrders.dateTag(d);
 function sheetFileBase(sh) { if (sh.draft) return `${METAL_TAG[sh.metal]}_working_${sh.sheetId}`; return CharmNestOrders.sheetName(sh.metal, sh.setDay || today(), sh.seq || 1, sh.sheetIndex || sh.page || 1); }
 /** The sheet's set (allocated once per run) and its index within its material in that set. */
 async function nextSheetSeq(sh) {
-  if (window.Gate && (Gate.modern(sh.runId) || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)))) {
+  if (window.Gate && (Gate.modern(sh.runId) || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)))) {
     sh.draft = true; sh.setId = null; sh.setDay = today(); sh.sheetIndex = null; return null;
   }
   const runKey = sh.runId || (sh.runId = "manual-" + uid());
@@ -4328,7 +4328,7 @@ async function persistSheet(sh, items, context) {
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
     sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
-    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
+    dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal, sh) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
@@ -5508,8 +5508,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-qr"></script>
-<script src="charm-nest-sheetwin.js?v=20260927-moves"></script>
+<script src="charm-nest-bridge.js?v=20260928-solid"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-solid"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

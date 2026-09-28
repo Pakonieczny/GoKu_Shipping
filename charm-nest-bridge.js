@@ -2190,10 +2190,17 @@ const Gate = window.Gate = (() => {
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
   const solid = m => ["gold10k", "gold14k"].includes(m);
-  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || !!(run?.solidIncluded || selected())[sh.metal] || sh.isolated;
+  /* 10K and 14K go into the set a sheet at a time, each by its own "Include in current set" (Paul, 28 Sep: "The system
+     incorrectly takes all sheets even the ones that are partial ... each sheet should have to be toggled independently").
+     The switch was the metal's: ticked on Sheet 1, it took the partial Sheet 2 with it. A sheet ticked before, when the
+     tick was the metal's, keeps it until a sheet of its metal is ticked on its own (changeMembership hands it over). */
+  const picked = (sh, choices = selected()) => typeof sh.solidPick === "boolean" ? sh.solidPick : choices[sh.metal] === true;
+  // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
+  const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
+  const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
   function policy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
-      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: choices });
+      stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
   }
   async function upgrade(run) {
     if (!run || run.releasePolicy === 2) return;
@@ -2244,7 +2251,7 @@ const Gate = window.Gate = (() => {
       sh.draft = true; sh.setId = null; sh.seq = null; sh.sheetIndex = null; sh.label = null;
       try {
         await Pool.update(sh.charms.map(c => c.poolId).filter(Boolean), { setId:null, sheetId:null, state:"ready" });
-        if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? !!choices[sh.metal] : null } });
+        if (sh.sheetId) await api("charmNestLibrary", { op:"putSheet", sheet:{ id:sh.sheetId, draft:true, setId:null, setSeq:null, sheetIndex:null, label:null, solidIncluded:solid(sh.metal) ? picked(sh, choices) : null } });
       } catch(e) { Object.assign(sh,previous); sh.problem="Set membership was not saved: "+e.message; throw e; }
       for (const row of Orders.rows()) if (row.poolIds.some(id => sh.charms.some(c => c.poolId === id))) row.state = "pooled";
       sh.problem=null;set.labels = null;
@@ -2273,7 +2280,7 @@ const Gate = window.Gate = (() => {
       // Membership changes reuse verified artwork and approved backs. Only the
       // manifest metadata and QR need saving; never re-render/re-upload the AI.
       try {
-        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? !!choices[sh.metal] : null}});
+        await api("charmNestLibrary", {op:"putSheet", sheet:{id:sh.sheetId,draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:sh.sheetIndex,fileBase:sh.fileBase,folder:sh.fileBase,solidIncluded:solid(sh.metal) ? picked(sh, choices) : null}});
         await Sets.onSheetSaved(sh, sh.charms, undefined, {setOverride:set});
         if (Engrave.saveSheetBacks) await Engrave.saveSheetBacks(sh);
         sh.problem = null;
@@ -2304,7 +2311,7 @@ const Gate = window.Gate = (() => {
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
     return rows.map(row=>{
       if(row.runId!==run.runId || !solid(row.metal)) return row;
-      const included=!!selected()[row.metal], live=allSheets().find(p=>p.sheetId===row.id);
+      const live=allSheets().find(p=>p.sheetId===row.id), included=live ? picked(live) : !!selected()[row.metal] && row.solidIncluded!==false;
       return {...row,solidIncluded:included,...(!included ? {draft:true,setId:null,setSeq:null,sheetIndex:null,label:null} : set && live && policy(live,set.seq).include ? {draft:false,setId:set.setId,setSeq:set.seq,sheetIndex:live.sheetIndex || row.sheetIndex} : {})};
     });
   }
@@ -2315,11 +2322,16 @@ const Gate = window.Gate = (() => {
       else {S.library.rows=projectLibraryRecords(S.library.rows || []);CN.renderLibrary();}
     }
   }
-  function changeMembership(m, included) {
+  function changeMembership(m, included, sh) {
     const run=B.run;
     if(run && (['complete','abandoned'].includes(run.status) || committing(run)))return Promise.reject(new Error(committing(run) ? 'The set is being committed · try again when it finishes' : 'This run is finished'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
-    choices[m]=!!included;
+    if(solid(m) && sh){
+      // the tick is this sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
+      // sheets' own are read (a new sheet starts out of the set)
+      for(const p of allSheets().filter(p=>p.metal===m && typeof p.solidPick!=='boolean'))p.solidPick=choices[m]===true;
+      choices[m]=false; sh.solidPick=!!included;
+    } else choices[m]=!!included;
     if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
     if (run) {
       run.membershipRevision=(run.membershipRevision||0)+1;run.commitRequested=false;run.membershipDirty=true;
@@ -2361,7 +2373,7 @@ const Gate = window.Gate = (() => {
       node.className = "shGate hidden";
       return;
     }
-    const included = m === "rose" ? policy(sh,seq).include : selected()[m] === true;
+    const included = m === "rose" ? policy(sh,seq).include : picked(sh);
     const sizeLocked=!!(sh.recalled || sh.roseCutAt || (m==='rose' && pagesOf(m).some(p=>p.roseStock)));
     // Keep the controls mounted: solver ticks, cloud replies and membership saves
     // must not replace a focused input, its draft value, or an open popup.
@@ -2369,7 +2381,7 @@ const Gate = window.Gate = (() => {
       node._sheetOptionsOwner=sh;
       node.innerHTML = `<details class="sheetOptions" ${R.optionsOpen?.[m] ? "open" : ""}><summary>Options</summary><div class="solidOptions" role="group" aria-label="${esc(labelOf(m))} sheet options">
         <div class="sheetOptionsHead"><strong>${esc(labelOf(m))} options</strong><button type="button" class="sheetOptionsClose" aria-label="Close sheet options">×</button></div>
-        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} in current set"> Include in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
+        <section class="sheetOptionSection"><label class="sheetInclude"><input type="checkbox" data-solid="include" aria-label="Include ${esc(labelOf(m))} sheet ${sh.page} in current set"> Include Sheet ${sh.page} in current set</label><span class="help sheetOptionStatus" role="status" data-solid="status"></span><button type="button" class="btn ghost xs" data-solid="retry" hidden>Retry selection</button></section>
         <section class="sheetOptionSection"><h4>Sheet dimensions</h4><div class="solidSize">
           <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
           <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
@@ -2389,8 +2401,8 @@ const Gate = window.Gate = (() => {
     node.querySelector('[data-solid="status"]').textContent=R.membershipError?'Selection not saved':R.membershipPending?'Saving selection…':locked;
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
-    retry.onclick=()=>changeMembership(m,!!selected()[m]).catch(()=>{});
-    include.onchange=e=>{if(!membershipEditable(sh))return renderRelease(sh,node);changeMembership(m,e.target.checked).catch(()=>{});};
+    retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
+    include.onchange=e=>{if(!membershipEditable(sh))return renderRelease(sh,node);changeMembership(m,e.target.checked,sh).catch(()=>{});};
     for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
       const input=node.querySelector('[data-solid="'+axis+'"]');
       input.disabled=sizeLocked;
@@ -2519,7 +2531,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:m => selected()[m] === true, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
@@ -4169,7 +4181,7 @@ const Sets = window.Sets = (() => {
   }
   /** Every set of a run, in set order. */
   const ofRun = runId => (grouped().runs.get(runId) || []).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
+  const setOfSheet = sh => sh.draft || (["gold10k","gold14k"].includes(sh.metal) && !Gate.solidSelected(sh.metal, sh)) ? null : sh.runId ? ((sh.setId ? grouped().ids.get(sh.setId) : null) || byRun().get(keyOf(sh.runId, sh.group)) || null) : null;
   /** The QR label, 145 × 145 pt, the print page's exact geometry (QR 85 pt at 3,3 · label 9 pt bold at 1,93 · "Notes:" at 92,0.5), ECC M. */
   async function renderLabelPng(payload, label, scale) {
     const k = scale || 8; const cv = document.createElement("canvas"); cv.width = Math.round(145 * k); cv.height = Math.round(145 * k);
@@ -4964,6 +4976,7 @@ const RunCtl = window.RunCtl = (() => {
       const prim = S.sheets[d.metal]; let pg = prim.pages.find(p => p.sheetId === d.id) || (prim.pages[0].charms.length ? addPage(d.metal) : prim.pages[0]);
       const set = d.draft ? null : bySet.get(d.setId);
       pg.draft = !!d.draft || !set; pg.releaseFull = !!d.releaseFull; pg.laserDoneAt = +d.laserDoneAt || null; pg.intakeFinalized = !!d.intakeFinalized; pg.intakeOptimized=!!d.intakeOptimized; pg.intakeOptimizedCount=+d.intakeOptimizedCount||0; pg.missRearranged=!!d.missRearranged; pg.topup=d.topup||null;
+      if (["gold10k","gold14k"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K sheet's own Include tick
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);

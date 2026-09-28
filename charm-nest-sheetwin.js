@@ -1235,7 +1235,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         return { kind: "release", note: gap ? `Filling its gaps · ${(sh.topup.tried || []).length} of 35 later orders tried` : "Made when the sheet is full and joins a set",
           title: `Release this sheet as it stands (${fmt.pct(sh.density || 0)} full): it joins its set now and gets its QR label, without waiting to fill${gap ? " its gaps" : ""}` };
       }
-      if (["gold10k", "gold14k"].includes(sh.metal)) return { kind: "include", note: "Made when its metal is included in the set", title: `Include ${sh.metal === "gold10k" ? "10K" : "14K"} in this set, as the Include switch does (every ${sh.metal === "gold10k" ? "10K" : "14K"} sheet of the run), and make the label` };
+      if (["gold10k", "gold14k"].includes(sh.metal)) return { kind: "include", note: "Made when this sheet is included in the set", title: "Include this sheet in the set, as its own Include switch does (the other sheets stay as they are), and make its label" };
       return null;
     }
     if ((rec.label?.files || []).length || !(rec.placements || []).length || !rec.verification?.ok) return null;
@@ -1258,7 +1258,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         if (sh.draft) throw new Error(reason());
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with its QR label for ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
       } else if (plan.kind === "include") {
-        await Gate.changeMembership(sh.metal, true);
+        await Gate.changeMembership(sh.metal, true, sh);
         if (sh.draft) throw new Error(reason());
       } else if (plan.kind === "relabel") {
         await Gate.assemble(run);
