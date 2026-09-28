@@ -115,14 +115,55 @@
     node.style.visibility = ""; g.remove();
     node.animate([{ boxShadow: "0 0 0 3px rgba(169,130,63,.45)" }, { boxShadow: "0 0 0 0 rgba(169,130,63,0)" }], { duration: 1400, easing: "ease-out" });
   }
+  /** What `node`'s room moves: each element after it on screen (up to its window, or the page) with how far it stands
+   *  from where it would be without `node` (dy, negative: it would stand higher). Measured once, by layout, so an
+   *  opening or closing room is played on transforms alone: what follows glides, and the frame round it (a window's
+   *  edge) takes its new size once. */
+  function shift(node) {
+    const bound = node.closest("dialog") || doc.body, list = [];
+    for (let a = node; a && a !== bound && a !== doc.body && list.length < 400; a = a.parentElement)
+      for (let s = a.nextElementSibling; s && list.length < 400; s = s.nextElementSibling) list.push(s);
+    if (!list.length) return [];
+    const before = list.map(s => s.getBoundingClientRect());
+    const was = node.style.display; node.style.display = "none";
+    const after = list.map(s => s.getBoundingClientRect().top);
+    node.style.display = was;
+    const seen = r => r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+    return list.map((s, i) => [s, after[i] - before[i].top]).filter(([s, dy], i) => Math.abs(dy) >= 1 && seen(before[i]));
+  }
   /** Something new in a list opens its own room and fades in, rather than appearing all at once. */
   function grow(node, opts = {}) {
     if (!node || !node.isConnected || reduced()) return;
     const h = node.getBoundingClientRect().height; if (!h) return;
+    const o = { duration: opts.ms || T.grow, easing: "cubic-bezier(.3,.1,.2,1)", delay: opts.delay || 0, fill: "backwards" };
     // room: false — the rows around it already glide into their places (reconcile), so it only fades in where it stands;
     // folding its height as well dropped them back first, and they jumped before gliding
-    if (opts.room === false) { node.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 0, offset: .3 }, { opacity: 1, transform: "none" }], { duration: opts.ms || T.grow, easing: "cubic-bezier(.3,.1,.2,1)", delay: opts.delay || 0, fill: "backwards" }); return; }
-    node.animate([{ opacity: 0, transform: "translateY(-6px)", maxHeight: "0px", overflow: "hidden" }, { opacity: 0, maxHeight: h + "px", offset: .45, overflow: "hidden" }, { opacity: 1, transform: "none", maxHeight: h + "px", overflow: "hidden" }], { duration: opts.ms || T.grow, easing: "cubic-bezier(.3,.1,.2,1)", delay: opts.delay || 0, fill: "backwards" });
+    if (opts.room !== false) {
+      // its room opens: what follows glides down from where it stood while it is still unseen (its height is not
+      // animated: a layout property per frame, Paul's "jerky"); `add` so a room closing nearby at once adds to it
+      for (const [s, dy] of shift(node)) s.animate([{ transform: `translateY(${dy}px)` }, { transform: "none", offset: .45 }, { transform: "none" }], Object.assign({ composite: "add" }, o));
+      node.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 0, offset: .45 }, { opacity: 1, transform: "none" }], o);
+      return;
+    }
+    node.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 0, offset: .3 }, { opacity: 1, transform: "none" }], o);
+  }
+  /** `node` leaves its room: it goes (opts.frames, else it folds up from its foot as it fades) while what follows it
+   *  rises into its room (from opts.at of the way), all on transform, opacity and clip-path; then opts.done takes it
+   *  out, and the frame round it takes its new size once. Returns { finished (true when it played to its end), cancel }
+   *  (cancel: it stays, whole, and done is not called). */
+  function shut(node, opts = {}) {
+    const o = { duration: opts.ms || T.fade, easing: opts.easing || "cubic-bezier(.4,0,.2,1)", fill: "forwards" };
+    const moved = !node.isConnected || reduced() ? [] : shift(node), at = opts.at || 0;
+    const own = node.animate(opts.frames || [{ opacity: 1, clipPath: "inset(0 0 0 0)" }, { opacity: 0, clipPath: "inset(0 0 100% 0)" }], o);
+    const rise = moved.map(([s, dy]) => s.animate([{ transform: "none" }, ...(at ? [{ transform: "none", offset: at }] : []), { transform: `translateY(${dy}px)` }], Object.assign({ composite: "add" }, o)));
+    let off = false;
+    const end = () => { for (const a of rise) a.cancel(); own.cancel(); };
+    const finished = own.finished.then(() => true, () => false).then(ok => {
+      if (off) return false;
+      try { if (opts.done) opts.done(); } finally { end(); }   // out of the layout and its lifts dropped in one step: no jump
+      return ok;
+    });
+    return { finished, cancel() { if (off) return; off = true; end(); } };
   }
   /** Something removed with no destination fades and folds away where it was. */
   async function fade(g) {
@@ -329,6 +370,27 @@
         press(s);
       }
     }
+    /* The stamp's shadow: it was a drop-shadow filter animated per frame (every frame repainted the stamp with a new
+       blur). Now two still soft discs under the stamp, one blurred as far from the paper, one tight as it touches,
+       that only move and cross-fade: [x, y, blur, alpha] as the filter had them, in the stamp's own space. */
+    const SHADE = { far: [30, 40, 18, .26], near: [2, 3, 3, .4], lift: [26, 36, 18, .2] };
+    function shadow(t, S, from, to, o) {
+      const R = S * 58 / 120, disc = (b, A) => {
+        const s = b / 2, pad = Math.ceil(2 * s + 2), i = doc.createElement("i"); i.className = "sealShade"; i.setAttribute("aria-hidden", "true");
+        i.style.cssText = `position:absolute;z-index:-1;left:${-pad}px;top:${-pad}px;width:${S + 2 * pad}px;height:${S + 2 * pad}px;pointer-events:none;opacity:0;` +
+          `background:radial-gradient(circle,rgba(20,14,6,${A}) ${Math.max(0, R - 2 * s).toFixed(1)}px,rgba(20,14,6,${A / 2}) ${R.toFixed(1)}px,rgba(20,14,6,0) ${(R + 2 * s).toFixed(1)}px)`;
+        t.insertBefore(i, t.firstChild); return i;
+      };
+      const soft = disc(18, .26), hard = disc(3, .4);
+      const to2 = (a, b, opt) => {
+        const at = x => `translate(${x[0]}px,${x[1]}px)`, soft0 = a[2] > 6 ? a[3] / SHADE.far[3] : 0, soft1 = b[2] > 6 ? b[3] / SHADE.far[3] : 0;
+        const k = Object.assign({ fill: "forwards" }, opt);
+        soft.animate([{ transform: at(a), opacity: soft0 }, { transform: at(b), opacity: soft1 }], k);
+        hard.animate([{ transform: at(a), opacity: a[2] > 6 ? 0 : 1 }, { transform: at(b), opacity: b[2] > 6 ? 0 : 1 }], k);
+      };
+      to2(from, to, o);
+      return { to: to2 };
+    }
     /** The wooden stamp comes down on a seal already in its place, and leaves it inked. */
     async function press(seal) {
       const r = seal.getBoundingClientRect(), size = r.width / 1.0, kind = seal.classList.contains("seal-button") ? "button" : "print";
@@ -337,10 +399,11 @@
       Object.assign(t.style, { position: "fixed", left: r.left - size * .02 + "px", top: r.top - size * .02 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
       layer(seal).appendChild(t);
       const down = t.animate([
-        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0, filter: "drop-shadow(30px 40px 18px rgba(20,14,6,.26))" },
+        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
         { opacity: 1, offset: .22 },
-        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1, filter: "drop-shadow(2px 3px 3px rgba(20,14,6,.4))" }
+        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1 }
       ], { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)", fill: "forwards" });
+      shadow(t, size * 1.04, SHADE.far, SHADE.near, { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
       await down.finished.catch(() => {});
       seal.classList.remove("pending"); seal.classList.add("wet");
       const btn = btnOf(seal); if (btn) btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
@@ -384,10 +447,11 @@
       const rot = rotOf(st), paint = () => btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
       if (reduced()) { seal.style.opacity = ""; t.remove(); paint(); return; }
       const down = t.animate([
-        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0, filter: "drop-shadow(30px 40px 18px rgba(20,14,6,.26))" },
+        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
         { opacity: 1, offset: .22 },
-        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1, filter: "drop-shadow(2px 3px 3px rgba(20,14,6,.4))" }
+        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1 }
       ], { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)", fill: "forwards" });
+      const shade = shadow(t, size * 1.04, SHADE.far, SHADE.near, { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
       await down.finished.catch(() => {});
       // the press: ink on the paper and the button, a thud, a ring through the paper
       seal.style.opacity = ""; seal.classList.add("wet"); paint();
@@ -396,10 +460,11 @@
       const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `left:${cx - size / 2}px;top:${cy - size / 2}px;width:${size}px;height:${size}px;--ink:${INK[kind]}`; host.appendChild(ring);
       ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }).finished.then(() => ring.remove(), () => ring.remove());
       const up = t.animate([
-        { transform: `rotate(${rot}deg) scale(1)`, opacity: 1, filter: "drop-shadow(2px 3px 3px rgba(20,14,6,.4))" },
+        { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
         { transform: `rotate(${rot}deg) scale(.95)`, opacity: 1, offset: .22 },
-        { transform: `translate(-16px,-40px) rotate(${rot + 8}deg) scale(1.55)`, opacity: 0, filter: "drop-shadow(26px 36px 18px rgba(20,14,6,.2))" }
+        { transform: `translate(-16px,-40px) rotate(${rot + 8}deg) scale(1.55)`, opacity: 0 }
       ], { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
+      shade.to(SHADE.near, SHADE.lift, { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)" });
       await wait(260); seal.classList.remove("wet");
       await up.finished.catch(() => {}); t.remove();
     }
@@ -724,6 +789,6 @@
     }).observe(doc.documentElement, { attributes: true, attributeFilter: ["open"], attributeOldValue: true, subtree: true });
   } catch (_) {}
 
-  root.Motion = { T, ghost, fly, flyIn, grow, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn };
+  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);

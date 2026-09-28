@@ -6929,20 +6929,18 @@ const CustomSheet = window.CustomSheet = (() => {
     if (show) { if (n._fold) { n._fold.cancel(); n._fold = null; } if (!n.hidden) return; n.hidden = false; if (!calm) Motion.grow(n, { ms: 600 }); return; }
     if (n.hidden || n._fold) return;
     if (calm) { n.hidden = true; return; }
-    const h = n.offsetHeight, a = n._fold = n.animate([{ height: h + "px", opacity: 1, overflow: "hidden" }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }], { duration: 480, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" });
-    a.finished.then(() => { if (n._fold !== a) return; n._fold = null; n.hidden = true; a.cancel(); }, () => {});
+    // (folded up from its foot on clip-path while what is under it rises on transforms: its height, animated, was a
+    // layout per frame; the window's edge takes its new size once, when it is gone)
+    const f = n._fold = Motion.shut(n, { ms: 480, easing: "cubic-bezier(.4,0,.2,1)", done: () => { n.hidden = true; } });
+    f.finished.then(() => { if (n._fold === f) n._fold = null; });
   }
   /** A design removed: its row slides a little toward its × as it fades, then closes its gap (the rows under it rise
    *  into place and the window shortens with it). The design itself is gone at once. */
   function fold(n, calm) {
     n._leaving = true; n.inert = true; n.classList.remove("arriving");
     if (calm) { n.remove(); return; }
-    const h = n.offsetHeight;
-    n.animate([
-      { height: h + "px", opacity: 1, transform: "none", overflow: "hidden" },
-      { height: h + "px", opacity: 0, transform: "translateX(24px)", offset: .42, overflow: "hidden" },
-      { height: "0px", opacity: 0, transform: "translateX(24px)", paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }
-    ], { duration: 700, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }).finished.then(() => n.remove(), () => n.remove());
+    // (the gap closes on transforms: the rows under it rise over its room, and it leaves the layout once they are there)
+    Motion.shut(n, { ms: 700, at: .42, easing: "cubic-bezier(.4,0,.2,1)", frames: [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(24px)", offset: .42 }, { opacity: 0, transform: "translateX(24px)" }], done: () => n.remove() });
   }
   /** Send pressed before the designs are ready: the reason lights up, and the design it is about takes the focus. */
   function nudge() {
