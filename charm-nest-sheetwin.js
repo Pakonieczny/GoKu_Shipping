@@ -3953,5 +3953,62 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return info;
   }
 
-  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, _W: W };
+  /* ── a Nest card turned over (charm-nest-1 paintPreview / drawRecalled; Paul, 28 Sep: "I should be able to see the
+     backings everywhere the sheet is visible"): the very back this window draws — every charm's own words from engGeoOf,
+     in drawEngrave's full ink on the charm's plain outline, nothing laid over the sheet — at the card's own scale. ── */
+  /** One charm from behind, in its own frame: the context already at its place on the plate, mirrored and turned (as
+      withPiece puts it). True when its words are drawn. */
+  function backPiece(ctx, x, backs, k, o = {}) {
+    const c = x.c, dpr = o.dpr || 1, cu = c && c.custom, t = c ? (px, py) => [(px - c.centerPt[0]) * k, (c.centerPt[1] - py) * k] : null;
+    const path = holes => {
+      ctx.beginPath();
+      if (!c) { const s = x.p.scale || 1, w = x.p.wPt * k / s, hh = x.p.hPt * k / s; ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
+      CharmNestPDF.pathToCanvas(ctx, c.outline, t); if (holes) for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t);
+    };
+    ctx.fillStyle = o.fill || (cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"); path(true); ctx.fill("evenodd");
+    ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = dpr; path(false); ctx.stroke();
+    const geo = c ? engGeoOf(x, backs) : null;
+    if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, t, { fill: "#2f2512" }));
+    if (cu) { path(false); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * dpr; ctx.setLineDash([4 * dpr, 3 * dpr]); ctx.stroke(); ctx.setLineDash([]); }
+    return !!(geo && geo.glyphs);
+  }
+  /** The engraving font, asked for once (null when it is here already). */
+  const backFontReady = () => { const F = window.Engrave && Engrave.fonts; return window.Engrave && Engrave.loadFonts && !(F && F.ok) ? Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {}) : null; };
+  /** A saved sheet from behind, for a recalled Nest card: its record (recFor), its pieces with their designs (sourceGeom,
+      the ones this window reads), its saved backs (backsFor) and the engraving font, read once and kept a minute. The
+      state fills in as each lands and onStep is told, so the card draws what it has and says what is still coming. */
+  const savedBacks = new Map();
+  function backSheet(id, onStep) {
+    let B = savedBacks.get(id);
+    if (B && B.done && Date.now() - B.at > 60000) { savedBacks.delete(id); B = null; }
+    if (!B) {
+      B = { at: Date.now(), rec: null, pieces: null, backs: null, done: false, error: null, fns: new Set() };
+      savedBacks.set(id, B); if (savedBacks.size > 12) savedBacks.delete(savedBacks.keys().next().value);
+      const step = () => { for (const f of B.fns) tryDo(() => f(B)); };
+      (async () => {
+        const font = backFontReady(), rec = await recFor(id), pieces = piecesOf(rec);
+        for (const x of pieces) x.eng = engOf(x, rec);
+        B.rec = rec; B.backs = backsOf(rec, null); B.pieces = pieces; step();
+        const list = backsFor(id).then(l => { B.backs = backsOf(rec, null, l); step(); }, () => {});
+        const srcs = new Map((rec.sources || []).map(s => [s.id, s])), queue = [...new Set(pieces.map(x => x.sourceId).filter(s => srcs.has(s)))];
+        await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => {
+          while (queue.length) {
+            const sid = queue.shift();
+            try { const g = await sourceGeom(srcs.get(sid)); for (const x of pieces) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { console.warn("card back: design", sid, e); }
+            step();
+          }
+        }));
+        await list; if (font) await font;
+        B.done = true; step();
+      })().catch(e => { B.done = true; B.error = e.message || String(e); savedBacks.delete(id); step(); });
+    }
+    if (onStep) B.fns.add(onStep);
+    return B;
+  }
+  /** A sheet this sorter holds, from behind: the backs its page and Engrave know, and (once it is saved) the sheet's saved
+      backs, read once for the whole sheet. */
+  const backsOfPage = (pg, list) => backsOf({ id: pg.sheetId || null, backPool: pg.backPool || [] }, null, list || null);
+  const cardBack = { piece: backPiece, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec) };
+
+  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, _W: W };
 })();
