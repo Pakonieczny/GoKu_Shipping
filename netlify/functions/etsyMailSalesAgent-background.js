@@ -345,6 +345,8 @@ const SALES_PROMPT_PATCHES = [
    "**Off-catalog request** — body jewelry or anything else the facts say we don't make (bracelets and rings are not off-catalog)"],
   ["USPS Priority Mail (+$18, 1-3 days)", "USPS Priority Mail (+$18, 2-4 days)"],
   ["Rush is $15, drops production from 4-5 days to 2-3", "Rush is $15, drops production from 4-6 business days to 2-3"],
+  ["**United States** — FREE (USPS Ground Advantage, 2-5 days transit)",
+   "**United States** — free on orders of $35 or more; smaller orders may show standard shipping at checkout (USPS Ground Advantage, 2-5 days transit)"],
   ["Clean no plus the list of regions we DO cover. **Do NOT escalate; the list is the policy.**",
    "Checkout doesn't ship there at the moment: say so, list the regions we DO cover, and say we'll check whether we can arrange it (staff have arranged some, such as Australia). Never quote a price or transit time for it; put the country in missing_facts."],
   ["\"Thanks for sending this over. I need to look at this carefully before I can speak to specifics.\"",
@@ -2209,7 +2211,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
       `Use next_action: attach_collateral with next_action_payload { category: "${forcedLineSheet.family}", kind: "line_sheet" } and set attach_line_sheet: true (the sheet attaches from that flag), ` +
       `answer any production-time question briefly, and ask the customer to use the attached ${forcedLineSheet.family} line sheet to choose the missing specs. ` +
       `Answer what the customer asked, then invite them to pick the missing choices from the attached sheet. ` +
-      `Do not say "I'll get back to you", "I'll send options later", or any future quote promise.`
+      `Do not say "I'll get back to you" or "I'll send options later". A price only a person can set (listed in missing_facts) still gets the clause "we'll confirm the price for that here".`
     );
   }
 

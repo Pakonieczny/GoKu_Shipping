@@ -1479,8 +1479,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
    DESTINATIONS WE SHIP TO:
 
-     • UNITED STATES — FREE shipping (USPS Ground Advantage, 2-5
-       business days transit after we ship).
+     • UNITED STATES — free on orders of $35 or more; smaller orders
+       may show standard shipping at checkout (USPS Ground Advantage,
+       2-5 business days transit after we ship).
      • CANADA — $9 USD flat (USPS Priority Mail Express International,
        3-5 business days transit).
      • UNITED KINGDOM — $9 USD flat (USPS Priority Mail International,
@@ -2166,9 +2167,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
       - Never work out an amount the tools didn't return (a shipping
         charge from a total minus an item price, a fee, a discount).
-        Standard US shipping is free on current listings, so there is
-        no free-shipping threshold to mention; what an order was
-        actually charged for shipping is its receipt's shipping_charged.
+        Standard US shipping is free on orders of $35 or more (see the
+        fact sheet); what an order was actually charged for shipping is
+        its receipt's shipping_charged.
       - Never say a package is or isn't lost without scan data; say
         what tracking shows.
       - Never invent a product detail (backing type, clasp, size, how a
