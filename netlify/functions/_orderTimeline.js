@@ -245,7 +245,8 @@ async function deriveEvents(db, id, opts) {
     const status = String(rc.status || "").toLowerCase(), upd = msOf(rc.updated_timestamp), firstShip = ships.map(x => x.at).filter(Boolean).sort((a, b) => a - b)[0] || 0;
     if (rc.is_shipped && !firstShip) ev("shipped", upd, { id: "d-etsy-shipped", by: "Etsy", source: "etsy", station: "shipping", text: "Marked shipped on Etsy", data: { approx: true } });
     if (status === "completed") ev("etsyCompleted", firstShip || upd, { id: "d-etsy-completed", by: "Etsy", source: "etsy", text: "Completed on Etsy", data: firstShip ? null : { approx: true } });
-    if (/cancel|fully refunded/.test(status)) ev("etsyCancelled", upd, { id: "d-etsy-cancelled", by: "Etsy", source: "etsy", text: `Etsy says: ${s(rc.status, 40)}`, data: { etsyStatus: s(rc.status, 40), approx: true } });
+    // (the cancel rule of _orderCancel.isCancelled: refunded after shipping is a return, not a cancel)
+    if (/cancel/.test(status) || (/fully\s*refund/.test(status) && !(rc.is_shipped || (rc.raw && rc.raw.is_shipped)))) ev("etsyCancelled", upd, { id: "d-etsy-cancelled", by: "Etsy", source: "etsy", text: `Etsy says: ${s(rc.status, 40)}`, data: { etsyStatus: s(rc.status, 40), approx: true } });
   }
 
   // custom readings and a person's decision

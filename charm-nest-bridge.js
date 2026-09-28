@@ -1091,7 +1091,9 @@ const Orders = window.Orders = (() => {
       }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
-      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, opt.patch || {})); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
+      const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
+      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
@@ -2104,6 +2106,9 @@ const Pool = window.Pool = (() => {
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
   function attachPool(row, run, prep, contended) {
     const { sp, pools, charms } = prep;
+    // a line that went (cancelled, AutoCancel, or gone from Etsy) while it was made up never goes onto a sheet: the run's
+    // pool step is not waited for by AutoCancel, and it used to place the cancelled order after it had been taken off
+    if (row.state === "gone" || window.Cancelled?.has?.(row.order.receiptId)) { const ids = pools.map(p => p.poolId); if (ids.length && S.cloud.ok) update(ids, { state: "abandoned", sheetId: null, setId: null }).catch(() => {}); return; }
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
     // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
@@ -2178,7 +2183,7 @@ const Pool = window.Pool = (() => {
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
     // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing)
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
     const plan = await Gate.plan(rows);
     const held = [...plan.wait.values()];
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
@@ -9813,7 +9818,8 @@ const Arrivals = window.Arrivals = (() => {
     const missing=!!open && current.some(row=>!["gone","committed"].includes(row.state) && !open.has(String(row.order.receiptId)));
     if(changed || missing){state.pending=true;state.revalidate=true;}
     const freshIds = await record(orders, stamp()), added = [];
-    for (const order of orders) for (const line of order.lines || []) {
+    // an order cancelled since it was picked (the Recall inbox is minutes old; AutoCancel may drop it during record) stays out
+    for (const order of orders) if (!window.Cancelled?.has?.(order.receiptId)) for (const line of order.lines || []) {
       const key = O.lineKey(order, line);
       if (B.orders.byKey.has(key)) continue; // Existing human decisions and pool membership belong to the existing row.
       const row = { key, order, line, arrivedAt: at(order.receiptId), spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
