@@ -1001,10 +1001,15 @@ const Orders = window.Orders = (() => {
   /* An order that left Etsy (cancelled, refunded) is dropped from its set (§10.3). Its pieces come off every sheet that is
      still filling, so they are not cut and their room goes to the next order; the rest of that sheet stays as placed. A
      piece on a sheet that is released, cut, or fixed inside a saved Rose Gold green line stays where it is: it is cut with
-     its sheet and set aside. Nothing took these pieces off before, and a cancelled order's piece held its sheet back for good. */
-  async function takeOffGone(rows) {
+     its sheet and set aside. Nothing took these pieces off before, and a cancelled order's piece held its sheet back for good.
+     A cancel the sorter finds by itself (AutoCancel, charm-nest-sheetwin.js) comes off the same way, with opt: keep(sh)
+     leaves a page alone, before(sh, pieces) sees the pieces while they are still placed (their flight), after(sh) runs as
+     each page is left (in the same task), patch goes on the piece records, why says why in the log, strict throws a piece
+     record that could not be written. Returns the pages taken from, each with the pieces it gave up. */
+  async function takeOffGone(rows, opt = {}) {
     const filling = sh => !(window.LiveNest && LiveNest.closed(sh)) && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) &&
-      !["nesting", "finishing", "queued"].includes(sh.status) && !(sh.persisted && !sh.persistedDone);
+      !["nesting", "finishing", "queued"].includes(sh.status) && !(sh.persisted && !sh.persistedDone) && !(opt.keep && opt.keep(sh));
+    const out = [];
     for (const row of rows) {
       // only the pages that hold its pieces are looked at: a gone order's pieces on a cut sheet stay there for good, and
       // every check used to search every charm of every sheet for them again
@@ -1012,15 +1017,18 @@ const Orders = window.Orders = (() => {
       for (const sh of allSheets()) {
         if (on && !on.has(sh)) continue;
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length || !filling(sh)) continue;
+        if (opt.before) try { opt.before(sh, mine); } catch (_) { /* a flight never stops the change */ }
         sh.charms = sh.charms.filter(c => !ids.has(c.poolId)); sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id)); keepRest(sh);
-        off.push(...mine.map(c => c.poolId));
-        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} is no longer open on Etsy (${row.reason || "gone"}): ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
+        off.push(...mine.map(c => c.poolId)); out.push({ sh, poolIds: mine.map(c => c.poolId) });
+        if (opt.after) opt.after(sh, mine);
+        agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
-      try { await Pool.update(off, { state: "abandoned", sheetId: null, setId: null }); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); }
+      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, opt.patch || {})); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
+    return out;
   }
   const STATE_PILL = { pulled: ["neutral", "pulled"], waiting: ["info", "waiting"], noDesign: ["info", "no design"], pooled: ["info", "pooled"], nested: ["ok", "nested"], written: ["ok", "written"], labelled: ["ok", "labelled"], committed: ["ok", "complete"], unmatched: ["bad", "unmatched"], held: ["bad", "held"], contended: ["warn", "other run"], skipped: ["warn", "skipped"], gone: ["bad", "gone"], oversize: ["bad", "oversize"] };
   function engravePill(r) { const e = r.engrave; if (!e) return r.spec && r.spec.engraveCandidate ? ["warn", "words?"] : ["neutral", "—"]; if (!e.needed) return ["neutral", e.state === "skipped" ? "skipped" : "no engraving"]; if (e.approved) return ["ok", "approved"]; if (e.state === "words") return ["warn", "words"]; if (e.state === "review") return ["warn", "review"]; if (e.state === "fitted") return ["info", "fitted"]; if (e.state === "blocked") return ["bad", "blocked"]; return ["info", e.state || "engrave"]; }
@@ -1363,7 +1371,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest };
+  return { view: () => OV, showPile, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -5742,6 +5750,9 @@ const RunCtl = window.RunCtl = (() => {
     // with no run open, a failed save of this browser's workspace is still said, once, until the next save works
     const unsaved = window.Session?.failure?.();
     if (unsaved) return { tone: "stop", short: "Not saved", why: `<span class="bad">Not saved on this browser: ${esc(unsaved.message)}</span> — keep this tab open; it is tried again by itself` };
+    // a cancelled order whose pieces could not come off (already cut): the pill stays until someone has set them aside
+    const aside = window.AutoCancel?.notices?.() || [];
+    if (aside.length) return { tone: "stop", short: aside.length === 1 ? `Order ${aside[0].rid} cancelled · set aside` : `${aside.length} cancelled orders · set aside`, why: "" };
     // nothing is running, so there is nothing to report: the pill is not a place to advertise from
     return null;
   }
@@ -5797,9 +5808,14 @@ const RunCtl = window.RunCtl = (() => {
     if (text._html !== words) { text._html = words; text.innerHTML = words; }
     fitPill(h);
     const detail = menu.querySelector(".runDetail");
-    const changed = [part(detail, `${v.who ? `<b>${esc(v.who)}</b><small>${esc(v.runId)}</small>` : ""}<span class="rbWhy">${v.why}</span>`), part(menu.querySelector(".rbActs"), v.acts || ""), part(menu.querySelector(".rbMore"), v.more || "")].some(Boolean);
+    // cancelled orders whose pieces are already cut (AutoCancel): at the top of the menu, and counted on the pill, until
+    // someone presses Set aside
+    let cx = menu.querySelector(".rbCx"); if (!cx) { cx = document.createElement("div"); cx.className = "rbCx"; menu.querySelector(".runMenuBody").prepend(cx); }
+    const aside = window.AutoCancel?.notices?.() || [], badge = menu.querySelector(".rbCxN") || menu.querySelector(".rbCaret").insertAdjacentElement("beforebegin", Object.assign(document.createElement("i"), { className: "rbCxN" }));
+    h.classList.toggle("cx", !!aside.length); badge.hidden = !aside.length; badge.textContent = aside.length || "";
+    const changed = [part(cx, window.AutoCancel?.pillHtml?.() || ""), part(detail, `${v.who ? `<b>${esc(v.who)}</b><small>${esc(v.runId)}</small>` : ""}<span class="rbWhy">${v.why}</span>`), part(menu.querySelector(".rbActs"), v.acts || ""), part(menu.querySelector(".rbMore"), v.more || "")].some(Boolean);
     // the whole sentence on hover, for when the pill has room for its first words only
-    const full = (v.who ? v.who + " — " : "") + detail.querySelector(".rbWhy").textContent.replace(/\s+/g, " ").trim();
+    const full = aside.map(n => n.text).concat((v.who ? v.who + " — " : "") + detail.querySelector(".rbWhy").textContent.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
     const summary = menu.querySelector("summary"); if (summary.title !== full) summary.title = full;
     if (changed && focusId && document.activeElement?.id !== focusId) h.querySelector("#" + CSS.escape(focusId))?.focus({ preventScroll: true });
   }
@@ -5819,6 +5835,7 @@ const RunCtl = window.RunCtl = (() => {
     // a question asked once the menu has closed, never over it
     const ask = f => { close(); requestAnimationFrame(() => setTimeout(f)); };
     if (b.dataset.rbres) { close(); B.openRuns = null; resumeRun(b.dataset.rbres).catch(err => toast(err.message, "bad", 7000)); }
+    else if (b.dataset.cxack) window.AutoCancel?.ack(b.dataset.cxack, b.closest(".rbCxItem"));   // (the menu stays open on what is left)
     else switch (b.id) {
       case "rbNow": close(); cancelNext(); if (clearRunState() === false) return; start({ mode: "auto" }).catch(err => toast(err.message, "bad")); break;
       case "rbCancelNext": close(); cancelNext(); break;
@@ -9565,7 +9582,9 @@ const Arrivals = window.Arrivals = (() => {
       // the stream's next simulated ten minutes of orders become listable, and the station sweeps for them (no reuse window)
       // (the maps load alongside: the snapshot below needs both, neither needs the other; the library is read again only
       // when its index changed, without a progress bar)
-      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true }), window.Cancelled && Cancelled.load()]);
+      // (the newest cancel records too, AutoCancel: an order cancelled since stays out of this check's arrivals, and one
+      // this sorter holds comes off its sheets in the background; a failed read never holds the check)
+      const [sim] = await Promise.all([streaming() && Sandbox.advance(), Orders.loadMaps(), Master.load({ quiet: true }), window.Cancelled && Cancelled.load(), window.AutoCancel && AutoCancel.poll().catch(() => null)]);
       const known=Object.fromEntries(Orders.rows().map(row=>[String(row.order.receiptId),+row.order.updateTs || 0]));
       // (the snapshot of a check that failed after it, on the cloud's side, is taken again for 2 minutes: the Etsy calls it
       // cost are not made a second time)
@@ -9981,7 +10000,7 @@ async function bootBridge() {
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
   if (!recoveryFailed) {
-    Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start();
+    Session.listen(); Arrivals.start(); ListMedia.start(); Upkeep.start(); window.AutoCancel?.start();
     // an approval whose back files a reload cut short is written now, not when the run next passes Engraving
     if (recovered) Engrave.resumeBacks();
     if(recovered)RunCtl.recoverReviewStop().catch(e=>RunCtl.stop(e.message,"Reconnect and Resume."));

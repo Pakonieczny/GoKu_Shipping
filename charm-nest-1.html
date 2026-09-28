@@ -1237,6 +1237,19 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .rbMore .btn{display:block;width:100%;text-align:left;border:0;background:transparent}
 .rbMore .btn:hover{background:var(--paper2)}
 .rbMore #rbAbandon{color:var(--clay)}
+/* a cancelled order whose pieces are already cut (AutoCancel): at the top of the menu until someone sets them aside */
+.rbCx{display:grid;gap:8px;padding:0 0 10px}
+.rbCx:empty{display:none}
+.rbCxItem{display:grid;gap:8px;padding:9px 10px 10px 12px;border-radius:9px;background:var(--claySoft);border:1px solid #e3c8bf;color:#8a3a26;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere;animation:rbCxIn .42s cubic-bezier(.3,1.3,.5,1) both}
+.rbCxItem .btn{justify-self:end;display:inline-flex;align-items:center;gap:5px}
+.rbCxItem .btn svg{width:13px;height:13px}
+.runMenu .rbCxN{flex:0 0 auto;min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--clay);color:#fff;font:700 9.5px/15px var(--sans);font-style:normal;text-align:center;animation:rbCxIn .42s cubic-bezier(.3,1.3,.5,1) both}
+.runMenu .rbCxN[hidden]{display:none}
+.runBanner.cx .rbDot{background:var(--clay)}
+.runDetail:not(:has(b)):has(.rbWhy:empty){display:none}
+.rbCx:has(+.runDetail:not(:has(b)):has(.rbWhy:empty)){padding-bottom:0}
+@keyframes rbCxIn{from{opacity:0;transform:translateY(-4px) scale(.96)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.rbCxItem,.runMenu .rbCxN{animation:none}}
 /* On a narrow screen the tools take their own row: the line and the run's pill join it, between the sandbox pill and the
    tools, in the room they leave (the tools keep to the right as before). */
 @container workspace (max-width:680px){
@@ -4482,9 +4495,9 @@ function queueGhosts(root, pick, max = 16) {
   return out;
 }
 /** A charm taken off a card's sheet (Exclude): the charm alone, drawn as the sheet draws it on a clear ground (so its
- *  neighbours are not covered), rises a little and fades where it stood. Returns what plays it, or null when it is not
- *  on a sheet in sight. */
-function liftFromSheet(sh, c) {
+ *  neighbours are not covered), rises a little and fades where it stood; given `to` (a cancelled order's charm, AutoCancel)
+ *  it flies off the sheet into that. Returns what plays it, or null when it is not on a sheet in sight. */
+function liftFromSheet(sh, c, to) {
   const M = window.Motion, p = sh.placements.find(x => x.id === c.id), v = sh._view, cv = sh.el && $('[data-r="canvas"]', sh.el);
   if (!M || M.reduced() || !p || !v || !cv || !cv.width) return null;
   const r = cv.getBoundingClientRect(); if (!r.width || r.bottom < 0 || r.top > innerHeight) return null;
@@ -4503,6 +4516,7 @@ function liftFromSheet(sh, c) {
   box.appendChild(piece);
   const s = r.width / cv.width, g = M.ghost(box, { left: r.left + x0 * s, top: r.top + y0 * s, width: (x1 - x0) * s, height: (y1 - y0) * s }, 0, document.body);
   g._card.style.borderRadius = "0";
+  if (to) return () => M.fly(g, to, { plus: false, ms: M.T.fly });
   return () => g.animate([{ opacity: 1, transform: "none" }, { opacity: 1, transform: "none", offset: .18 }, { opacity: 0, transform: "translateY(-14px) scale(.9)" }], { duration: 1150, easing: "cubic-bezier(.4,0,.3,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
 }
 /** A card's Clear, or Clear queues: each card's picture and queue fade into the empty sheet where they stood, while the
@@ -5581,8 +5595,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-merge2"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
+<script src="charm-nest-bridge.js?v=20260928-auto-remove"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-auto-remove"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
