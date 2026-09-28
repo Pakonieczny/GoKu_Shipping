@@ -141,6 +141,53 @@
   };
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const kindOf = t => own(KIND, t) ? KIND[t] : KIND.other;
+  /* ── which of those kinds gets a seal (Paul, 28 Sep: "I only want actual real milestones to be recorded with seals and
+     skip all the noise") ──
+     MILESTONE_SEAL: the steps of the rail, the ones a person would call a step of the work.
+     PERSON_SEAL: what a person did that changes the order — cancelled, held, taken off a sheet, put back.
+     Everything else (read, interpreted, needs a decision, pulled, pooled, moved, QR label, set committed, included …)
+     stays in the record and in memory — the step explainer reads it as plain text — but draws no stamp anywhere: not on
+     the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
+  // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
+  const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]);
+  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
+  /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
+   *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
+   *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
+   *  Shipped seal (its own seal only when nothing was shipped at a station). A person's action never collapses. */
+  function sealsOf(events) {
+    const out = [], first = new Map();
+    let ship = null;
+    for (const e of events || []) {
+      if (!sealed(e)) continue;
+      e.same = null;
+      if (!MILESTONE_SEAL.has(e.type)) { out.push(e); continue; }
+      const st = own(STOP_OF, e.type) ? STAGES[STOP_OF[e.type]].k : e.type;
+      const g = st + "|" + (e.lineKey || e.transactionId || "");
+      const kept = first.get(g) || (e.type === "etsyCompleted" && ship) || null;
+      if (kept) { (kept.same = kept.same || []).push(e); continue; }
+      first.set(g, e); out.push(e);
+      if (st === "shipped" && !ship) ship = e;
+    }
+    return out;
+  }
+  /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
+  function blockerOf(events) {
+    let hold = null; const need = new Map();
+    for (const e of events || []) {
+      if (e.type === "held") hold = e;
+      else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
+      else if (e.type === "needsDecision") need.set(e.lineKey || e.id, e);
+      else if (e.type === "decided" || e.type === "customDecided" || e.type === "skipped") {
+        if (e.lineKey && need.has(e.lineKey)) need.delete(e.lineKey); else need.clear();
+      }
+    }
+    if (hold) return { label: "On hold", text: str((hold.data && (hold.data.reason || hold.data.why)) || hold.text || "Waiting to be let go", 220), at: hold.at, by: whoOf(hold) };
+    const q = [...need.values()].pop();
+    if (q) return { label: "Needs a decision", text: str(q.text || (q.data && (q.data.why || q.data.reason)) || "Someone has to decide before this order can go on", 220), at: q.at, by: whoOf(q) };
+    return null;
+  }
   const typeInfo = t => { try { const T = root.OrderTimeline && root.OrderTimeline.TYPES; return (T && T[t]) || null; } catch (_) { return null; } };
   const labelOf = t => (typeInfo(t) || {}).label || String(t || "Event").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
   const LANES = [
@@ -282,15 +329,8 @@
     if (by) bits.push(`by ${by}`);
     return { stage, label, text: bits.join(" · ").slice(0, 200), sheet, sheetId, setId, station, device, by, at, since, designed, cancelled: isCancelled, step, rail: STAGES.map(s => s.l) };
   }
-  const FILTERS = [
-    ["all", "All", () => true],
-    ["mile", "Milestones", e => e.milestone],
-    ["stn", "Stations", e => !!(LANE[e.lane] || {}).st || kindOf(e.type).grp.includes("stn")],
-    ["sh", "Sheets", e => kindOf(e.type).grp.includes("sh") || !!e.sheetId],
-    ["hc", "Holds & cancels", e => kindOf(e.type).grp.includes("hc")],
-    ["msg", "Messages", e => kindOf(e.type).grp.includes("msg")]
-  ];
-  const FILTER = Object.fromEntries(FILTERS.map(f => [f[0], f[2]]));
+  // (the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips are gone: only milestones are drawn
+  //  now, so there is nothing left to filter. The bar keeps one quiet "Stamps" chip — the legend of the seals.)
   const CANCEL_TYPES = new Set(["cancelled", "etsyCancelled"]);
 
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
@@ -512,6 +552,187 @@
     return D;
   }
 
+  /* ════ what each step needs (Paul, 28 Sep 21:18, point 5): every step, done or to come, says what is there and what is
+     still missing to move on, in the shop's words. requirementsOf(step, data) is pure: it reads the order's events and
+     `where` (this component's), and what the host already holds of the order (opts.context(): its lines' states, holds,
+     waits and engraving, and the readiness of the sheets they sit on). No Etsy calls, no server calls.
+       step  a STAGES entry, its key ("laser") or its index      data { events, where, cancelled, D?, context?, stages? }
+       →     { k, label, i, n, of, state: done|now|later|stopped|gone|none, done:[{t,sub}], need:[{kind:wait|person|next|after|stop, t}], facts:[t] }
+     The steps are the order's (or a piece's) own rail: D.rail when D is given (the component's), else stagesFor's list in
+     data.stages (keepDone: a step with an event of its own stays). i is the step's place in STAGES; n and of count it on
+     that rail. A step the rail leaves out (Welded for a necklace, Engraved for a plain piece) is "none": nothing to do.
+     How the sorter moves an order on: the Gate makes a line up onto a sheet (fast metals once a sheet's worth waits,
+     sooner for a piece due within two days; slow metals every few days); a person answers Review (an unknown SKU, a
+     custom order, a hold); the engraving is read, fitted and approved, and its back file saved; the set is committed
+     once every sheet in it is ready (layout checked, front file, approvals, backs, QR labels: CharmNestReadiness); the
+     laser marks the sheet cut; then each station scans the order's QR label as it sorts, welds, assembles and ships. */
+  const QUIET = {   // the in-between events a step lists as quiet facts (never sealed)
+    arrived: ["pulled", "interpreted", "needsDecision", "decided", "customRead", "customDecided", "skipped"],
+    sheet: ["pooled", "moved", "renested", "included", "merged", "sizeChanged", "designSent", "designDropped"],
+    engraved: ["engraveNeeded", "engraveChanged", "engraveApproved"],
+    laser: ["qrLabel", "setCommitted", "sealPrinted", "sealCompleted", "recalled", "roseLine"],
+    sorted: ["scan", "cancelAlert"], welded: ["scan"], assembled: ["scan"], shipped: ["packed", "labelPrinted", "etsyCompleted"]
+  };
+  const HOW = {     // how a step gets done, when nothing more precise is known
+    arrived: "Etsy's order record is read every few minutes",
+    sheet: "the sorter nests it on a sheet at its next pass",
+    engraved: "its back engraving is read, fitted and approved in Review, then its back file is saved",
+    laser: "its set is committed and the sheet is cut on the laser",
+    sorted: "scan its QR label at the Sorting station",
+    welded: "weld the studs, then scan at the Welding station",
+    assembled: "assemble it, then scan at the Assembly station",
+    shipped: "pack it, print the label and scan at the Shipping station",
+    approved: "its sheet's set is committed", completed: "Etsy marks the order complete"
+  };
+  const metalWord = m => ({ gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" }[m] || String(m || ""));
+  const dayWord = d => { const t = Date.parse(String(d || "") + "T12:00:00"); return t ? new Date(t).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : String(d || ""); };
+  function requirementsOf(step, data) {
+    data = data || {};
+    const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
+    const s = STAGES[i]; if (!s) return null;
+    const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null);
+    if (!Array.isArray(D.rail)) D = railed(D, keepDone(data.stages, evs));
+    const R = D.rail, pos = R.findIndex(r => r.i === i);
+    const cx = data.context && typeof data.context === "object" ? data.context : {};
+    const lines = Array.isArray(cx.lines) ? cx.lines : [], sheets = Array.isArray(cx.sheets) ? cx.sheets.filter(x => x && x.name) : [];
+    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
+    const done = [], need = [], facts = [];
+    const whenWho = e => [shortWhen(e.at), whoOf(e)].concat(e.station && STATION_NAME[e.station] ? [STATION_NAME[e.station]] : []).join(" · ");
+    for (const e of evs) if (STOP_OF[e.type] === i) done.push({ t: titleOf(e, 80), sub: whenWho(e), key: e.key });
+    if (state === "done" && !done.length) done.push({ t: s.l, sub: "done before the timeline was kept" });
+    const quiet = QUIET[s.k] || [];
+    for (const e of evs) if (quiet.includes(e.type) && STOP_OF[e.type] == null) facts.push(`${titleOf(e, 70)} · ${shortWhen(e.at)}`);
+    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6) });
+    const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
+    if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
+    if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
+    const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
+    // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
+    // under Nested even once another piece of the order is nested
+    const loose = () => {
+      for (const l of lines) {
+        if (l.onSheet || l.state === "gone") continue;
+        if (l.hold) add("person", `${name(l)} is held${l.reason ? ": " + l.reason : ""}. Release it in Review`);
+        else if (l.state === "unmatched") add("person", `${name(l)} has no charm${l.reason ? " (" + l.reason + ")" : ""}; pick it in Review`);
+        else if (l.problem) add("person", `${name(l)}: ${l.problem}; decide it in Review`);
+        else if (l.state === "noDesign") add("person", `${name(l)} has no design${l.special ? " (" + l.special + ")" : ""}; finish it under Custom Orders`);
+        else if (l.state === "oversize") add("person", `${name(l)} is too big for the plate; resize it in Review`);
+        else if (l.wait && l.wait.kind === "slow") add("wait", `${metalWord(l.wait.material)} goes to the laser ${dayWord(l.wait.until)}; slow metals go every few days`);
+        else if (l.wait) add("wait", `the ${metalWord(l.wait.material)} pieces waiting fill ${Math.round(+l.wait.pct || 0)}% of a sheet; a sheet is made when it is full, or sooner for a piece due to ship within 2 days`);
+        else if (l.reason) add("wait", `${name(l)}: ${l.reason}`);
+      }
+    };
+    if (state === "done") { if (s.k === "sheet") loose(); return out(); }
+    if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
+    if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
+    if (state === "now" && s.k !== "sheet") loose();
+    if (s.k === "arrived") add("wait", HOW.arrived);
+    else if (s.k === "sheet") {
+      loose();
+      add("next", HOW.sheet);
+    } else if (s.k === "engraved") {
+      const eng = lines.filter(l => l.engrave && l.engrave.needed);
+      if (lines.length && !eng.length && lines.every(l => l.engrave || l.engraveCandidate === false)) facts.push("Nothing to engrave on this order");
+      for (const l of eng) if (!l.engrave.approved) add("person", `Approve the back engraving${l.engrave.text ? ` “${String(l.engrave.text).slice(0, 60)}”` : ""} of ${name(l)} in Review`);
+      for (const x of sheets) if (x.required > 0 && x.saved < x.required) add("wait", `${x.name} has ${x.saved} of ${x.required} back files saved`);
+      if (!need.some(n => n.kind !== "after")) add("next", HOW.engraved);
+    } else if (s.k === "laser" || s.k === "approved") {
+      if (!sheets.length && D.step < 1) add("after", "It is nested on a sheet first");
+      for (const x of sheets) {
+        if (x.cut) continue;
+        const g = x.stages || {};
+        if (x.placed != null) facts.push(`${x.name} holds ${x.placed} piece${x.placed === 1 ? "" : "s"}${x.pct ? ` · ${Math.round(x.pct)}% full` : ""}`);
+        if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
+        if (g.front === false) add("wait", `${x.name}'s front cut file is saved`);
+        if (g.approval === false) add("person", `${x.name}: ${x.waiting || "some"} engraving${x.waiting === 1 ? "" : "s"} still to approve in Review`);
+        if (g.backs === false && g.approval !== false) add("wait", `${x.name} has ${x.saved || 0} of ${x.required || 0} back files saved`);
+        if (g.qr === false) add("person", `Print the QR labels for ${x.name}`);
+        if (x.ready) add("next", `${x.name} is ready: commit its set and cut it`);
+      }
+      if (!evs.some(e => e.type === "setCommitted")) add("next", "its set is committed once every sheet in it is ready");
+      add("next", "the laser cuts the sheet and marks it cut");
+    } else add("next", HOW[s.k] || `${s.l.toLowerCase()} at its station`);
+    return out();
+  }
+  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped" };
+  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed" };
+  const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
+  const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
+  /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
+  function reqLines(q, full) {
+    const done = q.done.slice(full ? -6 : -2).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
+    const need = (full ? q.need : q.need.slice(0, 4)).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span><em>${esc(REQ_WORD[n.kind] || "")}</em>${esc(cap1(n.t))}</span></li>`);
+    const more = !full && q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more · click to see them</span></li>` : "";
+    if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
+    const facts = full && q.facts.length ? `<div class="tlReqF"><span class="tlLbl">Also recorded</span>${q.facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>` : "";
+    return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>${facts}`;
+  }
+  /** The small card under a hovered step. */
+  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
+    `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
+  /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it. → the animation. */
+  function placeExp(card, html, dot, whole) {
+    card.innerHTML = html;
+    card.style.display = "block"; card.style.transform = "none"; card.style.opacity = "0"; card.className = "tlExp";
+    // a transformed ancestor (the order view's dialog) moves a fixed layer's origin: measure where it really is
+    const o = card.getBoundingClientRect(), d = dot.getBoundingClientRect(), wr = (whole || dot).getBoundingClientRect();
+    const vw = root.innerWidth || 1200, vh = root.innerHeight || 800, w = card.offsetWidth, h = card.offsetHeight, cx = d.left + d.width / 2;
+    let x = clamp(cx - w / 2, 8, vw - w - 8), y = wr.bottom + 10;
+    if (y + h > vh - 8) {   // no room below: beside the dot (the zoomed seal takes the room above it)
+      y = clamp(d.top + d.height / 2 - 24, 8, vh - h - 8);
+      x = d.right + 14 + w <= vw - 8 ? d.right + 14 : Math.max(8, d.left - 14 - w);
+      card.classList.add("side");
+    } else card.style.setProperty("--ax", clamp(cx - x, 14, w - 14) + "px");
+    const to = `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px)`;
+    card.style.transform = to; card.style.opacity = "1";
+    return anim(card, [{ opacity: 0, transform: to + " translateY(-5px) scale(.98)" }, { opacity: 1, transform: to }], 200);
+  }
+  function fadeExp(card, a) {
+    if (a) { try { a.cancel(); } catch (_) {} }
+    const b = anim(card, [{ opacity: 1 }, { opacity: 0 }], 130, { easing: "ease-in" });
+    card.style.opacity = "0";
+    const done = () => { if (card.style.opacity === "0") { card.style.display = "none"; card.innerHTML = ""; } };
+    if (b) b.finished.then(done, () => {}); else done();
+    return b;
+  }
+  /** The order view's "Where it is now" card (and any host): hovering its seal or a stamp in it (.tlNowSeal, .tlMini,
+   *  [data-tl-step]) shows the step card under it; a click on the seal (or a [data-tl-step]) calls onPin({ stage }),
+   *  which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context, stages }.
+   *  Wired once per host (it survives the host's innerHTML being written again); a later call only swaps get/onPin. */
+  function explainOn(host, get, onPin) {
+    if (!host) return;
+    host._tlExpGet = get; host._tlExpPin = onPin;
+    if (host._tlExp) return;
+    css();
+    const card = doc.createElement("div"); card.className = "tlExp"; card.setAttribute("role", "tooltip");
+    (host.closest && host.closest("dialog") || doc.body).appendChild(card);
+    let on = null, a = null;
+    const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
+    const stepOf = b => {
+      const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
+      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = railed(derive(evs, g.cancelled || null, g.where || null), keepDone(g.stages, evs));
+      let i = b.dataset.tlStep ? STAGES.findIndex(s => s.k === b.dataset.tlStep) : -1;
+      if (i < 0 && b.dataset.tlEv) { const e = evs.find(x => x.id === b.dataset.tlEv); if (e && own(STOP_OF, e.type)) i = STOP_OF[e.type]; }
+      if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
+      return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context }) : null;
+    };
+    host.addEventListener("pointerover", ev => {
+      const b = ev.target.closest && ev.target.closest(SEL); if (!b || b === on || !host.contains(b)) return;
+      const q = stepOf(b); if (!q) return;
+      if (a) { try { a.cancel(); } catch (_) {} }
+      on = b; a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b);
+    });
+    host.addEventListener("pointerout", ev => { const b = ev.target.closest && ev.target.closest(SEL); if (b && b === on && !b.contains(ev.relatedTarget)) { on = null; a = fadeExp(card, a); } });
+    host.addEventListener("click", ev => {
+      const b = ev.target.closest && ev.target.closest(".tlNowSeal, [data-tl-step]"); if (!b || typeof host._tlExpPin !== "function") return;
+      const q = stepOf(b); if (!q) return;
+      if (on) { on = null; a = fadeExp(card, a); }
+      try { host._tlExpPin({ stage: q.k }); } catch (err) { warn("onPin", err); }
+    });
+    host._tlExp = card;
+  }
+
   /* ════ the component's look (once per page) ════ */
   const CSS = `
 .tlUI{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;color:var(--ink,#1c1a17);font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1);--tlSpring:cubic-bezier(.3,1.7,.5,1);--tlSlate:#2f5563}
@@ -576,7 +797,7 @@
 @keyframes tlSpin{to{transform:rotate(360deg)}}
 .tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);border-bottom:1px solid var(--line);position:relative;flex:none}
 .tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:50px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+.tlLane{position:relative;height:58px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
 .tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
@@ -584,7 +805,7 @@
 .tlLane span{position:relative;font-size:11px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tlLane.stn b{color:var(--tlSlate)}
 .tlScroll{overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.tlCanvas{position:relative;height:416px;min-width:100%}
+.tlCanvas{position:relative;height:472px;min-width:100%}
 .tlPath{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
@@ -617,7 +838,6 @@
 /* the zoomed seal (zoomSpot): 122px, 90% of the old 136px, above its dot and taking no pointer, so the dot keeps the hover */
 .tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:122px;height:122px;pointer-events:none;border-radius:50%;background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(30,26,20,.06),0 16px 40px rgba(30,26,20,.22);display:none}
 .tlLoupe .lf,.tlLoupe .lf svg{width:100%;height:100%;display:block}
-.tlLoupe .cap{position:absolute;left:50%;top:100%;margin-top:8px;transform:translateX(-50%);width:max-content;max-width:280px;background:var(--velvet,#221f1b);color:#f6f1e6;font:600 11px/1.35 var(--sans);padding:5px 10px;border-radius:8px;text-align:center}
 .tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
 .tlDetIn{display:grid;grid-template-columns:150px minmax(0,1fr) 290px;gap:32px;align-content:start}
 .tlBig{width:150px;height:150px;transform:rotate(var(--rot,0deg))}
@@ -676,12 +896,51 @@
 .tlNowSeal{width:92px;height:92px;flex:none;transform:rotate(var(--rot,0deg))}
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
 .tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
+.tlBlock{display:inline-flex;align-items:baseline;gap:9px;min-width:0;max-width:100%;font:13px/1.45 var(--sans);color:#7a5a1d;background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:10px;padding:5px 12px}
+.tlBlock b{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a24;flex:none}
 .tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
 /* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .tlMini .f{visibility:hidden}
 .tlMini:hover,.tlMini:focus-visible{z-index:6;outline:0}
 .tlMini:hover .s,.tlMini:focus-visible .s{transform:rotate(var(--rot,0deg)) scale(1.12)}
+.tlExp{position:fixed;z-index:2147483001;left:0;top:0;width:272px;pointer-events:none;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e7e1d6);border-radius:12px;padding:11px 14px 9px;box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 14px 34px rgba(30,26,20,.16),0 2px 6px rgba(30,26,20,.06);font:12px/1.4 var(--sans,system-ui,sans-serif);opacity:0;display:none}
+.tlExp::before{content:"";position:absolute;left:var(--ax,50%);top:-6px;width:10px;height:10px;margin-left:-5px;background:inherit;border-left:1px solid var(--line,#e7e1d6);border-top:1px solid var(--line,#e7e1d6);transform:rotate(45deg)}
+.tlExp.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
+.tlExp .xh,.tlPinH{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:7px}
+.tlExp .xh b{font:500 15px/1.2 var(--serif,Georgia,serif);color:var(--ink)}
+.tlExp .xs,.tlPinH .xs{flex:none;font:700 8.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);border-radius:999px;padding:2px 7px;background:var(--card2,#f6f2ea)}
+.tlExp .xs.done,.tlPinH .xs.done{color:#3c5a39;background:var(--sageSoft,#e8efe3)}
+.tlExp .xs.now,.tlPinH .xs.now{color:#7a5a1d;background:var(--goldSoft,#f6eedc)}
+.tlExp .xs.stopped,.tlExp .xs.gone,.tlPinH .xs.stopped,.tlPinH .xs.gone{color:#8a3a26;background:var(--claySoft,#f4e3dc)}
+.tlExp .xf{margin-top:8px;padding-top:6px;border-top:1px solid var(--line2,#efe9df);font:9.5px var(--mono,monospace);letter-spacing:.04em;color:var(--ink45)}
+.tlReq{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.tlReq .rq{display:grid;grid-template-columns:16px minmax(0,1fr);gap:8px;align-items:start;color:var(--ink70)}
+.tlReq .rq>i{width:14px;height:14px;margin-top:1px;border-radius:50%;border:1.5px solid var(--ink25,#c4bdb0);display:grid;place-items:center}
+.tlReq .rq.ok>i{border:0;background:var(--sage,#6f8d6a);color:#fff}.tlReq .rq.ok>i svg{width:9px;height:9px}
+.tlReq .rq.person>i{border-color:#c79a3a}.tlReq .rq.stop>i{border-color:var(--clay,#b0563f)}
+.tlReq .rq.after>i,.tlReq .rq.next>i{border-style:dashed}
+.tlReq .rq span{min-width:0;overflow-wrap:anywhere}
+.tlReq .rq.ok span{color:var(--ink)}
+.tlReq .rq small{display:block;font:10px var(--mono,monospace);color:var(--ink45);margin-top:1px}
+.tlReq .rq em{font:700 8.5px var(--mono,monospace);letter-spacing:.09em;text-transform:uppercase;font-style:normal;color:var(--ink45);margin-right:6px}
+.tlReq .rq.person em{color:#7a5a1d}.tlReq .rq.stop em{color:#8a3a26}
+.tlReq .rq.more{grid-template-columns:1fr;padding-left:24px;font:10px var(--mono,monospace);color:var(--ink45)}
+.tlReqF{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:12px;font:10.5px var(--mono,monospace);color:var(--ink45)}
+.tlReqF .tlLbl{flex-basis:100%;margin-bottom:1px}
+.tlStepReq{margin-top:16px;max-width:620px;border-top:1px solid var(--line2);padding-top:12px}
+.tlStepReq .tlPinH b{font:500 15px var(--serif)}
+.tlPin .tlReq{max-width:620px;margin-top:14px;gap:9px}.tlPin .tlReq .rq{font-size:13px}
+.tlPath2{display:grid;gap:2px}
+.tlPath2 button{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
+.tlPath2 button:hover{background:var(--card2)}.tlPath2 button.cur{background:var(--goldSoft)}
+.tlPath2 .sv{width:26px;height:26px}.tlPath2 .sv svg{width:100%;height:100%;display:block}
+.tlPath2 b{font:600 12px var(--sans)}.tlPath2 span{font:9.5px var(--mono);color:var(--ink45);letter-spacing:.04em;text-transform:uppercase}
+.tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
+.tlSt.ghost[data-stage]{cursor:pointer}
+.tlExp.side::before{display:none}
+.tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
+.tlStop.pinned>span{color:#7a5a1d}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
   function css() {
@@ -689,7 +948,9 @@
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(stationName(e))}</em>${esc(whoOf(e))}</span>`;
-  const COL = 35, LANE_H = 50, TOP = 40, PAD = 12, IDLE = 34, DAYMIN = 130, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
+  // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
+  //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
+  const COL = 50, LANE_H = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
   const laneY = k => TOP + (LANE[k] || LANE.office).i * LANE_H + LANE_H / 2;
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
@@ -776,7 +1037,7 @@
     const withDone = keepDone;
     const railNow = evs => { let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); } return withDone(r, evs); };
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
-    const S = { events: [], byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
+    const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, sel: null, legend: false, hl: new Set(), sig: "",
       loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
@@ -788,14 +1049,14 @@
       `<div class="tlRail" role="group" aria-label="Main steps"><span class="tlTrack"></span><span class="tlFill"></span><div class="tlStops"></div></div></div>` +
       `<div class="tlBar"><div class="tlChips" role="toolbar" aria-label="Show"></div><div class="tlBarR"><span class="tlBusy" hidden><i class="tlSpin"></i><span>Checking for new steps</span></span><span class="tlLive" hidden><i></i>LIVE</span><span class="tlSum"></span></div></div>` +
       `<div class="tlGrid"><div class="tlLanes"></div><div class="tlScroll"><div class="tlCanvas"></div></div><div class="tlMsg" hidden></div></div>` +
-      `<div class="tlDetail" aria-live="polite"></div><div class="tlLoupe" aria-hidden="true"></div>`;
+      `<div class="tlDetail" aria-live="polite"></div><div class="tlLoupe" aria-hidden="true"></div><div class="tlExp" role="tooltip"></div>`;
     el.appendChild(box);
     // opts.toolbar: the host's own bar (the order view's tab row, spec §1) takes the filters, so the lanes keep the height
     const tb = !compact && opts.toolbar && typeof opts.toolbar.appendChild === "function" ? opts.toolbar : null, bar = box.querySelector(".tlBar");
     if (tb) { bar.classList.add("inTools"); tb.appendChild(bar); }
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
-    const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
+    const loupe = $(".tlLoupe"), scroller = $(".tlScroll"), exp = $(".tlExp");
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, hideA = null;
     // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
     let lanesHtml = "", detHtml = "";
@@ -895,21 +1156,24 @@
     function repaint(o) {
       o = o || {};
       const D = S.D = deriveNow();
+      // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
+      S.shown = sealsOf(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
       paintChips(); paintCanvas(D, o); paintSum();
-      const fresh = (o.fresh || []).filter(k => S.byKey.has(k));
+      const fresh = (o.fresh || []).filter(k => S.shownKeys.has(k));
       if (S.legend) return;
+      if (S.pin && renderPin(true)) return;
       if (fresh.length) {
         // a new step: follow it when the reader was on the latest one, otherwise leave their reading alone
-        const newest = fresh.map(k => S.byKey.get(k)).sort(byAt).pop(), prevLast = S.events.filter(e => !fresh.includes(e.key)).pop();
+        const newest = fresh.map(k => S.byKey.get(k)).sort(byAt).pop(), prevLast = S.shown.filter(e => !fresh.includes(e.key)).pop();
         if (!S.sel || (prevLast && S.sel === prevLast.key)) select(newest.key, 1, { scroll: true, quiet: false });
-        else if (S.byKey.has(S.sel)) renderDetail(S.sel, 0, true);
+        else if (S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
         else select(newest.key, 1, { scroll: true });
-      } else if (S.sel && S.byKey.has(S.sel)) renderDetail(S.sel, 0, true);
-      else if (S.events.length) select(S.events[S.events.length - 1].key, 0, { scroll: o.first, quiet: true });
-      else $(".tlDetail").innerHTML = `<p class="tlEmpty">Nothing is recorded for this order yet. Each step shows here the moment it happens.</p>`;
+      } else if (S.sel && S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
+      else if (S.shown.length) select(S.shown[S.shown.length - 1].key, 0, { scroll: o.first, quiet: true });
+      else $(".tlDetail").innerHTML = `<p class="tlEmpty">${esc(S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.")}</p>`;
     }
     /** One piece: its own events and steps. All pieces of an order of several: the order is where its slowest piece is,
      *  on the steps any of its pieces takes, each counted. One piece only: as it always was. */
@@ -1012,7 +1276,7 @@
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
         const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
         const say = (c === "d" ? (ev ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
-        n.setAttribute("aria-label", say); n.title = say;
+        n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
           else anim(seal, [{ transform: `rotate(${rot}deg) scale(.6)` }, { transform: `rotate(${rot}deg) scale(1.5)`, offset: .45 }, { transform: `rotate(${rot}deg) scale(1)` }], 700, { easing: SPRING });
@@ -1039,17 +1303,17 @@
         if (a) a.finished.then(() => cx.remove(), () => cx.remove()); else cx.remove();
       }
     }
-    function counts() { return FILTERS.map(f => S.events.filter(f[2]).length); }
+    /** One quiet chip: the legend of the seals. (The filters are gone — only milestones are drawn.) */
     function paintChips() {
-      const c = counts();
-      $(".tlChips").innerHTML = FILTERS.map((f, i) => `<button type="button" class="tlChip${S.filter === f[0] && !S.legend ? " on" : ""}${c[i] ? "" : " zero"}" data-f="${f[0]}" aria-pressed="${S.filter === f[0] && !S.legend}">${esc(f[1])}<b>${c[i]}</b></button>`).join("") +
-        `<button type="button" class="tlChip${S.legend ? " on" : ""}" data-legend aria-pressed="${S.legend}">Stamps</button>`;
+      const html = `<button type="button" class="tlChip${S.legend ? " on" : ""}" data-legend aria-pressed="${S.legend}">Stamps</button>`;
+      const c = $(".tlChips"); if (c.innerHTML !== html) c.innerHTML = html;
     }
     function paintSum() {
       const r = $(".tlSum"), lv = $(".tlLive"); if (!r) return;
       if (lv) lv.hidden = !live || !S.loaded;
-      const e = S.events[S.events.length - 1];
-      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"}${leftOutNote()} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      const e = S.shown[S.shown.length - 1] || S.events[S.events.length - 1];
+      const n = S.shown.length;
+      r.textContent = e ? `${n} milestone${n === 1 ? "" : "s"}${leftOutNote()} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
     }
     /* What a cut-short read left out, said plainly (the server's leftOut: a type past its first 500 is not read further,
        and at most 2000 recorded events are read). Only repeats nobody would miss (scans, reads, moves) cut: nothing said. */
@@ -1070,9 +1334,9 @@
     }
     function paintCanvas(D, o) {
       const hov = loupeFor; hideLoupe(true);
-      const cv = $(".tlCanvas"), evs = S.events, oldNow = S.nowX;
+      const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
-      const { cols, w } = layout(evs), last = evs[evs.length - 1], fl = FILTER[S.filter] || FILTER.all;
+      const { cols, w } = layout(evs), last = evs[evs.length - 1];
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
       const ghosts = D.cancelled ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
@@ -1089,13 +1353,13 @@
       const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
-      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${fl(e) ? "" : " dim"}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
+      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
       const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}`;
-      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" title="${esc("Next: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
+      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
       // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
       // the days, lines, path, NOW line and ghosts are drawn again
       const kept = new Map();
-      if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.byKey.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
+      if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.shownKeys.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
       if (!kept.size) {
         cv.innerHTML = back + evs.map(e => `<button type="button" class="${clsOf(e)}" data-key="${esc(e.key)}" data-sv="${esc(e.type + "|" + e.at)}" style="${posOf(e)}" aria-label="${esc(sayOf(e))}">${stampSvg(e, false)}</button>`).join("") + ghostHtml;
       } else {
@@ -1141,19 +1405,22 @@
       if (hov && hov.isConnected && hov.matches(HOVER) && hov.matches(":hover")) showLoupe(hov, true);
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
-    function setFilter(f) {
-      if (!FILTER[f]) return;
-      const wasLegend = S.legend;
-      S.filter = f; S.legend = false;
-      paintChips();
-      const fl = FILTER[f];
-      for (const b of $$(".tlSt[data-key]")) { const e = S.byKey.get(b.dataset.key); b.classList.toggle("dim", !!e && !fl(e)); }
-      if (wasLegend) renderDetail(S.sel || (S.events[S.events.length - 1] || {}).key, 0);
+    /** The seal that stands for an event: itself when it is drawn, the seal that collapsed it, else the milestone it
+     *  happened under (the last seal at or before its time). "" when this order has no seal yet. */
+    function sealKey(key) {
+      if (!key) return "";
+      if (S.shownKeys.has(key)) return key;
+      const e = S.byKey.get(key); if (!e) return "";
+      for (const s of S.shown) if (s.same && s.same.some(x => x.key === key)) return s.key;
+      let at = "";
+      for (const s of S.shown) { if (s.at <= e.at) at = s.key; else if (!at) { at = s.key; break; } }
+      return at;
     }
     function toggleLegend() {
       S.legend = !S.legend; paintChips();
-      if (!S.legend) { renderDetail(S.sel || (S.events[S.events.length - 1] || {}).key, 0); return; }
-      const t = Date.now(), types = Object.keys(KIND).filter(k => k !== "other");
+      if (!S.legend) { renderDetail(S.sel || (S.shown[S.shown.length - 1] || {}).key, 0); return; }
+      // the legend shows the seals that are actually drawn, nothing else
+      const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k }));
       const det = $(".tlDetail");
       det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}</div>`;
       anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
@@ -1161,8 +1428,10 @@
     /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
     function select(key, dir, o) {
       o = o || {};
-      if (!key || !S.byKey.has(key)) return false;
+      key = sealKey(key);
+      if (!key) return false;
       S.sel = key; if (S.legend) { S.legend = false; paintChips(); }
+      if (S.pin) { S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned"); }
       for (const b of $$(".tlSt[data-key]")) b.classList.toggle("sel", b.dataset.key === key);
       const e = S.byKey.get(key);
       for (const l of $$(".tlLane")) l.classList.toggle("on", l.dataset.lane === e.lane);
@@ -1179,9 +1448,9 @@
       }
     }
     function renderDetail(key, dir, quiet) {
-      const det = $(".tlDetail"), evs = S.events, i = evs.findIndex(x => x.key === key);
+      const det = $(".tlDetail"), evs = S.shown, i = evs.findIndex(x => x.key === key);
       if (i < 0) return;
-      const e = evs[i], D = S.D || derive(evs, S.cancelled, null, STAGES);
+      const e = evs[i], D = S.D || derive(S.events, S.cancelled);
       const ae = doc.activeElement, focused = ae && ae !== det && det.contains(ae) ? (ae.dataset && ae.dataset.step) || (ae.classList.contains("tlArw") ? "arw" : "*") : null;
       const around = evs.slice(Math.max(0, i - 2), i + 3);
       const { out: ba, used } = pairsOf(e.data);
@@ -1192,13 +1461,14 @@
       const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
       const html = `<div class="tlDetIn">` +
         `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
-        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · step ${i + 1} of ${evs.length}${e.milestone ? " · milestone" : ""}${e.pending ? " · saving…" : ""}</span>` +
+        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.pending ? " · saving…" : ""}</span>` +
         `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
         `<div class="tlBadgeRow">${badge(e)}</div>` +
         (desc ? `<p>${esc(desc)}</p>` : "") +
         (why ? `<div class="tlWhy"><b>${esc(whyLbl)}</b>${esc(why)}</div>` : "") +
         ba.map(p => `<div class="tlBA"><div class="m"><i>${esc(p.what ? p.what + " · before" : "Before")}</i><span>${esc(fmt(p.a))}</span></div><span class="arr" aria-hidden="true">→</span><div class="m after"><i>${esc(p.what ? p.what + " · after" : "After")}</i><span>${esc(fmt(p.b))}</span></div></div>`).join("") +
         (facts.length ? `<div class="tlMeta">${facts.map(([k, v]) => `<div class="m"><i>${esc(k)}</i><span>${esc(v)}</span></div>`).join("")}</div>` : "") +
+        nextHtml(D) +
         `<div class="tlActs"><button type="button" class="btn ghost sm" data-step="-1"${i ? "" : " disabled"}>‹ Earlier</button><button type="button" class="btn ghost sm" data-step="1"${i < evs.length - 1 ? "" : " disabled"}>Later ›</button>` +
         (e.sheetId && opts.onSheet ? `<button type="button" class="btn sm tlOpenSheet" data-sheet="${esc(e.sheetId)}" data-pool="${esc(poolOf(e))}">Open sheet</button>` : "") + `</div></div>` +
         `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, false, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
@@ -1212,11 +1482,11 @@
       anim(big, [{ transform: `scale(1.35) rotate(${r - 6}deg)`, opacity: 0 }, { opacity: 1, offset: .55 }, { transform: `scale(1) rotate(${r}deg)`, opacity: 1 }], 500, { easing: SPRING });
     }
     function stepBy(d) {
-      const i = S.events.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.events.length - 1 : i) + d, 0, S.events.length - 1);
-      if (!S.events[j] || S.events[j].key === S.sel) return;
+      const i = S.shown.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.shown.length - 1 : i) + d, 0, S.shown.length - 1);
+      if (!S.shown[j] || S.shown[j].key === S.sel) return;
       const onStamp = doc.activeElement && doc.activeElement.matches && doc.activeElement.matches(".tlSt[data-key]") && box.contains(doc.activeElement);
-      select(S.events[j].key, d, { scroll: true });
-      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.events[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
+      select(S.shown[j].key, d, { scroll: true });
+      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.shown[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
     }
     function findKey(id) {
       if (id == null) return null;
@@ -1242,14 +1512,9 @@
       // above the dot itself; a flip goes under the whole stop, so a rail step keeps its name in sight
       const lift = liftOf(b), d = lift.getBoundingClientRect(), bb = b.getBoundingClientRect(), rot = rotOf(e);
       const r = { left: d.left, width: d.width, top: d.top, bottom: Math.max(d.bottom, bb.bottom) };
-      const cap = e.text && e.text !== labelOf(e.type) ? e.text : "";
-      loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>${cap ? `<div class="cap">${esc(cap.length > 110 ? cap.slice(0, 108) + "…" : cap)}</div>` : ""}`;
-      const p = zoomIn(loupe, r, quiet), vw = root.innerWidth || 1200, tx = p.x + ZSZ / 2;
-      const capEl = cap && loupe.querySelector(".cap");
-      if (capEl) {
-        if (p.up) { capEl.style.top = `${Math.round(r.bottom + ZGAP - p.y)}px`; capEl.style.marginTop = "0"; }   // under the dot, never over it
-        const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`;
-      }
+      // the seal alone: what the step is and still needs is the explainer card under the dot (it replaced the dark caption)
+      loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>`;
+      zoomIn(loupe, r, quiet);
       loupeFor = b; lift.classList.add("lifted");
     }
     function hideLoupe(now) {
@@ -1264,15 +1529,100 @@
     const HOVER = ".tlSt[data-key], .tlStop.d, .tlStop.x";
     function onOver(ev) { const b = ev.target.closest && ev.target.closest(HOVER); if (b && b !== loupeFor && box.contains(b)) showLoupe(b); }
     function onOut(ev) { const b = ev.target.closest && ev.target.closest(HOVER); if (b && b === loupeFor && !b.contains(ev.relatedTarget)) hideLoupe(); }
-    function onScroll() { hideLoupe(true); }
+    function onScroll() { hideLoupe(true); hideExp(true); }
+
+    /* ── the step explainer (Paul, 28 Sep, point 5): hovering a step (a rail's stop, a lane stamp, a dashed stamp to come)
+       shows a small card BELOW its dot, what is done and what is still missing (the zoomed seal sits above: the dot stays
+       seen); a click on a step not done yet pins the fuller version in the detail below, never a pop-up on a pop-up.
+       Escape or a click elsewhere lets it go. opts.context() is what the host knows of the order (requirementsOf). ── */
+    let expFor = null, expA = null;
+    const ctxOf = () => { try { return (typeof opts.context === "function" ? opts.context() : opts.context) || null; } catch (err) { warn("context", err); return null; } };
+    // (S.D is the rail drawn: the piece shown's own steps, or the order's)
+    const reqOf = i => requirementsOf(i, { events: S.events, D: S.D || deriveNow(), context: ctxOf() });
+    const EXP = ".tlStop, .tlSt[data-key], .tlSt.ghost[data-stage]";
+    function stageOfEl(b) {
+      if (b.dataset.stage) return STAGES.findIndex(s => s.k === b.dataset.stage);
+      const e = b.dataset.key && S.byKey.get(b.dataset.key); if (!e) return -1;
+      // an event that is not a step of its own (a hold, a message …): the step the order is working towards
+      return own(STOP_OF, e.type) ? STOP_OF[e.type] : S.D ? (S.D.cur >= 0 ? S.D.cur : S.D.step) : -1;
+    }
+    function showExp(b) {
+      if (!S.loaded || !S.D || !exp) return;
+      const i = stageOfEl(b), q = i >= 0 ? reqOf(i) : null; if (!q) return;
+      if (expA) { try { expA.cancel(); } catch (_) {} expA = null; }
+      // an event that is not a step of its own says what it is first, then what the order needs to move on
+      const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null;
+      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 9px">Then, for the order to move on</div>` : "";
+      expFor = b;
+      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, b);
+    }
+    function hideExp(now) {
+      if (!expFor || !exp) return;
+      expFor = null;
+      if (now) { if (expA) { try { expA.cancel(); } catch (_) {} } expA = null; exp.style.display = "none"; exp.innerHTML = ""; return; }
+      expA = fadeExp(exp, expA);
+    }
+    function nextHtml(D) {
+      if (!D || D.cancelled || D.cur < 0) return "";
+      const q = reqOf(D.cur); if (!q || !q.need.length) return "";
+      return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
+    }
+    function expOver(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b !== expFor && box.contains(b)) showExp(b); }
+    function expOut(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b === expFor && !b.contains(ev.relatedTarget)) hideExp(); }
+    function expFocus(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b.matches(":focus-visible")) showExp(b); }
+    function expBlur(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b === expFor) hideExp(); }
+    /** Pins a step's fuller explainer in the detail below; → true when shown. */
+    function pin(i) {
+      const s = STAGES[i]; if (!s || compact || !S.loaded) return false;
+      const was = S.pin; S.pin = s.k; hideExp(true);
+      renderPin(was === s.k);
+      for (const b of $$(".tlStop")) b.classList.toggle("pinned", b.dataset.stage === s.k);
+      return true;
+    }
+    function unpin() {
+      if (!S.pin) return;
+      S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned");
+      const k = S.sel && S.shownKeys.has(S.sel) ? S.sel : (S.shown[S.shown.length - 1] || {}).key;
+      if (k) renderDetail(k, 0); else $(".tlDetail").innerHTML = detHtml = "";
+    }
+    function renderPin(quiet) {
+      const i = STAGES.findIndex(s => s.k === S.pin), q = i >= 0 ? reqOf(i) : null, det = $(".tlDetail");
+      if (!q) { S.pin = null; return false; }
+      const D = S.D, ev = q.state === "done" ? D.stages[i].first : null, s = STAGES[i];
+      const seal = ev ? stampSvg(ev, true, { uid: detUid }) : stampSvg({ key: "pin-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
+      const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
+      const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
+      const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
+        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
+        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
+        reqLines(q, true) +
+        `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
+        `<div class="tlAround"><span class="tlLbl">The path</span><div class="tlPath2">${path}</div></div></div>`;
+      if (quiet && html === detHtml) return true;
+      det.innerHTML = detHtml = html;
+      if (!quiet) anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
+      return true;
+    }
+    /** A click anywhere but the pinned step, its detail and the rails lets the pin go. */
+    function onDocDown(ev) {
+      if (!S.pin) return;
+      const t = ev.target;
+      if (t && t.closest && (t.closest(".tlDetail") || t.closest(".tlStop") || t.closest(".tlSt"))) return;
+      unpin();
+    }
+    function onDocKey(ev) { if (ev.key === "Escape" && S.pin) { unpin(); } }
 
     /* ── clicks and keys ── */
     function onClick(ev) {
       const t = ev.target; if (!t || !t.closest) return;
-      const chip = t.closest(".tlChip"); if (chip) { if (chip.hasAttribute("data-legend")) toggleLegend(); else setFilter(chip.dataset.f); return; }
+      const pk = t.closest("[data-pin]"); if (pk) { pin(STAGES.findIndex(s => s.k === pk.dataset.pin)); return; }
+      if (t.closest("[data-unpin]")) { unpin(); return; }
+      const oe = t.closest("[data-open-ev]"); if (oe) { S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned"); select(oe.dataset.openEv, 0, { scroll: true }); return; }
+      const gh = t.closest(".tlSt.ghost[data-stage]"); if (gh) { pin(STAGES.findIndex(s => s.k === gh.dataset.stage)); return; }
+      const chip = t.closest(".tlChip"); if (chip) { toggleLegend(); return; }
       const os = t.closest(".tlOpenSheet"); if (os) { ev.preventDefault(); hideLoupe(true); try { if (typeof opts.onSheet === "function") opts.onSheet(os.dataset.sheet, os.dataset.pool || null); } catch (e) { try { console.warn("[OrderTimelineUI] onSheet:", e); } catch (_) {} } return; }
       const st = t.closest(".tlSt[data-key], .tlArw[data-key]");
-      if (st) { const k = st.dataset.key, a = S.events.findIndex(e => e.key === S.sel), b = S.events.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
+      if (st) { const k = st.dataset.key, a = S.shown.findIndex(e => e.key === S.sel), b = S.shown.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
       const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
       const stop = t.closest(".tlStop"); if (stop) { stageClick(stop, ev); return; }
       if (t.closest(".tlRetry")) { load(true); return; }
@@ -1282,12 +1632,15 @@
       const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && S.D.stages[i].last;
       const target = stop.classList.contains("x") ? e : last || e;
       if (!target || !target.key || !S.byKey.has(target.key)) {
+        if (i >= 0 && S.loaded) {
+          if (compact) { if (click) click.preventDefault(); handOver({ stage: STAGES[i].k }); return; }
+          if (pin(i)) return;
+        }
         anim(stop.querySelector(".tlSeal"), [{ transform: "translateX(0)" }, { transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "translateX(0)" }], 300);
         return;
       }
       if (compact) { if (click) click.preventDefault(); handOver(target); return; }
-      if (S.filter !== "all" && !FILTER[S.filter](target)) setFilter("all");
-      const a = S.events.findIndex(x => x.key === S.sel), b = S.events.findIndex(x => x.key === target.key);
+      const a = S.shown.findIndex(x => x.key === S.sel), b = S.shown.findIndex(x => x.key === sealKey(target.key));
       select(target.key, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: true });
     }
     function onKey(ev) {
@@ -1322,8 +1675,9 @@
     function refresh() { return Promise.resolve(load(false)).then(() => undefined); }
     /** compact: the host opens the event on its Timeline — opts.onOpen(event), else a bubbling "timeline:focus". */
     function handOver(e) {
-      if (typeof opts.onOpen === "function") { try { opts.onOpen(pub(e)); } catch (err) { warn("onOpen", err); } return; }
-      box.dispatchEvent(new CustomEvent("timeline:focus", { bubbles: true, detail: { eventId: e.id, key: e.key, orderId } }));
+      const x = e.stage && !e.type ? { orderId, stage: e.stage } : pub(e);
+      if (typeof opts.onOpen === "function") { try { opts.onOpen(x); } catch (err) { warn("onOpen", err); } return; }
+      box.dispatchEvent(new CustomEvent("timeline:focus", { bubbles: true, detail: e.stage && !e.type ? { stage: e.stage, orderId } : { eventId: e.id, key: e.key, orderId } }));
     }
     /** Tells the host what is drawn: opts.onEvents(events, oldest first) and opts.onNow(where it is now). */
     function tell() {
@@ -1337,14 +1691,19 @@
     function focus(ev) {
       if (S.dead) return false;
       // an event id (the server's or this page's), a key, or an event as onOpen/onEvents hand it out
+      if (ev && typeof ev === "object" && ev.stage && !ev.type && !ev.id) {
+        const i = STAGES.findIndex(s => s.k === ev.stage); if (i < 0) return false;
+        if (compact) { handOver({ stage: ev.stage }); return true; }
+        if (!S.loaded) { S.pendingFocus = ev; return false; }
+        return pin(i);
+      }
       const id = ev && typeof ev === "object" ? (ev.key && S.byKey.has(ev.key) ? ev.key : ev.id || ev.eventId || ev.key) : ev;
       if (!S.loaded) { S.pendingFocus = id; return false; }
       const k = findKey(id); if (!k) return false;
       const e = S.byKey.get(k);
       if (compact) { handOver(e); return true; }
-      if (S.filter !== "all" && !FILTER[S.filter](e)) setFilter("all");
-      select(k, 0, { scroll: true });
-      const b = box.querySelector(`.tlSt[data-key="${cssEsc(k)}"]`);
+      if (!select(k, 0, { scroll: true })) return false;
+      const b = box.querySelector(`.tlSt[data-key="${cssEsc(sealKey(k))}"]`);
       if (b) { try { b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reduced() ? "auto" : "smooth" }); } catch (_) {} }
       return true;
     }
@@ -1358,6 +1717,8 @@
       unsub = unfeed = null;
       doc.removeEventListener("visibilitychange", onVis);
       box.removeEventListener("click", onClick); box.removeEventListener("pointerover", onOver); box.removeEventListener("pointerout", onOut); box.removeEventListener("keydown", onKey);
+      box.removeEventListener("pointerover", expOver); box.removeEventListener("pointerout", expOut); box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur);
+      doc.removeEventListener("pointerdown", onDocDown, true); doc.removeEventListener("keydown", onDocKey);
       scroller.removeEventListener("scroll", onScroll);
       try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
       if (tb) { bar.removeEventListener("click", onClick); bar.remove(); }
@@ -1365,6 +1726,8 @@
     }
 
     box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
+    box.addEventListener("pointerover", expOver); box.addEventListener("pointerout", expOut); box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
+    if (!compact) { doc.addEventListener("pointerdown", onDocDown, true); doc.addEventListener("keydown", onDocKey); }
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
     paintRail(railed(derive([], null), pieceNow() ? withDone(stagesFor(pieceNow().line), []) : railNow([])), { first: true });
@@ -1391,14 +1754,19 @@
   function nowStamps(events, o) {
     css(); o = o || {};
     const evs = (events || []).map(norm).filter(Boolean).sort(byAt), c = o.cancelled;
-    const last = (o.ev && norm(o.ev)) || evs[evs.length - 1] || null;
+    // the seal of the milestone it is at now — never a "read" or a "?" (Paul, 28 Sep) — and, when something is holding
+    // it up, that in plain words in place of the old row of stamps
+    const seals = sealsOf(evs), asked = o.ev && norm(o.ev);
+    const last = (asked && sealed(asked) ? asked : seals[seals.length - 1]) || null;
+    const blocker = c ? null : blockerOf(evs);
     let seal = "";
     if (c) {
       const etsy = c.type === "etsyCancelled" || c.source === "etsy" || /^etsy$/i.test(c.by || "");
       seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
     } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
-    const recent = evs.slice(-6).map((e, i) => `<button type="button" class="tlMini" data-tl-ev="${esc(e.id)}" style="--rot:${rotOf(e)}deg" aria-label="${esc(`${labelOf(e.type)} · ${longWhen(e.at)} · ${whoOf(e)} — open on the Timeline`)}"><span class="s">${stampSvg(e, false, { tex: false })}</span><span class="f">${stampSvg(e, true, { uid: "tlNowM" + i })}</span></button>`).join("");
-    return { seal, recent };
+    // (`recent`, the old row of six stamps, is gone: one seal says where it is, and the words below say what it waits on)
+    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : "";
+    return { seal, recent, blocker };
   }
   function wireNow(card, onOpen) {
     if (!card) return;
@@ -1442,5 +1810,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn };
 })(typeof window !== "undefined" ? window : globalThis);

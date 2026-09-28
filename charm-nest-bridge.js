@@ -9017,18 +9017,57 @@ const OrderWin = window.OrderWin = (() => {
     paintPieceSum();
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
-    const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
+    const e = n.ev;
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
-    // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
+    // timeline-ui's seal: the milestone this order (or the piece shown) is at (the 118px CANCELLED ORDER one when
+    // cancelled) — never a row of stamps. What is holding it up (a decision nobody made, a hold nobody let go) is said in
+    // plain words instead.
     const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null })) : null;
-    const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
+    const bl = (st && st.blocker) || null;
+    const recent = st ? st.recent : "";
     const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
     card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(n.k)}</div><div class="t">${esc(n.t || "")}</div>${who}<div class="row">${recent}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    // the blocker is the card's own line then, so it is never said twice
+    const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
     if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
+    // hovering the seal or a stamp says what the step needs (timeline-ui's step explainer); a click pins it on the Timeline
+    const rid = String(r.order.receiptId);
+    if (UI && UI.explainOn) tryDo(() => UI.explainOn(card, () => ({ events: W.evFor === rid ? shownEvents() || [] : [], cancelled: W.cancelled, context: tlContext(rid), stages: tlStages(rid, true) }), stp => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(stp)); }));
+  }
+  /** The order's own steps (stagesFor its lines: Welded only when a piece is a stud earring); the piece shown's own when
+   *  one is picked (piece). null while the order's row is not read. */
+  function tlStages(rid, piece) {
+    const r = rowOf(W.key), UI = window.OrderTimelineUI; if (!r || String(r.order.receiptId) !== String(rid) || !UI || !UI.stagesFor) return null;
+    const p = piece && W.piece && (W.pieces || []).find(x => x.key === W.piece);
+    return tryDo(() => UI.stagesFor(p ? p.line : linesOf(r))) || null;
+  }
+  /* What this page already knows of the order, for the timeline's step explainer (OrderTimelineUI.requirementsOf):
+     each line's state, hold, wait and engraving, and the readiness of the sheets its pieces sit on
+     (CharmNestReadiness, as validateRelease reads it). Nothing is fetched. */
+  function tlContext(rid) {
+    const r = rowOf(W.key); if (!r || String(r.order.receiptId) !== String(rid)) return null;
+    const R = window.CharmNestReadiness, all = tryDo(() => linesOf(r)) || [r], pages = new Set();
+    // one piece shown (the piece switcher): its own line only
+    const rows = W.piece && all.some(x => x.key === W.piece) ? all.filter(x => x.key === W.piece) : all;
+    const lines = rows.map(x => {
+      const sp = x.spec || {}, ids = x.poolIds || [];
+      let onSheet = ids.length > 0;
+      for (const id of ids) { const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(id)) : null; if (pg) pages.add(pg); else onSheet = false; }
+      const pb = (x.problems || [])[0];
+      return { sku: sp.designSku || (x.line && x.line.sku) || "", form: sp.form || "", title: (x.line && x.line.title) || "", state: x.state, reason: x.reason || "", wait: x.wait || null, hold: !!x.hold,
+        problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
+    });
+    const dec = pages.size && R && R.decisions ? tryDo(() => R.decisions(Orders.rows())) : null;
+    const sheets = [...pages].map(pg => {
+      const placed = (pg.placements || []).length;
+      const rep = dec && R.sheet ? tryDo(() => R.sheet(Object.assign({}, pg, { roseStockId: pg.roseStock && pg.roseStock.id, id: pg.sheetId, poolIds: (pg.placements || []).map(p => ((pg.charms || []).find(c => c.id === p.id) || {}).poolId).filter(Boolean), placedCount: placed, outputs: pg.cloud || {}, engraving: dec }))) : null;
+      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt };
+    });
+    return { lines, sheets };
   }
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
@@ -9072,8 +9111,8 @@ const OrderWin = window.OrderWin = (() => {
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring,
       // Engraved only when one carries a back engraving (or is not read yet)
-      stages: () => { const r = rowOf(W.key), UI = window.OrderTimelineUI; return r && String(r.order.receiptId) === rid && UI && UI.stagesFor ? UI.stagesFor(linesOf(r)) : null; },
-      onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
+      stages: () => tlStages(rid),
+      context: () => tlContext(rid), onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
   function mountRail(rid) {
     const host = byId("owRail"), UI = window.OrderTimelineUI; if (!host) return;

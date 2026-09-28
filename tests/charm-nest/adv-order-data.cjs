@@ -65,7 +65,8 @@ async function main() {
     railMsg: (document.querySelector('#owRail .tlMsg:not([hidden])') || {}).textContent || '', fullMsg: (document.querySelector('#owTimeline .tlMsg:not([hidden])') || {}).textContent || '',
     railSpin: !!document.querySelector('#owRail .tlMsg:not([hidden]) .tlSpin'), fullSpin: !!document.querySelector('#owTimeline .tlMsg:not([hidden]) .tlSpin') }));
   const railReady = page => page.waitForFunction(() => { const r = document.querySelector('#owRail .tlUI'); return r && r.querySelector('.tlMsg').hidden && document.getElementById('owTlCount').textContent; });
-  const fullReady = page => page.waitForFunction(() => document.querySelector('#owTimeline .tlUI .tlSt[data-key]'));
+  // the lanes are drawn once the first seal lands, or once the view says this order has no milestone yet
+  const fullReady = page => page.waitForFunction(() => document.querySelector('#owTimeline .tlUI .tlSt[data-key], #owTimeline .tlUI .tlEmpty'));
   const closeView = async page => { await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 }); };
   const refresh = page => page.evaluate(() => OrderWin._feed().refresh({ force: true }));
   const results = [];
@@ -186,6 +187,7 @@ async function main() {
       // (only repeat scans are cut past their 500: nothing a person would miss, so no "not all shown" note; the server's
       // leftOut names the types cut, and the note says them plainly when one matters)
       assert.doesNotMatch(s.sum, /more than 2000|not all shown/i, 'no vague truncation note: ' + s.sum);
+      assert.equal(s.stamps, 0, 'scans and notes are noise: they draw no seal');
       await closeView(page);
     });
     assert.deepEqual(errors, [], 'no page errors');
