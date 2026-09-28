@@ -10474,7 +10474,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       } else if (emLearn.tab === "rules") {
         const list = (d.rules || []).slice().sort((a, b) =>
           (a.status === "active" ? 0 : a.status === "suggested" ? 1 : 2) - (b.status === "active" ? 0 : b.status === "suggested" ? 1 : 2) || (b.support || 0) - (a.support || 0));
-        if (!list.length) html = '<div class="em-learn-empty">No rules yet. The AI learns a rule once staff make the same kind of correction in 3 different conversations. You can switch any rule off.</div>';
+        if (!list.length) html = '<div class="em-learn-empty">No rules yet. The AI learns a rule once staff make the same kind of correction in 2 different conversations, or in 1 when the correction is clear-cut. You can switch any rule off.</div>';
         for (const r of list) {
           const on = r.status === "active";
           const chip = on ? '<span class="em-learn-chip on">on</span>' : r.status === "suggested" ? '<span class="em-learn-chip sug">suggested</span>' : '<span class="em-learn-chip">off</span>';
@@ -10482,7 +10482,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             '<div class="txt">' + esc(r.text) +
               '<div class="em-learn-meta" style="margin:3px 0 0">' + chip +
                 '<span>' + (r.scope === "sales" ? "Sales agent" : r.scope === "support" ? "Support drafter" : "Both AIs") + '</span>' +
-                '<span>from ' + (r.support || 0) + ' conversation' + ((r.support || 0) === 1 ? "" : "s") + '</span></div></div>' +
+                '<span>from ' + (r.support || 0) + ' conversation' + ((r.support || 0) === 1 ? "" : "s") + (r.direct ? ", clear-cut" : "") + '</span></div></div>' +
             '<div class="act"><button type="button" class="em-learn-btn" data-lact="rule-toggle" data-id="' + esc(r.id) + '" data-to="' + (on ? "off" : "active") + '">' + (on ? "Turn off" : "Turn on") + '</button></div>' +
           '</div></div>';
         }

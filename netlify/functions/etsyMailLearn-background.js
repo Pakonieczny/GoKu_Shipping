@@ -8,10 +8,12 @@
  *  facts and says which general lesson or product fact each one teaches.
  *
  *  Safeguards:
- *  - a lesson becomes active only when 3 different conversations taught
- *    it, a fact when 2 did; until then it waits as "suggested" in
- *    Settings > Learning, where the owner can switch any of them on or off
- *    (an owner's "off" is never overridden);
+ *  - a lesson or fact becomes active once 2 different conversations
+ *    taught it (owner, 2026-09-28: staff know what they write, so two is
+ *    confirmation enough), or after 1 when the learner marks it direct
+ *    (staff stated it outright and nothing else explains the edit); until
+ *    then it waits as "suggested" in Settings > Learning, where the owner
+ *    can switch any of them on or off (an owner's "off" is never overridden);
  *  - learned rules sit below the owner's rules, which always win;
  *  - a learned rule nobody reconfirms for 120 days expires.
  *
@@ -33,8 +35,10 @@ const db = admin.firestore();
 const MODEL = process.env.ETSYMAIL_LEARN_MODEL || "claude-haiku-4-5-20251001";
 const STATE_DOC = "learnState";
 const BATCH = 30;
-const RULE_THRESHOLD = 3;
+const RULE_THRESHOLD = 2;
 const FACT_THRESHOLD = 2;
+// A lesson the learner marks direct needs only the one conversation.
+const needed = (item, n) => (item.direct ? 1 : n);
 const RULE_EXPIRY_MS = 120 * 86400000;
 const OUTCOME_KEEP_MS = 180 * 86400000;
 
@@ -58,10 +62,11 @@ function buildPrompt({ outcomes, rules, facts }) {
     "- a FACT: a product, shipping or policy fact that staff stated in what they sent (never infer a fact staff did not write), one plain sentence.",
     "Reuse an existing rule or fact when the correction teaches the same thing: give its id in \"match\".",
     "Ignore corrections that only fix one customer's details, a typo, the greeting or the sign-off, or that you cannot explain.",
+    "Set \"direct\": true only when this one correction settles it beyond doubt: staff stated the fact or instruction outright in what they sent, it holds for every customer, and nothing else explains the edit. Otherwise false; it then waits for a second conversation.",
     "Never write a rule that conflicts with these owner rules: " + HARD_RULES.join(" "),
     "Reply with JSON only, no prose, in exactly this shape:",
-    '{"rules":[{"match":"<existing rule id or empty>","text":"...","scope":"all|support|sales","outcomes":["<outcome id>"]}],',
-    ' "facts":[{"match":"<existing fact id or empty>","family":"<family>","text":"...","outcomes":["<outcome id>"]}],',
+    '{"rules":[{"match":"<existing rule id or empty>","text":"...","scope":"all|support|sales","direct":false,"outcomes":["<outcome id>"]}],',
+    ' "facts":[{"match":"<existing fact id or empty>","family":"<family>","text":"...","direct":false,"outcomes":["<outcome id>"]}],',
     ' "ignored":[{"outcome":"<outcome id>","why":"<a few words>"}]}',
     "Families: " + K.FAMILY_ORDER.join(", ") + "."
   ].join("\n");
@@ -140,11 +145,14 @@ async function runLearning({ force = false } = {}) {
       rule.threads = Array.from(new Set([...(rule.threads || []), ...threads])).slice(-50);
       rule.support = rule.threads.length;
       rule.lastSeenAtMs = now;
-      if (rule.status === "suggested" && rule.support >= RULE_THRESHOLD) rule.status = "active";
-      if (rule.status === "expired") rule.status = rule.support >= RULE_THRESHOLD ? "active" : "suggested";
+      if (r.direct === true) rule.direct = true;
+      if (rule.status === "suggested" && rule.support >= needed(rule, RULE_THRESHOLD)) rule.status = "active";
+      if (rule.status === "expired") rule.status = rule.support >= needed(rule, RULE_THRESHOLD) ? "active" : "suggested";
       note(r.outcomes, rule.id);
     }
     for (const rule of ruleById.values()) {
+      // Suggestions that already meet today's bar (it was 3 before 2026-09-28).
+      if (rule.status === "suggested" && (rule.support || 0) >= needed(rule, RULE_THRESHOLD)) rule.status = "active";
       if (rule.source === "learned" && !rule.ownerSet && rule.status === "active" && now - (rule.lastSeenAtMs || rule.createdAtMs || now) > RULE_EXPIRY_MS) {
         rule.status = "expired";
       }
@@ -167,9 +175,11 @@ async function runLearning({ force = false } = {}) {
       fact.threads = Array.from(new Set([...(fact.threads || []), ...threads])).slice(-50);
       fact.support = fact.threads.length;
       fact.lastSeenAtMs = now;
-      if (fact.status === "suggested" && fact.support >= FACT_THRESHOLD) fact.status = "active";
+      if (f.direct === true) fact.direct = true;
+      if (fact.status === "suggested" && fact.support >= needed(fact, FACT_THRESHOLD)) fact.status = "active";
       note(f.outcomes, fact.id);
     }
+    for (const fact of added) if (fact.status === "suggested" && (fact.support || 0) >= needed(fact, FACT_THRESHOLD)) fact.status = "active";
 
     const batch = db.batch();
     batch.set(cfg.doc(K.RULES_DOC), { rules: Array.from(ruleById.values()), updatedAtMs: now }, { merge: true });
