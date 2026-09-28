@@ -193,7 +193,8 @@ put(`Sandbox_Order_Timeline/${RID}~pulled~x`, { orderId: RID, type: 'pulled', at
   // where it is now: completed on Etsy, last seen at shipping by Kim
   assert.strictEqual(a.where.stage, 'completed', 'where: ' + JSON.stringify(a.where));
   assert(a.where.station === 'shipping' && a.where.by === 'Kim' && a.where.label === 'Completed on Etsy' && a.where.cut === true, 'where: ' + JSON.stringify(a.where));
-  assert(a.where.step === 8 && a.where.rail[a.where.step] === 'Completed', 'the rail\'s last step');
+  // (Paul, 28 Sep 21:18: Etsy's completion folds into Shipped, the rail's last step; approving is not a step)
+  assert(a.where.step === 7 && a.where.rail[a.where.step] === 'Shipped' && a.where.rail.join('|') === 'Order in|Nested|Engraved|Laser cut|Sorted|Welded|Assembled|Shipped', 'the rail\'s last step: ' + JSON.stringify(a.where.rail));
   // cheap: two round trips beside the recorded read, one-field queries only (asserted by the fake), capped
   assert(took < LAT * 5, `answered in ${took} ms with ${LAT} ms a round trip: at most about three round trips`);
   assert(!touched.has('Sandbox_Charm_Pool') && !touched.has('Sandbox_Order_Timeline'), 'production reads production');
@@ -220,7 +221,7 @@ put(`Sandbox_Order_Timeline/${RID}~pulled~x`, { orderId: RID, type: 'pulled', at
   assert(bt('cancelled').length === 1 && bt('cancelled')[0].by === 'Sim' && /rehearsal/.test(bt('cancelled')[0].text), 'its cancel record is an event');
   assert(bt('note').length === 1 && bt('note')[0].text === 'QA2', 'its own Team stamp');
   assert(b.cancelled && b.cancelled.by === 'Sim', 'its cancel record');
-  assert(b.where.stage === 'cancelled' && b.where.sheet === 'GF Sheet 1' && /pieces on GF Sheet 1/.test(b.where.text) && b.where.step === 1, 'where: cancelled on the sheet, the rail stopped at On sheet: ' + JSON.stringify(b.where));
+  assert(b.where.stage === 'cancelled' && b.where.sheet === 'GF Sheet 1' && /pieces on GF Sheet 1/.test(b.where.text) && b.where.step === 1, 'where: cancelled on the sheet, the rail stopped at Nested: ' + JSON.stringify(b.where));
 
   /* 3 · the rules on their own: dedupe and where */
   const ev = (type, at, o) => Object.assign({ orderId: RID, type, at, data: null, text: '' }, o);

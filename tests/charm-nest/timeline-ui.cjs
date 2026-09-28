@@ -127,21 +127,29 @@ function fixture({ MAIN, CX }) {
 
   // ── Now and the rail ──
   let r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, done: q('.tlStop.d').map(n => n.dataset.stage), cur: q('.tlStop.c').map(n => n.dataset.stage), fut: q('.tlStop.f').map(n => n.dataset.stage), skip: q('.tlStop.s').length, fill: q('.tlFill')[0].style.transform, ghosts: q('.tlSt.ghost').length, nowLine: (q('.tlNowLine')[0] || {}).textContent, lanes: q('.tlLane span').map(s => s.textContent), days: q('.tlDay:not(.idle)').length, idle: q('.tlDay.idle').length }; });
-  assert.deepEqual(r.done, ['arrived', 'sheet', 'approved', 'laser', 'sorted', 'welded', 'assembled'], 'passed steps stamped: ' + r.done);
+  assert.deepEqual(r.done, ['arrived', 'sheet', 'engraved', 'laser', 'sorted', 'welded', 'assembled'], 'passed steps stamped: ' + r.done);
   assert.deepEqual(r.cur, ['shipped'], 'the next step pulses');
-  assert.deepEqual(r.fut, ['completed'], 'the step to come is an outline');
+  assert.deepEqual(r.fut, [], 'Shipped is the last step (Etsy\'s completion folds into it)');
   assert.equal(r.now, where[MAIN].label); assert.equal(r.now, 'Packed');
-  assert.match(r.fill, /scaleX\(0\.875\)/);
-  assert.equal(r.ghosts, 2, 'the two milestones to come are dashed stamps on the lanes');
+  assert.match(r.fill, /scaleX\(1(\.0+)?\)/);
+  assert.equal(r.ghosts, 1, 'the milestone to come is a dashed stamp on its lane');
   assert.equal(r.nowLine, 'NOW · AT SHIPPING');
   assert.equal(r.days, 5); assert.equal(r.idle, 1, 'the idle day collapses');
   assert.match(r.lanes[3], /Ana P\./); assert.match(r.lanes[6], /Dana K\./);
   r = await page.evaluate(() => ({ sub: window.__el.querySelector('.tlNowS').textContent, rail: [...window.__el.querySelectorAll('.tlStop span')].map(s => s.textContent) }));
-  assert.deepEqual(r.rail, where[MAIN].rail, 'the rail is the server\'s 9 steps');
+  assert.deepEqual(r.rail, where[MAIN].rail, 'the rail is the server\'s 8 steps');
+  assert.deepEqual(r.rail, ['Order in', 'Nested', 'Engraved', 'Laser cut', 'Sorted', 'Welded', 'Assembled', 'Shipped']);
+  // a piece's own steps: Welded only for a stud earring (the sorter's purchaseDetails reads its type)
+  const sf = await page.evaluate(() => { const k = x => OrderTimelineUI.stagesFor(x).map(s => s.k).join(' '); return { neck: k({ title: 'Custom Name Necklace, Dainty' }), stud: k({ line: { title: 'Tiny Moon Stud Earrings', variations: [] }, spec: {} }), huggie: k({ title: 'Star Huggie Hoop Earrings' }), opt: k({ title: 'Zodiac Charm', variations: [{ name: 'Style', value: 'Stud earrings' }] }), order: k([{ title: 'Name Necklace' }, { title: 'Heart Stud Earrings' }]), none: k([{ title: 'Name Necklace' }, { form: 'huggie' }]), unread: k({ title: '', variations: [] }), all: k(null) }; });
+  assert.equal(sf.neck, 'arrived sheet engraved laser sorted assembled shipped', 'a necklace is never welded');
+  assert.equal(sf.stud, 'arrived sheet engraved laser sorted welded assembled shipped', 'a stud earring is welded');
+  assert.equal(sf.huggie, sf.neck, 'a huggie is not a stud'); assert.equal(sf.opt, sf.stud, 'the Style option says stud');
+  assert.equal(sf.order, sf.stud, 'an order with any stud earring shows Welded'); assert.equal(sf.none, sf.neck, 'an order with none does not');
+  assert.equal(sf.unread, sf.stud, 'a piece not read yet does not rule welding out'); assert.equal(sf.all, sf.stud);
   assert.match(r.sub, /Shipping/); assert.match(r.sub, /Dana K\./); assert.match(r.sub, /next: Shipped/); assert.match(r.sub, new RegExp('on ' + where[MAIN].sheet));
   await page.click('.tlNowS .tlOpenSheet');
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
-  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 9-step rail: 7 stamped, Shipped pulses, Completed an outline; 5 day columns + 1 idle; NOW · AT SHIPPING');
+  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings; 5 day columns + 1 idle; NOW · AT SHIPPING');
 
   // ── hover a stamp: it lifts onto the loupe at 136px with its full face ──
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
@@ -205,9 +213,9 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(120);
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { n: q('.tlSt[data-key]').length, anim: s ? s.getAnimations().length : -1, ring: q('.tlInkRing').length, cur: q('.tlStop.c').map(n => n.dataset.stage), done: q('.tlStop.d').length, now: q('.tlNowT')[0].textContent, h: q('.tlDetail h3')[0].textContent, ghosts: q('.tlSt.ghost').length, nowAnim: q('.tlNowLine')[0].getAnimations().length }; });
   assert.equal(r.n, 32); assert(r.anim > 0, 'the new stamp drops in'); assert.equal(r.ring, 1, 'an ink ring spreads');
-  assert.deepEqual(r.cur, ['completed']); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
+  assert.deepEqual(r.cur, [], 'Shipped is the last step'); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
   assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one');
-  assert.equal(r.ghosts, 1); assert(r.nowAnim > 0, 'the NOW line glides');
+  assert.equal(r.ghosts, 0); assert(r.nowAnim > 0, 'the NOW line glides');
   await page.waitForTimeout(1300);
   await shot('tlui-1-live-timeline');
   // the refresh every pollMs while visible (20 s in the app) asks again and keeps the live step
@@ -215,8 +223,8 @@ function fixture({ MAIN, CX }) {
   await page.waitForFunction(g => window.__gets > g, g0, { timeout: 4000 });
   await page.waitForTimeout(250);
   assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 32);
-  assert.equal(await page.$$eval('.tlStop.c', s => s.map(n => n.dataset.stage).join()), 'completed', 'the server\'s older where does not take the rail back');
-  ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail moves to Completed; the timed refresh asks again and keeps it');
+  assert.equal(await page.$$eval('.tlStop.d', s => s.length), 8, 'the server\'s older where does not take the rail back');
+  ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail ends at Shipped; the timed refresh asks again and keeps it');
 
   // ── focus(eventId) ──
   assert.equal(await page.evaluate(MAIN => window.__tl.focus(`${MAIN}~sorted~e22`), MAIN), true);
@@ -243,7 +251,7 @@ function fixture({ MAIN, CX }) {
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, sub: q('.tlNowS')[0].textContent, stamp: q('.tlCxStamp text').map(t => t.textContent).join(' '), x: q('.tlStop.x').map(n => n.dataset.stage), gone: q('.tlStop.gone').length, line: (q('.tlNowLine.cx span')[0] || {}).textContent, hatch: q('.tlAfterCx').length, ghosts: q('.tlSt.ghost').length }; });
   assert.equal(r.now, 'Cancelled — do not proceed'); assert.match(r.sub, /Cancelled on Etsy/); assert.match(r.sub, /Buyer requested/);
   assert.match(r.stamp, /CANCELLED/); assert.match(r.stamp, /DO NOT PROCEED/); assert.match(r.stamp, /ON ETSY/);
-  assert.deepEqual(r.x, ['laser'], 'a clay ✕ where it stopped (approved, never cut)'); assert.equal(r.gone, 5);
+  assert.deepEqual(r.x, ['laser'], 'a clay ✕ where it stopped (engraved, never cut)'); assert.equal(r.gone, 4);
   assert.match(r.line, /^CANCELLED · /); assert.equal(r.hatch, 1); assert.equal(r.ghosts, 0);
   await page.click('.tlSt[data-key="removed~e37"]'); await page.waitForTimeout(350);
   assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was taken off.*not cut yet/);
@@ -271,7 +279,7 @@ function fixture({ MAIN, CX }) {
   assert.equal(await page.evaluate(() => window.__waitText), 'Loading the steps…');
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlStop.d').length === 7, null, { timeout: 3000 });
   r = await page.evaluate(() => { const q = s => window.__el.querySelector(s), b = q('.tlRail').getBoundingClientRect(), stops = [...window.__el.querySelectorAll('.tlStop')].map(n => n.getBoundingClientRect()); return { grid: getComputedStyle(q('.tlGrid')).display, now: getComputedStyle(q('.tlNow')).display, h: b.height, w: b.width, low: Math.max(...stops.map(s => s.bottom)), n: stops.length }; });
-  assert.equal(r.grid, 'none'); assert.equal(r.now, 'none'); assert.equal(r.n, 9);
+  assert.equal(r.grid, 'none'); assert.equal(r.now, 'none'); assert.equal(r.n, 8);
   assert(r.h <= 44 && r.low <= 48 && r.w > 700, `the rail fits the 44px strip: ${JSON.stringify(r)}`);
   await page.click('.tlStop[data-stage="laser"]');
   r = await page.evaluate(() => ({ opened: window.__opened, host: window.__hostClick }));
@@ -311,14 +319,15 @@ function fixture({ MAIN, CX }) {
     OrderTimeline.flush();
   }, REAL);
   await page.waitForFunction(() => OrderTimeline.pending() === 0, null, { timeout: 8000 });
-  await page.evaluate(REAL => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: REAL, live: false }); }, REAL);
+  await page.evaluate(REAL => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: REAL, live: false, stages: () => OrderTimelineUI.stagesFor([{ title: 'Custom Name Necklace' }]) }); }, REAL);
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 3, null, { timeout: 5000 });
-  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, done: q('.tlStop.d').map(n => n.dataset.stage), cur: q('.tlStop.c').map(n => n.dataset.stage), approved: q('.tlStop[data-stage="approved"]')[0].title, line: q('.tlNowLine')[0].textContent, pend: q('.tlSt.pend').length }; });
-  assert.deepEqual(r.done, ['arrived', 'sheet', 'approved', 'laser'], 'a step passed with no event of its own shows done: ' + r.done);
-  assert.equal(r.approved, 'Approved: done'); assert.deepEqual(r.cur, ['sorted']);
+  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, done: q('.tlStop.d').map(n => n.dataset.stage), cur: q('.tlStop.c').map(n => n.dataset.stage), engraved: q('.tlStop[data-stage="engraved"]')[0].title, stops: q('.tlStop').map(n => n.dataset.stage).join(' '), line: q('.tlNowLine')[0].textContent, pend: q('.tlSt.pend').length }; });
+  assert.deepEqual(r.done, ['arrived', 'sheet', 'engraved', 'laser'], 'a step passed with no event of its own shows done: ' + r.done);
+  assert.equal(r.engraved, 'Engraved: done'); assert.deepEqual(r.cur, ['sorted']);
+  assert.equal(r.stops, 'arrived sheet engraved laser sorted assembled shipped', 'a necklace order\'s rail has no Welded step');
   assert.equal(r.now, 'Cut on the laser'); assert.match(r.line, /^NOW · /); assert.equal(r.pend, 0, 'every step came back from the server');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
-  ok.push('the real OrderTimeline over the stand-in\'s timelineAdd/timelineGet: 3 recorded steps come back, Now "Cut on the laser" from where, rail 4 done (Approved without its own event), Sorted next');
+  ok.push('the real OrderTimeline over the stand-in\'s timelineAdd/timelineGet: 3 recorded steps come back, Now "Cut on the laser" from where, rail 4 done (Engraved without its own event), Sorted next, no Welded for a necklace');
 
   // ── reduced motion: no animations run ──
   await page.emulateMedia({ reducedMotion: 'reduce' });
