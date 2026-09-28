@@ -8875,14 +8875,18 @@ const OrderWin = window.OrderWin = (() => {
     const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
-    const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
+    const e = n.ev;
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
-    // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
+    // timeline-ui's seal: the milestone this order is at (the 118px CANCELLED ORDER one when cancelled) — never a row of
+    // stamps. What is holding it up (a decision nobody made, a hold nobody let go) is said in plain words instead.
     const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
-    const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
+    const bl = (st && st.blocker) || null;
+    const recent = st ? st.recent : "";
     const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
     card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(n.k)}</div><div class="t">${esc(n.t || "")}</div>${who}<div class="row">${recent}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    // the blocker is the card's own line then, so it is never said twice
+    const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });

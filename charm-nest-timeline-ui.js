@@ -111,6 +111,48 @@
   };
   const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const kindOf = t => own(KIND, t) ? KIND[t] : KIND.other;
+  /* ── which of those kinds gets a seal (Paul, 28 Sep: "I only want actual real milestones to be recorded with seals and
+     skip all the noise") ──
+     MILESTONE_SEAL: the steps of the rail, the ones a person would call a step of the work.
+     PERSON_SEAL: what a person did that changes the order — cancelled, held, taken off a sheet, put back.
+     Everything else (read, interpreted, needs a decision, pulled, pooled, moved, QR label, set committed, included …)
+     stays in the record and in memory — the step explainer reads it as plain text — but draws no stamp anywhere: not on
+     the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
+  const MILESTONE_SEAL = new Set(["arrived", "placed", "engraved", "engraveApproved", "laserDone", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]);
+  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
+  /** The seals to draw, oldest first: one per milestone per piece. A milestone recorded again for the same line (a
+   *  re-nest, a second sorting scan) keeps the first seal and hangs the rest on it as `same`, so nothing is lost —
+   *  the explainer and the detail can still read them. A person's action never collapses: each one is its own act. */
+  function sealsOf(events) {
+    const out = [], first = new Map();
+    for (const e of events || []) {
+      if (!sealed(e)) continue;
+      e.same = null;
+      if (!MILESTONE_SEAL.has(e.type)) { out.push(e); continue; }
+      const g = e.type + "|" + (e.lineKey || e.transactionId || "");
+      const kept = first.get(g);
+      if (kept) { (kept.same = kept.same || []).push(e); continue; }
+      first.set(g, e); out.push(e);
+    }
+    return out;
+  }
+  /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
+  function blockerOf(events) {
+    let hold = null; const need = new Map();
+    for (const e of events || []) {
+      if (e.type === "held") hold = e;
+      else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
+      else if (e.type === "needsDecision") need.set(e.lineKey || e.id, e);
+      else if (e.type === "decided" || e.type === "customDecided" || e.type === "skipped") {
+        if (e.lineKey && need.has(e.lineKey)) need.delete(e.lineKey); else need.clear();
+      }
+    }
+    if (hold) return { label: "On hold", text: str((hold.data && (hold.data.reason || hold.data.why)) || hold.text || "Waiting to be let go", 220), at: hold.at, by: whoOf(hold) };
+    const q = [...need.values()].pop();
+    if (q) return { label: "Needs a decision", text: str(q.text || (q.data && (q.data.why || q.data.reason)) || "Someone has to decide before this order can go on", 220), at: q.at, by: whoOf(q) };
+    return null;
+  }
   const typeInfo = t => { try { const T = root.OrderTimeline && root.OrderTimeline.TYPES; return (T && T[t]) || null; } catch (_) { return null; } };
   const labelOf = t => (typeInfo(t) || {}).label || String(t || "Event").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
   const LANES = [
@@ -193,15 +235,8 @@
     if (by) bits.push(`by ${by}`);
     return { stage, label, text: bits.join(" · ").slice(0, 200), sheet, sheetId, setId, station, device, by, at, since, designed, cancelled: isCancelled, step, rail: STAGES.map(s => s.l) };
   }
-  const FILTERS = [
-    ["all", "All", () => true],
-    ["mile", "Milestones", e => e.milestone],
-    ["stn", "Stations", e => !!(LANE[e.lane] || {}).st || kindOf(e.type).grp.includes("stn")],
-    ["sh", "Sheets", e => kindOf(e.type).grp.includes("sh") || !!e.sheetId],
-    ["hc", "Holds & cancels", e => kindOf(e.type).grp.includes("hc")],
-    ["msg", "Messages", e => kindOf(e.type).grp.includes("msg")]
-  ];
-  const FILTER = Object.fromEntries(FILTERS.map(f => [f[0], f[2]]));
+  // (the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips are gone: only milestones are drawn
+  //  now, so there is nothing left to filter. The bar keeps one quiet "Stamps" chip — the legend of the seals.)
   const CANCEL_TYPES = new Set(["cancelled", "etsyCancelled"]);
 
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
@@ -441,7 +476,7 @@
 @keyframes tlSpin{to{transform:rotate(360deg)}}
 .tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);border-bottom:1px solid var(--line);position:relative;flex:none}
 .tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:50px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+.tlLane{position:relative;height:58px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
 .tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
@@ -449,7 +484,7 @@
 .tlLane span{position:relative;font-size:11px;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tlLane.stn b{color:var(--tlSlate)}
 .tlScroll{overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.tlCanvas{position:relative;height:416px;min-width:100%}
+.tlCanvas{position:relative;height:472px;min-width:100%}
 .tlPath{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
@@ -540,6 +575,8 @@
 .tlNowSeal{width:92px;height:92px;flex:none;transform:rotate(var(--rot,0deg))}
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
 .tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
+.tlBlock{display:inline-flex;align-items:baseline;gap:9px;min-width:0;max-width:100%;font:13px/1.45 var(--sans);color:#7a5a1d;background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:10px;padding:5px 12px}
+.tlBlock b{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a24;flex:none}
 .tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transform-origin:50% 30%;transition:transform .16s ease-in,opacity .16s ease-in}
 .tlMini .f{opacity:0;background:#fffefb;box-shadow:0 3px 7px rgba(20,16,10,.22)}
@@ -553,7 +590,9 @@
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(stationName(e))}</em>${esc(whoOf(e))}</span>`;
-  const COL = 35, LANE_H = 50, TOP = 40, PAD = 12, IDLE = 34, DAYMIN = 130, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
+  // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
+  //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
+  const COL = 50, LANE_H = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
   const laneY = k => TOP + (LANE[k] || LANE.office).i * LANE_H + LANE_H / 2;
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
@@ -634,7 +673,7 @@
     // a shared feed (the order view): its reads, its poll; this mount keeps its own live stamps (onRecord) alone
     const src = opts.feed && typeof opts.feed.subscribe === "function" && opts.feed.orderId === orderId ? opts.feed : null;
     const pollMs = Math.max(250, +opts.pollMs || POLL);   // pollMs: tests only
-    const S = { events: [], byKey: new Map(), cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
+    const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), cancelled: null, where: null, D: null, sel: null, legend: false, hl: new Set(), sig: "",
       loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
@@ -753,21 +792,23 @@
     function repaint(o) {
       o = o || {};
       const D = S.D = derive(S.events, S.cancelled, whereNow());
+      // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
+      S.shown = sealsOf(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
       paintChips(); paintCanvas(D, o); paintSum();
-      const fresh = (o.fresh || []).filter(k => S.byKey.has(k));
+      const fresh = (o.fresh || []).filter(k => S.shownKeys.has(k));
       if (S.legend) return;
       if (fresh.length) {
         // a new step: follow it when the reader was on the latest one, otherwise leave their reading alone
-        const newest = fresh.map(k => S.byKey.get(k)).sort(byAt).pop(), prevLast = S.events.filter(e => !fresh.includes(e.key)).pop();
+        const newest = fresh.map(k => S.byKey.get(k)).sort(byAt).pop(), prevLast = S.shown.filter(e => !fresh.includes(e.key)).pop();
         if (!S.sel || (prevLast && S.sel === prevLast.key)) select(newest.key, 1, { scroll: true, quiet: false });
-        else if (S.byKey.has(S.sel)) renderDetail(S.sel, 0, true);
+        else if (S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
         else select(newest.key, 1, { scroll: true });
-      } else if (S.sel && S.byKey.has(S.sel)) renderDetail(S.sel, 0, true);
-      else if (S.events.length) select(S.events[S.events.length - 1].key, 0, { scroll: o.first, quiet: true });
-      else $(".tlDetail").innerHTML = `<p class="tlEmpty">Nothing is recorded for this order yet. Each step shows here the moment it happens.</p>`;
+      } else if (S.sel && S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
+      else if (S.shown.length) select(S.shown[S.shown.length - 1].key, 0, { scroll: o.first, quiet: true });
+      else $(".tlDetail").innerHTML = `<p class="tlEmpty">${esc(S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.")}</p>`;
     }
     /** The server's `where`; while this page has steps the server has not answered for yet (live, or still in the
      *  outbox) it is worked out here from every step, never behind the server's own. */
@@ -860,18 +901,18 @@
         if (a) a.finished.then(() => cx.remove(), () => cx.remove()); else cx.remove();
       }
     }
-    function counts() { return FILTERS.map(f => S.events.filter(f[2]).length); }
+    /** One quiet chip: the legend of the seals. (The filters are gone — only milestones are drawn.) */
     function paintChips() {
-      const c = counts();
-      $(".tlChips").innerHTML = FILTERS.map((f, i) => `<button type="button" class="tlChip${S.filter === f[0] && !S.legend ? " on" : ""}${c[i] ? "" : " zero"}" data-f="${f[0]}" aria-pressed="${S.filter === f[0] && !S.legend}">${esc(f[1])}<b>${c[i]}</b></button>`).join("") +
-        `<button type="button" class="tlChip${S.legend ? " on" : ""}" data-legend aria-pressed="${S.legend}">Stamps</button>`;
+      const html = `<button type="button" class="tlChip${S.legend ? " on" : ""}" data-legend aria-pressed="${S.legend}">Stamps</button>`;
+      const c = $(".tlChips"); if (c.innerHTML !== html) c.innerHTML = html;
     }
     function paintSum() {
       const r = $(".tlSum"), lv = $(".tlLive"); if (!r) return;
       if (lv) lv.hidden = !live || !S.loaded;
-      const e = S.events[S.events.length - 1];
+      const e = S.shown[S.shown.length - 1] || S.events[S.events.length - 1];
+      const n = S.shown.length;
       // (the server reads at most 2000 recorded steps of an order: more than that, and it says so)
-      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"}${S.truncated ? " (more than 2000 recorded: not all shown)" : ""} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      r.textContent = e ? `${n} milestone${n === 1 ? "" : "s"}${S.truncated ? " (more than 2000 steps recorded: not all read)" : ""} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
     }
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
@@ -881,9 +922,9 @@
     }
     function paintCanvas(D, o) {
       const hov = loupeFor; hideLoupe(true);
-      const cv = $(".tlCanvas"), evs = S.events, oldNow = S.nowX;
+      const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
-      const { cols, w } = layout(evs), last = evs[evs.length - 1], fl = FILTER[S.filter] || FILTER.all;
+      const { cols, w } = layout(evs), last = evs[evs.length - 1];
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
       const ghosts = D.cancelled ? [] : STAGES.map((s, i) => ({ s, i })).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
@@ -900,13 +941,13 @@
       const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
-      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${fl(e) ? "" : " dim"}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
+      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
       const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}`;
       const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" title="${esc("Next: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
       // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
       // the days, lines, path, NOW line and ghosts are drawn again
       const kept = new Map();
-      if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.byKey.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
+      if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.shownKeys.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
       if (!kept.size) {
         cv.innerHTML = back + evs.map(e => `<button type="button" class="${clsOf(e)}" data-key="${esc(e.key)}" data-sv="${esc(e.type + "|" + e.at)}" style="${posOf(e)}" aria-label="${esc(sayOf(e))}">${stampSvg(e, false)}</button>`).join("") + ghostHtml;
       } else {
@@ -952,19 +993,22 @@
       if (hov && hov.isConnected && hov.matches(HOVER) && hov.matches(":hover")) showLoupe(hov, true);
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
-    function setFilter(f) {
-      if (!FILTER[f]) return;
-      const wasLegend = S.legend;
-      S.filter = f; S.legend = false;
-      paintChips();
-      const fl = FILTER[f];
-      for (const b of $$(".tlSt[data-key]")) { const e = S.byKey.get(b.dataset.key); b.classList.toggle("dim", !!e && !fl(e)); }
-      if (wasLegend) renderDetail(S.sel || (S.events[S.events.length - 1] || {}).key, 0);
+    /** The seal that stands for an event: itself when it is drawn, the seal that collapsed it, else the milestone it
+     *  happened under (the last seal at or before its time). "" when this order has no seal yet. */
+    function sealKey(key) {
+      if (!key) return "";
+      if (S.shownKeys.has(key)) return key;
+      const e = S.byKey.get(key); if (!e) return "";
+      for (const s of S.shown) if (s.same && s.same.some(x => x.key === key)) return s.key;
+      let at = "";
+      for (const s of S.shown) { if (s.at <= e.at) at = s.key; else if (!at) { at = s.key; break; } }
+      return at;
     }
     function toggleLegend() {
       S.legend = !S.legend; paintChips();
-      if (!S.legend) { renderDetail(S.sel || (S.events[S.events.length - 1] || {}).key, 0); return; }
-      const t = Date.now(), types = Object.keys(KIND).filter(k => k !== "other");
+      if (!S.legend) { renderDetail(S.sel || (S.shown[S.shown.length - 1] || {}).key, 0); return; }
+      // the legend shows the seals that are actually drawn, nothing else
+      const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k }));
       const det = $(".tlDetail");
       det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}</div>`;
       anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
@@ -972,7 +1016,8 @@
     /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
     function select(key, dir, o) {
       o = o || {};
-      if (!key || !S.byKey.has(key)) return false;
+      key = sealKey(key);
+      if (!key) return false;
       S.sel = key; if (S.legend) { S.legend = false; paintChips(); }
       for (const b of $$(".tlSt[data-key]")) b.classList.toggle("sel", b.dataset.key === key);
       const e = S.byKey.get(key);
@@ -990,9 +1035,9 @@
       }
     }
     function renderDetail(key, dir, quiet) {
-      const det = $(".tlDetail"), evs = S.events, i = evs.findIndex(x => x.key === key);
+      const det = $(".tlDetail"), evs = S.shown, i = evs.findIndex(x => x.key === key);
       if (i < 0) return;
-      const e = evs[i], D = S.D || derive(evs, S.cancelled);
+      const e = evs[i], D = S.D || derive(S.events, S.cancelled);
       const ae = doc.activeElement, focused = ae && ae !== det && det.contains(ae) ? (ae.dataset && ae.dataset.step) || (ae.classList.contains("tlArw") ? "arw" : "*") : null;
       const around = evs.slice(Math.max(0, i - 2), i + 3);
       const { out: ba, used } = pairsOf(e.data);
@@ -1003,7 +1048,7 @@
       const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
       const html = `<div class="tlDetIn">` +
         `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
-        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · step ${i + 1} of ${evs.length}${e.milestone ? " · milestone" : ""}${e.pending ? " · saving…" : ""}</span>` +
+        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.milestone ? " · milestone" : ""}${e.pending ? " · saving…" : ""}</span>` +
         `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
         `<div class="tlBadgeRow">${badge(e)}</div>` +
         (desc ? `<p>${esc(desc)}</p>` : "") +
@@ -1023,11 +1068,11 @@
       anim(big, [{ transform: `scale(1.35) rotate(${r - 6}deg)`, opacity: 0 }, { opacity: 1, offset: .55 }, { transform: `scale(1) rotate(${r}deg)`, opacity: 1 }], 500, { easing: SPRING });
     }
     function stepBy(d) {
-      const i = S.events.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.events.length - 1 : i) + d, 0, S.events.length - 1);
-      if (!S.events[j] || S.events[j].key === S.sel) return;
+      const i = S.shown.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.shown.length - 1 : i) + d, 0, S.shown.length - 1);
+      if (!S.shown[j] || S.shown[j].key === S.sel) return;
       const onStamp = doc.activeElement && doc.activeElement.matches && doc.activeElement.matches(".tlSt[data-key]") && box.contains(doc.activeElement);
-      select(S.events[j].key, d, { scroll: true });
-      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.events[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
+      select(S.shown[j].key, d, { scroll: true });
+      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.shown[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
     }
     function findKey(id) {
       if (id == null) return null;
@@ -1082,10 +1127,10 @@
     /* ── clicks and keys ── */
     function onClick(ev) {
       const t = ev.target; if (!t || !t.closest) return;
-      const chip = t.closest(".tlChip"); if (chip) { if (chip.hasAttribute("data-legend")) toggleLegend(); else setFilter(chip.dataset.f); return; }
+      const chip = t.closest(".tlChip"); if (chip) { toggleLegend(); return; }
       const os = t.closest(".tlOpenSheet"); if (os) { ev.preventDefault(); hideLoupe(true); try { if (typeof opts.onSheet === "function") opts.onSheet(os.dataset.sheet, os.dataset.pool || null); } catch (e) { try { console.warn("[OrderTimelineUI] onSheet:", e); } catch (_) {} } return; }
       const st = t.closest(".tlSt[data-key], .tlArw[data-key]");
-      if (st) { const k = st.dataset.key, a = S.events.findIndex(e => e.key === S.sel), b = S.events.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
+      if (st) { const k = st.dataset.key, a = S.shown.findIndex(e => e.key === S.sel), b = S.shown.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
       const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
       const stop = t.closest(".tlStop"); if (stop) { stageClick(stop, ev); return; }
       if (t.closest(".tlRetry")) { load(true); return; }
@@ -1099,8 +1144,7 @@
         return;
       }
       if (compact) { if (click) click.preventDefault(); handOver(target); return; }
-      if (S.filter !== "all" && !FILTER[S.filter](target)) setFilter("all");
-      const a = S.events.findIndex(x => x.key === S.sel), b = S.events.findIndex(x => x.key === target.key);
+      const a = S.shown.findIndex(x => x.key === S.sel), b = S.shown.findIndex(x => x.key === sealKey(target.key));
       select(target.key, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: true });
     }
     function onKey(ev) {
@@ -1155,9 +1199,8 @@
       const k = findKey(id); if (!k) return false;
       const e = S.byKey.get(k);
       if (compact) { handOver(e); return true; }
-      if (S.filter !== "all" && !FILTER[S.filter](e)) setFilter("all");
-      select(k, 0, { scroll: true });
-      const b = box.querySelector(`.tlSt[data-key="${cssEsc(k)}"]`);
+      if (!select(k, 0, { scroll: true })) return false;
+      const b = box.querySelector(`.tlSt[data-key="${cssEsc(sealKey(k))}"]`);
       if (b) { try { b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reduced() ? "auto" : "smooth" }); } catch (_) {} }
       return true;
     }
@@ -1204,14 +1247,19 @@
   function nowStamps(events, o) {
     css(); o = o || {};
     const evs = (events || []).map(norm).filter(Boolean).sort(byAt), c = o.cancelled;
-    const last = (o.ev && norm(o.ev)) || evs[evs.length - 1] || null;
+    // the seal of the milestone it is at now — never a "read" or a "?" (Paul, 28 Sep) — and, when something is holding
+    // it up, that in plain words in place of the old row of stamps
+    const seals = sealsOf(evs), asked = o.ev && norm(o.ev);
+    const last = (asked && sealed(asked) ? asked : seals[seals.length - 1]) || null;
+    const blocker = c ? null : blockerOf(evs);
     let seal = "";
     if (c) {
       const etsy = c.type === "etsyCancelled" || c.source === "etsy" || /^etsy$/i.test(c.by || "");
       seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
     } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
-    const recent = evs.slice(-6).map((e, i) => `<button type="button" class="tlMini" data-tl-ev="${esc(e.id)}" style="--rot:${rotOf(e)}deg" aria-label="${esc(`${labelOf(e.type)} · ${longWhen(e.at)} · ${whoOf(e)} — open on the Timeline`)}"><span class="s">${stampSvg(e, false, { tex: false })}</span><span class="f">${stampSvg(e, true, { uid: "tlNowM" + i })}</span></button>`).join("");
-    return { seal, recent };
+    // (`recent`, the old row of six stamps, is gone: one seal says where it is, and the words below say what it waits on)
+    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : "";
+    return { seal, recent, blocker };
   }
   function wireNow(card, onOpen) {
     if (!card) return;
@@ -1229,5 +1277,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow, iconOf };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf };
 })(typeof window !== "undefined" ? window : globalThis);

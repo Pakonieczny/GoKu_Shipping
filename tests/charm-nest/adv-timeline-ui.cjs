@@ -54,7 +54,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
       const wait = window.setTimeout.bind(window);
       OrderTimeline.get = async id => { await new Promise(r => wait(r, 20)); return JSON.parse(JSON.stringify(window.__fx[id])); };
       const TY = ['arrived', 'pulled', 'interpreted', 'placed', 'engraveApproved', 'moved', 'teamMessage', 'laserDone', 'scan', 'sorted', 'welded', 'assembled', 'packed', 'note'];
-      window.__gen = (id, n, span) => Array.from({ length: n }, (_, i) => { const type = TY[Math.min(TY.length - 1, Math.floor(i * TY.length / n))]; return { id: `${id}~${type}~g${i}`, orderId: id, type, at: Math.round(Date.now() - span - 36e5 + i * span / Math.max(1, n - 1)), by: ['Paul', 'Ana P.', ''][i % 3], source: 'sorter', station: type === 'sorted' ? 'sorting' : '', text: `${type} ${i}` }; });
+      window.__gen = (id, n, span) => Array.from({ length: n }, (_, i) => { const type = TY[Math.min(TY.length - 1, Math.floor(i * TY.length / n))]; return { id: `${id}~${type}~g${i}`, orderId: id, type, at: Math.round(Date.now() - span - 36e5 + i * span / Math.max(1, n - 1)), by: ['Paul', 'Ana P.', ''][i % 3], source: 'sorter', station: type === 'sorted' ? 'sorting' : '', lineKey: `${id}_${i % 12}`, text: `${type} ${i}` }; });
       window.__mount = (id, extra, box) => {
         if (window.__tl) { window.__tl.destroy(); document.querySelectorAll('.tlTestHost').forEach(x => x.remove()); }
         const h = document.createElement('div'); h.className = 'tlTestHost'; h.style.cssText = box || 'position:fixed;inset:0;z-index:2147480000;background:var(--card);display:flex;flex-direction:column';
@@ -64,11 +64,15 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     });
     const setFx = (id, events, cancelled) => page.evaluate(a => { window.__fx[a.id] = a; }, { id, events, cancelled: cancelled || null, where: Timeline.whereOf(events, cancelled || null, { record: true }) });
     const painted = n => page.waitForFunction(n => window.__el.querySelectorAll('.tlSt[data-key], .tlStop.d').length >= n, n, { timeout: 5000 });
+    // what the lanes draw of a history: a seal per real milestone and per person's action, one per piece (charm-nest-timeline-ui.js)
+    const SEAL = new Set(['arrived', 'placed', 'engraved', 'engraveApproved', 'laserDone', 'sorted', 'welded', 'assembled', 'shipped', 'etsyCompleted', 'cancelled', 'etsyCancelled', 'cancelRestored', 'removed', 'held', 'released', 'restored', 'cancelAlert']);
+    const sealsOf = evs => new Set(evs.filter(e => SEAL.has(e.type)).map(e => e.type + '|' + (e.lineKey || ''))).size;
     const q = (sel, fn) => page.evaluate(({ sel, fn }) => (new Function('els', 'return (' + fn + ')(els)'))([...window.__el.querySelectorAll(sel)]), { sel, fn: fn.toString() });
 
     // ── 2 · a live step over 100 events: under a frame, the drawn stamps kept ──
     const P = '4100000100', evs100 = await page.evaluate(id => window.__gen(id, 100, 5 * 864e5), P);
-    await setFx(P, evs100); await page.evaluate(id => window.__mount(id), P); await painted(100); await page.waitForTimeout(800);
+    const seals100 = sealsOf(evs100);
+    await setFx(P, evs100); await page.evaluate(id => window.__mount(id), P); await painted(seals100); await page.waitForTimeout(800);
     // (three rounds of 7, the best median: a busy machine's hiccup is not the component's cost)
     const perf = await page.evaluate(async id => {
       const first = window.__el.querySelector('.tlSt[data-key]'), med = [];
@@ -79,15 +83,16 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
       }
       return { median: Math.min(...med), kept: first.isConnected && window.__el.querySelector('.tlSt[data-key]') === first, n: window.__el.querySelectorAll('.tlSt[data-key]').length, order: [...window.__el.querySelectorAll('.tlSt[data-key]')].map(b => +b.style.left.replace('px', '')).every((x, i, a) => !i || x >= a[i - 1]) };
     }, P);
-    assert.equal(perf.n, 121); assert(perf.kept, 'the stamps already drawn are kept'); assert(perf.order, 'the stamps stay in time order in the page');
+    assert(seals100 > 35 && seals100 < 60, 'the noise draws no seal: ' + seals100 + ' of 100');
+    assert.equal(perf.n, seals100, 'the 21 live notes are kept in the record and draw no seal'); assert(perf.kept, 'the stamps already drawn are kept'); assert(perf.order, 'the stamps stay in time order in the page');
     assert(perf.median < 16, `a live redraw of 100 events takes ${perf.median.toFixed(1)} ms (budget 16)`);
-    console.log(`  ✓ 2 · a live step over 100 events: ${perf.median.toFixed(1)} ms (median of 7, best of three rounds), the drawn stamps kept and in order`);
+    console.log(`  ✓ 2 · a live step over 100 events (${seals100} seals drawn of 121 records): ${perf.median.toFixed(1)} ms (median of 7, best of three rounds), the drawn stamps kept and in order`);
 
     // ── 3 · a restore whose cancelRestored event was not written ──
     const R = '4100000200', base = await page.evaluate(id => window.__gen(id, 12, 3 * 864e5), R);
     const cxEv = { id: `${R}~cancelled~c1`, orderId: R, type: 'cancelled', at: Date.now() - 6e4, by: 'Paul', text: 'Cancelled by Paul' };
     await setFx(R, base.concat([cxEv]), null);
-    await page.evaluate(id => window.__mount(id), R); await painted(13); await page.waitForTimeout(300);
+    await page.evaluate(id => window.__mount(id), R); await painted(sealsOf(base) + 1); await page.waitForTimeout(300);
     let r = await page.evaluate(() => ({ now: window.__el.querySelector('.tlNowT').textContent, x: window.__el.querySelectorAll('.tlStop.x').length, stamp: window.__el.querySelectorAll('.tlCxStamp').length }));
     assert.doesNotMatch(r.now, /Cancelled/, 'the record is gone: not cancelled, as the server says'); assert.equal(r.x, 0); assert.equal(r.stamp, 0);
     // a cancel recorded on this page counts at once (before the server has it)
@@ -99,7 +104,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     // ── 6 · the CANCELLED stamp follows the cancel; odd types draw ──
     const E = '4100000300', ev6 = base.map(e => Object.assign({}, e, { id: e.id.replace(R, E), orderId: E }));
     await setFx(E, ev6, { at: Date.now() - 5e5, by: 'Paul', why: 'Asked' });
-    await page.evaluate(id => window.__mount(id), E); await painted(12); await page.waitForTimeout(1300);
+    await page.evaluate(id => window.__mount(id), E); await painted(sealsOf(ev6)); await page.waitForTimeout(1300);
     const t1 = await page.evaluate(() => window.__el.querySelector('.tlCxStamp').textContent);
     await setFx(E, ev6, { at: Date.now() - 2e5, by: 'Etsy', why: 'Buyer requested', source: 'etsy' });
     await page.evaluate(() => window.__tl.refresh()); await page.waitForTimeout(200);
@@ -107,15 +112,15 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     assert.match(t1, /BY PAUL/); assert.equal(t2.length, 1); assert.match(t2[0], /ON ETSY/, 'the stamp says who cancelled it now');
     const O = '4100000400';
     await page.evaluate(id => { window.__fx[id] = { events: ['bogus', 'arrived', 'constructor', 'toString', 'placed'].map((type, i) => ({ id: `${id}~${type}~o${i}`, type, at: Date.now() - (5 - i) * 36e5 })), cancelled: null, where: null }; window.__mount(id); }, O);
-    await painted(5);
+    await painted(2);
     r = await page.evaluate(() => { for (const b of window.__el.querySelectorAll('.tlSt[data-key]')) b.click(); for (const c of window.__el.querySelectorAll('.tlChip')) c.click(); return { n: window.__el.querySelectorAll('.tlSt[data-key]').length, now: window.__el.querySelector('.tlNowT').textContent }; });
-    assert.equal(r.n, 5); assert.equal(r.now, 'On a sheet');
+    assert.equal(r.n, 2, 'bogus, constructor and toString draw no seal; arrived and placed do'); assert.equal(r.now, 'On a sheet');
     console.log('  ✓ 6 · the CANCELLED stamp goes from BY PAUL to ON ETSY with the record; unknown and prototype-named types draw and click');
 
     // ── 5 · keyboard ──
-    await page.evaluate(id => window.__mount(id), R); await painted(13); await page.waitForTimeout(500);
+    await page.evaluate(id => window.__mount(id), R); await painted(sealsOf(base) + 1); await page.waitForTimeout(500);
     r = await page.evaluate(() => {
-      const el = window.__el, lbl = () => el.querySelector('.tlDetail .tlLbl').textContent.replace(/ ·.*/, '') + '#' + el.querySelector('.tlDetail .tlLbl').textContent.match(/step (\d+)/)[1];
+      const el = window.__el, lbl = () => el.querySelector('.tlDetail .tlLbl').textContent.replace(/ ·.*/, '') + '#' + el.querySelector('.tlDetail .tlLbl').textContent.match(/milestone (\d+)/)[1];
       const key = k => document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
       el.querySelector('.tlSt[data-key]').click(); el.querySelector('.tlArw').focus();
       const out = [lbl()]; for (let i = 0; i < 3; i++) { key('ArrowRight'); out.push(lbl() + (document.activeElement.classList.contains('tlArw') ? '' : '!lost')); }
