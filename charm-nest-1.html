@@ -1072,6 +1072,19 @@ dialog.hist{border:0;border-radius:var(--r);box-shadow:0 24px 70px rgba(0,0,0,.2
 dialog.hist[open]{display:flex;flex-direction:column}
 dialog.hist::backdrop{background:rgba(24,20,16,.4)}
 dialog.hist h2{font:22px var(--serif);font-weight:400;margin:0;padding:16px 18px 0}
+/* the Sets menu preview turned to its Back (SetPicker turn): the order view's own Front | Back switch on the title line,
+   every sheet drawn from behind in full ink over the same box, nothing laid over it */
+dialog.hist h2 .spFace{margin-left:12px;vertical-align:4px}
+.setPreviewGrid figure{perspective:1600px}
+.spPlate{position:relative}
+.spPlate.back>img{visibility:hidden}
+.spPlate.back>.hEmpty{display:none}
+.spBack{position:absolute;inset:0;display:grid;place-items:center;background:#fffefb;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.spPlate.noPic>.spBack{position:relative;inset:auto;aspect-ratio:var(--ar,2)}
+.spBack[hidden],.spWait[hidden]{display:none}
+.spBack canvas{display:block}
+.spWait{position:absolute;left:8px;bottom:6px;display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;background:var(--card);border:1px solid var(--line);font:11px var(--sans);color:var(--ink45);white-space:nowrap}
+.spWait i{width:9px;height:9px;border:2px solid var(--line);border-top-color:var(--gold2);border-radius:50%;animation:spin .8s linear infinite}
 dialog.hist .x{position:absolute;top:12px;right:14px;margin:0}
 .hEmpty{padding:34px;text-align:center;color:var(--ink45);font-size:13px}
 .hEmpty.bad{color:#8a3a26}
@@ -5837,7 +5850,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-backface2"></script>
+<script src="charm-nest-bridge.js?v=20260928-bkX"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-backface2"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
