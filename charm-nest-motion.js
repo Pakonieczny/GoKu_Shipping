@@ -724,6 +724,48 @@
     }).observe(doc.documentElement, { attributes: true, attributeFilter: ["open"], attributeOldValue: true, subtree: true });
   } catch (_) {}
 
-  root.Motion = { T, ghost, fly, flyIn, grow, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn };
+  /* ── Front | Back · engraving, one turn at a time (Paul, 28 Sep: "a beautiful animation on every sheet view"). A sheet
+     turns to its edge, is drawn from the side asked for, and comes round. A press while it turns is taken up by that turn:
+     the side drawn at its edge is the one asked for last, and a press after the edge turns it once more when it has come
+     round — never a second turn started over the first. The side it ends on is always the last one asked for.
+     o: el() the element(s) that turn, now; shown() the side drawn now; paint(face) draws a side (at the edge, or at once when
+     it cannot turn); still() no motion now; persp a perspective() prefix; delay(i) a stagger. ── */
+  function turner(o) {
+    const S = { want: null, busy: false };
+    const go = delay => {
+      const to = S.want; if (to == null || to === o.shown()) return;
+      const els = [].concat((o.el && o.el()) || []).filter(e => e && e.isConnected && e.animate);
+      if (!els.length || reduced() || (o.still && o.still())) return o.paint(to);
+      S.busy = true;
+      const d = to === "back" ? 1 : -1, P = o.persp || "";
+      const edge = () => o.paint(S.want), done = () => { S.busy = false; if (S.want !== o.shown()) go(0); };
+      Promise.all(els.map((e, i) => e.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * d}deg)` }],
+        { duration: 300, delay: (delay || 0) + (o.delay ? o.delay(i) : 0), easing: "cubic-bezier(.4,0,1,1)" }).finished))
+        .then(() => { edge(); return Promise.all(els.filter(e => e.isConnected).map(e => e.animate([{ transform: P + `rotateY(${-90 * d}deg)` }, { transform: P + "rotateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" }).finished)); },
+          () => edge())
+        .catch(() => {}).then(done);
+    };
+    return { ask(face, delay) { S.want = face; if (!S.busy) go(delay); }, busy: () => S.busy, want: () => S.want };
+  }
+  /** Words landing on a sheet drawn from behind: the drawing without them fades out over the one with them, never a pop.
+      A plate still turning comes round first on its plain back (with its spinner), then the words fade in. */
+  function landIn(cv, paint) {
+    const turning = () => (doc.getAnimations ? doc.getAnimations() : []).filter(a => { const t = a.effect && a.effect.target; if (!t || !t.contains || !t.contains(cv) || a.playState !== "running") return false;
+      try { return a.effect.getKeyframes().some(k => /rotateY/.test(k.transform || "")); } catch (_) { return false; } });
+    const go = () => {
+      if (!cv || !cv.isConnected || reduced() || !cv.width || !cv.height || !cv.offsetWidth || !cv.offsetParent) return paint();
+      const c = doc.createElement("canvas"); c.width = cv.width; c.height = cv.height;
+      try { c.getContext("2d").drawImage(cv, 0, 0); } catch (_) { return paint(); }
+      c.className = "mLand"; c.setAttribute("aria-hidden", "true");
+      Object.assign(c.style, { position: "absolute", left: cv.offsetLeft + "px", top: cv.offsetTop + "px", width: cv.offsetWidth + "px", height: cv.offsetHeight + "px", margin: "0", pointerEvents: "none", zIndex: "1" });
+      cv.after(c); paint();
+      c.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 420, easing: "ease", fill: "forwards" }).finished.catch(() => {}).then(() => c.remove());
+    };
+    let n = 0;
+    const wait = () => { const t = turning(); if (!t.length || ++n > 6) return go(); Promise.all(t.map(a => a.finished.catch(() => {}))).then(wait); };
+    wait();
+  }
+
+  root.Motion = { T, ghost, fly, flyIn, grow, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);

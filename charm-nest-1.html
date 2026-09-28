@@ -2763,8 +2763,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=m14"></script>
-<script src="charm-nest-timeline-ui.js?v=m14"></script>
+<script src="charm-nest-motion.js?v=m15"></script>
+<script src="charm-nest-timeline-ui.js?v=m15"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5030,6 +5030,9 @@ function buildCards() {
     });
     q("canvas").addEventListener("click", e => onPreviewClick(cur(), e));
     q("face").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnCard(m.key, b.dataset.face); });
+    // (a saved sheet's backs are read as the switch is neared, so the turn never waits on them)
+    const nearFace = () => { const CB = cardBack(), id = cur().sheetId; if (CB && CB.warmFont) CB.warmFont(); if (CB && id) CB.list(id).catch(() => {}); };
+    q("face").addEventListener("pointerenter", nearFace); q("face").addEventListener("focusin", nearFace);
     q("agentTog").parentElement.onclick = () => { const pg = cur(); pg.agentOpen = !pg.agentOpen; renderAgent(pg); };
     renderCard(sh);
   }
@@ -5366,15 +5369,14 @@ function faceOf(cv) { return cv && cv._face === "back" ? "back" : "front"; }
     from the other side, and comes round. */
 function turnCard(metal, face) {
   const prim = S.sheets[metal], el = prim && prim.cardEl, cv = el && $(`[data-r="canvas"]`, el); if (!cv) return;
-  if (cv._turning || face === faceOf(cv)) return;
-  const sh = activePage(metal), d = face === "back" ? 1 : -1;
-  cv._faceTo = face; paintFace(sh, cv);
-  const swap = () => { cv._face = face; cv._faceTo = null; const pg = activePage(metal); if (pg.el) drawPreviewNow(pg); };
-  if (document.hidden || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || !cv.animate) return swap();
-  cv._turning = true;
-  cv.animate([{ transform: "perspective(1600px) rotateY(0)" }, { transform: `perspective(1600px) rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished
-    .then(() => { swap(); return cv.animate([{ transform: `perspective(1600px) rotateY(${-90 * d}deg)` }, { transform: "perspective(1600px) rotateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" }).finished; }, swap)
-    .catch(() => {}).then(() => { cv._turning = false; });
+  // one turn at a time (Motion.turner): a press while it turns is taken up by that turn (it was dropped, so a quick
+  // Back then Front ended on Back), and the card comes round on the side asked for last
+  if (face === (cv._faceTo || faceOf(cv))) return;
+  cv._faceTo = face; paintFace(activePage(metal), cv);
+  const swap = f => { cv._face = f; if (cv._faceTo === f) cv._faceTo = null; const pg = activePage(metal); if (pg.el) { drawPreviewNow(pg); paintFace(pg, cv); } };
+  if (!window.Motion || !Motion.turner) return swap(face);
+  if (!cv._turn) cv._turn = Motion.turner({ el: () => cv, shown: () => faceOf(cv), paint: swap, still: () => document.hidden, persp: "perspective(1600px) " });
+  cv._turn.ask(face);
 }
 /** The switch: shown once the sheet has something on it, the side it is on, and a spinner while the backs come. */
 function paintFace(sh, cv) {
@@ -5383,8 +5385,15 @@ function paintFace(sh, cv) {
   const B = sh.recalled && !sh.charms.length ? sh._backSheet : null, wait = face === "back" && (B ? !B.done : sh._backWait > 0);
   const key = `${has}|${face}|${wait}`; if (seg._key === key) return; seg._key = key;
   seg.hidden = !has && face === "front";
+  if (!seg.hidden && cardBack() && cardBack().warmFont) cardBack().warmFont();   // (the engraving font, in idle time, once)
   for (const b of $$("[data-face]", seg)) { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); }
   $(".spin", seg).hidden = !wait; seg.title = wait ? "Reading this sheet's back engraving…" : "";
+}
+/** A card's back drawn again with the words that have just landed: they fade in over the plain back, never pop. */
+function landWords(sh) {
+  const cv = sh.el && $(`[data-r="canvas"]`, sh.el);
+  if (!cv || !window.Motion || !Motion.landIn) return drawPreview(sh);
+  Motion.landIn(cv, () => { if (sh.el) { drawPreviewNow(sh); paintFace(sh, cv); } });
 }
 /** A charm on a page, as the window's back drawing takes a piece (kept with the charm, so its words are laid out once). */
 const backPieces = new WeakMap();
@@ -5401,7 +5410,8 @@ function liveBacks(sh) {
   if (sh._backsAsked !== key) {
     sh._backsAsked = key; const jobs = [], font = CB.font(); if (font) jobs.push(font);
     if (key) jobs.push(CB.list(key).then(l => { if (sh.sheetId === key) sh._backList = l; }, () => {}));
-    if (jobs.length) { sh._backWait = (sh._backWait || 0) + 1; Promise.all(jobs).then(() => { sh._backWait--; sh._backs = null; if (sh.el) drawPreview(sh); }); }
+    // (the words fade in as they land, once the card has come round on its plain back: Motion.landIn)
+    if (jobs.length) { sh._backWait = (sh._backWait || 0) + 1; Promise.all(jobs).then(() => { sh._backWait--; sh._backs = null; if (sh.el) landWords(sh); }); }
   }
   const b = sh._backs; if (b && now - b.at < 1000 && b.pool === sh.backPool) return b.map;
   sh._backs = { at: now, pool: sh.backPool, map: CB.ofPage(sh, sh._backList) };
@@ -5411,7 +5421,7 @@ function liveBacks(sh) {
     backs, at true scale in the card's frame. Until the record is read, the bare sheet; each design is drawn as it comes. */
 function drawRecalledBack(sh, cv, ctx, k, sw, sh2) {
   const CB = cardBack(), id = sh.sheetId || sh.recalled.id;
-  const B = sh._backSheet = CB.sheet(id, sh._onBack || (sh._onBack = () => { if (sh.el) drawPreview(sh); }));
+  const B = sh._backSheet = CB.sheet(id, sh._onBack || (sh._onBack = b => { if (!sh.el) return; if (b && b.done && !b._landed) { b._landed = true; landWords(sh); } else drawPreview(sh); }));
   sh._backView = { k, sw };
   ctx.save(); ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, sw - 1, sh2 - 1);
   if (B.pieces) {
@@ -6035,9 +6045,9 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=m14"></script>
-<script src="charm-nest-bridge.js?v=m14"></script>
-<script src="charm-nest-sheetwin.js?v=m14"></script>
+<script src="order-timeline.js?v=m15"></script>
+<script src="charm-nest-bridge.js?v=m15"></script>
+<script src="charm-nest-sheetwin.js?v=m15"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
