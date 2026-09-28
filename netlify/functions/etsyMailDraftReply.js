@@ -1707,11 +1707,13 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       service (and its business-day window), with the in-time judgment
       if the customer gave a date, and set
       ready_for_human_approval:true so staff confirm the label. Never
-      write that the team is checking or confirming it. The exception:
-      when the order's label was bought before the upgrade was paid
-      (a label or shipped date earlier than the upgrade receipt), don't
-      say it ships with that service; say we'll confirm here whether
-      the label can still be switched, and hold.
+      write that the team is checking or confirming it. The one
+      exception: when the order's label date is a day or more before
+      the upgrade receipt's date (or USPS scanned it before the upgrade
+      was paid), say we'll confirm here whether the label can still be
+      switched, and hold. A same-day or unknown label time, or staff
+      having asked for the upgrade in this thread, takes the normal
+      path: confirm the service, its window and the in-time judgment.
 
    4. If the customer has crossed the 7-days-past-EDD threshold,
       don't hold them off: say it qualifies and offer the choice of a
@@ -2556,9 +2558,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         transit, or Express, +$55, 1-2) the shop can set up through
         the shipping-upgrade listing (its link is in the ADD-ON block
         or the fact sheet; never search for it). Skip the upgrade when
-        no shipping speed can make the date, and when a label is
-        already bought say a person checks whether it can still be
-        changed. Do NOT mention rush production exists in
+        no shipping speed can make the date, and when offering the
+        upgrade on an order whose label is already bought, say we'll
+        confirm here whether it can still be changed. Do NOT mention rush production exists in
         these cases — it would falsely suggest it's still available.
         When the customer says they bought the shipping-upgrade
         listing, confirm the order will ship with that service.
