@@ -554,9 +554,12 @@
   /** Everything the closing needs, read while the window is still open. */
   function snapshot(dlg) {
     const D = rectOf(dlg.getBoundingClientRect()); if (!D || D.width < 2 || D.height < 2) return null;
+    // (a window closed while it still grows is bare, its surface drawn apart: its own colours are read without that)
+    const bare = dlg.classList.contains("mdGrow"); if (bare) dlg.classList.remove("mdGrow");
     const cs = getComputedStyle(dlg); let back = "";
     try { if (isModal(dlg)) back = getComputedStyle(dlg, "::backdrop").backgroundColor; } catch (_) {}
     const snap = { dlg, D, back, radius: cs.borderRadius, bg: cs.backgroundColor, bgi: cs.backgroundImage, shadow: cs.boxShadow, src: dlg._mdSrc || null, copy: null, scroll: [] };
+    if (bare) dlg.classList.add("mdGrow");
     if (dlg.getElementsByTagName("*").length > 5000) return snap;
     const c = dlg.cloneNode(true), a = dlg.getElementsByTagName("*"), b = c.getElementsByTagName("*");
     for (let i = 0; i < a.length; i++) { const n = a[i]; if (n.scrollTop || n.scrollLeft) snap.scroll.push([b[i], n.scrollTop, n.scrollLeft]); }
@@ -576,7 +579,9 @@
   function flyBack(snap, opts = {}) {
     try {
       const { dlg, D } = snap, still = reduced();
-      const under = [...doc.querySelectorAll("dialog[open]")].filter(d => d !== dlg && isModal(d)).pop() || null;
+      // (the window it lay over, if one is still open: never one opened after it, which the copy would cover)
+      const mine = dlg._mdSeq || Infinity, seqOf = d => d._mdSeq || 0;
+      const under = [...doc.querySelectorAll("dialog[open]")].filter(d => d !== dlg && isModal(d) && seqOf(d) < mine).sort((a, b) => seqOf(a) - seqOf(b)).pop() || null;
       const L = layer(under), A = [];
       const run = (el, frames, o) => { const a = el.animate(frames, Object.assign({ duration: DG.close, easing: DG.back, fill: "forwards" }, o)); A.push(a); return a; };
       const host = doc.createElement("div"); host.className = "mdGhost"; host.setAttribute("aria-hidden", "true"); host.inert = true;
@@ -617,7 +622,8 @@
   function dialogClose(dlg, opts = {}) {
     if (!dlg || !dlg.open) return Promise.resolve();
     let snap = null;
-    if (!skips(dlg)) { try { snap = snapshot(dlg); } catch (_) {} try { stopOpen(dlg); } catch (_) {} dlg._mdClosing = true; }
+    // (_mdSnap: an Esc whose cancel handler closes the window itself leaves this one copy, not a second from the Esc)
+    if (!skips(dlg)) { try { snap = snapshot(dlg); } catch (_) {} try { stopOpen(dlg); } catch (_) {} dlg._mdClosing = true; dlg._mdSnap = null; }
     try { if (opts.returnValue !== undefined) nativeClose.call(dlg, opts.returnValue); else nativeClose.call(dlg); }
     finally { dlg.classList.remove("mdIn"); }
     return snap ? flyBack(snap, opts) : Promise.resolve();
@@ -626,7 +632,9 @@
   const from = (dlg, src) => { if (dlg) dlg._mdFrom = src || null; };
   if (nativeShow && nativeClose && !root.HTMLDialogElement.prototype._mdWrapped) {
     const P = root.HTMLDialogElement.prototype; P._mdWrapped = true;
+    let seq = 0;   // the order windows were opened in, so a closing copy never lands over a window opened after it
     P.showModal = function () {
+      if (!this.open) this._mdSeq = ++seq;
       if (this.open || skips(this)) return nativeShow.apply(this, arguments);
       const f = this._mdFrom; this._mdFrom = null; this._mdClosing = false; this._mdSnap = null;
       if (!reduced()) this.classList.add("mdIn");
