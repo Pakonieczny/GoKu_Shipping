@@ -8943,10 +8943,14 @@ const OrderWin = window.OrderWin = (() => {
     W.tlFor = null; const t = byId("owTimeline"); if (t) t.innerHTML = ""; const r = byId("owRail"); if (r) r.innerHTML = "";
   }
 
-  /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and the rest stepped back (SheetWin.drawOrder),
+  /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
+     drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null };
-  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
+  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null, fade: null };
+  // while a sheet is read the plate steps back a little; only one such fade at a time, and it is always let go of, so a
+  // sheet switched while the last was still reading never leaves the plate half-faded (a haze over the charms)
+  function plateFade(a) { if (SV.fade) tryDo(() => SV.fade.cancel()); SV.fade = a || null; }
+  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; plateFade(null); const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
   const nOf = name => +((/_Sheet-(\d+)/.exec(name || "") || [])[1]) || null;
   /** Every sheet the order has pieces on: the pages this sorter holds, the pool's records, and else the Library's search. */
   async function sheetsFor(r) {
@@ -9001,11 +9005,12 @@ const OrderWin = window.OrderWin = (() => {
     }
     if (!window.SheetWin || !SheetWin.drawOrder) { plateWait(null); byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))}</b><span>The sheet window is not loaded on this page.</span></div>`); return; }
     plateWait("Reading " + sheetName(s) + "…");
-    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .35 }], { duration: 160, fill: "forwards" });
+    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .55 }], { duration: 160, fill: "forwards" });
+    plateFade(fade);
     try {
       const info = await SheetWin.drawOrder(cv, s.id || s.page, rid, {
-        onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); if (fade) fade.cancel(); cv.style.visibility = "";
-          if (!still()) cv.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 240, easing: "ease" });
+        onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); plateFade(null); cv.style.visibility = "";
+          if (!still()) cv.animate([{ opacity: .55 }, { opacity: 1 }], { duration: 240, easing: "ease" });
           paintPanel(inf); paintFoot(inf); },
         onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); }
       });
@@ -9013,7 +9018,7 @@ const OrderWin = window.OrderWin = (() => {
       plateWait(null); if (info.failed && info.failed.length) toast(`${info.failed.length} design(s) of this sheet could not be read; they show as outlines`, "bad", 6000);
     } catch (e) {
       if (tok !== SV.tok) return;
-      if (fade) fade.cancel(); plateWait(null); cv.style.visibility = "hidden";
+      plateFade(null); plateWait(null); cv.style.visibility = "hidden";
       byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))} could not be read</b><span>${esc(e.message)}</span><button type="button" class="btn ghost sm">Try again</button></div>`);
       byId("owPlateWrap").querySelector(".owPlateNone button").onclick = () => sheetDraw();
     }

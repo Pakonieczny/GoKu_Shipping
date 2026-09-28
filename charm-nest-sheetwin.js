@@ -1360,15 +1360,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const fs = focusSet();
     let u = 1;
     if (W.geom && (fs || (matches && matches.length < W.pieces.length))) {
-      // everything else steps back, the charms in hand come forward in their own lines (the first time after an opening
-      // it comes gently, the sheet having just arrived)
+      // the charms in hand come forward in their own lines, each in its colour and ringed (the first time after an
+      // opening it comes gently, the sheet having just arrived). Nothing is laid over the sheet: every other charm on it
+      // stays whole and sharp (Paul, 28 Sep: "no weird semi-transparent haze over the sheet").
       if (W.dimRamp) { W.dimRamp = false; if (!still()) { W.fx.push({ kind: "dim", t0: t1, ms: 280 }); fxLoop(); } }
       const d = W.fx.find(f => f.kind === "dim"); u = d ? Math.min(1, Math.max(0, (t1 - d.t0) / d.ms)) : 1; u = 1 - (1 - u) * (1 - u);
       const keep = new Set((fs ? fs.mates : []).concat(matches || []));
       ctx.save(); ctx.globalAlpha = u;
-      ctx.fillStyle = "rgba(255,254,251,.62)"; ctx.fillRect(R, R, cv.width - R, cv.height - R);
       // (the rest of the order lighter than the charm itself, which is marked last, above them)
       for (const x of keep) { if (x.gone || (fs && x === fs.f)) continue; const mate = !!fs && fs.mates.includes(x); withPiece(ctx, x, () => {
+        ctx.save(); ctx.scale(1.07, 1.07); outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.55)" : "rgba(74,107,120,.55)"; ctx.lineWidth = 1.6 * W.dpr / 1.07; ctx.stroke(); ctx.restore();
         ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
         if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.6)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (mate ? 1.2 : 1.4) * W.dpr; ctx.stroke(); }); }
@@ -1422,6 +1423,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const s = u > 0 && u < 1 ? 1 + .08 * Math.sin(Math.PI * u) : 1;
     withPiece(ctx, x, () => {
       if (s !== 1) { ctx.scale(s, s); ctx.fillStyle = "#fffefb"; outlinePath(ctx, x); ctx.fill(); }
+      // a ring just outside it, so it is told apart by its own gold and this line, not by dimming the sheet round it
+      ctx.save(); ctx.scale(1.1, 1.1); outlinePath(ctx, x); ctx.strokeStyle = "rgba(184,137,58,.85)"; ctx.lineWidth = 2.4 * W.dpr / (s * 1.1); ctx.stroke(); ctx.restore();
       ctx.fillStyle = "rgba(202,168,97,.42)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
       if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
       outlinePath(ctx, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr / s; ctx.stroke();
@@ -3683,8 +3686,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     G.dpr = dpr; G.R = R * dpr; G.k = (cw - G.R) / st.wPt; G.Wp = cw - G.R; G.Hp = ch - G.R;
     return true;
   }
-  /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, the other charms stepped back,
-      and this order's charms in gold (the one pointed at in a firmer line). */
+  /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, every other charm drawn whole and
+      sharp, and this order's charms in gold, ringed (the one pointed at in a firmer line). */
   function paintOrderBase(G) {
     if (!layoutOrder(G)) return false;
     const cv = G.cv, b = G.base || (G.base = document.createElement("canvas")); if (b.width !== cv.width || b.height !== cv.height) { b.width = cv.width; b.height = cv.height; }
@@ -3706,10 +3709,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (x.c && !G.backSide) drawOf(ctx, G, x); else { ctx.strokeStyle = "rgba(60,54,46,.45)"; ctx.lineWidth = dpr; orderOutline(ctx, G, x); ctx.stroke(); }
       });
     }
-    ctx.fillStyle = "rgba(255,254,251,.64)"; ctx.fillRect(0, 0, G.Wp, G.Hp);
+    // (Paul, 28 Sep: "make sure that everything is always perfectly visible and there's no weird semi-transparent haze
+    //  over the sheet" — nothing is ever laid over the sheet: the order's pieces are told apart by their own gold, a
+    //  firmer line and a ring just outside them, never by washing the rest of the sheet out)
     for (const x of G.mine) {
       const on = G.focus && (x.poolId === G.focus || x.id === G.focus);
       orderPiece(ctx, G, x, () => {
+        const rs = on ? 1.1 : 1.07;
+        ctx.save(); ctx.scale(rs, rs); orderOutline(ctx, G, x); ctx.strokeStyle = on ? "rgba(184,137,58,.85)" : "rgba(184,137,58,.6)"; ctx.lineWidth = (on ? 2.4 : 1.8) * dpr / rs; ctx.stroke(); ctx.restore();
         ctx.fillStyle = on ? "rgba(202,168,97,.58)" : "rgba(202,168,97,.42)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
         if (!G.backSide) drawOf(ctx, G, x);
         orderOutline(ctx, G, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = (on ? 3.6 : 2.5) * dpr; ctx.stroke();
