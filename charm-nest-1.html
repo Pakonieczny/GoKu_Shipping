@@ -5020,8 +5020,30 @@ function onPreviewClick(sh, e) {
    and a charm not placed on it keep the charm inspector below. */
 function inspectOnSheet(sh, c, el) {
   if (!c || !sh.sheetId || !window.SheetWin || !sh.placements.some(p => p.id === c.id)) return false;
-  SheetWin.open(sh.sheetId, { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
+  // the sheet grows out of this card into the window, with the charm lit as it was clicked, and goes back into it when
+  // the window closes (Paul, 28 Sep): the card is drawn now, not on its next frame, so the picture that grows shows it
+  const cv = el && el.tagName === "CANVAS" && el.isConnected ? el : null;
+  if (cv) try { drawPreviewNow(sh); } catch (_) {}
+  SheetWin.open(sh.sheetId, cv ? { select: c.poolId || c.id, origin: cardOrigin(sh, cv) } : { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
   return true;
+}
+/** Where a Nest card shows its sheet, for the sheet window to grow out of and go back into: the card's picture frame, the
+    sheet inside it (the rulers and the rest of the 100 × 50 mm frame left out), and a copy of what it shows now. */
+function cardOrigin(sh, cv) {
+  const st = stockFor(sh.metal, sh), area = () => { const v = sh._view; return v && cv.width ? { R: v.R, w: Math.min(cv.width - v.R, st.wPt * v.k), h: Math.min(cv.height - v.R, st.hPt * v.k) } : null; };
+  return {
+    stock: { wPt: st.wPt, hPt: st.hPt },
+    rects() {
+      const a = area(); if (!a || !cv.isConnected || !cv.getClientRects().length) return null;
+      const r = cv.getBoundingClientRect(), sx = r.width / cv.width, sy = r.height / cv.height;
+      return { box: (cv.closest(".shPreviewWrap") || cv).getBoundingClientRect(), sheet: new DOMRect(r.left + a.R * sx, r.top + a.R * sy, a.w * sx, a.h * sy) };
+    },
+    snap() {
+      const a = area(); if (!a || a.w < 2 || a.h < 2) return null;
+      const out = document.createElement("canvas"); out.width = Math.round(a.w); out.height = Math.round(a.h);
+      out.getContext("2d").drawImage(cv, a.R, a.R, a.w, a.h, 0, 0, out.width, out.height); return out;
+    }
+  };
 }
 
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
@@ -5549,7 +5571,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260928-merge"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-true"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-grow"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
