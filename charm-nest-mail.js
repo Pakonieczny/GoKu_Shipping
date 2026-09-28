@@ -1157,7 +1157,8 @@
     if (OW.dlg || !dlg) return;
     OW.dlg = dlg;
     const host = dlg.querySelector("#owPaneCust"); if (!host) return;
-    OW.P = Pane(host, { visible: () => dlg.open && OW.tab === "customer" });
+    // (in the full-screen order view the conversations are in its Overview: another view in front hides them)
+    OW.P = Pane(host, { visible: () => dlg.open && OW.tab === "customer" && !host.closest("[hidden]") });
     dlg.querySelectorAll("[data-ow-tab]").forEach(b => b.addEventListener("click", () => setTab(b.dataset.owTab, true)));
     dlg.querySelector(".owTabs")?.addEventListener("keydown", e => {
       if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
