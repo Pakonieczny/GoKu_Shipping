@@ -1189,7 +1189,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /* ── the record's pieces ── */
   function indexPieces() {
-    const rec = W.rec, saved = new Map((rec.charms || []).map(c => [c.id, c]));
+    const pieces = piecesOf(W.rec);
+    W.pieces = pieces; W.byId = new Map(pieces.map(x => [x.id, x])); W.byPool = new Map(pieces.filter(x => x.poolId).map(x => [x.poolId, x]));
+    W.orders = new Map(); for (const x of pieces) { const k = x.rid || "—"; if (!W.orders.has(k)) W.orders.set(k, []); W.orders.get(k).push(x); }
+    for (const x of pieces) x.eng = engOf(x);
+  }
+  // a record's placements as pieces: where each lies, and whose it is (the order view draws them too: drawOrder)
+  function piecesOf(rec) {
+    const saved = new Map((rec.charms || []).map(c => [c.id, c]));
     const pieces = [];
     for (const p of rec.placements || []) {
       const c = saved.get(p.id) || {};
@@ -1200,9 +1207,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         c: null, poolId, rid: /^\d+$/.test(rid) ? rid : "", sku: c.sku || (name.split(" · ")[1] || "").trim() || c.layer || "", name, copy, qty: m ? +m[2] : 1,
         tx: poolId ? poolId.split("_")[1] : "", sourceId: c.sourceId, index: c.index, hash: c.hash, thumb: c.thumbUrl || null });
     }
-    W.pieces = pieces; W.byId = new Map(pieces.map(x => [x.id, x])); W.byPool = new Map(pieces.filter(x => x.poolId).map(x => [x.poolId, x]));
-    W.orders = new Map(); for (const x of pieces) { const k = x.rid || "—"; if (!W.orders.has(k)) W.orders.set(k, []); W.orders.get(k).push(x); }
-    for (const x of pieces) x.eng = engOf(x);
+    return pieces;
   }
   const liveOf = id => allSheets().find(p => p.sheetId === id && p.placements.length) || null;
   // room that something has gone into since (an arrival, a move, a restore) is no longer shown as free
@@ -1525,9 +1530,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     for (const j of Engrave.items().values()) if (!j.editingBack && (j.copies || []).includes(x.poolId)) return j;
     return null;
   }
-  function engOf(x) {
-    const job = jobOfPiece(x), saved = W.rec?.engraving?.[x.poolId] || null;
-    const back = (W.rec?.backPool || []).find(b => b.poolId === x.poolId) || null;
+  function engOf(x, rec = W.rec) {
+    const job = jobOfPiece(x), saved = rec?.engraving?.[x.poolId] || null;
+    const back = (rec?.backPool || []).find(b => b.poolId === x.poolId) || null;
     if (job) {
       const s = job.state;
       // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
@@ -3608,5 +3613,168 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   function veil(text) { const E = W.el; if (!text) { E.veil.hidden = true; return; } E.veilText.textContent = text; E.veil.hidden = false; }
 
-  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, _W: W };
+  /* ── one order on its sheet, for the order view (OrderWin; Paul, 28 Sep: "the order window and the sheet view become
+     one"; plans/design/order-view-spec.md §4): the sheet drawn as this window draws it, with its rulers, the order's
+     pieces warm in a firm gold line under a slow gold ring and the rest stepped back; from behind (Back), mirrored as the
+     laser sees it, with the order's back engraving readable on its charm. What it knows of each piece (where it lies,
+     its copy, its back engraving) comes back for the view's own panel as soon as the record is read (onInfo); the
+     designs are the ones this window reads (sourceGeom, shared and cached), the order's own first, each drawn as it
+     comes (onProgress). A page this sorter holds that is not saved yet is drawn from the page. ── */
+  const orderRecs = new Map();   // sheet id → { at, p }: a record read in the last minute is not read again
+  function recFor(id) {
+    const hit = orderRecs.get(id); if (hit && Date.now() - hit.at < 60000) return hit.p;
+    const p = api("charmNestLibrary", { op: "getSheet", id }, { quiet: true }).then(r => { if (!r || !r.sheet) throw new Error("This sheet is no longer in the Library."); return r.sheet; });
+    p.catch(() => { if (orderRecs.get(id) && orderRecs.get(id).p === p) orderRecs.delete(id); });
+    orderRecs.set(id, { at: Date.now(), p }); if (orderRecs.size > 12) orderRecs.delete(orderRecs.keys().next().value);
+    return p;
+  }
+  const recOfPage = pg => ({ id: pg.sheetId || null, metal: pg.metal, sheetIndex: pg.sheetIndex || pg.page || 1, placements: pg.placements || [],
+    charms: (pg.charms || []).map(c => ({ id: c.id, name: c.name || "", poolId: c.poolId || null, order: c.order != null ? String(c.order) : "", sku: (c.orderInfo && c.orderInfo.sku) || "" })) });
+  function attachGeom(x, g, rec) {
+    if (g.pool) { const c = Pool.cloneCharm(g.base, x.id); Object.assign(c, { name: x.name, order: x.rid || c.order, poolId: x.poolId, metal: rec.metal }); x.c = c; return; }
+    const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
+    if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
+  }
+  function orderPiece(ctx, G, x, fn) { const p = x.p, k = G.k; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
+  function orderOutline(ctx, G, x, holes) {
+    const c = x.c; ctx.beginPath();
+    if (!c) { const w = x.p.wPt * G.k / (x.p.scale || 1), hh = x.p.hPt * G.k / (x.p.scale || 1); ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * G.dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
+    const cx = c.centerPt[0], cy = c.centerPt[1], k = G.k, t = (px, py) => [(px - cx) * k, (cy - py) * k];
+    CharmNestPDF.pathToCanvas(ctx, c.outline, t); if (holes) for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t);
+  }
+  const drawOf = (ctx, G, x) => { if (x.c) { const cx = x.c.centerPt[0], cy = x.c.centerPt[1], k = G.k; CharmNestPDF.drawCharm(ctx, x.c, (px, py) => [(px - cx) * k, (cy - py) * k], k); } };
+  /** Sizes the plate to its box (the sheet at its shape, its rulers along the top and the left). */
+  function layoutOrder(G) {
+    const cv = G.cv, st = G.st, host = cv.parentElement; if (!cv.isConnected || !st || !host) return false;
+    const dpr = Math.min(2.5, devicePixelRatio || 1), aw = host.clientWidth - 44, ah = host.clientHeight - 24; if (aw < 40 || ah < 30) return false;
+    const R = Math.round(Math.max(14, Math.min(22, aw * 0.022))), s = Math.min((aw - R) / st.wPt, (ah - R) / st.hPt);
+    const w = Math.floor(R + st.wPt * s), hh = Math.floor(R + st.hPt * s), cw = Math.round(w * dpr), ch = Math.round(hh * dpr);
+    if (cv.style.width !== w + "px") cv.style.width = w + "px";
+    if (cv.style.height !== hh + "px") cv.style.height = hh + "px";
+    if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+    G.dpr = dpr; G.R = R * dpr; G.k = (cw - G.R) / st.wPt; G.Wp = cw - G.R; G.Hp = ch - G.R;
+    return true;
+  }
+  /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, the other charms stepped back,
+      and this order's charms in gold (the one pointed at in a firmer line). */
+  function paintOrderBase(G) {
+    if (!layoutOrder(G)) return false;
+    const cv = G.cv, b = G.base || (G.base = document.createElement("canvas")); if (b.width !== cv.width || b.height !== cv.height) { b.width = cv.width; b.height = cv.height; }
+    const ctx = b.getContext("2d"), R = G.R, dpr = G.dpr, mine = new Set(G.mine), drawn = G.pieces.some(x => x.c);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, b.width, b.height);
+    ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, b.width, b.height);
+    tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
+    ctx.save(); ctx.translate(R, R);
+    if (G.backSide) { ctx.translate(G.Wp, 0); ctx.scale(-1, 1); }
+    ctx.save(); ctx.beginPath(); ctx.rect(0, 0, G.Wp, G.Hp); ctx.clip();
+    ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, G.Wp, G.Hp);
+    // the saved picture while the designs are read: the pieces are outlines on it
+    if (G.img && !drawn && !G.backSide) try { ctx.drawImage(G.img, 0, 0, G.Wp, G.Hp); } catch (_) {}
+    for (const x of G.pieces) {
+      if (mine.has(x) || (G.img && !drawn && !x.c && !G.backSide)) continue;
+      orderPiece(ctx, G, x, () => {
+        const cu = x.c && x.c.custom;
+        ctx.fillStyle = cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
+        if (x.c && !G.backSide) drawOf(ctx, G, x); else { ctx.strokeStyle = "rgba(60,54,46,.45)"; ctx.lineWidth = dpr; orderOutline(ctx, G, x); ctx.stroke(); }
+      });
+    }
+    ctx.fillStyle = "rgba(255,254,251,.64)"; ctx.fillRect(0, 0, G.Wp, G.Hp);
+    for (const x of G.mine) {
+      const on = G.focus && (x.poolId === G.focus || x.id === G.focus);
+      orderPiece(ctx, G, x, () => {
+        ctx.fillStyle = on ? "rgba(202,168,97,.58)" : "rgba(202,168,97,.42)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
+        if (!G.backSide) drawOf(ctx, G, x);
+        orderOutline(ctx, G, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = (on ? 3.6 : 2.5) * dpr; ctx.stroke();
+      });
+    }
+    ctx.restore();
+    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * G.k); ctx.strokeRect(.5, .5, G.Wp - 1, G.Hp - 1);
+    ctx.restore();
+    // from behind, the order's words read the right way round on its charm
+    if (G.backSide) for (const x of G.mine) {
+      const words = x.eng && x.eng.text; if (!words) continue;
+      const px = R + G.Wp - x.p.cxPt * G.k, py = R + x.p.cyPt * G.k, size = Math.max(9 * dpr, Math.min(14 * dpr, Math.min(x.p.wPt, x.p.hPt) * G.k * .22));
+      ctx.save(); ctx.font = `italic ${size}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const tw = ctx.measureText(words).width + 10 * dpr; ctx.fillStyle = "rgba(255,254,251,.92)"; ctx.strokeStyle = "rgba(169,130,63,.8)"; ctx.lineWidth = dpr;
+      ctx.beginPath(); ctx.roundRect ? ctx.roundRect(px - tw / 2, py - size * .9, tw, size * 1.8, 5 * dpr) : ctx.rect(px - tw / 2, py - size * .9, tw, size * 1.8); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "#6a4f1c"; ctx.fillText(words, px, py); ctx.restore();
+    }
+    return true;
+  }
+  /** The plate on screen: its still layer, and over it the order's slow gold ring (a pop as the drawing lands). */
+  function paintOrder(G, now) {
+    const cv = G.cv; if (!G.base || !cv.isConnected) return;
+    const ctx = cv.getContext("2d"), t1 = now || performance.now();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(G.base, 0, 0);
+    if (still() || !G.mine.length) return;
+    const ph = ((t1 - (G.t0 || 0)) % 1800) / 1800, land = G.t0 ? Math.min(1, (t1 - G.t0) / 900) : 1;
+    ctx.save(); ctx.translate(G.R, G.R); if (G.backSide) { ctx.translate(G.Wp, 0); ctx.scale(-1, 1); }
+    for (const x of G.mine) orderPiece(ctx, G, x, () => {
+      if (land < 1) { const pop = 1 + .1 * Math.sin(Math.PI * Math.min(1, land * 2.6)); ctx.save(); ctx.scale(pop, pop); orderOutline(ctx, G, x); ctx.strokeStyle = `rgba(184,137,58,${.9 * (1 - land)})`; ctx.lineWidth = 3 * G.dpr / pop; ctx.stroke(); ctx.restore(); }
+      const s = 1 + .6 * ph; ctx.scale(s, s); orderOutline(ctx, G, x); ctx.strokeStyle = `rgba(202,168,97,${.9 * (1 - ph)})`; ctx.lineWidth = 1.6 * G.dpr / s; ctx.stroke();
+    });
+    ctx.restore();
+    if (!G.raf && cv.offsetParent && !document.hidden) G.raf = requestAnimationFrame(t => { G.raf = 0; paintOrder(G, t); });
+  }
+  function soonPaint(G) { if (G.soon) return; G.soon = requestAnimationFrame(() => { G.soon = 0; if (paintOrderBase(G)) paintOrder(G); }); }
+  /** The piece under a point on the screen (hover names its order; a click opens it). */
+  function hitOrder(G, clientX, clientY) {
+    const cv = G.cv, r = cv.getBoundingClientRect(); if (!r.width || !G.base) return null;
+    let x = (clientX - r.left) * cv.width / r.width - G.R; const y = (clientY - r.top) * cv.height / r.height - G.R;
+    if (x < 0 || y < 0 || x > G.Wp || y > G.Hp) return null;
+    if (G.backSide) x = G.Wp - x;
+    const probe = G.probe || (G.probe = document.createElement("canvas").getContext("2d"));
+    for (let i = G.pieces.length - 1; i >= 0; i--) {
+      const pc = G.pieces[i], p = pc.p, dx = x - p.cxPt * G.k, dy = y - p.cyPt * G.k, reach = Math.max(p.wPt, p.hPt) * G.k;
+      if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
+      const a = -p.angle * Math.PI / 180, sc = p.scale || 1, lx = (dx * Math.cos(a) - dy * Math.sin(a)) / sc, ly = (dx * Math.sin(a) + dy * Math.cos(a)) / sc;
+      probe.setTransform(1, 0, 0, 1, 0, 0); orderOutline(probe, G, pc);
+      if (probe.isPointInPath(lx, ly)) return pc;
+    }
+    return null;
+  }
+  async function drawOrder(cv, target, orderId, opts = {}) {
+    const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
+    const live = page || (id ? liveOf(id) : null);
+    let rec = null;
+    if (id) { try { rec = await recFor(id); } catch (e) { if (!live) throw e; } }
+    if (!rec) rec = recOfPage(live);
+    const pieces = piecesOf(rec);
+    for (const x of pieces) x.eng = engOf(x, rec);
+    const G = { cv, rec, pieces, mine: pieces.filter(x => x.rid === rid), st: rec.stock ? stockOf(rec) : stockFor(rec.metal, live || undefined), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back };
+    const redraw = () => { if (paintOrderBase(G)) paintOrder(G); };
+    const info = {
+      rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
+      redraw, focus: poolId => { G.focus = poolId || null; redraw(); }, back: on => { G.backSide = !!on; redraw(); },
+      hitAt: (x, y) => hitOrder(G, x, y),
+      // where a piece's centre is on the screen
+      pointOf: key => { const x = pieces.find(p => p.poolId === key || p.id === key), r = cv.getBoundingClientRect(); if (!x || !G.base || !r.width) return null; const px = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), py = G.R + x.p.cyPt * G.k; return { x: r.left + px * r.width / cv.width, y: r.top + py * r.height / cv.height }; },
+      // a copy of what is drawn (the sheet window grows out of it)
+      snap: () => { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; try { c.getContext("2d").drawImage(G.base || cv, 0, 0); } catch (_) { return null; } return c; }
+    };
+    if (opts.onInfo) tryDo(() => opts.onInfo(info));
+    const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
+    if (url && !live) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
+    redraw();
+    if (live) { const byId = new Map((live.charms || []).map(c => [c.id, c])); for (const x of pieces) x.c = byId.get(x.id) || null; }
+    const need = pieces.filter(x => !x.c), srcs = new Map((rec.sources || []).map(s => [s.id, s]));
+    const ids = [...new Set(need.map(x => x.sourceId).filter(id2 => srcs.has(id2)))];
+    ids.sort((a, b) => (G.mine.some(x => x.sourceId === b) ? 1 : 0) - (G.mine.some(x => x.sourceId === a) ? 1 : 0));
+    let done = 0; const failed = [];
+    if (ids.length && opts.onProgress) tryDo(() => opts.onProgress(0, ids.length));
+    const one = async sid => {
+      const s = srcs.get(sid);
+      try { const g = await sourceGeom(s); for (const x of need) if (x.sourceId === sid) attachGeom(x, g, rec); } catch (e) { failed.push(s.name || sid); console.warn("order view: design", s.name, e); }
+      done++; if (opts.onProgress) tryDo(() => opts.onProgress(done, ids.length)); if (cv.isConnected) soonPaint(G);
+    };
+    const queue = ids.slice();
+    await Promise.all(Array.from({ length: Math.min(4, queue.length) }, async () => { while (queue.length && cv.isConnected) await one(queue.shift()); }));
+    info.failed = failed;
+    if (!cv.isConnected) return info;
+    G.t0 = performance.now();
+    redraw();
+    return info;
+  }
+
+  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, _W: W };
 })();

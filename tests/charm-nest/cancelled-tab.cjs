@@ -92,7 +92,8 @@ const FILLER = Array.from({ length: 227 }, (_, i) => ({ orderId: String(42000000
     assert.equal(a.restore, false, 'no Restore for Etsy\'s cancel');
     assert.equal(p.badge, 'Cancelled by Anna'); assert.equal(p.reason, 'Customer changed their mind'); assert.deepEqual(p.fates, ['off:taken off GF Sheet 3']); assert.equal(p.restore, true, 'a person\'s cancel keeps Restore');
     assert.equal(o.badge, 'Cancelled on Etsy', 'an older record by "Etsy" without a source is Etsy\'s'); assert.equal(o.reason, 'Etsy gave no reason'); assert.equal(o.restore, false);
-    assert.equal(a.open, false, 'before the order view exists a row opens nothing');
+    // (a row opens only where the order view is: OrderWin.openOrder)
+    assert.equal(a.open, await page.evaluate(() => typeof OrderWin.openOrder === 'function'), 'a row opens the order view, and nothing where there is none');
     await shot('cancelled-list');
 
     /* 3 · the search: order number, buyer, SKU */

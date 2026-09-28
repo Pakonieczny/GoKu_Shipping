@@ -1317,8 +1317,9 @@ const Orders = window.Orders = (() => {
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
       node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
-      node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
-      node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
+      // (the order view grows out of the row that was clicked)
+      node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key, { from: node }); };
+      node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key, { from: node });}};
       // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
       { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
@@ -8375,24 +8376,44 @@ const TeamCard = window.TeamCard = (() => {
 const OrderWin = window.OrderWin = (() => {
   // the Team thread itself lives in TeamMail (thread, load, html), shared with the engraving cards
   const W = { key: null, rid: null, at: 0, dlg: null, tray: [], poll: 0, noteTimer: 0, wired: false,
-    trays: new Map(), sending: new Map(), painted: "" };
+    trays: new Map(), sending: new Map(), painted: "",
+    // the order view (Paul, 28 Sep): a line from the records when the order is not in the pull (row, rows), whether
+    // Previous and Next walk the Orders list, the view in front, what it grew out of, its motion, the timeline mounted
+    // in it and the one in the header, and what the order's timeline has said so far
+    row: null, rows: null, walk: true, view: "info", from: null, anims: [], closing: false, hl: null, tl: null, tlFor: null, rail: null,
+    events: null, evFor: null, cancelled: null, offRec: null, look: 0, back: null, face: "front" };
   const byId = id => document.getElementById(id);
-  const rowOf = key => Orders.rows().find(r => r.key === key) || null;
+  const inPull = key => Orders.rows().find(r => r.key === key) || null;
+  const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
   const me = () => employeeName() || "";
+  const VIEWS = ["info", "timeline", "sheet"];
+  const EASE = "cubic-bezier(.2,.8,.2,1)", GROW = "cubic-bezier(.3,0,.1,1)";
+  const still = () => { try { return window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
+  const tryDo = f => { try { return f(); } catch (e) { console.warn("order view:", e); return null; } };
+  // the lines of the order on screen: the pull's, or those read from the records
+  const linesOf = r => { const rid = String(r.order.receiptId); const pulled = (Orders.rows() || []).filter(x => String(x.order.receiptId) === rid && x.state !== "gone"); return pulled.length ? pulled : (W.rows && W.rows.some(x => x === r) ? W.rows : [r]); };
 
   function wire() {
     if (W.wired) return; W.wired = true;
     W.dlg = byId("orderWin"); if (!W.dlg) return;
-    const close = () => W.dlg.close();
-    byId("owClose").onclick = close;
+    byId("owClose").onclick = () => shut();
+    // Esc goes back into what was clicked, as the close button does
+    W.dlg.addEventListener("cancel", e => { e.preventDefault(); if (finding()) endFind(true); else shut(); });
+    // the number is the view's search too (design spec 7)
+    byId("owTitle").addEventListener("click", e => { if (e.target.closest(".num")) focusSearch(); });
     // a note typed just before the window closed (Escape, ×) is saved too: its timer and its blur both found no order
     // images waiting beside the message box stay with their order for when it is opened again
     // (the close event comes a moment after the window closes: one opened again at once, on another order, keeps its own
     // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
     // text onto the new order; open() saves the note of the order it leaves)
-    W.dlg.addEventListener("close", () => { if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray(); try { window.CustomerMail?.orderClosed(); } catch (_) {} });
+    W.dlg.addEventListener("close", () => {
+      if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      W.closing = false; stopMotion(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
+      unmountTimeline(); W.row = null; W.rows = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled");
+      try { window.CustomerMail?.orderClosed(); } catch (_) {}
+    });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
-    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && (r.spec.designSku || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
+    byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
     const note = byId("owNote");
     note.oninput = () => { note.classList.toggle("has", !!note.value.trim()); clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700); };
@@ -8407,9 +8428,19 @@ const OrderWin = window.OrderWin = (() => {
     const pane = W.dlg.querySelector("#owPaneTeam") || W.dlg.querySelector(".owChat");
     pane.addEventListener("dragover", e => { e.preventDefault(); });
     pane.addEventListener("drop", e => { e.preventDefault(); addFiles([...(e.dataTransfer.files || [])].filter(f => f.type.startsWith("image/"))); });
-    byId("owSkip").onclick = toggleSkip;
+    byId("owSkip").onclick = e => { e.preventDefault(); toggleSkip(); };
     byId("owPrev").onclick = () => step(-1);
     byId("owNext").onclick = () => step(1);
+    // the views: a tab, the arrow keys on the tab row, the header's rail (its steps are on the Timeline)
+    const tabs = W.dlg.querySelector(".owTabsV");
+    tabs.querySelectorAll("[data-ow-view]").forEach(b => b.addEventListener("click", () => setView(b.dataset.owView)));
+    tabs.addEventListener("keydown", e => {
+      if (!e.target.closest("[role=tab]") || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      e.preventDefault(); const i = VIEWS.indexOf(W.view), v = VIEWS[(i + (e.key === "ArrowRight" ? 1 : VIEWS.length - 1)) % VIEWS.length];
+      setView(v); tabs.querySelector(`[data-ow-view="${v}"]`)?.focus();
+    });
+    byId("owRail").addEventListener("click", e => { if (!e.defaultPrevented && W.view !== "timeline") setView("timeline"); });
+    byId("owFace").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnPlate(b.dataset.face); });
     // a message still on its way: try it again now, take it back into the box, or let it go
     byId("owThread").addEventListener("click", e => {
       const b = e.target.closest("[data-tm]"); if (!b) return;
@@ -8428,6 +8459,11 @@ const OrderWin = window.OrderWin = (() => {
     byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => { paintThread(true); grow(); }, 0));
     document.addEventListener("visibilitychange", () => { if (!document.hidden && W.dlg.open && W.rid) TeamMail.load(W.rid); });
     window.addEventListener("online", () => { if (W.dlg.open && W.rid) TeamMail.load(W.rid); });
+    // the sheet is drawn again at the size its view has now
+    let rs = 0; window.addEventListener("resize", () => { cancelAnimationFrame(rs); rs = requestAnimationFrame(() => { if (W.dlg.open) { inkTo(); if (W.view === "sheet" && SV.info) SV.info.redraw(); } }); });
+    wirePlate();
+    // what the order's timeline records while it is open: its Now, the card and the tab's count follow
+    try { if (window.OrderTimeline && OrderTimeline.onRecord) OrderTimeline.onRecord(ev => { if (W.dlg.open && ev && String(ev.orderId) === W.rid) { (W.events = W.events || []).push(ev); paintNow(rowOf(W.key)); } }); } catch (_) {}
     // the customer's side of the order: its own tab beside the team's chat (charm-nest-mail.js)
     try { window.CustomerMail?.orderWindow(W.dlg); } catch (e) { console.warn("customer mail:", e); }
   }
@@ -8458,13 +8494,14 @@ const OrderWin = window.OrderWin = (() => {
   /** The lines the Orders tab is showing, so Previous and Next walk what the person is actually looking at. */
   const siblings = () => Orders.visibleRows();
   function step(d) {
+    if (!W.walk) return;
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
     // a line that has just left the list (skipped, or filtered out by the fix that was applied) resumes from where it was
     const from = i < 0 ? Math.min(W.at || 0, list.length - 1) : i;
     const at = from + d;
     if (at < 0 || at >= list.length) return;
     const next = list[at];
-    if (next && next.key !== W.key) open(next.key);
+    if (next && next.key !== W.key) { show(next, { dir: d }); }
   }
   function paintWho() {
     const w = byId("owWho"); if (w) w.textContent = me() || "Set your name";
@@ -8480,7 +8517,8 @@ const OrderWin = window.OrderWin = (() => {
   }
 
   async function saveNote() {
-    const r = rowOf(W.key); if (!r) return;
+    const r = rowOf(W.key); if (!r || r.loading) return;
+    r.spec = r.spec || {};
     const text = byId("owNote").value;
     // a note whose last save failed is sent again, although the box already shows it
     if (text === (r.spec.staffNote || "") && r.noteUnsaved == null) return;
@@ -8506,7 +8544,7 @@ const OrderWin = window.OrderWin = (() => {
   /** The note box shows what was typed; one that has not reached the station yet says so on the box itself. */
   function paintNote(r) {
     const note = byId("owNote"); if (!note) return;
-    if (document.activeElement !== note) note.value = r.noteUnsaved != null ? r.noteUnsaved : (r.spec.staffNote || "");
+    if (document.activeElement !== note) note.value = r.noteUnsaved != null ? r.noteUnsaved : ((r.spec && r.spec.staffNote) || "");
     const unsaved = r.noteUnsaved != null;
     // a note someone left stands out, so the next person to open the order reads it first
     note.classList.toggle("has", !!note.value.trim());
@@ -8556,7 +8594,8 @@ const OrderWin = window.OrderWin = (() => {
   function paintThread(keep) {
     const t = byId("owThread"); if (!t) return;
     const rid = W.rid, up = (rid && W.sending.get(rid)) || 0;
-    const visible = W.dlg && W.dlg.open && !byId("owPaneTeam")?.hidden;
+    // (seen only while it is on screen: its tab in front, in the view in front)
+    const visible = W.dlg && W.dlg.open && !byId("owPaneTeam")?.closest("[hidden]");
     if (visible && rid) TeamMail.markSeen(rid, TeamMail.thread(rid).list);
     paintTeamDot();
     if (!rid) { t.innerHTML = ""; W.painted = ""; return; }
@@ -8575,39 +8614,55 @@ const OrderWin = window.OrderWin = (() => {
     dot.hidden = !(W.rid && byId("owPaneTeam")?.hidden && TeamMail.isNew(W.rid, TeamMail.thread(W.rid).list));
   }
   function toggleSkip() {
-    const r = rowOf(W.key); if (!r) return;
+    const r = inPull(W.key); if (!r) return;
     const who = me() || askEmployee(); if (!who) return;
     const on = r.state !== "skipped";
     if (on) { r.state = "skipped"; r.reason = "line skipped by " + who; r.problems = []; r.hold = r.reason; }
     else { r.state = "pulled"; r.reason = null; r.hold = null; Orders.interpretAll(); }
     Review.syncOrderItems(); Orders.render(); RunCtl.poke(); paint();
   }
+  const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships. */
+  function paintHead(r, sibs, li) {
+    const rid = String(r.order.receiptId), t = byId("owTitle");
+    const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
+    if (!cur) {
+      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? esc("  ·  Order " + (li + 1) + " of " + sibs.length) : "");
+      t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
+    }
+    const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
+    let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
+    byId("owSub").textContent = [r.order.buyer && r.order.buyer.name, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
+    // Previous and Next walk the Orders list the person is looking at, and only then
+    const list = W.walk ? siblings() : [];
+    W.at = Math.max(0, list.findIndex(x => x.key === r.key));
+    const on = W.walk && list.some(x => x.key === r.key);
+    const pos = byId("owPos"); if (pos) pos.textContent = on && list.length ? (W.at + 1) + " of " + list.length : "";
+    const pv = byId("owPrev"), nx = byId("owNext");
+    pv.hidden = nx.hidden = !on; pv.disabled = W.at <= 0; nx.disabled = W.at >= list.length - 1;
+    // the Skip switch is the cutting flow's: a line of the pull
+    byId("owSkipBox").hidden = !inPull(r.key);
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
-    const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open) W.dlg.close(); return; }
+    const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open && !W.closing) W.dlg.close(); return; }
     const sp = r.spec || {};
-    const sibs = (Orders.rows() || []).filter(x => x.order.receiptId === r.order.receiptId && x.state !== "gone");
-    const li = sibs.findIndex(x => x.key === r.key);
-    const list = siblings(); W.at = Math.max(0, list.findIndex(x => x.key === r.key));
-    byId("owTitle").textContent = "Order " + r.order.receiptId + (sibs.length > 1 ? "  \u00b7  Order " + (li + 1) + " of " + sibs.length : "");
-    const pos = byId("owPos"); if (pos) pos.textContent = list.length ? (W.at + 1) + " of " + list.length : "";
-    const pv = byId("owPrev"), nx = byId("owNext");
-    if (pv) pv.disabled = W.at <= 0;
-    if (nx) nx.disabled = W.at >= list.length - 1;
-    const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || "no material");
-    mp.className = "pill " + (r.material ? "neutral" : "bad");
-    const ph = byId("owPhoto"); const url = Orders.imageFor(r);
+    const sibs = linesOf(r), li = Math.max(0, sibs.findIndex(x => x.key === r.key));
+    paintHead(r, sibs, li);
+    const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
+    mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
+    const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r));
     ph.classList.remove("zoom");
     ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">no image</span>';
-    ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; Orders.wantImage(r.line.listingId); }
+    ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
-    const vh = byId("owVector"); if (vh) ListMedia.vectorInto(vh, r);
+    const vh = byId("owVector"); if (vh) tryDo(() => ListMedia.vectorInto(vh, r));
     byId("owSku").textContent = "SKU: " + (sp.designSku || r.line.sku || "—");
     // the one field that must be read exactly: labelled, whole, and never boxed into a scroller under the staff note
     const said = [];
     // a line read before the placeholder cleanup (CharmNestOrders.visible) shows clean too
-    const pers = (sp.personalization || []).map(x => O.visible(x).trim()).filter(Boolean), bm = O.visible(sp.buyerMessage).trim();
+    const pers = (sp.personalization || r.line.personalization || []).map(x => O.visible(x).trim()).filter(Boolean), bm = O.visible(sp.buyerMessage).trim();
     if (pers.length) said.push(["Personalisation", pers.join("\n")]);
     if (bm) said.push(["Buyer message", bm]);
     const gm = O.visible(r.order.giftMessage).trim();
@@ -8615,16 +8670,15 @@ const OrderWin = window.OrderWin = (() => {
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
     notes.className = said.length ? "owSaid" : "owSaid none";
-    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : "— the customer wrote nothing —";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? "Reading the order…" : "— the customer wrote nothing —";
     paintNote(r);
-    const st = Orders.statePill(r), where = Orders.placeOf(r);
+    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], where = tryDo(() => Orders.placeOf(r));
     const mcell = (lbl, val) => '<div class="m"><i>' + esc(lbl) + '</i><span>' + esc(val) + '</span></div>';
     // the order itself (its number, when it was bought and by whom) and everything that was picked at the purchase, not
     // only the options the sorter could map: a custom order is read from exactly these
     const placed = (+r.order.createTs || 0) * 1000, rid = String(r.order.receiptId), onum = String(r.order.orderNumber || "");
-    const bought = O.purchaseOptions(r.line, sp);
-    const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-    byId("owMeta").innerHTML =
+    const bought = tryDo(() => O.purchaseOptions(r.line, sp)) || [];
+    byId("owMeta").innerHTML = r.loading ? mcell("Order", rid) :
       mcell("Order", rid + (onum && onum !== rid ? " · #" + onum : "")) +
       (placed ? mcell("Purchased", when(placed)) : r.arrivedAt ? mcell("Arrived", when(r.arrivedAt)) : "") +
       (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
@@ -8633,7 +8687,7 @@ const OrderWin = window.OrderWin = (() => {
       mcell("Metal", r.material ? labelOf(r.material) : (sp.materialLabel || "none")) +
       mcell("State", st[1]) +
       (where ? mcell("Sheet", (where.set ? where.set + " · " : "") + (where.sheet || "")) : "") +
-      mcell("Ship by", Orders.shipTxt(r)) +
+      mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
       (r.engrave && r.engrave.needed ? mcell("Engraving", (r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : "")) : "") +
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
@@ -8644,7 +8698,7 @@ const OrderWin = window.OrderWin = (() => {
     // map, an unknown SKU) is made in Review, not in this window (Paul, 28 Sep: "remove this from the UI ... move up
     // everything that is below to fill up the empty space"); a custom order's question has no other place.
     const fix = byId("owFix");
-    const item = Review.items().find(x => x.kind === "customOrder" && (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:"));
+    const item = inPull(r.key) ? Review.items().find(x => x.kind === "customOrder" && (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:")) : null;
     if (item) {
       let slot = fix.querySelector(".owFix > .owFixCard");
       if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
@@ -8655,16 +8709,18 @@ const OrderWin = window.OrderWin = (() => {
       const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
       fix.innerHTML = "";
       if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
-      if (r.engrave && r.engrave.needed && !r.engrave.approved) {
+      if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
         const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
         const b = el("button", "btn ghost sm", "Open it in Engraving");
         b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
         box.appendChild(b); fix.appendChild(box);
       }
     }
-    paintCustom(r);
+    if (inPull(r.key)) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
+    paintNow(r);
     paintWho();
+    if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
   }
   /** A custom order's own line above its decision: what kind it is, where it stands, and its QR label — the same
    *  sorting-station sticker, printed and completed as from its Custom Orders card (CustomPrint). One line, no window. */
@@ -8711,29 +8767,566 @@ const OrderWin = window.OrderWin = (() => {
       if (typeof note !== "string") return;
       const cur = rowOf(W.key), typing = cur && String(cur.order.receiptId) === rid && document.activeElement === byId("owNote");
       if (typing) return;
-      for (const x of Orders.rows()) if (String(x.order.receiptId) === rid && x.noteUnsaved == null && (x.spec.staffNote || "") !== note) { x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
+      for (const x of Orders.rows().concat(W.rows || (W.row ? [W.row] : []))) if (String(x.order.receiptId) === rid && x.noteUnsaved == null && ((x.spec && x.spec.staffNote) || "") !== note) { x.spec = x.spec || {}; x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
       if (cur && String(cur.order.receiptId) === rid && W.dlg && W.dlg.open) paintNote(cur);
     } catch (_) {}
   }
-  function open(key, opts) {
-    wire(); if (!W.dlg) return;
-    const r = rowOf(key); if (!r) { toast("That line is no longer in the pull", "bad"); return; }
+
+  /* ── Where it is now, and the order's Now in the header ──
+     The order's timeline (OrderTimeline, read once as it opens and followed while it is open) says what happened last;
+     before it has answered, or where there is none, the line's own state says it. */
+  const GROUP_NOW = { order: "Order in", review: "In review", engrave: "Engraving", sheet: "On a sheet", label: "Labelled", laser: "Laser cut", station: "At the stations", ship: "At shipping", done: "Completed", cancel: "Cancelled", note: "" };
+  function lastOf(list, f) { for (let i = (list || []).length - 1; i >= 0; i--) if (f(list[i])) return list[i]; return null; }
+  function loadEvents(rid) {
+    W.events = null; W.evFor = rid; W.cancelled = null;
+    const T = window.OrderTimeline; if (!T || !T.get) return;
+    Promise.resolve().then(() => T.get(rid)).then(j => {
+      if (W.evFor !== rid) return;
+      W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
+      const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r);
+    }).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
+  }
+  function nowOf(r) {
+    const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? W.events : null;
+    const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
+    const restored = cx && evs && lastOf(evs, e => e.type === "cancelRestored" && e.at > cx.at);
+    if (cx && !restored) return { tone: "bad", pill: "Cancelled", k: "Cancelled", t: cx.type === "etsyCancelled" ? "Cancelled on Etsy" : "Cancelled" + (cx.by ? " by " + cx.by : ""), ev: cx, cancelled: true };
+    const ms = evs && lastOf(evs, e => (T[e.type] && T[e.type].milestone) || e.milestone);
+    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage");
+    if (ms || last) {
+      const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
+      const g = GROUP_NOW[mt.group] || mt.label || "In progress";
+      return { tone: ["done"].includes(mt.group) || ms && ["etsyCompleted", "sealCompleted", "shipped"].includes(ms.type) ? "done" : "", pill: ms ? (T[ms.type] || {}).label || g : g, k: g, t: e.text || ty.label || e.type, ev: e };
+    }
+    const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || ""], where = tryDo(() => Orders.placeOf(r));
+    return { tone: st[0] === "bad" ? "bad" : st[0] === "ok" ? "done" : "", pill: String(st[1] || "").replace(/^\d\/\d\s+/, ""), k: "Where it is now", t: r.loading ? "Reading the order's records…" : (st[1] ? st[1].replace(/^\d\/\d\s+/, "") : "") + (where ? " · " + (where.sheet || "") : ""), ev: null };
+  }
+  function paintNow(r) {
+    if (!r) return;
+    const n = nowOf(r), pill = byId("owNow");
+    W.dlg.classList.toggle("owCancelled", !!n.cancelled);
+    pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
+    const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
+    const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
+    const card = byId("owNowCard"); if (!card) return;
+    if (r.loading) { card.hidden = true; return; }
+    const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
+    const who = e && (e.station || e.by) ? `<span class="who"><i></i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
+    // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
+    const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
+    const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
+    const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
+    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(n.k)}</div><div class="t">${esc(n.t || "")}</div>${who}<div class="row">${recent}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    if (card._html === html) return; card._html = html; card.innerHTML = html;
+    card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
+    card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
+    if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
+  }
+  const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
+  const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
+  const sheetName = s => `${CODE[s.metal] || ""} Sheet ${s.n || "?"}`.trim();
+
+  /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
+  function inkTo() {
+    const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
+    ink.style.left = b.offsetLeft + 6 + "px"; ink.style.width = Math.max(0, b.offsetWidth - 12) + "px";
+  }
+  function setView(v, o = {}) {
+    if (!VIEWS.includes(v)) v = "info";
+    const prev = W.view; W.view = v;
+    W.dlg.querySelectorAll(".owTabsV [data-ow-view]").forEach(b => { const on = b.dataset.owView === v; b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
+    W.dlg.querySelectorAll(".owTools .owGrp").forEach(g => g.classList.toggle("on", g.dataset.for === v));
+    inkTo();
+    const views = [...W.dlg.querySelectorAll(".owBody > .owView")], to = views.find(x => x.dataset.view === v), from = views.find(x => x.dataset.view === prev);
+    for (const x of views) if (x !== to && x !== from) x.hidden = true;
+    if (from && from !== to && !o.quiet && !still() && W.dlg.open) {
+      const dir = VIEWS.indexOf(v) > VIEWS.indexOf(prev) ? 1 : -1;
+      from.getAnimations().forEach(a => a.cancel()); to.getAnimations().forEach(a => a.cancel());
+      const out = from.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: `translateX(${-dir * 12}px)` }], { duration: 160, easing: "ease-in", fill: "forwards" });
+      out.finished.then(() => { if (W.view !== prev) from.hidden = true; out.cancel(); }, () => {});
+      to.hidden = false; to.animate([{ opacity: 0, transform: `translateX(${dir * 12}px)` }, { opacity: 1, transform: "none" }], { duration: 280, delay: 90, easing: EASE, fill: "backwards" });
+    } else { for (const x of views) x.hidden = x !== to; }
+    if (v === "info") { paintThread(true); grow(); try { const t = W.dlg.querySelector("[data-ow-tab][aria-selected=true]"); if (t && window.CustomerMail?.setTab) CustomerMail.setTab(t.dataset.owTab, false); } catch (_) {} }
+    if (o.noLoad) return;
+    if (v === "timeline") mountFull();
+    if (v === "sheet") sheetShow();
+  }
+
+  /* ── the timeline: timeline-ui's component, in the Timeline view and (compact) in the header ── */
+  function tlOpts(rid, extra) {
+    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true,
+      onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
+      onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
+      onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
+  }
+  function mountRail(rid) {
+    const host = byId("owRail"), UI = window.OrderTimelineUI; if (!host) return;
+    if (W.rail && W.rail.destroy) tryDo(() => W.rail.destroy()); W.rail = null; host.innerHTML = "";
+    if (UI && UI.mount) W.rail = tryDo(() => UI.mount(host, tlOpts(rid, { compact: true })));
+  }
+  function mountFull() {
+    const host = byId("owTimeline"), UI = window.OrderTimelineUI, rid = W.rid; if (!host || !rid) return;
+    if (W.tlFor === rid && (W.tl || host.firstChild)) { tryDo(() => W.tl && W.tl.refresh && W.tl.refresh()); return; }
+    if (W.tl && W.tl.destroy) tryDo(() => W.tl.destroy()); W.tl = null; host.innerHTML = ""; W.tlFor = rid;
+    if (UI && UI.mount) W.tl = tryDo(() => UI.mount(host, tlOpts(rid)));
+    if (!W.tl) host.innerHTML = `<div class="owTlNone"><b>The order's timeline</b><span>Every step this order takes, from the moment it came in to its shipping, is drawn here.</span></div>`;
+  }
+  function unmountTimeline() {
+    for (const k of ["tl", "rail"]) { if (W[k] && W[k].destroy) tryDo(() => W[k].destroy()); W[k] = null; }
+    W.tlFor = null; const t = byId("owTimeline"); if (t) t.innerHTML = ""; const r = byId("owRail"); if (r) r.innerHTML = "";
+  }
+
+  /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and the rest stepped back (SheetWin.drawOrder),
+     its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
+  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null };
+  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
+  const nOf = name => +((/_Sheet-(\d+)/.exec(name || "") || [])[1]) || null;
+  /** Every sheet the order has pieces on: the pages this sorter holds, the pool's records, and else the Library's search. */
+  async function sheetsFor(r) {
+    const rid = String(r.order.receiptId), out = new Map(), live = [];
+    const add = (id, o) => { if (!id) return; const cur = out.get(id); out.set(id, Object.assign({ id }, o, cur || {})); };
+    for (const x of linesOf(r)) for (const pid of x.poolIds || []) {
+      const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null;
+      if (pg) { if (pg.sheetId) add(pg.sheetId, { metal: pg.metal, n: pg.sheetIndex || pg.page || 1, page: pg }); else if (!live.includes(pg)) live.push(pg); }
+      const p2 = B.pool && B.pool.rows && B.pool.rows.get(pid); if (p2 && p2.sheetId) add(p2.sheetId, { metal: p2.material, n: nOf(p2.sheetName) });
+    }
+    try {
+      const got = r._pools || (await api("charmNestLibrary", { op: "poolList", orderId: rid }, { quiet: true })).pools || [];
+      SV.pools = got.filter(p => !["abandoned", "superseded"].includes(p.state));
+      for (const p of SV.pools) if (p.sheetId) add(p.sheetId, { metal: p.material, n: nOf(p.sheetName) });
+    } catch (e) { console.warn("order view: the order's pieces", e.message); }
+    if (!out.size && !live.length && /^\d{4,20}$/.test(rid)) {
+      try {
+        const f = await api("charmNestLibrary", { op: "findSheets", q: rid, fallback: false }, { quiet: true });
+        for (const s of (f.sheets || [])) if ((s.orders || []).map(String).includes(rid) || (s.match || []).includes("order")) add(s.id, { metal: s.metal, n: s.sheetIndex || s.page || nOf(s.folder || s.fileBase) });
+        for (const s of (f.rows || [])) if (s.kind === "sheet" && s.id) add(s.id, { metal: s.metal, n: s.sheetIndex, state: s.at ? "cut " + new Date(s.at).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "" });
+      } catch (e) { console.warn("order view: the order's sheets", e.message); }
+    }
+    return [...out.values(), ...live.map(pg => ({ id: null, page: pg, metal: pg.metal, n: pg.sheetIndex || pg.page || 1, state: "not saved yet" }))];
+  }
+  function plateWait(text) { const w = byId("owPlateWait"); if (!w) return; w.hidden = !text; if (text) w.lastElementChild.textContent = text; }
+  async function sheetShow(sheetId, poolId) {
+    const r = rowOf(W.key); if (!r || r.loading) { plateWait(r && r.loading ? "Reading the order's records…" : ""); return; }
     const rid = String(r.order.receiptId);
+    if (SV.rid !== rid) {
+      sheetReset(); SV.rid = rid; const tok = SV.tok;
+      paintPanel(null); byId("owSheetCv").style.visibility = "hidden"; byId("owPlateFoot").innerHTML = "";
+      plateWait("Finding the order's sheets…");
+      SV.finding = sheetsFor(r); const list = await SV.finding;
+      if (tok !== SV.tok || SV.rid !== rid) return;
+      SV.list = list; SV.at = 0; paintNow(rowOf(W.key));
+      const cnt = byId("owShCount"); if (cnt) cnt.textContent = list.length ? list.length + (list.length === 1 ? " sheet" : " sheets") : "";
+    } else if (SV.finding) await SV.finding;
+    if (SV.rid !== rid || !SV.list) return;
+    if (sheetId) { const i = SV.list.findIndex(s => s.id === sheetId); if (i >= 0) SV.at = i; }
+    if (poolId) SV.focus = poolId;
+    if (sheetId || !SV.info || SV.info.sheetAt !== SV.at) sheetDraw(); else if (poolId) SV.info.focus(poolId); else SV.info.redraw();
+  }
+  async function sheetDraw() {
+    const r = rowOf(W.key), cv = byId("owSheetCv"); if (!r || !SV.list) return;
+    const tok = ++SV.tok, s = SV.list[SV.at], rid = String(r.order.receiptId);
+    SV.info = null; byId("owPlateTip").hidden = true;
+    const none = byId("owPlateWrap").querySelector(".owPlateNone"); if (none) none.remove();
+    if (!s) {
+      cv.style.visibility = "hidden"; plateWait(null);
+      const st = tryDo(() => Orders.statePill(r)) || ["", r.state || ""];
+      byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>Not on a sheet yet</b><span>${esc(String(st[1] || "").replace(/^\d\/\d\s+/, "") || "It waits for its turn")} — its pieces are drawn here once they are placed on a sheet.</span></div>`);
+      byId("owPlateFoot").innerHTML = ""; paintPanel(null); return;
+    }
+    if (!window.SheetWin || !SheetWin.drawOrder) { plateWait(null); byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))}</b><span>The sheet window is not loaded on this page.</span></div>`); return; }
+    plateWait("Reading " + sheetName(s) + "…");
+    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .35 }], { duration: 160, fill: "forwards" });
+    try {
+      const info = await SheetWin.drawOrder(cv, s.id || s.page, rid, {
+        onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); if (fade) fade.cancel(); cv.style.visibility = "";
+          if (!still()) cv.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 240, easing: "ease" });
+          paintPanel(inf); paintFoot(inf); },
+        onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); }
+      });
+      if (tok !== SV.tok) return;
+      plateWait(null); if (info.failed && info.failed.length) toast(`${info.failed.length} design(s) of this sheet could not be read; they show as outlines`, "bad", 6000);
+    } catch (e) {
+      if (tok !== SV.tok) return;
+      if (fade) fade.cancel(); plateWait(null); cv.style.visibility = "hidden";
+      byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))} could not be read</b><span>${esc(e.message)}</span><button type="button" class="btn ghost sm">Try again</button></div>`);
+      byId("owPlateWrap").querySelector(".owPlateNone button").onclick = () => sheetDraw();
+    }
+  }
+  function paintFoot(inf) {
+    const live = inf.pieces.length, orders = new Set(inf.pieces.map(x => x.rid).filter(Boolean)).size, rec = inf.rec;
+    byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
+  }
+  /** The panel beside the plate: the sheets, the order, its charm, its back engraving and every piece of it. */
+  function paintPanel(inf) {
+    const panel = byId("owSheetPanel"), r = rowOf(W.key); if (!panel || !r) return;
+    const rid = String(r.order.receiptId), list = SV.list || [];
+    const o = r.order, placed = +o.createTs ? new Date(+o.createTs * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+    let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
+    const rec = inf && inf.rec, cut = rec && (rec.laserDoneAt || rec.roseCutAt);
+    const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
+    const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
+    const sp = r.spec || {}, sku = (x0 && x0.sku) || sp.designSku || r.line.sku || "";
+    // every piece of the order: on this sheet, on its other sheets, and not on one yet
+    const items = new Map(), add = (k, v) => items.set(k, Object.assign(items.get(k) || {}, v));
+    for (const x of mine) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, piece: x });
+    for (const p of SV.pools || []) if (!items.has(p.poolId)) add(p.poolId, { poolId: p.poolId, sku: p.sku, copy: p.copy, qty: p.quantity, sheetId: p.sheetId || null, metal: p.material, n: nOf(p.sheetName) });
+    for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
+    if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1 });
+    const pieces = [...items.values()];
+    const eng = x0 && x0.eng && x0.eng.kind !== "none" ? x0.eng : null, re = r.engrave && r.engrave.needed ? r.engrave : null;
+    const disc = (e2, metal) => {
+      const cls = /silver/.test(metal || "") ? " silver" : /rose/.test(metal || "") ? " rose" : "";
+      const img = e2 && e2.back && (e2.back.outputs?.png?.url || e2.back.png || e2.back.preview);
+      return `<div class="disc${cls}" data-disc>${img ? `<img crossorigin="anonymous" alt="The back engraving" src="${esc(/^https?:/.test(img) ? cors(img) : img)}">` : esc((e2 && e2.text) || "")}</div>`;
+    };
+    const STATE = { approve: ["To approve", "bad"], words: ["Words to confirm", "bad"], preparing: ["Being prepared", ""], approved: ["Approved", "ok"], skipped: ["Cut plain", ""] };
+    const engHtml = eng ? `<div class="owBackEng">${disc(eng, rec && rec.metal)}<div><div class="k ${(STATE[eng.kind] || [])[1] || ""}">Back engraving · ${esc((STATE[eng.kind] || [eng.label])[0])}</div><b>${eng.text ? "“" + esc(eng.text) + "”" : "—"}</b><span>${esc([eng.by ? "by " + eng.by : "", eng.at ? when(eng.at) : "", eng.note || ""].filter(Boolean).join(" · "))}${W.face !== "back" && eng.text ? (eng.by || eng.at ? " · " : "") + "switch to Back to see it on the sheet" : ""}</span>${eng.kind === "approve" && eng.job ? `<div class="acts"><button type="button" class="btn sage xs" data-eng="approve">Approve</button></div>` : ""}</div></div>`
+      : re ? `<div class="owBackEng">${disc({ text: re.text }, r.material)}<div><div class="k ${re.approved ? "ok" : "bad"}">Back engraving · ${re.approved ? "approved" : esc(re.state || "waiting")}</div><b>${re.text ? "“" + esc(re.text) + "”" : "—"}</b></div></div>`
+      : `<div class="owBackEng" style="grid-template-columns:1fr"><div><div class="k">Back engraving</div><span>No back engraving</span></div></div>`;
+    const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.sheetId ? `<em style="--c:${esc(colorOf(it.metal))}">${esc(sheetName({ metal: it.metal, n: it.n }))}</em>` : `<em>not on a sheet yet</em>`;
+    panel.innerHTML =
+      (list.length ? `<section><span class="fLabel">Sheet</span><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
+      `<section><span class="fLabel">Order</span><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
+      `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(r.material ? labelOf(r.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
+      `<section>${engHtml}</section>` +
+      `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
+      (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut ? " disabled" : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : ""}</div>` : "");
+    // the charm's own picture: its drawing on this sheet, else the order's vector
+    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, r)); }
+    // an approval-waiting back is drawn as Engrave fits it
+    const dsc = panel.querySelector("[data-disc]"); if (dsc && eng && eng.job && !dsc.querySelector("img") && eng.job.fit && eng.job.view && window.Engrave && Engrave.renderBack) { const cv2 = tryDo(() => Engrave.renderBack(eng.job, 176, { hatch: false, grid: false })); if (cv2) { dsc.innerHTML = ""; dsc.appendChild(cv2); } }
+    panel.querySelectorAll("[data-at]").forEach(b => b.onclick = () => { if (+b.dataset.at === SV.at) return; SV.at = +b.dataset.at; SV.focus = null; paintPanel(null); sheetDraw(); });
+    panel.querySelectorAll(".owPieces li[data-i]").forEach(li => {
+      const it = pieces[+li.dataset.i];
+      li.onmouseenter = () => { if (it.here && SV.info) SV.info.focus(it.poolId); };
+      li.onmouseleave = () => { if (SV.info) SV.info.focus(SV.focus); };
+      li.onclick = () => {
+        if (it.here) { SV.focus = it.poolId; if (SV.info) { SV.info.focus(it.poolId); paintPanel(SV.info); } return; }
+        const i = it.sheetId ? list.findIndex(s => s.id === it.sheetId) : -1; if (i >= 0) { SV.at = i; SV.focus = it.poolId; sheetDraw(); }
+      };
+    });
+    const ap = panel.querySelector("[data-eng=approve]"); if (ap) ap.onclick = async () => {
+      const who = me() || askEmployee(); if (!who) return;
+      ap.disabled = true; ap.innerHTML = '<span class="spin"></span>Approving…';
+      try { await Engrave.approve(eng.job, who); if (x0) x0.eng = Object.assign({}, x0.eng, { kind: "approved", by: who, at: Date.now() }); if (SV.info) paintPanel(SV.info); if (window.RunCtl) RunCtl.poke(); }
+      catch (e) { toast("Not approved: " + e.message, "bad", 6000); ap.disabled = false; ap.textContent = "Approve"; }
+    };
+    const full = panel.querySelector("[data-full]"); if (full) full.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
+    const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
+  }
+  function drawCharmInto(cv, c) {
+    const ctx = cv.getContext("2d"), k = Math.min(cv.width / c.widthPt, cv.height / c.heightPt) * .82, cx = c.centerPt[0], cy = c.centerPt[1];
+    ctx.save(); ctx.translate(cv.width / 2, cv.height / 2);
+    const t = (px, py) => [(px - cx) * k, (cy - py) * k];
+    ctx.fillStyle = "rgba(200,162,78,.16)"; ctx.beginPath(); P.pathToCanvas(ctx, c.outline, t); ctx.fill("evenodd");
+    tryDo(() => P.drawCharm(ctx, c, t, k)); ctx.restore();
+  }
+  /** Hovering the plate names a charm's order; a click on another order's charm opens that order here. */
+  function wirePlate() {
+    const cv = byId("owSheetCv"), tip = byId("owPlateTip"); if (!cv) return;
+    let raf = 0, last = null;
+    cv.addEventListener("pointermove", e => {
+      last = e; if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0; const inf = SV.info; if (!inf || !inf.hitAt || !last) return;
+        const x = inf.hitAt(last.clientX, last.clientY), wrap = byId("owPlateWrap").getBoundingClientRect();
+        cv.classList.toggle("hot", !!(x && x.rid));
+        if (!x) { tip.hidden = true; return; }
+        tip.hidden = false; tip.textContent = (x.rid ? x.rid : "No order") + (x.sku ? " · " + x.sku : "");
+        tip.style.left = last.clientX - wrap.left + "px"; tip.style.top = last.clientY - wrap.top + "px";
+      });
+    });
+    cv.addEventListener("pointerleave", () => { tip.hidden = true; cv.classList.remove("hot"); });
+    cv.addEventListener("click", e => {
+      const inf = SV.info; if (!inf || !inf.hitAt) return;
+      const x = inf.hitAt(e.clientX, e.clientY); if (!x || !x.rid) return;
+      if (x.rid === W.rid) { SV.focus = x.poolId; inf.focus(x.poolId); paintPanel(inf); return; }
+      // another order: the view cross-fades to it, on this same sheet
+      tip.hidden = true; swapTo(x.rid, { view: "sheet", sheetId: inf.sheet.id, poolId: x.poolId });
+    });
+  }
+  function swapTo(rid, o) {
+    const body = W.dlg.querySelector(".owBody");
+    const go = () => openOrder(rid, { view: o.view, keepFrom: true, sheetId: o.sheetId, poolId: o.poolId, highlight: o.highlight });
+    if (still() || !body) return go();
+    body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); body.getAnimations().forEach(a => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
+  }
+  /** Front | Back: the plate turns to its edge, is drawn from behind, and turns back. */
+  function turnPlate(face) {
+    if (face === W.face) return; W.face = face;
+    byId("owFace").querySelectorAll("[data-face]").forEach(b => { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    const cv = byId("owSheetCv"), d = face === "back" ? 1 : -1, redraw = () => { if (SV.info) { SV.info.back(face === "back"); paintFoot(SV.info); paintPanel(SV.info); } };
+    if (still() || !SV.info) return redraw();
+    cv.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished.then(() => { redraw(); cv.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, () => redraw());
+  }
+  /** The sheet window takes this view's place (never one window over another), grown out of the sheet drawn here, and
+   *  this view comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
+  function fullSheet(select) {
+    const s = SV.list && SV.list[SV.at]; if (!s || !s.id || !window.SheetWin || !SheetWin.open) return;
+    const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null;
+    W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, at: SV.at, focus: select || SV.focus };
+    closeNow();
+    SheetWin.open(s.id, Object.assign(select ? { select } : {}, { origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
+    const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
+  }
+  function comeBack() {
+    const b = W.back; if (!b) return; W.back = null;
+    setTimeout(() => {
+      if (!W.dlg || W.dlg.open || document.querySelector("dialog[open]")) return;
+      const r = inPull(b.key) || b.row; if (!r) return;
+      W.rows = b.rows;
+      show(r, { view: "sheet", walk: b.walk, highlight: b.hl, back: true, sheetAt: b.at, poolId: b.focus });
+    }, 30);
+  }
+
+  /* ── the header number is the view's own search (design spec 7): "/" or Ctrl/Cmd+K (charm-nest-search.js hands them
+     here while the view is open), or a click on the number, turns it into a field. What is typed is looked up in the
+     search's index as it is typed (OrderSearch.query), a number it does not know yet is looked up in the records, and
+     the order picked opens here in place, cross-faded: a search never stacks over the view. Esc gives the number back. ── */
+  const F = { box: null, q: null, list: null, hits: [], sel: 0, t: 0 };
+  const finding = () => !!(F.box && !F.box.hidden);
+  function findBox() {
+    if (F.box) return F.box;
+    F.box = el("div", "owFind"); F.box.hidden = true;
+    F.box.innerHTML = `<span class="lbl">Order</span><input id="owFindQ" type="search" autocomplete="off" spellcheck="false" placeholder="Number, buyer or SKU" aria-label="Find an order" aria-controls="owFindList" aria-autocomplete="list"><kbd>Esc</kbd>`;
+    F.list = el("div", "owFindList"); F.list.id = "owFindList"; F.list.setAttribute("role", "listbox"); F.list.setAttribute("aria-label", "Orders found"); F.list.hidden = true;
+    W.dlg.querySelector(".owId").appendChild(F.box); W.dlg.querySelector(".owHead").appendChild(F.list);
+    F.q = F.box.querySelector("input");
+    F.q.addEventListener("input", () => { F.sel = 0; cancelAnimationFrame(F.t); F.t = requestAnimationFrame(findPaint); });
+    F.q.addEventListener("keydown", e => {
+      // (a field just hidden can keep the focus a moment: a key then is the view's, and Esc closes it)
+      if (!finding()) return;
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endFind(true); return; }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const n = F.hits.length; if (n) { F.sel = (F.sel + (e.key === "ArrowDown" ? 1 : -1) + n) % n; findMark(); } return; }
+      if (e.key === "Enter") { e.preventDefault(); findPaint(); findGo(F.list.hidden ? null : F.hits[F.sel]); }
+    });
+    F.q.addEventListener("blur", () => setTimeout(() => { if (finding() && document.activeElement !== F.q) endFind(); }, 150));
+    F.list.addEventListener("pointerdown", e => e.preventDefault());   // (the field keeps the focus: a click picks)
+    F.list.addEventListener("click", e => { const b = e.target.closest("[data-i]"); if (b) findGo(F.hits[+b.dataset.i]); });
+    return F.box;
+  }
+  /** Turns the header number into the search field (the whole search when no view is open). */
+  function focusSearch() {
+    wire(); if (!W.dlg) return;
+    if (!W.dlg.open || W.closing) { if (window.OrderSearch && OrderSearch.open) OrderSearch.open(); return; }
+    const box = findBox();
+    if (!finding()) {
+      W.dlg.querySelector(".owId").classList.add("finding"); box.hidden = false;
+      F.q.value = W.rid || ""; F.hits = []; F.sel = 0;
+      if (!still()) box.animate([{ opacity: 0, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: EASE });
+    }
+    F.q.focus(); F.q.select(); findPaint();
+  }
+  function endFind(refocus) {
+    if (!finding()) return;
+    F.box.hidden = true; F.list.hidden = true; F.list.innerHTML = ""; F.hits = [];
+    W.dlg.querySelector(".owId").classList.remove("finding");
+    // the focus stays in the view: on its tab (Esc), or nowhere in particular (an order picked)
+    if (document.activeElement === F.q) { const tab = refocus && W.dlg.querySelector(".owTabsV [aria-selected=true]"); if (tab) tab.focus({ preventScroll: true }); else F.q.blur(); }
+    if (refocus) { const n = byId("owTitle").querySelector(".num"); if (n && !still()) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease" }); }
+  }
+  function findPaint() {
+    if (!finding()) return;
+    const raw = F.q.value.trim(), S = window.OrderSearch, digits = raw.replace(/^#/, "").replace(/[\s,#-]/g, "");
+    let res = null; if (raw && S && S.query) res = tryDo(() => S.query(raw));
+    F.hits = ((res && res.hits) || []).slice(0, 6).map(h => ({ rid: h.e.rid, buyer: h.e.buyer || "" }));
+    // a number the index has nothing starting with: offered as it is, to be read from the records
+    if (/^\d{6,}$/.test(digits) && !F.hits.some(h => h.rid.startsWith(digits))) F.hits.push({ rid: digits, look: true });
+    F.sel = Math.min(F.sel, Math.max(0, F.hits.length - 1));
+    if (!F.hits.length || (F.hits.length === 1 && F.hits[0].rid === W.rid)) { F.list.hidden = true; F.list.innerHTML = ""; return; }
+    const num = /^\d+$/.test(digits) ? digits : "";
+    F.list.innerHTML = F.hits.map((h, i) => {
+      const s = !h.look && S && S.find ? (tryDo(() => S.find(h.rid)) || {}).state : null;
+      const n = num && h.rid.includes(num) ? h.rid.replace(num, `<mark>${num}</mark>`) : esc(h.rid);
+      return `<button type="button" role="option" data-i="${i}" aria-selected="${i === F.sel}"${h.rid === W.rid ? ' class="cur"' : ""}><b>${n}</b><span>${h.look ? "Look it up in the records" : esc(h.buyer || "—")}</span>${s && s.pill ? `<em class="${esc(s.tone || "")}">${esc(s.pill)}</em>` : ""}</button>`;
+    }).join("") + `<div class="owFindFoot">${res && res.total > 6 ? `${res.total} matches · ` : ""}↑↓ to choose · ↵ to open here</div>`;
+    const was = F.list.hidden; F.list.hidden = false;
+    if (was && !still()) F.list.animate([{ opacity: 0, transform: "translateY(-4px)" }, { opacity: 1, transform: "none" }], { duration: 180, easing: EASE });
+  }
+  function findMark() { F.list.querySelectorAll("[data-i]").forEach(b => b.setAttribute("aria-selected", String(+b.dataset.i === F.sel))); }
+  function findGo(h) {
+    if (!h) { const d = F.q.value.replace(/\D/g, ""); if (d.length < 6) return; h = { rid: d }; }
+    endFind();
+    if (h.rid !== W.rid) swapTo(h.rid, { view: W.view, highlight: true });
+  }
+
+  /* ── opening and closing: the view grows out of what was clicked (an Orders row, a search result, a charm) and goes
+     back into it (Paul, 28 Sep; the sheet window's curve). The view is opaque from the first frame, its clip growing
+     from the clicked rectangle to the screen; the header, the tabs and the view come up as it lands. Closing shrinks it
+     into its origin, which flashes gold, or fades where the origin is gone. Nothing waits on it: a click or a close in
+     flight is taken at once. ── */
+  let pressed = null;
+  document.addEventListener("pointerdown", e => {
+    const t = e.target && e.target.closest && e.target.closest("[data-mkey],[data-key],[data-rid],.reviewListRow,.ocard,.orderListRow,.rc,[role=button],button,li,tr"); if (!t || t.closest("#orderWin")) return;
+    pressed = { el: t, at: Date.now() };
+  }, true);
+  const onScreen = r => !!r && r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  const rectOf = el => { if (el && el.nodeType !== 1 && typeof el.left === "number") { const r = { left: el.left, top: el.top, width: el.width, height: el.height, right: el.left + el.width, bottom: el.top + el.height }; return onScreen(r) ? r : null; } if (!el || !el.isConnected || !el.getClientRects().length || (el.closest && el.closest("#orderWin"))) return null; const r = el.getBoundingClientRect(); return onScreen(r) ? r : null; };
+  const clipOf = r => `inset(${Math.max(0, r.top)}px ${Math.max(0, innerWidth - r.right)}px ${Math.max(0, innerHeight - r.bottom)}px ${Math.max(0, r.left)}px round 12px)`;
+  function bgOf(n) { for (; n && n.nodeType === 1; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor; if (c && c !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(c)) return c; } return ""; }
+  function stopMotion() { for (const a of W.anims.splice(0)) { try { a.cancel(); } catch (_) {} } if (W.dlg) W.dlg.querySelectorAll(".owTint").forEach(n => n.remove()); }
+  /** The origin found again: the very element, or the row of this order drawn anew while the view was open. */
+  function origin() {
+    if (rectOf(W.from)) return W.from;
+    const key = W.key, rid = W.rid;
+    const q = [key && `[data-key="${CSS.escape(key)}"]`, rid && `[data-rid="${CSS.escape(rid)}"]`].filter(Boolean);
+    for (const sel of q) for (const n of document.querySelectorAll(sel)) if (rectOf(n)) return n;
+    return null;
+  }
+  function growIn(from) {
+    const d = W.dlg; stopMotion(); d.classList.remove("owBack"); d.classList.add("owGrow");
+    if (still()) { W.anims.push(d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" })); return; }
+    const r = rectOf(from);
+    const run = (n, frames, o) => { if (!n) return null; const a = n.animate(frames, Object.assign({ easing: EASE, fill: "backwards" }, o)); W.anims.push(a); return a; };
+    if (!r) { run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 }); return; }
+    run(d, [{ clipPath: clipOf(r) }, { clipPath: "inset(0px 0px 0px 0px round 0px)" }], { duration: 650, easing: GROW });
+    // the surface starts in the colour of what was clicked and takes its own as it grows
+    const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
+    // the header, the tabs and the view come up 6px, 40ms apart, from 240ms; the rail's steps spring in
+    const view = d.querySelector(`.owBody > .owView[data-view="${W.view}"]`);
+    const parts = [d.querySelector(".owId"), d.querySelector(".owRight"), d.querySelector(".owTabsV"), d.querySelector(".owLoading:not([hidden])"), view];
+    parts.filter(Boolean).forEach((n, i) => run(n, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 240 + i * 40 }));
+    run(d.querySelector(".owRail"), [{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 320, easing: "cubic-bezier(.3,1.4,.5,1)" });
+  }
+  async function shut() {
+    const d = W.dlg; if (!d || !d.open || W.closing) return;
+    W.closing = true; stopMotion();
+    const from = still() ? null : origin(), r = rectOf(from), A = [];
+    if (r) {
+      d.classList.add("owBack");
+      const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); A.push(t.animate([{ opacity: 0 }, { opacity: 0, offset: .3 }, { opacity: 1 }], { duration: 420, easing: "ease", fill: "forwards" })); }
+      A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)", opacity: 1 }, { clipPath: clipOf(r), opacity: .9 }], { duration: 420, easing: GROW, fill: "forwards" }));
+    } else A.push(d.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still() ? "none" : "scale(.985)" }], { duration: still() ? 110 : 170, easing: "ease", fill: "forwards" }));
+    W.anims.push(...A);
+    // (a hidden tab draws no frames: the close never waits on them)
+    await Promise.race([Promise.all(A.map(a => a.finished.catch(() => {}))), new Promise(res => setTimeout(res, 600))]);
+    if (!W.closing) return;   // opened again meanwhile
+    try { d.close(); } catch (_) { d.removeAttribute("open"); }
+    if (r && from && from.animate) from.animate([{ boxShadow: "0 0 0 3px rgba(202,168,97,.45)" }, { boxShadow: "0 0 0 0 rgba(202,168,97,0)" }], { duration: 700, easing: "ease-out" });
+  }
+  function closeNow() { if (!W.dlg || !W.dlg.open) return; W.closing = false; stopMotion(); try { W.dlg.close(); } catch (_) { W.dlg.removeAttribute("open"); } }
+
+  /** Show a line in the view: opened, or in the view already open (another order, the next line, the same one again). */
+  function show(r, opts = {}) {
+    wire(); if (!W.dlg || !r) return;
+    const key = r.key, rid = String(r.order.receiptId);
+    const fresh = !W.dlg.open || W.closing;
+    if (W.closing) { W.closing = false; stopMotion(); W.dlg.classList.remove("owBack"); }
     if (W.key && W.key !== key) { clearTimeout(W.noteTimer); saveNote(); }
     if (!W.dlg.open) W.key = null;
+    W.row = inPull(key) ? null : r;
+    if (!W.row && !(W.rows || []).includes(r)) W.rows = null;
+    if (fresh || opts.walk !== undefined) W.walk = opts.walk !== false && !W.row;
+    const other = rid !== W.rid || fresh;
+    if (other || opts.highlight !== undefined) W.hl = opts.highlight || null;
     showOrder(rid, r);
     W.key = key;
+    if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
+    if (other && W.face === "back") turnPlate("front");
     paint();
-    if (!W.dlg.open) W.dlg.showModal();
-    try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
-    grow(); paintThread();
-    TeamMail.load(rid, true);
-    refreshNote(r);
+    if (fresh) {
+      W.from = opts.from || (pressed && Date.now() - pressed.at < 1500 ? pressed.el : null); pressed = null;
+      const v = opts.view || "info";
+      setView(v, { quiet: true, noLoad: true });
+      try { W.dlg.showModal(); } catch (_) { W.dlg.setAttribute("open", ""); }
+      inkTo();
+      if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) W.anims.push(W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" })); }
+      else growIn(W.from);
+    } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
+    else if (other && opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE }); }
+    if (other) mountRail(rid);
+    if (W.view === "timeline") mountFull();
+    if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { sheetShow().then(() => { if (SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
+    if (opts.tab && W.view !== "info") setView("info");
+    if (!r.loading) {
+      try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
+      grow(); paintThread();
+      TeamMail.load(rid, true);
+      refreshNote(r);
+    }
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
     W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) TeamMail.load(W.rid); }, 20000);
   }
-  return { open, paint, close: () => W.dlg && W.dlg.close(), isOpen: () => !!(W.dlg && W.dlg.open), key: () => W.key, repaintThread: () => paintThread(true) };
+  function open(key, opts) {
+    const r = inPull(key) || (W.row && W.row.key === key ? W.row : null);
+    if (!r) { toast("That line is no longer in the pull", "bad"); return; }
+    show(r, opts || {});
+  }
+
+  /* ── an order outside the pull (a search, an old order, a charm on a sheet): its line built from the records — the
+     run that pulled it (its line archive), the pool's pieces, the Library's sheets and its custom-order record — with a
+     line saying what is being read meanwhile ── */
+  function stubRow(rid) {
+    return { key: rid, loading: true, fromRecord: true, order: { receiptId: rid, orderNumber: rid, buyer: { name: "" }, createTs: 0, shipBy: 0, buyerMessage: "", giftMessage: "", staffNote: "", messages: [], lines: [] },
+      line: { transactionId: "", listingId: "", sku: "", title: "", quantity: 1, personalization: [], variations: [] }, spec: {}, problems: [], state: "", poolIds: [], engrave: null, material: null };
+  }
+  function specOf(row) {
+    try { row.spec = O.interpretLine(row.order, row.line, Orders.ctx()); } catch (_) { row.spec = { quantity: row.line.quantity || 1, designSku: row.line.sku, personalization: row.line.personalization || [] }; }
+    if (row.metal && !row.spec.material) row.spec.material = row.metal;
+    row.material = row.materialOverride || row.spec.material || row.metal || null;
+    row.problems = []; return row;
+  }
+  async function lookUp(rid, say) {
+    let pools = [];
+    try { pools = ((await api("charmNestLibrary", { op: "poolList", orderId: rid }, { quiet: true })).pools || []).filter(p => !["abandoned", "superseded"].includes(p.state)); } catch (e) { console.warn("order view: pool", e.message); }
+    const runs = [...new Set(pools.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).map(p => p.runId).filter(Boolean))];
+    if (!runs.length) {
+      say("Looking for the order on the Library's sheets…");
+      try { const f = await api("charmNestLibrary", { op: "findSheets", q: rid, fallback: false }, { quiet: true }); for (const s of (f.sheets || []).concat(f.rows || [])) if (s.runId && !runs.includes(s.runId)) runs.push(s.runId); } catch (e) { console.warn("order view: find", e.message); }
+    }
+    let rows = [];
+    for (const runId of runs.slice(0, 3)) {
+      say("Reading the run that pulled it…");
+      try {
+        const r = await api("charmNestLibrary", { op: "runGet", runId, archived: true, orders: [rid] }, { quiet: true });
+        rows = Object.entries((r.run && r.run.lines) || {}).filter(([, l]) => String(l.orderId) === rid).map(([k, l]) => Orders.rowFromRecord(k, l));
+      } catch (e) { console.warn("order view: run", e.message); }
+      if (rows.length) break;
+    }
+    // no line kept: the pool's own pieces say what was cut for it
+    if (!rows.length && pools.length) {
+      const byLine = new Map(); for (const p of pools) { const k = p.lineKey || `${rid}_${p.transactionId || ""}`; if (!byLine.has(k)) byLine.set(k, p); }
+      rows = [...byLine].map(([k, p]) => Orders.rowFromRecord(k, { orderId: rid, transactionId: p.transactionId, sku: p.sku, material: p.material, quantity: p.quantity, state: p.state === "complete" ? "committed" : p.state, createTs: p.orderDate ? Math.round(p.orderDate) : 0, arrivedAt: p.arrivedAt, poolIds: pools.filter(q => (q.lineKey || "") === k).map(q => q.poolId) }));
+    }
+    if (!rows.length) return null;
+    try { await Orders.loadMaps(); } catch (_) {}
+    for (const row of rows) { specOf(row); row._pools = pools; if (!(row.poolIds || []).length) row.poolIds = pools.filter(p => p.lineKey === row.key).map(p => p.poolId); }
+    // a custom order finished by hand keeps its own record
+    say("Reading its custom-order record…");
+    await Promise.all(rows.map(async row => { try { const c = await api("charmNestLibrary", { op: "customGet", key: row.key }, { quiet: true }); if (c && c.record && !row.spec.customDone) row.spec.customDone = c.record; } catch (_) {} }));
+    return rows;
+  }
+  /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
+   *  opts: { highlight, from, view } (a search passes highlight: the number is lit as the view opens). */
+  async function openOrder(rid, opts = {}) {
+    wire(); if (!W.dlg) return;
+    rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
+    const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from;
+    // (a search passes the line it found: that line of the pull, else the order's first)
+    const pulled = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid && r.state !== "gone");
+    const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
+    if (pulled.length) return show(mine || pulled[0], o);
+    const tok = ++W.look, stub = stubRow(rid);
+    const loading = byId("owLoading"), say = t => { if (tok !== W.look) return; loading.hidden = !t; if (t) loading.lastElementChild.textContent = t; };
+    W.rows = null;
+    say("Looking up order " + rid + " in the sorter's records…");
+    show(stub, Object.assign({}, o, { view: o.view && o.view !== "sheet" ? o.view : o.view === "sheet" ? "sheet" : "info" }));
+    let rows = null;
+    try { rows = await lookUp(rid, say); } catch (e) { console.warn("order view: look-up", e); }
+    if (tok !== W.look || !W.dlg.open || W.key !== stub.key) return;
+    say(null);
+    if (!rows || !rows.length) {
+      stub.loading = false; stub.state = ""; paint();
+      byId("owNotes").textContent = "This order has no line in the sorter's records: it was never pulled, or its run is gone. Its timeline and messages are still here.";
+      TeamMail.load(rid, true); refreshNote(stub); try { window.CustomerMail?.orderShown(stub, {}); } catch (_) {}
+      return;
+    }
+    W.rows = rows;
+    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId });
+  }
+  return { open, openOrder, focusSearch, paint, close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════
