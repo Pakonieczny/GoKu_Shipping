@@ -503,6 +503,9 @@ dialog.phv{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-wid
 dialog.phv::backdrop{background:rgba(16,14,12,.95)}
 /* inside an open dialog it is a layer of that dialog (no second pop-up), with its own shade */
 dialog.phv.layer{z-index:2147483000;padding:0;border:0;background:rgba(16,14,12,.95)}
+dialog.phv.layer.phvIn{background:transparent}
+.phvShade{position:fixed;inset:0;z-index:-1;background:rgba(16,14,12,.95);pointer-events:none;will-change:opacity}
+.phvGhost{position:fixed;max-width:none;max-height:none;margin:0;transform-origin:0 0;pointer-events:none;background:#fff;box-shadow:0 10px 50px rgba(0,0,0,.45);will-change:transform,opacity}
 .phvStage{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:zoom-in}
 .phvStage.zoomed{cursor:grab}.phvStage.zoomed.drag{cursor:grabbing}
 .phvImg{position:absolute;left:0;top:0;max-width:none;max-height:none;transform-origin:0 0;will-change:transform;-webkit-user-drag:none;box-shadow:0 10px 50px rgba(0,0,0,.45);background:#fff}
@@ -2188,6 +2191,17 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
 #motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
+/* every pop-up grows out of what opened it and goes back into it (Paul, 28 Sep 19:27-19:30; Motion.dialogOpen/Close):
+   while it grows, its surface is a copy of its box laid over the screen under its parts, and the window itself is bare */
+.mdSurface{position:fixed;z-index:-1;pointer-events:none;transform-origin:0 0;overflow:hidden;will-change:transform}
+.mdSurface>b{position:absolute;inset:0;border-radius:inherit;will-change:opacity}
+dialog.mdIn[open]:not(.closing){animation:none!important}
+dialog.mdIn::backdrop{animation:mdBackIn .42s ease both}
+dialog.mdGrow{background:transparent!important;box-shadow:none!important}
+.mdGhost{position:fixed;pointer-events:none;transform-origin:0 0}
+.mdGhostBack{position:fixed;inset:0;pointer-events:none}
+@keyframes mdBackIn{from{opacity:0}}
+@media (prefers-reduced-motion:reduce){dialog.mdIn::backdrop{animation:mdBackIn .16s ease both}}
 .mGhost>.mCopy{border-radius:10px}
 .mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}
 .mPlus{position:fixed;z-index:141;font:800 11.5px var(--sans);color:#3f5b3a;background:var(--card);border:1px solid #cddcc9;border-radius:999px;padding:1px 8px;box-shadow:0 4px 12px rgba(30,24,16,.12);white-space:nowrap;pointer-events:none}
@@ -2454,7 +2468,7 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260927-seals"></script>
+<script src="charm-nest-motion.js?v=20260928-popups"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5581,9 +5595,9 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-merge2"></script>
+<script src="charm-nest-bridge.js?v=20260928-popups"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
-<script src="charm-nest-mail.js?v=20260926-audit3"></script>
+<script src="charm-nest-mail.js?v=20260928-popups"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260927-moves"></script>
