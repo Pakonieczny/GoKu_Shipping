@@ -872,6 +872,7 @@ dialog.cmDlg .owBox{height:100%}
 .solidOptions{display:flex;flex-direction:column;align-items:stretch;width:100%;font-size:12px;color:var(--ink70)}
 .sheetCard:has(.sheetOptions[open]){z-index:35}.sheetOptionsHead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:15px 18px;border-bottom:1px solid var(--line)}.sheetOptionsHead strong{font-size:14px;color:var(--ink);font-weight:600}.sheetOptionsClose{border:0;background:none;color:var(--ink45);font-size:22px;line-height:1;width:28px;height:28px;cursor:pointer;border-radius:6px}.sheetOptionsClose:hover{background:var(--paper);color:var(--ink)}
 .sheetOptionSection,.solidOptions .roseStockOptions{padding:17px 18px;display:grid;gap:12px;border:0}.sheetOptionSection+.sheetOptionSection,.solidOptions .roseStockOptions{border-top:1px solid var(--line)}.sheetOptionSection h4,.solidOptions .roseStockOptions h4{font-size:10px;letter-spacing:.11em;text-transform:uppercase;font-weight:600;color:var(--ink45);margin:0}.sheetInclude{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:13px}.sheetInclude input{width:17px;height:17px;margin:0;accent-color:var(--m-rose)}.sheetOptionStatus:empty{display:none}.sheetSizeAction{display:flex;align-items:center;justify-content:space-between;gap:12px}.sheetSizeAction .help{font-size:11px;line-height:1.5;flex:1}.sheetSizeAction button{flex:none}
+.sheetMergeHelp{margin:0;font-size:11px;line-height:1.5}.sheetMergeHelp.bad{color:var(--clay)}.sheetMergeActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}.sheetMergeActions .btn,.sheetMergeAskBtns .btn{margin-left:0}.sheetMergeAsk{display:grid;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card2)}.sheetMergeAsk .help{font-size:11.5px;line-height:1.5;color:var(--ink)}.sheetMergeAskBtns{display:flex;justify-content:flex-end;gap:8px}.sheetMergeBusy{display:flex;align-items:center;gap:8px;font-size:11px;line-height:1.5;color:var(--ink70)}.sheetMergeBusy .spin{width:11px;height:11px;flex:0 0 11px;border-width:2px}
 .solidSize{display:grid;grid-template-columns:1fr 1fr;gap:14px}.solidSize label{display:grid;grid-template-columns:1fr auto;gap:6px;font-size:12px}.solidSize label span,.roseAllowance>span{color:var(--ink45);font-size:11px}.solidSize input{grid-column:1/-1;width:100%;min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono);color:var(--ink)}.solidOptions input:focus-visible,.solidOptions select:focus-visible{outline:2px solid #c08578;outline-offset:2px}.solidOptions input:disabled{background:var(--paper);color:var(--ink45)}.solidOptions [hidden]{display:none!important}.solidOptions .roseAllowance{display:grid;grid-template-columns:1fr auto 88px;gap:10px;align-items:center}.solidOptions .roseAllowance input{width:88px;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font:13px var(--mono)}.solidOptions .roseStockOptions p{margin:0;font-size:11px;line-height:1.5}.solidOptions [data-rose-stock-choice]{display:grid;gap:10px}.solidOptions [data-rose-picker] select{width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:12px}
 
 /* the door back into every run that ever ran (dialog.hist is the Sets menu's read-only preview, SetPicker.preview) */
@@ -3376,9 +3377,12 @@ function overflowToNextSheet(sh, announce = true) {
   // saving the few orders before these takes them right after (feedWait, feedOn): a new sheet used to be opened for them,
   // which a batch coming in a few orders at a time would do again and again, leaving sheets half empty (25 Sep).
   const inLine = ["gold","silver"].includes(sh.metal), writing = p => ["nesting", "finishing"].includes(p.status) || p.persisted&&!p.persistedDone;
-  let next = inLine ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null;
-  if (!next || manualSheetClosed(next) || !inLine && (["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone)) next = addPage(sh.metal);
-  const after = inLine && writing(next);
+  // a 10K or 14K rerun from Options → Merge sheets refills its sheets in their order: the next sheet of the rerun takes
+  // what did not fit (after its own work, if it is busy), not the metal's newest sheet or a new one (Gate: mergeSheets)
+  const chained = prim.pages.includes(sh._mergeNext) && !manualSheetClosed(sh._mergeNext) ? sh._mergeNext : null;
+  let next = chained || (inLine ? prim.pages.slice(i+1).find(p => !manualSheetClosed(p)) || null : prim.pages.length-1>i?prim.pages[prim.pages.length-1]:null);
+  if (!chained && (!next || manualSheetClosed(next) || !inLine && (["nesting", "finishing", "queued"].includes(next.status) || next.persisted&&!next.persistedDone))) next = addPage(sh.metal);
+  const after = (inLine || !!chained) && writing(next);
   if (!after) { next.intakeAppend=next.placements.length>0;next.appendOnly=next.intakeAppend; }
   moving.forEach(c => { if(c.arrivalPin){c.pinned=null;delete c.arrivalPin;} c.metal = sh.metal; next.charms.push(c); });
   if (after) { next.feedWait = (next.feedWait || []).concat(moving.map(c => c.id)); next.dirty = true; }
@@ -5544,7 +5548,7 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-true"></script>
+<script src="charm-nest-bridge.js?v=20260928-merge"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-true"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
