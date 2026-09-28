@@ -2703,6 +2703,36 @@ html.gs-locked body > *:not(#gate){display:none!important}
   #batchJobsPanel .batch-card { padding:18px; }
   #batchJobsPanel .batch-stat { grid-template-columns:1fr; gap:2px; }
 }
+
+/* A single compact control surface; status and recovery stay separate. */
+#generateControls > label, #generateControls legend, #generateControls .generation-quantity label {
+  color:var(--text-2); font-size:13px; font-weight:500; letter-spacing:0; text-transform:none; margin:0 0 7px;
+}
+#generateControls > select { font-size:15px; padding:10px 12px; min-height:42px; }
+#generateControls .generation-mode { border:0; padding:0; margin:18px 0; min-width:0; }
+#generateControls .generation-modes { display:flex; gap:8px; }
+#generateControls .generation-modes .btn { flex:1; }
+#generateControls :is(.generation-modes, .generation-run, .generation-utilities) .btn { font-size:14px !important; line-height:1.3 !important; padding:9px 12px !important; min-height:38px; gap:8px; border-radius:8px; }
+#generateControls .mode-discount { font-size:11px; border-radius:4px; padding:2px 5px; background:var(--accent-bg); color:var(--accent); }
+#generateControls .generation-run { display:flex; align-items:flex-end; gap:10px; }
+#generateControls .generation-quantity { width:76px; flex-shrink:0; }
+#generateControls .generation-quantity input { width:100%; min-width:0; min-height:40px; padding:9px 10px; font-size:15px; }
+#generateControls #generateBatchBtn { flex:1; min-height:40px; }
+#generateControls .generation-utilities { display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+#generateControls .generation-utilities .btn { color:var(--text-2); background:transparent; border-color:transparent; padding:5px 2px !important; min-height:32px; }
+#generateControls .generation-utilities .btn:hover { color:var(--text); }
+#generateControls #filesApiCleanupStatus { font-size:13px; line-height:1.5; white-space:pre-line; overflow-wrap:anywhere; }
+#generateControls #filesApiCleanupStatus:not(:empty) { margin-top:12px; }
+#generateControls #cancelBatchBtn { color:#fca5a5; }
+#generateControls #generateSet[hidden] { display:none !important; }
+#generateControls :is(.generation-modes, .generation-run, .generation-utilities) .btn::before { content:""; display:inline-block; flex-shrink:0; width:16px; height:16px; background:currentColor; mask:var(--action-icon) center / contain no-repeat; }
+#generateControls #genModeStandardBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M13%202%204%2014h7l-1%208%2010-13h-7z%22/%3E%3C/svg%3E"); }
+#generateControls #genModeBatchBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m12%203%2010%205-10%205L2%208Zm-10%209%2010%205%2010-5M2%2016l10%205%2010-5%22/%3E%3C/svg%3E"); }
+#generateControls #generateBatchBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m8%204%2012%208-12%208Z%22/%3E%3C/svg%3E"); }
+#generateControls #resumeEmptySetsBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%2011a9%209%200%201%201%203%207M3%204v7h7%22/%3E%3C/svg%3E"); }
+#generateControls #filesApiCleanupBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M3%206h18M9%206V3h6v3M5%206l1%2015h12l1-15M10%2010v7m4-7v7%22/%3E%3C/svg%3E"); }
+#generateControls #cancelBatchBtn { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M6%206h12v12H6Z%22/%3E%3C/svg%3E"); }
+#generateControls #filesApiCleanupCancel { --action-icon:url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22black%22%20stroke-width%3D%221.8%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%206%2012%2012M18%206%206%2018%22/%3E%3C/svg%3E"); }
 </style>
 </head>
 <body>
@@ -3187,92 +3217,43 @@ html.gs-locked body > *:not(#gate){display:none!important}
       <!-- ===== GENERATE SECTION ===== -->
       <div id="generateSection">
         <h1>Generate</h1>
-        <p class="lede">Pick a category, drop assets into the matching folders, then trigger a randomized set generation.</p>
 
-        <div class="group">
-          <div class="group-head">
-            <h3>Category</h3>
-            <span class="count">storage source of truth</span>
-          </div>
-
-          <label>Category</label>
+        <div class="group" id="generateControls">
+          <label for="activeCategory">Category</label>
           <select id="activeCategory"></select>
+          <button type="button" id="generateSet" hidden>Generate one set</button>
 
-          <div class="hint" style="margin-top: 12px;">
-            <strong>Earring categories use a different shared pool.</strong><br>
-            Stud / Hoop Earrings pull charm refs from <code>Charm_Maker/New_Charms_Earrings</code>.
-            All other categories use <code>Charm_Maker/New_Charms</code>.
-          </div>
-
-          <div class="row" style="margin-top: 14px;">
-            <button class="btn btn-primary" id="generateSet" style="width:100%;">Generate Set (Randomized Refs)</button>
-          </div>
-
-          <!-- Generation mode toggle. Standard = realtime, current behavior.
-               Batch = OpenAI Batch API at 50% off, 2K output, up to 24h turnaround.
-               Persisted to localStorage so it survives page reloads. -->
-          <div id="genModeToggle" style="margin-top: 14px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <label style="margin: 0; font-size: 12px; font-weight: 600;">Generation mode</label>
-              <span class="muted" style="font-size: 10px;" id="genModeHint">Affects all Generate buttons</span>
+          <fieldset id="genModeToggle" class="generation-mode">
+            <legend>Mode</legend>
+            <div class="generation-modes">
+              <button type="button" class="btn" id="genModeStandardBtn" aria-pressed="true" title="Generate immediately at standard price">Standard</button>
+              <button type="button" class="btn" id="genModeBatchBtn" aria-pressed="false" title="Queued generation · 2K · 50% off · up to 24 hours">Batch <span class="mode-discount">−50%</span></button>
             </div>
-            <div class="row" style="gap: 6px;">
-              <button type="button" class="btn btnSmall" id="genModeStandardBtn"
-                      style="flex: 1; background: var(--accent-bg); border: 1px solid var(--accent-line); color: var(--accent); font-weight: 600;">
-                Standard · realtime · full price
-              </button>
-              <button type="button" class="btn btnSmall" id="genModeBatchBtn"
-                      style="flex: 1; background: var(--inset); border: 1px solid var(--line); color: var(--text-2); font-weight: 500;">
-                Batch · 50% off · 2K · up to 24h
-              </button>
+          </fieldset>
+
+          <div class="generation-run">
+            <div class="generation-quantity">
+              <label for="batchGenerateCount">Sets</label>
+              <input type="number" id="batchGenerateCount" min="1" max="1000" value="5" />
             </div>
-            <div id="genModeBatchInfo" class="muted" style="display: none; margin-top: 8px; font-size: 10px; line-height: 1.5;">
-              Batch jobs run on OpenAI's asynchronous Batch endpoint at 50% of standard cost. Output stays at 2K (2048×2048). The browser does not need to stay open; results land in Firebase Storage and the manifest writes automatically. Track progress in the panel below.
+            <button type="button" class="btn btn-primary" id="generateBatchBtn">Generate</button>
+            <button type="button" class="btn" id="cancelBatchBtn" style="display:none;">Stop</button>
+          </div>
+          <div class="generation-utilities">
+            <div id="resumeEmptySetsRow" style="display:none;">
+              <button type="button" class="btn" id="resumeEmptySetsBtn" title="Retry empty sets while preserving saved images">Retry empty</button>
+            </div>
+            <div id="filesApiCleanupRow">
+              <button type="button" class="btn" id="filesApiCleanupBtn" title="Scan temporary batch files for cleanup">Clean temp files</button>
+              <button type="button" class="btn" id="filesApiCleanupCancel" hidden>Cancel</button>
             </div>
           </div>
-
-          <!-- Batch generation: loops generateSet() N times in Standard mode,
-               or submits one OpenAI batch job in Batch mode. -->
-          <div style="margin-top: 20px; padding: 18px; background: var(--inset); border: 1px solid var(--line); border-radius: var(--r-md);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <label style="margin: 0; font-size: 12px;">Batch generate</label>
-              <span class="muted" style="font-size: 10px;" id="batchGenHint">loops the action above N times</span>
-            </div>
-            <div class="row" style="gap: 8px; align-items: center;">
-              <input type="number" id="batchGenerateCount" min="2" max="1000" value="5" style="flex: 0 0 96px;" />
-              <button class="btn" id="generateBatchBtn" style="flex: 1; background: #1c2a4a; border: 1px solid #2d4070; color: #93c5fd; font-weight: 500;">Generate batch</button>
-              <button class="btn btnSmall" id="cancelBatchBtn" style="display: none; background: #3d1c1c; border: 1px solid #7a3838; color: #fca5a5;">Cancel</button>
-            </div>
-            <!-- Resume empty sets — recovery path for partially-failed
-                 batches. Scans the active category for Set_N folders
-                 that were allocated but never populated with slot
-                 images (typical after a partial Gemini failure or a
-                 mid-collect crash), then re-runs charm_pool_pick +
-                 batch_submit using the EXISTING folder paths so the
-                 populated sets are left strictly untouched. Only
-                 visible in Batch mode (the Standard mode toggle hides
-                 this whole batch block via _renderGenModeButtons). -->
-            <div id="resumeEmptySetsRow" style="display: none; margin-top: 8px;">
-              <button class="btn btnSmall" id="resumeEmptySetsBtn" style="width: 100%; background: #1c2a4a; border: 1px solid #2d4070; color: #93c5fd;">
-                🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)
-              </button>
-            </div>
-            <div id="filesApiCleanupRow" style="margin-top: 8px;">
-              <button type="button" class="btn btnSmall" id="filesApiCleanupBtn" style="width: 100%; background: #4a1c1c; border: 1px solid #702d2d; color: #fca5a5;">
-                🗑 Purge temporary batch files…
-              </button>
-              <div class="muted" style="font-size: 11px; margin-top: 6px; line-height: 1.5;">
-                Clears OpenAI and legacy Gemini uploads/results after collection. Saved Firebase images and active or uncollected jobs are preserved.
-              </div>
-              <div id="filesApiCleanupStatus" role="status" aria-live="polite" style="font-size: 12px; margin-top: 6px; white-space: pre-line;"></div>
-              <button type="button" class="btn btnSmall" id="filesApiCleanupCancel" hidden>Cancel cleanup</button>
-            </div>
-            <div id="batchProgress" style="display: none; margin-top: 10px;">
-              <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
-              <div class="upload-progress-meta">
-                <span class="upload-phase" id="batchProgressPhase">Working…</span>
-                <span class="upload-pct" id="batchProgressPct">0/0</span>
-              </div>
+          <div id="filesApiCleanupStatus" role="status" aria-live="polite"></div>
+          <div id="batchProgress" style="display:none; margin-top:16px;">
+            <div class="upload-progress-bar"><div class="upload-progress-fill" id="batchProgressFill"></div></div>
+            <div class="upload-progress-meta">
+              <span class="upload-phase" id="batchProgressPhase">Working…</span>
+              <span class="upload-pct" id="batchProgressPct">0/0</span>
             </div>
           </div>
 
@@ -6111,7 +6092,7 @@ The output must look like the input image with ONLY the user's requested change 
       }
     }
 
-    activeCategoryEl.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join("");
+    activeCategoryEl.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c.replace(/_/g, " ").replace(/^Charm Maker\//, "Charm Maker · ")}</option>`).join("");
     activeCategoryEl.value = "Beady_Necklace";
     renderCategoryUI(activeCategoryEl.value);
 
@@ -11707,6 +11688,15 @@ These requirements take precedence over any instruction to duplicate a reference
           alert('Batch capped at 1000 sets per run. Adjust the count.');
           return;
         }
+        if (count === 1) {
+          _batchInFlight = true;
+          generateBatchBtn.disabled = true;
+          generateBatchBtn.textContent = "Generating…";
+          try { await generateSet(); }
+          catch (err) { setStatus(`Error: ${err?.message || err}`); }
+          finally { _batchInFlight = false; generateBatchBtn.disabled = false; _renderGenModeButtons(); }
+          return;
+        }
         const ok = confirm(`Generate ${count} sets with up to 3 sets in parallel? This will run in the background — you can switch tabs but keep this page open.`);
         if (!ok) return;
 
@@ -11748,7 +11738,7 @@ These requirements take precedence over any instruction to duplicate a reference
 
         cancelBatchBtn.style.display = 'none';
         generateBatchBtn.disabled = false;
-        generateBatchBtn.textContent = 'Generate batch';
+        generateBatchBtn.textContent = 'Generate';
         if (generateSetBtn) generateSetBtn.disabled = false;
         _batchInFlight = false;
         _batchCancelRequested = false;
@@ -11818,8 +11808,6 @@ These requirements take precedence over any instruction to duplicate a reference
     function _renderGenModeButtons() {
       const standardBtn = document.getElementById("genModeStandardBtn");
       const batchBtn = document.getElementById("genModeBatchBtn");
-      const info = document.getElementById("genModeBatchInfo");
-      const batchHint = document.getElementById("batchGenHint");
       const panel = document.getElementById("batchJobsPanel");
       if (!standardBtn || !batchBtn) return;
 
@@ -11854,22 +11842,11 @@ These requirements take precedence over any instruction to duplicate a reference
       batchBtn.style.opacity = canBatch ? "1" : "0.45";
       batchBtn.style.cursor = canBatch ? "pointer" : "not-allowed";
       batchBtn.title = canBatch
-        ? `Run ${modelConfig.label} through the OpenAI Batch API at reduced cost.`
+        ? "Queued generation · 2K · 50% off · up to 24 hours"
         : `${modelConfig.label} currently uses Standard mode in this app.`;
 
-      if (info) {
-        info.style.display = isBatch ? "block" : "none";
-        info.textContent =
-          `${modelConfig.label} batch jobs run on OpenAI's asynchronous Batch endpoint at reduced cost. ` +
-          `Output stays at 2K (2048×2048); results land in Firebase Storage and the manifest writes automatically.`;
-      }
-      if (batchHint) {
-        batchHint.textContent = !canBatch
-          ? `${modelConfig.label} uses Standard mode`
-          : isBatch
-          ? "submits one batch job (50% off, up to 24h)"
-          : "loops the action above N times";
-      }
+      standardBtn.setAttribute("aria-pressed", String(!isBatch));
+      batchBtn.setAttribute("aria-pressed", String(isBatch));
       // Show the in-flight batches panel when in batch mode (regardless
       // of whether there are any current batches — the panel will
       // render an "empty" state).
@@ -11893,12 +11870,12 @@ These requirements take precedence over any instruction to duplicate a reference
       // whether they're firing a batch job.
       if (generateBatchBtn) {
         if (isBatch) {
-          generateBatchBtn.textContent = "Submit batch (50% off, 2K)";
+          generateBatchBtn.textContent = "Queue sets";
           generateBatchBtn.style.background = "#1f4026";
           generateBatchBtn.style.borderColor = "#2f5e3a";
           generateBatchBtn.style.color = "#7fdb96";
         } else {
-          generateBatchBtn.textContent = "Generate batch";
+          generateBatchBtn.textContent = "Generate";
           generateBatchBtn.style.background = "#1c2a4a";
           generateBatchBtn.style.borderColor = "#2d4070";
           generateBatchBtn.style.color = "#93c5fd";
@@ -11971,19 +11948,9 @@ These requirements take precedence over any instruction to duplicate a reference
       // Files API upload buffering, etc).
       const chunkCount = Math.ceil(count / CHUNK_SIZE);
 
-      const confirmMsg = chunkCount === 1
-        ? `Submit ONE ${batchModelConfig.label} batch job for ${count} set(s) of ${category}?\n\n` +
-          `· Cost: ~50% of Standard mode\n` +
-          `· Output: 2K (2048×2048)\n` +
-          `· Turnaround: usually 2–6h, up to 24h\n\n` +
-          `You can close this tab — results land in Firebase automatically.`
-        : `Submit ${count} set(s) of ${category}?\n\n` +
-          `Will be split into ${chunkCount} OpenAI batch job(s) of up to ${CHUNK_SIZE} sets each ` +
-          `to stay under server memory limits.\n\n` +
-          `· Cost: ~50% of Standard mode\n` +
-          `· Output: 2K (2048×2048)\n` +
-          `· Turnaround: usually 2–6h, up to 24h per batch\n\n` +
-          `You can close this tab — results land in Firebase automatically.`;
+      const confirmMsg = `Queue ${count} ${category.replace(/_/g, " ")} set(s)?\n\n` +
+        `2K · 50% off · up to 24 hours after provider acceptance.\n` +
+        `Keep this tab open until all sets are queued.`;
       const ok = confirm(confirmMsg);
       if (!ok) return;
 
@@ -12568,7 +12535,7 @@ These requirements take precedence over any instruction to duplicate a reference
       const resumeBtn = document.getElementById("resumeEmptySetsBtn");
       if (resumeBtn) {
         resumeBtn.disabled = true;
-        resumeBtn.textContent = "🔄 Scanning for empty sets…";
+        resumeBtn.textContent = "Scanning…";
       }
       if (generateSetBtn) generateSetBtn.disabled = true;
       _setBatchProgress(0, 1, `Scanning ${category} for empty sets…`);
@@ -12897,7 +12864,7 @@ These requirements take precedence over any instruction to duplicate a reference
         if (generateSetBtn) generateSetBtn.disabled = false;
         if (resumeBtn) {
           resumeBtn.disabled = false;
-          resumeBtn.textContent = "🔄 Resume empty sets (scan & re-fill folders left empty by partial failures)";
+          resumeBtn.textContent = "Retry empty";
         }
         _renderGenModeButtons();
         setTimeout(() => { batchProgress.style.display = "none"; }, 8000);
@@ -12910,7 +12877,7 @@ These requirements take precedence over any instruction to duplicate a reference
     // Scan first; confirmation authorizes only collected batch temporary files.
     let filesCleanupPlan = null;
     let filesCleanupCancelled = false;
-    const cleanupLabel = "🗑 Purge temporary batch files…";
+    const cleanupLabel = "Clean temp files";
     document.getElementById("filesApiCleanupCancel")?.addEventListener("click", () => {
       filesCleanupCancelled = true;
       filesCleanupPlan = null;
@@ -12933,7 +12900,7 @@ These requirements take precedence over any instruction to duplicate a reference
       const call = body => postJson("geminiImageProxy", { kind: "files_cleanup", ...body }, AbortSignal.timeout(30000));
       try {
         if (!filesCleanupPlan) {
-          btn.textContent = "Scanning temporary batch files…";
+          btn.textContent = "Scanning…";
           let cursor = null, scanned = 0, protectedCount = 0;
           const candidates = [];
           do {
@@ -12949,7 +12916,7 @@ These requirements take precedence over any instruction to duplicate a reference
           filesCleanupPlan = [...new Set(candidates)];
           report(`Ready to check and purge temporary files from ${filesCleanupPlan.length} collected batches. Active batches will be skipped. Firebase images remain saved.
 Click the button again to permanently delete eligible temporary files, or cancel.`);
-          btn.textContent = `Confirm purge · ${filesCleanupPlan.length} collected batches`;
+          btn.textContent = `Confirm cleanup (${filesCleanupPlan.length})`;
           return;
         }
         const plan = filesCleanupPlan;
