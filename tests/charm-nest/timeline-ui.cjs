@@ -318,6 +318,13 @@ function fixture({ MAIN, CX }) {
   assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
   await page.hover('.tlTestHost .tlMini'); await page.waitForTimeout(320);
   assert(await page.$eval('.tlTestHost .tlMini .f', f => f.getBoundingClientRect().width) > 100, 'a stamp grows on hover to its full face');
+  // explainOn: the card's seal, hovered, says what the order's next step still needs; a click asks the host to pin it
+  await page.evaluate(MAIN => { const card = document.querySelector('.tlTestHost'), a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}); card.innerHTML = a.seal; OrderTimelineUI.explainOn(card, () => ({ events: window.__fx[MAIN].events }), st => { window.__pinned = st; }); }, MAIN);
+  await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(260);
+  r = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return X ? { need: X.querySelectorAll('.rq:not(.ok)').length, top: X.getBoundingClientRect().top, seal: document.querySelector('.tlTestHost .tlNowSeal').getBoundingClientRect().bottom } : null; });
+  assert(r && r.need > 0 && r.top >= r.seal, 'the Overview seal shows the next step\'s missing lines below it: ' + JSON.stringify(r));
+  await page.click('.tlTestHost .tlNowSeal');
+  assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click asks for the next step pinned');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
   ok.push('nowStamps/wireNow: the latest seal (SHIPPING LABEL · DANA K.), six 26px stamps that grow to their full face on hover and open their event, and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
 

@@ -427,12 +427,10 @@
     const out = () => ({ k: s.k, label: s.l, i, of: STAGES.length, state, done, need, facts: facts.slice(-6) });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
-    if (state === "done") return out();
-    if (state === "later") add("after", `${STAGES[Math.max(0, D.cur)].l}${D.cur >= 0 && D.cur < i - 1 ? " and the steps between" : ""}`);
-    if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
-    if (s.k === "arrived") add("wait", HOW.arrived);
-    else if (s.k === "sheet") {
+    // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
+    // under Nested even once another piece of the order is nested
+    const loose = () => {
       for (const l of lines) {
         if (l.onSheet || l.state === "gone") continue;
         if (l.hold) add("person", `${name(l)} is held${l.reason ? ": " + l.reason : ""}. Release it in Review`);
@@ -442,8 +440,16 @@
         else if (l.state === "oversize") add("person", `${name(l)} is too big for the plate; resize it in Review`);
         else if (l.wait && l.wait.kind === "slow") add("wait", `${metalWord(l.wait.material)} goes to the laser ${dayWord(l.wait.until)}; slow metals go every few days`);
         else if (l.wait) add("wait", `the ${metalWord(l.wait.material)} pieces waiting fill ${Math.round(+l.wait.pct || 0)}% of a sheet; a sheet is made when it is full, or sooner for a piece due to ship within 2 days`);
-        else if (l.reason) add("wait", l.reason);
+        else if (l.reason) add("wait", `${name(l)}: ${l.reason}`);
       }
+    };
+    if (state === "done") { if (s.k === "sheet") loose(); return out(); }
+    if (state === "later") add("after", `${STAGES[Math.max(0, D.cur)].l}${D.cur >= 0 && D.cur < i - 1 ? " and the steps between" : ""}`);
+    if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
+    if (state === "now" && s.k !== "sheet") loose();
+    if (s.k === "arrived") add("wait", HOW.arrived);
+    else if (s.k === "sheet") {
+      loose();
       add("next", HOW.sheet);
     } else if (s.k === "engraved") {
       const eng = lines.filter(l => l.engrave && l.engrave.needed);
@@ -482,7 +488,7 @@
     return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>${facts}`;
   }
   /** The small card under a hovered step. */
-  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}">${esc(STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
+  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
     `<div class="xf">Step ${q.i + 1} of ${q.of}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
   /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it. → the animation. */
   function placeExp(card, html, dot, whole) {
@@ -1348,7 +1354,7 @@
       const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
       const path = STAGES.map((x, j) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
       const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
-        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Step ${i + 1} of ${STAGES.length}</span><span class="xs ${q.state}">${esc(STATE_WORD[q.state] || "")}</span></div>` +
+        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Step ${i + 1} of ${STAGES.length}</span><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
         `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
         `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
