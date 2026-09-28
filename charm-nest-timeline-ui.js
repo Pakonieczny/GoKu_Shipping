@@ -3,13 +3,16 @@
  *  charm-nest-motion.js (same 120-unit geometry, ink texture, ring words, date/time/name in the middle).
  *
  *    const tl = OrderTimelineUI.mount(el, { orderId, highlight, live: true, compact: false, onSheet(sheetId, poolId),
- *                                           onOpen(event), onEvents(events), onNow({ text, where, step, next, … }) })
+ *                                           onOpen(event), onEvents(events), onNow({ text, where, step, next, … }),
+ *                                           stages: OrderTimelineUI.stagesFor(lines) | () => its steps })
  *    tl.refresh() → Promise   tl.focus(eventId | event) → true when shown   tl.destroy()
  *    onEvents/onNow tell the host what is drawn after every change; onOpen is compact's "open this on the Timeline".
+ *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring); isStud(line) → whether it is one.
  *
  *  Reads OrderTimeline.get(orderId) → { events, cancelled, where }. Draws, top to bottom:
- *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its 9-step
- *                          rail (Arrived → … → Completed): passed steps stamped, the next one pulsing, the ones to come
+ *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its own
+ *                          rail (Order in → Nested → Engraved → Laser cut → Sorted → [Welded] → Assembled → Shipped;
+ *                          Welded only when a piece is a stud earring): passed steps stamped, the next one pulsing, the ones to come
  *                          faint outlines; a cancelled order gets a red CANCELLED stamp across the rail
  *    filters               All · Milestones · Stations · Sheets · Holds & cancels · Messages, with counts, and Stamps
  *                          (the legend); non-matches dim, nothing moves
@@ -124,19 +127,49 @@
   const laneOf = e => ETSY_SIDE.has(e.type) ? "etsy" : STATION_LANE[e.station] || (e.source === "etsy" ? "etsy" : kindOf(e.type).lane);
   const whoOf = e => String(e.by || "").trim() || (e.source === "etsy" ? "Etsy" : e.source === "station" ? "Station" : "Automatic");
   const stationName = e => STATION_NAME[e.station] || (LANE[e.lane] || LANE.office).l;
-  // the milestone rail (design spec §2, the server's `where.rail`/`where.step`): each step, the events that stand for
-  // it (the stamp it shows, the event a click opens) and the lane its dashed stamp waits on
+  // the milestone rail (Paul, 28 Sep 21:18; the server's `where.rail`/`where.step`): the real steps a piece goes through,
+  // in process order. Each step: the events that stand for it (the stamp it shows, the event a click opens) and the lane
+  // its dashed stamp waits on. `only: "stud"`: a step only a stud earring takes; for any other piece it reads `none`.
+  // Approving (a sheet committed, a SKU decided) is not a step: what it needs is said under the step it blocks. Etsy's
+  // completion folds into Shipped. Engraved: the piece's back engraving approved in Engrave, which writes it into its
+  // sheet's back file for the laser (backPut records engraveApproved, who and when; older orders: Charm_Pool_Back).
   const STAGES = [
-    { k: "arrived", l: "Arrived", types: ["arrived", "pulled", "interpreted"], kind: "arrived", lane: "etsy" },
-    { k: "sheet", l: "On sheet", types: ["placed", "moved", "renested", "qrLabel", "roseLine", "included", "merged", "sizeChanged"], kind: "placed", lane: "sheet" },
-    { k: "approved", l: "Approved", types: ["engraveApproved", "setCommitted", "sealCompleted", "decided", "customDecided"], kind: "decided", lane: "office" },
+    { k: "arrived", l: "Order in", types: ["arrived"], kind: "arrived", lane: "etsy" },
+    { k: "sheet", l: "Nested", types: ["placed", "renested"], kind: "placed", lane: "sheet" },
+    { k: "engraved", l: "Engraved", types: ["engraveApproved"], kind: "engraveApproved", lane: kindOf("engraveApproved").lane },
     { k: "laser", l: "Laser cut", types: ["laserDone", "roseCut"], kind: "laserDone", lane: "sheet" },
     { k: "sorted", l: "Sorted", types: ["sorted"], kind: "sorted", lane: "sorting" },
-    { k: "welded", l: "Welded", types: ["welded"], kind: "welded", lane: "welding" },
-    { k: "assembled", l: "Assembled", types: ["assembled", "packed", "labelPrinted"], kind: "assembled", lane: "assembly" },
-    { k: "shipped", l: "Shipped", types: ["shipped"], kind: "shipped", lane: "shipping" },
-    { k: "completed", l: "Completed", types: ["etsyCompleted"], kind: "etsyCompleted", lane: "etsy" }
+    { k: "welded", l: "Welded", types: ["welded"], kind: "welded", lane: "welding", only: "stud", none: "No welding" },
+    { k: "assembled", l: "Assembled", types: ["assembled"], kind: "assembled", lane: "assembly" },
+    { k: "shipped", l: "Shipped", types: ["shipped", "etsyCompleted"], kind: "shipped", lane: "shipping" }
   ];
+  /* Whether a piece is a stud earring, read as the sorter reads a line's product type: CharmNestOrders.purchaseDetails,
+     the Style/Type option the buyer chose, else the listing's title ("Stud earrings", "Huggie hoop earrings", "Necklace",
+     "Charm only · …"). Takes the sorter's row ({ line, spec }), an Etsy line ({ title, variations }), or anything that
+     names its type (productType, type, kind, form). A huggie, a hoop or a charm only is never a stud. null: nothing
+     about the piece is known yet (a line still being read from the records), so it is not ruled out. */
+  const STUD = /\bstuds?\b/i, NOT_STUD = /\b(?:huggies?|hoops?|necklaces?|bracelets?|anklets?|key\s*(?:chains?|rings?))\b|\bcharms?\s+only\b/i;
+  function studOf(x) {
+    if (!x || typeof x !== "object") return null;
+    const line = x.line && typeof x.line === "object" ? x.line : x.title != null || Array.isArray(x.variations) ? x : null;
+    const spec = (x.spec && typeof x.spec === "object" && x.spec) || {}, O = root.CharmNestOrders;
+    if (line && O && typeof O.purchaseDetails === "function") {
+      try { const t = O.purchaseDetails(line, spec).type; if (t && t !== "Type not specified") return t === "Stud earrings"; } catch (_) {}
+    }
+    const said = [x.productType, x.type, x.kind, x.form, spec.form].filter(v => typeof v === "string" && v).join(" ");
+    const text = (said + " " + String((line && line.title) || "") + " " + (line && Array.isArray(line.variations) ? line.variations.map(v => v && v.value).join(" ") : "")).trim();
+    return text ? STUD.test(text) && !NOT_STUD.test(text) : null;
+  }
+  const isStud = x => studOf(x) === true;
+  /** A piece's own steps: STAGES, with Welded only when the piece is a stud earring. Every piece of an order (an array):
+      the order's steps, Welded when any piece is a stud (or is not read yet). Nothing given: every step. */
+  function stagesFor(line) {
+    const list = (Array.isArray(line) ? line : [line]).filter(x => x && typeof x === "object");
+    if (!list.length) return STAGES;
+    const weld = list.some(x => studOf(x) !== false);
+    return STAGES.filter(s => s.only !== "stud" || weld);
+  }
+  const ALL_STAGES = STAGES;   // (mount's own `STAGES` is the order's steps)
   const STOP_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STOP_OF[t] = i; }));
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
@@ -150,8 +183,9 @@
   const STAGE_BY_RANK = ["waiting", "review", "sheet", "cut", "sorted", "welded", "assembled", "packed", "shipped", "completed"];
   const STAGE_LABEL = { waiting: "Waiting", review: "In review", held: "On hold", designed: "Design complete", sheet: "On a sheet", cut: "Cut on the laser", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped", completed: "Completed on Etsy", cancelled: "Cancelled" };
   const PEOPLE_OUT = new Set(["", "system", "etsy", "operator", "someone"]);
-  const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, engraveApproved: 2, setCommitted: 2, sealCompleted: 2,
-    laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 8 };
+  // the furthest step of STAGES (the full rail, 0-7) an event shows the order has reached
+  const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
+    engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
   const isDesigned = e => e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete");
   function whereOf(events, cancelled, hint) {
     hint = hint || {};
@@ -160,7 +194,7 @@
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
       at = Math.max(at, +e.at || 0);
-      if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]); else if (isDesigned(e)) step = Math.max(step, 2);
+      if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]); else if (isDesigned(e)) step = Math.max(step, 1);
       if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
       if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
       if (e.setId) setId = e.setId;
@@ -355,27 +389,31 @@
 
   /** Where an order stands, for the rail and the Now line: its events (oldest first), its cancel record and the
    *  server's `where` (worked out here when there is none). Pure: the order view may use it too.
-   *  → { W, stages[{first,last}], step, cur, stop, cancelled, hold, last } — step: the furthest rail step reached,
-   *  cur: the step being worked towards (-1 when all are done), stop: where a cancelled order stopped. */
-  function derive(events, cancelRec, where) {
+   *  rail: the order's (or a piece's) own steps, stagesFor(lines); every step when left out.
+   *  → { W, rail, stages[{first,last}], step, cur, stop, cancelled, hold, last } — all indexes into `rail`. step: the
+   *  furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the step
+   *  being worked towards (-1 when all are done), stop: where a cancelled order stopped. */
+  function derive(events, cancelRec, where, rail) {
     events = events || [];
+    rail = Array.isArray(rail) && rail.length ? rail : STAGES;
     const W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
-    const stages = STAGES.map(() => ({ first: null, last: null }));
+    const stages = rail.map(() => ({ first: null, last: null }));
     let lastHold = null, lastCancel = null;
     for (const e of events) {
-      const i = own(STOP_OF, e.type) ? STOP_OF[e.type] : null;
-      if (i != null) { const st = stages[i]; if (!st.first) st.first = e; st.last = e; }
+      const i = own(STOP_OF, e.type) ? rail.indexOf(STAGES[STOP_OF[e.type]]) : -1;
+      if (i >= 0) { const st = stages[i]; if (!st.first) st.first = e; st.last = e; }
       if (e.type === "held" || e.type === "released" || e.type === "restored") lastHold = e;
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
     }
-    const step = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
-    const cur = step + 1 < STAGES.length ? step + 1 : -1;
+    const full = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
+    const step = full < 0 ? -1 : rail.filter(s => STAGES.indexOf(s) <= full).length - 1;
+    const cur = step + 1 < rail.length ? step + 1 : -1;
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
     const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
-    return { W, stages, step, cur, stop: cancelled ? Math.min(step + 1, STAGES.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
+    return { W, rail, stages, step, cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
   }
 
   /* ════ the component's look (once per page) ════ */
@@ -634,6 +672,16 @@
     // a shared feed (the order view): its reads, its poll; this mount keeps its own live stamps (onRecord) alone
     const src = opts.feed && typeof opts.feed.subscribe === "function" && opts.feed.orderId === orderId ? opts.feed : null;
     const pollMs = Math.max(250, +opts.pollMs || POLL);   // pollMs: tests only
+    /* this order's own steps (opts.stages: an array, or a function asked at every redraw, e.g. stagesFor(its lines));
+       inside the component they stand in for the full rail, so an order with no stud earring has no Welded step (one
+       that was welded all the same keeps it: what happened is always drawn) */
+    const railNow = evs => {
+      let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); }
+      r = Array.isArray(r) && r.length ? ALL_STAGES.filter(s => r.some(x => x === s || (x && x.k === s.k))) : ALL_STAGES;
+      if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
+      return r.length ? r : ALL_STAGES;
+    };
+    let STAGES = railNow();
     const S = { events: [], byKey: new Map(), cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
       loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     const timers = new Set();
@@ -752,7 +800,8 @@
     /* ── painting ── */
     function repaint(o) {
       o = o || {};
-      const D = S.D = derive(S.events, S.cancelled, whereNow());
+      STAGES = railNow(S.events);
+      const D = S.D = derive(S.events, S.cancelled, whereNow(), STAGES);
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
@@ -812,7 +861,8 @@
     }
     function paintRail(D, o) {
       const wrap = $(".tlStops"), rail = $(".tlRail");
-      if (!wrap.children.length) wrap.innerHTML = STAGES.map(s => `<button type="button" class="tlStop f" data-stage="${s.k}"><i class="tlSeal"></i><span>${esc(s.l)}</span></button>`).join("");
+      const keys = STAGES.map(s => s.k).join(" ");   // (the order's own steps: rebuilt when its pieces change them)
+      if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; wrap.innerHTML = STAGES.map(s => `<button type="button" class="tlStop f" data-stage="${s.k}"><i class="tlSeal"></i><span>${esc(s.l)}</span></button>`).join(""); }
       const nodes = [...wrap.children];
       STAGES.forEach((s, i) => {
         const n = nodes[i], st = D.stages[i];
@@ -992,7 +1042,7 @@
     function renderDetail(key, dir, quiet) {
       const det = $(".tlDetail"), evs = S.events, i = evs.findIndex(x => x.key === key);
       if (i < 0) return;
-      const e = evs[i], D = S.D || derive(evs, S.cancelled);
+      const e = evs[i], D = S.D || derive(evs, S.cancelled, null, STAGES);
       const ae = doc.activeElement, focused = ae && ae !== det && det.contains(ae) ? (ae.dataset && ae.dataset.step) || (ae.classList.contains("tlArw") ? "arw" : "*") : null;
       const around = evs.slice(Math.max(0, i - 2), i + 3);
       const { out: ba, used } = pairsOf(e.data);
@@ -1180,7 +1230,7 @@
     box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
-    paintRail(derive([], null), { first: true });
+    paintRail(derive([], null, null, STAGES), { first: true });
     if (!compact) paintLanes();
     if (src) {
       // what the feed has already: its answer drawn at once, its read on the way waited for; else it reads now
@@ -1229,5 +1279,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow, iconOf };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, isStud, KIND, labelOf, nowStamps, wireNow, iconOf };
 })(typeof window !== "undefined" ? window : globalThis);
