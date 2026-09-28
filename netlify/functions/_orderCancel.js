@@ -96,8 +96,9 @@ function plan(cur, inc, o = {}) {
     return { kind: Object.keys(patch).length ? "update" : null, doc: patch, record: Object.assign({}, cur, patch), events, kept: true };
   }
   if (personal(cur)) {
-    // a person's record again: written anew, as it always was, keeping what Etsy said of it
+    // a person's record again: written anew, as it always was, keeping what Etsy said of it (and what became of its pieces)
     const doc = Object.assign({}, inc); if (cur.etsyStatus) { doc.etsyStatus = cur.etsyStatus; doc.etsyAt = n(cur.etsyAt); }
+    if (Array.isArray(cur.fates) && cur.fates.length) doc.fates = cur.fates;
     return { kind: "set", doc, record: doc, events: [personEvent(inc, o)], kept: false };
   }
   // Etsy cancelled it first: Etsy stays the canceller; the sorter adds the sheets and the lines as it knows them
@@ -194,4 +195,23 @@ async function sweep(db, FV, opts = {}) {
   out.ids = out.ids.slice(0, 200);
   return out;
 }
-module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep };
+/** What became of a cancelled order's pieces, sheet by sheet (the sorter's AutoCancel as it takes them off or finds them
+    cut, and a cancel made in its sheet window): fates [{ sheet: "GF Sheet 2", fate: "removed" | "cut", text }], merged by
+    sheet into the record there is. Never makes a record: an order restored meanwhile stays restored. opts: prefix. */
+const fateOf = f => ({ sheet: s(f && f.sheet, 80), fate: f && f.fate === "cut" ? "cut" : "removed", text: s(f && f.text, 160) });
+async function noteFates(db, orderId, fates, opts = {}) {
+  const id = idOf(orderId); if (!id) return { error: "orderId required" };
+  const inc = (Array.isArray(fates) ? fates : []).map(fateOf).filter(f => f.sheet).slice(0, 30);
+  if (!inc.length) return { ok: true, changed: false };
+  const ref = colOf(db, opts.prefix).doc(id);
+  return db.runTransaction(async t => {
+    const snap = await t.get(ref); if (!snap.exists) return { ok: true, changed: false, missing: true };
+    const cur = Array.isArray(snap.data().fates) ? snap.data().fates : [], bySheet = new Map(cur.map(f => [f.sheet, f]));
+    for (const f of inc) bySheet.set(f.sheet, f);
+    const next = [...bySheet.values()].slice(0, 30);
+    if (JSON.stringify(next) === JSON.stringify(cur)) return { ok: true, changed: false, fates: cur };
+    t.update(ref, { fates: next });
+    return { ok: true, changed: true, fates: next };
+  });
+}
+module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates };

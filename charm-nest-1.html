@@ -565,6 +565,176 @@ dialog.phv.layer.phvIn{background:transparent}
 .owSw[aria-checked=true]{background:var(--sageSoft,var(--paper2));border-color:var(--sage,var(--line))}
 .owSw[aria-checked=true] i{left:20px;background:var(--sage,var(--ink))}
 
+/* ── the order view (Paul, 28 Sep, E1-F3; plans/design/order-view-spec.md): the whole screen, one thin header with the
+   order's progress rail, one tab row that is also the toolbar, and Overview · Timeline · Sheet, each the full height.
+   It grows out of what was clicked and goes back into it. (Scoped to #orderWin.owFull: the customer's own window reuses
+   the .owin classes.) ── */
+#orderWin.owFull{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-width:none;max-height:none;margin:0;border-radius:0;box-shadow:none;background:var(--card);overflow:hidden;--owPics:196px;--owSide:380px}
+@media (min-width:1400px){#orderWin.owFull{--owPics:204px;--owSide:400px}}
+@media (min-width:1800px){#orderWin.owFull{--owPics:220px;--owSide:440px}}
+#orderWin.owFull::backdrop{background:rgba(20,18,15,.52)}
+#orderWin.owFull.owGrow::backdrop{animation:owBdIn .42s ease both}
+#orderWin.owFull.owBack::backdrop{animation:owBdOut .42s ease .04s both}
+@keyframes owBdIn{from{opacity:0}}
+@keyframes owBdOut{to{opacity:0}}
+#orderWin.owFull .owTint{position:absolute;inset:0;z-index:50;pointer-events:none}
+#orderWin.owFull .owBox{display:grid;grid-template-rows:auto auto auto minmax(0,1fr);height:100%;max-height:none;min-height:0}
+#orderWin.owFull .owHead{height:52px;gap:18px;padding:0 10px 0 18px;position:relative;align-items:center}
+#orderWin.owFull .owId{min-width:0;flex:0 1 auto;display:flex;flex-direction:column;line-height:1.15}
+#orderWin.owFull .owId h3{font:19px var(--serif);font-weight:500;white-space:nowrap;position:relative;z-index:0}
+#owTitle .num{position:relative;font-variant-numeric:tabular-nums;padding:0 2px;border-radius:4px}
+#owTitle .num.found::before{content:"";position:absolute;inset:-1px -3px;border-radius:5px;background:var(--goldSoft);z-index:-1;transform-origin:left;animation:owSweep 2.9s cubic-bezier(.2,.8,.2,1) both}
+@keyframes owSweep{0%{transform:scaleX(0)}17%{transform:scaleX(1)}80%{transform:scaleX(1);opacity:1}100%{transform:scaleX(1);opacity:0}}
+#orderWin.owFull .owSub{font:10.5px var(--mono);color:var(--ink45);white-space:nowrap;letter-spacing:.03em;margin-top:3px;overflow:hidden;text-overflow:ellipsis}
+/* the number is the view's own search: a field in its place, the orders found in a list under the header */
+#orderWin.owFull #owTitle .num{cursor:text}
+#orderWin.owFull .owId.finding h3,#orderWin.owFull .owId.finding .owSub{display:none}
+.owFind{display:flex;align-items:center;gap:8px;height:34px;border:1px solid var(--goldLine,var(--line));border-radius:9px;background:var(--card);padding:0 8px 0 10px;box-shadow:0 0 0 3px rgba(202,168,97,.16);min-width:300px}
+.owFind[hidden]{display:none}
+.owFind .lbl{font:15px var(--serif);color:var(--ink70)}
+.owFind input{border:0;outline:0;background:transparent;font:600 15px var(--mono);letter-spacing:.02em;color:var(--ink);width:210px;min-width:0;padding:0}
+.owFind input::-webkit-search-cancel-button{display:none}
+.owFind kbd{font:9.5px var(--mono);color:var(--ink45);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.owFindList{position:absolute;left:14px;top:48px;z-index:60;width:min(460px,calc(100vw - 28px));background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(20,16,10,.16);padding:6px;display:grid;gap:2px}
+.owFindList[hidden]{display:none}
+.owFindList [role=option]{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;border:0;background:transparent;border-radius:8px;padding:8px 10px;text-align:left;cursor:pointer;font:12.5px var(--sans);color:var(--ink70)}
+.owFindList [role=option] b{font:600 13px var(--mono);color:var(--ink)}
+.owFindList [role=option] b mark{background:var(--goldSoft);color:inherit;border-radius:3px;padding:0 1px}
+.owFindList [role=option] span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owFindList [role=option] em{font:700 9px var(--mono);font-style:normal;letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:3px 8px;background:var(--goldSoft);color:#7a5a1d}
+.owFindList [role=option] em.ok{background:var(--sageSoft);color:#3f5b3c}
+.owFindList [role=option] em.bad{background:var(--claySoft);color:#8a3a26}
+.owFindList [role=option][aria-selected=true]{background:var(--paper2)}
+.owFindList [role=option].cur b::after{content:" · open";font:400 11px var(--sans);color:var(--ink45)}
+.owFindFoot{font:10.5px var(--sans);color:var(--ink45);padding:6px 10px 2px;border-top:1px solid var(--line2);margin-top:4px}
+#orderWin.owFull .owRail{flex:1 1 auto;min-width:0;max-width:860px;height:44px;margin:0 auto;overflow:hidden;cursor:pointer}
+#orderWin.owFull .owRight{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
+#orderWin.owFull .owPos{font-size:10.5px;color:var(--ink45);margin:0 2px 0 8px}
+#orderWin.owFull .owPos:empty{display:none}
+.owIconBtn{width:28px;height:28px;border-radius:8px;border:1px solid transparent;background:transparent;display:inline-grid;place-items:center;color:var(--ink70);cursor:pointer;padding:0;transition:background .18s,border-color .18s,transform .12s}
+.owIconBtn svg{width:15px;height:15px}
+.owIconBtn:hover{background:var(--paper2)}
+.owIconBtn:active{transform:scale(.94)}
+.owIconBtn:disabled{opacity:.35;cursor:default;background:transparent}
+.owIconBtn[hidden]{display:none}
+.owNow{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 10px;background:var(--goldSoft);color:#7a5a1d;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.owNow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.owNow[hidden]{display:none}
+.owNow.done{background:var(--sageSoft);color:#3f5b3c}.owNow.done::before{background:var(--sage)}
+.owNow.bad{background:var(--claySoft);color:#8a3a26}.owNow.bad::before{background:var(--clay)}
+/* a cancelled order: a clay line under the header, and its number struck through */
+#orderWin.owFull.owCancelled .owHead{box-shadow:inset 0 -2px 0 var(--clay)}
+#orderWin.owFull.owCancelled #owTitle .num{text-decoration:line-through;text-decoration-color:rgba(176,86,63,.55);text-decoration-thickness:1.5px}
+/* the tab row, which is also the toolbar of the tab in front */
+.owTabsV{height:38px;display:flex;align-items:stretch;gap:2px;padding:0 12px 0 10px;border-bottom:1px solid var(--line);position:relative;min-width:0}
+.owTabsV>[role=tab]{position:relative;border:0;background:transparent;padding:0 12px;display:inline-flex;align-items:center;gap:7px;color:var(--ink45);font:12.5px var(--sans);cursor:pointer;transition:color .2s;flex:none}
+.owTabsV>[role=tab] b{font-weight:650}
+.owTabsV>[role=tab] .c{font:9.5px var(--mono);letter-spacing:.06em;color:var(--ink45)}
+.owTabsV>[role=tab]:hover{color:var(--ink70)}
+.owTabsV>[role=tab][aria-selected=true]{color:var(--ink)}
+.owTabsV>[role=tab]:focus-visible{outline:2px solid var(--slate);outline-offset:-5px;border-radius:8px}
+.owInk{position:absolute;bottom:-1px;left:0;width:0;height:2px;border-radius:2px;background:var(--velvet);transition:left .34s cubic-bezier(.2,.8,.2,1),width .34s cubic-bezier(.2,.8,.2,1)}
+.owTools{margin-left:auto;display:flex;align-items:center;gap:6px;min-width:0}
+.owGrp{display:none;align-items:center;gap:10px;min-width:0}
+.owGrp.on{display:flex;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
+.owLive{font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.owSkip{display:inline-flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;white-space:nowrap}
+.owSkip .soft{color:var(--ink45)}
+.owSkip[hidden]{display:none}
+.owSeg{display:inline-flex;border:1px solid var(--line);border-radius:8px;padding:2px;background:var(--card2)}
+.owSeg button{border:0;background:transparent;border-radius:6px;padding:2px 10px;font:11px var(--sans);color:var(--ink45);cursor:pointer;transition:background .2s,color .2s}
+.owSeg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 2px rgba(30,26,20,.12)}
+@keyframes owUp{from{opacity:0;transform:translateY(6px)}}
+/* what is being waited for, said on one line */
+.owLoading{display:flex;align-items:center;gap:9px;padding:8px 18px;font:12px var(--sans);color:var(--ink70);border-bottom:1px solid var(--line2);background:var(--card2)}
+.owLoading[hidden]{display:none}
+/* the views: each the full height */
+#orderWin.owFull .owBody{grid-row:4;position:relative;display:block;overflow:hidden;min-height:0;grid-template-columns:none}
+#orderWin.owFull .owView{position:absolute;inset:0;min-width:0;min-height:0}
+#orderWin.owFull .owView[hidden]{display:none}
+#orderWin.owFull .owVInfo{display:grid;grid-template-columns:minmax(0,1fr) var(--owSide)}
+#orderWin.owFull .owMain{grid-template-columns:var(--owPics) minmax(0,1fr);gap:22px;padding:18px 22px 28px 18px;overflow:auto}
+#orderWin.owFull .owChat{border-left:1px solid var(--line)}
+#orderWin.owFull .owVTime{display:flex;flex-direction:column;overflow:auto}
+#orderWin.owFull .owTimeline{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.owTlNone{margin:auto;display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);padding:40px 20px}
+.owTlNone b{font:18px var(--serif);font-weight:500;color:var(--ink70)}
+#orderWin.owFull .owVSheet{display:grid;grid-template-columns:minmax(0,1fr) var(--owSide)}
+/* where it is now: the latest step, who did it, the last stamps, and the sheets it is on */
+.owNowCard{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:center;border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--card2);margin-bottom:20px}
+.owNowCard[hidden]{display:none}
+.owNowCard .k{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.owNowCard .t{font:19px var(--serif);margin:3px 0 6px;color:var(--ink)}
+.owNowCard .who{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:2px 10px 2px 4px;background:var(--card);font:12px var(--sans);color:var(--ink70)}
+.owNowCard .who b{font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
+.owNowCard .who i{width:20px;height:20px;border-radius:50%;background:var(--slateSoft);display:inline-block}
+.owNowCard .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.owNowCard .shs{display:grid;gap:8px}
+.owNowCard.bad{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
+.owShChip{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:6px 10px 6px 8px;font:11.5px var(--sans);text-align:left;cursor:pointer;transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s,box-shadow .18s}
+.owShChip:hover{transform:translateY(-1px);border-color:var(--goldLine);box-shadow:0 6px 16px rgba(20,16,10,.08)}
+.owShChip i{width:9px;height:9px;border-radius:50%;background:var(--c,var(--ink25));flex:none}
+.owShChip b{display:block;font:600 11px var(--mono)}
+.owShChip span{color:var(--ink45);font-size:10.5px}
+/* the sheet: the plate, its foot, and the panel */
+.owPlateArea{background:var(--paper);display:flex;flex-direction:column;min-width:0;min-height:0}
+.owPlateWrap{flex:1 1 auto;min-height:0;position:relative;display:grid;place-items:center;padding:18px 22px 6px;perspective:1600px}
+.owPlate{display:block;border-radius:6px;box-shadow:0 1px 2px rgba(30,26,20,.06),0 12px 34px rgba(30,26,20,.10);background:#fffefb;cursor:default}
+.owPlate.hot{cursor:pointer}
+.owPlateWait{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font:12px var(--sans);color:var(--ink70);box-shadow:0 6px 18px rgba(20,16,10,.08)}
+.owPlateWait[hidden]{display:none}
+.owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
+.owPlateTip[hidden]{display:none}
+.owPlateNone{display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);max-width:380px}
+.owPlateNone b{font:18px var(--serif);font-weight:500;color:var(--ink70)}
+.owPlateFoot{display:flex;align-items:center;gap:18px;padding:8px 22px 12px;font:12px var(--sans);color:var(--ink45);min-height:34px}
+.owPlateFoot b{color:var(--ink);font-family:var(--mono)}
+.owPlateFoot .r{margin-left:auto}
+.owPanel{border-left:1px solid var(--line);overflow:auto;padding:18px 20px 24px;display:grid;gap:18px;align-content:start;background:var(--card);min-height:0}
+.owPanel .big{font:600 24px var(--mono);letter-spacing:.02em;margin:2px 0 0}
+.owPanel .sub{font:12.5px var(--sans);color:var(--ink70)}
+.owPanel .fLabel{margin-bottom:6px}
+.owShTabs{display:flex;gap:6px;flex-wrap:wrap}
+.owShTabs button{border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--card);font:11.5px var(--sans);color:var(--ink70);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .18s,color .18s,border-color .18s}
+.owShTabs button i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25))}
+.owShTabs button.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
+.owCharm{display:grid;grid-template-columns:96px minmax(0,1fr);gap:14px;align-items:center}
+.owCharm .pic{aspect-ratio:1;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
+.owCharm .pic img,.owCharm .pic canvas{width:100%;height:100%;object-fit:contain}
+.owCharm b{font:600 13px var(--mono);display:block;overflow-wrap:anywhere}
+.owCharm span{display:block;font:12.5px var(--sans);color:var(--ink70)}
+.owBackEng{display:grid;grid-template-columns:88px minmax(0,1fr);gap:14px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card2)}
+.owBackEng .disc{width:88px;height:88px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fbf3de,#e3cf9e 70%,#c9ad6c);display:grid;place-items:center;text-align:center;font:italic 12px/1.25 var(--serif);color:#6a4f1c;box-shadow:inset 0 0 0 1px rgba(169,130,63,.5);overflow:hidden;padding:8px}
+.owBackEng .disc.silver{background:radial-gradient(circle at 35% 30%,#fbfcfd,#d9dee4 70%,#aab2bb);color:#46505a}
+.owBackEng .disc.rose{background:radial-gradient(circle at 35% 30%,#fbe9e3,#e4b9ab 70%,#c08578);color:#6e3b30}
+.owBackEng .disc canvas,.owBackEng .disc img{max-width:100%;max-height:100%;border-radius:50%}
+.owBackEng .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.owBackEng .k.bad{color:#8a3a26}.owBackEng .k.ok{color:#3f5b3c}
+.owBackEng b{display:block;font:15px var(--serif);font-weight:500;overflow-wrap:anywhere}
+.owBackEng span{display:block;font:11.5px var(--sans);color:var(--ink70)}
+.owBackEng .acts{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.owPieces{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.owPieces li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font:600 12px var(--mono);background:var(--card);cursor:pointer;transition:background .2s,border-color .2s}
+.owPieces li:hover{border-color:var(--ink25)}
+.owPieces li.on{background:var(--goldSoft);border-color:var(--goldLine)}
+.owPieces li.off{cursor:default;opacity:.8}
+.owPieces .n{color:var(--ink45);font-weight:400}
+.owPieces .sku{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owPieces em{font:400 11px var(--sans);font-style:normal;color:var(--ink70);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.owPieces em::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c,var(--ink25))}
+.owPieces li.on em::before{background:var(--gold2)}
+.owPanel .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.owPanel .why{font:11px var(--sans);color:#8a3a26}
+@media (max-width:900px){
+  #orderWin.owFull .owRail{display:none}
+  #orderWin.owFull .owVInfo,#orderWin.owFull .owVSheet{grid-template-columns:minmax(0,1fr);overflow:auto}
+  #orderWin.owFull .owMain{grid-template-columns:minmax(0,1fr);overflow:visible}
+  #orderWin.owFull .owChat{border-left:0;border-top:1px solid var(--line);min-height:420px}
+  #orderWin.owFull .owPlateWrap{min-height:320px}
+  #orderWin.owFull .owPanel{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  .owNowCard{grid-template-columns:minmax(0,1fr)}
+  .owSkip .soft{display:none}
+}
 /* ── the order window's two conversations: the team's (warm, internal) and the customer's (slate, on Etsy) ── */
 .owTabs{display:flex;gap:2px;padding:6px 10px 0;border-bottom:1px solid var(--line);flex:0 0 auto}
 .owTabs button{position:relative;display:inline-flex;align-items:baseline;gap:6px;border:0;background:transparent;padding:8px 12px 9px;cursor:pointer;color:var(--ink45);font:13px var(--sans)}
@@ -1282,6 +1452,19 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .rbMore .btn{display:block;width:100%;text-align:left;border:0;background:transparent}
 .rbMore .btn:hover{background:var(--paper2)}
 .rbMore #rbAbandon{color:var(--clay)}
+/* a cancelled order whose pieces are already cut (AutoCancel): at the top of the menu until someone sets them aside */
+.rbCx{display:grid;gap:8px;padding:0 0 10px}
+.rbCx:empty{display:none}
+.rbCxItem{display:grid;gap:8px;padding:9px 10px 10px 12px;border-radius:9px;background:var(--claySoft);border:1px solid #e3c8bf;color:#8a3a26;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere;animation:rbCxIn .42s cubic-bezier(.3,1.3,.5,1) both}
+.rbCxItem .btn{justify-self:end;display:inline-flex;align-items:center;gap:5px}
+.rbCxItem .btn svg{width:13px;height:13px}
+.runMenu .rbCxN{flex:0 0 auto;min-width:15px;height:15px;padding:0 4px;border-radius:8px;background:var(--clay);color:#fff;font:700 9.5px/15px var(--sans);font-style:normal;text-align:center;animation:rbCxIn .42s cubic-bezier(.3,1.3,.5,1) both}
+.runMenu .rbCxN[hidden]{display:none}
+.runBanner.cx .rbDot{background:var(--clay)}
+.runDetail:not(:has(b)):has(.rbWhy:empty){display:none}
+.rbCx:has(+.runDetail:not(:has(b)):has(.rbWhy:empty)){padding-bottom:0}
+@keyframes rbCxIn{from{opacity:0;transform:translateY(-4px) scale(.96)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.rbCxItem,.runMenu .rbCxN{animation:none}}
 /* On a narrow screen the tools take their own row: the line and the run's pill join it, between the sandbox pill and the
    tools, in the room they leave (the tools keep to the right as before). */
 @container workspace (max-width:680px){
@@ -4540,9 +4723,9 @@ function queueGhosts(root, pick, max = 16) {
   return out;
 }
 /** A charm taken off a card's sheet (Exclude): the charm alone, drawn as the sheet draws it on a clear ground (so its
- *  neighbours are not covered), rises a little and fades where it stood. Returns what plays it, or null when it is not
- *  on a sheet in sight. */
-function liftFromSheet(sh, c) {
+ *  neighbours are not covered), rises a little and fades where it stood; given `to` (a cancelled order's charm, AutoCancel)
+ *  it flies off the sheet into that. Returns what plays it, or null when it is not on a sheet in sight. */
+function liftFromSheet(sh, c, to) {
   const M = window.Motion, p = sh.placements.find(x => x.id === c.id), v = sh._view, cv = sh.el && $('[data-r="canvas"]', sh.el);
   if (!M || M.reduced() || !p || !v || !cv || !cv.width) return null;
   const r = cv.getBoundingClientRect(); if (!r.width || r.bottom < 0 || r.top > innerHeight) return null;
@@ -4561,6 +4744,7 @@ function liftFromSheet(sh, c) {
   box.appendChild(piece);
   const s = r.width / cv.width, g = M.ghost(box, { left: r.left + x0 * s, top: r.top + y0 * s, width: (x1 - x0) * s, height: (y1 - y0) * s }, 0, document.body);
   g._card.style.borderRadius = "0";
+  if (to) return () => M.fly(g, to, { plus: false, ms: M.T.fly });
   return () => g.animate([{ opacity: 1, transform: "none" }, { opacity: 1, transform: "none", offset: .18 }, { opacity: 0, transform: "translateY(-14px) scale(.9)" }], { duration: 1150, easing: "cubic-bezier(.4,0,.3,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
 }
 /** A card's Clear, or Clear queues: each card's picture and queue fade into the empty sheet where they stood, while the
@@ -5640,30 +5824,50 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-m3"></script>
-<script src="charm-nest-bridge.js?v=20260928-m3"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-m3"></script>
-<script src="charm-nest-mail.js?v=20260928-popups"></script>
+<script src="charm-nest-bridge.js?v=20260928-orderview3"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-orderview3"></script>
+<script src="charm-nest-mail.js?v=20260928-orderview3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260927-moves"></script>
 <script src="charm-nest-search.js?v=20260928-tl-search"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
-<dialog id="orderWin" class="owin" aria-labelledby="owTitle">
+<dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
     <div class="owHead">
-      <h3 id="owTitle">Order</h3>
-      <span class="spacer"></span>
-      <span class="pill neutral" id="owMetal">—</span>
-      <button class="btn ghost sm" id="owClose">✕ Close</button>
+      <div class="owId"><h3 id="owTitle">Order</h3><div class="owSub" id="owSub"></div></div>
+      <div class="owRail" id="owRail" aria-label="Where the order is"></div>
+      <div class="owRight">
+        <span class="owNow" id="owNow" hidden></span>
+        <span class="pill neutral" id="owMetal">—</span>
+        <span class="mono owPos" id="owPos"></span>
+        <button type="button" class="owIconBtn" id="owPrev" title="The line before this one" aria-label="Previous line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button type="button" class="owIconBtn" id="owNext" title="The next line" aria-label="Next line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <button type="button" class="owIconBtn" id="owClose" title="Close (Esc)" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
     </div>
+    <nav class="owTabsV" role="tablist" aria-label="Order view">
+      <button type="button" role="tab" data-ow-view="info" aria-selected="true"><b>Overview</b></button>
+      <button type="button" role="tab" data-ow-view="timeline" aria-selected="false" tabindex="-1"><b>Timeline</b><span class="c" id="owTlCount"></span></button>
+      <button type="button" role="tab" data-ow-view="sheet" aria-selected="false" tabindex="-1"><b>Sheet</b><span class="c" id="owShCount"></span></button>
+      <span class="owInk" aria-hidden="true"></span>
+      <div class="owTools">
+        <div class="owGrp" data-for="info"><span class="owLive" id="owLive"></span><label class="owSkip" id="owSkipBox"><button type="button" class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this line"><i></i></button><span>Skip this line <span class="soft">— cut nothing for it</span></span></label></div>
+        <div class="owGrp" data-for="timeline" id="owTlTools"></div>
+        <div class="owGrp" data-for="sheet"><div class="owSeg" id="owFace" role="group" aria-label="Side of the sheet"><button type="button" data-face="front" class="on" aria-pressed="true">Front</button><button type="button" data-face="back" aria-pressed="false">Back · engraving</button></div></div>
+      </div>
+    </nav>
+    <div class="owLoading" id="owLoading" hidden><span class="owSpin"></span><span></span></div>
     <div class="owBody">
+      <section class="owView owVInfo" data-view="info" role="tabpanel" aria-label="Overview">
       <div class="owMain">
         <div class="owPics">
           <figure><div class="owPhoto" id="owPhoto" title="click to zoom"><span class="ph">no image</span></div><figcaption>Etsy listing</figcaption></figure>
           <figure><div class="owVector" id="owVector" aria-label="Charm vector design"></div><figcaption>Vector design<button class="thumbReset" type="button" aria-label="Reset vector image zoom" title="Reset zoom" hidden>↺</button></figcaption></figure>
           <div class="owSku"><b id="owSku">SKU: —</b><button class="btn ghost xs" id="owCopy">Copy</button></div>
         </div>
-        <div>
+        <div class="owInfoMain">
+          <div class="owNowCard" id="owNowCard" hidden></div>
           <div id="owCustom" class="owCustom" aria-live="polite" hidden></div>
           <div id="owFix"></div>
           <div class="owField"><label class="fLabel">What the customer wrote</label><div class="owSaid" id="owNotes">— No notes —</div></div>
@@ -5692,14 +5896,15 @@ boot();
         </div>
         <div class="owPane cmHost" id="owPaneCust" role="tabpanel" aria-labelledby="owTabCust" hidden></div>
       </aside>
-    </div>
-    <div class="owFoot">
-      <button class="owSw" id="owSkip" role="switch" aria-checked="false" aria-label="Skip this line"><i></i></button>
-      <span style="font-size:12.5px">Skip this line <span style="color:var(--ink45)">— cut nothing for it and leave the order open</span></span>
-      <span class="spacer"></span>
-      <span class="mono" id="owPos" style="font-size:11.5px;color:var(--ink45)"></span>
-      <button class="btn ghost sm" id="owPrev" title="the line before this one">‹ Previous</button>
-      <button class="btn ghost sm" id="owNext" title="the next line">Next ›</button>
+      </section>
+      <section class="owView owVTime" data-view="timeline" role="tabpanel" aria-label="Timeline" hidden><div class="owTimeline" id="owTimeline"></div></section>
+      <section class="owView owVSheet" data-view="sheet" role="tabpanel" aria-label="Sheet" hidden>
+        <div class="owPlateArea">
+          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
+          <div class="owPlateFoot" id="owPlateFoot"></div>
+        </div>
+        <aside class="owPanel" id="owSheetPanel"></aside>
+      </section>
     </div>
   </div>
 </dialog>
