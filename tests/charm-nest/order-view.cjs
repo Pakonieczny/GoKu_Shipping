@@ -146,8 +146,49 @@ async function main() {
     // 6 · Esc closes it too
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 2000 });
+
+    // 7 · an order of two pieces (Paul, 28 Sep: "convoluted and confusing especially on multipiece orders"): a switch of
+    //     "All 2 pieces" and each piece; all pieces put the order where its slowest piece is, a step some pieces reached
+    //     says how many; one piece shows only its own steps. The header no longer says "line 1 of 2".
+    const D2 = { rid: '4174322410', t1: '41743224101', t2: '41743224102' }, k1 = `${D2.rid}_${D2.t1}`, k2 = `${D2.rid}_${D2.t2}`;
+    await page.evaluate(({ D2, k1, k2, SHIP }) => {
+      const T0 = Date.now() - 3 * 3600e3, ln = (tid, sku) => ({ transactionId: tid, listingId: '18000' + tid.slice(-4), sku, title: sku.replace(/_/g, ' ') + ' necklace', quantity: 1, expectedShipDate: SHIP, variations: [{ name: 'Metal', value: '14k Gold Filled' }], metalKey: 'gold', metalLabel: 'GF 14/20', personalization: [], buyerMessage: '' });
+      const order = { receiptId: D2.rid, orderNumber: D2.rid, createTs: Math.floor(T0 / 1000) - 60, updateTs: Math.floor(T0 / 1000), shipBy: SHIP, buyer: { name: 'Stephanie Lopez' }, buyerMessage: '', isGift: false, giftMessage: '', staffNote: '', messages: [], lines: [ln(D2.t1, 'SHEEP_3'), ln(D2.t2, 'COW_1')] };
+      for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: T0, spec: null, problems: [], state: 'pooled', reason: null, claimedBy: null, poolIds: [key + '_1'], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
+      Orders.interpretAll(); Orders.render();
+      const ev = (type, min, o) => Object.assign({ id: `${D2.rid}~${type}~${min}`, type, at: T0 + min * 60e3, by: 'paul', source: 'sorter' }, o || {});
+      const events = [ev('arrived', 0, { source: 'etsy', by: 'Etsy' }), ev('placed', 10, { lineKey: k1, transactionId: D2.t1, sheetId: 'sh-a', sheet: 'GF Sheet 1' }), ev('placed', 12, { lineKey: k2, transactionId: D2.t2, sheetId: 'sh-b', sheet: 'GF Sheet 2' }), ev('laserDone', 40, { lineKey: k1, transactionId: D2.t1, sheetId: 'sh-a', sheet: 'GF Sheet 1' })];
+      const get = OrderTimeline.get; OrderTimeline.get = (id, ...r) => String(id) === D2.rid ? Promise.resolve({ events, cancelled: null, where: null }) : get.call(OrderTimeline, id, ...r);
+      OrderWin.open(k1);
+    }, { D2, k1, k2, SHIP });
+    await page.waitForFunction(() => { const sw = document.getElementById('owPieceSw'); return sw && !sw.hidden && sw.querySelectorAll('button').length === 3 && document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'); }, null, { timeout: 15000 });
+    await settled();
+    const v7 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, sw: [...document.querySelectorAll('#owPieceSw button')].map(b => b.textContent.trim()), on: document.querySelector('#owPieceSw button.on').textContent.trim(),
+      sheet: document.querySelector('#owRail [data-stage="sheet"]').className, laser: [document.querySelector('#owRail [data-stage="laser"]').className, document.querySelector('#owRail [data-stage="laser"] .tlCnt').textContent],
+      rows: [...document.querySelectorAll('#owPcSum .owPcRow')].map(r => r.className + ' | ' + r.textContent) }));
+    assert.equal(v7.title, `Order ${D2.rid}`, 'no "line 1 of 2" in the header');
+    assert.equal(v7.sw[0], 'All 2 pieces'); assert.match(v7.sw[1], /^SHEEP 3 · GF/); assert.match(v7.sw[2], /^COW 1 · GF/); assert.equal(v7.on, 'All 2 pieces', 'all pieces first');
+    assert.match(v7.sheet, /\bd\b/, 'both pieces are on a sheet: done'); assert.doesNotMatch(v7.laser[0], /\bd\b/, 'one piece is not cut yet: the order is where its slowest piece is'); assert.equal(v7.laser[1], '1 of 2');
+    assert.equal(v7.rows.length, 2, 'each piece on a row under where it is now'); assert.match(v7.rows[1], /slow/, 'the slowest piece in gold');
+    if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-all.png') });
+    // one piece: its line on the Overview, only its own steps on the rail and the Timeline
+    await page.click('#owPieceSw button:nth-of-type(2)');
+    await page.waitForFunction(k1 => OrderWin.key() === k1 && /\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && document.querySelector('#owRail [data-stage="laser"] .tlCnt').hidden && document.getElementById('owPcSum').hidden, k1);
+    await page.click('#owPieceSw button:nth-of-type(3)');
+    await page.waitForFunction(k2 => OrderWin.key() === k2 && !/\bd\b/.test(document.querySelector('#owRail [data-stage="laser"]').className) && /COW/.test(document.getElementById('owSku').textContent), k2);
+    await page.click('.owTabsV [data-ow-view="timeline"]');
+    await page.waitForFunction(() => !document.getElementById('owPieceSw').hidden && document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 2, null, { timeout: 15000 });
+    if (shots) await page.screenshot({ path: path.join(shots, 'order-view-pieces-one.png') });
+    await page.click('#owPieceSw button:nth-of-type(1)');
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key]').length === 4 && !!document.querySelector('#owRail [data-stage="laser"] .tlCnt:not([hidden])'));
+    // a one-piece order has no switch
+    await page.evaluate(k => OrderWin.open(k), `${A.rid}_${A.tid}`);
+    await page.waitForFunction(rid => document.getElementById('owTitle').textContent === 'Order ' + rid && document.getElementById('owPieceSw').hidden, A.rid);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 2000 });
+
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ opened from a row (grown out of it, full screen), views, the sheet in gold, an order outside the pull, highlight, the header search, close');
+    console.log('  ✓ opened from a row (grown out of it, full screen), views, the sheet in gold, an order outside the pull, highlight, the header search, close, an order of two pieces');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Order view OK')).catch(e => { console.error(e); process.exit(1); });

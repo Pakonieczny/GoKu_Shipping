@@ -8401,7 +8401,10 @@ const OrderWin = window.OrderWin = (() => {
     // Previous and Next walk the Orders list, the view in front, what it grew out of, its motion, the timeline mounted
     // in it and the one in the header, and what the order's timeline has said so far
     row: null, rows: null, walk: true, view: "info", from: null, anims: [], closing: false, hl: null, tl: null, tlFor: null, rail: null,
-    events: null, evFor: null, cancelled: null, feed: null, offRec: null, look: 0, back: null, face: "front", early: null };
+    events: null, evFor: null, cancelled: null, feed: null, offRec: null, look: 0, back: null, face: "front", early: null,
+    // an order of several pieces (Paul, 28 Sep): its pieces, the one shown on the Timeline and Overview (null: all of
+    // them), and the side the last switch came from
+    pieces: [], piece: null, pieceDir: 0 };
   const byId = id => document.getElementById(id);
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
@@ -8465,6 +8468,8 @@ const OrderWin = window.OrderWin = (() => {
       setView(v); tabs.querySelector(`[data-ow-view="${v}"]`)?.focus();
     });
     byId("owRail").addEventListener("click", e => { if (!e.defaultPrevented && W.view !== "timeline") setView("timeline"); });
+    byId("owPieceSw")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
+    byId("owPcSum")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
     byId("owFace").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnPlate(b.dataset.face); });
     // a message still on its way: try it again now, take it back into the box, or let it go
     byId("owThread").addEventListener("click", e => {
@@ -8672,12 +8677,14 @@ const OrderWin = window.OrderWin = (() => {
     Review.syncOrderItems(); Orders.render(); RunCtl.poke(); paint();
   }
   const when = t => new Date(t).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships. */
+  /** The header: the order's number (lit when it was searched for), who bought it, how many pieces and when it ships.
+   *  (It said "Order 1 of 3", then "line 1 of 3": the first of the order's 3 lines was on screen, never 1 of 3 orders.
+   *  Paul found it confusing: the line under it says "3 pieces", and the piece switcher names the piece shown.) */
   function paintHead(r, sibs, li) {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
     if (!cur) {
-      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? ` <span class="owPc">line ${li + 1} of ${sibs.length}</span>` : "");
+      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>`;
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
     const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
@@ -8702,6 +8709,7 @@ const OrderWin = window.OrderWin = (() => {
     const sp = r.spec || {};
     const sibs = linesOf(r), li = Math.max(0, sibs.findIndex(x => x.key === r.key));
     paintHead(r, sibs, li);
+    paintPieces(r, sibs);
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
     const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r));
@@ -8828,6 +8836,101 @@ const OrderWin = window.OrderWin = (() => {
     } catch (_) {} finally { if (W.early && W.early.rid === rid) earlyNote(rid, known != null ? known : (r.spec && r.spec.staffNote) || ""); }
   }
 
+  /* ── an order of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ──
+     One switch in the tab row, for the Overview and the Timeline: "All 3 pieces", then each piece by its charm, metal
+     and type. A piece shows only its own steps and stamps (and its photo and details on the Overview); all of them show
+     the order where its slowest piece is, each step saying how many pieces reached it. One piece: no switch at all. */
+  const pieceName = x => String((x.spec && x.spec.designSku) || x.line.sku || x.line.title || "Piece").replace(/_+/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
+  const pieceMeta = p => [CODE[p.metal] || (p.metal ? labelOf(p.metal) : ""), p.form].filter(Boolean).join(" · ") + (p.qty > 1 ? ` · ×${p.qty}` : "");
+  /** Each line of the order as a piece: its key, transaction, count, pool pieces and the sheets they are on. */
+  function piecesOf(sibs) {
+    return sibs.map(x => {
+      const sp = x.spec || {}, pools = (x.poolIds || []).map(String), sheets = new Set(), m = x.material || sp.material || null;
+      for (const pid of pools) {
+        const pg = window.Pool && Pool.sheetOf ? tryDo(() => Pool.sheetOf(pid)) : null; if (pg && pg.sheetId) sheets.add(pg.sheetId);
+        const p2 = B.pool && B.pool.rows && B.pool.rows.get(pid); if (p2 && p2.sheetId) sheets.add(p2.sheetId);
+      }
+      for (const p of (x._pools || SV.pools || [])) if (p.sheetId && (p.lineKey === x.key || pools.includes(String(p.poolId)))) sheets.add(p.sheetId);
+      return { key: x.key, tid: String(x.line.transactionId || ""), qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
+        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null }),
+        name: pieceName(x), metal: m, form: sp.form || "" };
+    });
+  }
+  /** The switch, its thumb on the piece shown, and the timeline's two mounts (the header's rail, the Timeline) told. */
+  function paintPieces(r, sibs) {
+    const sw = byId("owPieceSw"), multi = sibs.length > 1 && !r.loading;
+    const ps = multi ? piecesOf(sibs) : [];
+    W.pieces = ps;
+    if (W.piece && !ps.some(p => p.key === W.piece)) W.piece = null;
+    if (sw) {
+      sw.hidden = !multi || W.view === "sheet";
+      if (!multi) { sw.innerHTML = ""; sw._k = ""; }
+      else {
+        const k = JSON.stringify(ps.map(p => [p.key, p.name, p.metal, p.form, p.qty]));
+        if (sw._k !== k) {
+          sw._k = k;
+          const total = ps.reduce((n, p) => n + p.qty, 0);
+          sw.innerHTML = `<i class="owPcThumb" aria-hidden="true"></i><button type="button" data-piece="">All ${total} pieces</button>` +
+            ps.map(p => `<button type="button" data-piece="${esc(p.key)}" title="${esc(`${p.name} · ${pieceMeta(p)}: only this piece's steps`)}"><i class="dot" style="--c:${esc(colorOf(p.metal))}"></i><span>${esc(p.name)}<small> · ${esc(pieceMeta(p))}</small></span></button>`).join("");
+        }
+        sw.querySelectorAll("[data-piece]").forEach(b => {
+          const key = b.dataset.piece || null, on = key === W.piece;
+          b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+          // (all pieces shown: the one whose photo and details the Overview holds has a small gold dot)
+          b.classList.toggle("shown", !W.piece && key === r.key);
+        });
+        thumbTo();
+      }
+    }
+    const dir = W.pieceDir; W.pieceDir = 0;
+    for (const m of [W.rail, W.tl]) if (m && m.setPieces) tryDo(() => m.setPieces(ps, W.piece, dir));
+  }
+  function thumbTo() {
+    const sw = byId("owPieceSw"), t = sw && sw.querySelector(".owPcThumb"), b = sw && sw.querySelector("button.on"); if (!t || !b || !sw.offsetParent) return;
+    t.style.left = b.offsetLeft + "px"; t.style.width = b.offsetWidth + "px";
+    if (b.offsetLeft < sw.scrollLeft || b.offsetLeft + b.offsetWidth > sw.scrollLeft + sw.clientWidth) sw.scrollTo({ left: Math.max(0, b.offsetLeft - 24), behavior: still() ? "auto" : "smooth" });
+  }
+  /** A piece chosen (null: all of them): the Overview shows that piece's line, and every view crosses over to it. */
+  function pickPiece(key) {
+    key = key || null; if (key === W.piece) return;
+    const order = [null].concat(W.pieces.map(p => p.key)); W.pieceDir = order.indexOf(key) > order.indexOf(W.piece) ? 1 : -1;
+    const dir = W.pieceDir; W.piece = key;
+    const r = rowOf(W.key); if (!r) return;
+    const to = key && key !== r.key ? linesOf(r).find(x => x.key === key) : null;
+    if (to) show(to, {}); else paint();
+    const main = W.view === "info" && W.dlg.querySelector(".owVInfo .owMain");
+    if (main && !still()) { main.getAnimations().forEach(a => a.cancel()); main.animate([{ opacity: .25, transform: `translateX(${dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 300, easing: EASE }); }
+  }
+  /** The order's events as the Overview shows them: the piece chosen's alone, or all of them. */
+  function shownEvents() {
+    const UI = window.OrderTimelineUI, p = W.piece && W.pieces.find(x => x.key === W.piece);
+    return p && W.events && UI && UI.ofPiece ? W.events.filter(e => UI.ofPiece(e, p, W.pieces)) : W.events;
+  }
+  /** All pieces of an order of several: the events of its slowest piece, where the order is (else null). */
+  function slowestEvents() {
+    const UI = window.OrderTimelineUI, ps = W.pieces || [];
+    if (W.piece || ps.length < 2 || !W.events || !UI || !UI.summary) return null;
+    const sum = tryDo(() => UI.summary(W.events, ps, W.cancelled)), x = sum && sum.each.find(y => y.D.step === sum.step);
+    return x ? x.events : null;
+  }
+  /** All pieces: each one on a row under "Where it is now", where it is, what comes next and its steps as dots; the
+   *  slowest (where the order is) in gold. A row opens that piece. */
+  function paintPieceSum() {
+    const box = byId("owPcSum"); if (!box) return;
+    const UI = window.OrderTimelineUI, ps = W.pieces || [];
+    const sum = !W.piece && ps.length > 1 && W.events && UI && UI.summary ? tryDo(() => UI.summary(W.events, ps, W.cancelled)) : null;
+    if (!sum) { box.hidden = true; box._h = ""; return; }
+    const at = s => UI.STAGES.indexOf(s);
+    const html = `<span class="fLabel">Its pieces · the order is where the slowest one is</span>` + sum.each.map(x => {
+      const nx = x.steps.find(s => at(s) > x.D.step), slow = x.D.step === sum.step;
+      return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece"><i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>` +
+        `<span class="nm"><b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}</span><span class="st">${esc((x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled ? " · next: " + esc(nx.l) : ""}</span>` +
+        `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span></button>`;
+    }).join("");
+    box.hidden = false;
+    if (box._h === html) return; box._h = html; box.innerHTML = html;
+  }
+
   /* ── Where it is now, and the order's Now in the header ──
      The order's timeline (OrderTimeline, read once as it opens and followed while it is open) says what happened last;
      before it has answered, or where there is none, the line's own state says it. */
@@ -8850,11 +8953,12 @@ const OrderWin = window.OrderWin = (() => {
     Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
   }
   function nowOf(r) {
-    const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? W.events : null;
+    const T = (window.OrderTimeline && OrderTimeline.TYPES) || {}, evs = W.evFor === String(r.order.receiptId) ? shownEvents() : null;
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
     const restored = cx && evs && lastOf(evs, e => e.type === "cancelRestored" && e.at > cx.at);
     if (cx && !restored) return { tone: "bad", pill: "Cancelled", k: "Cancelled", t: cx.type === "etsyCancelled" ? "Cancelled on Etsy" : "Cancelled" + (cx.by ? " by " + cx.by : ""), ev: cx, cancelled: true };
-    const ms = evs && lastOf(evs, e => (T[e.type] && T[e.type].milestone) || e.milestone);
+    // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
+    const ms = evs && lastOf(slowestEvents() || evs, e => (T[e.type] && T[e.type].milestone) || e.milestone);
     const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage");
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
@@ -8873,12 +8977,13 @@ const OrderWin = window.OrderWin = (() => {
     pill.hidden = !n.pill; pill.textContent = n.pill || ""; pill.className = "owNow" + (n.tone ? " " + n.tone : "");
     const count = byId("owTlCount"); if (count) count.textContent = W.events && W.evFor === String(r.order.receiptId) && W.events.length ? String(W.events.length) : "";
     const live = byId("owLive"); if (live) { const e = W.events && W.events.length ? W.events[W.events.length - 1] : null; live.textContent = e ? "Updated live · last change " + new Date(e.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) + (e.by ? " · " + e.by : "") : ""; }
+    paintPieceSum();
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
     // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
-    const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
+    const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null })) : null;
     const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
     const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
     card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
@@ -8896,6 +9001,7 @@ const OrderWin = window.OrderWin = (() => {
   function inkTo() {
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
     ink.style.left = b.offsetLeft + 6 + "px"; ink.style.width = Math.max(0, b.offsetWidth - 12) + "px";
+    const sw = byId("owPieceSw"); if (sw) { sw.hidden = W.pieces.length < 2 || W.view === "sheet"; thumbTo(); }
   }
   function setView(v, o = {}) {
     if (!VIEWS.includes(v)) v = "info";
@@ -8920,7 +9026,7 @@ const OrderWin = window.OrderWin = (() => {
 
   /* ── the timeline: timeline-ui's component, in the Timeline view and (compact) in the header ── */
   function tlOpts(rid, extra) {
-    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null,
+    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null, pieces: W.pieces, piece: W.piece,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
@@ -9317,6 +9423,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!fresh && (other || opts.dir)) W.from = null;
     showOrder(rid, r);
     W.key = key;
+    if (other) W.piece = null; else if (W.piece && W.piece !== key) W.piece = key;
     if (other) { sheetReset(); unmountTimeline(); loadEvents(rid); const n = byId("owNowCard"); if (n) n._html = ""; const c = byId("owShCount"); if (c) c.textContent = ""; }
     if (other && W.face === "back") turnPlate("front");
     paint();
