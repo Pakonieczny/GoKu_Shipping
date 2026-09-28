@@ -155,7 +155,7 @@
   const isDesigned = e => e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete");
   function whereOf(events, cancelled, hint) {
     hint = hint || {};
-    const list = (events || []).filter(e => e && own(KIND, e.type)).slice().sort((a, b) => (+a.at || 0) - (+b.at || 0));
+    const list = (events || []).filter(e => e && own(KIND, e.type)).slice().sort(byAt);
     let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, designed = false, cancel = null, step = list.length ? 0 : -1;
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
@@ -300,7 +300,10 @@
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
   const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return o; };
   const warn = (what, err) => { try { console.warn("[OrderTimelineUI] " + what + ":", err); } catch (_) {} };
-  const byAt = (a, b) => a.at - b.at || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  // oldest first, as the server's byTime: at the same moment the order's arrival leads (a step the server drew at the
+  // arrival, from before it, keeps its own order after it: data.recordedAt)
+  const recAt = e => (e.data && +e.data.recordedAt) || e.at;
+  const byAt = (a, b) => a.at - b.at || (a.type === "arrived" ? -1 : b.type === "arrived" ? 1 : 0) || recAt(a) - recAt(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const reasonOf = e => { const d = e.data || {}; return str(d.reason || d.why || d.removedReason || d.cancelReason || "", 400); };
   const poolOf = e => { const d = e.data || {}; return String(d.poolId || (Array.isArray(d.poolIds) && d.poolIds[0]) || (e.lineKey ? `${e.lineKey}_${d.copy || 1}` : "")); };
   const humanKey = k => String(k).replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase().replace(/^./, c => c.toUpperCase());

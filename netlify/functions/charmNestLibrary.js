@@ -1326,14 +1326,17 @@ async function op_arrivalRecord(b) {
       const o = missing[cursor++], id = String(o.id), ref = collection.doc(id); let made = false;
       firstSeen[id] = await db.runTransaction(async t => {
         made = false; const old = await t.get(ref); if (old.exists) return old.data().firstSeenAt;
-        t.set(ref, { id, firstSeenAt: now, createTs: num(o.createTs), expireAt }); made = true; return now;
+        t.set(ref, { id, firstSeenAt: now, seenAt: Date.now(), createTs: num(o.createTs), expireAt }); made = true; return now;
       });
       if (made) arrived.push(o);
     }
   }));
-  // an order's first arrival is the first milestone of its timeline (once: the ledger is written for it once)
-  await stamp(() => arrived.map(o => ({ orderId: String(o.id), type: "arrived", at: now, by: "System", station: "sorter", text: "First seen by the sorter",
-    data: { firstSeenAt: now, createTs: num(o.createTs) || null }, milestone: true, id: "first" })), "arrivals");
+  // an order's first arrival is the first milestone of its timeline (once: the ledger is written for it once). Stamped on
+  // the real clock, as every other event of the timeline is (seenAt above too): the sandbox stream's simulated moment
+  // (firstSeenAt, for the counts) is kept beside it, since the two clocks cannot be compared (_orderTimeline chronology)
+  const sim = [true, 1, "1"].includes(b.sandbox) && num(b.now) > 0, real = sim ? Date.now() : now;
+  await stamp(() => arrived.map(o => ({ orderId: String(o.id), type: "arrived", at: real, by: "System", station: "sorter", text: "First seen by the sorter",
+    data: Object.assign({ firstSeenAt: now, createTs: num(o.createTs) || null, clock: "real" }, sim ? { simAt: now } : {}), milestone: true, id: "first" })), "arrivals");
   const [day,hour]=await Promise.all([collection.where("firstSeenAt",">=",now-86400000).count().get(),collection.where("firstSeenAt",">=",now-3600000).count().get()]);
   // what the counts no longer read goes, a page per check: the sandbox stream's records first seen over 45 simulated days
   // ago (it plays days in hours; far past any order it still lists, and as long as the sorter keeps its own), production's
