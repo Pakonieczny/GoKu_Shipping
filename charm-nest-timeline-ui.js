@@ -2,8 +2,10 @@
  *  Design: plans/design/order-view-spec.md §5-6 and its prototype; the stamps are siblings of the Seal family in
  *  charm-nest-motion.js (same 120-unit geometry, ink texture, ring words, date/time/name in the middle).
  *
- *    const tl = OrderTimelineUI.mount(el, { orderId, highlight, live: true, compact: false, onSheet(sheetId, poolId) })
- *    tl.refresh() → Promise   tl.focus(eventId) → true when shown   tl.destroy()
+ *    const tl = OrderTimelineUI.mount(el, { orderId, highlight, live: true, compact: false, onSheet(sheetId, poolId),
+ *                                           onOpen(event), onEvents(events), onNow({ text, where, step, next, … }) })
+ *    tl.refresh() → Promise   tl.focus(eventId | event) → true when shown   tl.destroy()
+ *    onEvents/onNow tell the host what is drawn after every change; onOpen is compact's "open this on the Timeline".
  *
  *  Reads OrderTimeline.get(orderId) → { events, cancelled, where }. Draws, top to bottom:
  *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its 9-step
@@ -16,8 +18,9 @@
  *    detail                the chosen event inline, never a pop-up: its seal, who, where, when, the sheet (Open sheet),
  *                          before → after, the reason, its data, Earlier/Later (← →) and the steps around it
  *  Hovering a stamp lifts it onto a loupe (its own fixed layer, never clipped) at 136px with its full face.
- *  compact: true draws the Now line and the rail only (a rail stamp then asks the host to open the Timeline with a
- *  bubbling "timeline:focus" event, detail { eventId }).
+ *  compact: true draws the rail alone, sized to its host (the order view's header); a rail stamp asks the host to open
+ *  it on the Timeline: opts.onOpen(event), or else a bubbling "timeline:focus" event, detail { eventId }.
+ *  nowStamps()/wireNow(): the order view's "Where it is now" seal and latest stamps (see the end of this file).
  *  Live: OrderTimeline.onRecord for this order plus a refresh every 20 s while the tab is visible; a new stamp comes
  *  down on its lane, the NOW line glides and the rail moves on. Motion is transform and opacity only; none under
  *  prefers-reduced-motion. destroy() clears every timer and listener it set. */
@@ -235,10 +238,11 @@
     return L.st ? L.l + " station" : L.k === "etsy" ? "From Etsy" : L.l;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
-   *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture. */
+   *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture; opts.uid names
+   *  its inner ids (the same stamp then draws the same markup; unique in the page, as the ids are). */
   function stampSvg(e, full, opts) {
     opts = opts || {};
-    const Kd = kindOf(e.type), ink = INK[Kd.ink], id = "tls" + (++UID), seed = (hash(String(e.key || e.id || e.type) + e.at) % 997) + 1;
+    const Kd = kindOf(e.type), ink = INK[Kd.ink], id = opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "tls" + (++UID), seed = (hash(String(e.key || e.id || e.type) + e.at) % 997) + 1;
     const useTex = opts.tex !== false && !opts.ghost, tex = useTex ? texOf(id, seed) : "", g = useTex ? ` filter="url(#${id}f)"` : "";
     if (!full) {
       const wash = opts.ghost ? "none" : Kd.sh === "m" ? ink + "24" : ink + "12";
@@ -287,6 +291,10 @@
     e.lane = laneOf(e);
     return e;
   }
+  // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
+  const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
+  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return o; };
+  const warn = (what, err) => { try { console.warn("[OrderTimelineUI] " + what + ":", err); } catch (_) {} };
   const byAt = (a, b) => a.at - b.at || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
   const reasonOf = e => { const d = e.data || {}; return str(d.reason || d.why || d.removedReason || d.cancelReason || "", 400); };
   const poolOf = e => { const d = e.data || {}; return String(d.poolId || (Array.isArray(d.poolIds) && d.poolIds[0]) || (e.lineKey ? `${e.lineKey}_${d.copy || 1}` : "")); };
@@ -502,11 +510,29 @@
 .tlLegend .sv{width:96px;height:96px}.tlLegend .sv svg{width:100%;height:100%;display:block}
 .tlLegend figcaption{font:600 10.5px var(--sans);color:var(--ink70)}
 .tlLegend figcaption small{display:block;font:9px var(--mono);color:var(--ink45);letter-spacing:.06em;text-transform:uppercase;font-weight:400}
-.tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlDetail{display:none}
-.tlUI.compact .tlTop{border-bottom:0;padding:4px 0}
+.tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlDetail,.tlUI.compact .tlNow{display:none}
+.tlUI.compact{height:100%;justify-content:center}
+.tlUI.compact .tlTop{border-bottom:0;padding:0;flex:1 1 auto;align-items:center;flex-wrap:nowrap}
+.tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
+.tlUI.compact .tlStops{grid-template-columns:repeat(9,minmax(0,1fr))!important;row-gap:0}
+.tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:11px}
+.tlUI.compact .tlStop{gap:2px}
+.tlUI.compact .tlStop .tlSeal{width:24px;height:24px}
+.tlUI.compact .tlStop>span{font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tlUI.compact .tlCxStamp{width:min(150px,30%)}
+.tlUI.compact .tlMsg{left:50%;top:50%;transform:translate(-50%,-50%);max-width:100%;padding:3px 10px;font-size:11px;gap:6px;box-shadow:none;white-space:nowrap}
 @media (max-width:1100px){.tlDetIn{grid-template-columns:120px minmax(0,1fr)}.tlBig{width:120px;height:120px}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
 @media (max-width:900px){.tlRail{flex-basis:100%}.tlStops{grid-template-columns:repeat(6,minmax(0,1fr));row-gap:10px}.tlTrack,.tlFill{display:none}}
-@media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
+.tlNowSeal{width:92px;height:92px;flex:none;transform:rotate(var(--rot,0deg))}
+.tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
+.tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
+.tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
+.tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transform-origin:50% 30%;transition:transform .16s ease-in,opacity .16s ease-in}
+.tlMini .f{opacity:0;background:#fffefb;box-shadow:0 3px 7px rgba(20,16,10,.22)}
+.tlMini:hover,.tlMini:focus-visible{z-index:6;outline:0}
+.tlMini:hover>span,.tlMini:focus-visible>span{transform:rotate(var(--rot,0deg)) scale(4.4);transition:transform .22s cubic-bezier(.2,.8,.2,1),opacity .12s}
+.tlMini:hover .s,.tlMini:focus-visible .s{opacity:0}.tlMini:hover .f,.tlMini:focus-visible .f{opacity:1}
+@media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
   function css() {
     if (doc.getElementById("tlUiCss")) return;
@@ -559,8 +585,10 @@
       `<div class="tlDetail" aria-live="polite"></div><div class="tlLoupe" aria-hidden="true"></div>`;
     el.appendChild(box);
     const $ = s => box.querySelector(s), $$ = s => [...box.querySelectorAll(s)];
+    if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
     let unsub = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
+    const pub = e => pubOf(e, orderId);
 
     /* ── loading ── */
     function message(kind, text) {
@@ -575,7 +603,7 @@
       if (S.loading) return S.loading;
       const my = ++S.seq;
       if (!S.loaded) {
-        message("wait", `Loading the timeline of order ${orderId || "—"}…`);
+        message("wait", compact ? "Loading the steps…" : `Loading the timeline of order ${orderId || "—"}…`);
         $(".tlNowS").innerHTML = `<i class="tlSpin"></i><span>Loading the timeline</span>`;
       } else busyT = later(() => busy(true), 350);
       const api = root.OrderTimeline;
@@ -600,7 +628,7 @@
     }
     function failed() {
       if (!S.loaded) {
-        message("err", `Couldn't load the timeline: ${S.error}.`);
+        message("err", compact ? "Couldn't load the steps" : `Couldn't load the timeline: ${S.error}.`);
         $(".tlNowT").textContent = "Couldn't load the timeline";
         $(".tlNowS").innerHTML = `<span>${esc(S.error)}</span><button type="button" class="tlLink tlRetry">Retry</button>`;
       } else {
@@ -645,6 +673,7 @@
       o = o || {};
       const D = S.D = derive(S.events, S.cancelled, whereNow());
       paintNow(D, o); paintRail(D, o);
+      tell();
       if (compact) return;
       paintChips(); paintCanvas(D, o); paintSum();
       const fresh = (o.fresh || []).filter(k => S.byKey.has(k));
@@ -935,10 +964,10 @@
       const st = t.closest(".tlSt[data-key], .tlArw[data-key]");
       if (st) { const k = st.dataset.key, a = S.events.findIndex(e => e.key === S.sel), b = S.events.findIndex(e => e.key === k); select(k, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: st.classList.contains("tlArw") }); return; }
       const step = t.closest("[data-step]"); if (step) { stepBy(+step.dataset.step || 0); return; }
-      const stop = t.closest(".tlStop"); if (stop) { stageClick(stop); return; }
+      const stop = t.closest(".tlStop"); if (stop) { stageClick(stop, ev); return; }
       if (t.closest(".tlRetry")) { load(); return; }
     }
-    function stageClick(stop) {
+    function stageClick(stop, click) {
       const e = evOfEl(stop);
       const i = STAGES.findIndex(s => s.k === stop.dataset.stage), last = S.D && i >= 0 && S.D.stages[i].last;
       const target = stop.classList.contains("x") ? e : last || e;
@@ -946,7 +975,7 @@
         anim(stop.querySelector(".tlSeal"), [{ transform: "translateX(0)" }, { transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "translateX(0)" }], 300);
         return;
       }
-      if (compact) { box.dispatchEvent(new CustomEvent("timeline:focus", { bubbles: true, detail: { eventId: target.id, key: target.key, orderId } })); return; }
+      if (compact) { if (click) click.preventDefault(); handOver(target); return; }
       if (S.filter !== "all" && !FILTER[S.filter](target)) setFilter("all");
       const a = S.events.findIndex(x => x.key === S.sel), b = S.events.findIndex(x => x.key === target.key);
       select(target.key, a < 0 || a === b ? 0 : b > a ? 1 : -1, { scroll: true });
@@ -981,12 +1010,28 @@
 
     /* ── the handle ── */
     function refresh() { return Promise.resolve(load()).then(() => undefined); }
-    function focus(eventId) {
+    /** compact: the host opens the event on its Timeline — opts.onOpen(event), else a bubbling "timeline:focus". */
+    function handOver(e) {
+      if (typeof opts.onOpen === "function") { try { opts.onOpen(pub(e)); } catch (err) { warn("onOpen", err); } return; }
+      box.dispatchEvent(new CustomEvent("timeline:focus", { bubbles: true, detail: { eventId: e.id, key: e.key, orderId } }));
+    }
+    /** Tells the host what is drawn: opts.onEvents(events, oldest first) and opts.onNow(where it is now). */
+    function tell() {
+      const D = S.D; if (S.dead || !D) return;
+      if (typeof opts.onEvents === "function") { try { opts.onEvents(S.events.map(pub)); } catch (err) { warn("onEvents", err); } }
+      if (typeof opts.onNow === "function") {
+        const nt = nowText(D);
+        try { opts.onNow({ text: nt.t, tone: nt.cls, where: D.W, step: D.step, next: D.cur >= 0 ? STAGES[D.cur].l : "", cancelled: D.cancelled, held: !!D.hold, last: D.last ? pub(D.last) : null }); } catch (err) { warn("onNow", err); }
+      }
+    }
+    function focus(ev) {
       if (S.dead) return false;
-      if (!S.loaded) { S.pendingFocus = eventId; return false; }
-      const k = findKey(eventId); if (!k) return false;
+      // an event id (the server's or this page's), a key, or an event as onOpen/onEvents hand it out
+      const id = ev && typeof ev === "object" ? (ev.key && S.byKey.has(ev.key) ? ev.key : ev.id || ev.eventId || ev.key) : ev;
+      if (!S.loaded) { S.pendingFocus = id; return false; }
+      const k = findKey(id); if (!k) return false;
       const e = S.byKey.get(k);
-      if (compact) { box.dispatchEvent(new CustomEvent("timeline:focus", { bubbles: true, detail: { eventId: e.id, key: k, orderId } })); return true; }
+      if (compact) { handOver(e); return true; }
       if (S.filter !== "all" && !FILTER[S.filter](e)) setFilter("all");
       select(k, 0, { scroll: true });
       const b = box.querySelector(`.tlSt[data-key="${cssEsc(k)}"]`);
@@ -1020,5 +1065,34 @@
     return { refresh, destroy, focus };
   }
 
-  root.OrderTimelineUI = { mount, stampSvg, derive, STAGES, KIND, labelOf };
+  /* ════ the order view's "Where it is now" card (spec §3, §8) ════
+     nowStamps(events, { ev, cancelled }) → { seal, recent } HTML: the latest step's seal at 92px (a cancelled order: the
+     118px CANCELLED ORDER / DO NOT PROCEED seal) and the last six stamps at 26px, whose full face grows out on hover.
+     wireNow(card, onOpen) once that HTML is in the page: a stamp click → onOpen({ id }); the cancel seal drops in once. */
+  function nowStamps(events, o) {
+    css(); o = o || {};
+    const evs = (events || []).map(norm).filter(Boolean).sort(byAt), c = o.cancelled;
+    const last = (o.ev && norm(o.ev)) || evs[evs.length - 1] || null;
+    let seal = "";
+    if (c) {
+      const etsy = c.type === "etsyCancelled" || c.source === "etsy" || /^etsy$/i.test(c.by || "");
+      seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
+    } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
+    const recent = evs.slice(-6).map((e, i) => `<button type="button" class="tlMini" data-tl-ev="${esc(e.id)}" style="--rot:${rotOf(e)}deg" aria-label="${esc(`${labelOf(e.type)} · ${longWhen(e.at)} · ${whoOf(e)} — open on the Timeline`)}"><span class="s">${stampSvg(e, false, { tex: false })}</span><span class="f">${stampSvg(e, true, { uid: "tlNowM" + i })}</span></button>`).join("");
+    return { seal, recent };
+  }
+  function wireNow(card, onOpen) {
+    if (!card) return;
+    card.querySelectorAll(".tlMini[data-tl-ev]").forEach(b => { b.onclick = ev => { ev.preventDefault(); if (typeof onOpen === "function") { try { onOpen({ id: b.dataset.tlEv }); } catch (err) { warn("onOpen", err); } } }; });
+    const cx = card.querySelector(".tlNowSeal.cx"), s = card.querySelector(".tlNowSeal:not(.cx)");
+    if (cx && card._tlCx !== cx.dataset.at) {
+      card._tlCx = cx.dataset.at;
+      anim(cx, [{ transform: "rotate(-4deg) scale(1.9) translateY(-30px)", opacity: 0 }, { transform: "rotate(-13deg) scale(.96)", opacity: 1, offset: .62 }, { transform: "rotate(-11deg) scale(1)", opacity: 1 }], 700, { easing: DROP, delay: 200, fill: "backwards" });
+    }
+    if (!cx) card._tlCx = null;
+    if (s && card._tlLast && card._tlLast !== s.dataset.key) { const r = s.style.getPropertyValue("--rot"); anim(s, [{ transform: `rotate(${r}) scale(1.6)`, opacity: 0 }, { transform: `rotate(${r}) scale(.94)`, opacity: 1, offset: .55 }, { transform: `rotate(${r}) scale(1)`, opacity: 1 }], 600, { easing: DROP }); }
+    card._tlLast = s ? s.dataset.key : null;
+  }
+
+  root.OrderTimelineUI = { mount, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow };
 })(typeof window !== "undefined" ? window : globalThis);

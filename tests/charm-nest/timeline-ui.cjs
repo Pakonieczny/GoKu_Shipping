@@ -113,12 +113,15 @@ function fixture({ MAIN, CX }) {
   // ── mount on a detached container: the wait line says what it waits for, then the order paints ──
   await page.evaluate(MAIN => {
     window.__el = document.createElement('div');
-    window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, live: true, pollMs: 1500, onSheet: (s, p) => { window.__sheet = [s, p]; } });
+    window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, live: true, pollMs: 1500, onSheet: (s, p) => { window.__sheet = [s, p]; }, onEvents: l => { window.__evList = l; }, onNow: n => { window.__nowSaid = n; } });
     window.__waitText = window.__el.querySelector('.tlMsg').textContent;
   }, MAIN);
   assert.match(await page.evaluate(() => window.__waitText), /Loading the timeline of order 4176208841/);
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 31, null, { timeout: 5000 });
-  ok.push('mounts on a detached container: a spinner line says what it loads, then 31 stamps');
+  const r0 = await page.evaluate(() => ({ n: window.__evList.length, first: window.__evList[0], now: window.__nowSaid.text, next: window.__nowSaid.next, step: window.__nowSaid.step }));
+  assert.equal(r0.n, 31); assert.equal(r0.first.type, 'arrived'); assert.equal(r0.first.id, `${MAIN}~arrived~e1`); assert.equal(r0.first.x, undefined, 'the host gets the records, not the drawing');
+  assert.equal(r0.now, 'Packed'); assert.equal(r0.next, 'Shipped'); assert.equal(r0.step, 6);
+  ok.push('mounts on a detached container: a spinner line says what it loads, then 31 stamps; onEvents hands the host 31 events, onNow "Packed", next Shipped');
   await page.evaluate(() => window.__host(window.__el));
   await page.waitForTimeout(900);
 
@@ -220,6 +223,9 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(150);
   assert.equal(await page.$eval('.tlSt.sel', b => b.dataset.key), 'sorted~e22');
   assert.equal(await page.evaluate(() => window.__tl.focus('nope')), false);
+  assert.equal(await page.evaluate(() => window.__tl.focus(window.__evList.find(e => e.type === 'welded'))), true, 'focus takes an event as onEvents/onOpen hand it out');
+  await page.waitForTimeout(150);
+  assert.equal(await page.$eval('.tlSt.sel', b => b.dataset.key), 'welded~e25');
   // a rail stamp opens its step
   await page.click('.tlStop[data-stage="laser"]'); await page.waitForTimeout(150);
   assert.equal(await page.$eval('.tlSt.sel', b => b.dataset.key), 'roseCut~e20', 'the rail opens the latest event of that step');
@@ -254,12 +260,46 @@ function fixture({ MAIN, CX }) {
   await page.click('.tlMsg.err .tlRetry');
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 31, null, { timeout: 3000 });
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
-  await page.evaluate(MAIN => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, compact: true, live: false }); }, MAIN);
+  // compact, as the order view's header holds it: a 44px strip, the rail alone; a stamp hands its event to onOpen
+  await page.evaluate(MAIN => {
+    const h = document.createElement('div'); h.className = 'tlTestHost'; h.style.cssText = 'position:fixed;left:200px;top:4px;width:760px;height:44px;z-index:2147480000;background:var(--card);overflow:hidden';
+    window.__el = document.createElement('div'); window.__el.style.height = '100%'; h.appendChild(window.__el); document.body.appendChild(h);
+    window.__hostClick = null; h.addEventListener('click', e => { window.__hostClick = e.defaultPrevented; });
+    window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, compact: true, live: false, onOpen: ev => { window.__opened = ev; } });
+    window.__waitText = window.__el.querySelector('.tlMsg').textContent;
+  }, MAIN);
+  assert.equal(await page.evaluate(() => window.__waitText), 'Loading the steps…');
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlStop.d').length === 7, null, { timeout: 3000 });
-  r = await page.evaluate(() => ({ grid: getComputedStyle(window.__el.querySelector('.tlGrid')).display, rail: window.__el.querySelector('.tlRail').getBoundingClientRect().height }));
-  assert.equal(r.grid, 'none'); assert(r.rail > 30);
+  r = await page.evaluate(() => { const q = s => window.__el.querySelector(s), b = q('.tlRail').getBoundingClientRect(), stops = [...window.__el.querySelectorAll('.tlStop')].map(n => n.getBoundingClientRect()); return { grid: getComputedStyle(q('.tlGrid')).display, now: getComputedStyle(q('.tlNow')).display, h: b.height, w: b.width, low: Math.max(...stops.map(s => s.bottom)), n: stops.length }; });
+  assert.equal(r.grid, 'none'); assert.equal(r.now, 'none'); assert.equal(r.n, 9);
+  assert(r.h <= 44 && r.low <= 48 && r.w > 700, `the rail fits the 44px strip: ${JSON.stringify(r)}`);
+  await page.click('.tlStop[data-stage="laser"]');
+  r = await page.evaluate(() => ({ opened: window.__opened, host: window.__hostClick }));
+  assert.equal(r.opened && r.opened.id, `${MAIN}~roseCut~e20`); assert.equal(r.opened.orderId, MAIN); assert.equal(r.host, true, 'the host sees the click handled');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
-  ok.push('an error shows "Couldn\'t load the timeline: HTTP 503" with Retry, which loads it; compact draws the Now line and rail only');
+  ok.push('an error shows "Couldn\'t load the timeline: HTTP 503" with Retry, which loads it; compact fits a 44px header strip (rail alone, its own wait line) and a stamp calls onOpen(event)');
+
+  // ── the order view's "Where it is now": the latest seal, the last six stamps, the CANCELLED ORDER seal ──
+  r = await page.evaluate(({ MAIN, CX }) => {
+    const card = document.createElement('div'); card.className = 'tlTestHost'; card.style.cssText = 'position:fixed;left:40px;top:120px;display:flex;gap:16px;align-items:center;padding:20px;background:var(--card);z-index:2147480000';
+    document.body.appendChild(card);
+    const a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}), a2 = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {});
+    card.innerHTML = a.seal + '<div class="row">' + a.recent + '</div>'; OrderTimelineUI.wireNow(card, ev => { window.__opened = ev; });
+    const minis = card.querySelectorAll('.tlMini').length, seal = [...card.querySelectorAll('.tlNowSeal text')].map(t => t.textContent).join(' '), w = card.querySelector('.tlNowSeal').getBoundingClientRect().width;
+    card.querySelector('.tlMini').click();
+    const cx = window.__fx[CX].events.find(e => e.type === 'etsyCancelled'), c = OrderTimelineUI.nowStamps(window.__fx[CX].events, { ev: cx, cancelled: cx });
+    card.innerHTML = c.seal + '<div class="row">' + c.recent + '</div>'; OrderTimelineUI.wireNow(card, () => {});
+    const cxEl = card.querySelector('.tlNowSeal.cx');
+    return { same: a.seal === a2.seal && a.recent === a2.recent, minis, seal, w, opened: window.__opened.id, cx: [...cxEl.querySelectorAll('text')].map(t => t.textContent).join(' '), cw: cxEl.getBoundingClientRect().width, drop: cxEl.getAnimations().length };
+  }, { MAIN, CX });
+  assert.equal(r.minis, 6); assert.match(r.seal, /SHIPPING LABEL/); assert.match(r.seal, /DANA K\./); assert(r.w > 85 && r.w < 140, 'the latest seal at 92px: ' + r.w);
+  assert(r.same, 'the same stamps draw the same markup (the view skips an unchanged card)');
+  assert.equal(r.opened, `${MAIN}~note~e26`, 'a stamp opens its event');
+  assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
+  await page.hover('.tlTestHost .tlMini'); await page.waitForTimeout(320);
+  assert(await page.$eval('.tlTestHost .tlMini .f', f => f.getBoundingClientRect().width) > 100, 'a stamp grows on hover to its full face');
+  await page.evaluate(() => document.querySelector('.tlTestHost').remove());
+  ok.push('nowStamps/wireNow: the latest seal (SHIPPING LABEL · DANA K.), six 26px stamps that grow to their full face on hover and open their event, and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
 
   // ── the real client over the stand-in: record and send three steps, then timelineGet (with its where) paints them ──
   const REAL = '4170000001';

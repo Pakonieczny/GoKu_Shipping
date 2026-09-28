@@ -8773,13 +8773,16 @@ const OrderWin = window.OrderWin = (() => {
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
     const who = e && (e.station || e.by) ? `<span class="who"><i></i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
-    const recent = (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
+    // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
+    const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
+    const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
     const sheets = (SV.list || []).slice(0, 3).map((s, i) => `<button type="button" class="owShChip" data-sh="${i}" style="--c:${esc(colorOf(s.metal))}"><i></i><span><b>${esc(sheetName(s))}</b><span>${esc(s.state || "open it")}</span></span></button>`).join("");
-    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "");
-    const html = `<div><div class="k">${esc(n.k)}</div><div class="t">${esc(n.t || "")}</div>${who}<div class="row">${recent}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(n.k)}</div><div class="t">${esc(n.t || "")}</div>${who}<div class="row">${recent}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
+    if (st) tryDo(() => UI.wireNow(card, ev => { setView("timeline"); tryDo(() => W.tl && W.tl.focus(ev)); }));
   }
   const colorOf = m => (METALS.find(x => x.key === m) || {}).color || "#999";
   const CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
