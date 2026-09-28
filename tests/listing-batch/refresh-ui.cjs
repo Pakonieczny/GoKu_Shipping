@@ -86,15 +86,16 @@ async function check({ queued = false, automatic = false } = {}) {
     { batchName: "batch_failed", displayName: "lg1-Beady_Necklace-300sets-test-part31of300",
       state: "JOB_STATE_FAILED", retryRequested: true, setsCount: 1 },
   ];
-  const html = vm.runInNewContext(`${source.slice(renderStart, renderEnd)}; _renderSessionBlock({
+  const render = (jobs) => vm.runInNewContext(`${source.slice(renderStart, renderEnd)}; _renderSessionBlock({
     sessionId: "sess_test", batches, earliest: Date.now() - 3 * 3600000, latest: Date.now()
   })`, {
-    batches, Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: now + 600000,
+    batches: jobs, Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: now + 600000,
     _normBatchState: (x) => x, _batchSafeText: (x) => String(x),
     _formatDuration: (ms) => `${Math.round(ms / 3600000)}h`,
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }),
     DEFAULT_IMAGE_MODEL: "sunburst",
   });
+  const html = render(batches);
   assert.match(html, /Waiting for OpenAI/);
   assert.match(html, /0 completed · 180 pending · 0 failed/);
   assert.match(html, /OpenAI has not returned images for the active jobs/);
@@ -106,5 +107,19 @@ async function check({ queued = false, automatic = false } = {}) {
   assert(!summary.includes("data-session-cancel"), "destructive actions are collapsed");
   assert(!/<details[^>]*\sopen(?:[\s>])/.test(html), "details start closed");
   assert.match(html, /data-session-cancel/, "recovery and cancellation controls remain available");
+  const stopping = render(batches.slice(0, 30).map((b) => ({ ...b, providerStatus: "cancelling" })));
+  const stoppingSummary = stopping.slice(0, stopping.indexOf('<details class="batch-details"'));
+  assert.match(stoppingSummary, /Stopping jobs/);
+  assert.match(stoppingSummary, /30 stopping/);
+  assert.match(stoppingSummary, /Waiting for OpenAI to confirm cancellation/);
+  assert(!stoppingSummary.includes("Waiting for OpenAI</div>"), "cancellation takes precedence over the stale waiting headline");
+  assert(!stopping.includes("data-session-cancel"), "already stopping jobs cannot be cancelled twice");
+
+  const partial = render([
+    { ...batches[0], state: "JOB_STATE_SUCCEEDED", collected: true, results: { succeededCount: 6, failedCount: 0 } },
+    { ...batches[1], state: "JOB_STATE_SUCCEEDED", collected: true, results: { succeededCount: 5, failedCount: 1 } },
+  ]);
+  assert.match(partial, /1 \/ 300/, "a partly saved set is not counted as complete");
+  assert.match(partial, /1 need attention/, "missing images remain visible");
   console.log("Listing refresh UI: provider check, feedback, collection, retry sweep passed");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

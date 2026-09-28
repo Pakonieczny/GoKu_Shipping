@@ -13076,10 +13076,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           uniqueEffective.set(key, b);
       }
       const total = uniqueEffective.size;
-      const finished = [...uniqueEffective.values()].filter((b) => b.collected).length;
+      const finished = [...uniqueEffective.values()].filter((b) => b.collected && !b.results?.failedCount).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
+      const cancelling = activeJobs.filter((b) => b.providerStatus === "cancelling").length;
       const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
       const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
       const lastProviderCheck = Math.max(0, ...activeJobs.map((b) => Number(b.updatedAt || 0)));
@@ -13116,8 +13117,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
 
-      const attention = effective.filter((b) => !b.collected && !b.retryRequested &&
-        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state))).length;
+      const attention = effective.filter((b) => !b.retryRequested &&
+        (b.collected ? b.results?.failedCount > 0 :
+          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
       const originals = session.batches.filter((b) => !b.retryOf);
       const partNumbers = new Set();
       let plannedSets = 0;
@@ -13152,6 +13154,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
+      } else if (cancelling) {
+        headline = "Stopping jobs"; headlineColor = "#fde68a";
       } else if (providerWaiting) {
         headline = "Waiting for OpenAI"; headlineColor = "#fde68a";
       } else if (waitingRetries && running >= _batchRetryLimit) {
@@ -13212,11 +13216,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
         <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const activity = [running ? `${running} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
+      const activity = [cancelling ? `${cancelling} stopping` : "",
+        running > cancelling ? `${running - cancelling} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
         attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      let explanation = providerWaiting
+      let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
+        : providerWaiting
         ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
@@ -13234,6 +13240,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // anything is still running. Recover-all if there are failed /
       // expired batches the user could pull partial results from.
       const cancellableBatches = session.batches.filter((b) => {
+        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });
@@ -13262,7 +13269,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : "";
 
       const stateDetail = session.batches.map((b) => {
-        const state = _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
+        const state = b.providerStatus === "cancelling" ? "stopping" : _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
         const name = _batchSafeText(b.displayName || b.batchName || "Unnamed batch");
         const updated = b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "No update yet";
         const counts = b.batchStats || b.requestCounts || {};
@@ -13307,6 +13314,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
     async function _cancelSession(sessionId) {
       const targets = _lastBatchList.filter((b) => {
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
+        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });

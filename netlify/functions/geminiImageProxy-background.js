@@ -15110,6 +15110,7 @@ async function _handlerImpl(event) {
         await firestoreRetry(
           () => db.collection(BATCHES_COLL).doc(docId).set({
             state, batchStats: stats || null, responsesFile: respFile || null,
+            providerStatus: data?.providerStatus || null,
             providerError,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
@@ -15130,6 +15131,7 @@ async function _handlerImpl(event) {
 
       return json(200, {
         ok: true, batchName, state,
+        providerStatus: data?.providerStatus || null,
         batchStats: stats, responsesFile: respFile, providerError,
         done: state === "JOB_STATE_SUCCEEDED" || state === "JOB_STATE_FAILED" ||
               state === "JOB_STATE_CANCELLED" || state === "JOB_STATE_EXPIRED",
@@ -15557,6 +15559,7 @@ async function _handlerImpl(event) {
           sessionId: d.sessionId || null,
           model: d.model || preferredCharmRenderModelId(),
           state: d.state,
+          providerStatus: d.providerStatus || null,
           locallyQueued: !!d.locallyQueued,
           collected: !!d.collected,
           batchStats: d.batchStats || null,
@@ -15616,12 +15619,16 @@ async function _handlerImpl(event) {
         await firestoreRetry(
           () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
             state: cancellation?.state || "JOB_STATE_CANCELLED",
+            providerStatus: cancellation?.providerStatus || null,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.cancelMirror"
         );
       } catch (_) { /* non-fatal */ }
-      return json(200, { ok: true, cancelled: true, batchName });
+      const state = cancellation?.state || "JOB_STATE_CANCELLED";
+      return json(200, { ok: true, cancellationRequested: true,
+        cancelled: state === "JOB_STATE_CANCELLED", state,
+        providerStatus: cancellation?.providerStatus || null, batchName });
     }
 
     // ------------------------------------------------------------
