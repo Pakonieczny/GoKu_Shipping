@@ -6644,19 +6644,11 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   /** The layer copies fly on: the page's, or the window's own (the window sits above the whole page). */
   function layerIn(d) { let l = d.querySelector(":scope > .motionLayer"); if (!l) { l = el("div", "motionLayer"); l.setAttribute("aria-hidden", "true"); d.appendChild(l); } return l; }
-  function pageLayer() { let l = document.getElementById("motionLayer"); if (!l) { l = el("div"); l.id = "motionLayer"; l.setAttribute("aria-hidden", "true"); document.body.appendChild(l); } return l; }
-  /** The window opens out of its card: from the card's middle, small and clear, to its place. */
+  /** The window opens out of its card as every window does (Motion.dialogOpen): its surface grows out of the card and
+   *  its parts come in after it. Resolves once it has its size. */
   function growFrom(d, from) {
-    const src = from && from.isConnected ? from.getBoundingClientRect() : null;
-    if (!src || !src.width || motionOff()) return Promise.resolve();
-    const r = d.getBoundingClientRect(), dx = src.left + src.width / 2 - (r.left + r.width / 2), dy = src.top + src.height / 2 - (r.top + r.height / 2);
-    const s = Math.max(.3, Math.min(.8, src.height / r.height));
-    try { d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: "ease-out", pseudoElement: "::backdrop" }); } catch (_) {}
-    return d.animate([
-      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 },
-      { opacity: 1, offset: .35 },
-      { transform: "none", opacity: 1 }
-    ], { duration: 500, easing: "cubic-bezier(.2,.75,.2,1)" }).finished.catch(() => {});
+    if (!window.Motion || !Motion.dialogOpen) return Promise.resolve();
+    return from && from.isConnected ? Motion.dialogOpen(d, from) : d._mdShown || Promise.resolve();
   }
   /** Files just added, seen going in: a chip with each one's name lifts where it was dropped (or from the add box), flies
    *  into its row, and the row fills as it lands. The row's place is read on every frame, so a bar that opens above it
@@ -6733,28 +6725,11 @@ const CustomSheet = window.CustomSheet = (() => {
    *  card's designs, which answer. A card out of sight: the copy only fades. */
   function shut() {
     const d = D.dlg; if (!d || !d.open) return;
-    const ck = D.ck, box = d.getBoundingClientRect();
-    let g = null;
-    if (!motionOff()) {
-      g = el("div", "cuDlgGhost cuDlg"); g.inert = true;
-      Object.assign(g.style, { left: box.left + "px", top: box.top + "px", width: box.width + "px", height: box.height + "px" });
-      const copy = d.querySelector(".dlg").cloneNode(true); for (const x of copy.querySelectorAll("[id]")) x.removeAttribute("id"); g.appendChild(copy);
-    }
-    d.close();
-    if (!g) return;
-    const L = pageLayer(), shade = el("div", "cuShade"); L.append(shade, g);
-    shade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 480, easing: "ease-out", fill: "forwards" }).finished.then(() => shade.remove(), () => shade.remove());
-    const card = cardNode(ck), to = card && (card.querySelector(".cuDzThumbs") || card), tr = to && to.getBoundingClientRect();
-    if (!tr || !tr.width || tr.bottom < 0 || tr.top > innerHeight) { g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: 380, easing: "ease-in", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove()); return; }
-    const dx = tr.left + tr.width / 2 - (box.left + box.width / 2), dy = tr.top + tr.height / 2 - (box.top + box.height / 2);
-    const s = Math.max(.04, Math.min(.5, (tr.height * 1.3) / box.height, (tr.width * 1.3) / box.width));
-    g.animate([
-      { transform: "none", opacity: 1 },
-      { transform: `translate(${dx * .3}px,${dy * .3}px) scale(${(1 + s) / 1.7})`, opacity: 1, offset: .42 },
-      { transform: `translate(${dx * .92}px,${dy * .92}px) scale(${s * 1.15})`, opacity: .7, offset: .85 },
-      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 }
-    ], { duration: 660, easing: "cubic-bezier(.45,.05,.3,1)", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
-    setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 560);
+    const ck = D.ck, home = () => { const card = cardNode(ck); return card && (card.querySelector(".cuDzThumbs") || card); };
+    // (as every window closes, Motion.dialogClose: at once, and a copy of it goes back into the card's designs)
+    if (!window.Motion || !Motion.dialogClose) { d.close(); return; }
+    Motion.dialogClose(d, { to: home, arrive: false });
+    if (!motionOff()) setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 400);
   }
   /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what
    *  came, with Show. false when that cannot be seen (the caller says it in a toast instead). */
@@ -8579,10 +8554,10 @@ const RunHistory = window.RunHistory = (() => {
     d.querySelector("#hQ").focus();
     load();
   }
+  // (at once: a copy of it goes back into what opened it, as every window does, Motion.dialogClose, Paul 28 Sep)
   async function close(now) {
     const d = H.dlg; if (!d || !d.open) return;
     menu(null);
-    if (!now && !still() && !d.classList.contains("closing")) { d.classList.add("closing"); await new Promise(r => setTimeout(r, 160)); }
     d.classList.remove("closing");
     try { d.close(); } catch (_) { d.removeAttribute("open"); }
   }
