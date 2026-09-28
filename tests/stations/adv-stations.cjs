@@ -118,7 +118,7 @@ async function station() {
     await page.waitForFunction(() => window.StationTimeline && window.OrderTimeline, null, { timeout: 15000 });
     const enter = async id => { await page.fill('#etsyOrderNumber', id); await page.focus('#etsyOrderNumber'); await page.keyboard.press('Enter'); };
     const alertFor = id => page.evaluate(id => StationTimeline.alertOpen() && document.querySelector('.sttl-alert').innerText.includes('Order ' + id), id);
-    const understood = async () => { await wait(500); await page.focus('.sttl-ok'); await page.keyboard.press('Enter'); await page.waitForFunction(() => !document.querySelector('.sttl-alert'), null, { timeout: 3000 }); };
+    const understood = async () => { await wait(500); await page.click('.sttl-ok'); await page.waitForFunction(() => !document.querySelector('.sttl-alert'), null, { timeout: 3000 }); };
     const complete = () => page.evaluate(() => { document.getElementById('trackingNumberInput').value = '9400100000000000000000'; document.getElementById('carrierSelect').value = 'usps'; document.getElementById('completeOrderBtn').click(); });
 
     // a slow check (3.5 s): the scan goes on unchecked, and the late "cancelled" still raises the alert
@@ -129,7 +129,7 @@ async function station() {
     assert(await page.evaluate(id => !!StationTimeline.isCancelled(id), LATE), 'the late answer is kept for the guard');
     await understood();
     await until(() => ev('cancelAlert', LATE), 'Understood recorded');
-    assert.strictEqual(ev('cancelAlert', LATE).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', LATE).data.how, 'enter');
+    assert.strictEqual(ev('cancelAlert', LATE).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', LATE).data.how, 'button');
 
     // Complete Order on an order never scanned here (typed, no Enter): the guard asks, the alert shows, Stop sends nothing
     await page.fill('#etsyOrderNumber', NOSCAN);

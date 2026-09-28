@@ -148,10 +148,28 @@ function fixture({ MAIN, CX }) {
   assert.equal(sf.huggie, sf.neck, 'a huggie is not a stud'); assert.equal(sf.opt, sf.stud, 'the Style option says stud');
   assert.equal(sf.order, sf.stud, 'an order with any stud earring shows Welded'); assert.equal(sf.none, sf.neck, 'an order with none does not');
   assert.equal(sf.unread, sf.stud, 'a piece not read yet does not rule welding out'); assert.equal(sf.all, sf.stud);
+  // Engraved like Welded: only a piece with a back engraving takes it (its Engrave state, else its spec); unknown keeps it
+  const se = await page.evaluate(() => {
+    const k = x => OrderTimelineUI.stagesFor(x).map(s => s.k).join(' '), neck = { title: 'Name Necklace' }, R = (spec, engrave) => ({ line: neck, spec, engrave });
+    const plain = R({ engraveCandidate: false }), words = R({ engraveCandidate: true }, { needed: true, state: 'words' });
+    const ev = [{ type: 'arrived', at: 1, id: 'a' }, { type: 'engraveApproved', at: 2, id: 'b', lineKey: 'k1' }];
+    return { plain: k(plain), none: k(R({ engraveCandidate: true }, { needed: false, state: 'none', approved: true })), skipped: k(R({ engraveCandidate: true }, { needed: false, state: 'skipped' })),
+      noDesign: k(R({ noDesign: true, engraveCandidate: false })), words: k(words), reading: k(R({ engraveCandidate: true }, { needed: false, state: 'classify' })), cand: k(R({ engraveCandidate: true })),
+      studPlain: k({ line: { title: 'Tiny Moon Stud Earrings', variations: [] }, spec: { engraveCandidate: false } }), piece: k(Object.assign({}, neck, { engrave: { state: 'none' }, engraveCandidate: true })),
+      mix: k([plain, words]), allPlain: k([plain, R({ engraveCandidate: true }, { state: 'none' })]), etsy: k(neck),
+      kept: OrderTimelineUI.summary(ev, [{ key: 'k1', tid: '1', qty: 1, line: Object.assign({}, neck, { engraveCandidate: false }) }]).each[0].steps.map(s => s.k).join(' ') };
+  });
+  const bare = 'arrived sheet laser sorted assembled shipped';
+  assert.equal(se.plain, bare, 'no personalisation, message or note: no Engraved step'); assert.equal(se.none, bare, 'Engrave state none: no Engraved step');
+  assert.equal(se.skipped, bare, 'cut plain: no Engraved step'); assert.equal(se.noDesign, bare); assert.equal(se.piece, bare, 'a piece line carrying state none');
+  assert.equal(se.studPlain, 'arrived sheet laser sorted welded assembled shipped', 'a plain stud: Welded, no Engraved');
+  for (const k of ['words', 'reading', 'cand', 'etsy']) assert.equal(se[k], sf.neck, k + ': a back engraving, or not known yet, keeps Engraved');
+  assert.equal(se.mix, sf.neck, 'an order with any engraved piece shows Engraved'); assert.equal(se.allPlain, bare, 'an order of plain pieces does not');
+  assert.equal(se.kept, sf.neck, 'an engraveApproved event keeps the step on a plain piece (what happened is always drawn)');
   assert.match(r.sub, /Shipping/); assert.match(r.sub, /Dana K\./); assert.match(r.sub, /next: Shipped/); assert.match(r.sub, new RegExp('on ' + where[MAIN].sheet));
   await page.click('.tlNowS .tlOpenSheet');
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
-  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings; NOW · AT SHIPPING');
+  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 8-step rail: 7 stamped, Shipped pulses; stagesFor: Welded only for stud earrings, Engraved only with a back engraving (unknown keeps it); 5 day columns + 1 idle; NOW · AT SHIPPING');
 
   // ── hover a stamp: its seal zooms onto the loupe ABOVE the dot at 122px (90% of the old 136px) with its full face;
   //    the dot stays in sight and keeps the hover (Paul, 2026-09-28) ──

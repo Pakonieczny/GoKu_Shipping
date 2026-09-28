@@ -7,12 +7,13 @@
  *                                           stages: OrderTimelineUI.stagesFor(lines) | () => its steps })
  *    tl.refresh() → Promise   tl.focus(eventId | event) → true when shown   tl.destroy()
  *    onEvents/onNow tell the host what is drawn after every change; onOpen is compact's "open this on the Timeline".
- *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring); isStud(line) → whether it is one.
+ *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring, Engraved only with a back engraving);
+ *    isStud(line) → whether it is a stud; engraveOf(line) → true/false, null when not known yet.
  *
  *  Reads OrderTimeline.get(orderId) → { events, cancelled, where }. Draws, top to bottom:
  *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its own
- *                          rail (Order in → Nested → Engraved → Laser cut → Sorted → [Welded] → Assembled → Shipped;
- *                          Welded only when a piece is a stud earring): passed steps stamped, the next one pulsing, the ones to come
+ *                          rail (Order in → Nested → [Engraved] → Laser cut → Sorted → [Welded] → Assembled → Shipped;
+ *                          Welded only when a piece is a stud earring, Engraved only when one has a back engraving): passed steps stamped, the next one pulsing, the ones to come
  *                          faint outlines; a cancelled order gets a red CANCELLED stamp across the rail
  *    filters               All · Milestones · Stations · Sheets · Holds & cancels · Messages, with counts, and Stamps
  *                          (the legend); non-matches dim, nothing moves
@@ -202,14 +203,15 @@
   const stationName = e => STATION_NAME[e.station] || (LANE[e.lane] || LANE.office).l;
   // the milestone rail (Paul, 28 Sep 21:18; the server's `where.rail`/`where.step`): the real steps a piece goes through,
   // in process order. Each step: the events that stand for it (the stamp it shows, the event a click opens) and the lane
-  // its dashed stamp waits on. `only: "stud"`: a step only a stud earring takes; for any other piece it reads `none`.
+  // its dashed stamp waits on. `only`: a step only some pieces take ("stud": a stud earring; "engrave": a piece with a
+  // back engraving); for any other piece it reads `none` and stagesFor leaves it out.
   // Approving (a sheet committed, a SKU decided) is not a step: what it needs is said under the step it blocks. Etsy's
   // completion folds into Shipped. Engraved: the piece's back engraving approved in Engrave, which writes it into its
   // sheet's back file for the laser (backPut records engraveApproved, who and when; older orders: Charm_Pool_Back).
   const STAGES = [
     { k: "arrived", l: "Order in", types: ["arrived"], kind: "arrived", lane: "etsy" },
     { k: "sheet", l: "Nested", types: ["placed", "renested"], kind: "placed", lane: "sheet" },
-    { k: "engraved", l: "Engraved", types: ["engraveApproved"], kind: "engraveApproved", lane: kindOf("engraveApproved").lane },
+    { k: "engraved", l: "Engraved", types: ["engraveApproved"], kind: "engraveApproved", lane: kindOf("engraveApproved").lane, only: "engrave", none: "No engraving" },
     { k: "laser", l: "Laser cut", types: ["laserDone", "roseCut"], kind: "laserDone", lane: "sheet" },
     { k: "sorted", l: "Sorted", types: ["sorted"], kind: "sorted", lane: "sorting" },
     { k: "welded", l: "Welded", types: ["welded"], kind: "welded", lane: "welding", only: "stud", none: "No welding" },
@@ -234,16 +236,41 @@
     return text ? STUD.test(text) && !NOT_STUD.test(text) : null;
   }
   const isStud = x => studOf(x) === true;
-  /** A piece's own steps: STAGES, with Welded only when the piece is a stud earring. Every piece of an order (an array):
-      the order's steps, Welded when any piece is a stud (or is not read yet). Nothing given: every step. */
+  /* Whether a piece carries a back engraving, read as the sorter reads it (Paul, 28 Sep: a step a piece never takes is not
+     shown). The line's Engrave state first (row.engrave): "none" (nothing to engrave, or a person said so) and "skipped"
+     (cut plain) rule it out; words, ready, blocked or written mean it has one; classify/reclassify are still reading. Then
+     its spec (CharmNestOrders.interpretLine): engraveCandidate false (no personalisation, buyer message, note, nor a Team
+     message that says more than a workflow stamp like "DESIGNED :)" or "QA1", engravingNote) or noDesign (never cut)
+     rule it out. Takes the sorter's row ({ spec, engrave }) or a piece's line carrying the same fields. null: not known
+     yet (an Etsy line alone: its order's message may still ask for one), which keeps the step. */
+  const ENGRAVES = new Set(["words", "ready", "blocked", "written"]);
+  function engraveOf(x) {
+    if (!x || typeof x !== "object") return null;
+    const g = x.engrave && typeof x.engrave === "object" ? x.engrave : null;
+    if (g && (g.state === "none" || g.state === "skipped")) return false;
+    if (g && (ENGRAVES.has(g.state) || (g.needed === true && !g.state))) return true;
+    const spec = x.spec && typeof x.spec === "object" ? x.spec : x;
+    if (spec.noDesign === true || spec.engraveCandidate === false) return false;
+    return null;
+  }
+  /** A piece's own steps: STAGES, with Welded only when the piece is a stud earring and Engraved only when it carries a
+      back engraving. Every piece of an order (an array): the order's steps, a step shown when any piece takes it (or is
+      not read yet). Nothing given: every step. */
   function stagesFor(line) {
     const list = (Array.isArray(line) ? line : [line]).filter(x => x && typeof x === "object");
     if (!list.length) return STAGES;
-    const weld = list.some(x => studOf(x) !== false);
-    return STAGES.filter(s => s.only !== "stud" || weld);
+    const weld = list.some(x => studOf(x) !== false), engrave = list.some(x => engraveOf(x) !== false);
+    return STAGES.filter(s => (s.only !== "stud" || weld) && (s.only !== "engrave" || engrave));
   }
   const ALL_STAGES = STAGES;   // (mount's own `STAGES` is the order's steps)
   const STOP_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STOP_OF[t] = i; }));
+  /* a piece's (or order's) own steps, plus any step it was given all the same: a step with an event of its own is always
+     drawn (a necklace that was welded, a plain piece whose back engraving was approved) */
+  function keepDone(r, evs) {
+    r = Array.isArray(r) && r.length ? ALL_STAGES.filter(s => r.some(x => x === s || (x && x.k === s.k))) : ALL_STAGES;
+    if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
+    return r.length ? r : ALL_STAGES;
+  }
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
      `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
@@ -503,7 +530,7 @@
    *  which is where the order is. → { each: [{ p, D, steps, events }], rail: [{ s, i, n, of }], step } */
   function summary(events, pieces, cancelRec) {
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: stagesFor(p.line) || STAGES, events: list }; });
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
@@ -527,8 +554,11 @@
      still missing to move on, in the shop's words. requirementsOf(step, data) is pure: it reads the order's events and
      `where` (this component's), and what the host already holds of the order (opts.context(): its lines' states, holds,
      waits and engraving, and the readiness of the sheets they sit on). No Etsy calls, no server calls.
-       step  a STAGES entry, its key ("laser") or its index      data { events, where, cancelled, D?, context? }
-       →     { k, label, i, of, state: done|now|later|stopped|gone, done:[{t,sub}], need:[{kind:wait|person|next|after|stop, t}], facts:[t] }
+       step  a STAGES entry, its key ("laser") or its index      data { events, where, cancelled, D?, context?, stages? }
+       →     { k, label, i, n, of, state: done|now|later|stopped|gone|none, done:[{t,sub}], need:[{kind:wait|person|next|after|stop, t}], facts:[t] }
+     The steps are the order's (or a piece's) own rail: D.rail when D is given (the component's), else stagesFor's list in
+     data.stages (keepDone: a step with an event of its own stays). i is the step's place in STAGES; n and of count it on
+     that rail. A step the rail leaves out (Welded for a necklace, Engraved for a plain piece) is "none": nothing to do.
      How the sorter moves an order on: the Gate makes a line up onto a sheet (fast metals once a sheet's worth waits,
      sooner for a piece due within two days; slow metals every few days); a person answers Review (an unknown SKU, a
      custom order, a hold); the engraving is read, fitted and approved, and its back file saved; the set is committed
@@ -559,18 +589,21 @@
     const i = typeof step === "number" ? step : STAGES.findIndex(s => s.k === (step && typeof step === "object" ? step.k : step));
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
-    const D = data.D || derive(evs, data.cancelled || null, data.where || null);
+    let D = data.D || derive(evs, data.cancelled || null, data.where || null);
+    if (!Array.isArray(D.rail)) D = railed(D, keepDone(data.stages, evs));
+    const R = D.rail, pos = R.findIndex(r => r.i === i);
     const cx = data.context && typeof data.context === "object" ? data.context : {};
     const lines = Array.isArray(cx.lines) ? cx.lines : [], sheets = Array.isArray(cx.sheets) ? cx.sheets.filter(x => x && x.name) : [];
-    const state = D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
+    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
     const done = [], need = [], facts = [];
     const whenWho = e => [shortWhen(e.at), whoOf(e)].concat(e.station && STATION_NAME[e.station] ? [STATION_NAME[e.station]] : []).join(" · ");
     for (const e of evs) if (STOP_OF[e.type] === i) done.push({ t: titleOf(e, 80), sub: whenWho(e), key: e.key });
     if (state === "done" && !done.length) done.push({ t: s.l, sub: "done before the timeline was kept" });
     const quiet = QUIET[s.k] || [];
     for (const e of evs) if (quiet.includes(e.type) && STOP_OF[e.type] == null) facts.push(`${titleOf(e, 70)} · ${shortWhen(e.at)}`);
-    const out = () => ({ k: s.k, label: s.l, i, of: STAGES.length, state, done, need, facts: facts.slice(-6) });
+    const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6) });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
+    if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
     // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
@@ -589,7 +622,7 @@
       }
     };
     if (state === "done") { if (s.k === "sheet") loose(); return out(); }
-    if (state === "later") add("after", `${STAGES[Math.max(0, D.cur)].l}${D.cur >= 0 && D.cur < i - 1 ? " and the steps between" : ""}`);
+    if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
     if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     if (state === "now" && s.k !== "sheet") loose();
     if (s.k === "arrived") add("wait", HOW.arrived);
@@ -621,7 +654,7 @@
     return out();
   }
   const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped" };
-  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen" };
+  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed" };
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
   /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
@@ -629,12 +662,13 @@
     const done = q.done.slice(full ? -6 : -2).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
     const need = (full ? q.need : q.need.slice(0, 4)).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span><em>${esc(REQ_WORD[n.kind] || "")}</em>${esc(cap1(n.t))}</span></li>`);
     const more = !full && q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more · click to see them</span></li>` : "";
+    if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
     const facts = full && q.facts.length ? `<div class="tlReqF"><span class="tlLbl">Also recorded</span>${q.facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>` : "";
     return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>${facts}`;
   }
   /** The small card under a hovered step. */
   const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
-    `<div class="xf">Step ${q.i + 1} of ${q.of}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
+    `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
   /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it. → the animation. */
   function placeExp(card, html, dot, whole) {
     card.innerHTML = html;
@@ -662,7 +696,7 @@
   }
   /** The order view's "Where it is now" card (and any host): hovering its seal or a stamp in it (.tlNowSeal, .tlMini,
    *  [data-tl-step]) shows the step card under it; a click on the seal (or a [data-tl-step]) calls onPin({ stage }),
-   *  which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context }.
+   *  which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context, stages }.
    *  Wired once per host (it survives the host's innerHTML being written again); a later call only swaps get/onPin. */
   function explainOn(host, get, onPin) {
     if (!host) return;
@@ -675,7 +709,7 @@
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
-      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = derive(evs, g.cancelled || null, g.where || null);
+      const evs = (g.events || []).map(norm).filter(Boolean).sort(byAt), D = railed(derive(evs, g.cancelled || null, g.where || null), keepDone(g.stages, evs));
       let i = b.dataset.tlStep ? STAGES.findIndex(s => s.k === b.dataset.tlStep) : -1;
       if (i < 0 && b.dataset.tlEv) { const e = evs.find(x => x.id === b.dataset.tlEv); if (e && own(STOP_OF, e.type)) i = STOP_OF[e.type]; }
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
@@ -802,7 +836,6 @@
 /* the zoomed seal (zoomSpot): 122px, 90% of the old 136px, above its dot and taking no pointer, so the dot keeps the hover */
 .tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:122px;height:122px;pointer-events:none;border-radius:50%;background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(30,26,20,.06),0 16px 40px rgba(30,26,20,.22);display:none}
 .tlLoupe .lf,.tlLoupe .lf svg{width:100%;height:100%;display:block}
-.tlLoupe .cap{position:absolute;left:50%;top:100%;margin-top:8px;transform:translateX(-50%);width:max-content;max-width:280px;background:var(--velvet,#221f1b);color:#f6f1e6;font:600 11px/1.35 var(--sans);padding:5px 10px;border-radius:8px;text-align:center}
 .tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
 .tlDetIn{display:grid;grid-template-columns:150px minmax(0,1fr) 290px;gap:32px;align-content:start}
 .tlBig{width:150px;height:150px;transform:rotate(var(--rot,0deg))}
@@ -999,11 +1032,7 @@
     /* this order's own steps (opts.stages: an array, or a function asked at every redraw, e.g. stagesFor(its lines));
        inside the component they stand in for the full rail, so an order with no stud earring has no Welded step (one
        that was welded all the same keeps it: what happened is always drawn) */
-    const withDone = (r, evs) => {
-      r = Array.isArray(r) && r.length ? ALL_STAGES.filter(s => r.some(x => x === s || (x && x.k === s.k))) : ALL_STAGES;
-      if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
-      return r.length ? r : ALL_STAGES;
-    };
+    const withDone = keepDone;
     const railNow = evs => { let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); } return withDone(r, evs); };
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
     const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, sel: null, legend: false, hl: new Set(), sig: "",
@@ -1471,14 +1500,9 @@
       // above the dot itself; a flip goes under the whole stop, so a rail step keeps its name in sight
       const lift = liftOf(b), d = lift.getBoundingClientRect(), bb = b.getBoundingClientRect(), rot = rotOf(e);
       const r = { left: d.left, width: d.width, top: d.top, bottom: Math.max(d.bottom, bb.bottom) };
-      const cap = e.text && e.text !== labelOf(e.type) ? e.text : "";
-      loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>${cap ? `<div class="cap">${esc(cap.length > 110 ? cap.slice(0, 108) + "…" : cap)}</div>` : ""}`;
-      const p = zoomIn(loupe, r, quiet), vw = root.innerWidth || 1200, tx = p.x + ZSZ / 2;
-      const capEl = cap && loupe.querySelector(".cap");
-      if (capEl) {
-        if (p.up) { capEl.style.top = `${Math.round(r.bottom + ZGAP - p.y)}px`; capEl.style.marginTop = "0"; }   // under the dot, never over it
-        const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`;
-      }
+      // the seal alone: what the step is and still needs is the explainer card under the dot (it replaced the dark caption)
+      loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>`;
+      zoomIn(loupe, r, quiet);
       loupeFor = b; lift.classList.add("lifted");
     }
     function hideLoupe(now) {
@@ -1501,7 +1525,8 @@
        Escape or a click elsewhere lets it go. opts.context() is what the host knows of the order (requirementsOf). ── */
     let expFor = null, expA = null;
     const ctxOf = () => { try { return (typeof opts.context === "function" ? opts.context() : opts.context) || null; } catch (err) { warn("context", err); return null; } };
-    const reqOf = i => requirementsOf(i, { events: S.events, D: S.D || derive(S.events, S.cancelled, whereNow()), context: ctxOf() });
+    // (S.D is the rail drawn: the piece shown's own steps, or the order's)
+    const reqOf = i => requirementsOf(i, { events: S.events, D: S.D || deriveNow(), context: ctxOf() });
     const EXP = ".tlStop, .tlSt[data-key], .tlSt.ghost[data-stage]";
     function stageOfEl(b) {
       if (b.dataset.stage) return STAGES.findIndex(s => s.k === b.dataset.stage);
@@ -1545,8 +1570,8 @@
     function unpin() {
       if (!S.pin) return;
       S.pin = null; for (const b of $$(".tlStop.pinned")) b.classList.remove("pinned");
-      const k = S.sel && S.byKey.has(S.sel) ? S.sel : (S.events[S.events.length - 1] || {}).key;
-      if (k) renderDetail(k, 0); else $(".tlDetail").innerHTML = "";
+      const k = S.sel && S.shownKeys.has(S.sel) ? S.sel : (S.shown[S.shown.length - 1] || {}).key;
+      if (k) renderDetail(k, 0); else $(".tlDetail").innerHTML = detHtml = "";
     }
     function renderPin(quiet) {
       const i = STAGES.findIndex(s => s.k === S.pin), q = i >= 0 ? reqOf(i) : null, det = $(".tlDetail");
@@ -1554,9 +1579,9 @@
       const D = S.D, ev = q.state === "done" ? D.stages[i].first : null, s = STAGES[i];
       const seal = ev ? stampSvg(ev, true, { uid: detUid }) : stampSvg({ key: "pin-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
       const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
-      const path = STAGES.map((x, j) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
+      const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
       const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
-        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Step ${i + 1} of ${STAGES.length}</span><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
+        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
         `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
         `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
@@ -1773,5 +1798,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn };
 })(typeof window !== "undefined" ? window : globalThis);

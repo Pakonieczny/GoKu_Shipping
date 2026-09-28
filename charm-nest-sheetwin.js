@@ -2347,7 +2347,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
-      await Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null, removedBy: who, removedReason: cancel ? "cancelled" + (note ? ": " + note : "") : note || "on hold", removedAt: Date.now() });
+      // (a hold is recorded as held, below, and only so: removedBy/At on the piece records would have the server stamp a
+      // "removed" as well, and the order's history read one from them)
+      await Pool.update([...ids], Object.assign({ state: "abandoned", sheetId: null, setId: null }, cancel ? { removedBy: who, removedReason: "cancelled" + (note ? ": " + note : ""), removedAt: Date.now() } : { heldBy: who, heldReason: note || "on hold", heldAt: Date.now() }));
       for (const id of ids) B.pool.rows.delete(id);
       // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
       if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${sheetId}-${Date.now()}`, by: who, sheetId, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });
@@ -2490,7 +2492,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (list) { list = list.filter(c => String(c.orderId) !== rid); list.unshift((r && r.record) || Object.assign({ orderId: rid, by: rec.by, why: rec.why, at: Date.now() }, rec.record || {})); listAt = 0; }
       return r;
     }
-    async function restore(rid, by) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid), by: String(by || whoAmI() || "") }, { quiet: true }); restored.set(String(rid), Date.now()); window.AutoCancel?.forget?.(rid); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
+    async function restore(rid, by) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid), by: String(by || whoAmI() || "") }, { quiet: true }); restored.set(String(rid), Date.now()); window.AutoCancel?.forget?.(rid); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); revive(String(rid)); }
+    /** The order's lines AutoCancel kept marked gone (a piece stayed on a cut or released sheet) are in play again: the
+     *  arrivals' merge keeps a row it already has and the orders check skips gone ones, so they stayed gone for good. A
+     *  line whose pieces are all on sheets goes back to where they are (Pool.settle); the rest wait in line, and the next
+     *  orders check reads them against Etsy's open list like any other line. A line gone for another reason stays gone. */
+    function revive(rid) {
+      if (!window.Orders) return;
+      let n = 0;
+      for (const r of Orders.rows()) if (String(r.order.receiptId) === rid && r.state === "gone" && /^cancelled (on Etsy|by )/.test(r.reason || "")) {
+        if (window.Pool && Pool.onSheets(r)) Pool.settle(r); else { r.state = "pulled"; r.reason = null; }
+        n++;
+      }
+      if (!n) return;
+      try { Orders.interpretAll(); Orders.render(); } catch (e) { console.warn("cancelled orders: restore", e); }
+      if (window.B && B.run && window.RunCtl) RunCtl.save().catch(e => console.warn("cancelled orders: restore saved with the run's next change", e.message));
+    }
     /** Ids read elsewhere (AutoCancel's newest records) join the cache at once, and come into the Cancelled tab as any
      *  cancel seen live does; returns how many were new to it. */
     function absorb(more) {
@@ -2535,12 +2552,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function rowHtml(c, openable) {
       const etsy = isEtsy(c), rid = String(c.orderId), fates = fatesOf(c), lines = c.lines || [];
       const why = String(c.why || "").trim();
+      // Etsy says the order is cancelled: its own record, or one noted on a person's cancel. Never restored here (the
+      // stations read this record; "Fully Refunded" is not a cancel on its own, so that one can be restored)
+      const etsyX = /cancel/i.test(c.etsyStatus || (etsy ? "cancel" : ""));
       return `<div class="cxId"><b class="mono">${esc(rid)}</b><span>${esc(c.buyer || "")}</span></div>
         <div class="cxWhat">${lines.map(l => `<span class="mono" title="${esc(l.title || "")}">${esc(l.sku || "no SKU")}${l.quantity > 1 ? ` ×${l.quantity}` : ""}</span>`).join("") || `<i>no lines kept</i>`}</div>
-        <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span><time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
+        <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span>${!etsy && etsyX ? `<span class="cxBadge etsy">Cancelled on Etsy too</span>` : ""}<time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
           ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
-        <div class="cxAct">${etsy && /cancel/i.test(c.etsyStatus || "cancel") ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
+        <div class="cxAct">${etsyX ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
     let want = null, drawnKey = null, limit = PAGE;
@@ -2635,7 +2655,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      *  brings it back; Keep, Esc, a click elsewhere or 12 s leave it as it is. */
     function ask(node, c) {
       const rid = String(c.orderId); if (node.classList.contains("asking")) return;
-      const bar = h("div", "cxAskBar", `<span class="cxAsk">Bring it back?</span><button class="btn sm" type="button" data-cx="yes" title="Restore order ${esc(rid)}: it returns with the next orders check if it is still open on Etsy">Restore</button><button class="btn ghost sm" type="button" data-cx="no">Keep</button>`);
+      // (who restored it goes on the order's timeline: a screen with no name saved asks for it here, as a take-off does)
+      const bar = h("div", "cxAskBar", `<span class="cxAsk">Bring it back?</span>${whoAmI() ? "" : `<input class="swNote" type="text" maxlength="40" autocomplete="name" spellcheck="false" placeholder="Your name" aria-label="Your name, kept with the restore">`}<button class="btn sm" type="button" data-cx="yes" title="Restore order ${esc(rid)}: it returns with the next orders check if it is still open on Etsy">Restore</button><button class="btn ghost sm" type="button" data-cx="no">Keep</button>`);
       node.classList.add("asking"); node.appendChild(bar);
       animate(bar, [{ opacity: 0, transform: "translateX(10px)" }, { opacity: 1, transform: "none" }], 220);
       let t = 0;
@@ -2645,14 +2666,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       bar.querySelector("[data-cx=no]").onclick = e => { e.stopPropagation(); back(); node.focus && node.focus(); };
       bar.onclick = e => e.stopPropagation();
       bar.onkeydown = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); back(); } };
-      const yes = bar.querySelector("[data-cx=yes]"); requestAnimationFrame(() => yes.focus());
-      yes.onclick = e => { e.stopPropagation(); clearTimeout(t); document.removeEventListener("pointerdown", away, true); doRestore(node, c, yes, back); };
+      const yes = bar.querySelector("[data-cx=yes]"), inp = bar.querySelector("input");
+      if (inp) { inp.style.flex = "0 0 130px"; inp.style.width = "130px"; inp.oninput = () => clearTimeout(t); inp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); yes.click(); } }; }
+      requestAnimationFrame(() => (inp || yes).focus());
+      yes.onclick = e => {
+        e.stopPropagation(); let who = whoAmI();
+        if (!who && inp) { who = inp.value.trim(); if (!who) { inp.focus(); return; } if (window.B) B.employee = who; try { localStorage.setItem("cn.employee", who); } catch (_) {} }
+        clearTimeout(t); document.removeEventListener("pointerdown", away, true); inp?.remove(); doRestore(node, c, yes, back, who);
+      };
     }
-    async function doRestore(row, c, b, back) {
+    async function doRestore(row, c, b, back, who) {
       const rid = String(c.orderId), w = want;
       b.disabled = true; b.innerHTML = `<span class="spin"></span>Restoring`; row.querySelector("[data-cx=no]")?.remove();
       try {
-        await restore(rid);
+        await restore(rid, who);
         nodes.delete(rid);
         agent({ bridge: true }, "DS", `Order ${rid} restored by ${whoAmI() || "someone"}: it comes back with the next orders check if it is still open on Etsy`);
         // where it goes, seen going (Paul, 27 Sep): a copy lifts off toward Open Orders, slowly enough to follow (~700 ms), the

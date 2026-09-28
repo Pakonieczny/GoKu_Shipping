@@ -13,7 +13,8 @@
  *        read from Etsy — also counts as a cancel when it says so (no extra Etsy call).
  *    StationTimeline.did(type, orderId, text, data)   welded · assembled · packed · labelPrinted · shipped ·
  *        etsyCompleted · sorted (any station type). Stable id `${device}-${orderId}-${type}-${minute}`.
- *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch)
+ *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch; a "cancelled"
+ *     that comes after the 2.5 s then goes to opts.onLate(record) instead of the module's alert)
  *    StationTimeline.isCancelled(orderId)  → the cached cancel record ({ at, by, why, source }) or null
  *    StationTimeline.guard(orderId, { action, anchor })  → Promise<boolean>: true to go on. For a cancelled order it
  *        asks "This order is cancelled. Do it anyway?" inline (inside the alert while it is up); a yes is recorded.
@@ -123,7 +124,7 @@
       opts = opts || {};
       const how = HOW.has(opts.how) ? opts.how : "scan", at = Date.now(), by = who();
       const extra = small(opts.extra);
-      const res = await check(id, extra, rec => { try { if (!opts.quiet) showAlert(id, rec); } catch (e) { warn("alert failed", e); } });
+      const res = await check(id, extra, rec => { try { if (!opts.quiet) showAlert(id, rec); else if (typeof opts.onLate === "function") opts.onLate(rec); } catch (e) { warn("alert failed", e); } });
       const data = { how, check: res.state };
       if (res.why) data.checkNote = res.why;
       if (extra) data.extra = extra;
@@ -178,8 +179,10 @@
   const CSS = `
 .sttl-alert{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;box-sizing:border-box;padding:4vh 2vw;overflow:auto;text-align:center;
   background:#7e2415;color:#fff;font-family:${SANS};-webkit-font-smoothing:antialiased;opacity:0;transition:opacity .26s ease}
-.sttl-alert.in{opacity:1;animation:sttlAlarm 1.1s ease-in-out 2}.sttl-alert.out{opacity:0;transition-duration:.24s}
-.sttl-card{width:100%;max-width:1400px;transform:scale(.94);transition:transform .42s cubic-bezier(.2,.8,.2,1)}
+.sttl-alert.in{opacity:1}.sttl-alert.out{opacity:0;transition-duration:.24s}
+.sttl-alert::before{content:"";position:fixed;inset:0;background:#b1321c;opacity:0;pointer-events:none}
+.sttl-alert.in::before{animation:sttlAlarm 1.1s ease-in-out 2}
+.sttl-card{position:relative;width:100%;max-width:1400px;transform:scale(.94);transition:transform .42s cubic-bezier(.2,.8,.2,1)}
 .sttl-alert.in .sttl-card{transform:scale(1)}.sttl-alert.out .sttl-card{transform:scale(.97);transition-duration:.24s}
 .sttl-alert .sttl-h1{margin:0;font:800 clamp(48px,8.6vw,132px)/.95 ${SANS};letter-spacing:.01em;animation:sttlSlam .36s cubic-bezier(.3,1.7,.5,1) both}
 .sttl-alert .sttl-h2{margin:18px 0 26px;font:700 clamp(24px,3.2vw,44px)/1.1 ${SANS};letter-spacing:.14em;color:#ffd9cf;animation:sttlSlam .36s cubic-bezier(.3,1.7,.5,1) .08s both}
@@ -214,8 +217,8 @@
 @keyframes sttlFade{from{opacity:0}to{opacity:1}}
 @keyframes sttlIn{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
 @keyframes sttlSlam{from{opacity:0;transform:scale(1.25)}}
-@keyframes sttlAlarm{0%,100%{background-color:#7e2415}50%{background-color:#b1321c}}
-@media (prefers-reduced-motion:reduce){.sttl-alert,.sttl-bar{transition-duration:.12s!important}.sttl-alert.in{animation:none}
+@keyframes sttlAlarm{0%,100%{opacity:0}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.sttl-alert,.sttl-bar{transition-duration:.12s!important}.sttl-alert.in::before{animation:none}
   .sttl-card,.sttl-alert.in .sttl-card{transform:none!important;transition:none}.sttl-bar.in,.sttl-bar{transform:translateX(-50%)!important}
   .sttl-alert .sttl-h1,.sttl-alert .sttl-h2,.sttl-guard{animation:none}}`;
   function css() {
@@ -275,7 +278,7 @@
     const rows = el("div", "sttl-rows"), who = el("div", "sttl-who"), guardBox = el("div"), ok = el("button", "sttl-ok", "Understood");
     ok.type = "button";
     ok.addEventListener("click", () => acknowledge("button"));
-    card.append(el("h1", "sttl-h1", "CANCELLED ORDER"), el("h2", "sttl-h2", "DO NOT PROCEED"), rows, who, guardBox, ok, el("div", "sttl-hint", "Press Understood or Enter to close"));
+    card.append(el("h1", "sttl-h1", "CANCELLED ORDER"), el("h2", "sttl-h2", "DO NOT PROCEED"), rows, who, guardBox, ok, el("div", "sttl-hint", "Click or tap Understood to close"));
     root.appendChild(card);
     Object.assign(A, { root, rows, who, ok, guardBox });
   }
@@ -331,11 +334,10 @@
         const i = f.indexOf(document.activeElement); e.preventDefault(); e.stopPropagation();
         f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length].focus(); return;
       }
-      if (e.key === "Enter" || e.key === "NumpadEnter" || e.key === "Escape") {
+      /* a barcode scanner ends every scan with Enter (some with Tab or a space): no key closes the alert or presses a
+         button in it (not even "Do it anyway"); only a deliberate click or tap on Understood closes it */
+      if (e.key === "Enter" || e.key === "NumpadEnter" || e.key === " " || e.key === "Spacebar" || e.key === "Escape") {
         e.preventDefault(); e.stopPropagation();
-        if (e.key === "Escape" || e.repeat || Date.now() - A.shownAt < 450) return;   // a held Enter does not dismiss it unseen
-        const f = document.activeElement;
-        if (f && f !== A.ok && A.root.contains(f) && f.tagName === "BUTTON") f.click(); else acknowledge("enter");
       }
     } catch (_) {}
   }
@@ -401,6 +403,7 @@
       configured = false; ot();
       if (!keysOn) {
         keysOn = true; loadCache();
+        try { if (document.head) css(); } catch (_) {}   // the stylesheet is in before any alert: its first frame does not restyle the page
         window.addEventListener("keydown", onKey, true);
         const unlock = () => { audio(); window.removeEventListener("pointerdown", unlock, true); window.removeEventListener("keydown", unlock, true); };
         window.addEventListener("pointerdown", unlock, true); window.addEventListener("keydown", unlock, true);

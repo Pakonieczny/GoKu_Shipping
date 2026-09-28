@@ -86,8 +86,9 @@
     const headers = { "Content-Type": "application/json" };
     if (cfg.passcode) headers["X-Edit-Passcode"] = cfg.passcode;
     const url = base() + fn + (fn === "firebaseOrders" && sandbox ? "?sandbox=1" : "");
-    // (a keepalive request may carry 64 KB at most: a bigger one is refused outright, and was retried forever)
-    const text = JSON.stringify(body), r = await fetch(url, { method: "POST", headers, body: text, keepalive: text.length < 60000 });
+    // (a keepalive request may carry 64 KB at most: a bigger one is refused outright, and was retried forever. Bytes, not
+    //  characters: 45,000 characters of Japanese or emoji are over 120 KB)
+    const text = JSON.stringify(body), r = await fetch(url, { method: "POST", headers, body: text, keepalive: new Blob([text]).size < 60000 });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
     return j;
@@ -119,8 +120,10 @@
       const orderId = digits(e && e.orderId); if (!orderId || !TYPES[e.type]) return null;
       if (cfg.mode === "station" && !STATION_TYPES.has(e.type)) return null;
       const at = Number(e.at) > 1e12 ? Number(e.at) : Date.now();
-      const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
+      let ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
+      // kept as plain JSON: details that are not (a circular object) are left out here, where they stopped the outbox for good
+      try { ev = JSON.parse(JSON.stringify(ev)); } catch (_) { ev.data = null; ev = JSON.parse(JSON.stringify(ev)); }
       box.push(ev); if (box.length > KEEP) box.splice(0, box.length - KEEP);   // (a server refusing for days: memory stays bounded)
       save(); schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }
@@ -131,8 +134,10 @@
     const id = digits(orderId); if (!id) throw new Error("no order number");
     const j = await post("charmNestLibrary", { op: "timelineGet", orderId: id, sandbox: cfg.sandbox });
     // events still in this page's outbox are part of the timeline too (they are on their way)
-    const known = new Set((j.events || []).map(x => x.id && x.id.split("~").pop()));
-    for (const ev of box) if (ev.orderId === id && !!ev.sandbox === !!cfg.sandbox && !known.has(ev.id)) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
+    // (by the server's own key, orderId~type~cleaned id: an id with a space or "/" is stored cleaned, and two types may share one)
+    const known = new Set((j.events || []).map(x => x.id && x.id.split("~").slice(1).join("~")));
+    const keyIn = ev => `${ev.type}~${String(ev.id).slice(0, 120).replace(/[^\w.:-]/g, "_")}`;
+    for (const ev of box) if (ev.orderId === id && !!ev.sandbox === !!cfg.sandbox && !known.has(keyIn(ev))) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
     (j.events || []).sort((a, b) => a.at - b.at);
     return j;
   }
@@ -154,6 +159,9 @@
     config(o) { Object.assign(cfg, o || {}); return Object.assign({}, cfg); },
     record, flush, get, cancelCheck,
     onRecord(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    pending() { return box.length; }
+    pending() { return box.length; },
+    /** A sandbox reset (sandbox true): that store's events still waiting, this page's and every other page's on the disk,
+        go with the records it cleared; sent afterwards they would land on the replay of the same real order numbers */
+    discard(sandbox) { const keep = ev => !!ev.sandbox !== !!sandbox; box = box.filter(keep); try { localStorage.setItem(OUTBOX, JSON.stringify(disk().filter(keep))); } catch (_) {} return box.length; }
   };
 })();

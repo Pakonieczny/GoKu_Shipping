@@ -13117,7 +13117,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
           checkStatus.textContent = `Saved progress loaded · Refresh checks OpenAI now.`;
         return { ok: true, batches };
       } catch (err) {
-        listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${_batchSafeText(err?.message || err)}</div>`;
+        // Keep the dashboard already on screen; the status line says the load failed.
+        if (!_lastBatchList.length) listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${_batchSafeText(err?.message || err)}</div>`;
         const checkStatus = document.getElementById("batchRefreshStatus");
         if (checkStatus) checkStatus.textContent = `Could not load saved jobs: ${err?.message || err}`;
         return { ok: false, error: err };
@@ -13330,6 +13331,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const cancellableBatches = session.batches.filter((b) => {
         if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
+        // A failed job queued for retry is taken out of the queue too.
+        if (b.retryRequested && !b.collected && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(st)) return true;
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });
       const recoverableBatches = session.batches.filter((b) => {
@@ -13404,15 +13407,23 @@ Click the button again to permanently delete eligible temporary files, or cancel
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
         if (b.retryBatchName || b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
+        // Queued retries stop too; otherwise the collector keeps submitting them.
+        if (b.retryRequested && !b.collected && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(st)) return true;
         return !["JOB_STATE_SUCCEEDED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(st);
       });
       if (targets.length === 0) return;
-      const ok = confirm(`Cancel ${targets.length} running batch(es) in this submission?\n\nAlready-completed work is still billed.`);
+      const ok = confirm(`Cancel ${targets.length} running or queued batch(es) in this submission?\n\nAlready-completed work is still billed.`);
       if (!ok) return;
-      for (const b of targets) {
+      const status = document.getElementById("batchRecoveryStatus");
+      document.querySelectorAll("[data-session-cancel]").forEach((btn) => { btn.disabled = true; });
+      let notCancelled = 0;
+      for (const [index, b] of targets.entries()) {
+        if (status) status.textContent = `Cancelling ${index + 1}/${targets.length}…`;
         try { await postJson("geminiImageProxy", { kind: "batch_cancel", batchName: b.batchName }); }
-        catch (e) { console.warn(`cancel ${b.batchName} failed:`, e?.message || e); }
+        catch (e) { notCancelled++; console.warn(`cancel ${b.batchName} failed:`, e?.message || e); }
       }
+      if (status) status.textContent = `Cancel sent for ${targets.length - notCancelled} of ${targets.length} batch(es)` +
+        (notCancelled ? ` · ${notCancelled} could not be cancelled; Refresh and cancel again.` : ".");
       await refreshBatchJobsPanel();
     }
 

@@ -1010,7 +1010,7 @@
   </script>
 
   <!-- Order timeline: records this station's scans and steps, and shows the cancelled-order alert (optional: the page works without it) -->
-  <script src="order-timeline.js?v=20260928-ov2"></script><script src="station-timeline.js?v=20260928-ov2"></script>
+  <script src="order-timeline.js?v=20260928-ov2"></script><script src="station-timeline.js?v=20260928-a3-5"></script>
 
   <script>
     /********** Global Variables **********/
@@ -4925,6 +4925,14 @@ function metalToBadge(label){
 
       /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {
+        /* a cancelled order asks "Do it anyway?" before a label is bought (order timeline) */
+        try {
+          const stOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+          if (window.StationTimeline && stOrder && !(await window.StationTimeline.guard(stOrder, { action: "Buy & Print", anchor: "#ccBuy" }))) {
+            M.toast?.({ html: "Cancelled order — no label bought." });
+            return;
+          }
+        } catch (_) {}
         try {
 
           // No stub window: we will print inline in the same tab.

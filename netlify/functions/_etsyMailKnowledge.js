@@ -161,7 +161,9 @@ function invalidateKnowledgeCache() { _cache = { at: 0, facts: null, rules: null
 
 // The shop's automatic away reply ("We are away from the shop at the
 // moment...") reads like a staff message but answers nothing.
-const AWAY_RX = /\baway from the (?:shop|studio|office)\b|\bour (?:regular )?business hours are\b|\bout of (?:the )?office\b/i;
+// The business hours alone are not the away reply: the fact sheet states
+// them, so a real answer quotes them. Nor is "we were away last week".
+const AWAY_RX = /(?<!\b(?:were|was|been)\s+)\b(?:away from the (?:shop|studio|office)|out of (?:the )?office)\b/i;
 function isAwayMessage(text) { return AWAY_RX.test(String(text || "")); }
 const AWAY_NOTE = "[Automatic away reply, not written by staff. It answers nothing: every customer question before it is still open.]";
 

@@ -142,8 +142,10 @@ async function check(name, fn) {
   });
 
   await check("a restore landing between the mirror's read and its batch is not undone", async () => {
-    await post({ op: "cancelPut", orderId: "4200000020", by: "Paul", why: "asked", record: {} });
-    // the mirror reads Paul's record (and would add Etsy's word to it); Paul restores the order before its batch lands
+    // (Paul's record already carries Etsy's word, so his restore knew it; a person's own cancel restored unaware of Etsy's
+    //  is recorded as Etsy's: adv-a3-cancel.cjs)
+    await post({ op: "cancelPut", orderId: "4200000020", by: "Paul", why: "asked", etsyStatus: "Canceled", record: {} });
+    // the mirror reads Paul's record (and would add the receipt's lines to it); Paul restores the order before its batch lands
     afterGetAll = () => post({ op: "cancelRestore", orderId: "4200000020", by: "Paul" });
     const out = await runMirror([[receipt("4200000020", "Canceled", { updated_timestamp: T0 + 10 }), receipt("4200000021", "Canceled", { updated_timestamp: T0 + 10 })]]);
     assert.equal(out.ok, true);

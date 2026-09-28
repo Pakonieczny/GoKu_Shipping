@@ -317,7 +317,7 @@
     }
     .detail-box.st-cancelled { color:#d32f2f !important; background:#fdecea !important; text-decoration:line-through; }
     /* the station alert of the design spec (order-view-spec §8, shot-alert.png): clay red, flashes twice, Understood */
-    @keyframes stAlarm { 0%, 100% { background:#7e2415; } 50% { background:#b1321c; } }
+    @keyframes stAlarm { 0%, 100% { opacity:0; } 50% { opacity:1; } }
     @keyframes stSlam { from { transform:scale(1.25); opacity:0; } }
     #stCancelAlert {
       position:fixed; inset:0; z-index:100000; display:grid; place-items:center; padding:48px 24px;
@@ -325,7 +325,11 @@
       font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
       opacity:0; transition:opacity 240ms ease;
     }
-    #stCancelAlert.on { opacity:1; animation:stAlarm 1.1s ease-in-out 2; }
+    #stCancelAlert.on { opacity:1; }
+    #stCancelAlert::before {
+      content:""; position:fixed; inset:0; z-index:-1; background:#b1321c; opacity:0; pointer-events:none;
+    }
+    #stCancelAlert.on::before { animation:stAlarm 1.1s ease-in-out 2; }
     #stCancelAlert .st-h1 {
       margin:0; font-size:clamp(56px, 9vw, 132px); line-height:.95; font-weight:800; letter-spacing:.01em;
       animation:stSlam 360ms cubic-bezier(.3,1.7,.5,1) both;
@@ -346,7 +350,7 @@
     #stCancelAlert .st-ok:focus { background:#fff; outline:none; }
     #stCancelAlert .st-ok:active { transform:scale(.97); }
     @media (prefers-reduced-motion: reduce) {
-      #stCancelAlert.on, #stCancelAlert .st-h1 { animation:none; }
+      #stCancelAlert.on::before, #stCancelAlert .st-h1 { animation:none; }
       #stCancelAlert { transition-duration:120ms; }
     }
 
@@ -513,7 +517,7 @@
   <!-- Order timeline: the shared client and the station module (every scan recorded, cancelled orders flagged).
        If either is missing the page works exactly as before. -->
   <script src="order-timeline.js?v=20260928-ov2"></script>
-  <script src="station-timeline.js?v=20260928-ov2"></script>
+  <script src="station-timeline.js?v=20260928-m10"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -1567,7 +1571,8 @@ window.SortTL = (function () {
     const k = "scan:" + batch;
     busy(k, "Checking " + ids.length + " order" + (ids.length === 1 ? "" : "s") + " for cancellations…");
     Promise.all(ids.map(id =>
-      within(call("scanned", id, { how, extra, quiet: true }), 15000, undefined)
+      // a "cancelled" that comes after the module's 2.5 s (the scan went on unchecked) still flags and alerts
+      within(call("scanned", id, { how, extra, quiet: true, onLate: rec => { flag(me, id, rec); if (me.scansSettled) raise(me); } }), 15000, undefined)
         .then(res => { if (res && res.cancelled) flag(me, id, res.record); })
     )).then(() => {
       idle(k);
@@ -1629,7 +1634,13 @@ window.SortTL = (function () {
       el.innerHTML = '<div><div class="st-h1">CANCELLED ORDER</div><div class="st-h2">DO NOT PROCEED</div>' +
         '<div class="st-list"></div><div class="st-who st-scan"></div>' +
         '<button type="button" class="st-ok">Understood</button></div>';
+      // a scanner's Enter (or a Space) never closes it, even with Understood focused, nor presses a button behind it:
+      // only a click or a tap on Understood does. A relayed batch's own (synthetic) Enter still loads behind it.
+      const keyStop = e => { if (e.isTrusted && (e.key === "Enter" || e.key === "NumpadEnter" || e.key === " " || e.key === "Spacebar")) { e.preventDefault(); e.stopPropagation(); } };
+      const keys = ["keydown", "keypress", "keyup"];
+      keys.forEach(t => window.addEventListener(t, keyStop, true));
       el.querySelector(".st-ok").addEventListener("click", () => {
+        keys.forEach(t => window.removeEventListener(t, keyStop, true));
         el.classList.remove("on");
         el.id = "";                                  // a new alert may open while this one fades out
         setTimeout(() => el.remove(), 250);
@@ -1667,7 +1678,9 @@ window.SortTL = (function () {
         if (known && !alertKnown) { skipped.push(id); return; }
         const pass = await within(call("guard", id), 10000, undefined);
         if (pass === false) return;                              // blocked, and the module alerted
-        if (known) { showAlert([{ id, rec: (cur && cur.cancelled.get(id)) || {} }], cur && cur.batch); return; }
+        // "Do it anyway" to the module's own question goes ahead (the timeline says so); a cancel the module did not ask
+        // about (only Etsy's answer here) or no answer at all: the alert again, not printed
+        if (known && !(pass === true && call("isCancelled", id))) { showAlert([{ id, rec: (cur && cur.cancelled.get(id)) || {} }], cur && cur.batch); return; }
         ok.add(id);
       }));
       if (skipped.length) toast("Not printed — cancelled, do not sort: " + skipped.map(esc).join(", "));

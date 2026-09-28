@@ -339,8 +339,10 @@ const TL = window.CNTimeline = (() => {
   }
   const hash = s => { let a = 2166136261; for (const ch of String(s)) a = Math.imul(a ^ ch.charCodeAt(0), 16777619); return (a >>> 0).toString(36); };
   const hash2 = s => { let b = 5381; for (const ch of String(s)) b = Math.imul(b, 33) ^ ch.charCodeAt(0); return hash(s) + "." + (b >>> 0).toString(36); };   // (the sent list keeps these, not the ids)
+  /** A sandbox reset: the events waiting here go with its records, and those sent once are sent again for the replay. */
+  function forget() { if (!WORKSPACE_SANDBOX) return; queue.length = 0; seen = null; const t = T(); if (t && t.discard) t.discard(true); }
   sync();
-  return { sync, rec, line, pulled, hash, pending: () => queue.length };
+  return { sync, rec, line, pulled, hash, forget, pending: () => queue.length };
 })();
 /* One drawing a frame. The run banner, the rail's strip and ladder and the Orders tab were each drawn in full at every
    call, and a run step, a poke, an arrival, a log line or a pool pass called them, often several times in one go. A
@@ -2743,6 +2745,8 @@ const Gate = window.Gate = (() => {
         // whether or not its set is committed: nesting it again would move pieces whose files already went out
         const cut=p=>!!(p.laserDoneAt||p.releaseFull||holding(p)||Sets.ofRun(p.runId).some(s=>s.committedAt&&(s.sheetIds||[]).includes(p.sheetId)));
         const pages=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt),resized=pages.filter(p=>!cut(p)),keptPages=pages.filter(cut);
+        // (and the size it was cut at: it was drawn, measured and shown in the sheet window at the new one)
+        for(const p of keptPages)if(!p.keptStock)p.keptStock={wPt:was.wPt,hPt:was.hPt};
         (R.sizeKept ||= {})[m]=keptPages.length?{at:Date.now(),text:keptPages.map(p=>`${window.SheetEvents?.label?.(p)||sheetName(p)} is cut: kept at its size`).join(' · ')}:null;
         window.SheetEvents?.sizeChanged(resized,[was.wIn*25.4,was.hIn*25.4],[w,h]);   // on the orders' timelines (idle time)
         for(const p of resized){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
@@ -2849,7 +2853,8 @@ const Gate = window.Gate = (() => {
       if (moveIn) {
         // nothing is re-arranged: every sheet taking part is only marked as changing, so the set lets it go (assemble)
         // while Sheet 1 takes the others; a later sheet remembers where its charms lay, for the ones that come back to it
-        for (const p of pages) p.dirty = true;
+        // (a sheet taking part is open again: it takes the metal's size, not one an Apply size kept for it)
+        for (const p of pages) { p.dirty = true; delete p.keptStock; }
         for (const p of sources) { p._mergeSpots = new Map((p.placements || []).filter(x => [x.cxPt, x.cyPt].every(Number.isFinite)).map(x => [x.id, { cxPt: x.cxPt, cyPt: x.cyPt, angle: x.angle || 0 }])); p.feedWait = null; }
       } else {
         // every sheet taking part is nested again from scratch: pins go, as with Apply size
@@ -6171,7 +6176,7 @@ const CustomPrint = window.CustomPrint = (() => {
   const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
   const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
   const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
-  const armed = new Map();      // card key|act → until when a cancelled order's second press goes ahead
+  const armed = new Map();      // card key|act → { from, until }: when a cancelled order's second press goes ahead
   const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
@@ -6234,9 +6239,11 @@ const CustomPrint = window.CustomPrint = (() => {
   function anyway(it, act) {
     const rid = ridOfCard(it), k = it.key + "|" + act;
     if (!rid || !(window.Cancelled && Cancelled.has(rid))) return null;
-    if ((armed.get(k) || 0) > Date.now()) { armed.delete(k); redraw(); return rid; }
-    armed.set(k, Date.now() + 4000); redraw();
-    setTimeout(() => { if ((armed.get(k) || 0) <= Date.now() && armed.delete(k)) redraw(); }, 4100);
+    // (the second click of a double-click is not the deliberate second press: one within 350 ms is let go by)
+    const a = armed.get(k), now = Date.now();
+    if (a && a.until > now) { if (now < a.from) return false; armed.delete(k); redraw(); return rid; }
+    armed.set(k, { from: now + 350, until: now + 4000 }); redraw();
+    setTimeout(() => { const x = armed.get(k); if (x && x.until <= Date.now() && armed.delete(k)) redraw(); }, 4100);
     return false;
   }
   function printedAnyway(rid, who, act, n) {
@@ -6409,7 +6416,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
   function buttonHtml(it, act, cls, label, title, sz, attrs) {
     const w = working(it), more = attrs ? " " + attrs : "";
-    if (!w && (armed.get(it.key + "|" + act) || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
+    if (!w && ((armed.get(it.key + "|" + act) || {}).until || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
     if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
     return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
   }
@@ -6453,7 +6460,7 @@ const CustomSheet = window.CustomSheet = (() => {
   const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
   // motion (Paul, 27 Sep 20:09-20:24): files just dropped, still on their way into their rows; thumbnails new on a card;
   // cards whose strip of designs is about to show for the first time
-  const arriving = new Set(), popThumb = new Set(), stripNew = new Set();
+  const arriving = new Set(), popThumb = new Set(), stripNew = new Set(), ringNext = new Set();
   const D = { dlg: null, ck: null, it: null, askName: false, opening: false };
   let ver = 0, idxFor = null, idxVer = -1, idx = new Map(), lastPrune = 0;
   const ckOf = it => String(it.key || "").replace(/^[a-z]+:/, "");        // "ord:custom:…" and "cinfo:custom:…" are one card
@@ -6588,8 +6595,11 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const F of fresh) arriving.add(F.id);
     e.files.push(...fresh); e.at = Date.now();
     TL.line(row, "designDropped", { id: `${c.ck}.${fresh[0].id}`, text: (fresh.length === 1 ? `Design added: ${fresh[0].name}` : `${fresh.length} designs added: ${fresh.map(F => F.name).join(", ")}`).slice(0, 200), data: { files: fresh.map(F => ({ name: F.name, kind: F.kind, size: F.size })).slice(0, 12), card: c.ck } });
-    open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
-    let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
+    const flown = open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
+    // each is read once it has landed in its row: tracing a design and drawing its picture are long tasks (50-130 ms)
+    // that made the flight jump on its way. Bounded, so one whose flight was cut short (the window closed) is read too.
+    const landed = Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
+    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F));
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent) return;
@@ -6897,7 +6907,7 @@ const CustomSheet = window.CustomSheet = (() => {
       let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
       if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
       const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, sent, tooBig(F)].join("|");
-      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); }
+      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); if (F.thumb && ringNext.delete(F.id)) lit(n.querySelector(".cuThumb"), "cuLanded", 1000); }
       if (made && !calm) Motion.grow(n, { ms: 700 });
       prev = n;
     }
@@ -6980,21 +6990,22 @@ const CustomSheet = window.CustomSheet = (() => {
    *  into its row, and the row fills as it lands. The row's place is read on every frame, so a bar that opens above it
    *  or a list that scrolls does not make it miss. */
   function launch(fly) {
-    const d = D.dlg; if (!d || !d.open || !fly) return;
+    const d = D.dlg; if (!d || !d.open || !fly) return Promise.resolve();
     const list = d.querySelector("#cuList"), rows = fly.ids.map(id => [...list.children].find(x => x.dataset.id === id && !x._leaving)).filter(Boolean);
-    if (!rows.length) return;
-    if (motionOff()) { rows.forEach(n => land(n, true)); return; }
+    if (!rows.length) return Promise.resolve();
+    if (motionOff()) { rows.forEach(n => land(n, true)); return Promise.resolve(); }
     // the last of them in sight (a long list scrolls down to it)
     const lr = list.getBoundingClientRect(), z = rows[rows.length - 1], need = z.getBoundingClientRect().top + z.scrollHeight - lr.bottom;
     if (need > 0) list.scrollTop += need + 6;
     const box = d.querySelector("#cuAdd").getBoundingClientRect(), at = fly.at || { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files;
+    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files, landed = [];
     rows.forEach((n, i) => {
       const F = files.find(x => x.id === n.dataset.id); if (!F) { land(n, true); return; }
       const chip = el("div", "cuChip", `<i>${F.kind === "dxf" ? "DXF" : "AI"}</i><span></span>`); chip.lastChild.textContent = F.name;
       L.appendChild(chip);
-      flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => land(n));
+      landed.push(new Promise(res => flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => { land(n); res(); })));
     });
+    return Promise.all(landed);
   }
   const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, easeOut = t => 1 - Math.pow(1 - t, 3);
   function flight(chip, at, i, target, onLand) {
@@ -7026,26 +7037,29 @@ const CustomSheet = window.CustomSheet = (() => {
     arriving.delete(n.dataset.id);
     if (!n.isConnected) return;
     n.classList.remove("arriving");
-    if (!quiet) lit(n.querySelector(".cuThumb"), "cuLanded", 1000);
+    // (its picture still being drawn: the ring answers when it comes)
+    if (!quiet) { const t = n.querySelector(".cuThumb"); if (t && t.querySelector("img")) lit(t, "cuLanded", 1000); else ringNext.add(n.dataset.id); }
   }
   /** What a closed window leaves behind is cleared: chips still flying, rows still folding, rows still waiting. */
   function settle(d) {
     d.querySelectorAll(":scope > .motionLayer > .cuChip").forEach(x => x.remove());
     for (const n of [...d.querySelector("#cuList").children]) { if (n._leaving) n.remove(); else n.classList.remove("arriving"); }
-    arriving.clear();
+    arriving.clear(); ringNext.clear();
   }
   /** The window, for one card: never over another window (the order window is closed first). */
   function open(it, opts = {}) {
     const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
     D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
+    let flown = null;   // (the files just added have all landed in their rows)
     if (!d.open) {
       D.opening = true; try { paint(); } finally { D.opening = false; }
       d.showModal();
       const shown = growFrom(d, opts.from);
-      if (opts.fly) shown.then(() => launch(opts.fly));
-    } else { paint(); if (opts.fly) launch(opts.fly); }
+      if (opts.fly) flown = shown.then(() => launch(opts.fly));
+    } else { paint(); if (opts.fly) flown = launch(opts.fly); }
     if (opts.browse) d.querySelector("#cuFileIn").click();
     else if (D.askName) d.querySelector("#cuWho input").focus();
+    return flown || Promise.resolve();
   }
   /** The window goes back into its card: it closes at once (the page is usable again), and a copy of it shrinks into the
    *  card's designs, which answer. A card out of sight: the copy only fades. */
@@ -7742,10 +7756,22 @@ const Review = window.Review = (() => {
   /** The decision card inside another view (the order window): rebuilt only when its decision changed, and then with
    *  what was typed or picked carried over, as the Review list does. The window used to rebuild it on every repaint, so
    *  a repool elsewhere emptied the field being typed in. */
+  /** What was typed or picked in a decision card the order view left for another order (Previous, Next, another order
+   *  opened): kept for that decision, as the staff note is kept for its order, and put back when it is shown again. It
+   *  used to be thrown away at the first step. */
+  const typedKept = new Map();
+  function leaveCard(host) {
+    if (!host || !host._rvKey || !host.firstChild) return;
+    const was = typedIn(host).map(w => Object.assign(w, { at: null }));
+    typedKept.delete(host._rvKey); if (was.some(w => w.v !== "" && w.v !== false)) typedKept.set(host._rvKey, was);
+    while (typedKept.size > 30) typedKept.delete(typedKept.keys().next().value);
+    host._rvKey = null; host._rvStamp = null;
+  }
   function cardIn(host, it) {
     const stamp=stampOf(it);
     if(host._rvStamp===stamp&&host._rvKey===it.key&&host.firstChild)return;
-    const was=host._rvKey===it.key?typedIn(host):[];
+    if(host._rvKey!==it.key)leaveCard(host);
+    const was=host._rvKey===it.key?typedIn(host):(typedKept.get(it.key)||[]);typedKept.delete(it.key);
     host.innerHTML='';host.appendChild(card(it));host._rvStamp=stamp;host._rvKey=it.key;
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
@@ -7909,7 +7935,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -8016,9 +8042,14 @@ const Sandbox = window.Sandbox = (() => {
     await Arrivals.pause(); let reloading = false;
     try {
       if (replay && RunCtl.clearRunState(null, { drop: "all" }) === false) return;   // a Rose Gold sheet still saving: nothing is deleted
+      // the rehearsal's timeline events still waiting to be sent (kept on the disk across the reload) go with its records,
+      // before the wipe and again after it: sent later, they would stand on the replay of the same real order numbers
+      const dropEvents = () => { try { window.CNTimeline?.forget?.(); } catch (_) {} };
+      dropEvents();
       // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
       let r = null, records = 0, files = 0;
       for (let i = 0; i < 400; i++) { r = await api("charmNestLibrary", { op: "sandboxReset" }); records += r.deleted || 0; files += r.files || 0; if (!r.more) break; }
+      dropEvents();
       if (r.more) throw new Error(`it stopped part way (${records} record(s) and ${files} file(s) removed): press Reset again to finish`);
       toast(`Sandbox reset — ${records} record(s) and ${files} file(s) removed${r.filesError ? ` · files not deleted: ${r.filesError}` : ""}`, r.filesError ? "bad" : "ok");
       await forgetCompletions();
@@ -8562,8 +8593,9 @@ const OrderWin = window.OrderWin = (() => {
     try {
       await saveNoteAt(rid, text);
       // the order carries it too: each arrival re-reads the lines from their orders, which put the old note back
-      let told = false;
-      for (const x of all) { x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
+      // (and newer than any read of the record asked while it was on its way: that read may predate it, refreshNote)
+      let told = false; const done = Date.now();
+      for (const x of all) { if (x.noteAt === at) x.noteAt = done; x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
       // the label promises "saved automatically": a save speaks up only to end an earlier failure (it used to toast at
       // every pause in the typing)
       if (told) toast("Staff note saved", "ok", 1800);
@@ -8768,6 +8800,7 @@ const OrderWin = window.OrderWin = (() => {
     } else {
       // an answered question folds away where it was (the room closes as it fades), never vanishing at once
       const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
+      if (had) Review.leaveCard(had);   // (what was picked there waits for its order to be shown again)
       const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
       fix.innerHTML = "";
       if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
@@ -8852,7 +8885,9 @@ const OrderWin = window.OrderWin = (() => {
       }
       for (const p of (x._pools || SV.pools || [])) if (p.sheetId && (p.lineKey === x.key || pools.includes(String(p.poolId)))) sheets.add(p.sheetId);
       return { key: x.key, tid: String(x.line.transactionId || ""), qty: Math.max(1, Math.round(+(sp.quantity || x.line.quantity) || 1)), pools, sheets: [...sheets],
-        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null }),
+        // (its Engrave state and whether it could carry a back engraving: stagesFor leaves Engraved out for a plain piece)
+        line: Object.assign({}, x.line, { form: sp.form || null, designSku: sp.designSku || null, material: m, size: sp.size || null,
+          engrave: x.engrave ? { state: x.engrave.state || "", needed: x.engrave.needed } : null, engraveCandidate: sp.engraveCandidate, noDesign: sp.noDesign }),
         name: pieceName(x), metal: m, form: sp.form || "" };
     });
   }
@@ -9037,9 +9072,13 @@ const OrderWin = window.OrderWin = (() => {
   const sheetName = s => `${CODE[s.metal] || ""} Sheet ${s.n || "?"}`.trim();
 
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
-  function inkTo() {
+  // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
+  // puts it in place at once, under the header coming in)
+  function inkTo(now) {
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
-    ink.style.left = b.offsetLeft + 6 + "px"; ink.style.width = Math.max(0, b.offsetWidth - 12) + "px";
+    if (now) ink.style.transition = "none";
+    ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
+    if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
     const sw = byId("owPieceSw"); if (sw) { sw.hidden = W.pieces.length < 2 || W.view === "sheet"; thumbTo(); }
   }
   function setView(v, o = {}) {
@@ -9068,7 +9107,8 @@ const OrderWin = window.OrderWin = (() => {
     return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null, pieces: W.pieces, piece: W.piece,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
-      // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring
+      // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring,
+      // Engraved only when one carries a back engraving (or is not read yet)
       stages: () => tlStages(rid),
       context: () => tlContext(rid), onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
@@ -9473,11 +9513,11 @@ const OrderWin = window.OrderWin = (() => {
       const v = opts.view || "info";
       setView(v, { quiet: true, noLoad: true });
       try { W.dlg.showModal(); } catch (_) { W.dlg.setAttribute("open", ""); }
-      inkTo();
+      inkTo(true);
       if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) W.anims.push(W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" })); }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
-    else if (other && opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE }); }
+    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
     if (other) mountRail(rid);
     if (W.view === "timeline") mountFull();
     if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { sheetShow().then(() => { if (SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
@@ -9486,10 +9526,10 @@ const OrderWin = window.OrderWin = (() => {
     // pull is read, the tab kept the order shown before, and a message written there went to that buyer
     try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
     refreshNote(r);
-    if (!r.loading) {
-      grow(); paintThread();
-      TeamMail.load(rid, true);
-    }
+    // (the Team tab too: while an order outside the pull is read it showed the thread of the order shown before; the
+    // thread is the order's, read by its number, so it is read at once)
+    grow(); paintThread();
+    TeamMail.load(rid, !r.loading);
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
     W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) TeamMail.load(W.rid); }, 20000);
