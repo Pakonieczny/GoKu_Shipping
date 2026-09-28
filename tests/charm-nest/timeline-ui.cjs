@@ -359,13 +359,15 @@ function fixture({ MAIN, CX }) {
   assert.equal(r.ask.label, 'Needs a decision'); assert.match(r.ask.text, /Unknown SKU/); assert(r.askSeal, 'and its seal is the milestone, not a "?"');
   assert.equal(r.cxBlock, null);
   assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
-  // explainOn: the card's seal, hovered, says what the order's next step still needs; a click asks the host to pin it
+  // explainOn: the card's seal, hovered, says what the order's next step still needs; a click pins the card, whose link
+  // asks the host for the step on the Timeline
   await page.evaluate(MAIN => { const card = document.querySelector('.tlTestHost'), a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}); card.innerHTML = a.seal; OrderTimelineUI.explainOn(card, () => ({ events: window.__fx[MAIN].events }), st => { window.__pinned = st; }); }, MAIN);
   await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(260);
   r = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return X ? { need: X.querySelectorAll('.rq:not(.ok)').length, top: X.getBoundingClientRect().top, seal: document.querySelector('.tlTestHost .tlNowSeal').getBoundingClientRect().bottom } : null; });
   assert(r && r.need > 0 && r.top >= r.seal, 'the Overview seal shows the next step\'s missing lines below it: ' + JSON.stringify(r));
   await page.click('.tlTestHost .tlNowSeal');
-  assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click asks for the next step pinned');
+  await page.click('.tlExp.on [data-tl-open]');
+  assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click pins the card; its link asks for the next step pinned');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
   ok.push('nowStamps: one seal — the milestone it is at (ASSEMBLED · LUISA T.) — no row of stamps, the blocker in plain words ("On hold — H or K", "Needs a decision — Unknown SKU"), and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
 

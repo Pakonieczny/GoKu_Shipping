@@ -671,8 +671,9 @@
   /** The small card under a hovered step. */
   const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
     `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
-  /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it. → the animation. */
-  function placeExp(card, html, dot, whole) {
+  /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it (and beside seal,
+   *  the zoomed seal's rect in the view, when one is open). → the animation. */
+  function placeExp(card, html, dot, whole, seal) {
     card.innerHTML = html;
     card.style.display = "block"; card.style.transform = "none"; card.style.opacity = "0"; card.className = "tlExp";
     // a transformed ancestor (the order view's dialog) moves a fixed layer's origin: measure where it really is
@@ -681,7 +682,8 @@
     let x = clamp(cx - w / 2, 8, vw - w - 8), y = wr.bottom + 10;
     if (y + h > vh - 8) {   // no room below: beside the dot (the zoomed seal takes the room above it)
       y = clamp(d.top + d.height / 2 - 24, 8, vh - h - 8);
-      x = d.right + 14 + w <= vw - 8 ? d.right + 14 : Math.max(8, d.left - 14 - w);
+      const L = seal ? Math.min(d.left, seal.left) : d.left, R = seal ? Math.max(d.right, seal.right) : d.right;
+      x = R + 14 + w <= vw - 8 ? R + 14 : Math.max(8, L - 14 - w);
       card.classList.add("side");
     } else card.style.setProperty("--ax", clamp(cx - x, 14, w - 14) + "px");
     const to = `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px)`;
@@ -697,8 +699,8 @@
     return b;
   }
   /** The order view's "Where it is now" card (and any host): hovering its seal or a stamp in it (.tlNowSeal, .tlMini,
-   *  [data-tl-step]) shows the step card under it; a click on the seal (or a [data-tl-step]) calls onPin({ stage }),
-   *  which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context, stages }.
+   *  [data-tl-step]) shows the step card under it; a click on the seal (or a [data-tl-step]) pins the card, whose link
+   *  (or a second click) calls onPin({ stage }), which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context, stages }.
    *  Wired once per host (it survives the host's innerHTML being written again); a later call only swaps get/onPin. */
   function explainOn(host, get, onPin) {
     if (!host) return;
@@ -707,7 +709,7 @@
     css();
     const card = doc.createElement("div"); card.className = "tlExp"; card.setAttribute("role", "tooltip");
     (host.closest && host.closest("dialog") || doc.body).appendChild(card);
-    let on = null, a = null;
+    let on = null, a = null, t = 0, pinned = null, cur = null;
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
@@ -717,19 +719,40 @@
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
       return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context }) : null;
     };
-    host.addEventListener("pointerover", ev => {
-      const b = ev.target.closest && ev.target.closest(SEL); if (!b || b === on || !host.contains(b)) return;
-      const q = stepOf(b); if (!q) return;
+    // as the Timeline's card: it takes the pointer, so moving from the seal onto it keeps it; leaving both lets it go
+    // 160 ms later. A click pins it (Esc or a click elsewhere lets it go); pinned, it offers the step on the Timeline.
+    const foot = pin => { const f = card.querySelector(".xf"); if (f && cur) f.innerHTML = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"} · ${pin && typeof host._tlExpPin === "function" ? `<button type="button" class="tlLink" data-tl-open>Open on the Timeline</button>` : "click to pin"}`; };
+    const show = b => {
+      const q = stepOf(b); if (!q) return false;
       if (a) { try { a.cancel(); } catch (_) {} }
-      on = b; a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b);
+      clearTimeout(t); on = b; cur = q; pinned = null;
+      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b); card.classList.add("on"); foot(false);
+      return true;
+    };
+    const hide = () => { clearTimeout(t); t = 0; pinned = null; if (!on) return; on = null; card.classList.remove("on"); a = fadeExp(card, a); };
+    const later = () => { clearTimeout(t); t = setTimeout(() => { t = 0; if (on && !pinned && !card.matches(":hover") && !(on.isConnected && on.matches(":hover"))) hide(); }, 160); };
+    host.addEventListener("pointerover", ev => {
+      const b = ev.target.closest && ev.target.closest(SEL); if (!b || !host.contains(b)) return;
+      if (b === on) { clearTimeout(t); return; }
+      show(b);
     });
-    host.addEventListener("pointerout", ev => { const b = ev.target.closest && ev.target.closest(SEL); if (b && b === on && !b.contains(ev.relatedTarget)) { on = null; a = fadeExp(card, a); } });
+    host.addEventListener("pointerout", ev => { const b = ev.target.closest && ev.target.closest(SEL); if (b && b === on && !b.contains(ev.relatedTarget) && !(ev.relatedTarget && card.contains(ev.relatedTarget))) later(); });
+    card.addEventListener("pointerleave", ev => { if (on && !(ev.relatedTarget && on.contains(ev.relatedTarget))) later(); });
     host.addEventListener("click", ev => {
-      const b = ev.target.closest && ev.target.closest(".tlNowSeal, [data-tl-step]"); if (!b || typeof host._tlExpPin !== "function") return;
-      const q = stepOf(b); if (!q) return;
-      if (on) { on = null; a = fadeExp(card, a); }
-      try { host._tlExpPin({ stage: q.k }); } catch (err) { warn("onPin", err); }
+      const b = ev.target.closest && ev.target.closest(".tlNowSeal, [data-tl-step]"); if (!b) return;
+      if (pinned === b) { openIt(); return; }   // a second click: the step on the Timeline
+      if (b !== on && !show(b)) return;
+      pinned = b; foot(true);
     });
+    function openIt() {
+      const q = cur; hide();
+      if (q && typeof host._tlExpPin === "function") { try { host._tlExpPin({ stage: q.k }); } catch (err) { warn("onPin", err); } }
+    }
+    card.addEventListener("click", ev => { if (ev.target.closest && ev.target.closest("[data-tl-open]")) openIt(); });
+    doc.addEventListener("pointerdown", ev => { if (pinned && !card.contains(ev.target) && !(on && on.contains(ev.target))) hide(); }, true);
+    // (Esc lets the pin go first; the order view stays open)
+    doc.addEventListener("keydown", ev => { if (ev.key === "Escape" && pinned) { ev.preventDefault(); ev.stopPropagation(); hide(); } }, true);
+    const dlg = host.closest && host.closest("dialog"); if (dlg) dlg.addEventListener("close", hide);
     host._tlExp = card;
   }
 
@@ -1559,9 +1582,10 @@
       const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 9px">Then, for the order to move on</div>` : "";
       expFor = b; expT = cancelT(expT);
       // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
-      const lp = loupeFor === b && loupeAt && !loupeAt.up ? loupeAt : null;
+      const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && !z.up ? z : null;
       const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
-      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole);
+      // (a short view puts the card beside the dot: beside its seal too, never over it)
+      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
       exp.classList.add("on");   // (the card takes the pointer: moving onto it keeps it)
     }
     function hideExp(now) {
