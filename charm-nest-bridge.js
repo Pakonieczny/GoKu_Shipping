@@ -9455,7 +9455,8 @@ const OrderWin = window.OrderWin = (() => {
    card it is about, and every wait says what it is waiting for. */
 const RunHistory = window.RunHistory = (() => {
   const H = { q: "", when: "all", view: "cards", runs: [], sheets: [], sets: [], shown: [], scanned: null, loading: false, more: false, err: null, dlg: null,
-    open: new Set(), media: new Map(), orders: new Map(), fetching: new Set(), busy: new Map(), notes: new Map(), noteT: new Map(), menu: null, back: false, scroll: 0, tile: null };
+    open: new Set(), media: new Map(), orders: new Map(), fetching: new Set(), busy: new Map(), notes: new Map(), noteT: new Map(), menu: null, back: false, scroll: 0, tile: null,
+    face: "front", backCv: new Map() };
   try { H.view = localStorage.getItem("cn.histView") === "list" ? "list" : "cards"; } catch (_) {}
   /* "Select previous run sets or days" is a filing question, so the dialog files them: four ways to narrow by time and
      state, and a heading for every day, because a flat list of eighty runs is a wall whatever order it is in. */
@@ -9586,6 +9587,7 @@ const RunHistory = window.RunHistory = (() => {
       <div class="hBar">
         <div class="hSeg" id="hWhen" role="group" aria-label="Which sets"></div>
         <span class="hState" id="hState" aria-live="polite"></span>
+        <div class="hSeg hFace" id="hFace" role="group" aria-label="Side of the sheets"><button type="button" data-face="front" aria-pressed="true" title="Every sheet from the front">Front</button><button type="button" data-face="back" aria-pressed="false" title="Turn every sheet over: each charm's own back engraving, mirrored as the laser sees it">Back · engraving</button></div>
         <div class="hSeg hView" role="group" aria-label="View">${["cards", "list"].map(v => `<button type="button" data-view="${v}" aria-pressed="${H.view === v}" title="${v === "cards" ? "A card for each set, with its sheets" : "One line for each set"}">${v === "cards" ? "Cards" : "List"}</button>`).join("")}</div>
       </div>
       <div class="hBody" id="hBody"></div>
@@ -9659,14 +9661,20 @@ const RunHistory = window.RunHistory = (() => {
     d.querySelector("#hWhen").innerHTML = WHEN.map(([k, lbl]) => `<button type="button" data-when="${k}" aria-pressed="${H.when === k}">${lbl}<i>${H.sets.filter(g => inWhen(g, k)).length}</i></button>`).join("");
     d.querySelectorAll(".hView [data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === H.view)));
     const found = H.q.trim() && !H.loading && !H.err ? H.sets.length : -1;
-    d.querySelector("#hState").innerHTML = H.loading
-      ? `<span class="owSpin"></span><span>${esc(H.more ? (H.q ? "Searching older records…" : "Reading older sets…") : H.q.trim() ? `Searching every set for “${H.q.trim()}”…` : "Reading the records…")}</span>`
-      : H.err && (H.sets.length || H.runs.length) ? `<span class="bad" title="${esc(H.err)}">Could not read the records: ${esc(H.err)}</span>`
-      : found > 0 ? `<span>${n(found, "set")} found</span>` : "";
+    paintState(found);
     const rf = d.querySelector("#hRefresh"); rf.disabled = H.loading;
     const mb = d.querySelector("#hMore"); mb.hidden = !H.next || (!H.sets.length && !H.q); mb.disabled = H.loading;
     mb.innerHTML = H.loading && H.more ? `<span class="spin"></span>Reading older…` : H.q ? "Search older records" : "Load older sets";
     d.querySelector("#hFoot").textContent = H.scanned ? `searched ${H.scanned.runs} runs and ${H.scanned.sheets} sheets${H.from ? ` back to ${dayWord(H.from)}` : ""}` : "";
+  }
+  function paintState(found = H.q.trim() && !H.loading && !H.err ? H.sets.length : -1) {
+    const d = H.dlg; if (!d) return;
+    const drawing = H.face === "back" ? BK.run + BK.q.length : 0;
+    d.querySelector("#hState").innerHTML = H.loading
+      ? `<span class="owSpin"></span><span>${esc(H.more ? (H.q ? "Searching older records…" : "Reading older sets…") : H.q.trim() ? `Searching every set for “${H.q.trim()}”…` : "Reading the records…")}</span>`
+      : H.err && (H.sets.length || H.runs.length) ? `<span class="bad" title="${esc(H.err)}">Could not read the records: ${esc(H.err)}</span>`
+      : drawing ? `<span class="owSpin"></span><span>Drawing the backs of the sheets · ${n(drawing, "to go", "to go")}</span>`
+      : found > 0 ? `<span>${n(found, "set")} found</span>` : H.face === "back" ? `<span>Back side, mirrored as the laser sees it</span>` : "";
   }
   /** What the filter shows: the groups, and an unfinished run with no group of its own (it can still be picked up). */
   function entries() {
@@ -9825,13 +9833,73 @@ const RunHistory = window.RunHistory = (() => {
     }
   }
   /** A picture already loaded (from the cache) shows at once; a strip says which way it can still scroll. */
-  function settle(root) { requestAnimationFrame(() => { for (const i of root.querySelectorAll("img.hThumb:not(.on)")) if (i.complete && i.naturalWidth) i.classList.add("on"); }); }
+  function settle(root) { requestAnimationFrame(() => { for (const i of root.querySelectorAll("img.hThumb:not(.on)")) if (i.complete && i.naturalWidth) i.classList.add("on"); }); backsIn(root); }
   function atEnds(root) {
     requestAnimationFrame(() => {
       const wraps = root.classList && root.classList.contains("hStripWrap") ? [root] : root.querySelectorAll(".hStripWrap");
       for (const w of wraps) { const s = w.querySelector(".hStrip"); if (!s) continue; const max = s.scrollWidth - s.clientWidth; w.dataset.at = max <= 1 ? "none" : s.scrollLeft <= 1 ? "start" : s.scrollLeft >= max - 1 ? "end" : "mid"; }
     });
   }
+
+  /* ── Front | Back · engraving (Paul, 28 Sep: "add the back engraving view … to all places where a sheet is visible").
+     One switch turns every sheet of the window at once, with the sheet window's own turn (SheetWin turnPlate: to its
+     edge, drawn from the other side, back again). Each sheet's back is the order view's own plate (SheetWin.drawOrder,
+     thumb): every charm's own words from the sheet's saved backs, where the laser burns them, mirrored as it sees them,
+     in full ink with nothing laid over the sheet. A back is drawn once its sheet scrolls into sight, two at a time, and
+     kept for as long as the window is (its canvas moves into the tile again when the list is drawn anew). ── */
+  const BK = { q: [], run: 0, io: null }, EASE = "cubic-bezier(.2,.8,.2,1)";
+  const sheetOf = id => H.sheets.find(s => idOf(s) === id) || H.sets.flatMap(g => g.sheets || []).find(s => idOf(s) === id) || null;
+  function turnFace(face) {
+    const d = H.dlg; if (!d || face === H.face) return;
+    H.face = face;
+    d.querySelectorAll("#hFace [data-face]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.face === face)));
+    const body = d.querySelector("#hBody");
+    // (the backs start drawing as the turn starts, so they are there when the sheets come round)
+    if (face === "back") backsIn(body); else if (BK.io) { BK.io.disconnect(); BK.io = null; }
+    const apply = () => { d.dataset.face = face; paintState(); };
+    const br = body.getBoundingClientRect(), plates = still() ? [] : [...body.querySelectorAll(".hPlate")].filter(p => { const r = p.getBoundingClientRect(); return r.width && r.bottom > br.top && r.top < br.bottom; });
+    if (!plates.length) return apply();
+    const dir = face === "back" ? 1 : -1, P = "perspective(700px) ";
+    Promise.all(plates.map(p => p.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * dir}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished))
+      .then(() => { apply(); for (const p of plates) if (p.isConnected) p.animate([{ transform: P + `rotateY(${-90 * dir}deg)` }, { transform: P + "rotateY(0)" }], { duration: 380, easing: EASE }); }, apply);
+  }
+  /** Every sheet under root gets its back's place, and is drawn once it is in sight. */
+  function backsIn(root) {
+    if (H.face !== "back" || !H.dlg || !window.SheetWin || !SheetWin.drawOrder) return;
+    if (!BK.io) BK.io = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { BK.io.unobserve(e.target); if (e.target.isConnected) backOf(e.target); } }, { root: H.dlg.querySelector("#hBody"), rootMargin: "160px 0px" });
+    for (const t of root.querySelectorAll(".hTile[data-sheet]")) { hostOf(t); BK.io.observe(t); }
+  }
+  /** The back's place on a tile: the picture's own box, at the picture's true width, and a back already drawn moved in. */
+  function hostOf(t) {
+    const plate = t.querySelector(".hPlate"); if (!plate) return null;
+    let host = plate.querySelector(".hBack");
+    if (!host) {
+      host = el("span", "hBack"); host.setAttribute("aria-hidden", "true");
+      const s = sheetOf(t.dataset.sheet), f = s && window.trueFrame?.(s.stock); if (f && f.w < f.fw - .5) host.style.width = `calc(100% * ${+(f.w / f.fw).toFixed(4)})`;
+      plate.appendChild(host);
+    }
+    const e = H.backCv.get(t.dataset.sheet);
+    if (e && e.failed && !host.firstChild) host.appendChild(el("span", "hNoPv", "back not readable"));
+    else if (e && e.cv && e.cv.parentElement !== host) { host.appendChild(e.cv); if (e.info) requestAnimationFrame(() => e.info.redraw()); }
+    return host;
+  }
+  function backOf(t) {
+    const id = t.dataset.sheet; if (!id || H.backCv.has(id)) return;
+    const cv = document.createElement("canvas"), e = { id, cv, info: null, failed: false };
+    H.backCv.set(id, e); hostOf(t);
+    BK.q.push(e); pump();
+  }
+  function pump() {
+    while (BK.run < 2 && BK.q.length) {
+      const e = BK.q.shift(); BK.run++;
+      SheetWin.drawOrder(e.cv, e.id, "", { back: true, thumb: true, onInfo: i => { e.info = i; } })
+        .then(i => { e.info = i; if (!e.cv.isConnected && (i.pieces || []).some(x => !x.c)) H.backCv.delete(e.id); },
+          err => { console.warn("sets window: back of", e.id, err); e.failed = true; const host = e.cv.parentElement; e.cv.remove(); e.cv = null; if (host) host.appendChild(el("span", "hNoPv", "back not readable")); })
+        .finally(() => { BK.run--; pump(); paintState(); });
+    }
+    paintState();
+  }
+  addEventListener("resize", () => { if (H.face === "back" && H.dlg && H.dlg.open) requestAnimationFrame(() => { for (const e of H.backCv.values()) if (e.info && e.cv && e.cv.isConnected) e.info.redraw(); }); });
 
   /* ── what a press does ── */
   function onClick(e) {
@@ -9842,6 +9910,7 @@ const RunHistory = window.RunHistory = (() => {
     const mi = t.closest("#hMenu [data-m]"); if (mi) { if (!mi.disabled) menuAct(mi.dataset.m); return; }
     if (t.closest("[data-close]")) { close(); return; }
     const w = t.closest("[data-when]"); if (w) { H.when = w.dataset.when; render(); return; }
+    const f = t.closest("#hFace [data-face]"); if (f) { turnFace(f.dataset.face); return; }
     const v = t.closest("[data-view]"); if (v) { if (H.view !== v.dataset.view) { H.view = v.dataset.view; try { localStorage.setItem("cn.histView", H.view); } catch (_) {} render(); } return; }
     if (t.closest("#hRefresh")) { load(); return; }
     if (t.closest("#hMore")) { load(true); return; }
