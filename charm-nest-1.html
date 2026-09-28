@@ -728,6 +728,18 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPlateWait[hidden]{display:none}
 .owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
 .owPlateTip[hidden]{display:none}
+/* another order's charm, chosen: its order and "Open order", on the charm (the order view moves to it, never a view over it) */
+.owPlatePick{position:absolute;z-index:4;display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px 3px 3px 10px;box-shadow:0 6px 18px rgba(20,16,10,.12);font:11px var(--sans);color:var(--ink70);white-space:nowrap;transform:translate(-50%,calc(-100% - 12px))}
+.owPlatePick.below{transform:translate(-50%,12px)}
+.owPlatePick[hidden]{display:none}
+.owPlatePick .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.owPlatePick b{font:600 11.5px var(--mono);color:var(--ink)}
+.owPlatePick .s{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.owPlatePick .btn,.owOrdHd .btn{display:inline-flex;align-items:center;gap:4px}
+.owPlatePick .btn svg,.owOrdHd .btn svg{width:11px;height:11px;flex:none}
+.owOrdHd{display:flex;align-items:center;justify-content:space-between;gap:8px;height:18px}
+.owPanel .owOrdHd .fLabel{margin:0}
+.owOrdHd .btn{padding:2px 8px 2px 5px}
 .owPlateNone{display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);max-width:380px}
 /* the plate and its "not on a sheet yet" line share the one centred cell (a hidden plate still holds its room) */
 .owPlateWrap>.owPlate,.owPlateWrap>.owPlateNone{grid-area:1/1}
@@ -6127,7 +6139,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=m23"></script>
-<script src="charm-nest-bridge.js?v=20260928-oo-c"></script>
+<script src="charm-nest-bridge.js?v=oo1"></script>
 <script src="charm-nest-sheetwin.js?v=m23"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
@@ -6205,7 +6217,7 @@ boot();
       <section class="owView owVTime" data-view="timeline" role="tabpanel" aria-label="Timeline" hidden><div class="owTimeline" id="owTimeline"></div></section>
       <section class="owView owVSheet" data-view="sheet" role="tabpanel" aria-label="Sheet" hidden>
         <div class="owPlateArea">
-          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
+          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
         <aside class="owPanel" id="owSheetPanel"></aside>
