@@ -424,6 +424,259 @@
     return { list, html, row, svg, stampOn, press, pressPending, hasPrint, titleOf, INK };
   })();
 
-  root.Motion = { T, ghost, fly, flyIn, grow, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait };
+  /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════
+     Paul, 28 Sep 19:27-19:30: the sheet window's opening, everywhere a pop-up is. The window's surface grows out of the
+     thing clicked, opaque from the first frame and in its colour; the header and the rest of the window come in after
+     it, one part after another; closing, the window goes back into what opened it (or fades, when that is gone). The
+     real window opens and closes at once: the motion is drawn over it, never waited on (nothing here holds anything up
+     for more than 700 ms), and it never throws. Any <dialog> gets it: showModal and close are wrapped below, and a
+     dialog opened just after a click grows out of what was clicked. A dialog with data-no-grow (or the sheet window,
+     which has its own) is left alone. */
+  const DG = { grow: "cubic-bezier(.3,0,.1,1)", back: "cubic-bezier(.4,0,.2,1)", ease: "cubic-bezier(.2,.8,.2,1)", surface: 600, tint: 250, panel: 380, head: 560, part: 380, step: 45, close: 480, cap: 700 };
+  const SRC = "button,a[href],summary,[role=button],[role=menuitem],[role=tab],[role=option],img,label,[data-id],[tabindex]:not([tabindex='-1'])";
+  let press = null;
+  function remember(el) {
+    if (!el || el.nodeType !== 1 || el === doc.body || el === doc.documentElement) return;
+    try { const r = el.getBoundingClientRect(); press = { el, rect: { left: r.left, top: r.top, width: r.width, height: r.height }, at: Date.now() }; } catch (_) {}
+  }
+  doc.addEventListener("pointerdown", e => { const t = e.target; if (t && t.closest) remember(t.closest(SRC) || t); }, true);
+  doc.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") remember(doc.activeElement); }, true);
+  // (left alone: the sheet window, which has its own; the order window, being rebuilt as a full-screen view with its own)
+  const skips = d => !d || d.hasAttribute("data-no-grow") || d.classList.contains("sheetWin") || d.id === "orderWin";
+  const isModal = d => { try { return d.matches(":modal"); } catch (_) { return true; } };
+  const rectOf = r => r && { left: r.left, top: r.top, width: r.width, height: r.height };
+  /** The colour of what was clicked: its own, else the nearest box behind it that has one. */
+  function tintOf(el) {
+    for (let n = el, i = 0; n && n.nodeType === 1 && i < 6; n = n.parentElement, i++) {
+      const c = getComputedStyle(n).backgroundColor, m = /rgba?\(([^)]*)\)/.exec(c || ""); if (!m) continue;
+      const p = m[1].split(/[\s,/]+/).filter(Boolean); if (p.length < 4 || parseFloat(p[3]) > .6) return c;
+    }
+    return "";
+  }
+  /** What a window grows out of: the element (or rect) it was given, else what was pressed a moment ago. An element
+   *  gone or out of sight by now still gives where it was pressed. */
+  function sourceFor(dlg, from) {
+    let el = null, rect = null;
+    if (from && from.nodeType === 1) { el = from; if (press && press.el === from) rect = press.rect; }
+    else if (from && typeof from.left === "number") rect = rectOf(from);
+    else if (!from && press && Date.now() - press.at < 1500) { el = press.el; rect = press.rect; }
+    if (el && dlg.contains(el)) return null;
+    if (el && visible(el)) rect = rectOf(el.getBoundingClientRect());
+    if (!rect || !(rect.width >= 1 && rect.height >= 1)) return null;
+    return { el, rect, tint: el && el.isConnected ? tintOf(el) : "" };
+  }
+  /** Where a closing window goes back to: what it grew out of while that is in sight (for a menu's item, the menu's
+   *  button once the menu has closed); null: it fades where it is. */
+  function homeOf(src, to) {
+    let el = to !== undefined ? resolve(to) : src && src.el;
+    if (el && !visible(el)) { const d = el.closest && el.closest("details:not([open])"); el = d ? d.querySelector(":scope > summary") : null; }
+    return el && visible(el) ? el : null;
+  }
+  const OPEN = new WeakMap();
+  function stopOpen(dlg) {
+    const st = OPEN.get(dlg); if (!st) return; OPEN.delete(dlg);
+    clearTimeout(st.t); for (const a of st.anims) { try { a.cancel(); } catch (_) {} }
+    if (st.surf) st.surf.remove(); dlg.classList.remove("mdGrow");
+  }
+  /** The parts of a window that come in one after another: its children, or the children of its single wrapper. */
+  function partsOf(dlg) {
+    let box = dlg, kids = [];
+    for (let i = 0; i < 3; i++) {
+      kids = [...box.children].filter(n => !/^(SCRIPT|STYLE|TEMPLATE|DIALOG|LINK)$/.test(n.tagName) && !n.classList.contains("mdSurface") && !n.classList.contains("motionLayer") && n.getClientRects().length && getComputedStyle(n).position !== "fixed");
+      if (kids.length === 1 && kids[0].children.length > 1) { box = kids[0]; continue; }
+      break;
+    }
+    return kids.slice(0, 40);
+  }
+  const isHead = n => /^(HEADER|H1|H2|H3)$/.test(n.tagName) || /(^|\s)[\w-]*Head(\s|$)/.test(n.getAttribute("class") || "");
+  /** The window, just shown, grows out of `from` (an element, a rect, or by default what was just pressed; none: from a
+   *  little smaller than itself): its surface grows, the frame's colour giving way to its own, then its header and its
+   *  parts come in. Resolves when the surface has its size. */
+  function dialogOpen(dlg, from, opts = {}) {
+    try {
+      if (!dlg || !dlg.open || (skips(dlg) && !opts.force)) return Promise.resolve();
+      stopOpen(dlg);
+      const st = { anims: [] }; OPEN.set(dlg, st);
+      const run = (el, frames, o) => { const a = el.animate(frames, Object.assign({ duration: DG.surface, easing: DG.grow, fill: "backwards" }, o)); st.anims.push(a); return a; };
+      const src = sourceFor(dlg, from); dlg._mdSrc = src;
+      const done = ms => { st.t = setTimeout(() => { if (OPEN.get(dlg) === st) stopOpen(dlg); }, ms); return wait(Math.min(ms, DG.cap)); };
+      if (reduced()) { run(dlg, [{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease" }); return done(200); }
+      dlg.classList.add("mdIn");
+      const D = dlg.getBoundingClientRect(); if (D.width < 2 || D.height < 2) return done(0);
+      const B = src ? src.rect : { left: D.left + D.width * .07, top: D.top + D.height * .07, width: D.width * .86, height: D.height * .86 };
+      // the surface: the window's own box and colours, laid over the screen (so no window's edge cuts it), under its parts
+      const cs = getComputedStyle(dlg), surf = doc.createElement("div"); surf.className = "mdSurface"; surf.setAttribute("aria-hidden", "true");
+      Object.assign(surf.style, { left: D.left + "px", top: D.top + "px", width: D.width + "px", height: D.height + "px", borderRadius: cs.borderRadius, backgroundColor: cs.backgroundColor, backgroundImage: cs.backgroundImage, boxShadow: cs.boxShadow });
+      const tint = doc.createElement("b"); tint.style.background = (src && src.tint) || cs.backgroundColor; surf.appendChild(tint);
+      dlg.appendChild(surf); st.surf = surf;
+      const g = surf.getBoundingClientRect();
+      if (Math.abs(g.left - D.left) > .5 || Math.abs(g.top - D.top) > .5) { surf.style.left = 2 * D.left - g.left + "px"; surf.style.top = 2 * D.top - g.top + "px"; }
+      dlg.classList.add("mdGrow");
+      const C = `translate(${B.left - D.left}px,${B.top - D.top}px) scale(${B.width / D.width},${B.height / D.height})`;
+      const grown = run(surf, [{ transform: C }, { transform: "none" }], { fill: "both" });
+      run(tint, [{ opacity: 1 }, { opacity: 0 }], { duration: DG.tint, easing: "cubic-bezier(.4,0,.6,1)", fill: "both" });
+      // the header once the window has its size; the rest one after another, from as the surface settles
+      let i = 0;
+      partsOf(dlg).forEach((n, k) => {
+        if (k === 0 && isHead(n)) run(n, [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], { duration: 320, delay: DG.head, easing: DG.ease });
+        else run(n, [{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], { duration: DG.part, delay: DG.panel + Math.min(i++, 6) * DG.step, easing: DG.ease });
+      });
+      // the window is its own surface again once grown (a window that grows meanwhile is never left without its colour)
+      const land = () => { if (OPEN.get(dlg) !== st || !st.surf) return; st.surf.remove(); st.surf = null; dlg.classList.remove("mdGrow"); };
+      // (the tidying keeps the animations' own time, so a slowed animation is not cut short; a hidden tab, which draws
+      // no frames, is tidied a while later all the same)
+      Promise.race([grown.finished.catch(() => {}), wait(3000)]).then(land);
+      const total = DG.panel + 6 * DG.step + DG.part + 120, clock = dlg.animate([], { duration: total }); st.anims.push(clock);
+      clock.finished.then(() => { if (OPEN.get(dlg) === st) stopOpen(dlg); }, () => {});
+      done(15000);
+      return Promise.race([grown.finished.catch(() => {}), wait(DG.cap)]);
+    } catch (_) { try { stopOpen(dlg); } catch (__) {} return Promise.resolve(); }
+  }
+  /* the copy a closed window leaves behind: drawn from the page's own styles inside a closed shadow root, so nothing
+     that looks for the window's contents (or counts open dialogs) ever finds it */
+  let sheetKey = "", sheetObj = null;
+  function pageSheet() {
+    try {
+      if (!("adoptedStyleSheets" in doc) || !root.CSSStyleSheet) return null;
+      const list = [...doc.styleSheets]; let key = String(list.length), text = "";
+      for (const s of list) { try { key += "," + s.cssRules.length; } catch (_) { key += ",x"; } }
+      if (sheetObj && key === sheetKey) return sheetObj;
+      for (const s of list) {
+        try {
+          if (s.disabled) continue;
+          const body = [...s.cssRules].map(r => r.cssText).filter(t => !/^@(import|charset)/i.test(t)).join("\n"), m = s.media && s.media.mediaText;
+          text += m && m !== "all" ? `@media ${m}{${body}}\n` : body + "\n";
+        } catch (_) {}
+      }
+      const sh = new CSSStyleSheet(); sh.replaceSync(text); sheetObj = sh; sheetKey = key; return sh;
+    } catch (_) { return null; }
+  }
+  /** Everything the closing needs, read while the window is still open. */
+  function snapshot(dlg) {
+    const D = rectOf(dlg.getBoundingClientRect()); if (!D || D.width < 2 || D.height < 2) return null;
+    const cs = getComputedStyle(dlg); let back = "";
+    try { if (isModal(dlg)) back = getComputedStyle(dlg, "::backdrop").backgroundColor; } catch (_) {}
+    const snap = { dlg, D, back, radius: cs.borderRadius, bg: cs.backgroundColor, bgi: cs.backgroundImage, shadow: cs.boxShadow, src: dlg._mdSrc || null, copy: null, scroll: [] };
+    if (dlg.getElementsByTagName("*").length > 5000) return snap;
+    const c = dlg.cloneNode(true), a = dlg.getElementsByTagName("*"), b = c.getElementsByTagName("*");
+    for (let i = 0; i < a.length; i++) { const n = a[i]; if (n.scrollTop || n.scrollLeft) snap.scroll.push([b[i], n.scrollTop, n.scrollLeft]); }
+    if (dlg.scrollTop || dlg.scrollLeft) snap.scroll.push([c, dlg.scrollTop, dlg.scrollLeft]);
+    const ca = dlg.querySelectorAll("canvas"), cb = c.querySelectorAll("canvas");
+    ca.forEach((x, i) => { try { const y = cb[i]; y.width = x.width; y.height = x.height; y.getContext("2d").drawImage(x, 0, 0); } catch (_) {} });
+    const fa = dlg.querySelectorAll("input,textarea,select"), fb = c.querySelectorAll("input,textarea,select");
+    fa.forEach((x, i) => { const y = fb[i]; if (!y) return; try { if (x.type === "checkbox" || x.type === "radio") y.checked = x.checked; else if (x.type !== "file") y.value = x.value; } catch (_) {} });
+    for (const x of c.querySelectorAll(".mdSurface,iframe,video,audio,object,embed,script")) x.remove();
+    for (const x of c.querySelectorAll("dialog")) x.removeAttribute("open");
+    for (const x of c.querySelectorAll("[autofocus]")) x.removeAttribute("autofocus");
+    c.removeAttribute("autofocus"); c.setAttribute("open", ""); c.classList.remove("mdIn", "mdGrow", "closing");
+    snap.copy = c;
+    return snap;
+  }
+  /** The closed window's copy goes back into what it grew out of (opts.to, else its source), or fades where it is. */
+  function flyBack(snap, opts = {}) {
+    try {
+      const { dlg, D } = snap, still = reduced();
+      const under = [...doc.querySelectorAll("dialog[open]")].filter(d => d !== dlg && isModal(d)).pop() || null;
+      const L = layer(under), A = [];
+      const run = (el, frames, o) => { const a = el.animate(frames, Object.assign({ duration: DG.close, easing: DG.back, fill: "forwards" }, o)); A.push(a); return a; };
+      const host = doc.createElement("div"); host.className = "mdGhost"; host.setAttribute("aria-hidden", "true"); host.inert = true;
+      Object.assign(host.style, { left: D.left + "px", top: D.top + "px", width: D.width + "px", height: D.height + "px", willChange: "transform,opacity" });
+      let shade = null;
+      if (snap.back && !/rgba\(0, 0, 0, 0\)|transparent/.test(snap.back)) { shade = doc.createElement("div"); shade.className = "mdGhostBack"; shade.setAttribute("aria-hidden", "true"); shade.style.background = snap.back; L.appendChild(shade); }
+      L.appendChild(host);
+      const sr = host.attachShadow({ mode: "closed" }), sheet = snap.copy ? pageSheet() : null; if (sheet) sr.adoptedStyleSheets = [sheet];
+      const box = (bg, more) => { const x = doc.createElement("div"); Object.assign(x.style, { position: "absolute", inset: "0", borderRadius: snap.radius, background: bg }, more || {}); return x; };
+      sr.appendChild(box(snap.bg, { backgroundImage: snap.bgi, boxShadow: snap.shadow }));
+      const c = sheet ? snap.copy : null;
+      if (c) {
+        Object.assign(c.style, { position: "absolute", inset: "0", margin: "0", width: "100%", height: "100%", maxWidth: "none", maxHeight: "none", minWidth: "0", minHeight: "0", background: "transparent", boxShadow: "none", animation: "none", transition: "none", transform: "none", opacity: "1", zIndex: "auto" });
+        sr.appendChild(c);
+        for (const [n, t, l] of snap.scroll) { try { if (n) { n.scrollTop = t; n.scrollLeft = l; } } catch (_) {} }
+      }
+      const tint = box((snap.src && snap.src.tint) || snap.bg, { opacity: "0" }); sr.appendChild(tint);
+      if (shade) run(shade, [{ opacity: 1 }, { opacity: 0 }], { duration: still ? 120 : 440, easing: "ease" });
+      const home = still ? null : homeOf(snap.src, opts.to);
+      if (!home) run(host, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: still ? "none" : "translateY(6px) scale(.985)" }], { duration: still ? 120 : 220, easing: "ease" });
+      else {
+        const T = home.getBoundingClientRect();
+        run(host, [{ transform: "none" }, { transform: `translate(${T.left - D.left}px,${T.top - D.top}px) scale(${T.width / D.width},${T.height / D.height})` }]);
+        run(host, [{ opacity: 1 }, { opacity: 1, offset: .8 }, { opacity: 0 }], { easing: "linear" });
+        if (c) run(c, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "cubic-bezier(.4,0,1,1)" });
+        run(tint, [{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease" });
+        if (opts.arrive !== false) setTimeout(() => { try { if (home.isConnected) home.animate([{ transform: "scale(1)" }, { transform: "scale(1.06)", offset: .4 }, { transform: "scale(1)" }], { duration: 360, easing: "ease-out" }); } catch (_) {} }, DG.close * .8);
+      }
+      const end = () => { host.remove(); if (shade) shade.remove(); };
+      // (nothing waits on this: the window is closed already; a hidden tab, which draws no frames, loses the copy later)
+      return Promise.race([Promise.all(A.map(a => a.finished.catch(() => {}))), wait(3000)]).then(end, end);
+    } catch (_) { return Promise.resolve(); }
+  }
+  const nativeClose = root.HTMLDialogElement ? root.HTMLDialogElement.prototype.close : null;
+  const nativeShow = root.HTMLDialogElement ? root.HTMLDialogElement.prototype.showModal : null;
+  /** Closes the window now (dialog.open is false when this returns; returnValue, Esc and focus as the browser does them),
+   *  and a copy of it goes back into what opened it. opts.to: where it goes instead; opts.returnValue. */
+  function dialogClose(dlg, opts = {}) {
+    if (!dlg || !dlg.open) return Promise.resolve();
+    let snap = null;
+    if (!skips(dlg)) { try { snap = snapshot(dlg); } catch (_) {} try { stopOpen(dlg); } catch (_) {} dlg._mdClosing = true; }
+    try { if (opts.returnValue !== undefined) nativeClose.call(dlg, opts.returnValue); else nativeClose.call(dlg); }
+    finally { dlg.classList.remove("mdIn"); }
+    return snap ? flyBack(snap, opts) : Promise.resolve();
+  }
+  /** The next opening of `dlg` grows out of `from` (for a window opened later than just after its click). */
+  const from = (dlg, src) => { if (dlg) dlg._mdFrom = src || null; };
+  if (nativeShow && nativeClose && !root.HTMLDialogElement.prototype._mdWrapped) {
+    const P = root.HTMLDialogElement.prototype; P._mdWrapped = true;
+    P.showModal = function () {
+      if (this.open || skips(this)) return nativeShow.apply(this, arguments);
+      const f = this._mdFrom; this._mdFrom = null; this._mdClosing = false; this._mdSnap = null;
+      if (!reduced()) this.classList.add("mdIn");
+      try { nativeShow.apply(this, arguments); } catch (e) { this.classList.remove("mdIn"); throw e; }
+      this._mdShown = dialogOpen(this, f);
+    };
+    P.close = function (rv) {
+      if (!this.open || skips(this)) return arguments.length ? nativeClose.call(this, rv) : nativeClose.call(this);
+      dialogClose(this, arguments.length ? { returnValue: rv } : {});
+    };
+    // closed by the browser itself (Esc, a form's method="dialog"): read while still open, gone back into once closed
+    const early = d => {
+      if (!(d instanceof root.HTMLDialogElement) || !d.open || skips(d)) return;
+      let rec = null; try { rec = d._mdSnap = { snap: snapshot(d), at: Date.now(), used: false }; } catch (_) { return; }
+      // (drawn before the next frame, so the window never blinks out between its closing and its copy)
+      requestAnimationFrame(() => { if (!d.open && d._mdSnap === rec && !rec.used && rec.snap) { rec.used = true; flyBack(rec.snap); } });
+    };
+    doc.addEventListener("cancel", e => early(e.target), true);
+    doc.addEventListener("submit", e => { const f = e.target, how = (e.submitter && e.submitter.getAttribute("formmethod")) || (f && f.getAttribute && f.getAttribute("method")); if (f && /^dialog$/i.test(how || "")) early(f.closest("dialog")); }, true);
+    doc.addEventListener("close", e => {
+      const d = e.target; if (!(d instanceof root.HTMLDialogElement)) return;
+      if (d.open) return;
+      const ours = d._mdClosing, s = d._mdSnap; d._mdClosing = false; d._mdSnap = null;
+      try { stopOpen(d); } catch (_) {} d.classList.remove("mdIn");
+      if (!ours && s && s.snap && !s.used && Date.now() - s.at < 1500 && !skips(d)) { s.used = true; flyBack(s.snap); }
+    }, true);
+  }
+
+  /* ════ the lighter pop: a menu or a panel that opens under its button zooms out of it and fades in ════ */
+  function popIn(el, anchor) {
+    try {
+      if (!el || !el.isConnected) return;
+      if (reduced()) { el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease" }); return; }
+      const r = el.getBoundingClientRect(); if (!r.width || !r.height) return;
+      const a = anchor && anchor.isConnected ? anchor.getBoundingClientRect() : null;
+      const ox = a ? Math.max(0, Math.min(r.width, a.left + a.width / 2 - r.left)) : r.width / 2, oy = a ? Math.max(0, Math.min(r.height, a.top + a.height / 2 - r.top)) : 0, o = `${ox}px ${oy}px`;
+      el.animate([{ opacity: 0, transform: "scale(.88)", transformOrigin: o }, { opacity: 1, transform: "none", transformOrigin: o }], { duration: 300, easing: DG.grow });
+    } catch (_) {}
+  }
+  // every <details> that opens as a pop-up (its panel laid over the page: the run menu, Workspace, a sheet's Options…)
+  try {
+    new MutationObserver(recs => {
+      for (const r of recs) {
+        const d = r.target; if (d.tagName !== "DETAILS" || !d.open || r.oldValue !== null) continue;
+        const panel = [...d.children].find(n => n.tagName !== "SUMMARY" && n.getClientRects().length); if (!panel) continue;
+        const pos = getComputedStyle(panel).position; if (pos === "absolute" || pos === "fixed") popIn(panel, d.querySelector(":scope > summary"));
+      }
+    }).observe(doc.documentElement, { attributes: true, attributeFilter: ["open"], attributeOldValue: true, subtree: true });
+  } catch (_) {}
+
+  root.Motion = { T, ghost, fly, flyIn, grow, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);

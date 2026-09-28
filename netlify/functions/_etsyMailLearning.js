@@ -83,7 +83,7 @@ function isoWeek(ms) {
 
 /** One record per sent reply. prev is the draft doc as it stood before
  *  this send (the AI's text, if the AI wrote it). Never throws. */
-async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sendOrigin, employeeName }) {
+async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sendOrigin, employeeName, polished = false }) {
   try {
     const FV = admin.firestore.FieldValue;
     const now = Date.now();
@@ -94,8 +94,9 @@ async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sen
     const kind = cmp ? cmp.kind : "staff_only";
     const manual = sendOrigin !== "auto";
     // Worth learning from: a person changed what the AI wrote, or wrote the
-    // reply themselves when the AI could not answer.
-    const learnable = manual && cmp && (cmp.kind === "rewrite" || cmp.kind === "replaced"
+    // reply themselves when the AI could not answer. Never a reply the
+    // Polish button reworded: that wording is the model's, not a correction.
+    const learnable = manual && !polished && cmp && (cmp.kind === "rewrite" || cmp.kind === "replaced"
       || (cmp.kind === "light" && (cmp.numbersChanged || cmp.linksChanged)));
     const route = prev && prev.generatedBySalesAgent ? "sales" : "support";
     const doc = {
@@ -109,6 +110,7 @@ async function recordOutcome({ db, admin, draftId, threadId, prev, sentText, sen
       aiMissingFacts: (prev && Array.isArray(prev.aiMissingFacts)) ? prev.aiMissingFacts.slice(0, 5) : [],
       learnStatus: learnable ? "pending" : "skip"
     };
+    if (polished) doc.polished = true;
     if (cmp) Object.assign(doc, {
       similarity: cmp.similarity, added: cmp.added, removed: cmp.removed,
       numbersChanged: cmp.numbersChanged, linksChanged: cmp.linksChanged

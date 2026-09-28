@@ -1474,7 +1474,7 @@
     const pts = new Map(); let pinch = null, down = null, moved = false, tap = null, tapped = 0;
     const maxS = () => Math.max(fit * 6, 4);
     function build() {
-      dlg = h("dialog", "phv");
+      dlg = h("dialog", "phv"); dlg.setAttribute("data-no-grow", "");   // (the photo grows out of its picture instead: enter, flyIn)
       dlg.setAttribute("aria-label", "Photo");
       dlg.innerHTML = `<div class="phvStage"><img class="phvImg" alt="" draggable="false"><div class="phvNote" hidden></div></div>
         <button type="button" class="phvBtn phvX" data-phv="close" title="Close (Esc)" aria-label="Close">${SVG('<path d="M6 6l12 12M18 6 6 18"/>')}</button>
@@ -1597,7 +1597,7 @@
         if (list[at] !== p) return;
         W = img.naturalWidth || 1; H = img.naturalHeight || 1; ready = true; say("");
         img.style.width = W + "px"; img.style.height = H + "px"; img.style.visibility = "";
-        measure(); toFit();
+        measure(); toFit(); if (flight) flyIn();
       };
       img.onerror = () => {
         if (list[at] !== p) return;
@@ -1635,18 +1635,77 @@
       if (!list.length) return;
       opener = el;
       if (!dlg) build();
-      if (!dlg.open) {
+      const fresh = !dlg.open;
+      if (fresh) {
         host = into;
         dlg.classList.toggle("layer", !!host);
         if ((host || document.body) !== dlg.parentNode) (host || document.body).appendChild(dlg);
+        const still = !window.Motion || Motion.reduced();
+        if (!still) dlg.classList.add("mdIn");
         if (host) { host.addEventListener("cancel", hostCancel, true); host.addEventListener("close", hostClosed); dlg.show(); }
         else { try { dlg.showModal(); } catch (_) { dlg.show(); } }
+        flight = { el, at: Date.now() };
       }
       show(Math.max(0, all.indexOf(el)));
+      if (fresh) enter();
       dlg.querySelector(".phvX").focus({ preventScroll: true });
+    }
+    /* Paul, 28 Sep 19:27-19:30: the photo (a QR label) opens out of the picture clicked, as the sheet window does: the
+       shade comes over the page, the photo grows from where it lay to its place, and the buttons come in after it;
+       closing, the photo goes back into its picture. The viewer itself opens and closes at once. */
+    let flight = null;
+    function enter() {
+      try {
+        if (!window.Motion || Motion.reduced()) { if (window.Motion) dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 140, easing: "ease" }); return; }
+        if (host) {
+          const sh = document.createElement("i"); sh.className = "phvShade"; sh.setAttribute("aria-hidden", "true"); dlg.prepend(sh); dlg.classList.add("phvIn");
+          const off = () => { sh.remove(); dlg.classList.remove("phvIn"); };
+          Promise.race([sh.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, easing: "ease" }).finished, Motion.wait(3000)]).then(off, off);
+        }
+        const bits = [...dlg.querySelectorAll(":scope > .phvX, :scope > .phvNav:not([hidden]), :scope > .phvBar")];
+        bits.forEach((b, i) => {
+          const x = b.classList.contains("phvBar") ? "translateX(-50%) " : "";
+          b.animate([{ opacity: 0, transform: x + "translateY(10px)" }, { opacity: 1, transform: x + "translateY(0)" }], { duration: 380, delay: 380 + i * 45, easing: "cubic-bezier(.2,.8,.2,1)", fill: "backwards" });
+        });
+      } catch (_) {}
+    }
+    /** The first photo, once it is laid out, grows out of the picture that was clicked (one that takes long to load only
+     *  fades in: by then nobody is looking at the picture any more). */
+    function flyIn() {
+      const f = flight; flight = null;
+      try {
+        if (!f || !window.Motion || !dlg.open) return;
+        const src = f.el && f.el.isConnected && f.el.getClientRects().length ? f.el.getBoundingClientRect() : null;
+        if (Motion.reduced() || !src || !src.width || Date.now() - f.at > 2500) { img.animate([{ opacity: 0 }, { opacity: 1 }], { duration: Motion.reduced() ? 140 : 260, easing: "ease" }); return; }
+        const sr = stage.getBoundingClientRect();
+        img.animate([{ transform: `translate(${src.left - sr.left}px,${src.top - sr.top}px) scale(${src.width / W},${src.height / H})` }, { transform: img.style.transform }], { duration: 650, easing: "cubic-bezier(.3,0,.1,1)" });
+      } catch (_) {}
+    }
+    /** Closing: a copy of the photo, where it is, goes back into its picture (or fades, when that is out of sight), and the
+     *  shade lifts, while the viewer is already closed. */
+    function flyOut() {
+      try {
+        if (!window.Motion || !ready) return;
+        const r = img.getBoundingClientRect(), src = img.currentSrc || img.src, o = opener, home = o && o.isConnected && o.getClientRects().length ? o.getBoundingClientRect() : null;
+        if (!src || !r.width) return;
+        const L = Motion.layer(o && o.isConnected ? o : null), still = Motion.reduced(), A = [];
+        const shade = document.createElement("div"); shade.className = "mdGhostBack"; shade.setAttribute("aria-hidden", "true"); shade.style.background = "rgba(16,14,12,.95)";
+        const g = new Image(); g.className = "phvGhost"; g.alt = ""; g.setAttribute("aria-hidden", "true"); if (img.crossOrigin) g.crossOrigin = img.crossOrigin; g.src = src;
+        Object.assign(g.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", imageRendering: img.style.imageRendering || "" });
+        L.append(shade, g);
+        const on = home && home.width && home.bottom > 0 && home.top < innerHeight && !still;
+        A.push(shade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: still ? 120 : 440, easing: "ease", fill: "forwards" }));
+        if (on) {
+          A.push(g.animate([{ transform: "none" }, { transform: `translate(${home.left - r.left}px,${home.top - r.top}px) scale(${home.width / r.width},${home.height / r.height})` }], { duration: 480, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }));
+          A.push(g.animate([{ opacity: 1 }, { opacity: 1, offset: .85 }, { opacity: 0 }], { duration: 480, easing: "linear", fill: "forwards" }));
+        } else A.push(g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still ? "none" : "scale(.97)" }], { duration: still ? 120 : 220, easing: "ease", fill: "forwards" }));
+        const end = () => { g.remove(); shade.remove(); };
+        Promise.race([Promise.all(A.map(a => a.finished.catch(() => {}))), Motion.wait(3000)]).then(end, end);
+      } catch (_) {}
     }
     function close() {
       if (!dlg || !dlg.open) return;
+      flight = null; flyOut();
       dlg.close();
       if (host) { host.removeEventListener("cancel", hostCancel, true); host.removeEventListener("close", hostClosed); host = null; }
       img.onload = img.onerror = null; img.removeAttribute("src"); list = []; pts.clear(); pinch = null; ready = false;

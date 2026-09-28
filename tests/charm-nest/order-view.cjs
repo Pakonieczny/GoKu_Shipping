@@ -99,8 +99,15 @@ async function main() {
     assert(shrank, 'it shrinks back into the row');
     await page.waitForFunction(() => !OrderWin.isOpen() && !document.getElementById('orderWin').open, null, { timeout: 2000 });
 
-    // 5 · an order outside the pull, as search opens it: a spinner line while its records are read, then its line
-    const early = await page.evaluate(rid => { OrderWin.openOrder(rid, { highlight: rid }); const l = document.getElementById('owLoading'); return { open: OrderWin.isOpen(), loading: !l.hidden && l.textContent, title: document.getElementById('owTitle').textContent }; }, C.rid);
+    // 5 · an order outside the pull, as the search opens it (charm-nest-search.js: the number lit, grown out of a lifted copy
+    //     of its card): a spinner line while its records are read, then its line
+    const early = await page.evaluate(rid => {
+      const card = document.createElement('div'); card.id = 'liftedCard'; Object.assign(card.style, { position: 'fixed', left: '520px', top: '160px', width: '400px', height: '84px', background: '#fff' }); document.body.appendChild(card);
+      OrderWin.openOrder(rid, { highlight: true, from: card, q: rid, row: null });
+      const l = document.getElementById('owLoading'), d = document.getElementById('orderWin');
+      return { open: OrderWin.isOpen(), loading: !l.hidden && l.textContent, title: document.getElementById('owTitle').textContent, grew: d.getAnimations().some(a => a.effect.getKeyframes().some(k => k.clipPath && /inset\(160px/.test(k.clipPath))) }; }, C.rid);
+    assert(early.grew, 'it grows out of the card it was opened from');
+    await page.evaluate(() => document.getElementById('liftedCard').remove());
     assert(early.open, 'it opens at once'); assert.match(early.loading || '', /Looking up order 4175000123/); assert.equal(early.title, `Order ${C.rid}`);
     await page.waitForFunction(() => document.getElementById('owLoading').hidden && /Janet Steptoe/.test(document.getElementById('owSub').textContent), null, { timeout: 15000 });
     const v5 = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, lit: !!document.querySelector('#owTitle .num.found'), prev: document.getElementById('owPrev').hidden, skip: document.getElementById('owSkipBox').hidden,
@@ -121,11 +128,26 @@ async function main() {
     await settled();
     if (shots) await page.screenshot({ path: path.join(shots, 'order-view-swap.png') });
 
+    // 5b · the header number is the view's own search ("/" is handed to it while the view is open): an order found opens here
+    await page.keyboard.press('/');
+    await page.waitForFunction(rid => { const q = document.getElementById('owFindQ'); return q && document.activeElement === q && q.value === rid && document.getElementById('owTitle').offsetParent === null; }, A.rid);
+    await page.keyboard.type(B2.rid.slice(0, 8));
+    await page.waitForFunction(rid => [...document.querySelectorAll('#owFindList [role=option]')].some(o => o.textContent.includes(rid) && /Ava Patel/.test(o.textContent)), B2.rid);
+    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'no search window over the view');
+    if (shots) await page.screenshot({ path: path.join(shots, 'order-view-find.png') });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(rid => document.getElementById('owTitle').textContent === 'Order ' + rid && !!document.querySelector('#owTitle .num.found') && document.getElementById('owTitle').offsetParent !== null && document.getElementById('owFindList').hidden, B2.rid, { timeout: 15000 });
+    // Esc in the field gives the number back and leaves the view open
+    await page.evaluate(() => OrderWin.focusSearch());
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('owFindQ').closest('.owFind').hidden && document.getElementById('owTitle').offsetParent !== null);
+    assert(await page.evaluate(() => OrderWin.isOpen()), 'Esc in the search field leaves the view open');
+
     // 6 · Esc closes it too
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 2000 });
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ opened from a row (grown out of it, full screen), views, the sheet in gold, an order outside the pull, highlight, close');
+    console.log('  ✓ opened from a row (grown out of it, full screen), views, the sheet in gold, an order outside the pull, highlight, the header search, close');
   } finally { await browser.close(); srv.close(); }
 }
 main().then(() => console.log('Order view OK')).catch(e => { console.error(e); process.exit(1); });

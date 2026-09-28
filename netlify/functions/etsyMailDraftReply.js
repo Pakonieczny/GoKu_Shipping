@@ -5936,18 +5936,21 @@ answering. Do not guess about the order's contents.`;
     const draftRef = db.collection(DRAFTS_COLL).doc(draftId);
     const now = FV.serverTimestamp();
 
-    // Audit-friendly tool call log (strip large response payloads)
-    const toolCallLog = loopResult.toolCalls.map(tc => ({
+    // Audit-friendly tool call log (strip large response payloads).
+    // JSON round trip: Firestore refuses a draft holding an undefined value
+    // anywhere (a tool's shipment without a barcode failed every draft of
+    // that conversation, 2026-09-28).
+    const toolCallLog = loopResult.toolCalls.map(tc => JSON.parse(JSON.stringify({
       name       : tc.name,
-      input      : tc.input,
-      error      : tc.error,
-      durationMs : tc.durationMs,
+      input      : tc.input === undefined ? null : tc.input,
+      error      : tc.error === undefined ? null : tc.error,
+      durationMs : tc.durationMs === undefined ? null : tc.durationMs,
       // For non-terminal tools, include a slim version of the output
-      outputPreview: tc.name === "compose_draft_reply" ? null :
+      outputPreview: tc.name === "compose_draft_reply" || tc.output === undefined ? null :
         (typeof tc.output === "object" && tc.output !== null
           ? { ...tc.output, _truncated: false }
           : tc.output)
-    }));
+    })));
 
     const usage = loopResult.usage || {};
 
