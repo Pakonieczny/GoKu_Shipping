@@ -65,7 +65,8 @@ async function main() {
     railMsg: (document.querySelector('#owRail .tlMsg:not([hidden])') || {}).textContent || '', fullMsg: (document.querySelector('#owTimeline .tlMsg:not([hidden])') || {}).textContent || '',
     railSpin: !!document.querySelector('#owRail .tlMsg:not([hidden]) .tlSpin'), fullSpin: !!document.querySelector('#owTimeline .tlMsg:not([hidden]) .tlSpin') }));
   const railReady = page => page.waitForFunction(() => { const r = document.querySelector('#owRail .tlUI'); return r && r.querySelector('.tlMsg').hidden && document.getElementById('owTlCount').textContent; });
-  const fullReady = page => page.waitForFunction(() => document.querySelector('#owTimeline .tlUI .tlSt[data-key]'));
+  // the lanes are drawn once the first seal lands, or once the view says this order has no milestone yet
+  const fullReady = page => page.waitForFunction(() => document.querySelector('#owTimeline .tlUI .tlSt[data-key], #owTimeline .tlUI .tlEmpty'));
   const closeView = async page => { await page.evaluate(() => OrderWin.close()); await page.waitForFunction(() => !document.getElementById('orderWin').open, null, { timeout: 3000 }); };
   const refresh = page => page.evaluate(() => OrderWin._feed().refresh({ force: true }));
   const results = [];
@@ -184,6 +185,7 @@ async function main() {
       console.log(`      2000+ steps: first paint ${ms} ms, ${s.stamps} stamps, count ${s.count}, summary "${s.sum}"`);
       assert(ms < 8000, 'painted in ' + ms + ' ms');
       assert.match(s.sum, /2000|first|cut short|more/i, 'says it is truncated: ' + s.sum);
+      assert.equal(s.stamps, 0, 'scans and notes are noise: they draw no seal');
       await closeView(page);
     });
     assert.deepEqual(errors, [], 'no page errors');
