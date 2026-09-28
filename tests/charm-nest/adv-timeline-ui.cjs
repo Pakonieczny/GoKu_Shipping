@@ -135,6 +135,9 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     await page.waitForSelector('.tlUI.compact .tlStop.x'); await page.waitForTimeout(900);
     await page.hover('.tlUI.compact .tlStop.x'); await page.waitForTimeout(300);
     assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlLoupe')).display), 'block');
+    // a rail 100px from the top has no room above: the seal flips under the step (its name too), inside the view
+    r = await page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlUI.compact .tlStop.x').getBoundingClientRect(); return { side: L.dataset.side, top: b.top, left: b.left, right: b.right, sb: s.bottom, vw: innerWidth }; });
+    assert.equal(r.side, 'below'); assert(r.top >= r.sb && r.top <= r.sb + 16 && r.left >= 0 && r.right <= r.vw, 'flipped under the step: ' + JSON.stringify(r));
     await setFx(C, ev4.concat([cx4, { id: `${C}~cancelRestored~r`, orderId: C, type: 'cancelRestored', at: Date.now(), by: 'Paul' }]), null);
     await page.evaluate(() => window.__tl.refresh()); await page.waitForTimeout(300);
     await page.mouse.move(700, 600); await page.waitForTimeout(300);

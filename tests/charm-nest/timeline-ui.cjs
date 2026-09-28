@@ -143,16 +143,27 @@ function fixture({ MAIN, CX }) {
   assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
   ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 9-step rail: 7 stamped, Shipped pulses, Completed an outline; 5 day columns + 1 idle; NOW · AT SHIPPING');
 
-  // ── hover a stamp: it lifts onto the loupe at 136px with its full face ──
+  // ── hover a stamp: its seal zooms onto the loupe ABOVE the dot at 122px (90% of the old 136px) with its full face;
+  //    the dot stays in sight and keeps the hover (Paul, 2026-09-28) ──
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
   const small = await welded.boundingBox();
   await welded.hover();
   await page.waitForTimeout(320);
-  r = await page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'); return { disp: getComputedStyle(L).display, w: b.width, texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (L.querySelector('.cap') || {}).textContent, lifted: s.classList.contains('lifted'), shadow: getComputedStyle(L).boxShadow }; });
-  assert.equal(r.disp, 'block'); assert(r.w > 130 && small.width < 40, `the stamp grows from ${small.width}px to ${r.w}px`);
+  const zoomAt = () => page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), cap = L.querySelector('.cap'); return { disp: getComputedStyle(L).display, w: b.width, h: b.height, top: b.top, bottom: b.bottom, cx: b.left + b.width / 2, dTop: d.top, dBottom: d.bottom, dcx: d.left + d.width / 2, dOp: getComputedStyle(s).opacity, pe: getComputedStyle(L).pointerEvents, side: L.dataset.side, capTop: cap ? cap.getBoundingClientRect().top : null, texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (cap || {}).textContent, lifted: s.classList.contains('lifted'), hov: s.matches(':hover'), shadow: getComputedStyle(L).boxShadow }; });
+  r = await zoomAt();
+  assert.equal(r.disp, 'block'); assert(small.width < 40, 'a small dot: ' + small.width);
+  assert(Math.abs(r.w - 136 * .9) <= 1.5 && Math.abs(r.h - 136 * .9) <= 1.5, `the zoomed seal is 90% of the old 136px: ${r.w}×${r.h}`);
+  assert.equal(r.side, 'above'); assert(r.bottom <= r.dTop && r.bottom >= r.dTop - 16, `the seal sits just above the dot, not over it: seal bottom ${r.bottom}, dot top ${r.dTop}`);
+  assert(Math.abs(r.cx - r.dcx) <= 1.5, 'centred over the dot');
+  assert.equal(r.pe, 'none', 'the seal takes no pointer'); assert(+r.dOp > .9 && r.hov, 'the dot stays in sight and keeps the hover');
+  assert(r.capTop >= r.dBottom, 'the caption sits under the dot, not over it');
   assert.match(r.texts, /WELDED/); assert.match(r.texts, /MARCO R\./); assert.match(r.texts, /WELDING STATION/); assert.match(r.texts, /\d{1,2}:\d\d [AP]M/);
   assert.equal(r.cap, 'Jump rings closed'); assert(r.lifted && /rgba/.test(r.shadow));
-  ok.push(`hover: the stamp grows ${Math.round(small.width)}px → ${Math.round(r.w)}px on the loupe with shadow, reading WELDED, the time, MARCO R. and the station`);
+  // moving within the dot keeps the seal, still and in place
+  for (const [dx, dy] of [[-.3, -.3], [.3, .25], [0, .35], [-.35, 0]]) { await page.mouse.move(small.x + small.width * (.5 + dx), small.y + small.height * (.5 + dy)); await page.waitForTimeout(40); }
+  await page.waitForTimeout(120);
+  const r2 = await zoomAt(); assert.equal(r2.disp, 'block', 'moving within the dot keeps the seal'); assert(Math.abs(r2.top - r.top) < 1 && Math.abs(r2.cx - r.cx) < 1, 'and it does not move');
+  ok.push(`hover: the seal zooms ${Math.round(small.width)}px → ${Math.round(r.w)}px (90% of 136) just above its dot (${Math.round(r.dTop - r.bottom)}px gap), not over it, with shadow, no pointer, reading WELDED, the time, MARCO R. and the station; the dot stays in sight and keeps the hover`);
   await page.mouse.move(700, 880); await page.waitForTimeout(260);
   assert.equal(await page.evaluate(() => getComputedStyle(window.__el.querySelector('.tlLoupe')).display), 'none', 'the loupe goes away');
 
@@ -297,9 +308,14 @@ function fixture({ MAIN, CX }) {
   assert.equal(r.opened, `${MAIN}~note~e26`, 'a stamp opens its event');
   assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
   await page.hover('.tlTestHost .tlMini'); await page.waitForTimeout(320);
-  assert(await page.$eval('.tlTestHost .tlMini .f', f => f.getBoundingClientRect().width) > 100, 'a stamp grows on hover to its full face');
+  r = await page.evaluate(() => { const m = document.querySelector('.tlTestHost .tlMini'), L = document.querySelector('.tlTestHost .tlNowZoom'), b = L.getBoundingClientRect(), d = m.getBoundingClientRect(); return { disp: getComputedStyle(L).display, w: b.width, bottom: b.bottom, dTop: d.top, texts: L.querySelectorAll('text').length, dup: [...L.querySelectorAll('[id]')].filter(x => document.querySelectorAll('#' + CSS.escape(x.id)).length > 1).length, pe: getComputedStyle(L).pointerEvents, sOp: getComputedStyle(m.querySelector('.s')).opacity, hov: m.matches(':hover') }; });
+  assert.equal(r.disp, 'block'); assert(Math.abs(r.w - 136 * .9) <= 1.5, 'the card\'s stamp zooms to 90% of 136px: ' + r.w);
+  assert(r.bottom <= r.dTop && r.bottom >= r.dTop - 16, `above its stamp, not over it: ${r.bottom} vs ${r.dTop}`);
+  assert(r.texts > 0 && r.dup === 0, 'its full face, with its own ids'); assert.equal(r.pe, 'none'); assert(+r.sOp > .9 && r.hov, 'the stamp stays in sight under the pointer');
+  await page.mouse.move(700, 880); await page.waitForTimeout(260);
+  assert.equal(await page.$eval('.tlTestHost .tlNowZoom', L => getComputedStyle(L).display), 'none', 'the card\'s zoom goes away');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
-  ok.push('nowStamps/wireNow: the latest seal (SHIPPING LABEL · DANA K.), six 26px stamps that grow to their full face on hover and open their event, and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
+  ok.push('nowStamps/wireNow: the latest seal (SHIPPING LABEL · DANA K.), six 26px stamps whose full face zooms above them on hover and open their event, and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
 
   // ── the real client over the stand-in: record and send three steps, then timelineGet (with its where) paints them ──
   const REAL = '4170000001';
