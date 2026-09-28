@@ -517,7 +517,7 @@
   <!-- Order timeline: the shared client and the station module (every scan recorded, cancelled orders flagged).
        If either is missing the page works exactly as before. -->
   <script src="order-timeline.js?v=20260928-ov2"></script>
-  <script src="station-timeline.js?v=20260928-m10"></script>
+  <script src="station-timeline.js?v=20260928-fxS"></script>
 
   <!-- Everything is in this single <script> block -->
   <script>
@@ -1577,7 +1577,7 @@ window.SortTL = (function () {
     )).then(() => {
       idle(k);
       me.scansSettled = true;
-      if (cur !== me) return;
+      if (cur !== me) { raise(me); return; }          // an earlier batch (another loaded since): its cancels are still named
       markTiles();
       // one alert for the batch, once its orders are on screen too (a few seconds at most), so the tiles are marked
       if (me.loadDone) raise(me); else setTimeout(() => raise(me), 6000);
@@ -1596,8 +1596,8 @@ window.SortTL = (function () {
     markTiles();
     if (me.scansSettled) raise(me);
   }
+  // every batch's cancels are raised, an earlier batch's too (a second batch loaded before its late answer came in)
   function raise(me) {
-    if (cur !== me) return;
     const fresh = [...me.cancelled.keys()].filter(id => !me.alerted.has(id));
     if (!fresh.length) return;
     fresh.forEach(id => me.alerted.add(id));

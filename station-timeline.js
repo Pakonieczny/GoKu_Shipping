@@ -16,6 +16,8 @@
  *    (scanned's opts.quiet: the page draws its own alert, as the Sorting station does for a whole batch; a "cancelled"
  *     that comes after the 2.5 s then goes to opts.onLate(record) instead of the module's alert)
  *    StationTimeline.isCancelled(orderId)  → the cached cancel record ({ at, by, why, source }) or null
+ *    StationTimeline.afterAlert(fn)  → true when the red alert is up and fn (a phone scan relayed meanwhile) is held
+ *        until Understood; false: go on now. While the alert is up the focus and every typed key stay on it.
  *    StationTimeline.guard(orderId, { action, anchor })  → Promise<boolean>: true to go on. For a cancelled order it
  *        asks "This order is cancelled. Do it anyway?" inline (inside the alert while it is up); a yes is recorded.
  *
@@ -270,7 +272,7 @@
   }
 
   /* ── the alert: one at a time; a second cancelled order scanned while it is up joins the same alert ── */
-  const A = { root: null, rows: null, who: null, ok: null, guardBox: null, list: [], shownAt: 0, prevFocus: null, pending: null };
+  const A = { root: null, rows: null, who: null, ok: null, guardBox: null, list: [], shownAt: 0, prevFocus: null, pending: null, held: null };
   const alertUp = () => !!(A.root && A.root.isConnected && !A.root.classList.contains("out"));
   function buildAlert() {
     css();
@@ -327,10 +329,22 @@
     setTimeout(() => { try { if (root.classList.contains("out")) root.remove(); } catch (_) {} }, 240);
     const back = A.prevFocus; A.prevFocus = null;
     try { if (back && back.isConnected && back.focus) back.focus({ preventScroll: true }); } catch (_) {}
+    const held = A.held; A.held = null;                // a phone scan relayed while it was up loads now
+    if (held) setTimeout(() => { try { held(); } catch (e) { warn("held scan failed", e); } }, 0);
+  }
+  /* While the alert is up the focus stays on it: page code (the phone relay focusing the order field) cannot move it
+     behind, where typed keys would land in a hidden field; Understood gives it back to where it was. */
+  function focusAlert() { try { (A.guardBox.querySelector("button") || A.ok).focus({ preventScroll: true }); } catch (_) {} }
+  function onFocusIn(e) { try { if (alertUp() && e.target && !A.root.contains(e.target)) focusAlert(); } catch (_) {} }
+  /** afterAlert(fn): with the alert up, fn (a relayed scan) waits and runs after Understood (a later one replaces it,
+      as the field holds one order); true when it was held. With no alert, false: the caller goes on now. */
+  function afterAlert(fn) {
+    try { if (!alertUp() || typeof fn !== "function") return false; A.held = fn; return true; } catch (_) { return false; }
   }
   function onKey(e) {
     try {
       if (!alertUp() || !e.isTrusted) return;           // a scan's own (synthetic) Enter goes on to the page
+      if (!A.root.contains(e.target)) { e.preventDefault(); e.stopPropagation(); focusAlert(); return; }   // no key reaches a field behind it
       if (e.key === "Tab") {                            // keep the keyboard inside the alert
         const f = [...A.root.querySelectorAll("button")]; if (!f.length) return;
         const i = f.indexOf(document.activeElement); e.preventDefault(); e.stopPropagation();
@@ -407,6 +421,7 @@
         keysOn = true; loadCache();
         try { if (document.head) css(); } catch (_) {}   // the stylesheet is in before any alert: its first frame does not restyle the page
         window.addEventListener("keydown", onKey, true);
+        document.addEventListener("focusin", onFocusIn, true);
         const unlock = () => { audio(); window.removeEventListener("pointerdown", unlock, true); window.removeEventListener("keydown", unlock, true); };
         window.addEventListener("pointerdown", unlock, true); window.addEventListener("keydown", unlock, true);
       }
@@ -415,7 +430,7 @@
   }
 
   const api = {
-    init, scanned, did, isCancelled, guard,
+    init, scanned, did, isCancelled, guard, afterAlert,
     alertOpen: () => { try { return alertUp(); } catch (_) { return false; } },
     config: () => Object.assign({}, cfg, { getEmployee: undefined })
   };
