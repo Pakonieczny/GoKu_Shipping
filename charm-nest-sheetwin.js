@@ -2347,7 +2347,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
-      await Pool.update([...ids], { state: "abandoned", sheetId: null, setId: null, removedBy: who, removedReason: cancel ? "cancelled" + (note ? ": " + note : "") : note || "on hold", removedAt: Date.now() });
+      // (a hold is recorded as held, below, and only so: removedBy/At on the piece records would have the server stamp a
+      // "removed" as well, and the order's history read one from them)
+      await Pool.update([...ids], Object.assign({ state: "abandoned", sheetId: null, setId: null }, cancel ? { removedBy: who, removedReason: "cancelled" + (note ? ": " + note : ""), removedAt: Date.now() } : { heldBy: who, heldReason: note || "on hold", heldAt: Date.now() }));
       for (const id of ids) B.pool.rows.delete(id);
       // on hold (a cancel is stamped by the server as the order is cancelled): on the order's timeline, with who
       if (!cancel && rid) window.SheetEvents?.order({ type: "held", orderId: rid, id: `sw-${sheetId}-${Date.now()}`, by: who, sheetId, sheet: names || "", text: `${text}, on hold`.slice(0, 200), data: { pieces: list.length, note: note || undefined } });

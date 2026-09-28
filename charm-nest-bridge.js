@@ -9031,9 +9031,13 @@ const OrderWin = window.OrderWin = (() => {
   const sheetName = s => `${CODE[s.metal] || ""} Sheet ${s.n || "?"}`.trim();
 
   /* ── the views: Overview, Timeline, Sheet; the old one leaves sideways and the new one comes in from the other side ── */
-  function inkTo() {
+  // (the underline moves by transform, never by left/width, which laid the header out again every frame; a fresh opening
+  // puts it in place at once, under the header coming in)
+  function inkTo(now) {
     const b = W.dlg.querySelector(`.owTabsV [data-ow-view="${W.view}"]`), ink = W.dlg.querySelector(".owInk"); if (!b || !ink) return;
-    ink.style.left = b.offsetLeft + 6 + "px"; ink.style.width = Math.max(0, b.offsetWidth - 12) + "px";
+    if (now) ink.style.transition = "none";
+    ink.style.transform = `translateX(${b.offsetLeft + 6}px) scaleX(${Math.max(0, b.offsetWidth - 12) / 100})`;
+    if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
     const sw = byId("owPieceSw"); if (sw) { sw.hidden = W.pieces.length < 2 || W.view === "sheet"; thumbTo(); }
   }
   function setView(v, o = {}) {
@@ -9467,7 +9471,7 @@ const OrderWin = window.OrderWin = (() => {
       const v = opts.view || "info";
       setView(v, { quiet: true, noLoad: true });
       try { W.dlg.showModal(); } catch (_) { W.dlg.setAttribute("open", ""); }
-      inkTo();
+      inkTo(true);
       if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) W.anims.push(W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" })); }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
