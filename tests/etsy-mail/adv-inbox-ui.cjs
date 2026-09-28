@@ -111,6 +111,9 @@ const server = http.createServer((req, res) => {
     const noteBack = !!(await page.$("#emPolishNote"));
     console.log("  after switching away and back: box =", JSON.stringify(back.slice(0, 40)), "note shown =", noteBack);
     check(!noteBack || back === polished, "the Polished · Undo note only shows over the polished words");
+    // The polished words come back with their note (the reply typed so far
+    // stays with its conversation); Undo gives the staff's own words back.
+    if (noteBack) await page.click("#emPolishNote .em-polish-undo");
     await page.fill("#emDraftText", "Hi Bob, the chain is 18 inches and it ships Friday, sorry for the wait.");
     calls.length = 0;
     await page.click("#emSendEtsyBtn");
