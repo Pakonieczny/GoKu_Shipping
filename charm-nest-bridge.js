@@ -9019,10 +9019,16 @@ const Arrivals = window.Arrivals = (() => {
       const t = Date.now(); if (lastTick && t - lastTick > 60000 && state.nextCheck < t + 10000) state.nextCheck = t + 10000; lastTick = t;
       paint();
       if (busy || paused || S.settings.pollOrders === "off") return;
+      /* A gap fill ends once every order of the stream is in (CN.settleTopups), asked at every tick with no check out. It
+         was asked only between checks, and at 1000x there is no between: the next check is due 600 ms after the last one
+         began and a check (the stream's step, the station's sweep) takes longer, so each tick started the next check at
+         once and a sheet still filling its gaps was never released and never got its QR label (Paul, 27 Sep 22:21: "The
+         system still does not successfully auto-generate the QR codes when a given sheet is full"). */
+      window.CN?.settleTopups?.();
       if (Date.now() >= state.nextCheck && !held()) {
         if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
         else check();
-      } else { processPending().catch(e => { state.error = e.message; }); window.CN?.settleTopups?.(); }   // (a gap fill ends once every order of the stream is in)
+      } else processPending().catch(e => { state.error = e.message; });
     }, streaming() ? 250 : 1000);   // a stream step is 12 s at 50x: a whole second late would be most of a simulated minute
   }
   /** A sandbox reset deletes the records under the checks: none starts meanwhile, and one still out is waited for and its
