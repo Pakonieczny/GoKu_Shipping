@@ -154,6 +154,9 @@
     config(o) { Object.assign(cfg, o || {}); return Object.assign({}, cfg); },
     record, flush, get, cancelCheck,
     onRecord(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    pending() { return box.length; }
+    pending() { return box.length; },
+    /** A sandbox reset (sandbox true): that store's events still waiting, this page's and every other page's on the disk,
+        go with the records it cleared; sent afterwards they would land on the replay of the same real order numbers */
+    discard(sandbox) { const keep = ev => !!ev.sandbox !== !!sandbox; box = box.filter(keep); try { localStorage.setItem(OUTBOX, JSON.stringify(disk().filter(keep))); } catch (_) {} return box.length; }
   };
 })();
