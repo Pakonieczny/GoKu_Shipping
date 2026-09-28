@@ -3766,10 +3766,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const live = page || (id ? liveOf(id) : null), claim = cv._claim = {};
     let rec = null;
     if (id) { try { rec = await recFor(id); } catch (e) { if (!live) throw e; } }
-    if (!rec) rec = recOfPage(live);
+    // a sheet this sorter holds is drawn as it is on its page (pieces merged, moved, taken off or the stock changed since it
+    // was saved), with what only the saved record knows (its designs, backs, set, cut); else the Library's saved copy
+    if (live) rec = Object.assign({}, rec || {}, recOfPage(live), { id: (rec && rec.id) || live.sheetId || null, laserDoneAt: (rec && rec.laserDoneAt) || live.laserDoneAt || null,
+      roseCutAt: (rec && rec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true });
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
-    const G = { cv, rec, pieces, mine: pieces.filter(x => x.rid === rid), st: rec.stock ? stockOf(rec) : stockFor(rec.metal, live || undefined), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back };
+    const G = { cv, rec, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back };
     // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
     // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
     const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
