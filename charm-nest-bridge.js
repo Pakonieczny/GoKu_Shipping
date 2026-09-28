@@ -2456,14 +2456,16 @@ const Gate = window.Gate = (() => {
       input.disabled=sizeLocked;
       if(!input._draft && input!==document.activeElement)input.value=+(value*25.4).toFixed(2);
     }
-    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying;
+    // (a merge of this metal's sheets under way: the size waits for it, and says so plainly)
+    const merging=!!MERGE[m]?.busy;
+    const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying||merging;
     apply.textContent=node._sizeApplying?'Applying size…':'Apply size';
     apply.setAttribute('aria-busy',String(!!node._sizeApplying));
-    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
+    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
     apply.onclick=async()=>{
       const width=node.querySelector('[data-solid="w"]'),height=node.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
       if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
-      if(node._sizeApplying||sizeLocked||!editable(sh))return;
+      if(node._sizeApplying||sizeLocked||!editable(sh)||MERGE[m]?.busy)return;
       const run=B.run;
       const resize=()=>{
         // Recheck after any short, conflicting record write finishes. A solver
@@ -2486,27 +2488,30 @@ const Gate = window.Gate = (() => {
     if(solid(m))paintMerge(sh,node);
   }
 
-  /* ── Merge sheets (Paul, 28 Sep: "add a new button that allows two sheets to be merged into one, especially when the
-     user changes the size of the available sheet and now there's more room to fit the charms, but they're stuck in the
-     second sheet"). A 10K or 14K sheet made bigger kept its charms, and so did the sheets after it. From the Options of
-     either card, two ways:
-       · Move all onto Sheet 1: every charm of the metal's later sheets goes onto its first sheet that can still change,
-         which is nested again at its size; what still does not fit moves on to the next sheet as any overflow does, and
-         the sheets emptied go (their tabs fold away).
-       · Re-nest both sheets: every charm of those sheets is nested again from the first of them on, oldest orders first,
-         as a fresh run of the same flow: each sheet refills in turn (overflowToNextSheet follows _mergeNext), and a sheet
-         left empty at the end goes.
+  /* ── Merge sheets (Paul, 28 Sep 17:07: "add a new button that allows two sheets to be merged into one, especially when
+     the user changes the size of the available sheet and now there's more room to fit the charms, but they're stuck in
+     the second sheet and the user should be able just to retry everything onto the newly resized sheet or just attempt a
+     rerun of everything on both sheets"). From the Options of either card, two ways:
+       · Move all onto Sheet 1: Sheet 1 keeps its charms exactly where they are (a sheet is never re-arranged: one charm
+         at a time, 24 Sep). The later sheets' charms go into its free room the way new arrivals do: oldest orders first,
+         a few at a time, around the charms already there (appendOnly: the solver holds Sheet 1's placements as fixed).
+         What does not fit goes back to Sheet 2 (overflowToNextSheet follows _mergeNext), each charm pinned to the spot
+         it had there (_mergeSpots), so Sheet 2 only loses what moved; never to a new sheet. A later sheet left empty goes.
+       · Re-nest both sheets: every charm of those sheets is nested again from scratch, from Sheet 1 on, oldest orders
+         first, for the tightest packing: each sheet refills in turn and a sheet left empty at the end goes.
      Only sheets that can still change take part (not cut, not recalled, not in a committed set, not while a set commits,
-     none being rewritten in the sheet window) and only those of one run. A sheet in the current set leaves it while it is
-     nested again and goes back in with a new QR label, as after a size change (assemble); a sheet that goes leaves the
-     set first, and its saved record is archived at the run's next checkpoint (LiveNest.finish). No charm is dropped on
-     the way: each moves before its sheet goes, an order's copies stay together (keepOrdersWhole), and the approved
-     engraving backs go with their charms. ── */
+     none being rewritten in the sheet window) and only those of one run. A sheet in the current set leaves it while it
+     changes and goes back in with a new QR label, as after a size change (assemble); a sheet that goes leaves the set
+     first, and its saved record is archived at the run's next checkpoint (LiveNest.finish). No charm is dropped on the
+     way: each moves before its sheet is emptied, an order's copies stay together (keepOrdersWhole), and the approved
+     engraving backs go with their charms. Pressing Merge or Re-nest closes the panel, so the sheet is in full view for the
+     merge (mergeScene); its progress is the card's own status line (mergeStage), and "Done" is a note under it. ── */
   const MERGE = {};   // metal → { ask, busy, done }: this page's own, never saved (R is)
   const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone);
   const mergeable = p => solid(p.metal) && p.charms.length > 0 && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p);
   const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
   const sheetsWord = list => list.length === 1 ? `Sheet ${list[0].page}` : `Sheets ${list.slice(0, -1).map(p => p.page).join(", ")} and ${list.at(-1).page}`;
+  const byDate = (a, b) => (+a.orderDate || 0) - (+b.orderDate || 0);
   /** The metal's sheets a merge takes: the first that can still change, and the later ones of its run. null: nothing to merge. */
   function mergePlan(m) {
     if (!solid(m)) return null;
@@ -2518,10 +2523,10 @@ const Gate = window.Gate = (() => {
   }
   /** What a press will do, in the words the panel asks with. */
   function mergeWords(plan, kind) {
-    const t = plan.target, st = stockFor(t.metal, t), mm = v => +(v * 25.4).toFixed(1), inSet = plan.pages.some(p => p.setId && !p.draft);
-    if (kind === "move") return `${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} go onto Sheet ${t.page}, which is nested again at ${mm(st.wIn)} × ${mm(st.hIn)} mm. Whatever does not fit moves on to the next sheet.` +
-      (picked(t) ? (inSet ? ` Sheet ${t.page} gets a new QR label once it is nested.` : "") : plan.sources.some(p => picked(p)) ? ` Sheet ${t.page} is not in the current set, so these orders leave it.` : "");
-    return `All ${charmsWord(plan.total)} on ${sheetsWord(plan.pages)} are nested again from Sheet ${t.page} on, oldest orders first. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
+    const t = plan.target, inSet = plan.pages.some(p => p.setId && !p.draft), rest = plan.sources.length === 1 ? `Sheet ${plan.sources[0].page}` : "the later sheets";
+    if (kind === "move") return `${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} go into Sheet ${t.page}'s free room, oldest orders first. Sheet ${t.page}'s charms stay where they are, and whatever does not fit stays on ${rest}. A sheet left empty is removed.` +
+      (picked(t) ? (inSet ? ` Sheet ${t.page} gets a new QR label once they are placed.` : "") : plan.sources.some(p => picked(p)) ? ` Sheet ${t.page} is not in the current set, so these orders leave it.` : "");
+    return `All ${charmsWord(plan.total)} on ${sheetsWord(plan.pages)} are nested again from scratch, oldest orders first, for the tightest packing. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
   }
   // a sheet that goes: its saved record is archived at the run's next checkpoint (LiveNest.finish), as a repacked open
   // sheet's is, and the run forgets its hold and its note (only a record the cloud has: archiving an unknown one would stop the run)
@@ -2530,102 +2535,115 @@ const Gate = window.Gate = (() => {
     if (p.sheetId && p.cloud) (run.intakeRecovery ||= { retire: [], backs: [] }).retire.push(p.sheetId);
     const key = p.sheetId || p.metal + "-" + p.page; delete (run.sheetHolds || {})[key]; if (run.sheets) delete run.sheets[key];
   }
-  /** The merge as it is seen: the charms' thumbnails leave the sheet they were on (its queue, when the card shows it, or
-   *  its tab) and fly to Sheet 1, each onto its own thumbnail there; a tab left empty folds away as the row is drawn again
-   *  (setSheetTabs). Taken before the charms move; what it returns plays it once they have. */
-  function mergeFlight(m, sources, target, moving) {
-    const M = window.Motion, card = S.sheets[m]?.cardEl, none = () => {};
-    if (!M || !card || typeof document === "undefined") return none;
-    const tabOf = p => [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(b => pagesOf(m)[+b.dataset.i] === p) || null;
-    const ids = new Set(moving.map(c => c.id)), ghosts = [];
-    if (!M.reduced()) {
-      if (sources.includes(activePage(m)) && typeof queueGhosts === "function") ghosts.push(...queueGhosts(card, id => ids.has(id), 12).map(g => ({ g, id: g._card.dataset.cid })));
-      else for (const p of sources) {
-        const r = tabOf(p)?.getBoundingClientRect(); if (!r || !r.width) continue;
-        p.charms.filter(c => c.thumb).slice(0, 6).forEach((c, i, all) => {
-          const img = document.createElement("img"), s = 26; img.src = typeof cors === "function" ? cors(c.thumb) : c.thumb; img.alt = "";
-          const g = M.ghost(img, { left: r.left + r.width / 2 - s / 2 + (i - (all.length - 1) / 2) * 7, top: r.top + r.height / 2 - s / 2, width: s, height: s }, 0, card);
-          Object.assign(g._card.style, { objectFit: "contain", background: "#fff", border: "1px solid var(--line)", borderRadius: "6px" });
-          ghosts.push({ g, id: c.id });
-        });
-      }
-    }
-    return () => {
-      if (!ghosts.length) { M.pulse(() => tabOf(target)); return; }
-      const to = id => typeof cardSpot === "function" && activePage(m) === target ? cardSpot(m, id) : () => tabOf(target);
-      ghosts.forEach(({ g, id }, i) => setTimeout(() => M.fly(g, to(id), { plus: i ? false : "+" + moving.length }), i * 110));
-    };
+  /** The card's status line while a merge runs (the page's renderProgress asks): what it does now, and for how long. */
+  function mergeStage(sh) {
+    const b = sh && MERGE[sh.metal]?.busy; if (!b || !sh.el) return null;
+    return { text: "Merge · " + b.text, right: typeof fmt === "object" && fmt.s ? fmt.s(Date.now() - b.at) : "" };
   }
-  function repaintMerge(m) { for (const p of pagesOf(m)) { const node = p.el?.querySelector?.(".shGate"); if (node) renderRelease(p, node); } }
-  /** Merge a metal's sheets: kind "move" (all onto its first open sheet) or "renest" (all of them again, oldest first).
-   *  Resolves once the sheets it took are nested and saved (or it stopped), true when it ran. */
+  function repaintMerge(m) {
+    for (const p of pagesOf(m)) { const node = p.el?.querySelector?.(".shGate"); if (node) renderRelease(p, node); }
+    const a = activePage(m); if (a?.el && typeof renderProgress === "function") renderProgress(a);
+  }
+  /** The panel closes before the merge, so its sheet is in full view (never a panel over what it does). */
+  function closeOptions(m) {
+    (R.optionsOpen ||= {})[m] = false;
+    const d = S.sheets[m]?.cardEl?.querySelector?.(".sheetOptions"); if (!d || !d.open) return;
+    d.open = false; try { d.querySelector(":scope > summary")?.focus({ preventScroll: true }); } catch (_) {}
+  }
+  /** "Done", said once where the merge showed its progress: a note under the card's status line (a toast when the card
+   *  is out of sight). */
+  function mergeNote(m, done) {
+    const M = window.Motion, card = S.sheets[m]?.cardEl, line = () => card?.querySelector?.('[data-r="stage"]') || null, at = line();
+    if (M && at && typeof document !== "undefined" && !document.hidden && at.getClientRects().length) { const r = at.getBoundingClientRect(); if (r.bottom > 0 && r.top < innerHeight) { M.note(line, { text: done.text, ms: done.bad ? 12000 : 7000 }); return; } }
+    toast(done.text, done.bad ? "bad" : "ok", 6000);
+  }
+  /** Merge a metal's sheets: kind "move" (the later sheets' charms into Sheet 1's free room) or "renest" (all of them
+   *  again, from scratch). Resolves once the sheets it took are nested and saved (or it stopped), true when it ran. */
   function mergeSheets(m, kind) {
     const plan = mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
     if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
     const run = B.run, t = plan.target, ops = window.CharmNestOperations;
     st.ask = null; st.done = null;
-    st.busy = { kind, text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t };
-    repaintMerge(m);
+    st.busy = { kind, at: Date.now(), text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t };
+    closeOptions(m); repaintMerge(m);
     const work = async ctx => {
       // looked at again in its turn: a sheet may have started nesting, been cut or committed meanwhile
       const now = mergePlan(m);
       if (B.run !== run || !now || now.target !== t || now.sources.length !== plan.sources.length || now.sources.some((p, i) => p !== plan.sources[i])) throw new Error("the sheets changed meanwhile. Look again and press it once more");
       if (pagesOf(m).some(busyPage)) throw new Error("a sheet of this metal is nesting or saving. Try again when it is done");
-      const { sources, pages } = plan;
-      st.busy.text = kind === "move" ? `Moving ${charmsWord(plan.moving)} onto Sheet ${t.page}…` : `Gathering ${charmsWord(plan.total)} onto Sheet ${t.page}…`; repaintMerge(m);
-      // every sheet taking part is nested again from scratch: pins go, as with Apply size
-      for (const p of pages) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } p.feedWait = null; sheetDirty(p); }
-      // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is nested again)
+      const { sources, pages } = plan, moveIn = kind === "move";
+      st.busy.text = moveIn ? `Moving ${charmsWord(plan.moving)} into Sheet ${t.page}'s free room…` : `Gathering ${charmsWord(plan.total)} onto Sheet ${t.page}…`; repaintMerge(m);
+      // the picture of the sheets as they stand, for the merge to be seen (it never holds up what follows)
+      let seen = null; try { seen = mergeCapture(m, plan, kind); } catch (e) { console.warn("merge sheets: motion", e); }
+      if (moveIn) {
+        // nothing is re-arranged: every sheet taking part is only marked as changing, so the set lets it go (assemble)
+        // while Sheet 1 takes the others; a later sheet remembers where its charms lay, for the ones that come back to it
+        for (const p of pages) p.dirty = true;
+        for (const p of sources) { p._mergeSpots = new Map((p.placements || []).filter(x => [x.cxPt, x.cyPt].every(Number.isFinite)).map(x => [x.id, { cxPt: x.cxPt, cyPt: x.cyPt, angle: x.angle || 0 }])); p.feedWait = null; }
+      } else {
+        // every sheet taking part is nested again from scratch: pins go, as with Apply size
+        for (const p of pages) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } p.feedWait = null; sheetDirty(p); }
+      }
+      // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is written again)
       if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { try { await assemble(run, ctx); } catch (e) { changed(); throw e; } }
       const moving = sources.flatMap(p => p.charms), poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
-      let flight = () => {}; try { flight = mergeFlight(m, sources, t, moving); } catch (e) { console.warn("merge sheets: motion", e); }
       // onto Sheet 1 first, with their approved backs; only then is anything taken away
-      t.charms = t.charms.concat(moving).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0));
-      for (const c of moving) c.metal = m;
+      for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
+      t.charms = moveIn ? t.charms.concat(moving.slice().sort(byDate)) : t.charms.concat(moving).sort(byDate);
       for (const p of sources) {
         const backs = (p.backPool || []).filter(b => poolIds.has(b.poolId));
         if (backs.length) t.backPool = (t.backPool || []).filter(b => !poolIds.has(b.poolId)).concat(backs);
         p.backPool = (p.backPool || []).filter(b => !poolIds.has(b.poolId));
         p.charms = []; p.placements = []; p.rejects = []; p.feedWait = null; p.movedOn = null;
+        sheetDirty(p);
       }
-      if (kind === "move") for (const p of sources.slice().reverse()) { retirePage(run, p); removePage(p); }
-      else { for (let i = 0; i < pages.length - 1; i++) pages[i]._mergeNext = pages[i + 1]; for (const p of sources) sheetDirty(p); }
+      // what does not fit goes on in the merge's order: Sheet 1, then Sheet 2 (and on), never a new sheet
+      for (let i = 0; i < pages.length - 1; i++) pages[i]._mergeNext = pages[i + 1];
+      if (moveIn) {
+        // as a sheet takes new arrivals (LiveNest.add): its placements stay, locked, and the new charms go around them
+        delete t.runHold; delete t.intakeFinalized; delete t.intakeForceFinal; delete t.topup; delete t.missRearranged;
+        t.releaseFull = false; t.movedOn = null; t.problem = null; t.feedWait = null; t.rejects = [];
+        t.intakeAppend = t.placements.length > 0; t.appendOnly = t.intakeAppend; t.dirty = true; t.status = "ready";
+      }
       const prim = S.sheets[m]; if (prim.pages[prim.active] !== t && window.CN?.showPage) window.CN.showPage(m, prim.pages.indexOf(t));
       t._byHand = true; startNest(t);
-      agent({ metal: m, run: run?.runId }, "nest", kind === "move" ? `Merged by hand: ${charmsWord(plan.moving)} from ${sheetsWord(sources)} moved onto Sheet ${t.page}, which is nested again; what does not fit moves on` : `Re-nest by hand: ${charmsWord(plan.total)} of ${sheetsWord(pages)} nested again from Sheet ${t.page} on, oldest orders first`);
+      agent({ metal: m, run: run?.runId }, "nest", moveIn ? `Merged by hand: ${charmsWord(plan.moving)} from ${sheetsWord(sources)} go into Sheet ${t.page}'s free room, oldest orders first; its charms stay where they are, and what does not fit stays on ${sheetsWord(sources.slice(0, 1))}` : `Re-nest by hand: ${charmsWord(plan.total)} of ${sheetsWord(pages)} nested again from scratch from Sheet ${t.page} on, oldest orders first`);
       st.busy.text = `Nesting Sheet ${t.page}…`;
-      changed();
-      try { flight(); } catch (e) { console.warn("merge sheets: motion", e); }
+      changed(); repaintMerge(m);
+      if (seen) mergeScene(seen, plan.moving);
       return true;
     };
     const task = ops ? ops.run({ key: "sheet-merge:" + m, label: `Merging ${labelOf(m)} sheets`, resources: ["production:" + (run?.runId || t.runId || t.sheetId || m)], priority: 20 }, work) : work(null);
     // (once the charms have moved, the merge is done: only its line can still go wrong)
-    const after = () => watchMerge(m, st).catch(e => { for (const p of pagesOf(m)) delete p._mergeNext; st.busy = null; console.warn("merge sheets", e); repaintMerge(m); }).then(() => true);
+    const after = () => watchMerge(m, st).catch(e => { for (const p of pagesOf(m)) { delete p._mergeNext; delete p._mergeSpots; } st.busy = null; console.warn("merge sheets", e); repaintMerge(m); }).then(() => true);
     return task.then(after, e => {
+      for (const p of plan.pages) delete p._mergeSpots;
       st.busy = null; st.done = { text: "Not merged: " + e.message, at: Date.now(), bad: true };
       toast("Sheets not merged: " + e.message, "bad"); repaintMerge(m); return false;
     });
   }
-  /** The merge runs on as its sheets nest: its line says which, until none of them is working. Then a sheet the rerun
-   *  left empty goes, and the line says where the charms are. */
+  /** The merge runs on as its sheets nest: the card's line says which, until none of them is working. Then a sheet left
+   *  empty goes (its tab folds away as the row is drawn again), and a note says where the charms are. */
   async function watchMerge(m, st) {
     const b = st.busy, until = Date.now() + 3600000, mine = () => pagesOf(m).filter(p => b.pages.has(p) || !b.before.has(p));
     const held = p => p.status === "queued" && typeof heldForResume === "function" && heldForResume(p);   // a stopped run's: it waits for Resume
+    // (a sheet between two of its turns still holds the orders it will place next)
+    const working = p => busyPage(p) && !held(p) || !!p.feedWait?.length && !p.problem && !p.runHold && p.endedBy !== "stopped";
     for (;;) {
       await new Promise(r => setTimeout(r, 400));
-      const p = mine().find(p => busyPage(p) && !held(p));
+      const p = mine().find(working);
       if (!p || Date.now() > until) break;
       const text = p.status === "nesting" ? `Nesting Sheet ${p.page} · ${p.placements.length} of ${activeCharms(p).length} placed` : p.status === "finishing" ? `Writing Sheet ${p.page}…` : p.persisted && !p.persistedDone && !["queued"].includes(p.status) ? `Saving Sheet ${p.page}…` : `Sheet ${p.page} waits its turn…`;
-      if (text !== b.text) { b.text = text; repaintMerge(m); }
+      if (text !== b.text) { b.text = text; repaintMerge(m); } else { const a = activePage(m); if (a?.el && typeof renderProgress === "function") renderProgress(a); }
     }
-    for (const p of pagesOf(m)) delete p._mergeNext;
+    for (const p of pagesOf(m)) { delete p._mergeNext; delete p._mergeSpots; }
     const run = B.run, gone = [];
-    if (b.kind === "renest") for (const p of mine().reverse()) if (p !== b.target && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
+    for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
     const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
     st.busy = null;
     st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `Sheet ${trouble.page} needs a look: ${trouble.problem}` : waiting ? `Sheet ${waiting.page} waits for Resume` : ["Done", ...left.map(p => `Sheet ${p.page}: ${charmsWord(p.charms.length)}`)].join(" · ") };
-    if (gone.length) { agent({ metal: m, run: run?.runId }, "nest", `Re-nest: ${gone.length === 1 ? `Sheet ${gone[0]} was left empty and removed` : `${gone.length} sheets were left empty and removed`}`); changed(); }
-    repaintMerge(m); setTimeout(() => repaintMerge(m), 12500);
+    if (gone.length) { agent({ metal: m, run: run?.runId }, "nest", `Merge: ${gone.length === 1 ? `Sheet ${gone[0]} was left empty and removed` : `${gone.length} sheets were left empty and removed`}`); changed(); }
+    repaintMerge(m); mergeNote(m, st.done); setTimeout(() => repaintMerge(m), 12500);
   }
   /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
   function paintMerge(sh, node) {
@@ -2644,12 +2662,339 @@ const Gate = window.Gate = (() => {
     if (st.busy) q("busy-text").textContent = st.busy.text;
     help.hidden = !!st.busy || asking;
     help.classList.toggle("bad", !!done?.bad);
-    help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `${sheetsWord(plan.sources)} ${plan.sources.length > 1 ? "hold" : "holds"} ${charmsWord(plan.moving)}. Move them onto Sheet ${plan.target.page}, or nest ${plan.pages.length === 2 ? "both sheets" : "all " + plan.pages.length + " sheets"} again from the start.` : "";
+    help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `Use Move all when Sheet ${plan.target.page} has free room and its charms should stay where they are; use Re-nest to pack every charm again for the tightest fit.` : "";
     if (asking) { q("ask-text").textContent = mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }
     const ask = kind => { st.ask = kind; st.done = null; paintMerge(sh, node); q("go").focus(); };
     move.onclick = () => ask("move"); renest.onclick = () => ask("renest");
     q("cancel").onclick = () => { st.ask = null; paintMerge(sh, node); move.focus(); };
     q("go").onclick = () => { const kind = st.ask; st.ask = null; mergeSheets(m, kind); };
+  }
+
+  /* ── The merge, as it is seen (Paul, 28 Sep 18:01: "a sophisticated animation that's beautiful minimalist elegant that
+     shows when two sheets are being merged into one. The user must understand exactly what's happening ... some flying
+     pieces fly from one to the other, and then the sheet flies and condenses into one"). Only a picture of what has
+     already happened: the charms have moved and Sheet 1 is on its way to nesting before the first frame, and nothing
+     waits for it. On the card, over its picture:
+       1 · the sheets part: Sheet 1 steps aside and the later sheets slide out from behind it, each under its name and
+           the number of charms it holds;
+       2 · a move: the later sheets' charms lift off one by one, oldest orders first, and fly into Sheet 1: onto the spot
+           the nest has given it by then, or else onto its own thumbnail in Sheet 1's queue, where it waits for the nest.
+           The numbers count over as they go, and the sheets they left empty. A re-nest lifts every charm of the sheets
+           at once, and they all come down the same way;
+       3 · the emptied sheets condense into Sheet 1, which takes them with a small swell and grows back into its place;
+       4 · the picture is live again: a pulse, a soft glow and "+N".
+     About two and a half seconds and a second of glow, transform and opacity only, every step on the animation clock.
+     A hidden tab ends it at once; the card laid out anew, another sheet shown or a resize ends it with a quick fade;
+     reduced motion shows none of it. Whatever it adds goes when it ends. ── */
+  const FX = new Set();   // the scenes playing (Gate.mergeFx: what the tests look at)
+  /** What the scene needs from before the charms move, taken in the same turn and cheap: the card's own picture of
+   *  Sheet 1 for a move (its charms stay), copies of each sheet's placements. null: nothing is shown. */
+  function mergeCapture(m, plan, kind) {
+    const M = window.Motion, card = S.sheets[m]?.cardEl;
+    if (!M || !card || typeof document === "undefined" || typeof requestAnimationFrame !== "function" || typeof paintPreview !== "function" || M.reduced() || document.hidden) return null;
+    const wrap = card.querySelector(".shPreviewWrap"), cv = card.querySelector('[data-r="canvas"]'), front = activePage(m), v = front && front._view;
+    if (!wrap || !cv || !v || !cv.width || !wrap.getClientRects().length) return null;
+    const r = wrap.getBoundingClientRect(); if (r.width < 160 || r.bottom < 60 || r.top > innerHeight - 60) return null;
+    const st = stockFor(m, front), W = Math.min(cv.width - v.R, st.wPt * v.k), H = Math.min(cv.height - v.R, st.hPt * v.k);
+    if (W < 24 || H < 24) return null;
+    let still = null;
+    if (kind === "move" && front === plan.target) { still = document.createElement("canvas"); still.width = Math.round(W); still.height = Math.round(H); still.getContext("2d").drawImage(cv, v.R, v.R, W, H, 0, 0, still.width, still.height); }
+    return { m, kind, card, wrap, cv, cvW: cv.width, cvH: cv.height, R: v.R, k: v.k, W, H, still, front, target: plan.target,
+      pages: plan.pages.map(p => ({ p, n: p.page, charms: p.charms.slice(), placements: (p.placements || []).filter(x => [x.cxPt, x.cyPt].every(Number.isFinite)).map(x => ({ ...x })) })) };
+  }
+  /** The empty sheet as the card draws it (its edge and inset line), cut to the sheet. */
+  function sheetGround(cap) {
+    const full = document.createElement("canvas"); full.width = cap.cvW; full.height = cap.cvH;
+    const bare = Object.assign(Object.create(cap.target), { placements: [], charms: [], probe: null, probePlaced: [], status: "complete", sat: null, liveInfo: null, selected: null, _view: null });
+    paintPreview(full, bare, false, cap.R);
+    const out = document.createElement("canvas"); out.width = Math.round(cap.W); out.height = Math.round(cap.H);
+    out.getContext("2d").drawImage(full, cap.R, cap.R, cap.W, cap.H, 0, 0, out.width, out.height);
+    return out;
+  }
+  /** Sheet 1 as the card draws it, charms and all (a move leaves them where they are), cut to the sheet. */
+  function sheetStill(cap, e) {
+    const full = document.createElement("canvas"); full.width = cap.cvW; full.height = cap.cvH;
+    paintPreview(full, Object.assign(Object.create(e.p), { placements: e.placements, charms: e.charms, probe: null, probePlaced: [], status: "complete", sat: null, liveInfo: null, _view: null }), false, cap.R);
+    const out = document.createElement("canvas"); out.width = Math.round(cap.W); out.height = Math.round(cap.H);
+    out.getContext("2d").drawImage(full, cap.R, cap.R, cap.W, cap.H, 0, 0, out.width, out.height);
+    return out;
+  }
+  /** One charm alone, drawn as the card draws a placed charm, on a clear ground: its canvas and where it lies on the
+   *  sheet (canvas pixels). null when it cannot be drawn. */
+  function charmPiece(c, pl, k, pad) {
+    const d = Math.hypot(+c.widthPt || 0, +c.heightPt || 0) * (pl.scale || 1), w = +pl.wPt || d, h = +pl.hPt || d;
+    if (!(w > 0 && h > 0) || !c.outline || !c.centerPt || !window.CharmNestPDF) return null;
+    const px = (pl.xPt != null ? pl.xPt : pl.cxPt - w / 2) * k, py = (pl.yPt != null ? pl.yPt : pl.cyPt - h / 2) * k;
+    const x0 = Math.floor(px - pad), y0 = Math.floor(py - pad), cv = document.createElement("canvas");
+    cv.width = Math.max(2, Math.ceil(px + w * k + pad) - x0); cv.height = Math.max(2, Math.ceil(py + h * k + pad) - y0);
+    const g = cv.getContext("2d"), cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+    g.translate(pl.cxPt * k - x0, pl.cyPt * k - y0); g.rotate((+pl.angle || 0) * Math.PI / 180); if (pl.scale) g.scale(pl.scale, pl.scale);
+    g.fillStyle = c.custom && typeof CUSTOM_TINT === "string" ? CUSTOM_TINT : "rgba(200,162,78,.10)";
+    g.beginPath(); CharmNestPDF.pathToCanvas(g, c.outline, tx); for (const ln of (typeof cutLinesOf === "function" ? cutLinesOf(c) : [])) CharmNestPDF.pathToCanvas(g, ln, tx); g.fill("evenodd");
+    CharmNestPDF.drawCharm(g, c, tx, k);
+    return { cv, x0, y0 };
+  }
+  /** The scene plays on the next frame, once the card has drawn what the merge changed. */
+  function mergeScene(cap, count) {
+    const asked = performance.now();
+    // (a hidden tab runs its frames late, if at all: a scene of what happened long ago is not shown)
+    requestAnimationFrame(() => { if (performance.now() - asked > 700) return; try { playMerge(cap, count); } catch (e) { console.warn("merge sheets: motion", e); } });
+  }
+  function playMerge(cap, count) {
+    const { m, kind, card, wrap, cv } = cap, M = window.Motion, move = kind === "move";
+    if (!card.isConnected || !wrap.isConnected || !cv.isConnected || document.hidden || !M || M.reduced() || !wrap.getClientRects().length) return;
+    for (const f of [...FX]) if (f.card === card) f.stop();
+    // card-local: the scene rides along when the page scrolls
+    const origin = () => { const r = card.getBoundingClientRect(); return { x: r.left + card.clientLeft, y: r.top + card.clientTop }; };
+    const local = r => { const o = origin(); return { x: r.left - o.x, y: r.top - o.y, w: r.width, h: r.height }; };
+    const wr = local(wrap.getBoundingClientRect()), cvr = local(cv.getBoundingClientRect()), sx = cvr.w / cap.cvW;
+    const home = { x: cvr.x + cap.R * sx, y: cvr.y + cap.R * sx, w: cap.W * sx, h: cap.H * sx };
+    const list = cap.pages, n = list.length, ti = list.findIndex(e => e.p === cap.target), fi = list.findIndex(e => e.p === cap.front);
+    // the sheets side by side in the card's frame, each under its name
+    const tagH = 26, pad = 14, gap = Math.max(16, Math.round(wr.w * .045)), aw = wr.w - 2 * pad, ah = wr.h - 2 * pad - tagH;
+    const s = Math.max(.14, Math.min(1, (aw - gap * (n - 1)) / n / home.w, ah / home.h));
+    const sw = home.w * s, sh = home.h * s, x0 = wr.x + (wr.w - (sw * n + gap * (n - 1))) / 2, y0 = wr.y + pad + tagH + Math.max(0, (ah - sh) / 2);
+    const slots = list.map((_, i) => ({ x: x0 + i * (sw + gap), y: y0, w: sw, h: sh }));
+    const q = sw / cap.W;   // canvas pixels to the scene's, in a slot
+    const fx = document.createElement("div"); fx.className = "mergeFx"; fx.setAttribute("aria-hidden", "true"); card.appendChild(fx);
+    const put = (node, b, cls, z) => { node.className = cls; Object.assign(node.style, { left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px", zIndex: String(z) }); fx.appendChild(node); return node; };
+    const anims = [], hidden = new Set(); let live = true, timer = 0;
+    const play = (node, frames, o) => { const a = node.animate(frames, o); anims.push(a); return a; };
+    // a step on the animation clock (it slows, pauses and ends with the animations)
+    const cue = (ms, fn) => { const a = new Animation(new KeyframeEffect(null, [], { duration: Math.max(0, ms) }), document.timeline); anims.push(a); a.onfinish = () => { if (!live) return; try { fn(); } catch (e) { console.warn("merge sheets: motion", e); stop(true); } }; a.play(); return a; };
+    // a box at the size sc, its centre at (cx, cy); a box drawn over another; a point a of a box (its own pixels) at (cx, cy)
+    const at = (b, cx, cy, sc) => `translate(${(cx - b.x - b.w * sc / 2).toFixed(2)}px,${(cy - b.y - b.h * sc / 2).toFixed(2)}px) scale(${sc.toFixed(4)})`;
+    const from = (b, h) => `translate(${(h.x - b.x).toFixed(2)}px,${(h.y - b.y).toFixed(2)}px) scale(${(h.w / b.w).toFixed(4)})`;
+    const pose = (b, a, cx, cy, sc = 1, rot = 0) => `translate(${(cx - b.x).toFixed(2)}px,${(cy - b.y).toFixed(2)}px) rotate(${rot.toFixed(2)}deg) scale(${sc.toFixed(4)}) translate(${(-a.x).toFixed(2)}px,${(-a.y).toFixed(2)}px)`;
+    // (a sheet slot, as it was on the card: the same point of the sheet, at the card's size)
+    const homeOf = (b, slot) => ({ x: home.x + (b.x - slot.x) / s, y: home.y + (b.y - slot.y) / s, w: b.w / s, h: b.h / s });
+    const hideStyle = document.createElement("style");
+    const paintHidden = () => { hideStyle.textContent = hidden.size ? [...hidden].map(id => `.sheetCard[data-m="${m}"] [data-r="queue"] img[data-cid="${CSS.escape(String(id))}"]`).join(",") + "{opacity:0!important}" : ""; };
+    // (a thumbnail shows again as its charm lands: at most once a frame, the page's style being worked out anew each time)
+    let unhiding = 0; const unhide = id => { hidden.delete(id); if (!unhiding) unhiding = requestAnimationFrame(() => { unhiding = 0; if (live) paintHidden(); }); };
+    const onVis = () => { if (document.hidden) stop(false); }, onResize = () => stop(true);
+    const scene = { card, stop: (soft = false) => stop(soft) };
+    function stop(soft) {
+      if (!live) return; live = false; FX.delete(scene); clearTimeout(timer); cancelAnimationFrame(unhiding);
+      document.removeEventListener("visibilitychange", onVis); removeEventListener("resize", onResize);
+      hideStyle.remove();
+      const gone = () => { for (const a of anims) try { a.cancel(); } catch (_) {} fx.remove(); };
+      if (soft && fx.isConnected && !document.hidden) fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: "ease-out", fill: "forwards" }).finished.then(gone, gone); else gone();
+    }
+    // the card laid out anew under it (a row above the picture appeared, the card was drawn again, another sheet shown): it ends
+    // (measured by its centre and its own width: the pulse at the end scales it about its centre)
+    const w0 = wrap.offsetWidth, wc = { x: wr.x + wr.w / 2, y: wr.y + wr.h / 2 };
+    const inPlace = () => { if (!card.isConnected || !wrap.isConnected || activePage(m) !== cap.target) return false; const r = local(wrap.getBoundingClientRect()); return Math.abs(r.x + r.w / 2 - wc.x) < 3 && Math.abs(r.y + r.h / 2 - wc.y) < 3 && Math.abs(wrap.offsetWidth - w0) < 3; };
+    const guard = fn => () => { if (!inPlace()) return stop(true); fn(); };
+
+    /* the pictures: the empty sheet under each (Sheet 1 as it is, for a move), the charms each a piece of their own */
+    const ground = sheetGround(cap), dpr = cap.cvW / Math.max(1, cvr.w), padPx = 3 * cap.k + 4 * dpr;
+    const still = move ? cap.still || sheetStill(cap, list[ti]) : null;
+    const veil = put(document.createElement("div"), wr, "mergeFxVeil", 1);
+    const sheets = list.map((e, i) => {
+      const c = document.createElement("canvas"); c.width = ground.width; c.height = ground.height;
+      c.getContext("2d").drawImage(move && i === ti ? still : ground, 0, 0, c.width, c.height);
+      return put(c, slots[i], "mergeFxSheet", i === fi ? 20 : 10 - i);
+    });
+    // each sheet's name, and how many charms it holds (they count over as the charms go)
+    const counts = list.map(e => e.charms.length), total = counts.reduce((a, b) => a + b, 0), digits = String(total).length;
+    const tags = list.map((e, i) => {
+      const tg = document.createElement("span"), num = document.createElement("b"); tg.append(`Sheet ${e.n}`); num.textContent = String(counts[i]); num.style.minWidth = digits + "ch"; tg.append(num);
+      put(tg, { x: 0, y: 0, w: 0, h: 0 }, "mergeFxTag" + (i === ti ? " on" : ""), 30); Object.assign(tg.style, { width: "", height: "" });
+      const w = tg.offsetWidth || 64, h = tg.offsetHeight || 18, box = { x: slots[i].x + slots[i].w / 2 - w / 2, y: slots[i].y - h - 7, w, h };
+      Object.assign(tg.style, { left: box.x + "px", top: box.y + "px" }); tg._box = box; tg._num = num; return tg;
+    });
+    const recount = (i, d, beat) => { counts[i] = Math.max(0, counts[i] + d); tags[i]._num.textContent = String(counts[i]); if (beat) play(tags[i]._num, [{ transform: "scale(1)" }, { transform: "scale(1.35)", offset: .3 }, { transform: "scale(1)" }], { duration: 300, easing: "ease-out" }); };
+    const pieces = [];
+    list.forEach((e, i) => {
+      if (move && i === ti) return;   // Sheet 1's charms stay where they are: they are its picture
+      const byId = new Map(e.charms.map(c => [c.id, c])), placed = new Set();
+      for (const pl of e.placements) {
+        const c = byId.get(pl.id); if (!c) continue;
+        let pc = null; try { pc = charmPiece(c, pl, cap.k, padPx); } catch (_) {} if (!pc) continue;
+        placed.add(c.id);
+        const b = { x: slots[i].x + pc.x0 * q, y: slots[i].y + pc.y0 * q, w: pc.cv.width * q, h: pc.cv.height * q };
+        pieces.push({ c, i, pl, node: put(pc.cv, b, "mergeFxPiece", (i === fi ? 20 : 10 - i) + 1), b, a: { x: (pl.cxPt * cap.k - pc.x0) * q, y: (pl.cyPt * cap.k - pc.y0) * q } });
+      }
+      // charms waiting on a sheet with no place yet: their thumbnails, in a row along its top
+      const waiting = e.charms.filter(c => !placed.has(c.id) && c.thumb).slice(0, 40), tw = Math.max(14, Math.min(26, slots[i].w / 9));
+      waiting.forEach((c, j) => {
+        const per = Math.max(1, Math.floor((slots[i].w - 12) / (tw + 5))), b = { x: slots[i].x + 6 + (j % per) * (tw + 5), y: slots[i].y + 6 + Math.floor(j / per) * (tw + 5), w: tw, h: tw };
+        if (b.y + tw > slots[i].y + slots[i].h) return;
+        const img = document.createElement("img"); img.alt = ""; img.decoding = "async"; img.src = typeof cors === "function" ? cors(c.thumb) : c.thumb;
+        pieces.push({ c, i, node: put(img, b, "mergeFxPiece", (i === fi ? 20 : 10 - i) + 1), b, a: { x: tw / 2, y: tw / 2 }, thumb: true });
+      });
+    });
+    document.head.appendChild(hideStyle);
+    FX.add(scene);
+    document.addEventListener("visibilitychange", onVis); addEventListener("resize", onResize);
+    timer = setTimeout(() => stop(false), 60000);   // (never needed: the last step ends it)
+
+    /* the timeline (ms) */
+    const flyers = pieces.slice().sort((a, b) => byDate(a.c, b.c) || a.i - b.i);
+    const T = move ? { unfold: 460, fly0: 500, fly: 540, step: 70, spread: 600 } : { unfold: 460, lift0: 500, lift: 220, fly0: 680, fly: 500, step: 45, spread: 560 };
+    const spread = Math.min(T.spread, Math.max(0, flyers.length - 1) * T.step), step = flyers.length > 1 ? spread / (flyers.length - 1) : 0;
+    const landed = T.fly0 + spread + T.fly, C0 = Math.max(T.unfold + 200, landed - 160), CD = 440, R0 = C0 + Math.round(CD * .72), RD = 540, FADE = R0 + RD, SET = FADE + 110, END = SET + 1000;
+    const ease = "cubic-bezier(.3,.1,.2,1)";
+    // 0 · the frame quiets, and the sheets part: the front one steps aside, the others slide out from behind it
+    play(veil, [{ opacity: 0 }, { opacity: 1 }], { duration: 170, easing: "ease-out", fill: "backwards" });
+    list.forEach((e, i) => {
+      const b = slots[i], unfold = { delay: 40, duration: T.unfold, easing: ease, fill: "backwards" };
+      play(sheets[i], [{ transform: from(b, home) }, { transform: "none" }], unfold);
+      if (i !== fi) play(sheets[i], [{ opacity: 0 }, { opacity: 1, offset: .45 }, { opacity: 1 }], { ...unfold, easing: "linear" });
+      for (const p of pieces.filter(p => p.i === i)) {
+        play(p.node, [{ transform: from(p.b, homeOf(p.b, b)) }, { transform: "none" }], unfold);
+        if (i !== fi || p.thumb) play(p.node, [{ opacity: 0 }, { opacity: 0, offset: p.thumb ? .5 : .25 }, { opacity: 1 }], { ...unfold, easing: "linear" });
+      }
+      play(tags[i], [{ opacity: 0, transform: "translateY(5px)" }, { opacity: 1, transform: "none" }], { delay: T.unfold - 60, duration: 260, easing: "ease-out", fill: "backwards" });
+    });
+    // 1b · a re-nest: every charm on the sheets lifts at once
+    const centre = p => ({ x: p.b.x + p.a.x, y: p.b.y + p.a.y });
+    if (!move) pieces.forEach((p, j) => { const c = centre(p); play(p.node, [{ transform: pose(p.b, p.a, c.x, c.y) }, { transform: pose(p.b, p.a, c.x, c.y - 3, 1.07) }], { delay: T.lift0 + (j % 7) * 12, duration: T.lift, easing: "cubic-bezier(.3,.7,.3,1)", fill: "forwards" }); });
+    /* 2 · one by one into Sheet 1: onto the spot the nest has given it by then, drawn as it is; or else into Sheet 1's free
+           room, faint, in a tidy grid at its far end, to wait for the nest (its thumbnail shows in the queue as it comes).
+           One the nest puts down while the scene plays glides from there to its spot; the others sink into the sheet as
+           the sheets become one, and the card draws them as the nest puts them down. */
+    const spotOf = c => {
+      const pl = (cap.target.placements || []).find(x => x.id === c.id); if (!pl || ![pl.cxPt, pl.cyPt].every(Number.isFinite)) return null;
+      return { pl, x: slots[ti].x + pl.cxPt * cap.k * q, y: slots[ti].y + pl.cyPt * cap.k * q };
+    };
+    // (a charm on its way keeps its thumbnail in the queue hidden until it lands, when it is in sight there)
+    {
+      const qu = card.querySelector('[data-r="queue"]'), qb = qu && qu.getBoundingClientRect(), seen = new Set();
+      if (qb) for (const img of qu.querySelectorAll("img[data-cid]")) { const r = img.getBoundingClientRect(); if (r.width && r.left >= qb.left - 1 && r.right <= qb.right + 1 && r.top >= 0 && r.bottom <= innerHeight) seen.add(img.dataset.cid); }
+      for (const p of flyers) if (seen.has(String(p.c.id))) { hidden.add(p.c.id); p.hid = true; }
+    }
+    paintHidden();
+    const GH = .42, every = Math.max(1, Math.ceil(flyers.length / 36)), kpx = cap.k * q;
+    const dia = p => p.thumb ? p.b.w : Math.max(+p.pl.wPt || 0, +p.pl.hPt || 0) * kpx || Math.max(p.b.w, p.b.h) * .8;
+    // the free room: beside or below Sheet 1's charms (a move keeps them), the whole sheet for a re-nest
+    const bay = (() => {
+      const t = slots[ti], mg = 6, all = { x: mg, y: mg, w: t.w - 2 * mg, h: t.h - 2 * mg };
+      let ex = null;
+      if (move) for (const pl of list[ti].placements) {
+        const w = (+pl.wPt || 0) * kpx, h = (+pl.hPt || 0) * kpx, x = (pl.xPt != null ? pl.xPt * kpx : pl.cxPt * kpx - w / 2) + w, y = (pl.yPt != null ? pl.yPt * kpx : pl.cyPt * kpx - h / 2) + h;
+        ex = { x: Math.max(ex ? ex.x : 0, x), y: Math.max(ex ? ex.y : 0, y) };
+      }
+      if (!ex) return all;
+      const right = { x: ex.x + mg, y: mg, w: t.w - ex.x - 2 * mg, h: t.h - 2 * mg }, below = { x: mg, y: ex.y + mg, w: t.w - 2 * mg, h: t.h - ex.y - 2 * mg };
+      return [right, below].filter(b => b.w >= 16 && b.h >= 16).sort((a, b) => b.w * b.h - a.w * a.h)[0] || null;
+    })();
+    // (cells the size of an average charm, smaller when they would not all fit; the grid sits in the far corner, away
+    //  from where the nest starts, and the charms that wait take its cells in turn, oldest first)
+    const cells = [], cellAt = { c: 0, next: 0 };
+    if (bay && flyers.length) {
+      let c = flyers.reduce((a, p) => a + dia(p), 0) / flyers.length * 1.12;
+      while (c > 6 && Math.floor(bay.w / c) * Math.floor(bay.h / c) < flyers.length) c *= .93;
+      const cols = Math.max(1, Math.min(flyers.length, Math.floor(bay.w / c))), rows = Math.ceil(flyers.length / cols);
+      const ox = slots[ti].x + bay.x + bay.w - cols * c + c / 2, oy = slots[ti].y + bay.y + Math.max(0, bay.h - rows * c) + c / 2;
+      for (let j = 0; j < flyers.length; j++) cells.push({ x: ox + (j % cols) * c, y: oy + Math.floor(j / cols) * c });
+      cellAt.c = c;
+    }
+    const cellFor = p => { const x = cells[cellAt.next++]; return x && { x: x.x, y: x.y, g: Math.min(1, cellAt.c * .88 / dia(p)) }; };
+    // (a charm put down on its spot rings once, softly)
+    const ring = (x, y, d) => { const rr = Math.max(14, Math.min(40, d)), r = put(document.createElement("i"), { x: x - rr / 2, y: y - rr / 2, w: rr, h: rr }, "mergeFxRing", 42); play(r, [{ transform: "scale(.7)", opacity: 0 }, { transform: "scale(.95)", opacity: .7, offset: .2 }, { transform: "scale(1.35)", opacity: 0 }], { duration: 440, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }); };
+    // how it lies on its spot, from how it lay before: turned and scaled as the nest has it
+    const onSpot = (p, spot) => {
+      if (p.thumb) return { end: Math.max(.3, Math.min(3, Math.max(+spot.pl.wPt || 0, +spot.pl.hPt || 0) * kpx / p.b.w || 1)), rot: 0 };
+      return { end: (spot.pl.scale || 1) / (p.pl.scale || 1), rot: ((((+spot.pl.angle || 0) - (+p.pl.angle || 0)) % 360) + 540) % 360 - 180 };
+    };
+    // down on its spot, it is part of Sheet 1's picture (drawn as the nest has it)
+    const settle = (p, spot) => { p.done = true; try { const pc = charmPiece(p.c, spot.pl, cap.k, padPx); if (pc) sheets[ti].getContext("2d").drawImage(pc.cv, pc.x0, pc.y0); } catch (_) {} p.node.remove(); };
+    // a faint one still waiting sinks into the sheet as the sheets become one: the card shows it once the nest puts it down
+    const sink = p => {
+      p.done = true; const g = p.ghost;
+      play(p.node, [{ transform: pose(p.b, p.a, g.x, g.y, g.g), opacity: GH }, { transform: pose(p.b, p.a, g.x, g.y, g.g * .82), opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" });
+      cue(260, () => p.node.remove());
+    };
+    let late = false, sealed = false;
+    const glide = (p, spot) => {
+      p.gliding = true; const { b, a } = p, g = p.ghost, { end, rot } = onSpot(p, spot), mid = { x: (g.x + spot.x) / 2, y: Math.min(g.y, spot.y) - 12 };
+      play(p.node, [{ transform: pose(b, a, g.x, g.y, g.g), opacity: GH }, { transform: pose(b, a, mid.x, mid.y, (g.g + end) / 2 * 1.08, rot * .6), opacity: .9, offset: .5 }, { transform: pose(b, a, spot.x, spot.y, end, rot), opacity: 1 }], { duration: 400, easing: ease, fill: "forwards" });
+      cue(400, () => { settle(p, spot); ring(spot.x, spot.y, dia(p) * end + 4); });
+    };
+    const flyOne = (p, j) => {
+      const across = p.i !== ti;   // (Sheet 1's own, in a re-nest, stays Sheet 1's: its number does not change)
+      if (across) recount(p.i, -1, false);
+      const spot = spotOf(p.c), t = slots[ti], b = p.b, a = p.a, c0 = centre(p), size = Math.max(b.w, b.h);
+      const lifted = move ? { x: c0.x, y: c0.y - 7, s: 1.12 } : { x: c0.x, y: c0.y - 3, s: 1.07 };
+      let c2, end, rot = 0, op = GH;
+      if (spot) { c2 = spot; ({ end, rot } = onSpot(p, spot)); op = 1; }
+      else if ((p.cell = cellFor(p))) { c2 = p.cell; end = p.cell.g; }
+      else { c2 = { x: t.x + t.w / 2, y: t.y + t.h / 2 }; end = .3; op = 0; }   // (Sheet 1 has no free room in sight: it goes into it)
+      const bend = Math.min(80, 12 + Math.hypot(c2.x - lifted.x, c2.y - lifted.y) * .2), c1 = { x: (lifted.x + c2.x) / 2, y: Math.min(lifted.y, c2.y) - bend };
+      const B = u => ({ x: (1 - u) * (1 - u) * lifted.x + 2 * (1 - u) * u * c1.x + u * u * c2.x, y: (1 - u) * (1 - u) * lifted.y + 2 * (1 - u) * u * c1.y + u * u * c2.y });
+      const mid = (lifted.s + end) / 2, pt = [B(.34), B(.7), B(.93)], o = move ? .15 : 0, ease2 = "cubic-bezier(.45,.05,.3,1)";
+      p.node.style.zIndex = "40";
+      play(p.node, [
+        ...(move ? [{ transform: pose(b, a, c0.x, c0.y), opacity: 1, offset: 0 }] : []),
+        { transform: pose(b, a, lifted.x, lifted.y, lifted.s), opacity: 1, offset: o },
+        { transform: pose(b, a, pt[0].x, pt[0].y, lifted.s * .97 + mid * .03, rot * .3), opacity: 1, offset: .44 },
+        { transform: pose(b, a, pt[1].x, pt[1].y, mid, rot * .75), opacity: 1, offset: .74 },
+        { transform: pose(b, a, pt[2].x, pt[2].y, end * 1.05, rot * .96), opacity: op > .5 ? 1 : .8, offset: .92 },
+        { transform: pose(b, a, c2.x, c2.y, end, rot), opacity: op, offset: 1 }], { duration: T.fly, easing: ease2, fill: "forwards" });
+      // its shadow on the sheets below, while it is in the air
+      const d = size * .78, sb = { x: c0.x - d / 2, y: c0.y - d / 2, w: d, h: d }, sa = { x: d / 2, y: d / 2 }, shade = put(document.createElement("i"), sb, "mergeFxShade", 39);
+      play(shade, [
+        ...(move ? [{ transform: pose(sb, sa, c0.x, c0.y), opacity: 0, offset: 0 }] : []),
+        { transform: pose(sb, sa, lifted.x, lifted.y + 5, lifted.s), opacity: .55, offset: o },
+        { transform: pose(sb, sa, pt[0].x, pt[0].y + 10, lifted.s * .97 + mid * .03), opacity: .45, offset: .44 },
+        { transform: pose(sb, sa, pt[1].x, pt[1].y + 9, mid), opacity: .4, offset: .74 },
+        { transform: pose(sb, sa, c2.x, c2.y + 1, end), opacity: 0, offset: 1 }], { duration: T.fly, easing: ease2, fill: "forwards" });
+      const beat = !(j % every);
+      cue(T.fly, () => {
+        shade.remove();
+        if (p.hid) { p.hid = false; unhide(p.c.id); }
+        if (across) recount(ti, +1, beat);
+        if (spot) { settle(p, spot); return ring(c2.x, c2.y, dia(p) * end + 4); }
+        if (!op) { p.done = true; return p.node.remove(); }
+        p.ghost = { x: c2.x, y: c2.y, g: end };
+        const now = !late && spotOf(p.c);
+        if (now) glide(p, now); else if (sealed) sink(p);
+      });
+    };
+    // (the watch below keeps an eye on the card: a flight need not measure it again)
+    flyers.forEach((p, j) => cue(T.fly0 + j * step, () => flyOne(p, j)));
+    // (every so often: still in place, and has the nest put down one that waits?)
+    const watch = () => cue(150, guard(() => { if (!late) for (const p of flyers) if (p.ghost && !p.gliding && !p.done) { const sp = spotOf(p.c); if (sp) glide(p, sp); } watch(); }));
+    watch();
+    cue(C0 - 120, () => { late = true; });
+    // 3 · the emptied sheets condense into Sheet 1, which takes them with a small swell and grows back into its place
+    const tb = slots[ti], tc = { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 };
+    cue(C0, guard(() => {
+      sealed = true; for (const p of flyers) if (p.ghost && !p.gliding && !p.done) sink(p);
+      for (const p of flyers) if (p.hid) { hidden.delete(p.c.id); p.hid = false; } paintHidden();   // (one out of sight never landed)
+      // (a charm that could not be drawn went along unseen: the numbers end where the charms are)
+      list.forEach((e, i) => { if (i !== ti && counts[i]) { const d = counts[i]; recount(i, -d, false); recount(ti, d, false); } });
+      list.forEach((e, i) => {
+        if (i === ti) return;
+        const b = slots[i], c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+        play(sheets[i], [{ transform: "none", opacity: 1 }, { transform: at(b, c.x, c.y - 4, .94), opacity: 1, offset: .26 }, { transform: at(b, tc.x, tc.y, .12), opacity: 0 }], { duration: CD, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" });
+        const g = tags[i]._box; play(tags[i], [{ transform: "none", opacity: 1 }, { transform: at(g, tc.x, tb.y + 4, .5), opacity: 0 }], { duration: CD * .8, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" });
+      });
+      // (Sheet 1's name makes way for the sheet as it grows)
+      play(tags[ti], [{ transform: "none", opacity: 1 }, { transform: "translateY(-6px)", opacity: 0 }], { delay: CD * .6, duration: 200, easing: "ease-in", fill: "forwards" });
+    }));
+    cue(R0, guard(() => {
+      play(sheets[ti], [{ transform: "none", easing: "ease-out" }, { transform: at(tb, tc.x, tc.y, 1.035), offset: .2, easing: ease }, { transform: from(tb, home) }], { duration: RD, fill: "forwards" });
+    }));
+    // the picture on the card shows through: the sheet that grew back is the card's own
+    cue(FADE, guard(() => { for (const x of [veil, sheets[ti]]) play(x, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: "ease-in-out", fill: "forwards" }); }));
+    // 4 · the picture, live again, answers: a pulse, a soft glow, "+N" (and the sheet's tab)
+    cue(SET, guard(() => {
+      play(wrap, [{ transform: "none" }, { transform: "scale(1.012)", offset: .34 }, { transform: "none" }], { duration: 560, easing: "ease-out" });
+      const glow = put(document.createElement("i"), wr, "mergeFxGlow", 45);
+      play(glow, [{ opacity: 0 }, { opacity: 1, offset: .3 }, { opacity: 0 }], { duration: 850, easing: "ease-out", fill: "forwards" });
+      if (count > 0) {
+        // (over the free room the charms went into)
+        const plus = put(document.createElement("span"), bay ? { x: home.x + (bay.x + bay.w / 2) / s, y: home.y + (bay.y + bay.h / 2) / s, w: 0, h: 0 } : { x: home.x + home.w / 2, y: home.y + home.h * .45, w: 0, h: 0 }, "mPlus mergeFxPlus", 50);
+        Object.assign(plus.style, { width: "", height: "" }); plus.textContent = "+" + count;
+        play(plus, [{ transform: "translate(-50%,-50%) scale(.7)", opacity: 0 }, { transform: "translate(-50%,calc(-50% - 12px)) scale(1)", opacity: 1, offset: .28 }, { transform: "translate(-50%,calc(-50% - 16px)) scale(1)", opacity: 1, offset: .62 }, { transform: "translate(-50%,calc(-50% - 30px)) scale(1)", opacity: 0 }], { duration: 980, easing: "ease-out", fill: "forwards" });
+      }
+      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === cap.target);
+      if (tab && tab.getClientRects().length) play(tab, [{ transform: "scale(1)" }, { transform: "scale(1.14)", offset: .32 }, { transform: "scale(.97)", offset: .62 }, { transform: "scale(1)" }], { duration: 700, easing: "ease-out" });
+    }));
+    cue(END, () => stop(false));
   }
 
   async function load() {
@@ -2746,7 +3091,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, mergeStage, mergeFx: () => ({ live: FX.size }), state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
