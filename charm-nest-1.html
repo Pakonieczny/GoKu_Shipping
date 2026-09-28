@@ -503,6 +503,9 @@ dialog.phv{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;max-wid
 dialog.phv::backdrop{background:rgba(16,14,12,.95)}
 /* inside an open dialog it is a layer of that dialog (no second pop-up), with its own shade */
 dialog.phv.layer{z-index:2147483000;padding:0;border:0;background:rgba(16,14,12,.95)}
+dialog.phv.layer.phvIn{background:transparent}
+.phvShade{position:fixed;inset:0;z-index:-1;background:rgba(16,14,12,.95);pointer-events:none;will-change:opacity}
+.phvGhost{position:fixed;max-width:none;max-height:none;margin:0;transform-origin:0 0;pointer-events:none;background:#fff;box-shadow:0 10px 50px rgba(0,0,0,.45);will-change:transform,opacity}
 .phvStage{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;cursor:zoom-in}
 .phvStage.zoomed{cursor:grab}.phvStage.zoomed.drag{cursor:grabbing}
 .phvImg{position:absolute;left:0;top:0;max-width:none;max-height:none;transform-origin:0 0;will-change:transform;-webkit-user-drag:none;box-shadow:0 10px 50px rgba(0,0,0,.45);background:#fff}
@@ -1131,6 +1134,48 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .ordRow .ship{font-family:var(--mono);color:var(--ink70);font-size:11px;white-space:nowrap}
 .ordRow .why{grid-column:1/-1;font-size:11.5px;color:#8a3a26;padding:2px 0 4px 8px;border-left:2px solid var(--clay)}
 .ordRow .why button{margin-left:8px}
+/* ── Orders › Cancelled (Paul, 28 Sep, A5): every cancelled order, newest first. Etsy's carry slate, a person's clay;
+   what happened on each sheet sits under the reason (sage: taken off, gold: already cut, set aside) ── */
+.ordBar.onCx #ordMetalHost,.ordBar.onCx .ordDisplay{display:none}
+.cxWrap{display:grid;gap:8px;padding:2px 0 10px}
+.cxSum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:18px;padding:0 4px;font:11.5px var(--sans);color:var(--ink45)}
+.cxSum b{font:700 12px var(--mono);color:var(--ink70)}
+.cxLegend{margin-left:auto;display:inline-flex;gap:14px}.cxLegend span{display:inline-flex;align-items:center;gap:6px}
+.cxDot{display:inline-block;width:7px;height:7px;border-radius:50%}.cxDot.etsy{background:var(--slate)}.cxDot.person{background:var(--clay)}
+.cxList{display:grid;gap:5px}
+.cxRow{position:relative;display:grid;grid-template-columns:minmax(130px,190px) minmax(110px,.7fr) minmax(0,1.6fr) auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 12px 9px 16px;font-size:12.5px;transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}
+.cxRow::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--clay);opacity:.65}
+.cxRow.etsy::before{background:var(--slate)}
+.cxRow.open{cursor:pointer}
+.cxRow.open:hover,.cxRow.open:focus-visible{transform:translateY(-1px);border-color:var(--ink45);box-shadow:var(--hoverLift);outline:none}
+.cxRow.asking{border-color:var(--clay);box-shadow:0 0 0 3px var(--claySoft)}
+.cxId{display:grid;line-height:1.3;min-width:0}.cxId b{font:700 13px var(--mono);color:var(--ink)}.cxId span{font:11.5px var(--sans);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cxWhat{display:flex;flex-wrap:wrap;gap:4px;min-width:0}.cxWhat span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 10.5px var(--mono);background:var(--paper2);border-radius:999px;padding:2px 8px;color:var(--ink70)}.cxWhat i{font:11px var(--sans);font-style:normal;color:var(--ink45)}
+.cxWhy{display:grid;gap:3px;min-width:0;font:12px/1.4 var(--sans);color:var(--ink70)}
+.cxWho{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cxWho time{font:10.5px var(--mono);color:var(--ink45)}
+.cxBadge{padding:2px 8px;border-radius:999px;font:700 10.5px var(--sans);white-space:nowrap}
+.cxBadge.etsy{background:var(--slateSoft);color:#33525d}.cxBadge.person{background:var(--claySoft);color:#8a3a26}
+.cxReason{overflow-wrap:anywhere}.cxReason.none{color:var(--ink45);font-style:italic}
+.cxFates{display:flex;flex-wrap:wrap;gap:3px 12px}
+.cxFates span{display:inline-flex;align-items:center;gap:6px;font:11px var(--sans);color:var(--ink45)}
+.cxFates span::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;border:1.5px solid var(--sage)}
+.cxFates span.cut{color:#7a5a1d}.cxFates span.cut::before{border-color:var(--gold);background:var(--goldSoft)}
+.cxAct{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:100px;white-space:nowrap}
+.cxAskBar{position:absolute;right:10px;top:1px;bottom:1px;display:flex;align-items:center;gap:6px;padding-left:40px;background:linear-gradient(90deg,rgba(255,254,251,0),var(--card) 34px)}
+.cxRow.asking .cxAct{visibility:hidden}
+.cxAsk{font:600 11.5px var(--sans);color:var(--ink70);margin-right:2px}
+.cxGo{font:16px/1 var(--sans);color:var(--ink25);transition:transform .15s ease,color .15s ease}.cxRow.open:hover .cxGo{color:var(--ink70);transform:translateX(2px)}
+.cxWait{display:flex;align-items:center;gap:8px;justify-content:center;padding:40px;color:var(--ink45);font:12.5px var(--sans)}
+.cxEmpty small{max-width:52ch;font-size:11.5px;line-height:1.5;color:var(--ink45)}
+.cxFoot{display:flex;justify-content:center}.cxFoot:empty{display:none}
+.cxMore{padding:8px;font:11.5px var(--sans);color:var(--ink45)}
+.cxIn{animation:cxIn .42s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 32ms)}
+@keyframes cxIn{from{opacity:0;transform:translateY(8px)}}
+.cxTokenWrap{position:fixed;z-index:139;pointer-events:none}
+.cxToken,.mGhost>.cxToken{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:999px;background:var(--card);border:1px solid var(--clay);box-shadow:0 8px 22px rgba(30,24,16,.16);font:600 11.5px var(--sans);color:#8a3a26;white-space:nowrap}
+.cxToken b{font:700 11.5px var(--mono);color:var(--ink)}
+@media (max-width:900px){.cxRow{grid-template-columns:minmax(0,1fr) auto}.cxWhat,.cxWhy{grid-column:1}.cxAct{grid-column:2;grid-row:1}}
+@media (prefers-reduced-motion:reduce){.cxIn{animation:none}.cxRow,.cxGo{transition:none}}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
 /* what the orders want that the library has never heard of — one fact, said once, where master files are added */
@@ -2188,6 +2233,17 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 /* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
 #motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
 .mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
+/* every pop-up grows out of what opened it and goes back into it (Paul, 28 Sep 19:27-19:30; Motion.dialogOpen/Close):
+   while it grows, its surface is a copy of its box laid over the screen under its parts, and the window itself is bare */
+.mdSurface{position:fixed;z-index:-1;pointer-events:none;transform-origin:0 0;overflow:hidden;will-change:transform}
+.mdSurface>b{position:absolute;inset:0;border-radius:inherit;will-change:opacity}
+dialog.mdIn[open]:not(.closing){animation:none!important}
+dialog.mdIn::backdrop{animation:mdBackIn .42s ease both}
+dialog.mdGrow{background:transparent!important;box-shadow:none!important}
+.mdGhost{position:fixed;pointer-events:none;transform-origin:0 0}
+.mdGhostBack{position:fixed;inset:0;pointer-events:none}
+@keyframes mdBackIn{from{opacity:0}}
+@media (prefers-reduced-motion:reduce){dialog.mdIn::backdrop{animation:mdBackIn .16s ease both}}
 .mGhost>.mCopy{border-radius:10px}
 .mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}
 .mPlus{position:fixed;z-index:141;font:800 11.5px var(--sans);color:#3f5b3a;background:var(--card);border:1px solid #cddcc9;border-radius:999px;padding:1px 8px;box-shadow:0 4px 12px rgba(30,24,16,.12);white-space:nowrap;pointer-events:none}
@@ -2454,7 +2510,7 @@ dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgb
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260927-seals"></script>
+<script src="charm-nest-motion.js?v=20260928-popups"></script>
 <script src="charm-nest-timeline-ui.js?v=20260928-tl-ui"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
@@ -2854,7 +2910,7 @@ async function gate() {
       try {
         const r = await fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": pc, "Content-Type": "application/json" }, body: JSON.stringify({ app: "charm-nest-1", passcode: pc }) });
         if (!r.ok) { $("#signinErr").textContent = "That passcode was not accepted."; return; }
-        S.passcode = pc; sessionStorage.setItem("cn.passcode", pc); box.classList.add("hidden"); resolve(true);
+        S.passcode = pc; sessionStorage.setItem("cn.passcode", pc); try { if (window.CNTimeline) CNTimeline.sync(); } catch (_) {} box.classList.add("hidden"); resolve(true);
       } catch (err) { $("#signinErr").textContent = "Could not reach the sign-in service."; }
     };
   });
@@ -3691,6 +3747,7 @@ function startNestReady(sh, context) {
   sh.nestFlow = sh.roseProtected || sh.appendOnly ? "standard" : S.settings.nestFlow || "standard";
   cancelGPUComparison();
   sh.persistedDone = false;
+  if (sh._byHand) window.SheetEvents?.renested(sh);   // a person nested it again: on its orders' timelines (idle time)
   sh.movedOn = null; sh.problem = null; delete sh._byHand; delete sh.resumeWait;
   if (sh.runId && window.LiveNest) LiveNest.prepareSheet(sh);
   // a big batch: the oldest few orders now, the next few once they are placed (feedTurn)
@@ -5582,12 +5639,14 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-merge2"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
-<script src="charm-nest-mail.js?v=20260926-audit3"></script>
-<script src="charm-nest-rose-ui.js?v=20260928-true"></script>
+<script src="order-timeline.js?v=20260928-m3"></script>
+<script src="charm-nest-bridge.js?v=20260928-m3"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-m3"></script>
+<script src="charm-nest-mail.js?v=20260928-popups"></script>
+<script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
 <script src="charm-nest-library.js?v=20260927-moves"></script>
+<script src="charm-nest-search.js?v=20260928-tl-search"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">

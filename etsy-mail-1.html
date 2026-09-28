@@ -904,7 +904,48 @@
       font-family: inherit; resize: vertical; outline: none;
     }
     .em-compose textarea:focus { border-color: #0366d6; }
-    .em-compose .em-compose-bar { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+    .em-compose .em-compose-bar { display: flex; gap: 8px; margin-top: 8px; flex-wrap: nowrap; align-items: center; position: relative; }
+    /* The reply buttons keep to one line at one height (owner, 2026-09-28):
+       joined groups (AI Draft + Polish; Attach, Sheets, Listing) with thin
+       shared borders, a little more room between groups than inside them.
+       Short of room, fitComposeBar() adds .is-compact and the files group
+       shows icons only (their names stay in the tooltips). */
+    .em-compose .em-compose-bar > *,
+    .em-compose .em-compose-bar button { flex-shrink: 0; white-space: nowrap; }
+    .em-compose .em-bar-group { display: inline-flex; align-items: stretch; }
+    .em-compose .em-bar-group > button { border-radius: 0; }
+    .em-compose .em-bar-group > button:first-child { border-radius: 4px 0 0 4px; }
+    .em-compose .em-bar-group > button:last-child { border-radius: 0 4px 4px 0; }
+    .em-compose .em-bar-group > button + button { margin-left: -1px; }
+    .em-compose .em-bar-group > button:hover,
+    .em-compose .em-bar-group > button:focus-visible { position: relative; z-index: 1; }
+    .em-compose .em-compose-bar.is-compact .em-bar-files button:not(.is-loading) .em-bar-label { display: none; }
+    .em-compose .em-compose-bar.is-compact .em-bar-files button { padding-left: 9px; padding-right: 9px; }
+    /* Polish: the AI pair's second half, outlined in the AI purple. */
+    .em-compose button.ai-soft { color: #6639ba; border-color: #6639ba; }
+    .em-compose button.ai-soft:hover:not(:disabled) { background: #f5f0ff; }
+    button#emPolishBtn.is-loading { background: #f5f0ff; cursor: wait; }
+    button#emPolishBtn.is-loading .material-icons { display: none; }
+    button#emPolishBtn.is-loading::before {
+      content: ""; display: inline-block; flex: 0 0 auto;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(102,57,186,.25); border-top-color: #6639ba;
+      border-radius: 50%; animation: em-spin .7s linear infinite;
+    }
+    /* "Polished · Undo" floats above the AI pair, so nothing moves. */
+    .em-compose .em-polish-note {
+      position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 5;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 3px 3px 10px; border: 1px solid #d8c8f5; border-radius: 999px;
+      background: #f5f0ff; color: #4b2a8f; font-size: 12px;
+      box-shadow: 0 2px 6px rgba(31,35,40,.12);
+    }
+    .em-compose .em-polish-note button {
+      padding: 2px 10px; border-radius: 999px; border-color: #c8b3f0;
+      color: #6639ba; font-size: 12px; font-weight: 500;
+    }
+    .em-compose .em-polish-note button.em-polish-x { padding: 2px 4px; border-color: transparent; background: transparent; color: #6e7781; }
+    .em-compose .em-polish-note button.em-polish-x:hover { color: #1f2328; }
 
     /* ═══════════════════════════════════════════════════════════════
        v5.32.3 — Send to Design toggle. BUTTON-based.
@@ -16358,11 +16399,20 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
               <div id="emSuggestedListings" class="em-suggested-listings" style="display:none;"></div>
               <div id="emTrackingImages" class="em-tracking-images" style="display:none;"></div>
               <div id="emSendStatus" class="em-send-status" style="display:none;"></div>
+              <!-- The reply buttons, one line: the AI pair (AI Draft, Polish),
+                   the files group (Attach, Sheets, Listing), then the Send to
+                   Design switch and Send. fitComposeBar() drops the files
+                   group to icons (names in the tooltips) before it would wrap. -->
               <div class="em-compose-bar">
-                <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
-                <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
-                <button id="emSheetsBtn" type="button" title="Attach a customer sheet: line sheets, fit guide, metals, care, bracelet sizing"><i class="material-icons">photo_library</i>Sheets</button>
-                <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span>${manualCustomListingBusy ? 'Creating…' : 'Custom Listing'}</span></button>
+                <div class="em-bar-group em-bar-ai" role="group" aria-label="AI">
+                  <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
+                  <button id="emPolishBtn" type="button" class="ai-soft" title="Polish what you wrote: proper, warm and short, same meaning. Undo puts your words back."><i class="material-icons">auto_fix_high</i><span>Polish</span></button>
+                </div>
+                <div class="em-bar-group em-bar-files" role="group" aria-label="Files">
+                  <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i><span class="em-bar-label">Attach</span></button>
+                  <button id="emSheetsBtn" type="button" title="Attach a customer sheet: line sheets, fit guide, metals, care, bracelet sizing"><i class="material-icons">photo_library</i><span class="em-bar-label">Sheets</span></button>
+                  <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Custom Listing: create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span class="em-bar-label">${manualCustomListingBusy ? 'Creating…' : 'Listing'}</span></button>
+                </div>
                 <button type="button"
                         id="emSendToDesignBtn"
                         class="em-send-to-design"
@@ -16798,6 +16848,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // ─── M4: AI draft wiring ──────────────────────────────────────────
       $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial", null, /*forceRegenerate=*/true));
       $("emCustomListingBtn")?.addEventListener("click", () => generateManualCustomListing(t.id));
+      $("emPolishBtn")?.addEventListener("click", () => polishStaffText(t.id));
+      if (state.polish && state.polish.threadId === t.id) showPolishNote(t.id);
+      watchComposeBar();
       $("emAiFollowUpBtn")?.addEventListener("click", () => generateAiDraft(t.id, "follow_up"));
       $("emReviseBtn")?.addEventListener("click", () => {
         const instructions = ($("emReviseInput")?.value || "").trim();
@@ -16854,9 +16907,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         desktopBtn.disabled = !!isLoading;
         desktopBtn.classList.toggle("is-loading", !!isLoading);
         desktopBtn.setAttribute("aria-busy", isLoading ? "true" : "false");
-        desktopBtn.title = isLoading ? "Creating custom listing…" : "Create a real Etsy custom listing from this conversation";
+        desktopBtn.title = isLoading ? "Creating custom listing…" : "Custom Listing: create a real Etsy custom listing from this conversation";
       }
-      if (desktopLabel) desktopLabel.textContent = isLoading ? "Creating…" : "Custom Listing";
+      if (desktopLabel) desktopLabel.textContent = isLoading ? "Creating…" : "Listing";
+      fitComposeBar();
 
       if (mobileBtn) {
         mobileBtn.disabled = !!isLoading;
@@ -16867,6 +16921,117 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       // Manual custom-listing generation should not touch any other control.
       // Only the custom-listing button itself shows busy state.
+    }
+
+    // ─── Reply button row: one line, never wrapped ─────────────────────
+    // Short of room, the files group (Attach, Sheets, Listing) shows icons
+    // only; the names stay in the tooltips. Re-checked when the row or a
+    // button changes width (a busy label, the design switch's word).
+    function fitComposeBar() {
+      const bar = document.querySelector(".em-compose .em-compose-bar");
+      if (!bar || !bar.clientWidth) return;
+      bar.classList.remove("is-compact");
+      if (bar.scrollWidth > bar.clientWidth + 1) bar.classList.add("is-compact");
+    }
+    let _composeBarObserver = null;
+    function watchComposeBar() {
+      const bar = document.querySelector(".em-compose .em-compose-bar");
+      if (!bar) return;
+      if (typeof ResizeObserver === "function") {
+        if (!_composeBarObserver) _composeBarObserver = new ResizeObserver(() => requestAnimationFrame(fitComposeBar));
+        _composeBarObserver.disconnect();
+        _composeBarObserver.observe(bar);
+        bar.querySelectorAll(":scope > button, :scope > .em-bar-group").forEach(el => _composeBarObserver.observe(el));
+      }
+      fitComposeBar();
+    }
+
+    // ─── Polish: the staff's own words, tidied ─────────────────────────
+    // Sends what staff typed (with the customer's latest messages, for
+    // tone) to etsyMailPolish and puts the reworded text in the box. The
+    // words it replaced stay one click away: "Polished · Undo" floats above
+    // the AI pair until the reply is sent, AI Draft replaces it, or the note
+    // is closed. A send of polished words is marked (body.polished) so the
+    // learner never takes the model's wording for a staff correction.
+    function setPolishBusy(isBusy) {
+      const btn = $("emPolishBtn");
+      if (!btn) return;
+      btn.classList.toggle("is-loading", !!isBusy);
+      btn.setAttribute("aria-busy", isBusy ? "true" : "false");
+      const sp = btn.querySelector("span");
+      if (sp) sp.textContent = isBusy ? "Polishing…" : "Polish";
+    }
+    function closePolishNote() {
+      const n = document.getElementById("emPolishNote");
+      if (n) n.remove();
+    }
+    function dropPolish(threadId) {
+      if (state.polish && state.polish.threadId === threadId) state.polish = null;
+      closePolishNote();
+    }
+    function showPolishNote(threadId) {
+      closePolishNote();
+      const bar = document.querySelector(".em-compose .em-compose-bar");
+      if (!bar || !state.polish || state.polish.threadId !== threadId) return;
+      const note = document.createElement("div");
+      note.id = "emPolishNote";
+      note.className = "em-polish-note";
+      note.setAttribute("role", "status");
+      note.innerHTML = '<span>Polished</span>' +
+        '<button type="button" class="em-polish-undo" title="Put back exactly what you had before Polish">Undo</button>' +
+        '<button type="button" class="em-polish-x" title="Keep the polished text" aria-label="Close"><i class="material-icons">close</i></button>';
+      note.querySelector(".em-polish-undo").addEventListener("click", () => undoPolish(threadId));
+      note.querySelector(".em-polish-x").addEventListener("click", closePolishNote);
+      bar.appendChild(note);
+    }
+    function undoPolish(threadId) {
+      const p = state.polish;
+      const ta = $("emDraftText");
+      if (!p || p.threadId !== threadId || !ta || state.selectedId !== threadId) return;
+      ta.value = p.before;
+      autoSizeDraftTextarea(ta);
+      dropPolish(threadId);
+      ta.focus();
+    }
+    async function polishStaffText(threadId) {
+      const btn = $("emPolishBtn");
+      const ta = $("emDraftText");
+      if (!btn || !ta || btn.classList.contains("is-loading")) return;
+      const before = ta.value || "";
+      if (!before.trim()) {
+        toast("Type your reply first; Polish tidies what you wrote");
+        ta.focus();
+        return;
+      }
+      const t = (state.threads || []).find(x => x && x.id === threadId) || {};
+      const customerMessages = (state.messages || [])
+        .filter(m => m && m.direction === "inbound" && m.text)
+        .slice(-3).map(m => String(m.text).slice(0, 400));
+      setPolishBusy(true);
+      let res;
+      try {
+        res = await api("etsyMailPolish", {
+          method: "POST",
+          body: { text: before, customerName: t.customerName || null, customerMessages }
+        });
+      } catch (e) {
+        setPolishBusy(false);
+        if (e && e.status === 401) return;   // the sign-in screen explains
+        toast((e && e.data && e.data.error) || ("Polish didn't work: " + ((e && e.message) || "unknown error")), 5000);
+        return;
+      }
+      setPolishBusy(false);
+      // The operator's own typing always wins over a late result.
+      const now = $("emDraftText");
+      if (state.selectedId !== threadId || !now) return;
+      if (now.value !== before) { toast("Not polished: the reply changed while Polish was working"); return; }
+      const after = String((res && res.text) || "").trim();
+      if (!after) { toast("Polish came back empty; your text is unchanged"); return; }
+      if (after === before.trim()) { toast("Already reads well; nothing to change"); return; }
+      now.value = after;
+      autoSizeDraftTextarea(now);
+      state.polish = { threadId, before };
+      showPolishNote(threadId);
     }
 
     function manualCustomListingDelay(ms) {
@@ -17742,6 +17907,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // during a long sales-agent run. Revise/follow-up keep their current
       // behavior because they intentionally operate on existing text.
       if (mode === "initial" && isOpen()) {
+        dropPolish(threadId);   // the polished words are being replaced
         const oldTa = $("emDraftText");
         if (oldTa) {
           oldTa.value = "";
@@ -20793,6 +20959,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (window.SendFlight) flight = window.SendFlight.prepare({ surface, source, textarea: ta, text });
       } catch (e) { console.warn("[send] flight prepare:", e); }
 
+      const polishedSend = !!(state.polish && state.polish.threadId === threadId);
+      closePolishNote();
       if (deskTa) deskTa.value = "";
       if (mobTa) mobTa.value = "";
       const mSendBtn = document.getElementById("mComposerSend");
@@ -20838,7 +21006,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // "Manually Sent" once the extension confirms delivery.
         sendOrigin          : "manual",
         // The English words, for the server's "says it's attached" check.
-        claimText           : englishText
+        claimText           : englishText,
+        // Polish reworded this reply: its wording is the model's, so the
+        // learner does not read it as a staff correction.
+        polished            : polishedSend
       };
 
       let resp;
@@ -20865,6 +21036,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       }
 
       // Queued. The bubble now reads "syncing…" until Etsy's copy arrives.
+      if (polishedSend && state.polish && state.polish.threadId === threadId) state.polish = null;
       const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
       const patch = { _state: "queued", optimisticDraftId: resp && resp.draftId };
       const media = localSendMedia(sentAtts);

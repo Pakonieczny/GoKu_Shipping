@@ -136,6 +136,34 @@ const { getValidEtsyAccessToken } = require("./_etsyMailEtsy");
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
 
+// ─── Charm Nest: Etsy's cancels as cancel records (28 Sep, A1) ─────────────
+// Each page this mirror writes is also looked over for receipts Etsy has
+// cancelled; each gets one Charm_Nest_Cancelled record (by "Etsy") and one
+// `etsyCancelled` timeline event, through _orderCancel.js. No Etsy call of its
+// own. A page with no cancelled receipt costs nothing; one with some costs one
+// getAll of their records and one batch. It must never break the mirror: the
+// helper loads inside try/catch, every call is caught, and it gets at most
+// CANCEL_HOOK_MS before the mirror moves on without it.
+let OrderCancel = null;
+try { OrderCancel = require("./_orderCancel"); }
+catch (e) { console.warn("[mirror-cron] cancel records off (helper did not load):", e && e.message); }
+const CANCEL_HOOK_MS = 8000;
+async function noteEtsyCancels(receipts) {
+  if (!OrderCancel) return null;
+  let timer = null;
+  try {
+    const work = Promise.resolve().then(() => OrderCancel.fromReceipts(db, FV, receipts, { detectedBy: "mirror" }))
+      .catch(e => ({ error: String((e && e.message) || e).slice(0, 200) }));
+    const cap = new Promise(res => { timer = setTimeout(() => res({ error: "timed out" }), CANCEL_HOOK_MS); });
+    const out = await Promise.race([work, cap]);
+    if (out && out.error) console.warn("[mirror-cron] cancel records not written this page:", out.error);
+    return out || null;
+  } catch (e) {
+    console.warn("[mirror-cron] cancel records skipped:", e && e.message);
+    return null;
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 // ─── Config ────────────────────────────────────────────────────────────────
 const SHOP_ID       = process.env.SHOP_ID;
 const CLIENT_ID     = process.env.CLIENT_ID;
@@ -590,6 +618,7 @@ exports.handler = meter.wrapHandler(async () => {
   let outcome = "ok";
   let lastErrorMsg = null;
   const changedBuyerIds = new Set();
+  const etsyCancels = { created: 0, noted: 0, errors: 0, off: false };
   let customerRebuild = { attempted: 0, updated: 0, skipped: 0, errors: [], missingIndexFallbackCount: 0 };
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -633,6 +662,14 @@ exports.handler = meter.wrapHandler(async () => {
       console.error(`[mirror-cron] batch write failed at page ${page}:`, e.message);
       break;
     }
+
+    // Charm Nest: the cancelled receipts of this page become cancel records
+    // (never throws; see noteEtsyCancels). Once it has timed out, the rest of
+    // this run goes without it (op cancelSweep catches up on any it missed).
+    try {
+      const cx = etsyCancels.off ? null : await noteEtsyCancels(receipts);
+      if (cx) { etsyCancels.created += cx.created || 0; etsyCancels.noted += cx.noted || 0; if (cx.error) etsyCancels.errors += 1; if (cx.error === "timed out") etsyCancels.off = true; }
+    } catch (_) { /* never into the mirror */ }
 
     // Track changed buyers so the 3-minute receipt mirror also refreshes
     // EtsyMail_Customers/{buyerUserId}. Firestore collections are created on
@@ -730,6 +767,7 @@ exports.handler = meter.wrapHandler(async () => {
     customerRebuildErrorCount: customerRebuild.errors.length,
     customerRebuildMissingIndexFallbackCount: customerRebuild.missingIndexFallbackCount,
     customerRebuildErrors   : customerRebuild.errors.slice(0, 10),
+    etsyCancels,
     errorMsg          : lastErrorMsg,
     endedAt           : FV.serverTimestamp()
   });

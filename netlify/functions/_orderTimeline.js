@@ -71,16 +71,29 @@ async function add(db, FV, events, opts = {}) {
   await batch.commit();
   return { ok: true, ids: list.map(x => x.key) };
 }
-/** The recorded events of one order, oldest first, plus its cancel record (null when it is not cancelled). */
+/** The whole timeline of one order, oldest first: its recorded events, plus (derive, the default) the events read from
+    the records the shop already keeps, so an order from before the timeline existed still has its history. Also its
+    cancel record (null when it is not cancelled) and `where`: where the order is now.
+    opts: { prefix: "Sandbox_" | "", sandboxed: charmNestLibrary's SANDBOXED set, derive: true } */
 async function get(db, orderId, opts = {}) {
   const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
-  const [snap, can] = await Promise.all([
+  const [snap, can, derived] = await Promise.all([
     colOf(db, opts.prefix).where("orderId", "==", id).limit(2000).get(),
-    db.collection((opts.prefix || "") + CANCELLED).doc(id).get()
+    db.collection((opts.prefix || "") + CANCELLED).doc(id).get(),
+    opts.derive === false ? null : withTimeout(deriveEvents(db, id, opts), DERIVE_MS)
   ]);
-  const events = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; }).sort((a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id)));
+  const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
-  return { orderId: id, events, cancelled, now: Date.now(), truncated: snap.size >= 2000 };
+  const byTime = (a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id));
+  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled), now: Date.now(), truncated: snap.size >= 2000 }; }
+  const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
+  const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
+  const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
+  const events = recorded.concat(kept).sort(byTime);
+  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets }), now: Date.now(), truncated: snap.size >= 2000, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
+  if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
+  if (timedOut) out.derived.timedOut = true;
+  return out;
 }
 /** Which of these orders are cancelled, with who/when/why: what a station asks right after a scan. */
 async function cancelCheck(db, ids, opts = {}) {
@@ -91,4 +104,345 @@ async function cancelCheck(db, ids, opts = {}) {
   for (const d of docs) if (d.exists) { const x = d.data(); cancelled[d.id] = { at: n(x.at), by: s(x.by, 80), why: s(x.why, 400), source: s(x.source || (x.by === "Etsy" ? "etsy" : "sorter"), 20), sheets: Array.isArray(x.sheets) ? x.sheets.slice(0, 30) : [] }; }
   return { cancelled, now: Date.now() };
 }
-module.exports = { COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck };
+
+/* ── the history read from what the shop already keeps (Paul, C1 · C7 · D2) ──────────────────────────────────────────
+   An order from before the timeline has no recorded events, but its story is in the records the shop has always kept:
+     Charm_Nest_Arrivals/{rid}        firstSeenAt, createTs              → arrived (first seen by the sorter)
+     Charm_Pool (orderId == rid)      createdAt, removed*, moved*, engraveApprovedBy, committedAt
+                                                                         → pooled, removed, moved, engraveApproved, setCommitted
+     Charm_Pool_Back/{poolId}         approvedAt, approvedBy, text       → engraveApproved
+     Charm_Nest_Sheets (orders ∋ rid) label, metal, stock, laserDone*, roseCutAt, rosePlanJson stages
+                                                                         → placed, qrLabel, laserDone, roseCut, roseLine
+     Charm_Nest_Rose_Stock/{stock}/cuts/{sheetId}  by                    → who cut a Rose Gold sheet
+     Charm_Nest_Sets/{setId}          committedAt, committed[], orders[rid] → setCommitted
+     Charm_Custom_Orders (receiptId == rid)  stamps, completedAt/By      → sealPrinted, sealCompleted
+     Charm_Nest_CustomRead/{lineKey}  reads[latest], decided             → customRead, customDecided
+     Charm_Nest_Cancelled/{rid}       (read by get() itself)             → cancelled, etsyCancelled
+     Brites_Orders/{rid}/messages     the Team's messages and stamps     → teamMessage, note ("DESIGNED :)", QA1, QA2, PE)
+     Design_Order_Archive/{rid}, "Design_Completed Orders"/{rid}         → setCommitted / design complete
+     EtsyMail_Receipts/{rid}          the inbox's Etsy mirror            → arrived (placed on Etsy), shipped, etsyCompleted,
+                                                                           etsyCancelled   (no Etsy call: the mirror is read)
+   Two round trips, every read in each in parallel: one-field queries (no composite index) and reads by id, each capped,
+   the big fields left out (field masks). Nothing is cached between requests. A read that fails is left out and named
+   in derived.errors; the whole derivation gives up after DERIVE_MS and the recorded events are answered alone.
+   Sandbox: the sorter's own records carry the Sandbox_ prefix exactly as charmNestLibrary's SANDBOXED set says (it is
+   passed in); the stations' records (Brites_Orders, the design ledgers) are the Sandbox_ copies firebaseOrders and
+   designArchive keep; the Etsy mirror is production's and is not read in the sandbox; a person's custom decision is
+   kept per workspace (decided / decidedSandbox), as _charmNestCustomRead does. ── */
+const DERIVE_MS = 2500, DEDUPE_MS = 3 * 60 * 1000;
+// charmNestLibrary's SANDBOXED (with Charm_Custom_Orders, which it adds), for a caller that does not pass its own
+const SANDBOXED_DEFAULT = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge", "Charm_Custom_Orders"]);
+const STATION_SANDBOXED = new Set(["Brites_Orders", "Design_Completed Orders", "Design_Order_Archive"]);
+const CAP = { pools: 200, sheets: 40, custom: 40, reads: 40, messages: 120, backs: 100, sets: 20, rose: 6 };
+const SHEET_FIELDS = ["id", "metal", "metalLabel", "sheetIndex", "page", "setId", "setSeq", "fileBase", "stock", "poolIds", "orders", "label", "archived", "draft", "laserDoneAt", "laserDoneBy", "roseCutAt", "roseStockId", "rosePlanHash", "createdAt", "cardStartedAt", "updatedAt", "runId"];
+const POOL_FIELDS = ["poolId", "orderId", "transactionId", "lineKey", "runId", "setId", "sheetId", "sheetName", "sku", "material", "copy", "state", "orderDate", "createdAt", "updatedAt", "removedAt", "removedBy", "removedReason", "movedAt", "movedBy", "movedFrom", "movedTo", "engraveApprovedBy", "committedAt"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "kind", "completedAt", "completedBy", "how", "printedAt", "printedBy", "lastPrintedAt", "lastPrintedBy", "prints", "stamps"];
+const BACK_FIELDS = ["poolId", "sheetId", "setId", "approvedAt", "approvedBy", "text", "invalidated", "transactionId", "copy"];
+const SET_FIELDS = ["setId", "seq", "name", "day", "committedAt", "committed", "refused", "status"];
+const ARCHIVE_FIELDS = ["completedAtMs", "completedAt", "completedBy", "setId", "runId", "sheetIds", "status", "shipments"];
+const RECEIPT_FIELDS = ["created_timestamp", "updated_timestamp", "status", "is_shipped", "is_paid", "raw.shipments"];
+const METAL_CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
+// the Team's workflow stamps, each its own event (a note) rather than a message
+const TEAM_STAMPS = [[/^designed\s*:?\s*\)?$/i, "DESIGNED :)"], [/^qa\s*-?\s*1$/i, "QA1"], [/^qa\s*-?\s*2$/i, "QA2"], [/^pe$/i, "PE"]];
+
+/** ms from whatever a record keeps: a Firestore timestamp, a Date, {seconds}, Etsy's seconds or ms. */
+function msOf(v) {
+  if (v == null || v === "") return 0;
+  if (typeof v.toMillis === "function") return v.toMillis();
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "object") { const x = v.seconds != null ? v.seconds : v._seconds; return Number.isFinite(+x) ? +x * 1000 : 0; }
+  const x = +v; return !Number.isFinite(x) || x <= 0 ? 0 : x < 1e11 ? Math.round(x * 1000) : Math.round(x);
+}
+const sheetLabel = d => `${METAL_CODE[d.metal] || s(d.metalLabel, 20) || ""}${METAL_CODE[d.metal] || d.metalLabel ? " " : ""}Sheet ${n(d.sheetIndex) || n(d.page) || 1}`;
+const sizeOf = st => (st && n(st.wPt) > 0 && n(st.hPt) > 0 ? `${Math.round(n(st.wPt) / 72 * 25.4)}×${Math.round(n(st.hPt) / 72 * 25.4)} mm` : "");
+const withTimeout = (p, ms) => new Promise(resolve => {
+  const t = setTimeout(() => resolve({ value: null, timedOut: true }), ms);
+  p.then(value => { clearTimeout(t); resolve({ value }); }, e => { clearTimeout(t); resolve({ value: { events: [], sheets: null, errors: ["derive: " + ((e && e.message) || e)] } }); });
+});
+
+/** Derived events as they are answered: cleaned as a recorded one is, marked derived, with a stable id
+    (orderId~type~d-…, never one a writer uses). `series` (dropped before answering) keeps one record's own list, such as
+    a custom line's seal per press, from being folded together. */
+function finalize(id, list) {
+  return list.map(e => {
+    const c = clean(e, { source: e.source }); if (!c) return null;
+    const x = c.doc; x.id = `${id}~${e.type}~${s(e.id, 120).replace(/[^\w.:-]/g, "_")}`.slice(0, 400); x.derived = true;
+    if (e.series) x.series = e.series;
+    return x;
+  }).filter(Boolean);
+}
+/** The events of a cancel record (get() reads it anyway). */
+function cancelEventsOf(id, c) {
+  const at = n(c.at) || msOf(c.createdAt); if (!at) return [];
+  const etsy = c.by === "Etsy" || c.source === "etsy";
+  return [{ orderId: id, type: etsy ? "etsyCancelled" : "cancelled", at, by: s(c.by, 80) || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "sorter", id: "d-cancel",
+    text: `${etsy ? "Cancelled on Etsy" : "Cancelled by " + (c.by || "someone")}${c.why ? ": " + c.why : ""}`, data: { why: s(c.why, 400), sheets: Array.isArray(c.sheets) ? c.sheets.slice(0, 30) : [] } }];
+}
+
+/** Every event the order's existing records tell, each marked derived with a stable id. */
+async function deriveEvents(db, id, opts) {
+  const P = opts.prefix || "", sandbox = !!P, SB = opts.sandboxed instanceof Set ? opts.sandboxed : SANDBOXED_DEFAULT;
+  const col = name => db.collection((SB.has(name) || STATION_SANDBOXED.has(name) ? P : "") + name);
+  const forms = [id].concat(Number.isSafeInteger(+id) ? [+id] : []), errors = [];
+  const safe = (what, fn) => Promise.resolve().then(fn).catch(e => { errors.push(`${what}: ${s((e && e.message) || e, 160)}`); return null; });
+  const one = (ref, fieldMask) => db.getAll(ref, { fieldMask }).then(r => r[0]);
+  const docs = snap => (snap ? snap.docs.map(d => Object.assign({ _id: d.id }, d.data())) : []);
+  const got = d => (d && d.exists ? Object.assign({ _id: d.id }, d.data()) : null);
+
+  // ── round 1: everything keyed by the order itself ──
+  const [arrS, poolS, sheetS, customS, readS, msgS, doneS, archS, rcS] = await Promise.all([
+    safe("arrivals", () => col("Charm_Nest_Arrivals").doc(id).get()),
+    safe("pool", () => col("Charm_Pool").where("orderId", "in", forms).limit(CAP.pools).select(...POOL_FIELDS).get()),
+    safe("sheets", () => col("Charm_Nest_Sheets").where("orders", "array-contains-any", forms).limit(CAP.sheets).select(...SHEET_FIELDS).get()),
+    safe("custom", () => col("Charm_Custom_Orders").where("receiptId", "in", forms).limit(CAP.custom).select(...CUSTOM_FIELDS).get()),
+    safe("customRead", () => db.collection("Charm_Nest_CustomRead").where("order", "==", id).limit(CAP.reads).get()),
+    safe("messages", () => col("Brites_Orders").doc(id).collection("messages").orderBy("timestamp", "desc").limit(CAP.messages).get()),
+    safe("designCompleted", () => col("Design_Completed Orders").doc(id).get()),
+    safe("archive", () => one(col("Design_Order_Archive").doc(id), ARCHIVE_FIELDS)),
+    sandbox ? null : safe("receipt", () => one(db.collection("EtsyMail_Receipts").doc(id), RECEIPT_FIELDS))
+  ]);
+  const arrival = got(arrS), done = got(doneS), arch = got(archS), rc = got(rcS);
+  const pools = docs(poolS).map(p => Object.assign(p, { poolId: s(p.poolId || p._id, 120) }));
+  const sheets = docs(sheetS).filter(d => !d.archived && (d.orders || []).some(v => String(v) === id)).slice(0, CAP.sheets);
+  const customs = docs(customS), reads = docs(readS), msgs = docs(msgS);
+
+  // ── round 2: what those name (the backs of its pieces, its sets, its Rose Gold plans and cuts, the custom readings of
+  //    lines the first round found but the reading query did not) ──
+  const poolIds = [...new Set(pools.map(p => p.poolId))].filter(Boolean).slice(0, CAP.backs);
+  const setIds = [...new Set([...sheets.map(d => d.setId), ...pools.map(p => p.setId), arch && arch.setId].filter(v => v && typeof v === "string"))].slice(0, CAP.sets);
+  const rose = sheets.filter(d => d.metal === "rose" && (d.rosePlanHash || d.roseCutAt)).slice(0, CAP.rose);
+  const cut = rose.filter(d => d.roseCutAt && d.roseStockId && typeof d.roseStockId === "string");
+  const readKeys = new Set(reads.map(r => r._id));
+  const lineKeys = [...new Set([...pools.map(p => p.lineKey || (p.transactionId ? `${id}_${p.transactionId}` : "")), ...customs.map(c => c.key || c._id)].filter(k => k && /^[\w-]{3,120}$/.test(k) && !readKeys.has(k)))].slice(0, 20);
+  const [backS, setS, planS, cutS, moreReadS] = await Promise.all([
+    poolIds.length ? safe("backs", () => db.getAll(...poolIds.map(p => col("Charm_Pool_Back").doc(p)), { fieldMask: BACK_FIELDS })) : null,
+    setIds.length ? safe("sets", () => db.getAll(...setIds.map(x => col("Charm_Nest_Sets").doc(x)), { fieldMask: SET_FIELDS.concat(["orders." + id]) })) : null,
+    rose.length ? safe("rosePlans", () => db.getAll(...rose.map(d => col("Charm_Nest_Sheets").doc(d._id)), { fieldMask: ["rosePlanJson"] })) : null,
+    cut.length ? safe("roseCuts", () => db.getAll(...cut.map(d => col("Charm_Nest_Rose_Stock").doc(d.roseStockId).collection("cuts").doc(d._id)), { fieldMask: ["at", "by"] })) : null,
+    lineKeys.length ? safe("customRead", () => db.getAll(...lineKeys.map(k => db.collection("Charm_Nest_CustomRead").doc(k)))) : null
+  ]);
+  const backs = (backS || []).map(got).filter(b => b && !b.invalidated);
+  const sets = new Map((setS || []).map(got).filter(Boolean).map(x => [x._id, x]));
+  const plans = new Map((planS || []).map(got).filter(Boolean).map(x => [x._id, x.rosePlanJson]));
+  const cuts = new Map((cutS || []).map((d, i) => [cut[i]._id, got(d)]).filter(([, v]) => v));
+  for (const r of (moreReadS || []).map(got).filter(Boolean)) reads.push(r);
+
+  // ── the events, most trusted source first (a later one that says the same thing is dropped by dedupe) ──
+  const out = [];
+  const ev = (type, at, f) => { if (!(at > 1e12)) return; out.push(Object.assign({ orderId: id, type, at: Math.round(at) }, f)); };
+  const sheetById = new Map(sheets.map(d => [d._id, d]));
+  const labelOf = sid => { const d = sheetById.get(sid); return d ? sheetLabel(d) : ""; };
+  const setName = x => (x ? s(x.name, 40) || (x.seq ? `Set ${x.seq}` : "") : "");
+
+  // Etsy: when the order was placed, shipped, completed or cancelled
+  const placedAt = rc && msOf(rc.created_timestamp) || arrival && msOf(arrival.createTs) || arch && arch.status && msOf(arch.status.createdTs) || pools.map(p => msOf(p.orderDate)).find(Boolean) || 0;
+  ev("arrived", placedAt, { id: "d-etsy-placed", by: "Etsy", source: "etsy", text: "Order placed on Etsy", milestone: true, data: rc ? { etsyStatus: s(rc.status, 40) } : null });
+  if (arrival) ev("arrived", msOf(arrival.firstSeenAt), { id: "d-first-seen", by: "System", source: "sorter", station: "sorter", text: "First seen by the sorter", milestone: false });
+  const ships = rc ? (rc.raw && Array.isArray(rc.raw.shipments) ? rc.raw.shipments : []).map(x => ({ at: msOf(x.shipment_notification_timestamp || x.notification_date), carrier: s(x.carrier_name, 40), tracking: s(x.tracking_code, 60) }))
+    : arch && Array.isArray(arch.shipments) ? arch.shipments.map(x => ({ at: msOf(x.notificationTs), carrier: s(x.carrier, 40), tracking: s(x.trackingCode, 60) })) : [];
+  ships.filter(x => x.at).slice(0, 5).forEach((x, i) => ev("shipped", x.at, { id: `d-etsy-shipped-${i}`, by: "Etsy", source: "etsy", station: "shipping", text: `Shipped${x.carrier ? " with " + x.carrier : ""}${x.tracking ? " · " + x.tracking : ""}`, data: { carrier: x.carrier, tracking: x.tracking } }));
+  if (rc) {
+    const status = String(rc.status || "").toLowerCase(), upd = msOf(rc.updated_timestamp), firstShip = ships.map(x => x.at).filter(Boolean).sort((a, b) => a - b)[0] || 0;
+    if (rc.is_shipped && !firstShip) ev("shipped", upd, { id: "d-etsy-shipped", by: "Etsy", source: "etsy", station: "shipping", text: "Marked shipped on Etsy", data: { approx: true } });
+    if (status === "completed") ev("etsyCompleted", firstShip || upd, { id: "d-etsy-completed", by: "Etsy", source: "etsy", text: "Completed on Etsy", data: firstShip ? null : { approx: true } });
+    if (/cancel|fully refunded/.test(status)) ev("etsyCancelled", upd, { id: "d-etsy-cancelled", by: "Etsy", source: "etsy", text: `Etsy says: ${s(rc.status, 40)}`, data: { etsyStatus: s(rc.status, 40), approx: true } });
+  }
+
+  // custom readings and a person's decision
+  for (const r of reads) {
+    const key = s(r._id, 80), tid = key.includes("_") ? key.split("_").pop() : "";
+    const latest = r.reads && typeof r.reads === "object" ? (r.latest && r.reads[r.latest]) || Object.values(r.reads).sort((a, b) => n(b && b.at) - n(a && a.at))[0] : null;
+    if (latest) ev("customRead", msOf(latest.at), { id: `d-read-${key}`, lineKey: key, transactionId: tid, by: "System", source: "sorter", station: "sorter", text: `Read as ${latest.kind || "?"}${latest.confidence != null ? ` (${Math.round(n(latest.confidence) * 100)}%)` : ""}${latest.summary ? ": " + latest.summary : ""}`, data: { kind: s(latest.kind, 20), confidence: n(latest.confidence), relatedOrder: latest.relatedOrder || null } });
+    const dec = r[sandbox ? "decidedSandbox" : "decided"];
+    if (dec && dec.kind) ev("customDecided", msOf(dec.at), { id: `d-decided-${key}`, lineKey: key, transactionId: tid, by: s(dec.by, 80), source: "sorter", station: "sorter", text: `Decided: ${dec.kind}`, data: { kind: s(dec.kind, 20) } });
+  }
+
+  // the pieces: in the pool (one event per line), taken off, moved
+  const lineOf = p => s(p.lineKey, 80) || (p.transactionId ? `${id}_${p.transactionId}` : "");
+  const lines = new Map();
+  for (const p of pools) { const k = lineOf(p) || p.poolId; const l = lines.get(k) || lines.set(k, { rows: [] }).get(k); l.rows.push(p); }
+  for (const [k, l] of lines) {
+    const at = Math.min(...l.rows.map(p => msOf(p.createdAt)).filter(Boolean)), p0 = l.rows[0];
+    if (Number.isFinite(at)) ev("pooled", at, { id: `d-pooled-${k}`, lineKey: lineOf(p0), transactionId: s(p0.transactionId, 30), by: "System", source: "sorter", station: "sorter", text: `Ready to nest: ${p0.sku || "charm"}${p0.material ? " · " + p0.material : ""}${l.rows.length > 1 ? ` · ${l.rows.length} pieces` : ""}`, data: { sku: s(p0.sku, 60), material: s(p0.material, 20), pieces: l.rows.length, runId: s(p0.runId, 80) } });
+  }
+  const groups = (rows, keyOf) => { const m = new Map(); for (const p of rows) { const k = keyOf(p); if (k) (m.get(k) || m.set(k, []).get(k)).push(p); } return m; };
+  for (const [k, rows] of groups(pools.filter(p => msOf(p.removedAt)), p => `${msOf(p.removedAt)}|${p.removedBy || ""}|${p.removedReason || ""}`)) {
+    const p0 = rows[0], why = s(p0.removedReason, 160);
+    ev("removed", msOf(p0.removedAt), { id: `d-removed-${msOf(p0.removedAt)}`, by: s(p0.removedBy, 80), source: "sorter", station: "sorter", lineKey: rows.every(p => lineOf(p) === lineOf(p0)) ? lineOf(p0) : "", text: `Taken off the sheet${why ? ": " + why : ""}`, data: { reason: why, poolIds: rows.map(p => p.poolId).slice(0, 40), key: k.slice(0, 200) } });
+  }
+  for (const [, rows] of groups(pools.filter(p => msOf(p.movedAt)), p => `${msOf(p.movedAt)}|${p.movedTo || ""}`)) {
+    const p0 = rows[0], to = s(p0.movedTo, 100);
+    ev("moved", msOf(p0.movedAt), { id: `d-moved-${msOf(p0.movedAt)}-${to}`, by: s(p0.movedBy, 80), source: "sorter", station: "sorter", sheetId: to, sheet: labelOf(to) || s(p0.sheetName, 80), text: `Moved to ${labelOf(to) || p0.sheetName || "another sheet"}`, data: { from: s(p0.movedFrom, 300), to, poolIds: rows.map(p => p.poolId).slice(0, 40) } });
+  }
+
+  // back engraving approved (the back's record; the piece's own mark when there is no record, at its last change)
+  const backed = new Set();
+  for (const [, rows] of groups(backs, b => `${msOf(b.approvedAt)}|${b.approvedBy || ""}|${b.sheetId || ""}`)) {
+    const b0 = rows[0]; rows.forEach(b => backed.add(b.poolId || b._id));
+    ev("engraveApproved", msOf(b0.approvedAt), { id: `d-back-${msOf(b0.approvedAt)}-${b0.sheetId || ""}`, by: s(b0.approvedBy, 80), source: "sorter", station: "sorter", sheetId: s(b0.sheetId, 100), sheet: labelOf(b0.sheetId), setId: s(b0.setId, 100), transactionId: s(b0.transactionId, 30), text: `Back engraving approved${b0.text ? ": “" + s(b0.text, 120).replace(/\s*\n\s*/g, " / ") + "”" : ""}`, data: { text: s(b0.text, 300), pieces: rows.length } });
+  }
+  for (const p of pools) if (p.engraveApprovedBy && !backed.has(p.poolId)) { backed.add(p.poolId); ev("engraveApproved", msOf(p.updatedAt), { id: `d-back-${p.poolId}`, by: s(p.engraveApprovedBy, 80), source: "sorter", station: "sorter", lineKey: lineOf(p), text: "Back engraving approved", data: { approx: true } }); }
+
+  // the sheets that hold it: placed, its QR label, Rose Gold lines and cut, laser cut
+  const poolOf = new Map(pools.map(p => [p.poolId, p]));
+  for (const d of sheets) {
+    const sid = d._id, label = sheetLabel(d), set = sets.get(d.setId), mine = (d.poolIds || []).map(x => poolOf.get(x)).filter(Boolean);
+    const onIt = mine.length ? mine : pools.filter(p => p.sheetId === sid);
+    // when it went on: not before the sheet, its pieces, their last removal, or their move here (no stamp says more)
+    const placedOn = Math.max(msOf(d.createdAt) || msOf(d.cardStartedAt), ...onIt.map(p => msOf(p.createdAt)), ...onIt.map(p => msOf(p.removedAt) + 1), ...onIt.filter(p => p.movedTo === sid).map(p => msOf(p.movedAt)), 0);
+    const base = { sheetId: sid, sheet: label, setId: s(d.setId, 100), source: "sorter", station: "sorter" };
+    ev("placed", placedOn, Object.assign({ id: `d-placed-${sid}`, by: "System", text: `On ${label}${setName(set) ? " · " + setName(set) : d.setSeq ? " · Set " + d.setSeq : ""}${sizeOf(d.stock) ? " · " + sizeOf(d.stock) : ""}`, data: { metal: s(d.metal, 20), metalLabel: s(d.metalLabel, 40), size: sizeOf(d.stock), pieces: onIt.length, fileBase: s(d.fileBase, 100), approx: true } }, base));
+    const files = d.label && Array.isArray(d.label.files) ? d.label.files.filter(f => f && (!Array.isArray(f.orders) || f.orders.some(v => String(v) === id))) : [];
+    if (files.length) {
+      // no stamp says when a label was made: after it went on, and no later than what followed it
+      const later = [set && msOf(set.committedAt), n(d.laserDoneAt), msOf(d.updatedAt)].filter(t => t > placedOn);
+      ev("qrLabel", later.length ? Math.min(...later) : placedOn, Object.assign({ id: `d-label-${sid}`, by: "System", text: `QR label for ${label}${files.length > 1 ? ` (${files.length} parts)` : ""}`, data: { parts: files.length, approx: true } }, base));
+    }
+    const plan = plans.get(sid);
+    if (plan) {
+      let stages = []; try { const j = JSON.parse(plan); stages = Array.isArray(j && j.stages) ? j.stages : []; } catch (_) { stages = []; }
+      const mineIds = new Set(onIt.map(p => p.poolId));
+      const hits = stages.filter(st => Array.isArray(st.ids) && st.ids.some(x => mineIds.has(String(x)) || mineIds.has(String(x).split(":").pop())));
+      (hits.length ? hits : stages.length === 1 ? stages : []).forEach(st => ev("roseLine", n(st.at), Object.assign({ id: `d-roseline-${sid}-${n(st.n)}`, by: "System", text: `RG green line ${n(st.n) || ""} on ${label}`.replace("  ", " "), data: { n: n(st.n), lines: Array.isArray(st.lines) ? st.lines.slice(0, 2) : null } }, base)));
+    }
+    if (n(d.roseCutAt)) { const c = cuts.get(sid); ev("roseCut", n(d.roseCutAt), Object.assign({}, base, { id: `d-rosecut-${sid}`, by: c ? s(c.by, 80) : "", station: "laser", text: `Rose Gold ${label} cut` })); }
+    if (n(d.laserDoneAt)) ev("laserDone", n(d.laserDoneAt), Object.assign({}, base, { id: `d-laser-${sid}`, by: s(d.laserDoneBy, 80), station: "laser", text: `Cut on the laser: ${label}` }));
+  }
+
+  // the set committed (the design is complete); then the design archive's record of it; then the pieces' mark (the
+  // design station's plain completion, with no set, is written after the Team's thread below: its "DESIGNED :)" wins)
+  for (const [sid, x] of sets) {
+    const mine = x["orders." + id] || (x.orders && x.orders[id]) || null, committed = Array.isArray(x.committed) && x.committed.some(v => String(v) === id);
+    const refused = Array.isArray(x.refused) && x.refused.some(r => r && String(r.id) === id);
+    if (msOf(x.committedAt) && (committed || (!Array.isArray(x.committed) && mine && !mine.held)) && !refused)
+      ev("setCommitted", msOf(x.committedAt), { id: `d-set-${sid}`, setId: sid, by: arch && arch.setId === sid ? s(arch.completedBy, 80) : "", source: "sorter", station: "sorter", text: `${setName(x) || "Set"} committed: design complete`, data: { set: setName(x) } });
+  }
+  const archAt = arch ? msOf(arch.completedAtMs) || msOf(arch.completedAt) : 0;
+  if (archAt && arch.setId) ev("setCommitted", archAt, { id: `d-archive-${s(arch.setId, 80)}`, setId: s(arch.setId, 100), by: s(arch.completedBy, 80), source: "station", station: "design", text: `${setName(sets.get(arch.setId)) || "Set"} committed: design complete`, data: { sheets: Array.isArray(arch.sheetIds) ? arch.sheetIds.slice(0, 20) : [] } });
+  for (const [, rows] of groups(pools.filter(p => msOf(p.committedAt)), p => `${msOf(p.committedAt)}`)) ev("setCommitted", msOf(rows[0].committedAt), { id: `d-pool-commit-${msOf(rows[0].committedAt)}`, setId: s(rows[0].setId, 100), by: "", source: "sorter", station: "sorter", text: "Set committed: design complete", data: { approx: true } });
+
+  // custom orders: each seal (a printed QR label or a Complete Order press), and the completion
+  for (const c of customs) {
+    const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = c.sku || c.title || "custom line";
+    const stamps = Array.isArray(c.stamps) && c.stamps.length ? c.stamps : [c.printedAt && { how: "print", at: c.printedAt, by: c.printedBy }, n(c.prints) > 1 && c.lastPrintedAt && { how: "print", at: c.lastPrintedAt, by: c.lastPrintedBy }].filter(Boolean);
+    stamps.slice(-24).forEach(st => ev(st.how === "button" ? "sealCompleted" : "sealPrinted", msOf(st.at), { id: `d-seal-${key}-${msOf(st.at)}`, series: `seal-${key}`, lineKey: key, transactionId: tid, by: s(st.by, 80), source: "sorter", station: "sorter", text: st.how === "button" ? `Custom order completed: ${s(what, 80)}` : `Custom QR label printed: ${s(what, 80)}`, data: { how: st.how === "button" ? "button" : "print" } }));
+    if (msOf(c.completedAt)) ev("sealCompleted", msOf(c.completedAt), { id: `d-seal-done-${key}`, lineKey: key, transactionId: tid, by: s(c.completedBy, 80), source: "sorter", station: "sorter", text: `Custom order completed: ${s(what, 80)}`, data: { how: c.how === "button" ? "button" : "print" } });
+  }
+
+  // the Team's thread: its workflow stamps as their own events, the rest as messages
+  for (const m of msgs) {
+    const text = String(m.text || "").trim(), at = msOf(m.timestamp) || msOf(m.at), by = s(m.senderName || "Staff", 80);
+    if (!text && !m.imageUrl) continue;
+    const stamp = (TEAM_STAMPS.find(([re]) => re.test(text)) || [])[1];
+    if (stamp) ev("note", at, { id: `d-msg-${m._id}`, by, source: "station", station: stamp === "DESIGNED :)" ? "design" : "", milestone: stamp === "DESIGNED :)" || undefined, text: stamp, data: { stamp } });
+    else ev("teamMessage", at, { id: `d-msg-${m._id}`, by, source: "station", text: s(text || "(picture)", 200), data: Object.assign({ role: s(m.senderRole, 20) }, m.imageUrl ? { imageUrl: s(m.imageUrl, 600) } : {}, text.length > 200 ? { full: s(text, 1500) } : {}) });
+  }
+  // the design station's completion with no set (an order designed there by hand): the same moment as a set's commit
+  // or the "DESIGNED :)" stamp, when there is one (sameEvent)
+  const designed = { id: "d-design-complete", source: "station", station: "design", milestone: true, text: "Design complete", data: { stamp: "designComplete" } };
+  if (archAt && !arch.setId) ev("note", archAt, Object.assign({ by: s(arch.completedBy, 80) }, designed));
+  if (done && msOf(done.completedAt)) ev("note", msOf(done.completedAt), Object.assign({ by: "" }, designed));
+
+  return { events: finalize(id, out), sheets: sheetS ? sheets.map(d => ({ sheetId: d._id, sheet: sheetLabel(d), setId: s(d.setId, 100), cut: n(d.laserDoneAt) > 0 || n(d.roseCutAt) > 0 })) : null, errors };
+}
+
+/** Whether two events say the same thing: the same type, within ±3 minutes (at any time for a derived event whose time
+    is only a bound, `approx`), on the same sheet and line when both name one, and the same words for a note or message. */
+function sameEvent(a, b) {
+  // the design station's plain completion is the moment a set was committed, or the "DESIGNED :)" stamp
+  const plain = x => x.type === "note" && !!x.data && x.data.stamp === "designComplete";
+  if (plain(a) || plain(b)) {
+    const o = plain(a) ? b : a;
+    return (o.type === "setCommitted" || plain(o) || (o.type === "note" && !!o.data && o.data.stamp === "DESIGNED :)")) && Math.abs(a.at - b.at) <= DEDUPE_MS;
+  }
+  if (a.type !== b.type) return false;
+  const approx = (a.data && a.data.approx) || (b.data && b.data.approx);
+  if (!approx && Math.abs(a.at - b.at) > DEDUPE_MS) return false;
+  if (a.sheetId && b.sheetId && a.sheetId !== b.sheetId) return false;
+  if (a.lineKey && b.lineKey && a.lineKey !== b.lineKey) return false;
+  if (a.type === "note" || a.type === "teamMessage" || a.type === "customerMessage") {
+    const t = x => String((x.data && x.data.stamp) || x.text || "").trim().toLowerCase();
+    return t(a) === t(b) || (!!(a.data && a.data.stamp) && a.data.stamp === (b.data && b.data.stamp));
+  }
+  return true;
+}
+/** The derived events that say something no recorded event (nor an earlier derived one) already says. */
+function dedupe(recorded, derived) {
+  const kept = [];
+  for (const e of derived) if (!recorded.some(r => sameEvent(r, e)) && !kept.some(k => !(k.series && k.series === e.series) && sameEvent(k, e))) kept.push(e);
+  return kept;
+}
+
+/* ── where the order is now ── */
+const RANK = {
+  arrived: 0, pulled: 0, interpreted: 0, pooled: 0, decided: 0, skipped: 0, customDecided: 0, designSent: 0, designDropped: 0, released: 0, restored: 0,
+  needsDecision: 1, engraveNeeded: 1, held: 1, customRead: 1,
+  placed: 2, moved: 2, renested: 2, qrLabel: 2, roseLine: 2, included: 2, merged: 2, sizeChanged: 2, setCommitted: 2, sealPrinted: 2, sealCompleted: 2, recalled: 2,
+  laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 7, labelPrinted: 7, shipped: 8, etsyCompleted: 9
+};
+const STAGE_OF = ["waiting", "review", "sheet", "cut", "sorted", "welded", "assembled", "packed", "shipped", "completed"];
+const STAGE_LABEL = { waiting: "Waiting", review: "In review", held: "On hold", designed: "Design complete", sheet: "On a sheet", cut: "Cut on the laser", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped", completed: "Completed on Etsy", cancelled: "Cancelled" };
+const PEOPLE_OUT = new Set(["", "system", "etsy", "operator", "someone"]);
+// the order view's milestone rail (design spec §2): the furthest step an event has reached
+const RAIL = ["Arrived", "On sheet", "Approved", "Laser cut", "Sorted", "Welded", "Assembled", "Shipped", "Completed"];
+const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, engraveApproved: 2, setCommitted: 2, sealCompleted: 2,
+  laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 8 };
+/** Where the order is now, from its events (oldest first) and its cancel record:
+    { stage, label, text, sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled, step, rail }
+    step: the furthest step of the rail (RAIL, 0-8) the order has reached; a cancelled order stopped there.
+    stage: waiting | review | held | designed | sheet | cut | sorted | welded | assembled | packed | shipped | completed | cancelled.
+    hint.sheets (from the derivation): the sheets that hold the order now, which outrank a stale removal or placement. */
+function whereOf(events, cancelled, hint = {}) {
+  const list = (events || []).filter(e => e && TYPES.has(e.type)).slice().sort((a, b) => n(a.at) - n(b.at));
+  let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, cut = false, designed = false, cancel = null, step = list.length ? 0 : -1;
+  const enter = (st, e) => { if (st !== stage) since = n(e.at); stage = st; };
+  for (const e of list) {
+    at = Math.max(at, n(e.at));
+    if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]);
+    else if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) step = Math.max(step, 2);
+    if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
+    if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
+    if (e.setId) setId = e.setId;
+    if (e.type === "cancelled" || e.type === "etsyCancelled") { cancel = e; continue; }
+    if (e.type === "cancelRestored") { cancel = null; continue; }
+    if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) {
+      designed = true;   // designed at the design station (an order the sorter never had), or its set committed
+      if (rank <= 2 && !sheetId) { rank = 2; enter("designed", e); }
+      continue;
+    }
+    if (e.type === "setCommitted" || e.type === "sealCompleted") designed = true;
+    if (e.type === "removed") {
+      if (rank <= 2 && (!e.sheetId || !sheetId || e.sheetId === sheetId)) { rank = 0; sheet = ""; sheetId = ""; enter(/hold/i.test((e.data && e.data.reason) || e.text || "") ? "held" : "waiting", e); }
+      continue;
+    }
+    const r = RANK[e.type]; if (r == null) continue;
+    if (r >= 3) { if (r > rank) { rank = r; enter(STAGE_OF[r], e); } if (r === 3) { cut = true; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } } continue; }
+    if (rank > 2) continue;   // past the sheet: sorter steps after the cut do not bring it back
+    if (r === 2) { rank = 2; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } enter(sheetId ? "sheet" : designed ? "designed" : "sheet", e); continue; }
+    // on a sheet, a reading or another line's step does not take it off; a hold does
+    if (sheetId && e.type !== "held") continue;
+    rank = 0; if (e.type === "held") { sheet = ""; sheetId = ""; }
+    enter(r === 1 ? (e.type === "held" ? "held" : "review") : "waiting", e);
+  }
+  // the sheets that hold it now (read from the records) outrank a placement or removal that was not recorded
+  const now = Array.isArray(hint.sheets) ? hint.sheets : null;
+  if (now && rank <= 2) {
+    const cur = now.find(x => x.sheetId === sheetId) || now[now.length - 1];
+    if (cur) { step = Math.max(step, cur.cut ? 3 : 1); if (cur.cut) { rank = 3; stage = "cut"; cut = true; } else if (rank < 2 || stage !== "sheet") { rank = 2; stage = "sheet"; } sheetId = cur.sheetId; sheet = cur.sheet; setId = cur.setId || setId; }
+    else if (stage === "sheet") { stage = designed ? "designed" : "waiting"; sheet = ""; sheetId = ""; }
+  }
+  if (stage === "sheet" && !sheetId && designed) stage = "designed";
+  const isCancelled = !!(cancelled || cancel);
+  if (isCancelled) {
+    const c = cancel || {}; stage = "cancelled"; since = n(c.at) || n(cancelled && cancelled.at) || since;
+    // a cancel record with no event of its own: whoever cancelled it is the last to act on it
+    if (!cancel && cancelled && n(cancelled.at) >= at) { at = n(cancelled.at); if (!PEOPLE_OUT.has(String(cancelled.by || "").trim().toLowerCase())) by = cancelled.by; }
+  }
+  const label = stage === "sheet" && sheet ? `On ${sheet}` : STAGE_LABEL[stage] || stage;
+  const bits = [label];
+  if (isCancelled && sheet) bits.push(`pieces on ${sheet}`);
+  if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`at ${station}${device ? " (" + device + ")" : ""}`);
+  if (by) bits.push(`by ${by}`);
+  return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
+}
+module.exports = { RAIL, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

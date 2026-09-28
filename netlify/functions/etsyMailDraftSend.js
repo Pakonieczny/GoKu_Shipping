@@ -1441,11 +1441,12 @@ exports.handler = async (event) => {
       });
 
       // Learning: keep what the AI drafted next to what was sent. Not for a
-      // Charm Sorter question, whose words never came from the AI.
+      // Charm Sorter question, whose words never came from the AI. A reply
+      // the Polish button reworded is marked: its wording is the model's.
       if (!orderLink) {
         await require("./_etsyMailLearning").recordOutcome({
           db, admin, draftId, threadId, prev: result.learnPrev, sentText: cleanText,
-          sendOrigin: inferredSendOriginForRecon, employeeName
+          sendOrigin: inferredSendOriginForRecon, employeeName, polished: body.polished === true
         });
       }
 

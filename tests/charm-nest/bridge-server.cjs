@@ -32,6 +32,10 @@ async function functions(st, name, req, res, base) {
   if (name === 'imageProxy') { res.writeHead(200, { 'Content-Type': 'image/png', 'Access-Control-Allow-Origin': '*', 'Cross-Origin-Resource-Policy': 'cross-origin' }); return res.end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=', 'base64')); }
   if (name === 'refreshEtsyToken') return json(res, 200, { access_token: 'tok', refresh_token: 'ref', expires_in: 3600 });
   const SB = q.sandbox === '1' ? 'Sandbox_' : '';
+  // the order timeline: the sorter's ops (charmNestLibrary, sandbox in the body) and the stations' door (firebaseOrders)
+  if (name === 'charmNestLibrary' && TIMELINE_OPS.has(body.op)) { const out = await timelineOp(st, body.op, body, [true, 1, '1'].includes(body.sandbox) ? 'Sandbox_' : ''); return json(res, out && out.error ? 400 : 200, out); }
+  if (name === 'firebaseOrders' && req.method === 'POST' && Array.isArray(body.timeline)) return json(res, 200, Object.assign({ success: true }, await timelineOp(st, 'timelineAdd', { events: body.timeline }, SB, { source: 'station', stationOnly: true })));
+  if (name === 'firebaseOrders' && req.method === 'GET' && q.cancelCheck) return json(res, 200, Object.assign({ success: true }, await timelineOp(st, 'cancelCheck', { orderIds: q.cancelCheck }, SB)));
   if (name === 'firebaseOrders') {
     if (req.method === 'POST') {
       const RT = SB + 'Design_RealTime_Selected_Orders';
@@ -81,6 +85,29 @@ async function functions(st, name, req, res, base) {
     res.writeHead(out.statusCode || 200, Object.assign({ 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' }, out.headers || {})); return res.end(out.body || '');
   }
   return json(res, 404, { error: 'no functions in the test server: ' + name });
+}
+
+/* The order timeline (netlify/functions/_orderTimeline.js) over the in-memory state, as the sorter (charmNestLibrary
+   timelineAdd / timelineGet / cancelCheck) and the stations (firebaseOrders POST {timeline}, GET ?cancelCheck=) call it.
+   Events land in st under (Sandbox_)Order_Timeline, cancel records are read from (Sandbox_)Charm_Nest_Cancelled (where
+   the real cancelPut writes them). timelineGet answers the recorded events alone (with `where`); the events derived from
+   the shop's other records have their own test (timeline-derive.cjs). */
+const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'));
+const TIMELINE_OPS = new Set(['timelineAdd', 'timelineGet', 'cancelCheck']);
+const plainCopy = d => JSON.parse(JSON.stringify(d || {}));
+function timelineDb(st) {
+  const doc = (c, id) => ({ id, _c: c, async get() { const d = st.doc(c, id); return { exists: !!d, id, data: () => (d ? plainCopy(d) : undefined) }; } });
+  return {
+    collection: c => ({ doc: id => doc(c, id), where: (f, op, v) => ({ limit: n => ({ async get() { const docs = st.list(c).filter(x => x[f] === v).slice(0, n).map(({ _id, ...d }) => ({ id: _id, data: () => plainCopy(d) })); return { docs, size: docs.length }; } }) }) }),
+    async getAll(...refs) { return Promise.all(refs.filter(r => r && typeof r.get === 'function').map(r => r.get())); },
+    batch() { const ops = []; return { set: (r, d) => ops.push(() => st.put(r._c, r.id, d)), async commit() { ops.forEach(o => o()); } }; }
+  };
+}
+async function timelineOp(st, op, b, prefix, extra = {}) {
+  const db = timelineDb(st);
+  if (op === 'timelineAdd') return Timeline.add(db, { serverTimestamp: () => Date.now() }, b.events, Object.assign({ prefix, source: 'sorter' }, extra));
+  if (op === 'timelineGet') return Timeline.get(db, b.orderId, { prefix, derive: false });
+  return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix });
 }
 
 /** firebase-admin fake shared by the real charmNest* handlers (the same shape tests/charm-nest/functions.cjs injects). */
