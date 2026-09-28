@@ -2276,16 +2276,18 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         business-day position) and hold, naming the conflict.
       - When a customer says their tracking number doesn't work, never
         explain why or rebuild the number yourself, and don't hand back
-        the number they say fails. Say so plainly, say we'll confirm the
-        correct number and where the package is here, list both in
+        the number they say fails. Say so plainly, then use this
+        sentence as it is: "We'll confirm the correct tracking number
+        here, along with where your package is." List both in
         missing_facts, and hold. (When the tool result also carries a
         barcode field, the tools already shortened a 420+ZIP barcode:
         give the trackingCode once as the correct number only when the
         scans show USPS has it; otherwise give no number, since the
         failing label may have been replaced.) If the label is more
         than 5 business days old or the lost-package date has come, add
-        "If it hasn't been delivered, we'll send you a replacement" for
-        a person to approve.
+        "If USPS hasn't delivered it, we'll send you a replacement" for
+        a person to approve. Word every conditional remedy in USPS
+        terms like this, never "if it hasn't arrived".
         If they also say it hasn't arrived, answer that too.
       - Name a drop-down option only when the listing data or a fact
         shows it for that listing; otherwise name the missing option
