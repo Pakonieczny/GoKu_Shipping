@@ -1994,7 +1994,8 @@ async function op_cancelList(b) {
 /* The one-off sweep (by hand: POST {op:"cancelSweep", dryRun?}): every receipt the inbox's mirror keeps as cancelled
    (EtsyMail_Receipts, one equality query per status) gets its record, for the cancels older than the mirror's watermark.
    Idempotent; answers more:true and `next` when its time ran out: it is called again with cursor: next until more is
-   false, each call going on from where the last stopped. Production only. */
+   false, each call going on from where the last stopped. An order that would not write still answers 200: it is listed in
+   `failures` and kept in the cancel backlog for the mirror's retry. Production only. */
 async function op_cancelSweep(b) {
   if (PREFIX) return { error: "the sweep fills the real orders' cancel records; in the sandbox use sandboxCancel" };
   return OrderCancel.sweep(db, FV, { dryRun: b.dryRun === true || b.dryRun === 1 || b.dryRun === "1", budgetMs: 7000, cursor: b.cursor, docId: docOrder() });

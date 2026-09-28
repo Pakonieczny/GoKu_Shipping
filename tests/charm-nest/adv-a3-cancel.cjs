@@ -166,6 +166,32 @@ async function check(name, fn) {
     const bl = store.get("Charm_Nest_Cancelled_Backlog/pending"); assert(bl, "backlog kept"); assert.deepEqual(bl.ids, ["4310000000"]);
     assert(cancelDoc("4310000100"));
   });
+  await check("sweep: one order that will not write answers 200 with the progress, the resume point and that order, kept in the backlog", async () => {
+    // the backlog is full (200 ids): the failed order is added as the newest and the oldest drops, as the backlog always did
+    await OrderCancel.keepBacklog(db, Array.from({ length: 200 }, (_, i) => String(4330000000 + i)));
+    const ok1 = "4320000000", bad = "4320000001", ok2 = "4320000002";
+    for (const id of [ok1, bad, ok2]) store.set("EtsyMail_Receipts/" + id, { receipt_id: id, status: "Canceled", is_shipped: false, updated_timestamp: T0, raw: { receipt_id: id, status: "Canceled" } });
+    const poisoned = r => r && r.path === "Charm_Nest_Cancelled/" + bad;
+    const realBatch = db.batch, realRT = db.runTransaction;
+    db.batch = () => { const b = realBatch.call(db), commit = b.commit, seen = []; for (const k of ["set", "update", "create"]) { const f = b[k]; b[k] = (r, ...a) => { seen.push(r); return f(r, ...a); }; }
+      b.commit = async () => { if (seen.some(poisoned)) throw new Error("ABORTED: contention"); return commit(); }; return b; };
+    db.runTransaction = fn => realRT.call(db, t => fn(Object.assign({}, t, { get: r => (poisoned(r) ? Promise.reject(new Error("DEADLINE_EXCEEDED: write timed out")) : t.get(r)) })));
+    slowCancelRead = 8000;   // the first page's reads "take" 8 s: the call stops after it, with a resume point
+    let r;
+    try { r = await post({ op: "cancelSweep" }); } finally { db.batch = realBatch; db.runTransaction = realRT; slowCancelRead = 0; }
+    assert.equal(r.status, 200, "progress was made: not a failure: " + JSON.stringify(r.body));
+    assert.equal(r.body.ok, true); assert.equal(r.body.more, true); assert(r.body.next && Number.isInteger(r.body.next.s), "a resume point");
+    assert.equal(r.body.failed, 1);
+    assert.equal(r.body.failures.length, 1); assert.equal(r.body.failures[0].orderId, bad); assert.match(r.body.failures[0].why, /DEADLINE_EXCEEDED/);
+    assert(r.body.failures[0].why.length <= 200, "a short reason");
+    assert(cancelDoc(ok1) && cancelDoc(ok2), "the others were recorded"); assert(!cancelDoc(bad));
+    const bl = store.get("Charm_Nest_Cancelled_Backlog/pending").ids;
+    assert.equal(bl.length, 200, "bounded as the backlog is"); assert.equal(bl[199], bad, "kept for the mirror's retry");
+    assert.equal(r.body.backlogged, 1);
+    // the mirror's next run retries it (no Etsy call of its own) and it is recorded
+    await OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue);
+    assert(cancelDoc(bad) && cancelDoc(bad).by === "Etsy", "retried from the backlog");
+  });
   console.warn = realWarn; console.log = realLog; Date.now = realNow;
   console.log(`adv-a3-cancel: ${passed} passed, ${failed} failed`); process.exit(failed ? 1 : 0);
 })().catch(e => { console.warn = realWarn; console.log = realLog; console.error(e); process.exit(1); });
