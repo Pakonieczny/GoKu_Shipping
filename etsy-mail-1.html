@@ -27619,6 +27619,11 @@ const EtsyMailAuth=(()=>{
     }
     /* The emptied reply box keeps its hint hidden while the words lift off it. */
     .em-flight-quiet::placeholder { color: transparent !important; }
+    /* A copy of a box edge that slides while the emptied reply box settles. */
+    .em-flight-band {
+      position: absolute; box-sizing: border-box; margin: 0; padding: 0;
+      border: 0 solid transparent; pointer-events: none;
+    }
     /* Desktop bubbles keep the reply's line breaks, as the phone does. */
     .em-thread .em-msg .em-msg-text { white-space: pre-wrap; }
     .em-thread .em-msg .em-msg-text:empty { display: none; }
@@ -27743,21 +27748,6 @@ const EtsyMailAuth=(()=>{
         out.push({ text: mm[0], left: q.left, top: q.top, width: q.width, height: q.height });
       }
       return out;
-    }
-
-    /** Run onFrame(p) for p eased from 0 to 1 over ms, then keep() to hold
-     *  the view steady. Resolves when done. */
-    function tween(ms, onFrame, keep) {
-      return new Promise(resolve => {
-        const t0 = performance.now();
-        const ease = p => 1 - Math.pow(1 - p, 3);
-        const step = now => {
-          let p = Math.min(1, (now - t0) / ms);
-          try { onFrame(ease(p)); if (keep) keep(); } catch (_) { p = 1; }
-          if (p < 1) requestAnimationFrame(step); else resolve();
-        };
-        requestAnimationFrame(step);
-      });
     }
 
     function releaseHold() {
@@ -28005,7 +27995,7 @@ const EtsyMailAuth=(()=>{
         clearTimeout(f.safety);
         (f.anims || []).forEach(a => { try { a.cancel(); } catch (_) {} });
         node.classList.remove('em-flight-text-hidden');
-        if (f.quiet) f.quiet.classList.remove('em-flight-quiet');
+        // The reply box's hint stays hidden until the box has settled.
         clearGrowth(node);
         if (scroller) scroller.style.overflowAnchor = f.oldAnchor || '';
         // The heavy work (held renders, the reply box's resize) waits until
@@ -28038,58 +28028,165 @@ const EtsyMailAuth=(()=>{
       }, Math.max(320, landAt));
     }
 
-    /** Ease the emptied reply box back to its resting height. */
+    /** Everything that rides on the reply box's edges: what sits beside it
+     *  up to its card, the card's neighbours, and the phone's messages. */
+    function ridersOf(ta, host, scroller) {
+      const out = [];
+      const beside = el => {
+        const p = el.parentElement;
+        if (p) for (const s of p.children) if (s !== el) out.push(s);
+      };
+      for (let el = ta; el && el !== host; el = el.parentElement) beside(el);
+      beside(host);
+      if (scroller && !scroller.contains(host)) out.push.apply(out, scroller.children);
+      return out.filter(el => !/^(SCRIPT|STYLE|TEMPLATE)$/.test(el.tagName) && el.getClientRects().length);
+    }
+
+    /** A box's height has just snapped smaller. Over its uniform middle, a
+     *  copy of each edge that moved (top or bottom: border, corners and
+     *  fill) slides from where the edge was to where it is, with transform
+     *  and clip-path only. The copy goes in host (positioned) at z. */
+    function edgeBands(host, box, was, now, z, T, anims, bands) {
+      const cs = getComputedStyle(box);
+      const hr = host.getBoundingClientRect();
+      const px = v => parseFloat(v) || 0;
+      const line = s => cs['border' + s + 'Width'] + ' ' + cs['border' + s + 'Style'] + ' ' + cs['border' + s + 'Color'];
+      [['Top', now.top - was.top], ['Bottom', was.bottom - now.bottom]].forEach(([side, m]) => {
+        if (m < 0.5) return;
+        const r1 = px(cs['border' + side + 'LeftRadius']), r2 = px(cs['border' + side + 'RightRadius']);
+        const cover = px(cs['border' + side + 'Width']) + Math.max(r1, r2, 2);
+        const top = side === 'Top';
+        const y0 = top ? was.top : now.bottom - cover, y1 = top ? now.top + cover : was.bottom;
+        const b = document.createElement('div');
+        b.className = 'em-flight-band';
+        Object.assign(b.style, {
+          left: (now.left - hr.left - host.clientLeft) + 'px', width: now.width + 'px',
+          top: (y0 - hr.top - host.clientTop) + 'px', height: (y1 - y0) + 'px', zIndex: z,
+          backgroundColor: cs.backgroundColor, borderLeft: line('Left'), borderRight: line('Right')
+        });
+        b.style['border' + side] = line(side);
+        b.style['border' + side + 'LeftRadius'] = r1 + 'px';
+        b.style['border' + side + 'RightRadius'] = r2 + 'px';
+        host.appendChild(b);
+        bands.push(b);
+        anims.push(b.animate([
+          { transform: 'translateY(0px)', clipPath: 'inset(0px)' },
+          { transform: 'translateY(' + (top ? m : -m) + 'px)', clipPath: top ? 'inset(0px 0px ' + m + 'px 0px)' : 'inset(' + m + 'px 0px 0px 0px)' }
+        ], T));
+      });
+    }
+
+    /** Ease the emptied reply box back to its resting height. The height
+     *  is set once (the view held steady); what moved slides from where it
+     *  was, and the box's edges are drawn sliding in, with transform and
+     *  clip-path only. */
     function settleComposer(prep, f, instant) {
       const ta = prep && prep.textarea;
-      if (!ta || !ta.isConnected || ta.value) return;   // the operator is already typing
+      const unquiet = () => { if (f && f.quiet) f.quiet.classList.remove('em-flight-quiet'); };
+      if (!ta || !ta.isConnected || ta.value) { unquiet(); return; }   // the operator is already typing
       const mobile = prep.surface === 'mobile';
       const fit = () => {
         if (mobile && typeof window.mAutoGrow === 'function') window.mAutoGrow(ta);
         else { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
       };
-      const h0 = ta.getBoundingClientRect().height;
-      const old = ta.style.height;
-      fit();
-      const h1 = ta.getBoundingClientRect().height;
-      if (instant || Math.abs(h1 - h0) < 2 || reducedMotion() || document.hidden) return;
-      ta.style.height = old || (h0 + 'px');
-      const keep = keeper(f);
-      let typed = false;
-      const onInput = () => { typed = true; };
-      ta.addEventListener('input', onInput, { once: true });
-      tween(220, p => {
-        if (typed) return;
-        ta.style.height = (h0 + (h1 - h0) * p) + 'px';
-      }, () => { if (!typed) keep(); }).then(() => {
-        ta.removeEventListener('input', onInput);
-        if (!typed && !ta.value) fit();
-      });
+      const host = mobile ? document.getElementById('mComposer') : prep.anchorEl;
+      const scroller = prep.scroller && prep.scroller.isConnected ? prep.scroller : null;
+      const animate = !instant && !reducedMotion() && !document.hidden && host && host.isConnected && host.contains(ta);
+      if (!animate) { fit(); unquiet(); return; }
+      const anims = [], bands = [];
+      const oldPos = host.style.position, oldIso = host.style.isolation;
+      let over = false;
+      const end = () => {
+        if (over) return;
+        over = true;
+        ta.removeEventListener('input', end);
+        anims.forEach(a => { try { a.cancel(); } catch (_) {} });
+        bands.forEach(b => b.remove());
+        host.style.position = oldPos;
+        host.style.isolation = oldIso;
+        unquiet();
+      };
+      try {
+        const was = ta.getBoundingClientRect(), hostWas = host.getBoundingClientRect();
+        const riders = ridersOf(ta, host, scroller);
+        const before = riders.map(el => el.getBoundingClientRect().top);
+        const keep = keeper({ surface: prep.surface, scroller, anchorEl: host, anchorBottom: hostWas.bottom });
+        fit();
+        keep();
+        const now = ta.getBoundingClientRect();
+        if (now.height > was.height - 2) { end(); return; }
+        // The card's edge copy goes under its contents (z -1); the box's over it.
+        if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        host.style.isolation = 'isolate';
+        const T = { duration: 220, easing: 'cubic-bezier(.33,1,.68,1)', fill: 'forwards' };
+        riders.forEach((el, i) => {
+          const d = el.getBoundingClientRect().top - before[i];
+          if (Math.abs(d) >= 0.5) anims.push(el.animate([{ transform: 'translateY(' + (-d) + 'px)' }, { transform: 'translateY(0px)' }], T));
+        });
+        edgeBands(host, host, hostWas, host.getBoundingClientRect(), '-1', T, anims, bands);
+        edgeBands(host, ta, was, now, 'auto', T, anims, bands);
+      } catch (e) { console.warn('[SendFlight] settle:', e); end(); return; }
+      // Typing mid-way hands the box straight back.
+      ta.addEventListener('input', end);
+      Promise.all(anims.map(a => a.finished)).then(end, end);
+      setTimeout(end, 700);
     }
 
-    /** A failed send's bubble folds away. Resolves when it is gone. */
+    /** A failed send's bubble folds away. Resolves when it is gone. It stays
+     *  in the layout while it folds: the history slides to where it will be
+     *  and the bubble is covered from its bottom as it fades (transform,
+     *  clip-path and opacity only); then it leaves the layout once. */
     function retract(localId) {
       const nodes = Array.from(document.querySelectorAll(sel(localId)));
       if (active && nodes.indexOf(active.node) >= 0) abort(active);
       if (!nodes.length || reducedMotion() || document.hidden) return Promise.resolve();
-      return Promise.all(nodes.map(node => {
+      return Promise.all(nodes.map(node => new Promise(resolve => {
         const surface = node.closest('#mMessagesList') ? 'mobile' : 'desktop';
         const list = listFor(surface);
         const f = { surface, scroller: scrollerFor(surface, list), anchorEl: anchorFor(surface) };
         f.anchorBottom = f.anchorEl ? f.anchorEl.getBoundingClientRect().bottom : 0;
         const keep = surface === 'mobile' ? () => {} : keeper(f);
-        const cs = getComputedStyle(node);
-        const H = node.offsetHeight, pt = parseFloat(cs.paddingTop) || 0, pb = parseFloat(cs.paddingBottom) || 0;
-        const mb = parseFloat(cs.marginBottom) || 0;
-        node.style.overflow = 'hidden';
-        return tween(260, p => {
-          const q = 1 - p;
-          node.style.height = (H * q) + 'px';
-          node.style.paddingTop = (pt * q) + 'px';
-          node.style.paddingBottom = (pb * q) + 'px';
-          node.style.marginBottom = (mb * q) + 'px';
-          node.style.opacity = String(Math.max(0, 1 - p * 1.5));
-        }, keep);
-      })).then(() => {});
+        const comp = f.anchorEl && f.anchorEl.isConnected ? f.anchorEl : null;
+        const anims = [];
+        let over = false;
+        const end = () => {
+          if (over) return;
+          over = true;
+          node.style.display = 'none';
+          anims.forEach(a => { try { a.cancel(); } catch (_) {} });
+          keep();
+          resolve();
+        };
+        try {
+          // Where everything ends up once the bubble is gone, then put back.
+          const after = [];
+          for (let s = node.nextElementSibling; s; s = s.nextElementSibling) after.push(s);
+          const tops = () => [list, comp].concat(after).map(el => el && el.isConnected ? el.getBoundingClientRect().top : 0);
+          const t0 = tops();
+          const st = f.scroller ? f.scroller.scrollTop : 0;
+          const oldDisplay = node.style.display;
+          node.style.display = 'none';
+          keep();
+          const t1 = tops();
+          node.style.display = oldDisplay;
+          if (f.scroller) f.scroller.scrollTop = st;
+          const dList = t1[0] - t0[0], dComp = t1[1] - t0[1];
+          const room = Math.max(0, dList - dComp);
+          const T = { duration: 260, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' };
+          const slide = (el, d) => {
+            if (el && Math.abs(d) >= 0.5) anims.push(el.animate([{ transform: 'translateY(0px)' }, { transform: 'translateY(' + d + 'px)' }], T));
+          };
+          slide(list, dList);
+          slide(comp, dComp);
+          after.forEach((el, i) => slide(el, (t1[i + 2] - t0[i + 2]) - dList));
+          anims.push(node.animate([
+            { clipPath: 'inset(0px)', opacity: 1 },
+            { opacity: 0, offset: 0.7 },
+            { clipPath: 'inset(0px 0px ' + room + 'px 0px)', opacity: 0 }], T));
+        } catch (e) { console.warn('[SendFlight] retract:', e); end(); return; }
+        Promise.all(anims.map(a => a.finished)).then(end, end);
+        setTimeout(end, 700);
+      }))).then(() => {});
     }
 
     /** Draw the eye to the reply box when a failed reply comes back. */
