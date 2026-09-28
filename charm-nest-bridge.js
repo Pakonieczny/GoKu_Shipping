@@ -8471,6 +8471,8 @@ const OrderWin = window.OrderWin = (() => {
     byId("owPieceSw")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
     byId("owPcSum")?.addEventListener("click", e => { const b = e.target.closest("[data-piece]"); if (b) pickPiece(b.dataset.piece || null); });
     byId("owFace").addEventListener("click", e => { const b = e.target.closest("[data-face]"); if (b) turnPlate(b.dataset.face); });
+    // the turn never waits on a download: the engraving font in idle time, the sheet's backs as the switch is neared
+    if (window.SheetWin && SheetWin.armBack) SheetWin.armBack(byId("owFace"), () => { const s = SV.list && SV.list[SV.at]; return s && s.id; });
     // a message still on its way: try it again now, take it back into the box, or let it go
     byId("owThread").addEventListener("click", e => {
       const b = e.target.closest("[data-tm]"); if (!b) return;
@@ -9122,7 +9124,9 @@ const OrderWin = window.OrderWin = (() => {
           paintPanel(inf); paintFoot(inf); },
         onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); },
         // the back side waits on nothing: the plate is drawn, and this says what is still coming
-        onWait: t => { if (tok === SV.tok) plateWait(t); }
+        onWait: t => { if (tok === SV.tok) plateWait(t); },
+        // (a sheet drawn while the view is turned over is drawn from behind: the switch and the plate never disagree)
+        back: (W.faceShown || "front") === "back"
       });
       if (tok !== SV.tok) return;
       plateWait(null); if (info.failed && info.failed.length) toast(`${info.failed.length} design(s) of this sheet could not be read; they show as outlines`, "bad", 6000);
@@ -9249,13 +9253,16 @@ const OrderWin = window.OrderWin = (() => {
     if (still() || !body) return go();
     body.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: "ease-in", fill: "forwards" }).finished.then(() => { go(); body.getAnimations().forEach(a => a.cancel()); body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: EASE }); }, () => go());
   }
-  /** Front | Back: the plate turns to its edge, is drawn from behind, and turns back. */
+  /** Front | Back: the plate turns to its edge, is drawn from behind, and turns back — one turn at a time (Motion.turner):
+      a second press while it turns is taken up by that turn, and it ends on the side asked for last. */
+  let plateTurn = null;
   function turnPlate(face) {
     if (face === W.face) return; W.face = face;
     byId("owFace").querySelectorAll("[data-face]").forEach(b => { const on = b.dataset.face === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
-    const cv = byId("owSheetCv"), d = face === "back" ? 1 : -1, redraw = () => { if (SV.info) { SV.info.back(face === "back"); paintFoot(SV.info); paintPanel(SV.info); } };
-    if (still() || !SV.info) return redraw();
-    cv.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished.then(() => { redraw(); cv.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, () => redraw());
+    const redraw = f => { W.faceShown = f; if (SV.info) { SV.info.back(f === "back"); paintFoot(SV.info); paintPanel(SV.info); } };
+    if (!window.Motion || !Motion.turner) return redraw(face);
+    plateTurn = plateTurn || Motion.turner({ el: () => SV.info ? byId("owSheetCv") : null, shown: () => W.faceShown || "front", paint: redraw, still });
+    plateTurn.ask(face);
   }
   /** The sheet window takes this view's place (never one window over another), grown out of the sheet drawn here, and
    *  this view comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
@@ -9704,6 +9711,9 @@ const RunHistory = window.RunHistory = (() => {
     </div><div class="hMenu" id="hMenu" role="menu" hidden></div>`;
     document.body.appendChild(d); H.dlg = d;
     const q = d.querySelector("#hQ"), body = d.querySelector("#hBody");
+    // the turn never waits on a download: the engraving font in idle time, the backs of the sheets in sight as the switch is neared
+    if (window.SheetWin && SheetWin.armBack) SheetWin.armBack(d.querySelector("#hFace"), () => { const br = body.getBoundingClientRect();
+      return [...body.querySelectorAll(".hTile[data-sheet]")].filter(t => { const r = t.getBoundingClientRect(); return r.width && r.bottom > br.top - 160 && r.top < br.bottom + 160; }).map(t => t.dataset.sheet); });
     let t = 0;
     q.oninput = () => { H.q = q.value; clearTimeout(t); t = setTimeout(load, 260); };
     q.onkeydown = e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); clearTimeout(t); H.q = q.value; load(); } };
@@ -9969,12 +9979,13 @@ const RunHistory = window.RunHistory = (() => {
     const body = d.querySelector("#hBody");
     // (the backs start drawing as the turn starts, so they are there when the sheets come round)
     if (face === "back") backsIn(body); else if (BK.io) { BK.io.disconnect(); BK.io = null; }
-    const apply = () => { d.dataset.face = face; paintState(); };
-    const br = body.getBoundingClientRect(), plates = still() ? [] : [...body.querySelectorAll(".hPlate")].filter(p => { const r = p.getBoundingClientRect(); return r.width && r.bottom > br.top && r.top < br.bottom; });
-    if (!plates.length) return apply();
-    const dir = face === "back" ? 1 : -1, P = "perspective(700px) ";
-    Promise.all(plates.map(p => p.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * dir}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished))
-      .then(() => { apply(); for (const p of plates) if (p.isConnected) p.animate([{ transform: P + `rotateY(${-90 * dir}deg)` }, { transform: P + "rotateY(0)" }], { duration: 380, easing: EASE }); }, apply);
+    // one turn at a time (Motion.turner): a press while the sheets turn is taken up by that turn, and they come round on
+    // the side asked for last — never a second turn started over the first
+    const apply = f => { if (H.dlg !== d) return; d.dataset.face = f; paintState(); };
+    const plates = () => { const br = body.getBoundingClientRect(); return [...body.querySelectorAll(".hPlate")].filter(p => { const r = p.getBoundingClientRect(); return r.width && r.bottom > br.top && r.top < br.bottom; }); };
+    if (!window.Motion || !Motion.turner) return apply(face);
+    if (!d._turn) d._turn = Motion.turner({ el: plates, shown: () => d.dataset.face === "back" ? "back" : "front", paint: apply, still, persp: "perspective(700px) " });
+    d._turn.ask(face);
   }
   /** Every sheet under root gets its back's place, and is drawn once it is in sight. */
   function backsIn(root) {
@@ -11031,6 +11042,8 @@ const SetPicker = window.SetPicker = (() => {
     dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}${FACE_SWITCH}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map((s, i) => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div><div class="spPlate${s.preview ? "" : " noPic"}" data-sp="${i}" style="--ar:${(f => f ? +(f.wPt / f.hPt).toFixed(4) : 2)(s.stock && +s.stock.wPt > 0 && +s.stock.hPt > 0 ? s.stock : null)}">${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}</div><figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     F.sheets = g.sheets; F.face = "front"; F.tok++;
     dialog.querySelectorAll("[data-sp-face]").forEach(b => b.onclick = () => turn(b.dataset.spFace));
+    // the turn never waits on a download: the engraving font in idle time, the sheets' backs as the switch is neared
+    if (window.SheetWin && SheetWin.armBack) SheetWin.armBack(dialog.querySelector(".spFace"), () => g.sheets.map(s => s.id || s.sheetId));
     dialog.showModal();
   }
   /* ── Front | Back · engraving (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
@@ -11045,12 +11058,14 @@ const SetPicker = window.SetPicker = (() => {
   function turn(face) {
     if (!dialog || face === F.face) return; F.face = face;
     dialog.querySelectorAll("[data-sp-face]").forEach(b => { const on = b.dataset.spFace === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
-    const d = face === "back" ? 1 : -1, tok = F.tok;
+    const tok = F.tok;
+    // each sheet turns once at a time (Motion.turner): a press while it turns is taken up by that turn, and it comes round
+    // on the side asked for last — never a second turn started over the first
     dialog.querySelectorAll(".spPlate").forEach((pl, n) => {
-      const swap = () => { if (tok === F.tok && F.face === face) sideOf(pl, face); };
-      if (still() || !pl.animate) return swap();
-      pl.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, delay: Math.min(n, 8) * 40, easing: "cubic-bezier(.4,0,1,1)" })
-        .finished.then(() => { swap(); pl.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, swap);
+      const swap = f => { if (tok === F.tok) sideOf(pl, f); };
+      if (!window.Motion || !Motion.turner) return swap(face);
+      if (!pl._turn) pl._turn = Motion.turner({ el: () => pl, shown: () => pl.classList.contains("back") ? "back" : "front", paint: swap, still });
+      pl._turn.ask(face, Math.min(n, 8) * 40);
     });
   }
   /** One sheet shown from the side asked for; its back is drawn the first time it is turned, and kept. */

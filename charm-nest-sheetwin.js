@@ -1588,7 +1588,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       (W.backsWait ? `<span class="swLegend"><span class="spin"></span>${esc(W.backsWait)}</span>` : "") +
       `<span>${backFace() ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
     const t = E.strip.querySelector("[data-r2=backs]"); if (t) t.onclick = () => { W.showBacks = !W.showBacks; renderStrip(); paintFx(); };
-    const f = E.strip.querySelector("[data-r2=face]"); if (f) f.onclick = () => turnPlate(backFace() ? "front" : "back");
+    const f = E.strip.querySelector("[data-r2=face]"); if (f) { f.onclick = () => turnPlate(backFace() ? "front" : "back");
+      // the turn never waits on a download: the font is loaded in idle time, the sheet's backs read as the switch is neared
+      warmFont(); f.onpointerenter = f.onfocus = () => { if (W.id) backsFor(W.id).catch(() => {}); }; }
   }
   /** Front | Back: the plate turns to its edge, is drawn from the other side, and turns back (the order view turns the
       same way: OrderWin turnPlate). Nothing is read before it turns — the words arrive on the plate as they come. */
@@ -1625,8 +1627,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     W.backsWait = "Reading " + what.join(" and ") + "…"; renderStrip();
     Promise.all(jobs).then(() => {
       if (tok !== W.token) return;
-      W.backsWait = ""; for (const x of W.pieces) { x._engGeo = null; x._engGeoKey = null; }
-      renderStrip(); if (backFace() && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); }
+      // (once the plate has come round on its plain back, the words fade in over it: Motion.landIn)
+      const land = () => { if (tok !== W.token) return; W.backsWait = ""; for (const x of W.pieces) { x._engGeo = null; x._engGeoKey = null; }
+        renderStrip(); if (backFace() && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); } };
+      if (backFace() && W.el && W.el.base && window.Motion && Motion.landIn) Motion.landIn(W.el.base, land); else land();
     });
   }
   function renderSheetPane() {
@@ -3776,9 +3780,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!jobs.length) return;
     wait("Reading " + what.join(" and ") + "…");
     Promise.all(jobs).then(() => {
-      wait(null);
-      for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; }
-      if (G.cv.isConnected && G.cv._order === G) soonPaint(G);
+      // (a plate still turning comes round on its plain back with its spinner, then the words fade in: Motion.landIn)
+      const land = () => { wait(null); for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; } if (G.cv.isConnected && G.cv._order === G) { if (paintOrderBase(G)) paintOrder(G); } };
+      if (G.backSide && G.cv.isConnected && window.Motion && Motion.landIn) Motion.landIn(G.cv, land); else land();
     });
   }
   /** The words of one piece in the charm's own frame, worked out once per drawing and kept with the piece. */
@@ -4031,9 +4035,24 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** A sheet this sorter holds, from behind: the backs its page and Engrave know, and (once it is saved) the sheet's saved
       backs, read once for the whole sheet. */
   const backsOfPage = (pg, list) => backsOf({ id: pg.sheetId || null, backPool: pg.backPool || [] }, null, list || null);
-  const cardBack = { piece: backPiece, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec) };
+  /** A sheet view with a Front | Back switch has appeared (Paul, 28 Sep: the flip must be smooth on every sheet view): the
+      engraving font is loaded once, in idle time, and the backs its Back would read are read as a pointer or the focus comes
+      to the switch — so the turn itself never waits on a download (they are asked once and kept: backsFor, loadFonts). */
+  let fontWarm = false;
+  function warmFont() {
+    if (fontWarm) return; fontWarm = true;
+    const go = () => { backFontReady(); };
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 1500 }); else setTimeout(go, 200);
+  }
+  function armBack(sw, ids) {
+    warmFont();
+    if (!sw || sw._armed) return; sw._armed = true;
+    const go = () => { for (const id of [].concat((ids && tryDo(ids)) || []).filter(Boolean).slice(0, 12)) backsFor(String(id)).catch(() => {}); };
+    sw.addEventListener("pointerenter", go); sw.addEventListener("focusin", go);
+  }
+  const cardBack = { piece: backPiece, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec), warmFont, arm: armBack };
 
-  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, _W: W };
+  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
@@ -4080,6 +4099,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     seg.innerHTML = segHtml(L.face, true);
     seg.addEventListener("click", e => { const x = e.target.closest("[data-face]"); if (x) turnAll(x.dataset.face); });
     b.appendChild(seg);
+    // (the engraving font in idle time, so no card's turn waits on it; a card reads its own record when it is turned)
+    if (window.SheetWin && SheetWin.armBack) SheetWin.armBack(seg, null);
   }
   /** A card's picture in a turning box: the saved picture (front), the drawn back over its same box, and its own switch. */
   function prep(card) {
@@ -4141,14 +4162,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
   }
   /** Front | Back on one card: its picture turns to its edge, is shown from the other side, and turns back. */
+  // one turn at a time per card (Motion.turner): a press while it turns is taken up by that turn — it comes round on the
+  // side asked for last — never a second turn started over the first
   function turnCard(card, face, delay) {
     const lb = prep(card); if (!lb) return;
-    if (lb.turn.classList.contains("back") === (face === "back")) return setFace(card, face);
-    const d = face === "back" ? 1 : -1, apply = () => setFace(card, face);
+    const shown = () => lb.turn.classList.contains("back") ? "back" : "front";
+    if (!(lb.t && lb.t.busy()) && shown() === face) return setFace(card, face);
     if (face === "back") want(card);   // asked for as the turn starts, so the drawing is on its way while it turns
-    if (still() || !card._lbIn || !lb.turn.animate) return apply();
-    lb.turn.animate([{ transform: "perspective(900px) rotateY(0)" }, { transform: `perspective(900px) rotateY(${90 * d}deg)` }], { duration: 300, delay: delay || 0, easing: "cubic-bezier(.4,0,1,1)" })
-      .finished.then(() => { apply(); lb.turn.animate([{ transform: `perspective(900px) rotateY(${-90 * d}deg)` }, { transform: "perspective(900px) rotateY(0)" }], { duration: 380, easing: EASE }); }, apply);
+    mark(lb.sw, face);
+    if (!window.Motion || !Motion.turner) return setFace(card, face);
+    if (!lb.t) lb.t = Motion.turner({ el: () => lb.turn, shown, paint: f => setFace(card, f), still: () => still() || !card._lbIn, persp: "perspective(900px) " });
+    lb.t.ask(face, delay || 0);
   }
   function turnOne(card, face) {
     const id = card.dataset.id; if (face === L.face) L.own.delete(id); else L.own.set(id, face);
@@ -4160,7 +4184,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const all = cards(), seen = all.filter(c => c._lbIn).map(c => ({ c, r: c.getBoundingClientRect() })).sort((a, b) => (a.r.top - b.r.top) || (a.r.left - b.r.left));
     L.queue = [];
     seen.forEach(({ c }, i) => turnCard(c, face, Math.min(i * 45, 540)));
-    for (const c of all) if (!c._lbIn) setFace(c, face);
+    for (const c of all) if (!c._lbIn) turnCard(c, face, 0);   // (out of sight: at once, or taken up by a turn still going)
   }
   /** New cards (a search, a refresh, the Sets view) come in on the side the Library shows. */
   function sync() {
