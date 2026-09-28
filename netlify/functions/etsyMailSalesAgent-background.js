@@ -4184,11 +4184,15 @@ ${validationResult.message}
     // A draft someone should read first (review_decision, a low review
     // confidence, escalation, or a detail the facts don't give) is never
     // auto-sent: the pipeline reads readyForHumanApproval from the draft.
-    const salesHoldForPerson = !!wantsHumanReview || salesMissingFacts.length > 0;
+    // Owner's rule: no delivery dates. A reply that ties arrival to a date or
+    // weekday waits for a person, as in the support drafter.
+    const salesDated = require("./_etsyMailVetoes").deliveryDateSentence(replyText);
+    const salesHoldForPerson = !!wantsHumanReview || salesMissingFacts.length > 0 || !!salesDated;
     let aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
     // A detail the fact sheet does not give waits for a person.
     if (salesMissingFacts.length && aiConfidence > 0.5) aiConfidence = 0.5;
+    if (salesDated) aiConfidence = 0;
 
     // ─── v4.3.12: line-sheet attachment construction ──────────────────
     //
@@ -4503,6 +4507,7 @@ ${validationResult.message}
         attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
       },
       readyForHumanApproval : salesHoldForPerson || salesClaimMismatch,
+      aiDeliveryDateReview  : !!salesDated,
       // Audit fix F3 — the auto-pipeline reads this flag from the DRAFT
       // (isAcceptanceSkip). It was only written on the thread, so the
       // acceptance reply was auto-sent next to the listing-link message.

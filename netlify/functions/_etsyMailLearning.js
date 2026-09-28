@@ -153,4 +153,26 @@ async function recordMissingFacts({ db, admin, threadId, facts, route }) {
   }
 }
 
-module.exports = { OUTCOMES_COLL, GAPS_COLL, STATS_DOC, compareTexts, isoWeek, recordOutcome, recordMissingFacts, gapId };
+// ── lessons that wait for a person (pure) ────────────────────────────
+
+// A learned rule or fact goes live with nobody reading it, so one that names
+// a calendar date or promises when an order arrives waits for the owner
+// (owner's rule: no delivery dates in any draft). Business-day ranges and
+// "we can't guarantee delivery dates" are fine.
+const L_MON = "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+const LESSON_DATE_RX = new RegExp("\\b(?:" + L_MON + "\\s+\\d{1,2}(?:st|nd|rd|th)?\\b|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?" + L_MON + "(?![a-z])" +
+  "|\\d{1,2}/\\d{1,2}/\\d{2,4}\\b|\\d{4}-\\d{2}-\\d{2}\\b)", "i");
+const LESSON_PROMISE_RX = /\b(?:arriv\w*|deliver(?:s|ed|y|ies)?|get\s+(?:it|there|to\s+(?:you|them))|reach\w*|be\s+there|in\s+(?:your|their)\s+hands)\b[^.!?\n]{0,40}?\b(?:by|before|no\s+later\s+than|in\s+time\s+for|(?:with)?in\s+\d+(?:\s*(?:-|to)\s*\d+)?\s+(?!business)(?:\w+\s+)?(?:days?|weeks?|hours?))\b|\bguarantee[sd]?\s+(?:delivery|arrival)\b/i;
+const LESSON_NEG_RX = /\b(?:never|not|no|cannot|avoid)\b|n['’]t\b/i;
+function lessonHoldReason(text) {
+  const s = String(text || "");
+  if (LESSON_DATE_RX.test(s)) return "names a calendar date";
+  const { deliveryDateSentence } = require("./_etsyMailVetoes");
+  for (const t of s.split(/(?<=[.!?;])\s+|\n+/)) {
+    if (LESSON_NEG_RX.test(t)) continue;   // "never give a delivery date"
+    if (LESSON_PROMISE_RX.test(t) || deliveryDateSentence(t)) return "promises a delivery time";
+  }
+  return null;
+}
+
+module.exports = { OUTCOMES_COLL, GAPS_COLL, STATS_DOC, compareTexts, isoWeek, recordOutcome, recordMissingFacts, gapId, lessonHoldReason };

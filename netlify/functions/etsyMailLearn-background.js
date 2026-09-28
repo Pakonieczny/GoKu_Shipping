@@ -29,7 +29,7 @@ const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { callClaudeRaw } = require("./_etsyMailAnthropic");
 const K = require("./_etsyMailKnowledge");
-const { OUTCOMES_COLL } = require("./_etsyMailLearning");
+const { OUTCOMES_COLL, lessonHoldReason } = require("./_etsyMailLearning");
 
 const db = admin.firestore();
 const MODEL = process.env.ETSYMAIL_LEARN_MODEL || "claude-haiku-4-5-20251001";
@@ -39,6 +39,17 @@ const RULE_THRESHOLD = 2;
 const FACT_THRESHOLD = 2;
 // A lesson the learner marks direct needs only the one conversation.
 const needed = (item, n) => (item.direct ? 1 : n);
+// A lesson that names a calendar date or promises a delivery time never goes
+// live by itself: it waits as "suggested" (with heldReason) for the owner,
+// and a learned one already live goes back to waiting. The owner's own
+// switch (ownerSet) is never overridden.
+function holdForPerson(item) {
+  if (item.source !== "learned") return false;
+  const why = lessonHoldReason(item.text);
+  if (why) item.heldReason = why; else delete item.heldReason;
+  if (why && item.status === "active" && item.source === "learned" && !item.ownerSet) item.status = "suggested";
+  return !!why;
+}
 const RULE_EXPIRY_MS = 120 * 86400000;
 const OUTCOME_KEEP_MS = 180 * 86400000;
 
@@ -149,13 +160,13 @@ async function runLearning({ force = false } = {}) {
       rule.support = rule.threads.length;
       rule.lastSeenAtMs = now;
       if (r.direct === true) rule.direct = true;
-      if (rule.status === "suggested" && rule.support >= needed(rule, RULE_THRESHOLD)) rule.status = "active";
-      if (rule.status === "expired") rule.status = rule.support >= needed(rule, RULE_THRESHOLD) ? "active" : "suggested";
+      if (rule.status === "expired") rule.status = "suggested";
       note(r.outcomes, rule.id);
     }
     for (const rule of ruleById.values()) {
       // Suggestions that already meet today's bar (it was 3 before 2026-09-28).
-      if (rule.status === "suggested" && (rule.support || 0) >= needed(rule, RULE_THRESHOLD)) rule.status = "active";
+      const held = holdForPerson(rule);
+      if (!held && rule.status === "suggested" && (rule.support || 0) >= needed(rule, RULE_THRESHOLD)) rule.status = "active";
       if (rule.source === "learned" && !rule.ownerSet && rule.status === "active" && now - (rule.lastSeenAtMs || rule.createdAtMs || now) > RULE_EXPIRY_MS) {
         rule.status = "expired";
       }
@@ -179,10 +190,12 @@ async function runLearning({ force = false } = {}) {
       fact.support = fact.threads.length;
       fact.lastSeenAtMs = now;
       if (f.direct === true) fact.direct = true;
-      if (fact.status === "suggested" && fact.support >= needed(fact, FACT_THRESHOLD)) fact.status = "active";
       note(f.outcomes, fact.id);
     }
-    for (const fact of added) if (fact.status === "suggested" && (fact.support || 0) >= needed(fact, FACT_THRESHOLD)) fact.status = "active";
+    for (const fact of added) {
+      const held = holdForPerson(fact);
+      if (!held && fact.status === "suggested" && (fact.support || 0) >= needed(fact, FACT_THRESHOLD)) fact.status = "active";
+    }
 
     const batch = db.batch();
     batch.set(cfg.doc(K.RULES_DOC), { rules: Array.from(ruleById.values()), updatedAtMs: now }, { merge: true });
