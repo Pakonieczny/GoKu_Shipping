@@ -16849,7 +16849,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       $("emAiDraftBtn")?.addEventListener("click", () => generateAiDraft(t.id, "initial", null, /*forceRegenerate=*/true));
       $("emCustomListingBtn")?.addEventListener("click", () => generateManualCustomListing(t.id));
       $("emPolishBtn")?.addEventListener("click", () => polishStaffText(t.id));
-      if (state.polish && state.polish.threadId === t.id) showPolishNote(t.id);
+      // The reply box was just rebuilt empty: the polished words are gone,
+      // so their Undo note and the "polished" mark on the next send go too.
+      dropPolish(t.id);
       watchComposeBar();
       $("emAiFollowUpBtn")?.addEventListener("click", () => generateAiDraft(t.id, "follow_up"));
       $("emReviseBtn")?.addEventListener("click", () => {
@@ -27774,6 +27776,7 @@ const EtsyMailAuth=(()=>{
       f.done = true;
       clearTimeout(f.safety);
       try { if (f.layer) f.layer.remove(); } catch (_) {}
+      (f.anims || []).forEach(a => { try { a.cancel(); } catch (_) {} });
       try { if (f.node) { f.node.classList.remove('em-flight-text-hidden'); clearGrowth(f.node); } } catch (_) {}
       try { if (f.quiet) f.quiet.classList.remove('em-flight-quiet'); } catch (_) {}
       try { if (f.scroller) f.scroller.style.overflowAnchor = f.oldAnchor || ''; } catch (_) {}
@@ -27927,31 +27930,40 @@ const EtsyMailAuth=(()=>{
         }
       }
 
-      // 3. Collapse the bubble so the view looks as it did before Send;
-      //    the bubble then opens, pushing the history up, frame by frame.
-      const cs = getComputedStyle(node);
-      const H = node.offsetHeight;
-      const pt = parseFloat(cs.paddingTop) || 0, pb = parseFloat(cs.paddingBottom) || 0;
-      const mb = parseFloat(cs.marginBottom) || 0;
-      Object.assign(node.style, { height: '0px', paddingTop: '0px', paddingBottom: '0px', marginBottom: '0px', overflow: 'hidden', opacity: '0' });
+      // 3. The bubble opens just above the reply box while the history
+      //    makes room. The layout is final from the start: the history
+      //    (and, when it can't scroll, the reply box) slides from where it
+      //    was before Send and the bubble is uncovered from its top, with
+      //    transform, clip-path and opacity only, so no frame re-lays out
+      //    the conversation.
       if (built) node.classList.add('em-flight-text-hidden');
+      const comp = prep.surface === 'mobile' ? null : (f.anchorEl && f.anchorEl.isConnected ? f.anchorEl : null);
+      const listEnd = prep.list.getBoundingClientRect().top;
+      const compEnd = comp ? comp.getBoundingClientRect().top : 0;
+      const oldDisplay = node.style.display;
+      node.style.display = 'none';
       keep();
+      const dList = prep.list.getBoundingClientRect().top - listEnd;
+      const dComp = comp ? comp.getBoundingClientRect().top - compEnd : 0;
+      node.style.display = oldDisplay;
+      keep();
+      const room = Math.max(0, dList - dComp);
 
       active = f;
       f.safety = setTimeout(() => abort(f), 2600);
 
-      tween(300, p => {
-        if (f.done || !node.isConnected) return;
-        node.style.height = (H * p) + 'px';
-        node.style.paddingTop = (pt * p) + 'px';
-        node.style.paddingBottom = (pb * p) + 'px';
-        node.style.marginBottom = (mb * p) + 'px';
-        node.style.opacity = String(Math.min(1, p * 1.6));
-      }, () => { if (!f.done) keep(); }).then(() => {
-        if (f.done || !node.isConnected) return;
-        clearGrowth(node);
-        keep();
-      });
+      const GROW = { duration: 300, easing: 'cubic-bezier(.33,1,.68,1)' };
+      f.anims = [];
+      try {
+        if (Math.abs(dList) >= 0.5) f.anims.push(prep.list.animate([
+          { transform: 'translateY(' + dList + 'px)' }, { transform: 'translateY(0px)' }], GROW));
+        if (comp && Math.abs(dComp) >= 0.5) f.anims.push(comp.animate([
+          { transform: 'translateY(' + dComp + 'px)' }, { transform: 'translateY(0px)' }], GROW));
+        f.anims.push(node.animate([
+          { clipPath: 'inset(0px 0px ' + room + 'px 0px)', opacity: 0 },
+          { opacity: 1, offset: 0.625 },
+          { clipPath: 'inset(0px 0px 0px 0px)', opacity: 1 }], GROW));
+      } catch (e) { console.warn('[SendFlight] grow:', e); }
 
       // 4. Flight: each word rises early and drifts sideways late (a soft
       //    arc), takes the bubble's colour and size on the way.
@@ -27991,28 +28003,38 @@ const EtsyMailAuth=(()=>{
         if (!node.isConnected) { abort(f); return; }
         f.done = true;
         clearTimeout(f.safety);
+        (f.anims || []).forEach(a => { try { a.cancel(); } catch (_) {} });
         node.classList.remove('em-flight-text-hidden');
         if (f.quiet) f.quiet.classList.remove('em-flight-quiet');
         clearGrowth(node);
         if (scroller) scroller.style.overflowAnchor = f.oldAnchor || '';
+        // The heavy work (held renders, the reply box's resize) waits until
+        // the copies have faded, so it never stalls the landing.
+        let settled = false;
+        const afterLanding = () => {
+          if (settled) return;
+          settled = true;
+          // Renders held during the flight run now; they may swap the node.
+          if (active === f) releaseHold();
+          try {
+            const live = (prep.list && prep.list.querySelector(sel(localId))) || node;
+            const target = prep.surface === 'mobile' ? (live.querySelector('.m-msg-bubble') || live) : live;
+            const glow = String(bubbleColor || 'rgb(3,102,214)').replace(/^rgba?\(([^,]+),([^,]+),([^,)]+).*$/, 'rgba($1,$2,$3,');
+            target.animate([
+              { boxShadow: '0 0 0 0 ' + glow + '0.38)' },
+              { boxShadow: '0 0 0 7px ' + glow + '0)' }
+            ], { duration: 650, easing: 'ease-out' });
+          } catch (_) {}
+          settleComposer(prep, f, false);
+        };
         if (f.layer) {
           const layer = f.layer;
           f.layer = null;
+          const gone = () => { layer.remove(); afterLanding(); };
           layer.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-out', fill: 'forwards' })
-            .finished.then(() => layer.remove(), () => layer.remove());
-        }
-        // Renders held during the flight run now; they may swap the node.
-        if (active === f) releaseHold();
-        try {
-          const live = (prep.list && prep.list.querySelector(sel(localId))) || node;
-          const target = prep.surface === 'mobile' ? (live.querySelector('.m-msg-bubble') || live) : live;
-          const glow = String(bubbleColor || 'rgb(3,102,214)').replace(/^rgba?\(([^,]+),([^,]+),([^,)]+).*$/, 'rgba($1,$2,$3,');
-          target.animate([
-            { boxShadow: '0 0 0 0 ' + glow + '0.38)' },
-            { boxShadow: '0 0 0 7px ' + glow + '0)' }
-          ], { duration: 650, easing: 'ease-out' });
-        } catch (_) {}
-        settleComposer(prep, f, false);
+            .finished.then(gone, gone);
+          setTimeout(gone, 400);
+        } else afterLanding();
       }, Math.max(320, landAt));
     }
 
