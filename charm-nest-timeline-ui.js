@@ -109,7 +109,8 @@
     note: K("note", "e", "bubble", "office", "msg"), teamMessage: K("note", "e", "bubble", "office", "msg"), customerMessage: K("note", "e", "mail", "etsy", "msg"),
     other: K("note", "e", "dot", "office")
   };
-  const kindOf = t => KIND[t] || KIND.other;
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const kindOf = t => own(KIND, t) ? KIND[t] : KIND.other;
   const typeInfo = t => { try { const T = root.OrderTimeline && root.OrderTimeline.TYPES; return (T && T[t]) || null; } catch (_) { return null; } };
   const labelOf = t => (typeInfo(t) || {}).label || String(t || "Event").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, c => c.toUpperCase());
   const LANES = [
@@ -152,8 +153,9 @@
   const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, engraveApproved: 2, setCommitted: 2, sealCompleted: 2,
     laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 8 };
   const isDesigned = e => e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete");
-  function whereOf(events, cancelled) {
-    const list = (events || []).filter(e => e && e.type).slice().sort((a, b) => (+a.at || 0) - (+b.at || 0));
+  function whereOf(events, cancelled, hint) {
+    hint = hint || {};
+    const list = (events || []).filter(e => e && own(KIND, e.type)).slice().sort((a, b) => (+a.at || 0) - (+b.at || 0));
     let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, designed = false, cancel = null, step = list.length ? 0 : -1;
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
@@ -179,7 +181,7 @@
       enter(r === 1 ? (e.type === "held" ? "held" : "review") : "waiting", e);
     }
     if (stage === "sheet" && !sheetId && designed) stage = "designed";
-    const isCancelled = !!(cancelled || cancel);
+    const isCancelled = hint.record ? !!cancelled : !!(cancelled || cancel);
     if (isCancelled) {
       stage = "cancelled"; since = (cancel && +cancel.at) || (cancelled && +cancelled.at) || since;
       if (!cancel && cancelled && +cancelled.at >= at) { at = +cancelled.at; if (!PEOPLE_OUT.has(String(cancelled.by || "").trim().toLowerCase())) by = cancelled.by; }
@@ -212,8 +214,11 @@
   let UID = 0;
   const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], DAYN = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.getDate()).padStart(2, "0")} ${MON[d.getMonth()]} ${d.getFullYear()}`; };
-  const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-  const longWhen = t => new Date(+t).toLocaleString("en-US", { weekday: "long", month: "short", day: "numeric", year: "numeric" }) + " · " + timeOf(t);
+  // one formatter each, made once: toLocale*String builds a new one per call (~0.3 ms), and a redraw formats every stamp
+  const fmtOf = o => { let f = null; return d => { try { return (f = f || new Intl.DateTimeFormat("en-US", o)).format(d); } catch (_) { return ""; } }; };
+  const TIME = fmtOf({ hour: "numeric", minute: "2-digit" }), LONG = fmtOf({ weekday: "long", month: "short", day: "numeric", year: "numeric" });
+  const timeOf = t => TIME(new Date(+t || Date.now()));
+  const longWhen = t => LONG(new Date(+t)) + " · " + timeOf(t);
   const shortWhen = t => { const d = new Date(+t); return `${DAYN[d.getDay()]} ${timeOf(t)}`; };
   function ago(t) {
     const s = (Date.now() - t) / 1000; if (!(t > 0)) return ""; if (s < 45) return "just now";
@@ -358,7 +363,7 @@
     const stages = STAGES.map(() => ({ first: null, last: null }));
     let lastHold = null, lastCancel = null;
     for (const e of events) {
-      const i = STOP_OF[e.type];
+      const i = own(STOP_OF, e.type) ? STOP_OF[e.type] : null;
       if (i != null) { const st = stages[i]; if (!st.first) st.first = e; st.last = e; }
       if (e.type === "held" || e.type === "released" || e.type === "restored") lastHold = e;
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
@@ -367,7 +372,7 @@
     const cur = step + 1 < STAGES.length ? step + 1 : -1;
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
-    else if (lastCancel && lastCancel.type !== "cancelRestored") cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
+    else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
     const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
     return { W, stages, step, cur, stop: cancelled ? Math.min(step + 1, STAGES.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
@@ -588,6 +593,9 @@
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
     let unsub = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
+    // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
+    let lanesHtml = "", detHtml = "";
+    const detUid = "tlDet" + (++UID);
     const pub = e => pubOf(e, orderId);
 
     /* ── loading ── */
@@ -674,7 +682,7 @@
       const D = S.D = derive(S.events, S.cancelled, whereNow());
       paintNow(D, o); paintRail(D, o);
       tell();
-      if (compact) return;
+      if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
       paintChips(); paintCanvas(D, o); paintSum();
       const fresh = (o.fresh || []).filter(k => S.byKey.has(k));
       if (S.legend) return;
@@ -693,7 +701,11 @@
     function whereNow() {
       const srv = S.where && typeof S.where === "object" ? S.where : null;
       if (srv && !S.events.some(e => e.pending || e.live)) return srv;
-      const local = whereOf(S.events, S.cancelled);
+      // as the server's: with its answer in, the cancel record says whether the order is cancelled (a restore whose
+      // cancelRestored event was not written leaves a cancel in the history); a cancel recorded here since counts too
+      const lastCx = S.events.filter(e => CANCEL_TYPES.has(e.type) || e.type === "cancelRestored").pop();
+      const liveCx = lastCx && CANCEL_TYPES.has(lastCx.type) && (lastCx.live || lastCx.pending) ? lastCx : null;
+      const local = whereOf(S.events, S.cancelled || liveCx, { record: !!srv });
       if (!srv) return typeof S.where === "string" && S.where ? Object.assign(local, { label: S.where, text: S.where }) : local;
       return Object.assign({}, srv, local, { step: Math.max(Number.isFinite(+srv.step) ? +srv.step : -1, local.step) });
     }
@@ -757,14 +769,20 @@
       const idx = D.cancelled ? D.stop : D.cur < 0 ? STAGES.length - 1 : Math.max(0, D.cur);
       $(".tlFill").style.transform = `scaleX(${(idx / (STAGES.length - 1)).toFixed(4)})`;
       rail.classList.toggle("cx", !!D.cancelled);
-      let cx = rail.querySelector(".tlCxStamp");
-      if (D.cancelled && !cx) {
-        cx = doc.createElement("div"); cx.className = "tlCxStamp"; cx.innerHTML = cancelSvg(D.cancelled); rail.appendChild(cx);
+      let cx = rail.querySelector(".tlCxStamp:not(.out)");
+      const cxK = D.cancelled ? [D.cancelled.at, D.cancelled.by, D.cancelled.source, D.stop].join("|") : "";
+      const cxAt = () => {
+        cx.dataset.k = cxK; cx.innerHTML = cancelSvg(D.cancelled);
         // over the steps it will not reach, so the ✕ where it stopped stays readable
         const from = Math.min(D.stop + 1, STAGES.length - 1), mid = ((from + STAGES.length - 1) / 2 + .5) / STAGES.length;
         cx.style.left = `clamp(135px, ${(mid * 100).toFixed(2)}%, calc(100% - 135px))`;
+      };
+      if (D.cancelled && cx && cx.dataset.k !== cxK) cxAt();
+      if (D.cancelled && !cx) {
+        cx = doc.createElement("div"); cx.className = "tlCxStamp"; rail.appendChild(cx); cxAt();
         anim(cx, [{ transform: "translate(-50%,-50%) rotate(-2deg) scale(1.9) translateY(-20px)", opacity: 0 }, { transform: "translate(-50%,-50%) rotate(-8deg) scale(.96)", opacity: 1, offset: .62 }, { transform: "translate(-50%,-50%) rotate(-6deg) scale(1)", opacity: 1 }], 700, { delay: o.first ? 450 : 0, easing: DROP, fill: "backwards" });
       } else if (!D.cancelled && cx) {
+        cx.classList.add("out");
         const a = anim(cx, [{ opacity: 1 }, { opacity: 0 }], 240);
         if (a) a.finished.then(() => cx.remove(), () => cx.remove()); else cx.remove();
       }
@@ -784,11 +802,12 @@
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
       const selLane = S.sel && S.byKey.get(S.sel) ? S.byKey.get(S.sel).lane : "";
-      $(".tlLanes").innerHTML = LANES.map(L => { const w = who[L.k] ? [...who[L.k]].join(", ") : "—"; return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
+      const html = LANES.map(L => { const w = who[L.k] ? [...who[L.k]].join(", ") : "—"; return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
+      if (html !== lanesHtml) { lanesHtml = html; $(".tlLanes").innerHTML = html; }
     }
     function paintCanvas(D, o) {
-      hideLoupe(true);
-      const cv = $(".tlCanvas"), evs = S.events, oldNow = S.nowX, keepLeft = scroller.scrollLeft;
+      const hov = loupeFor; hideLoupe(true);
+      const cv = $(".tlCanvas"), evs = S.events, oldNow = S.nowX;
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1], fl = FILTER[S.filter] || FILTER.all;
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
@@ -804,11 +823,34 @@
       const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
       const nowLbl = D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
-      cv.innerHTML = dayCols + lines +
+      const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
-        (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`) +
-        evs.map(e => `<button type="button" class="tlSt${S.sel === e.key ? " sel" : ""}${fl(e) ? "" : " dim"}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}" data-key="${esc(e.key)}" style="left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg" aria-label="${esc(`${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}`)}">${stampSvg(e, false)}</button>`).join("") +
-        ghosts.map(g => `<span class="tlSt ghost" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" title="${esc("Next: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
+        (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
+      const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${fl(e) ? "" : " dim"}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
+      const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}`;
+      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" title="${esc("Next: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
+      // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
+      // the days, lines, path, NOW line and ghosts are drawn again
+      const kept = new Map();
+      if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.byKey.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
+      if (!kept.size) {
+        cv.innerHTML = back + evs.map(e => `<button type="button" class="${clsOf(e)}" data-key="${esc(e.key)}" data-sv="${esc(e.type + "|" + e.at)}" style="${posOf(e)}" aria-label="${esc(sayOf(e))}">${stampSvg(e, false)}</button>`).join("") + ghostHtml;
+      } else {
+        cv.insertAdjacentHTML("afterbegin", back);
+        let prev = cv.querySelector(".tlNowLine");
+        for (const e of evs) {
+          let b = kept.get(e.key);
+          if (!b) { b = doc.createElement("button"); b.type = "button"; b.dataset.key = e.key; }
+          const sv = e.type + "|" + e.at, cls = clsOf(e), pos = posOf(e), say = sayOf(e);
+          if (b.dataset.sv !== sv) { b.dataset.sv = sv; b.innerHTML = stampSvg(e, false); }
+          if (b.className !== cls) b.className = cls;
+          if (b.getAttribute("style") !== pos) b.setAttribute("style", pos);
+          if (b.getAttribute("aria-label") !== say) b.setAttribute("aria-label", say);
+          if (prev.nextSibling !== b) cv.insertBefore(b, prev.nextSibling);
+          prev = b;
+        }
+        cv.insertAdjacentHTML("beforeend", ghostHtml);
+      }
       S.nowX = nowX;
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
@@ -816,7 +858,7 @@
         // opens at "now"
         if (scroller.clientWidth && W > scroller.clientWidth) scroller.scrollLeft = Math.max(0, nowX - scroller.clientWidth * .6);
       } else {
-        scroller.scrollLeft = keepLeft;
+        // (the canvas keeps its width while it is redrawn, so the scroll stays where the reader left it)
         const nl = cv.querySelector(".tlNowLine:not(.cx)");
         if (nl && oldNow && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
         for (const k of o.fresh || []) {
@@ -832,6 +874,8 @@
           }
         }
       }
+      // a live step while a stamp is hovered: its loupe stays up (the stamp was kept)
+      if (hov && hov.isConnected && hov.matches(HOVER) && hov.matches(":hover")) showLoupe(hov, true);
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
     function setFilter(f) {
@@ -875,7 +919,7 @@
       const det = $(".tlDetail"), evs = S.events, i = evs.findIndex(x => x.key === key);
       if (i < 0) return;
       const e = evs[i], D = S.D || derive(evs, S.cancelled);
-      const focused = doc.activeElement && box.contains(doc.activeElement) && doc.activeElement.dataset ? doc.activeElement.dataset.step : null;
+      const ae = doc.activeElement, focused = ae && ae !== det && det.contains(ae) ? (ae.dataset && ae.dataset.step) || (ae.classList.contains("tlArw") ? "arw" : "*") : null;
       const around = evs.slice(Math.max(0, i - 2), i + 3);
       const { out: ba, used } = pairsOf(e.data);
       const facts = factsOf(e, used);
@@ -883,8 +927,8 @@
       if (!why && CANCEL_TYPES.has(e.type) && D.cancelled) why = D.cancelled.why;
       const desc = e.text && e.text.length > 90 ? e.text : "";
       const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
-      det.innerHTML = `<div class="tlDetIn">` +
-        `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true)}</span>` +
+      const html = `<div class="tlDetIn">` +
+        `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
         `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · step ${i + 1} of ${evs.length}${e.milestone ? " · milestone" : ""}${e.pending ? " · saving…" : ""}</span>` +
         `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
         `<div class="tlBadgeRow">${badge(e)}</div>` +
@@ -895,7 +939,9 @@
         `<div class="tlActs"><button type="button" class="btn ghost sm" data-step="-1"${i ? "" : " disabled"}>‹ Earlier</button><button type="button" class="btn ghost sm" data-step="1"${i < evs.length - 1 ? "" : " disabled"}>Later ›</button>` +
         (e.sheetId && opts.onSheet ? `<button type="button" class="btn sm tlOpenSheet" data-sheet="${esc(e.sheetId)}" data-pool="${esc(poolOf(e))}">Open sheet</button>` : "") + `</div></div>` +
         `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, false, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
-      if (focused) { const b = det.querySelector(`[data-step="${focused}"]:not(:disabled)`) || det.querySelector("[data-step]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); }
+      if (quiet && html === detHtml && det.firstChild && det.firstChild.classList.contains("tlDetIn")) return;
+      det.innerHTML = detHtml = html;
+      if (focused && !det.contains(doc.activeElement)) { const b = (focused === "arw" && det.querySelector(".tlArw.cur")) || det.querySelector(`[data-step="${focused}"]:not(:disabled)`) || det.querySelector("[data-step]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); }
       if (quiet) return;
       const inn = det.firstChild;
       anim(inn, [{ opacity: 0, transform: `translateX(${(dir || 0) * 14}px)${dir ? "" : " translateY(6px)"}` }, { opacity: 1, transform: "none" }], 280);
@@ -904,7 +950,10 @@
     }
     function stepBy(d) {
       const i = S.events.findIndex(e => e.key === S.sel), j = clamp((i < 0 ? S.events.length - 1 : i) + d, 0, S.events.length - 1);
-      if (S.events[j] && S.events[j].key !== S.sel) select(S.events[j].key, d, { scroll: true });
+      if (!S.events[j] || S.events[j].key === S.sel) return;
+      const onStamp = doc.activeElement && doc.activeElement.matches && doc.activeElement.matches(".tlSt[data-key]") && box.contains(doc.activeElement);
+      select(S.events[j].key, d, { scroll: true });
+      if (onStamp) { const b = box.querySelector(`.tlSt[data-key="${cssEsc(S.events[j].key)}"]`); if (b) b.focus({ preventScroll: true }); }
     }
     function findKey(id) {
       if (id == null) return null;
@@ -922,7 +971,7 @@
       return S.D.stages[i].first;
     }
     const liftOf = b => b.classList.contains("tlStop") ? b.querySelector(".tlSeal") : b;
-    function showLoupe(b) {
+    function showLoupe(b, quiet) {
       const e = evOfEl(b); if (!e) return;
       if (hideA) { try { hideA.cancel(); } catch (_) {} hideA = null; }
       if (loupeFor && loupeFor !== b) liftOf(loupeFor).classList.remove("lifted");
@@ -939,7 +988,7 @@
       const capEl = cap && loupe.querySelector(".cap");
       if (capEl) { const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`; }
       loupeFor = b; lift.classList.add("lifted");
-      anim(loupe, [{ transform: `translate(${cx - SZ / 2 - loupeOff[0]}px,${cy - SZ / 2 - loupeOff[1]}px) scale(${s0})`, opacity: .6 }, { transform: to, opacity: 1 }], 220);
+      if (!quiet) anim(loupe, [{ transform: `translate(${cx - SZ / 2 - loupeOff[0]}px,${cy - SZ / 2 - loupeOff[1]}px) scale(${s0})`, opacity: .6 }, { transform: to, opacity: 1 }], 220);
     }
     function hideLoupe(now) {
       const b = loupeFor; if (!b) return;
