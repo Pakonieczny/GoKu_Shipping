@@ -1268,7 +1268,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         commentary preamble. When the customer's unanswered message is
         more than a business day old, the brief "Sorry for the wait"
         is required (joined with any other opener the rules ask for).
-        Never open by refusing something the customer didn't ask for.
+        Never open by refusing something the customer didn't ask for,
+        and on a complaint open with no thank-you and no lead-in before
+        the answer or question.
 
         Separate from delay apologies: when the shop's own miss caused
         the problem (USPS never scanned the label, the order is past
@@ -1669,8 +1671,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       whether the address was right and give both outcomes, one
       sentence each (a wrong or old address: we reship once it's back
       and the fee is paid; a correct address: we'll confirm from the
-      carrier's scans why it came back, and a person decides the next
-      step). Never offer a refund on the address alone, never let the
+      carrier's scans why it came back, and if it came back through no
+      fault of theirs a person arranges a replacement or refund, with
+      no fee). Quote the order's address when you have it. Never offer
+      a refund on the address alone, never let the
       customer pick refund or replacement ("whichever you prefer"),
       and never call it no fault of theirs before the cause is known
       (a parcel nobody collected or that was refused comes back too).

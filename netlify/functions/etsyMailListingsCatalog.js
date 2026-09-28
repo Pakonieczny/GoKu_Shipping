@@ -614,7 +614,7 @@ async function getServiceListingsBlock() {
     });
     const block = lines.length ? [
       "=== ADD-ON AND SERVICE LISTINGS (live shop links) ===",
-      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never name one of these without its link. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A custom design or proof the customer approves gets its own custom listing (the sales flow makes it); never send a generic custom-charm checkout listing for it.",
+      "When the customer needs one of these, put its exact link in the reply and say in one line what to select and what to write in the checkout note. Never name one of these without its link. Never invent another listing link, and never state a price for the extra work unless it is the listing's own price, a price the fact sheet or shipping rates give (such as a country's shipping rate), or a person already quoted it in this thread. Skip these on complaints, refunds and remakes unless the customer asks for the paid change. A custom design or proof the customer approves gets its own custom listing (the sales flow makes it); never send a generic custom-charm checkout listing for it.",
       ...lines,
       "=== END ADD-ON AND SERVICE LISTINGS ==="
     ].join("\n") : "";
