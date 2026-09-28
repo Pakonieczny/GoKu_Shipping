@@ -183,7 +183,9 @@ async function main() {
       const s = await page.evaluate(() => ({ sum: (document.querySelector('#owTimeline .tlSum') || document.querySelector('#owTlTools .tlSum') || document.querySelector('.tlSum') || {}).textContent || '', stamps: document.querySelectorAll('#owTimeline .tlSt[data-key]').length, count: document.getElementById('owTlCount').textContent }));
       console.log(`      2000+ steps: first paint ${ms} ms, ${s.stamps} stamps, count ${s.count}, summary "${s.sum}"`);
       assert(ms < 8000, 'painted in ' + ms + ' ms');
-      assert.match(s.sum, /2000|first|cut short|more/i, 'says it is truncated: ' + s.sum);
+      // (only repeat scans are cut past their 500: nothing a person would miss, so no "not all shown" note; the server's
+      // leftOut names the types cut, and the note says them plainly when one matters)
+      assert.doesNotMatch(s.sum, /more than 2000|not all shown/i, 'no vague truncation note: ' + s.sum);
       await closeView(page);
     });
     assert.deepEqual(errors, [], 'no page errors');

@@ -224,6 +224,8 @@
     if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
     return r.length ? r : ALL_STAGES;
   }
+  // what a person would miss from a cut-short read: the rail's steps and what a person did (the sealed kinds)
+  const MISSED = new Set(STAGES.flatMap(s => s.types).concat(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]));
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
      `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
@@ -863,7 +865,7 @@
       for (const [k, e] of S.allKeys) if (e.live && !next.has(k) && Date.now() - e.live < 180000) next.set(k, e);
       const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.allKeys.has(k));
       S.allKeys = next; S.every = [...next.values()].sort(byAt); narrow();
-      S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true; S.truncated = !!j.truncated;
+      S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true; S.truncated = !!j.truncated; S.leftOut = j.leftOut || null;
       const sig = sigOf();
       if (!first && sig === S.sig) { paintNowSub(); paintSum(); return; }
       S.sig = sig;
@@ -1047,8 +1049,18 @@
       const r = $(".tlSum"), lv = $(".tlLive"); if (!r) return;
       if (lv) lv.hidden = !live || !S.loaded;
       const e = S.events[S.events.length - 1];
-      // (the server reads at most 2000 recorded steps of an order: more than that, and it says so)
-      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"}${S.truncated ? " (more than 2000 recorded: not all shown)" : ""} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+      r.textContent = S.events.length ? `${S.events.length} step${S.events.length === 1 ? "" : "s"}${leftOutNote()} · last ${shortWhen(e.at)} · ${whoOf(e)}` : "";
+    }
+    /* What a cut-short read left out, said plainly (the server's leftOut: a type past its first 500 is not read further,
+       and at most 2000 recorded events are read). Only repeats nobody would miss (scans, reads, moves) cut: nothing said. */
+    function leftOutNote() {
+      if (!S.truncated) return "";
+      const L = S.leftOut;
+      if (!L || !Array.isArray(L.types)) return " (not every recorded step could be read)";
+      const seen = [...new Set(L.types.filter(t => MISSED.has(t)).map(labelOf))];
+      const bits = seen.length ? [`only ${L.kept || 500} ${seen.map(l => `“${l}”`).join(", ")} steps shown, the rest left out`] : [];
+      if (L.capped) bits.push("stopped at 2000 recorded steps: later ones may be missing");
+      return bits.length ? ` (${bits.join("; ")})` : "";
     }
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));

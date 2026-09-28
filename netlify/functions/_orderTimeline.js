@@ -82,27 +82,32 @@ async function add(db, FV, events, opts = {}) {
 /* An order's recorded events, a page at a time in document-id order: the one-field index its equality query already
    runs on, so no composite index. Ids are orderId~type~key, so the unordered limit(2000) this replaced answered the
    types in alphabetical order, and a long run of one type (a guard's cancelAlert loop) hid every later one: shipped,
-   sorted, welded. A type past PER_TYPE is skipped to its end, so every type is read; at most MAX_READ documents. */
+   sorted, welded. A type past PER_TYPE is skipped to its end, so every type is read; at most MAX_READ documents.
+   What was left out is said (leftOut): the types cut at PER_TYPE, and `capped` when MAX_READ (or the page limit) ended
+   the read, so a later type may be missing altogether. */
 const PAGE = 500, PER_TYPE = 500, MAX_READ = 2000;
 async function recordedOf(c, id) {
-  const docs = [], per = new Map(); let after = null, truncated = false;
+  const docs = [], per = new Map(), skipped = []; let after = null, truncated = false;
+  const capped = () => ({ docs, truncated: true, skipped, capped: true });
   for (let pages = 0; pages < 12; pages++) {
-    const want = Math.min(PAGE, MAX_READ - docs.length); if (want <= 0) return { docs, truncated: true };
+    const want = Math.min(PAGE, MAX_READ - docs.length); if (want <= 0) return capped();
     // (a query with no orderBy answers in document-id order already; a later page says so, to start past a document id)
     let q = c.where("orderId", "==", id);
     if (after) q = q.orderBy("__name__").startAfter(after);
     const snap = await q.limit(want).get(); let jump = null;
     for (const d of snap.docs) {
       const t = String(d.id).split("~")[1] || "", k = (per.get(t) || 0) + 1; per.set(t, k);
-      if (k > PER_TYPE) { truncated = true; jump = `${id}~${t}~~`; break; }   // ("~" sorts after every key character)
+      if (k > PER_TYPE) { truncated = true; if (!skipped.includes(t)) skipped.push(t); jump = `${id}~${t}~~`; break; }   // ("~" sorts after every key character)
       docs.push(d);
     }
     if (jump) { after = jump; continue; }
-    if (snap.docs.length < want) return { docs, truncated };
+    if (snap.docs.length < want) return { docs, truncated, skipped, capped: false };
     after = snap.docs[snap.docs.length - 1].id;
   }
-  return { docs, truncated: true };
+  return capped();
 }
+// what a cut-short read left out, for the page to say plainly: { types (each cut at `kept`), kept, capped }; null: nothing
+const leftOutOf = r => (r.truncated ? { types: r.skipped.slice(0, 20), kept: PER_TYPE, capped: !!r.capped } : null);
 async function get(db, orderId, opts = {}) {
   const id = orderIdOf(orderId); if (!id) return { error: "orderId required" };
   const [snap, can, derived] = await Promise.all([
@@ -113,12 +118,12 @@ async function get(db, orderId, opts = {}) {
   const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
   const sandbox = !!opts.prefix;
-  if (!derived) { const events = chronology(recorded, { sandbox }).sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.truncated }; }
+  if (!derived) { const events = chronology(recorded, { sandbox }).sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.truncated, leftOut: leftOutOf(snap) }; }
   const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
   const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
   const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
   const events = chronology(recorded.concat(kept), { sandbox }).sort(byTime);
-  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.truncated, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
+  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.truncated, leftOut: leftOutOf(snap), derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
   return out;
