@@ -8629,7 +8629,7 @@ const OrderWin = window.OrderWin = (() => {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
     if (!cur) {
-      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? esc("  ·  Order " + (li + 1) + " of " + sibs.length) : "");
+      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? ` <span class="owPc">line ${li + 1} of ${sibs.length}</span>` : "");
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
     const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
@@ -8813,7 +8813,7 @@ const OrderWin = window.OrderWin = (() => {
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
-    const who = e && (e.station || e.by) ? `<span class="who"><i></i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
+    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
     // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
     const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
     const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
@@ -8871,7 +8871,8 @@ const OrderWin = window.OrderWin = (() => {
     const host = byId("owTimeline"), UI = window.OrderTimelineUI, rid = W.rid; if (!host || !rid) return;
     if (W.tlFor === rid && (W.tl || host.firstChild)) { tryDo(() => W.tl && W.tl.refresh && W.tl.refresh()); return; }
     if (W.tl && W.tl.destroy) tryDo(() => W.tl.destroy()); W.tl = null; host.innerHTML = ""; W.tlFor = rid;
-    if (UI && UI.mount) W.tl = tryDo(() => UI.mount(host, tlOpts(rid)));
+    // its filters sit in the tab row (spec §1); the header already holds the rail and the state
+    if (UI && UI.mount) W.tl = tryDo(() => UI.mount(host, tlOpts(rid, { toolbar: byId("owTlTools") })));
     if (!W.tl) host.innerHTML = `<div class="owTlNone"><b>The order's timeline</b><span>Every step this order takes, from the moment it came in to its shipping, is drawn here.</span></div>`;
   }
   function unmountTimeline() {

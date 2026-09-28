@@ -454,7 +454,7 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owSaid .lbl{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-weight:700;margin:6px 0 2px}
 .owSaid .lbl:first-child{margin-top:0}
 .owSaid.none{font-family:var(--sans);font-size:12.5px;color:var(--ink45)}
-.owMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:9px}
+.owMeta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:9px}
 .owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
 .owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
 .owMeta .m span{font:12.5px var(--mono);overflow-wrap:anywhere}
@@ -541,7 +541,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owAct button{border:0;background:none;padding:0;font:12px var(--sans);color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;opacity:.85}
 .owAct button:hover{opacity:1}
 .owMsg.failed .owAct button:first-child{color:var(--slate)}
-.owComp{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 11px;display:grid;gap:6px;background:var(--card)}
+.owComp{flex:0 0 auto;border-top:1px solid var(--line);padding:9px 11px;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;background:var(--card)}
 .owCompLine{display:flex;gap:7px;align-items:flex-end}
 .owCompLine textarea{flex:1 1 auto;min-width:0;border:1px solid var(--line);border-radius:11px;padding:8px 11px;font:13px var(--sans);resize:none;max-height:120px;background:var(--card);color:var(--ink)}
 .owCompLine textarea:focus{outline:none;border-color:var(--ink45);box-shadow:0 0 0 3px rgba(34,31,27,.08)}
@@ -608,6 +608,11 @@ dialog.phv.layer.phvIn{background:transparent}
 .owFindList [role=option].cur b::after{content:" · open";font:400 11px var(--sans);color:var(--ink45)}
 .owFindFoot{font:10.5px var(--sans);color:var(--ink45);padding:6px 10px 2px;border-top:1px solid var(--line2);margin-top:4px}
 #orderWin.owFull .owRail{flex:1 1 auto;min-width:0;max-width:860px;height:44px;margin:0 auto;overflow:hidden;cursor:pointer}
+/* the header's rail reads at the spec's 8.5px; a cancelled order says so with the ✕, the clay line, pill and struck
+   number (spec §8), not with the big stamp, which would cover the step names in a 52px bar */
+#orderWin.owFull .owRail .tlStop>span{font-size:8.5px}
+#orderWin.owFull .owRail .tlCxStamp{display:none}
+#orderWin.owFull .owId h3 .owPc{font:10.5px var(--mono);letter-spacing:.03em;color:var(--ink45);margin-left:4px;vertical-align:2px}
 #orderWin.owFull .owRight{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
 #orderWin.owFull .owPos{font-size:10.5px;color:var(--ink45);margin:0 2px 0 8px}
 #orderWin.owFull .owPos:empty{display:none}
@@ -657,6 +662,9 @@ dialog.phv.layer.phvIn{background:transparent}
 #orderWin.owFull .owChat{border-left:1px solid var(--line)}
 #orderWin.owFull .owVTime{display:flex;flex-direction:column;overflow:auto}
 #orderWin.owFull .owTimeline{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+/* one thin header and one tab row (spec §1, §5): the header's rail and pill already say where the order is, so the
+   timeline's own Now and rail strip is not drawn a second time here, and its filters are in the tab row */
+#orderWin.owFull .owTimeline .tlUI:not(.compact)>.tlTop{display:none}
 .owTlNone{margin:auto;display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);padding:40px 20px}
 .owTlNone b{font:18px var(--serif);font-weight:500;color:var(--ink70)}
 #orderWin.owFull .owVSheet{display:grid;grid-template-columns:minmax(0,1fr) var(--owSide)}
@@ -668,7 +676,9 @@ dialog.phv.layer.phvIn{background:transparent}
 .owNowCard .t{font:19px var(--serif);margin:3px 0 6px;color:var(--ink)}
 .owNowCard .who{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:999px;padding:2px 10px 2px 4px;background:var(--card);font:12px var(--sans);color:var(--ink70)}
 .owNowCard .who b{font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
-.owNowCard .who i{width:20px;height:20px;border-radius:50%;background:var(--slateSoft);display:inline-block}
+.owNowCard .who i{width:20px;height:20px;border-radius:50%;background:var(--slateSoft);display:inline-grid;place-items:center;color:var(--slate);flex:none}
+.owNowCard .who i svg{width:11px;height:11px}
+.owNowCard .who i:empty{display:none}.owNowCard .who:has(>i:empty){padding-left:10px}
 .owNowCard .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
 .owNowCard .shs{display:grid;gap:8px}
 .owNowCard.bad{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
@@ -687,6 +697,8 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
 .owPlateTip[hidden]{display:none}
 .owPlateNone{display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);max-width:380px}
+/* the plate and its "not on a sheet yet" line share the one centred cell (a hidden plate still holds its room) */
+.owPlateWrap>.owPlate,.owPlateWrap>.owPlateNone{grid-area:1/1}
 .owPlateNone b{font:18px var(--serif);font-weight:500;color:var(--ink70)}
 .owPlateFoot{display:flex;align-items:center;gap:18px;padding:8px 22px 12px;font:12px var(--sans);color:var(--ink45);min-height:34px}
 .owPlateFoot b{color:var(--ink);font-family:var(--mono)}
@@ -2695,7 +2707,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
 <script src="charm-nest-motion.js?v=20260928-ov1"></script>
-<script src="charm-nest-timeline-ui.js?v=20260928-ov1"></script>
+<script src="charm-nest-timeline-ui.js?v=20260928-adv-design"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5825,7 +5837,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-ov2"></script>
+<script src="charm-nest-bridge.js?v=20260928-adv-design"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-ov2"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
@@ -5888,7 +5900,7 @@ boot();
           <div class="owTray" id="owTray"></div>
           <div class="owCompLine">
             <button type="button" class="owIco" id="owAttach" title="Attach images"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
-            <textarea id="owInput" rows="1" placeholder="Message every station working this order…"></textarea>
+            <textarea id="owInput" rows="1" placeholder="Message every station on this order…"></textarea>
             <button type="button" class="owIco send" id="owSend" title="Send (Enter)" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
           </div>
           <div class="owHint"><span class="owLink ok" id="owLink" title="Messages and the staff note save straight to the order's record"><i></i>Live</span><span class="owHintT"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · paste or drop images</span></div>
