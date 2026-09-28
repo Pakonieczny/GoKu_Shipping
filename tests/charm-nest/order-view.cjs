@@ -77,7 +77,7 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('.owVTime').hidden && document.querySelector('.owVInfo').hidden && document.getElementById('owTimeline').children.length > 0);
     await page.click('.owTabsV [data-ow-view="sheet"]');
     await page.waitForFunction(() => OrderWin._sheet() && document.querySelector('#owSheetPanel .owPieces') && document.getElementById('owPlateWait').hidden && document.querySelector('.owVTime').hidden, null, { timeout: 15000 });
-    // 3 · the sheet view draws the order's pieces in gold and steps the rest back
+    // 3 · the sheet view draws the order's pieces in gold and the rest whole, with no haze
     const px = async key => page.evaluate(key => { const inf = OrderWin._sheet(), p = inf.pointOf(key), cv = document.getElementById('owSheetCv'), r = cv.getBoundingClientRect();
       if (!p) throw new Error('no point for ' + key + ': ' + JSON.stringify({ cv: [cv.width, cv.height, r.width, r.height], wrap: [cv.parentElement.clientWidth, cv.parentElement.clientHeight], pieces: inf.pieces.map(x => x.poolId) }));
       const x = Math.round((p.x - r.left) * cv.width / r.width), y = Math.round((p.y - r.top) * cv.height / r.height), d = cv.getContext('2d').getImageData(x, y, 1, 1).data; return [d[0], d[1], d[2]]; }, key);
@@ -86,7 +86,7 @@ async function main() {
     assert.deepEqual(sv.mine, [poolOf(A)], 'the order\'s piece on the sheet'); assert.equal(sv.sheet, SHEET);
     assert.deepEqual(sv.chips, ['GF Sheet 2']); assert(sv.head.includes('This order · 1 piece'), sv.head.join(' | ')); assert.equal(sv.count, '1 sheet'); assert(sv.full, 'Open full sheet');
     const gold = await px(poolOf(A)), rest = await px('4179999999_41799999991_1');
-    assert(gold[0] - gold[2] > 30, 'its piece is gold: ' + gold); assert(rest[0] - rest[2] < 16 && rest[2] > 225, 'the other orders\' pieces step back: ' + rest);
+    assert(gold[0] - gold[2] > 30, 'its piece is gold: ' + gold); assert(rest[0] - rest[2] < 24 && (gold[0] - gold[2]) - (rest[0] - rest[2]) > 14, 'the other orders\' pieces are drawn whole, not in gold: ' + rest + ' vs ' + gold);
     // hovering a charm names its order
     const pc = await page.evaluate(k => OrderWin._sheet().pointOf(k), poolOf(C));
     await page.mouse.move(pc.x, pc.y);
