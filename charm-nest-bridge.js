@@ -8562,8 +8562,9 @@ const OrderWin = window.OrderWin = (() => {
     try {
       await saveNoteAt(rid, text);
       // the order carries it too: each arrival re-reads the lines from their orders, which put the old note back
-      let told = false;
-      for (const x of all) { x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
+      // (and newer than any read of the record asked while it was on its way: that read may predate it, refreshNote)
+      let told = false; const done = Date.now();
+      for (const x of all) { if (x.noteAt === at) x.noteAt = done; x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
       // the label promises "saved automatically": a save speaks up only to end an earlier failure (it used to toast at
       // every pause in the typing)
       if (told) toast("Staff note saved", "ok", 1800);
@@ -9438,7 +9439,7 @@ const OrderWin = window.OrderWin = (() => {
       if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) W.anims.push(W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" })); }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
-    else if (other && opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE }); }
+    else if (opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 280, easing: EASE }); }
     if (other) mountRail(rid);
     if (W.view === "timeline") mountFull();
     if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { sheetShow().then(() => { if (SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
@@ -9447,10 +9448,10 @@ const OrderWin = window.OrderWin = (() => {
     // pull is read, the tab kept the order shown before, and a message written there went to that buyer
     try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
     refreshNote(r);
-    if (!r.loading) {
-      grow(); paintThread();
-      TeamMail.load(rid, true);
-    }
+    // (the Team tab too: while an order outside the pull is read it showed the thread of the order shown before; the
+    // thread is the order's, read by its number, so it is read at once)
+    grow(); paintThread();
+    TeamMail.load(rid, !r.loading);
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
     W.poll = setInterval(() => { if (W.dlg.open && W.rid && !document.hidden) TeamMail.load(W.rid); }, 20000);
