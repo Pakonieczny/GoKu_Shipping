@@ -5323,8 +5323,16 @@ function drawRecalledBack(sh, cv, ctx, k, sw, sh2) {
   sh._backView = { k, sw };
   ctx.save(); ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, sw - 1, sh2 - 1);
   if (B.pieces) {
-    ctx.translate(sw, 0); ctx.scale(-1, 1);
-    for (const x of B.pieces) { const p = x.p; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); CB.piece(ctx, x, B.backs, k, { dpr: devicePixelRatio }); ctx.restore(); }
+    const said = [];
+    ctx.save(); ctx.translate(sw, 0); ctx.scale(-1, 1);
+    for (const x of B.pieces) { const p = x.p; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); if (!CB.piece(ctx, x, B.backs, k, { dpr: devicePixelRatio })) said.push(x); ctx.restore(); }
+    ctx.restore();
+    // a charm whose design could not be read still says its words, in ink on its place (never left looking plain)
+    for (const x of said) {
+      const b = x.poolId && B.backs && B.backs.get(x.poolId), words = b && (b.lines && b.lines.length ? b.lines.join(" ") : b.text); if (!words) continue;
+      ctx.save(); ctx.fillStyle = "#2f2512"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = `italic ${Math.max(9 * devicePixelRatio, Math.min(x.p.wPt, x.p.hPt) * k * .2)}px Georgia, serif`;
+      ctx.fillText(words, sw - x.p.cxPt * k, x.p.cyPt * k, x.p.wPt * k * .9); ctx.restore();
+    }
   } else {
     ctx.fillStyle = "#9a9388"; ctx.font = `${Math.round(cv.width / 40)}px sans-serif`; ctx.textAlign = "center";
     ctx.fillText(B.error ? "the back of this sheet could not be read" : "reading the back of this sheet…", cv.width / 2, cv.height / 2);
