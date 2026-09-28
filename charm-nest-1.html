@@ -638,7 +638,7 @@ dialog.phv.layer.phvIn{background:transparent}
 .owTabsV>[role=tab]:hover{color:var(--ink70)}
 .owTabsV>[role=tab][aria-selected=true]{color:var(--ink)}
 .owTabsV>[role=tab]:focus-visible{outline:2px solid var(--slate);outline-offset:-5px;border-radius:8px}
-.owInk{position:absolute;bottom:-1px;left:0;width:0;height:2px;border-radius:2px;background:var(--velvet);transition:left .34s cubic-bezier(.2,.8,.2,1),width .34s cubic-bezier(.2,.8,.2,1)}
+.owInk{position:absolute;bottom:-1px;left:0;width:100px;height:2px;border-radius:2px;background:var(--velvet);transform:scaleX(0);transform-origin:0 0;transition:transform .34s cubic-bezier(.2,.8,.2,1)}
 .owTools{margin-left:auto;display:flex;align-items:center;gap:6px;min-width:0}
 .owGrp{display:none;align-items:center;gap:10px;min-width:0}
 .owGrp.on{display:flex;animation:owUp .26s cubic-bezier(.2,.8,.2,1) both}
@@ -5837,7 +5837,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-haze1"></script>
+<script src="charm-nest-bridge.js?v=20260928-a3-9"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-a3-9"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
