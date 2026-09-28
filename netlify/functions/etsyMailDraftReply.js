@@ -65,7 +65,7 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { applyDeterministicVetoes, unansweredInboundText } = require("./_etsyMailVetoes");
+const { applyDeterministicVetoes, unansweredInboundText, deliveryDateSentence } = require("./_etsyMailVetoes");
 const { simNow } = require("./_etsyMailSim");
 // v3.7+ — callClaudeRaw added alongside runToolLoop. The translate ops
 // (op:"detectLanguage" and op:"translate") and the v4.0 summarize op
@@ -5654,13 +5654,8 @@ answering. Do not guess about the order's contents.`;
     // arrival to a calendar date or weekday is held for a person; the one
     // allowed date is the lost-package "if it hasn't arrived by <date>".
     {
-      const _mon = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?";
-      const _day = "(?:mon|tues|wednes|thurs|fri|satur|sun)day|tomorrow|next\\s+week|this\\s+week|the\\s+\\d{1,2}(?:st|nd|rd|th)";
-      const _dateRx = new RegExp("\\b(?:" + _mon + "|\\d{1,2}/\\d{1,2}|" + _day + ")\\b", "i");
-      const _arriveRx = /\b(?:arriv\w*|land\w*|deliver\w*|get\s+(?:it|there|to\s+you)|be\s+there|reach\w*|expect\w*|have\s+it|in\s+your\s+hands|show\s+up)\b/i;
-      const _lostRx = /\b(?:hasn['\u2019]?t|has\s+not|haven['\u2019]?t|have\s+not|not|doesn['\u2019]?t|does\s+not)\s+(?:yet\s+)?(?:arrived|shown\s+up|received|come|reached|delivered|got(?:ten)?)\b/i;
-      const _dated = (parsed.text || "").split(/(?<=[.!?])\s+|\n+/)
-        .find(t => _dateRx.test(t) && _arriveRx.test(t) && !_lostRx.test(t));
+      // "You'll receive it by Friday" used to pass (no "receive" verb).
+      const _dated = deliveryDateSentence(parsed.text);
       if (_dated) {
         parsed.aiDeliveryDateReview = true;
         parsed.aiEscalationRequested = true;
