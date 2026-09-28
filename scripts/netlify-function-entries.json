@@ -177,6 +177,7 @@
     "_charmNestPdf.js",
     "_charmNestSolver.js",
     "_charmNestRoseStock.js",
+    "_orderTimeline.js",
     "_etsyApiMeter.js",
     "_etsyApiUsage.js",
     "_etsyImageCache.js",

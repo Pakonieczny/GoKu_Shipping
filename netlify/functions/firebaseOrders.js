@@ -46,6 +46,12 @@ exports.handler = async (event) => {
     /* ───────────────────────── POST ───────────────────────── */
     if (method === "POST") {
       const body = JSON.parse(event.body || "{}");
+      /* the production stations' own events on an order's timeline (_orderTimeline.js): scans and what was done with
+         them, by whom, where. Only station event types pass this open door. */
+      if (Array.isArray(body.timeline)) {
+        const out = await require("./_orderTimeline").add(db, admin.firestore.FieldValue, body.timeline, { prefix: PREFIX, source: "station", stationOnly: true });
+        return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out)) };
+      }
       const {
         orderNumber,
         orderNumField,
@@ -297,6 +303,11 @@ exports.handler = async (event) => {
           .map(x => x.trim())
           .filter(Boolean);
 
+      /* ?cancelCheck=rid1,rid2 → which of these orders are cancelled (by Etsy or by a person), for a station's scan */
+      if (event.queryStringParameters?.cancelCheck) {
+        const out = await require("./_orderTimeline").cancelCheck(db, event.queryStringParameters.cancelCheck, { prefix: PREFIX });
+        return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out)) };
+      }
       /* ?messagesFor=rid1,rid2[&limit=80][&since=ms] → the internal thread of each order, oldest first. The real thread is
          always read (only read), so a sandbox run shows what the stations wrote on the real order; the sandbox's own
          messages come from its copy and carry sandbox: true. */
