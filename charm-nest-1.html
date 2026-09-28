@@ -3368,11 +3368,28 @@ function assignCharm(charm, metal) {
   flushManualIntake(metal);renderRail();updateTopSub();window.Session?.schedule();
 }
 function removeSource(src) {
-  if(allSheets().some(sh=>sh.placements.some(p=>sh.charms.some(c=>c.id===p.id&&c.sourceId===src.id)))){toast('This file contains charms already placed on a sheet. Keep the saved sheet and its source.','bad');return;}
+  // (a search still running has placed nothing for good: what counts is the sheet as it stood before it)
+  if(allSheets().some(sh=>(sh.status==='nesting'&&sh._beforeNest?sh._beforeNest.placements||[]:sh.placements).some(p=>sh.charms.some(c=>c.id===p.id&&c.sourceId===src.id)))){toast('This file contains charms already placed on a sheet. Keep the saved sheet and its source.','bad');return;}
   S.sources = S.sources.filter(s => s !== src);
   S.unassigned = S.unassigned.filter(c => c.sourceId !== src.id);
-  for (const sh of allSheets()) { const before = sh.charms.length; sh.charms = sh.charms.filter(c => c.sourceId !== src.id); if (sh.charms.length !== before) {if(sh.placements.length){sh.appendOnly=true;sh.dirty=true;sh.status='ready';renderCard(sh);}else sheetDirty(sh);} }
+  for (const sh of allSheets()) { const before = sh.charms.length; sh.charms = sh.charms.filter(c => c.sourceId !== src.id); if (sh.charms.length !== before) {const renest=searchWithout(sh);if(sh.placements.length){sh.appendOnly=true;sh.dirty=true;sh.status='ready';renderCard(sh);}else sheetDirty(sh);if(renest){const placed=new Set(sh.placements.map(p=>p.id));if(activeCharms(sh).some(c=>!placed.has(c.id)))startNest(sh);else pumpNestQueue();}} }
   renderRail(); updateTopSub();
+}
+/** A file removed while a sheet it fed is searched (adversarial check, 28 Sep): the search in flight carried the file's
+    charms and went on placing them. It ends here, the sheet stands as it did before it (its charms placed before stay
+    where they are), and it is searched again with the charms it still has (removeSource). */
+function searchWithout(sh) {
+  if (sh.status !== "nesting") return false;
+  for (const w of sh.workers || []) w.terminate();
+  sh.workers = []; sh.worker = null; sh.pool = null; sh.jobId = uid();   // (late messages of that search are dropped)
+  if (sh.serverJob) { api("charmNestLibrary", { op: "stopJob", id: sh.serverJob }).catch(() => {}); sh.serverJob = null; }
+  if (sh._beforeNest) Object.assign(sh, sh._beforeNest);
+  const on = new Set(sh.charms.map(c => c.id));
+  sh.rejects = (sh.rejects || []).filter(id => on.has(id)); sh.feedWait = null;
+  sh._beforeNest = sh._beforeLearned = null; sh.probe = null; sh.probePlaced = []; sh.livePlacements = []; sh.stage = ""; sh.status = "ready";
+  for (const ev of [sh.evSearch, sh.evNest]) if (ev && ev.live) agentUpdate(ev, { live: false, elapsed: 0, html: null, text: "A file was removed while this sheet was searched · searched again without its charms" });
+  log(sh, "a file was removed while the sheet was searched: searching again without its charms");
+  return true;
 }
 async function persistSource(src) {
   if (!S.cloud.ok) return;
