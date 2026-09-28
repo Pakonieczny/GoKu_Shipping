@@ -144,25 +144,30 @@ const FV = admin.firestore.FieldValue;
 // getAll of their records and one batch. It must never break the mirror: the
 // helper loads inside try/catch, every call is caught, and it gets at most
 // CANCEL_HOOK_MS in a whole run (all its pages together) before the mirror
-// moves on without it.
+// moves on without it. A page whose cancels were not recorded (a failure, a
+// timeout, no time left) keeps their receipt ids in a small backlog document,
+// which the next run retries first from the receipts stored here (no Etsy
+// call); CANCEL_SAVE_MS of the budget is kept for writing that backlog.
 let OrderCancel = null;
 try { OrderCancel = require("./_orderCancel"); }
 catch (e) { console.warn("[mirror-cron] cancel records off (helper did not load):", e && e.message); }
-const CANCEL_HOOK_MS = 8000;
-async function noteEtsyCancels(receipts, capMs = CANCEL_HOOK_MS) {
-  if (!OrderCancel) return null;
+const CANCEL_HOOK_MS = 8000, CANCEL_SAVE_MS = 1500;
+/** fn() raced against capMs: its answer, or { error }. Never throws. */
+async function cappedCancelWork(fn, capMs) {
   let timer = null;
   try {
-    const work = Promise.resolve().then(() => OrderCancel.fromReceipts(db, FV, receipts, { detectedBy: "mirror" }))
-      .catch(e => ({ error: String((e && e.message) || e).slice(0, 200) }));
+    const work = Promise.resolve().then(fn).catch(e => ({ error: String((e && e.message) || e).slice(0, 200) }));
     const cap = new Promise(res => { timer = setTimeout(() => res({ error: "timed out" }), Math.max(0, capMs)); });
-    const out = await Promise.race([work, cap]);
-    if (out && out.error) console.warn("[mirror-cron] cancel records not written this page:", out.error);
-    return out || null;
+    return (await Promise.race([work, cap])) || null;
   } catch (e) {
-    console.warn("[mirror-cron] cancel records skipped:", e && e.message);
-    return null;
+    return { error: String((e && e.message) || e).slice(0, 200) };
   } finally { if (timer) clearTimeout(timer); }
+}
+async function noteEtsyCancels(receipts, capMs = CANCEL_HOOK_MS) {
+  if (!OrderCancel) return null;
+  const out = await cappedCancelWork(() => OrderCancel.fromReceipts(db, FV, receipts, { detectedBy: "mirror" }), capMs);
+  if (out && out.error) console.warn("[mirror-cron] cancel records not written this page:", out.error);
+  return out;
 }
 
 // ─── Config ────────────────────────────────────────────────────────────────
@@ -621,6 +626,21 @@ exports.handler = meter.wrapHandler(async () => {
   const changedBuyerIds = new Set();
   const etsyCancels = { created: 0, noted: 0, errors: 0, off: false };
   let etsyCancelsMs = 0;   // what the cancel hook has taken of this run (CANCEL_HOOK_MS at most, all pages together)
+  const cancelsMissed = new Set();   // cancelled receipts of this run's pages not recorded: the backlog
+  const cancelLeft = () => CANCEL_HOOK_MS - CANCEL_SAVE_MS - etsyCancelsMs;
+
+  // Charm Nest: the backlog of cancels an earlier run could not record, first
+  // (one document read when there is none; never throws; within the budget).
+  try {
+    if (OrderCancel && cancelLeft() > 0) {
+      const t0 = Date.now(), rb = await cappedCancelWork(() => OrderCancel.retryBacklog(db, FV), cancelLeft());
+      etsyCancelsMs += Math.max(0, Date.now() - t0);
+      if (rb) {
+        etsyCancels.retried = rb.retried || 0; etsyCancels.created += rb.created || 0; etsyCancels.noted += rb.noted || 0;
+        if (rb.error) { etsyCancels.errors += 1; console.warn("[mirror-cron] cancel backlog not retried:", rb.error); }
+      }
+    }
+  } catch (_) { /* never into the mirror */ }
   let customerRebuild = { attempted: 0, updated: 0, skipped: 0, errors: [], missingIndexFallbackCount: 0 };
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -670,12 +690,13 @@ exports.handler = meter.wrapHandler(async () => {
     // up, the rest of the run goes without it (op cancelSweep catches up on
     // any it missed).
     try {
-      const left = CANCEL_HOOK_MS - etsyCancelsMs;
+      const left = cancelLeft();
       if (left <= 0) etsyCancels.off = true;
       const t0 = Date.now(), cx = etsyCancels.off ? null : await noteEtsyCancels(receipts, left);
       if (!etsyCancels.off) etsyCancelsMs += Math.max(0, Date.now() - t0);
       if (cx) { etsyCancels.created += cx.created || 0; etsyCancels.noted += cx.noted || 0; if (cx.error) etsyCancels.errors += 1; if (cx.error === "timed out") etsyCancels.off = true; }
-      if (etsyCancelsMs >= CANCEL_HOOK_MS) etsyCancels.off = true;
+      if (OrderCancel && (cx ? cx.error : etsyCancels.off)) for (const id of OrderCancel.cancelledIds(receipts)) cancelsMissed.add(id);
+      if (cancelLeft() <= 0) etsyCancels.off = true;
     } catch (_) { /* never into the mirror */ }
 
     // Track changed buyers so the 3-minute receipt mirror also refreshes
@@ -699,6 +720,16 @@ exports.handler = meter.wrapHandler(async () => {
 
     offset += PAGE_SIZE;
   }
+
+  // Charm Nest: the cancels this run could not record wait in the backlog
+  // for the next run (never throws; the rest of the 8 s budget at most).
+  try {
+    if (OrderCancel && cancelsMissed.size) {
+      const kb = await cappedCancelWork(() => OrderCancel.keepBacklog(db, [...cancelsMissed]), CANCEL_HOOK_MS - etsyCancelsMs);
+      etsyCancels.backlog = cancelsMissed.size;
+      if (kb && kb.error) { etsyCancels.errors += 1; console.warn("[mirror-cron] cancel backlog not kept:", kb.error); }
+    }
+  } catch (_) { /* never into the mirror */ }
 
   // ─── Persist new state ────────────────────────────────────────────
   //

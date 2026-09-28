@@ -2431,7 +2431,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (list) { list = list.filter(c => String(c.orderId) !== rid); list.unshift((r && r.record) || Object.assign({ orderId: rid, by: rec.by, why: rec.why, at: Date.now() }, rec.record || {})); listAt = 0; }
       return r;
     }
-    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); restored.set(String(rid), Date.now()); window.AutoCancel?.forget?.(rid); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
+    async function restore(rid, by) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid), by: String(by || whoAmI() || "") }, { quiet: true }); restored.set(String(rid), Date.now()); window.AutoCancel?.forget?.(rid); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
     /** Ids read elsewhere (AutoCancel's newest records) join the cache at once, and come into the Cancelled tab as any
      *  cancel seen live does; returns how many were new to it. */
     function absorb(more) {

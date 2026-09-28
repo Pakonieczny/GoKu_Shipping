@@ -58,7 +58,8 @@ const db = {
         for (const [k, r, d, o] of ops) await r[k](d, o);
       } };
   },
-  async getAll(...refs) {
+  async getAll(...args) {
+    const refs = args.filter(r => r && r._snap);   // (a trailing { fieldMask } is read options)
     cost.getAll++;
     if (failCancelReads && refs.some(r => /Charm_Nest_Cancelled/.test(r.coll))) throw new Error("UNAVAILABLE: pretend Firestore outage");
     const out = refs.map(r => r._snap()); if (afterGetAll) { const f = afterGetAll; afterGetAll = null; f(); } return out;
@@ -224,7 +225,12 @@ async function check(name, fn) { await fn(); passed++; realLog("ok  " + name); }
     assert(!cancelDoc("4100000050"));
     assert(warns.slice(w0).some(w => /cancel records not written/.test(w)), "the miss is logged");
     const diag = [...store.entries()].filter(([k]) => k.startsWith("EtsyMail_DiagnosticLog/")).map(([, v]) => v).filter(v => v.phase === "end" && v.etsyCancels).pop();
-    assert.equal(diag.etsyCancels.errors, 1);
+    assert.equal(diag.etsyCancels.errors, 1); assert.equal(diag.etsyCancels.backlog, 1);
+    assert.deepEqual(store.get("Charm_Nest_Cancelled_Backlog/pending").ids, ["4100000050"], "the missed cancel waits in the backlog");
+    // the next run records it first, from the mirror's own receipt (no Etsy call of its own), and empties the backlog
+    const e0 = etsyCalls; await runMirror([[]]);
+    assert.equal(etsyCalls - e0, 1, "only the mirror's own page"); assert.equal(cancelDoc("4100000050").by, "Etsy");
+    assert(!store.has("Charm_Nest_Cancelled_Backlog/pending"));
   });
 
   await check("a person's cancel landing between the mirror's read and its batch is kept", async () => {
