@@ -79,7 +79,7 @@ async function poolTest() {
 
 /* ── 2 · Arrivals.merge ── */
 async function mergeTest() {
-  const store = new Map(), rows = [], cancelled = new Set(), added = [];
+  const store = new Map(), rows = [], cancelled = new Set(), added = [], toasts = [];
   const ctx = {
     WORKSPACE_SANDBOX: false, JSON, Map, Set, Promise, Math, Object, Array, String, Number, Date, console,
     localStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)) },
@@ -89,7 +89,7 @@ async function mergeTest() {
     B: { orders: { rows, byKey: new Map() }, run: null },
     Orders: { rows: () => rows, interpretAll() {}, render() {} }, O, TL: { pulled: o => added.push(String(o.receiptId)) },
     Review: { render() {} }, Engrave: { render() {} }, refreshAllCards() {}, Session: { schedule() {} }, ListMedia: { prepare() {} },
-    toast: () => null, notifyPerson() {}, RunCtl: { save: async () => {} }, api: async () => { throw new Error('no cloud in this test'); },
+    toast: t => { toasts.push(t); return null; }, notifyPerson() {}, RunCtl: { save: async () => {} }, api: async () => { throw new Error('no cloud in this test'); },
   };
   ctx.Cancelled = ctx.window.Cancelled; ctx.B.orders.rows = rows;
   vm.createContext(ctx);
@@ -103,7 +103,9 @@ async function mergeTest() {
   await Arrivals.merge(inbox);
   const got = [...new Set(rows.map(r => String(r.order.receiptId)))];
   assert.deepEqual(got, [A], 'the cancelled order is not added to Orders again: ' + JSON.stringify(got));
-  console.log('  ok · Arrivals.merge: an order cancelled after it was picked is not added back');
+  // (and the notice counts only what came in: it said "2 new orders arrived", the cancelled one counted, adv area 2)
+  assert.deepEqual(toasts, ['1 new order arrived'], 'the arrivals notice counts only the order added: ' + JSON.stringify(toasts));
+  console.log('  ok · Arrivals.merge: an order cancelled after it was picked is not added back, nor counted as arrived');
 }
 
 (async () => {
