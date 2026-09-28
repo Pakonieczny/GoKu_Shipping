@@ -92,6 +92,7 @@ const assets = [
   "charm-nest-dxf.js",
   "charm-nest-motion.js",
   "order-timeline.js",
+  "station-timeline.js",
   "charm-nest-vector.js",
   "vendor/clipper-6.4.2.js",
   "vendor/clipper-6.4.2-LICENSE.txt",

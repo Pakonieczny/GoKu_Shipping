@@ -239,11 +239,29 @@ async function decide(db, FV, b, sandbox) {
   if (keys.length > 400) return { error: "too many lines in one decision" };
   const kind = b.kind == null ? null : KINDS.includes(b.kind) ? b.kind : null;
   if (b.kind != null && !kind) return { error: "bad kind" };
-  const rec = kind ? { kind, by: str(b.by, 60) || "someone", at: Date.now() } : null;
+  const rec = kind ? { kind, by: str(b.by, 60) || "someone", at: Date.now() } : null, field = sandbox ? "decidedSandbox" : "decided";
+  // what each line was decided before: the order's timeline records a change (a retried call finds it made, and adds none)
+  const was = new Map();
+  try { for (let i = 0; i < keys.length; i += 100) (await db.getAll(...keys.slice(i, i + 100).map(k => db.collection(COLL).doc(k)))).forEach((d, j) => { const x = d.exists ? d.data() || {} : {}; was.set(keys[i + j], (x[field] && x[field].kind) || null); }); }
+  catch (e) { was.clear(); console.warn("[customRead] decisions not read for the timeline:", e.message || e); }
   const batch = db.batch();
-  for (const key of keys) batch.set(db.collection(COLL).doc(key), { [sandbox ? "decidedSandbox" : "decided"]: rec || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
+  for (const key of keys) batch.set(db.collection(COLL).doc(key), { [field]: rec || FV.delete(), updatedAt: FV.serverTimestamp() }, { merge: true });
   await batch.commit();
+  await stampDecisions(db, FV, keys.filter(k => !was.has(k) || was.get(k) !== kind), was, kind, rec, b, sandbox);
   return { ok: true, decided: rec, keys };
+}
+const KIND_WORDS = { custom: "custom order", rework: "rework", addOnToOrder: "add-on to an order", chainOnly: "chain only", other: "other", regular: "regular order" };
+/** One customDecided event per order whose lines' decision changed. Never throws: a failed write is only logged. */
+async function stampDecisions(db, FV, changed, was, kind, rec, b, sandbox) {
+  try {
+    if (!changed.length) return;
+    const at = rec ? rec.at : Date.now(), by = rec ? rec.by : str(b.by, 60) || "someone", byOrder = new Map();
+    for (const key of changed) { const o = (/^(\d{1,30})_/.exec(key) || [])[1]; if (!o) continue; if (!byOrder.has(o)) byOrder.set(o, []); byOrder.get(o).push(key); }
+    const events = [...byOrder].map(([orderId, lines]) => ({ orderId, type: "customDecided", at, by, station: "sorter", lineKey: lines.length === 1 ? lines[0] : "", transactionId: lines.length === 1 ? lines[0].split("_")[1] || "" : "",
+      text: kind ? `Decided: ${KIND_WORDS[kind] || kind}` : "Decision taken back", data: { kind, lines: lines.slice(0, 40), was: Object.fromEntries(lines.slice(0, 40).map(k => [k, was.has(k) ? was.get(k) : null])) }, id: `${lines[0]}-${at}` }));
+    const TL = require("./_orderTimeline");
+    for (let i = 0; i < events.length; i += 100) await TL.add(db, FV, events.slice(i, i + 100), { prefix: sandbox ? "Sandbox_" : "", source: "sorter" });
+  } catch (e) { console.warn("[customRead] timeline not recorded (custom decided):", (e && e.message) || e); }
 }
 
 module.exports = { run, lookup, decide, content, cleanLine, normalize, INSTRUCTIONS, SCHEMA, MODEL, KINDS, COLL, MAX_LINES };

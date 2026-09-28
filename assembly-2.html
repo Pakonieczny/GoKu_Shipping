@@ -1009,6 +1009,9 @@
       .catch(err=>console.error("Anon auth ❌", err));
   </script>
 
+  <!-- Order timeline: records this station's scans and steps, and shows the cancelled-order alert (optional: the page works without it) -->
+  <script src="order-timeline.js?v=20260928-station-core"></script><script src="station-timeline.js?v=20260928-station-core"></script>
+
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -2312,6 +2315,16 @@ function metalToBadge(label){
         const userLoginModalElem = document.getElementById("userLoginModal");
         const userLoginModal = M.Modal.init(userLoginModalElem, { dismissible: false });
 
+        // Order timeline for this station: who scanned which order, where and when (station-timeline.js)
+        try {
+          const stName = (document.getElementById("titleShipping")?.value || "").trim();   // "Assembly_1"
+          window.StationTimeline && window.StationTimeline.init({
+            station: "assembly",
+            device: stName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "assembly",       // "assembly-1"
+            getEmployee: () => localStorage.getItem("employee_name") || ""
+          });
+        } catch (err) { console.warn("Station timeline init failed:", err); }
+
         // --- employee auto-restore + OAuth guard ---------------------------
         const oauthFlag  = localStorage.getItem("oauth_in_progress");
         const savedEmpID = localStorage.getItem("employee_id");
@@ -2448,6 +2461,7 @@ function metalToBadge(label){
             inp.focus();
             setTimeout(() => {
               const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              ev.stationHow = "paste";                 // order timeline: how the order came in
               inp.dispatchEvent(ev);
             }, 100);
           } catch (err) {
@@ -2531,6 +2545,15 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
+
+        // Order timeline: record the scan (station, operator, how it came in); a cancelled order gets the full-screen alert
+        try {
+          if (window.StationTimeline && /^\d{6,}$/.test(orderNumber)) {
+            const etsyStatus = (orderData && typeof orderData.status === "string") ? orderData.status : "";   // already read: no extra Etsy call
+            Promise.resolve(window.StationTimeline.scanned(orderNumber, { how: e.stationHow || "typed", ...(etsyStatus ? { extra: { etsyStatus } } : {}) }))
+              .catch(err => console.warn("Station timeline scan failed:", err));
+          }
+        } catch (err) { console.warn("Station timeline scan failed:", err); }
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -2747,6 +2770,15 @@ function metalToBadge(label){
     const sendBtn   = document.getElementById("goScreenTwoBtn");
     const newMsgInp = document.getElementById("britesMsgInput");
 
+    /* Order timeline: the Team's stamp for a finished order ("QA1", "QA 2", "Done", "Assembled"),
+       sent from this station, is when the order is assembled. Ordinary messages are not. */
+    function isAssemblyStamp(text){
+      const words = String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+      const done  = w => /^qa\d{0,2}$/.test(w) || /^(assembled|done|complete|completed|finished)$/.test(w);
+      return words.length > 0 && words.length <= 3 && words.some(done)
+        && words.every(w => done(w) || /^(assembly|ok|okay|checked|\d{1,2})$/.test(w));
+    }
+
     if (sendBtn) {
       sendBtn.addEventListener("click", async () => {
         const orderId = document.getElementById("etsyOrderNumber").value.trim();
@@ -2771,6 +2803,11 @@ function metalToBadge(label){
           const json = await resp.json();
           if (!resp.ok || !json.success) throw new Error(json.error || "Server error");
           newMsgInp.value = "";                // clear box on success
+          try {
+            if (window.StationTimeline && isAssemblyStamp(msgTxt)) {
+              window.StationTimeline.did("assembled", orderId, "Assembled · " + msgTxt, { message: msgTxt });
+            }
+          } catch (errTl) { console.warn("Station timeline failed:", errTl); }
         } catch (err) {
           console.error("Send error:", err);
           M.toast({ html: "Error: " + err.message });
@@ -2794,6 +2831,14 @@ function metalToBadge(label){
         if (!receiptId) { M.toast({ html: "Enter order #"   }); return; }
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
+
+        // Order timeline: a cancelled order asks before it is completed on Etsy
+        if (window.StationTimeline) {
+          let go = true;
+          try { go = (await window.StationTimeline.guard(receiptId, { action: "Complete Order" })) !== false; }
+          catch (errTl) { console.warn("Station timeline guard failed:", errTl); }
+          if (!go) return;
+        }
 
         /* helper → perform one POST via resilient apiFetch */
         const postTracking = () =>
@@ -2821,6 +2866,10 @@ function metalToBadge(label){
 
           /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
+          try {
+            window.StationTimeline && window.StationTimeline.did("etsyCompleted", receiptId,
+              "Completed on Etsy · " + (carrier === "usps" ? "USPS" : "Chit Chats") + " " + tracking, { tracking, carrier });
+          } catch (errTl) { console.warn("Station timeline failed:", errTl); }
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
 
@@ -3436,6 +3485,7 @@ function metalToBadge(label){
               etsyOrderInput.focus();
               setTimeout(() => {
                 const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+                ev.stationHow = "scan";                // order timeline: came from the phone scanner
                 etsyOrderInput.dispatchEvent(ev);
               }, 100);
 

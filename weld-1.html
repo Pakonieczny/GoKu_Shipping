@@ -1009,6 +1009,18 @@
       .catch(err=>console.error("Anon auth ❌", err));
   </script>
 
+  <!-- Order timeline: every scan here is recorded (who, when) and a cancelled order raises the full-screen alert -->
+  <script src="order-timeline.js?v=20260928-station-core"></script>
+  <script src="station-timeline.js?v=20260928-station-core"></script>
+  <script>
+    try {
+      StationTimeline.init({
+        station: "welding", device: "weld-1",
+        getEmployee: () => localStorage.getItem("employee_name") || (document.getElementById("employeeName") || {}).value || ""
+      });
+    } catch (_) {}
+  </script>
+
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -2448,6 +2460,7 @@ function metalToBadge(label){
             inp.focus();
             setTimeout(() => {
               const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              window.__stationHow = "paste";
               inp.dispatchEvent(ev);
             }, 100);
           } catch (err) {
@@ -2507,6 +2520,9 @@ function metalToBadge(label){
 
       etsyOrderInput.addEventListener("keydown", async function (e) {
         if (e.key !== "Enter") return;
+        // how the number came in, for the order timeline: a real Enter is typed; the scan relay and Paste press it for us
+        let stHow = "scan";
+        try { stHow = e.isTrusted ? "typed" : (window.__stationHow || "scan"); window.__stationHow = ""; } catch (_) {}
 
           /* ⛔ Cancel any in-flight ccShipmentId search and pending slow-pass */
         window.ccManualIdUpdateDone    = false;
@@ -2531,6 +2547,15 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
+        /* Order timeline: record the scan (who, where, how) and check for a cancel; a cancelled order raises the alert.
+           Not awaited, so the order loads as before. The weld station has no "weld done" button, so a scan here is the weld. */
+        try {
+          if (window.StationTimeline) {
+            StationTimeline.scanned(orderNumber, { how: stHow, extra: { etsyStatus: (orderData && orderData.status) || "" } })
+              .then(r => { if (r && !r.cancelled) StationTimeline.did("welded", orderNumber); })
+              .catch(() => {});
+          }
+        } catch (_) {}
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -2795,6 +2820,11 @@ function metalToBadge(label){
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
+        /* a cancelled order asks "Do it anyway?" first (order timeline) */
+        try {
+          if (window.StationTimeline && !(await StationTimeline.guard(receiptId, { action: "Complete Order", anchor: completeBtn }))) return;
+        } catch (_) {}
+
         /* helper → perform one POST via resilient apiFetch */
         const postTracking = () =>
           apiFetch("/trackOrderProxy", {
@@ -2821,6 +2851,7 @@ function metalToBadge(label){
 
           /* 🎉 success */
           M.toast({ html: "Etsy order marked complete 🎉" });
+          try { window.StationTimeline && StationTimeline.did("etsyCompleted", receiptId, "Completed on Etsy at Welding", { carrier, tracking }); } catch (_) {}
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
 
@@ -3436,6 +3467,7 @@ function metalToBadge(label){
               etsyOrderInput.focus();
               setTimeout(() => {
                 const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+                window.__stationHow = "scan";
                 etsyOrderInput.dispatchEvent(ev);
               }, 100);
 

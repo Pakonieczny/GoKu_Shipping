@@ -995,6 +995,45 @@
       .catch(err=>console.error("Anon auth ❌", err));
   </script>
 
+  <!-- Order timeline: this station records each scan, label and shipment on the order's timeline and stops a
+       cancelled order ("CANCELLED ORDER — DO NOT PROCEED"). Optional: without station-timeline.js nothing changes. -->
+  <script src="order-timeline.js?v=20260928-station-core"></script>
+  <script src="station-timeline.js?v=20260928-station-core"></script>
+  <script>
+    (function () {
+      const soft = (p) => { try { if (p && typeof p.catch === "function") p.catch(e => console.warn("StationTimeline:", e)); } catch (_) {} };
+      try {
+        window.StationTimeline && window.StationTimeline.init({
+          station: "shipping",
+          device: "shipping-1",
+          getEmployee: () => { try { return localStorage.getItem("employee_name") || ""; } catch (_) { return ""; } }
+        });
+      } catch (e) { console.warn("StationTimeline.init failed:", e); }
+      window.shipTimeline = {
+        /* scan, typing or paste: record it; the module checks for a cancel and shows its own full-screen alert */
+        scanned(orderId, how) {
+          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.scanned(String(orderId), { how })); }
+          catch (e) { console.warn("StationTimeline.scanned failed:", e); }
+        },
+        did(type, orderId, text, data) {
+          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.did(type, String(orderId), String(text || "").slice(0, 200), data)); }
+          catch (e) { console.warn("StationTimeline.did failed:", e); }
+        },
+        /* true → go on. A cancelled order goes on only after the module's explicit second confirmation. */
+        async guard(orderId) {
+          if (!window.StationTimeline || !orderId) return true;
+          try { return (await window.StationTimeline.guard(String(orderId))) !== false; }
+          catch (e) {
+            console.warn("StationTimeline.guard failed:", e);
+            let cancelled = false;
+            try { cancelled = !!(await window.StationTimeline.isCancelled(String(orderId))); } catch (_) {}
+            return !cancelled || window.confirm("CANCELLED ORDER — DO NOT PROCEED\n\nOrder " + orderId + " was cancelled. Continue anyway?");
+          }
+        }
+      };
+    })();
+  </script>
+
   <script>
     /********** Global Variables **********/
     window.receiptIsGift = null;
@@ -2531,6 +2570,7 @@ function metalToBadge(label){
             setTimeout(() => {
             resetAllOrderUI(); // ← full cold boot
               const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true });
+              ev.stHow = "paste"; // order timeline: how the order came in
               inp.dispatchEvent(ev);
             }, 100);
           } catch (err) {
@@ -2631,6 +2671,7 @@ function metalToBadge(label){
         if (!orderNumber) return;
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
+        window.shipTimeline && window.shipTimeline.scanned(orderNumber, e.stHow || (e.isTrusted ? "typed" : "auto"));
         await loadShipToAddress(orderNumber);
         await loadGiftMessage(orderNumber);
 
@@ -2895,6 +2936,13 @@ function metalToBadge(label){
         if (!tracking)  { M.toast({ html: "Enter tracking #" }); return; }
         if (!carrier)   { M.toast({ html: "Choose carrier"  }); return; }
 
+        /* Cancelled order: never marked shipped without the station's explicit second confirmation */
+        if (window.shipTimeline && !(await window.shipTimeline.guard(receiptId))) {
+          M.toast({ html: "Cancelled order — not marked shipped." });
+          return;
+        }
+        const carrierName = (carrierSel.options[carrierSel.selectedIndex]?.text || carrier).trim();
+
         /* helper → perform one POST via resilient apiFetch */
         const postTracking = () =>
           apiFetch("/trackOrderProxy", {
@@ -2920,6 +2968,12 @@ function metalToBadge(label){
           if (errMsg) throw new Error(errMsg);
 
           /* 🎉 success */
+          if (window.shipTimeline) {
+            let ss = null; try { ss = JSON.parse(payload); } catch (_) {}
+            const tl = { tracking, carrier, carrierName, shipStationOrderId: ss?.orderId ?? null };
+            window.shipTimeline.did("shipped", receiptId, `Shipped · ${carrierName} ${tracking}`, tl);
+            window.shipTimeline.did("etsyCompleted", receiptId, `Completed on Etsy · tracking ${tracking}`, tl);
+          }
           M.toast({ html: "Etsy order marked complete 🎉" });
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
@@ -3550,6 +3604,7 @@ function metalToBadge(label){
               etsyOrderInput.focus();
               setTimeout(() => {
                 const ev = new KeyboardEvent("keydown", { key:"Enter", bubbles:true });
+                ev.stHow = "scan"; // order timeline: came from the phone scanner
                 etsyOrderInput.dispatchEvent(ev);
               }, 100);
 
@@ -4989,6 +5044,23 @@ function metalToBadge(label){
 
       /* Main flow: buy → poll → print (no new tab) */      
       async function buyCcThenPrint() {
+        /* Cancelled order: no label without the station's explicit second confirmation */
+        const stOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (window.shipTimeline && !(await window.shipTimeline.guard(stOrder))) {
+          M.toast?.({ html: "Cancelled order — no label bought." });
+          return;
+        }
+        let stLabel = null; // set once Chit Chats sold the label, so it is recorded exactly once
+        const stRecordLabel = (printed, shipment, err) => {
+          if (!stLabel || stLabel.done || !window.shipTimeline) return;
+          stLabel.done = true;
+          const tracking = shipment?.carrier_tracking_code || "";
+          window.shipTimeline.did("labelPrinted", stOrder,
+            (printed ? "Chit Chats label printed" : "Chit Chats label bought, not printed yet") + (tracking ? " · " + tracking : ""),
+            { service: "chitchats", shipmentId: stLabel.shipmentId, postageType: stLabel.postageType,
+              carrier: shipment?.carrier || null, tracking: tracking || null, printed,
+              error: err ? String(err.message || err).slice(0, 120) : null });
+        };
         try {
 
           // No stub window: we will print inline in the same tab.
@@ -5041,6 +5113,7 @@ function metalToBadge(label){
           }
            
            await callCc("PATCH", { action: "buy", shipment_id: shipmentId, postage_type: postageType });
+          stLabel = { shipmentId, postageType };
 
           // 4) Poll for label URLs (Chit Chats may return postage_requested first)
           const { zpl, pdf, png, shipment } = await waitForLabelUrls(shipmentId, 12, 1500);
@@ -5077,9 +5150,11 @@ function metalToBadge(label){
             const modalEl = document.getElementById("ccEditModal");
             if (modalEl) modalEl.style.display = "none";
           } catch {}
+          stRecordLabel(true, shipment);
           M.toast?.({ html: "Label printed." });
         } catch (err) {
           console.error(err);
+          stRecordLabel(false, null, err);
           M.toast?.({ html: "Buy/print failed: " + (err.message || err) });
         } finally {
 
@@ -5571,6 +5646,11 @@ async function refreshRates(){
         async function buySelected(){
         const id = (idInput.value || "").trim();
         if (!id || !selectedPostageType) return;
+        const stOrder = (document.getElementById("etsyOrderNumber")?.value || "").trim();
+        if (window.shipTimeline && !(await window.shipTimeline.guard(stOrder))) {
+          M.toast?.({ html: "Cancelled order — no label bought." });
+          return;
+        }
         btnBuy.disabled = true;
         try{
         // 🔒 Freeze any ccShipmentId-driven auto lookups after Buy
@@ -5592,6 +5672,8 @@ async function refreshRates(){
           } catch (e) {}
           // 2) Buy the label
           await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
+          window.shipTimeline && window.shipTimeline.did("labelPrinted", stOrder, "Chit Chats label bought",
+            { service: "chitchats", shipmentId: id, postageType: selectedPostageType });
 
          // 2) Wait for Chit Chats to finish generating the label URL
           const url = await waitForLabelUrl(id, 30, 2000); // ~60s patience
