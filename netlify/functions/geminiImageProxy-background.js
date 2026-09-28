@@ -14149,7 +14149,10 @@ async function _handlerImpl(event) {
           // Admission below must use the state we just fetched, not the
           // snapshot from before this sweep started.
           b.state = state;
-          if (state === "JOB_STATE_FAILED" && quotaFailure(st?.providerError) && !st?.responsesFile) b.retryRequested = true;
+          // Same eligibility as batch_status's saved mark: a Charm Maker or
+          // multi-set job would be refused by batch_retry_missing and stop the refill.
+          if (state === "JOB_STATE_FAILED" && quotaFailure(st?.providerError) && !st?.responsesFile &&
+              !b.retryBatchName && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") b.retryRequested = true;
         }
         if (isSucceeded(state)) {
           const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
@@ -14165,7 +14168,10 @@ async function _handlerImpl(event) {
       const activeStates = ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"];
       let activeCount = open.filter((b) => !b.collected && activeStates.includes(normState(b.state))).length;
       const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName &&
-        !b.collected && !b.responsesFile && (isFinal(b.state) || b.state === "JOB_STATE_QUEUED") && b.batchName &&
+        // A cancelled job is never retried (batch_retry_missing refuses it,
+        // and that refusal would stop the refill for every set behind it).
+        !b.collected && !b.responsesFile &&
+        ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(normState(b.state)) && b.batchName &&
         Number(b.retryAttempt || 0) < 5);
       let refillNeedsContinuation = false;
       for (const b of waiting) {
@@ -15708,6 +15714,22 @@ async function _handlerImpl(event) {
       if (!/^(batches\/[A-Za-z0-9_-]+|batch_[A-Za-z0-9_-]+)$/.test(batchName)) {
         return json(400, { error: { message: "Invalid batch identifier" } });
       }
+      // A finished job waiting in the retry queue: take it out of the queue
+      // (the provider cannot cancel it). Serialized with admission like a
+      // queued submission; its state, results and saved images are kept.
+      const cancelRef = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(batchName));
+      const saved = (await cancelRef.get().catch(() => null))?.data?.() || {};
+      if (["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(String(saved.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_"))) {
+        const unqueued = await getDb().runTransaction(async (tx) => {
+          const gate = await tx.get(getDb().collection("LG1_Config").doc("batchAdmission"));
+          const current = (await tx.get(cancelRef)).data() || {};
+          if (current.retryBatchName || gate.data()?.sourceName === batchDocIdFromName(batchName) && gate.data()?.owner) return false;
+          tx.set(cancelRef, { retryRequested: false, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          return true;
+        });
+        return unqueued ? json(200, { ok: true, state: saved.state, retryCancelled: true, batchName }) :
+          json(409, { error: { message: "Its retry is being submitted; refresh before cancelling" } });
+      }
       const cancellation = await cancelGeminiBatchJob(apiKey, batchName);
       try {
         const db = getDb();
@@ -15715,6 +15737,8 @@ async function _handlerImpl(event) {
           () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
             state: cancellation?.state || "JOB_STATE_CANCELLED",
             providerStatus: cancellation?.providerStatus || null,
+            // A cancelled job never goes back into the retry queue.
+            retryRequested: false,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.cancelMirror"
