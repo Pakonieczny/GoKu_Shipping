@@ -120,5 +120,27 @@ async function test(name, fn) {
     assert.equal(out.filter(a => a.type === "image").length, 2);
   });
 
+  await test("a file is the same file under any of its names", () => {
+    const code = "9212490362894333515469";
+    const out = S.normalizeAttachments([
+      { type: "tracking_image", trackingCode: code, proxyUrl: "/t?trackingCode=" + code },
+      // the same tracking picture stored as a plain image
+      { type: "image", storagePath: "etsymail/tracking/" + code + ".png", proxyUrl: "/i?path=trk" },
+      // one sheet at its old and new storage path
+      { ...chip("hug"), storagePath: "etsymail-collateral/old-Huggie.png", proxyUrl: "/i?path=old" },
+      chip("hug"),
+      // the same photo uploaded twice
+      { type: "image", storagePath: "etsymail/drafts/t/a.png", proxyUrl: "/i?a", contentHash: "abc" },
+      { type: "image", storagePath: "etsymail/drafts/t/b.png", proxyUrl: "/i?b", contentHash: "abc" },
+      // a listing twice
+      { type: "listing", listingId: "123" }, { type: "listing", listingId: "123" },
+      // an invalid copy does not hide the valid one after it
+      { type: "image", storagePath: "etsymail/drafts/t/c.png" },
+      { type: "image", storagePath: "etsymail/drafts/t/c.png", proxyUrl: "/i?c" }
+    ]);
+    assert.deepEqual(out.map(a => a.type + ":" + (a.trackingCode || a.collateralId || a.listingId || a.storagePath)),
+      ["tracking_image:" + code, "image:hug", "image:etsymail/drafts/t/a.png", "listing:123", "image:etsymail/drafts/t/c.png"]);
+  });
+
   console.log(passed + " promised-attachment tests passed");
 })().catch(e => { console.error(e); process.exit(1); });

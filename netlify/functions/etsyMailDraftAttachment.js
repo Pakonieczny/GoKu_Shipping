@@ -154,6 +154,9 @@ exports.handler = async (event) => {
     return bad(`Image too large: ${buf.length} bytes (max ${MAX_DECODED_BYTES})`);
   }
 
+  // The photo's fingerprint: the same bytes attached twice are one file.
+  const contentHash = crypto.createHash("sha256").update(buf).digest("hex");
+
   // ── Upload to Firebase Storage ─────────────────────────────────────
   const attachmentId = "att_" + crypto.randomBytes(6).toString("hex");
   const ext          = extFromContentType(contentType);
@@ -196,6 +199,7 @@ exports.handler = async (event) => {
     contentType,
     bytes       : buf.length,
     filename    : safeName,
+    contentHash,
     createdAt   : FV.serverTimestamp()
   };
 
@@ -234,6 +238,7 @@ exports.handler = async (event) => {
     contentType,
     bytes       : buf.length,
     filename    : safeName,
+    contentHash,
     widthPx     : null,  // reserved; would require sharp to compute
     heightPx    : null
   });

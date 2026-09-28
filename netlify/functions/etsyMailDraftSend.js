@@ -408,12 +408,23 @@ function sameTrackingCode(code) {
   const m = c.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
   return m ? m[1] : c;
 }
-function attachmentKey(a) {
-  if (!a) return null;
-  if (a.type === "tracking_image") return a.trackingCode ? "trk:" + sameTrackingCode(a.trackingCode) : (a.proxyUrl ? "url:" + a.proxyUrl : null);
-  if (a.type === "image") return a.storagePath ? "img:" + a.storagePath : null;
-  if (a.type === "listing") return a.listingId ? "lst:" + a.listingId : null;
-  return null;
+// Every name one file goes by: a repeat under any of them is the same file
+// (a tracking image also stored as a plain image, a sheet added by the AI
+// and again by hand, the same photo uploaded twice).
+function attachmentKeys(a) {
+  const k = [];
+  if (!a) return k;
+  if (a.type === "tracking_image" && a.trackingCode) k.push("trk:" + sameTrackingCode(a.trackingCode));
+  if (a.storagePath) {
+    k.push("path:" + a.storagePath);
+    const t = String(a.storagePath).match(/^etsymail\/tracking\/([A-Za-z0-9]+)\.png$/);
+    if (t) k.push("trk:" + sameTrackingCode(t[1]));
+  }
+  if (a.proxyUrl) k.push("url:" + a.proxyUrl);
+  if (a.collateralId) k.push("col:" + a.collateralId);
+  if (a.contentHash) k.push("sha:" + a.contentHash);
+  if (a.type === "listing" && a.listingId) k.push("lst:" + a.listingId);
+  return k;
 }
 
 function normalizeAttachments(raw) {
@@ -422,11 +433,11 @@ function normalizeAttachments(raw) {
   const seen = new Set();
   for (const a of raw) {
     if (!a || typeof a !== "object") continue;
-    const key = attachmentKey(a);
-    if (key && seen.has(key)) continue;
-    if (key) seen.add(key);
     const type = a.type;
     if (type !== "image" && type !== "listing" && type !== "tracking_image") continue;
+    const keys = attachmentKeys(a);
+    if (keys.some(k => seen.has(k))) continue;
+    const before = out.length;
 
     const common = {
       attachmentId: a.attachmentId || ("att_" + Math.random().toString(36).slice(2, 12)),
@@ -442,7 +453,9 @@ function normalizeAttachments(raw) {
         proxyUrl    : String(a.proxyUrl),
         contentType : a.contentType || "image/png",
         bytes       : Number(a.bytes) || null,
-        filename    : a.filename || null
+        filename    : a.filename || null,
+        ...(a.contentHash ? { contentHash: String(a.contentHash) } : {}),
+        ...(a.collateralId ? { collateralId: String(a.collateralId), collateralName: a.collateralName || null, collateralKind: a.collateralKind || null } : {})
       });
     } else if (type === "tracking_image") {
       // Tracking images only need proxyUrl — storagePath isn't always
@@ -473,6 +486,7 @@ function normalizeAttachments(raw) {
         price       : a.price        || null
       });
     }
+    if (out.length > before) keys.forEach(k => seen.add(k));
   }
   return out;
 }
@@ -935,6 +949,13 @@ exports.handler = async (event) => {
             });
           }
         }
+      }
+
+      // A listing whose link is already in the words would show twice (the
+      // extension adds each listing's link to the text).
+      for (let i = normalized.length - 1; i >= 0; i--) {
+        const a = normalized[i];
+        if (a.type === "listing" && /^\d+$/.test(a.listingId) && new RegExp("/listing/" + a.listingId + "(?!\\d)").test(cleanText)) normalized.splice(i, 1);
       }
 
       if (!cleanText && !normalized.length) {

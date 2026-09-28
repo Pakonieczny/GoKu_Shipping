@@ -19024,30 +19024,54 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return state.composerAttachments.get(threadId);
     }
 
-    // One chip per tracking label, file or listing: the same one can reach
-    // the box twice (the draft's own copy and the tracking sync).
-    function composerAttachmentKey(a) {
-      if (!a) return null;
-      if (a.type === "tracking_image" && a.trackingCode) {
-        const c = String(a.trackingCode).replace(/\s+/g, "").toUpperCase();
-        const m = c.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
-        return "trk:" + (m ? m[1] : c);
+    // One chip per tracking label, file or listing (Paul, 2026-09-28: never
+    // a repeat of any attachment). A file can go by several names: its
+    // tracking code, storage path, sheet id or photo fingerprint. Sharing
+    // any one of them makes it the same file.
+    function composerAttachmentKeys(a) {
+      const k = [];
+      if (!a) return k;
+      const code = (c) => {
+        const x = String(c || "").replace(/\s+/g, "").toUpperCase();
+        const m = x.match(/^420\d{5}(?:\d{4})?(9\d{21})$/);
+        return m ? m[1] : x;
+      };
+      if (a.type === "tracking_image" && a.trackingCode) k.push("trk:" + code(a.trackingCode));
+      if (a.storagePath) {
+        k.push("path:" + a.storagePath);
+        const t = String(a.storagePath).match(/^etsymail\/tracking\/([A-Za-z0-9]+)\.png$/);
+        if (t) k.push("trk:" + code(t[1]));
       }
-      if (a.type === "image" && a.storagePath) return "img:" + a.storagePath;
-      if (a.type === "listing" && a.listingId) return "lst:" + a.listingId;
-      return a.attachmentId ? "id:" + a.attachmentId : null;
+      if (a.collateralId) k.push("col:" + a.collateralId);
+      if (a.contentHash) k.push("sha:" + a.contentHash);
+      if (a.type === "listing" && a.listingId) k.push("lst:" + a.listingId);
+      if (a.attachmentId) k.push("id:" + a.attachmentId);
+      return k;
+    }
+    function composerHasAttachment(threadId, a) {
+      const want = composerAttachmentKeys(a);
+      return getComposerAttachments(threadId).some(x => x !== a && composerAttachmentKeys(x).some(k => want.includes(k)));
     }
 
     function setComposerAttachments(threadId, arr) {
       const seen = new Set();
       const list = (Array.isArray(arr) ? arr : []).filter(a => {
-        const k = composerAttachmentKey(a);
-        if (!k) return true;
-        if (seen.has(k)) return false;
-        seen.add(k);
+        const keys = composerAttachmentKeys(a);
+        if (keys.some(k => seen.has(k))) return false;
+        keys.forEach(k => seen.add(k));
         return true;
       });
       state.composerAttachments.set(threadId, list);
+    }
+
+    // SHA-256 of a file's bytes, to spot the same photo added twice.
+    async function fileFingerprint(file) {
+      try {
+        if (!window.crypto || !crypto.subtle) return null;
+        const buf = await file.arrayBuffer();
+        const h = await crypto.subtle.digest("SHA-256", buf);
+        return Array.from(new Uint8Array(h)).map(b => b.toString(16).padStart(2, "0")).join("");
+      } catch { return null; }
     }
 
     function trackingImageLooksReady(img) {
@@ -19329,6 +19353,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
       const attachmentId = makeAttachmentId();
       const placeholderName = file.name || (fromPaste ? "paste.png" : "image");
+      const contentHash = await fileFingerprint(file);
+      if (state.selectedId !== threadId) return;
+      if (contentHash && composerHasAttachment(threadId, { type: "image", contentHash })) {
+        toast("That image is already attached");
+        return;
+      }
       const atts = getComposerAttachments(threadId);
       const record = {
         attachmentId,
@@ -19338,7 +19368,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         bytes      : file.size,
         filename   : placeholderName,
         thumbDataUrl: null,   // filled below
-        source     : fromPaste ? "paste" : "upload"
+        source     : fromPaste ? "paste" : "upload",
+        contentHash
       };
       atts.push(record);
       setComposerAttachments(threadId, atts);
@@ -19374,7 +19405,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           proxyUrl   : resp.proxyUrl,
           // Server-side attachmentId replaces our temporary one so the
           // backend doc matches the chip
-          attachmentId: resp.attachmentId || current[idx].attachmentId
+          attachmentId: resp.attachmentId || current[idx].attachmentId,
+          contentHash : resp.contentHash || current[idx].contentHash || null
         };
         setComposerAttachments(threadId, current);
         renderComposerChips();
