@@ -32,6 +32,8 @@
   const inflight = new Map();  // orderId → the cancel check under way
   const cleared = new Map();   // orderId → when the server last said "not cancelled" (the guard asks again after FRESH_MS)
   const FRESH_MS = 30000;
+  // (an answer older than FRESH_MS is never used again: a station open for weeks kept every order it ever scanned)
+  const prune = () => { if (cleared.size > 500) { const now = Date.now(); for (const [k, t] of cleared) if (now - t >= FRESH_MS) cleared.delete(k); } };
   let configured = false, keysOn = false;
 
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
@@ -101,7 +103,7 @@
         try {
           ask = Promise.resolve(askGrouped(o, id));
           const r = answerOf(id, await withTimeout(ask, CHECK_MS));
-          if (r) { state = "cancelled"; record = remember(id, r); } else { state = "clear"; forget(id); cleared.set(id, Date.now()); }
+          if (r) { state = "cancelled"; record = remember(id, r); } else { state = "clear"; forget(id); cleared.set(id, Date.now()); prune(); }
         } catch (e) {
           why = (navigator.onLine === false ? "offline" : String((e && e.message) || e || "failed")).slice(0, 80);
           if (known.has(id)) { state = "cancelled"; record = known.get(id); }   // a cancel we already knew still counts
