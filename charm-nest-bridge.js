@@ -6171,7 +6171,7 @@ const CustomPrint = window.CustomPrint = (() => {
   const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
   const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
   const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
-  const armed = new Map();      // card key|act → until when a cancelled order's second press goes ahead
+  const armed = new Map();      // card key|act → { from, until }: when a cancelled order's second press goes ahead
   const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
@@ -6234,9 +6234,11 @@ const CustomPrint = window.CustomPrint = (() => {
   function anyway(it, act) {
     const rid = ridOfCard(it), k = it.key + "|" + act;
     if (!rid || !(window.Cancelled && Cancelled.has(rid))) return null;
-    if ((armed.get(k) || 0) > Date.now()) { armed.delete(k); redraw(); return rid; }
-    armed.set(k, Date.now() + 4000); redraw();
-    setTimeout(() => { if ((armed.get(k) || 0) <= Date.now() && armed.delete(k)) redraw(); }, 4100);
+    // (the second click of a double-click is not the deliberate second press: one within 350 ms is let go by)
+    const a = armed.get(k), now = Date.now();
+    if (a && a.until > now) { if (now < a.from) return false; armed.delete(k); redraw(); return rid; }
+    armed.set(k, { from: now + 350, until: now + 4000 }); redraw();
+    setTimeout(() => { const x = armed.get(k); if (x && x.until <= Date.now() && armed.delete(k)) redraw(); }, 4100);
     return false;
   }
   function printedAnyway(rid, who, act, n) {
@@ -6409,7 +6411,7 @@ const CustomPrint = window.CustomPrint = (() => {
   /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
   function buttonHtml(it, act, cls, label, title, sz, attrs) {
     const w = working(it), more = attrs ? " " + attrs : "";
-    if (!w && (armed.get(it.key + "|" + act) || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
+    if (!w && ((armed.get(it.key + "|" + act) || {}).until || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
     if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
     return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
   }
