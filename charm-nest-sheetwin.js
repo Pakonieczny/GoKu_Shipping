@@ -75,8 +75,30 @@
 dialog.sheetWin{width:min(1480px,98vw);height:min(94vh,1000px);max-height:none;border-radius:16px;overflow:hidden;background:var(--card)}
 dialog.sheetWin::backdrop{background:rgba(20,18,15,.5);animation:swFade .22s ease both}
 dialog.sheetWin[open]{animation:swIn .26s ${EASE} backwards}
+/* grown out of the sheet that was clicked (Paul, 28 Sep): the window keeps no lift of its own while it is open; while the
+   sheet flies, the window's surface is a curtain growing from where it was clicked, the sheet flies above everything,
+   and the panel waits, untouchable, until it comes in */
+dialog.sheetWin.swGrow[open]:not(.closing){animation:none}
+dialog.sheetWin.swGrow::backdrop{animation:swFade .42s ease both}
+dialog.sheetWin.swFlying{background:transparent;box-shadow:none}
+.swFlying .swStage{background:transparent}
+.swFlying .swPlateBox{overflow:visible}
+.swFlying .swPlate{z-index:3;transform-origin:0 0;background:transparent;box-shadow:none}
+.swFlying .swVeil{opacity:0}
+.swSide.swHush{pointer-events:none}
+.swCurtain{position:absolute;inset:0;z-index:-1;border-radius:inherit;overflow:hidden;background:var(--paper);box-shadow:0 24px 80px rgba(0,0,0,.32);transform-origin:0 0;pointer-events:none;will-change:transform,opacity}
+.swCurtain i{position:absolute;background:var(--card)}
+.swCurtain b{position:absolute;inset:0;will-change:opacity}
+.swShade{position:absolute;z-index:2;border-radius:10px;box-shadow:0 1px 2px rgba(30,26,20,.06),0 12px 34px rgba(30,26,20,.10);transform-origin:0 0;pointer-events:none;will-change:transform,opacity}
+.swPlate canvas.swSnap{inset:auto;pointer-events:none}
+.swSkel{position:absolute;inset:0;z-index:2;background:var(--card);overflow:hidden;pointer-events:none}
+.swSkel[hidden]{display:none}
+.swSkel i{display:block;background:var(--paper2);border-radius:6px;animation:swBreathe 1.4s ease-in-out .5s infinite alternate}
+.swSkel .row{display:flex;align-items:center;gap:10px}
+@keyframes swBreathe{to{opacity:.55}}
 dialog.sheetWin.closing{animation:swOut .17s ease both}
 dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
+dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 /* (the opening lift is not kept once done: a window left with a transform would be the frame of every copy that flies
    inside it, and the copies are placed where they stand on the screen) */
 @keyframes swIn{from{opacity:0;transform:translateY(10px) scale(.985)}}
@@ -138,7 +160,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swTip span{display:block;font:11px var(--sans);color:#cdc4b2;margin-top:1px;white-space:nowrap}
 .swTip em{display:flex;align-items:center;gap:6px;font:normal 10.5px var(--sans);color:#e8d9b0;margin-top:4px;white-space:nowrap}
 .swTip em i{width:7px;height:7px;border-radius:50%;background:var(--c,#caa861)}
-.swStrip{display:flex;align-items:center;gap:14px;padding:7px 16px 9px;font:11.5px var(--sans);color:var(--ink45);min-width:0;white-space:nowrap;overflow:hidden}
+.swStrip{display:flex;align-items:center;gap:14px;padding:7px 16px 9px;font:11.5px var(--sans);color:var(--ink45);min-width:0;white-space:nowrap;overflow:hidden;min-height:30px}
+.swStrip .swToggle{margin:-4px 0}
 .swStrip b{font:600 12px var(--mono);color:var(--ink)}
 .swStrip .grow{flex:1}
 .swLegend{display:inline-flex;align-items:center;gap:6px}
@@ -365,7 +388,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .mGhost.swFly{display:block;padding:0;border:0;border-radius:0;background:none;animation:none}.mGhost.swFly>li{background:var(--card);box-shadow:0 8px 22px rgba(40,30,20,.14);animation:none}
 @keyframes swSpin{to{transform:rotate(360deg)}}
 @media (max-width:980px){.swBody{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(300px,1fr) auto}.swSide{border-left:0;border-top:1px solid var(--line);min-height:46vh}.swBox{overflow:auto}.swSheets{display:none}}
-@media (prefers-reduced-motion:reduce){dialog.sheetWin[open],dialog.sheetWin.closing,dialog.sheetWin::backdrop,.swReturn{animation:none}}
+@media (prefers-reduced-motion:reduce){dialog.sheetWin[open],dialog.sheetWin::backdrop{animation:swFade .16s ease backwards}dialog.sheetWin.closing,dialog.sheetWin.closing::backdrop{animation:swFadeOut .12s ease both}.swReturn,.swSkel i{animation:none}}
 `;
 
   { const style = h("style"); style.textContent = STYLE; document.head.appendChild(style); }   // (the Orders tab's Cancelled list uses it too)
@@ -384,7 +407,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (W.dlg) return;
     const d = h("dialog", "sheetWin"); d.setAttribute("aria-label", "Sheet");
     d.innerHTML = `<div class="swBox" tabindex="-1" autofocus>
-      <header class="swHead">
+      <header class="swHead" data-r="headBar">
         <div class="swId"><span class="swMetal" data-r="metal"></span><div class="swTitle"><h3 data-r="title">Sheet</h3><span data-r="sub"></span></div></div>
         <nav class="swSheets" data-r="sheets" aria-label="Sheets in this set"></nav>
         <div class="swHeadR">
@@ -396,12 +419,13 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       </header>
       <div class="swBody">
         <section class="swStage">
-          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div>
+          <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div>
             <div class="swHand" data-r="hand" hidden></div><div class="swVeil" data-r="veil" hidden><span class="owSpin"></span><span data-r="veilText">Opening the sheet…</span></div></div>
           <footer class="swStrip" data-r="strip"></footer>
         </section>
         <aside class="swSide" data-r="side">
           <div class="swName" data-r="name" role="group" aria-label="Your name" hidden></div>
+          <div class="swSkel" data-r="skel" aria-hidden="true" hidden></div>
           <div class="swPane" data-pane="sheet">
             <div class="swPaneHead"><div class="swFindRow"><label class="swFind">${ICON.search}<input data-r="find" type="search" placeholder="Find an order or SKU on this sheet" autocomplete="off" spellcheck="false"></label><button type="button" class="swIcon" data-r="addBtn" title="Add an order to this sheet" aria-label="Add an order to this sheet" hidden>${ICON.add}</button></div><div class="swSeg" data-r="seg" role="group" aria-label="Show"></div></div>
             <div class="swSheetMsg" data-r="work" hidden></div>
@@ -421,7 +445,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     W.dlg = d; d.querySelectorAll("[data-r]").forEach(n => { W.el[n.dataset.r] = n; });
     const E = W.el;
     E.close.onclick = () => close();
-    d.addEventListener("cancel", e => { e.preventDefault(); if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece") return showSheetPane(); close(); });
+    // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
+    d.addEventListener("cancel", e => { e.preventDefault(); if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
     d.addEventListener("close", () => cleanup());
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
     E.moreBtn.onclick = () => menu(E.menu.hidden);
@@ -657,18 +682,310 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     }
   }
 
-  /* ── open / close ── */
-  // the Library card that was pressed: the window grows out of its preview, and shrinks back into it
+  /* ── open / close ──
+     The window grows out of the sheet that was clicked and goes back into it (Paul, 28 Sep: "that sheet should expand as
+     an animation to fill the screen, and then the options on the right hand side should fade in ... so the user can
+     naturally understand what they clicked", landing on the charm clicked; the Library's sheets the same). What was
+     clicked is the window's origin: the frame it was shown in, the sheet inside that frame, the frame's colour, and what
+     the sheet shows there: a Nest card's live sheet (drawn here at the window's own size, so it stays sharp as it grows)
+     or a Library card's own picture (the window's preview shows the very same picture); on a Library picture, the point
+     clicked. While it opens, the window's surface grows out of the frame, opaque from the first frame, in the frame's
+     colour and taking the window's own colours as it comes; the sheet grows from where it lay to the plate with its
+     rulers; the panel grows with the surface, holding the shape of what it will show until it has it, then shows it
+     part by part; the charm clicked is marked from the first frame and rings as the sheet comes to rest; the header
+     settles last. Closing plays it back: the panel, header, rulers and highlights go first while the surface turns the
+     frame's colour, then the sheet and the surface shrink into the frame together; where the frame is no longer on
+     screen the window fades. Only transforms and opacity move, and nothing waits on them: a click, Esc or a close in
+     flight is taken at once (a close turns the flight round from wherever it is). (Polished the same day after a review
+     at real reading times: a growth that can be followed, not a pop.) */
+  // what was pressed that opens a sheet: a Library card (the Sets view's and a set's in Completed too), a Completed
+  // row, a Sets window tile
   let pressed = null;
-  document.addEventListener("pointerdown", e => { const c = e.target.closest && e.target.closest(".libCard[data-id]"); if (c) pressed = { id: c.dataset.id, at: Date.now() }; }, true);
-  const cardPv = id => { const c = document.querySelector(`#libBody .libCard[data-id="${CSS.escape(id)}"]`); return c && c.offsetParent ? (c.querySelector("img.pv") || c) : null; };
+  document.addEventListener("pointerdown", e => {
+    const t = e.target && e.target.closest && e.target.closest(".libCard[data-id], .ldItem[data-kind=sheet][data-id] > .ldLine, .hTile[data-sheet]"); if (!t) return;
+    const id = t.dataset.id || t.dataset.sheet || (t.parentElement && t.parentElement.dataset.id); if (!id) return;
+    pressed = { id, at: Date.now(), el: t, x: e.clientX, y: e.clientY };
+  }, true);
+  const tryDo = f => { try { return f ? f() : null; } catch (_) { return null; } };
+  const onScreen = r => !!r && r.width > 1 && r.height > 1 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  const shown = el => !!el && el.isConnected && el.getClientRects().length > 0;
+  /** The largest box of aspect a (w/h) centred in r. */
+  const fitIn = (r, a) => { let w = r.width, hh = a ? w / a : r.height; if (hh > r.height) { hh = r.height; w = hh * a; } return new DOMRect(r.left + (r.width - w) / 2, r.top + (r.height - hh) / 2, w, hh); };
+  /** Where a picture is drawn inside its img box: its content box (a true-scale preview is padded inside its 100 × 50 mm
+      frame), the picture fitted into it as object-fit: contain draws it. */
+  function picBox(im) {
+    const r = im.getBoundingClientRect(), cs = getComputedStyle(im), n = v => parseFloat(v) || 0;
+    const l = n(cs.borderLeftWidth) + n(cs.paddingLeft), t = n(cs.borderTopWidth) + n(cs.paddingTop);
+    const box = new DOMRect(r.left + l, r.top + t, r.width - l - n(cs.borderRightWidth) - n(cs.paddingRight), r.height - t - n(cs.borderBottomWidth) - n(cs.paddingBottom));
+    return im.naturalWidth && im.naturalHeight ? fitIn(box, im.naturalWidth / im.naturalHeight) : box;
+  }
+  const loaded = im => !!im && im.complete && im.naturalWidth > 0;
+  /** A copy of a picture at its own size, never stretched: the stand-in while the window's preview decodes it. */
+  function imgSnap(im) {
+    if (!loaded(im)) return null;
+    const s = Math.min(1, 2400 / im.naturalWidth), c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(im.naturalWidth * s)); c.height = Math.max(1, Math.round(im.naturalHeight * s));
+    try { c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); } catch (_) { return null; }
+    return c;
+  }
+  /** The colour a frame shows: its own background, or the nearest one behind it. */
+  function bgOf(el) {
+    for (let n = el; n && n.nodeType === 1; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor; if (c && c !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(c)) return c; }
+    return "";
+  }
+  /** A Library card as an origin: the card is the frame, its preview's picture the sheet; where it was pressed, on the
+      sheet in points. Found again by its sheet when the card was drawn anew while the window was open. */
+  function cardOrigin(id, card0, at) {
+    const lib = (S.library.rows || []).find(r => r.id === id), st = lib && lib.stock ? stockOf(lib) : null;
+    const cardNow = () => shown(card0) ? card0 : [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown) || null;
+    const pic = c => { const im = c && c.querySelector("img.pv"); return shown(im) ? { im, r: picBox(im) } : null; };
+    const o = {
+      id, stock: st, tint: bgOf(card0),
+      rects() { const c = cardNow(); if (!c) return null; const p = pic(c); return { box: c.getBoundingClientRect(), sheet: p ? p.r : null }; },
+      img() { const p = pic(card0) || pic(cardNow()); return p ? p.im : null; }
+    };
+    const p = at && st && pic(card0);
+    if (p && p.r.width > 2) { const u = (at.x - p.r.left) / p.r.width, v = (at.y - p.r.top) / p.r.height; if (u >= 0 && u <= 1 && v >= 0 && v <= 1) o.at = { xPt: u * st.wPt, yPt: v * st.hPt }; }
+    return o;
+  }
+  function originOf(id, opts) {
+    if (opts.origin) return Object.assign({ id }, opts.origin);
+    const p = pressed && pressed.id === id && Date.now() - pressed.at < 1500 ? pressed : null;
+    if (p && p.el.classList.contains("libCard")) return cardOrigin(id, p.el, p);
+    // anything else: the rectangle it was opened from (a Completed row, a Sets window tile, the pill back from Engrave),
+    // with its picture where it shows one; a row still on screen at the close takes the window back
+    const img = p && p.el.querySelector && p.el.querySelector("img.hThumb, img.pv"), r0 = opts.fromRect && opts.fromRect.width ? opts.fromRect : null;
+    if (!r0 && !(p && shown(p.el))) return null;
+    let first = true;
+    return {
+      id, tint: p ? bgOf(p.el) : "",
+      rects() {
+        const was = first; first = false;
+        if (p && shown(p.el) && (!r0 || !was)) return { box: p.el.getBoundingClientRect(), sheet: shown(img) && img.naturalWidth ? picBox(img) : null };
+        return was && r0 ? { box: r0, sheet: img && img.naturalWidth ? r0 : null } : null;
+      },
+      img: img ? () => img : null
+    };
+  }
+  /** What the plate shows before the sheet's record is read: a Nest card's own sheet (its placements and designs, held
+      by the page), with the charm clicked; or, on a Library picture, the point clicked. */
+  function preOf(o, opts) {
+    const sh = o && o.sheet, pre = { pieces: null, sel: null, at: opts.select ? null : opts.at || (o && o.at) || null };
+    if (sh && sh.placements && sh.placements.length && sh.charms && sh.charms.length) {
+      const byId = new Map(sh.charms.map(c => [c.id, c]));
+      const list = sh.placements.map(p => { const c = byId.get(p.id); return c && c.outline ? { id: p.id, poolId: c.poolId || null, p: { cxPt: +p.cxPt, cyPt: +p.cyPt, angle: +p.angle || 0, scale: +p.scale || 1, wPt: +p.wPt || 10, hPt: +p.hPt || 10 }, c } : null; });
+      if (list.every(Boolean)) { pre.pieces = list; if (opts.select) pre.sel = list.find(x => x.poolId === opts.select || x.id === opts.select) || null; }
+    }
+    return pre.pieces || pre.at ? pre : null;
+  }
+  // an opacity set at once, not eased from the last opening's
+  const setNow = (el, v) => { el.style.transition = "none"; el.style.opacity = v; getComputedStyle(el).opacity; el.style.transition = ""; };
+  /** The window as its surface: a curtain the window's own colours (its header band and its panel on the paper), laid
+      over the window's box, that the opening grows and the closing shrinks; over them, the frame's own colour, which the
+      opening fades away and the closing brings back. */
+  function curtain(tint) {
+    const d = W.dlg, D = d.getBoundingClientRect(), hb = W.el.headBar.getBoundingClientRect(), sb = W.el.side.getBoundingClientRect();
+    const c = h("div", "swCurtain", `<i style="left:0;top:0;right:0;height:${Math.max(0, hb.bottom - D.top)}px"></i><i style="left:${sb.left - D.left}px;top:${sb.top - D.top}px;width:${sb.width}px;height:${sb.height}px"></i><b></b>`);
+    c.lastChild.style.background = tint || "var(--card)";
+    c.setAttribute("aria-hidden", "true"); d.prepend(c); return c;
+  }
+  /** The plate's lift while it flies (the plate itself is bare then, so that its rulers can come and go): its shadow, on
+      its own box, under it. */
+  function shade() {
+    const E = W.el, s = h("i", "swShade"); s.setAttribute("aria-hidden", "true");
+    Object.assign(s.style, { left: E.plate.offsetLeft + "px", top: E.plate.offsetTop + "px", width: (W.cssW || E.plate.offsetWidth) + "px", height: (W.cssH || E.plate.offsetHeight) + "px" });
+    E.plateBox.insertBefore(s, E.plate); return s;
+  }
+  /** The shape of what the panel will show (a charm, or the orders), held until it has it. */
+  function skeleton(piece) {
+    const sk = W.el.skel, bar = (w, hh, more) => `<i style="width:${w};height:${hh}px${more ? ";" + more : ""}"></i>`, col = (gap, s) => `<div style="display:grid;gap:${gap}px;justify-items:start">${s}</div>`;
+    sk.innerHTML = piece
+      ? `<div class="swNav" style="min-height:45px">${bar("96px", 13)}<span style="margin-left:auto"></span>${bar("78px", 10)}${bar("16px", 16, "margin-left:14px")}${bar("16px", 16, "margin-left:12px;margin-right:6px")}</div>
+         <div class="swDetail">${col(8, bar("44px", 9) + bar("168px", 24))}
+           <div class="swPiece">${bar("92px", 92, "border-radius:11px")}${col(9, bar("112px", 13) + bar("86px", 11) + bar("64px", 11))}</div>
+           ${bar("100%", 38, "border-radius:12px")}${col(8, bar("118px", 9) + bar("100%", 34, "border-radius:10px") + bar("100%", 34, "border-radius:10px"))}${col(8, bar("72px", 9) + bar("100%", 160, "border-radius:12px"))}</div>`
+      : `<div class="swPaneHead">${bar("100%", 32, "border-radius:9px")}</div>
+         <div style="display:grid;gap:4px;padding:8px 18px">${Array.from({ length: 9 }, (_, i) => `<div class="row" style="height:36px">${bar("98px", 12)}${bar(`${34 + (i * 23) % 44}%`, 10)}</div>`).join("")}</div>`;
+    sk.hidden = false;
+  }
+  // the sheet inside the plate (the rulers left out), in the plate's own pixels
+  const plateSheet = () => { const R = W.R / W.dpr; return { R, w: W.cssW - R, h: W.cssH - R }; };
+  function placeSnap() { const s = W.snap; if (!s) return; const a = plateSheet(); Object.assign(s.style, { left: a.R + "px", top: a.R + "px", width: a.w + "px", height: a.h + "px" }); }
+  function dropSnap(fade) {
+    const s = W.snap; if (!s) return; W.snap = null;
+    if (!fade || still() || !s.isConnected) { s.remove(); return; }
+    s.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 340, easing: "ease", fill: "forwards" }).finished.catch(() => {}).then(() => s.remove());
+  }
+  /** The transform that puts the plate, as laid out at P, with its sheet over S (origin at its top left). */
+  function plateTo(P, S) {
+    const a = plateSheet(), sx = S.width / a.w, sy = S.height / a.h;
+    return `translate(${S.left - P.left - a.R * sx}px,${S.top - P.top - a.R * sy}px) scale(${sx},${sy})`;
+  }
+  const curtainTo = (D, B) => `translate(${B.left - D.left}px,${B.top - D.top}px) scale(${B.width / D.width},${B.height / D.height})`;
+  // a timer that keeps the animations' time (it slows with them where they are slowed, as when they are inspected)
+  const clock = (F, ms) => { const a = W.el.side.animate([], { duration: ms }); F.clocks.push(a); return a.finished.then(() => true, () => false); };
+  // the growth: slow to leave, most of the way in the middle, a long settle (the surface a little ahead of the sheet)
+  const GROW = "cubic-bezier(.3,0,.1,1)", GROW_MS = 650, SURFACE_MS = 600, CUE_MS = 420, PANEL_MS = 380, HEAD_MS = 560, HOLD_MS = 2000;
+  const keyOf = x => x.poolId || x.id;
+
+  function flipOpen(o, piece) {
+    const d = W.dlg, E = W.el, got = tryDo(o.rects);
+    if (!got || !got.box || !onScreen(got.box)) return false;
+    fitPlate(true);
+    const P = E.plate.getBoundingClientRect(), D = d.getBoundingClientRect();
+    if (!W.st || P.width < 40 || P.height < 30 || !D.width) return false;
+    const a = plateSheet(), B = got.box, S = got.sheet && got.sheet.width > 2 && got.sheet.height > 2 ? got.sheet : fitIn(B, a.w / a.h);
+    const F = W.flip = { anims: [], clocks: [], landed: false, cued: false, onLand: [], onCue: [], ready: false, early: false, shown: false };
+    const run = (el, frames, opts) => { const x = el.animate(frames, Object.assign({ duration: SURFACE_MS, easing: GROW, fill: "both" }, opts)); F.anims.push(x); return x; };
+    // what the sheet shows as it grows: a Nest card's sheet is drawn on the plate already; a picture is the window's
+    // preview, or, until the preview has decoded it, a copy of it at its own size; else the card's own drawing
+    if (!(W.pre && W.pre.pieces)) {
+      const im = o.img ? tryDo(o.img) : null;
+      const snap = im ? (E.pv.getAttribute("src") && loaded(E.pv) ? null : imgSnap(im)) : tryDo(o.snap);
+      if (snap) {
+        snap.className = "swSnap"; W.snap = snap; placeSnap(); E.plate.insertBefore(snap, E.fx);
+        if (im) E.pv.addEventListener("load", () => { if (W.snap === snap) dropSnap(false); }, { once: true });
+      }
+    }
+    W.curtain = curtain(o.tint); W.shade = shade();
+    const Dc = W.curtain.getBoundingClientRect(), C = curtainTo(Dc, B), T = plateTo(P, S);
+    // the surface grows out of the frame, opaque, the frame's colour giving way to the window's; the sheet grows from
+    // where it lay to the plate, its rulers and its lift coming with it
+    run(W.curtain, [{ transform: C }, { transform: "none" }]);
+    run(W.curtain.lastChild, [{ opacity: 1 }, { opacity: 0 }], { duration: 250, easing: "cubic-bezier(.4,0,.6,1)" });
+    const fly = run(E.plate, [{ transform: T }, { transform: "none" }], { duration: GROW_MS });
+    run(W.shade, [{ transform: T }, { transform: "none" }], { duration: GROW_MS });
+    for (const el of [W.shade, E.rule]) run(el, [{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: "linear" });
+    // the panel grows as part of the surface, holding the shape of what it will show
+    const sb = E.side.getBoundingClientRect(), org = `${Dc.left - sb.left}px ${Dc.top - sb.top}px`;
+    skeleton(piece); E.side.classList.add("swHush");
+    run(E.side, [{ transform: C, transformOrigin: org }, { transform: "none", transformOrigin: org }]);
+    run(E.side, [{ opacity: 0 }, { opacity: 1 }], { duration: 250, easing: "cubic-bezier(.4,0,.6,1)" });
+    // the header and the plate's foot once the window has its size, so they never stand outside it
+    run(E.headBar, [{ opacity: 0, transform: "translateY(-8px)" }, { opacity: 1, transform: "none" }], { duration: 320, delay: HEAD_MS, easing: EASE });
+    run(E.strip, [{ opacity: 0 }, { opacity: 1 }], { duration: 320, delay: 480, easing: "ease" });
+    // the panel's content comes as the sheet settles, once it is read (a slow read holds the shape a while longer)
+    const go = () => { if (W.flip === F) reveal(F, run); };
+    clock(F, PANEL_MS).then(ok => { if (!ok) return; F.early = true; if (F.ready) go(); });
+    clock(F, HOLD_MS).then(ok => { if (ok) go(); });
+    clock(F, CUE_MS).then(ok => { if (ok && W.flip === F) cue(F); });
+    F.readyNow = () => { F.ready = true; if (F.early) go(); };
+    fly.finished.then(() => { if (W.flip === F) landed(F); }, () => {});
+    return true;
+  }
+  /** The panel shows what it has: while the window is still growing, the shape it held gives way as its parts come in
+      one after another (the piece's heading and its sections, or the list's search, list and foot); once the window
+      is at rest (a slow read), what was read simply takes the shape's place. */
+  function reveal(F, run) {
+    if (F.shown) return; F.shown = true;
+    const E = W.el, sk = E.skel;
+    E.side.classList.remove("swHush");
+    if (F.landed) { sk.hidden = true; settle(F); return; }
+    const pane = E.side.querySelector(".swPane:not([hidden])");
+    const parts = !pane ? [] : pane.dataset.pane === "piece" ? [pane.querySelector(".swNav"), ...pane.querySelector(".swDetail").children] : [...pane.children];
+    parts.filter(n => n && !n.hidden && n.getClientRects().length).slice(0, 10)
+      .forEach((n, i) => run(n, [{ opacity: 0, transform: "translateY(10px)" }, { opacity: 1, transform: "none" }], { duration: 380, delay: 60 + Math.min(i, 5) * 45, easing: EASE }));
+    if (!sk.hidden) run(sk, [{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-out" }).finished.then(() => { if (!W.flip || W.flip === F) sk.hidden = true; }, () => {});
+    settle(F);
+  }
+  /** The sheet comes to rest: the charm clicked rings (drawn by then, from the page or from the record). */
+  function cue(F) {
+    F.cued = true;
+    const x = W.geom && W.sel ? W.sel : W.pre && W.pre.sel ? W.pre.sel : null;
+    if (x && W.rang !== keyOf(x)) { W.rang = keyOf(x); land(x); }
+    for (const f of F.onCue.splice(0)) tryDo(f);
+  }
+  /** The sheet is home: the window is its own surface again, the plate its own size with its own lift. */
+  function landed(F) {
+    const E = W.el; F.landed = true; W.flying = false;
+    const flight = [W.curtain, W.curtain && W.curtain.lastChild, W.shade, E.plate, E.rule, E.side];
+    for (const x of F.anims) if (x.effect && flight.includes(x.effect.target)) x.cancel();
+    F.anims = F.anims.filter(x => x.playState !== "idle");
+    if (W.curtain) { W.curtain.remove(); W.curtain = null; }
+    if (W.shade) { W.shade.remove(); W.shade = null; }
+    W.dlg.classList.remove("swFlying");
+    if (W.fitLater) refit();
+    if (W.geom) dropSnap(true);
+    for (const f of F.onLand.splice(0)) tryDo(f);
+    settle(F);
+  }
+  // the opening is over once the sheet is home, the panel shown, and everything that came in has come
+  function settle(F) {
+    if (W.flip !== F || !F.landed || !F.shown) return;
+    const live = F.anims.filter(a => a.playState === "running" || a.playState === "paused" || a.pending);
+    if (live.length) { Promise.all(live.map(a => a.finished.catch(() => {}))).then(() => settle(F)); return; }
+    endFlip(F);
+  }
+  function endFlip(F) {
+    if (W.flip !== F) return; W.flip = null;
+    for (const x of F.anims.concat(F.clocks)) x.cancel();
+    W.el.side.classList.remove("swHush"); W.el.skel.hidden = true;
+  }
+  /** Stops an opening wherever it is (its animations let go, its curtain and lift, or a closing's, gone): the window as
+      it is laid out. (keep: the panel's held shape stays, as the panel fades with it.) */
+  function stopFlip(keep) {
+    const F = W.flip; W.flip = null; W.flying = false;
+    if (F) for (const x of F.anims.concat(F.clocks)) x.cancel();
+    if (W.curtain) { W.curtain.remove(); W.curtain = null; }
+    if (W.shade) { W.shade.remove(); W.shade = null; }
+    W.dlg.classList.remove("swFlying"); W.el.side.classList.remove("swHush");
+    if (!keep) W.el.skel.hidden = true;
+  }
+  // what waits on the sheet coming to rest runs then, or now when nothing is flying
+  const afterCue = fn => { if (W.flip && !W.flip.cued) W.flip.onCue.push(fn); else fn(); };
+  // the plate sized again when the box it sits in changed while it flew: it eases to its new size
+  function refit() {
+    W.fitLater = false; const plate = W.el.plate, r0 = plate.getBoundingClientRect(); fitPlate();
+    const r1 = plate.getBoundingClientRect(); if (still() || !r1.width || (Math.abs(r0.width - r1.width) < 1 && Math.abs(r0.left - r1.left) < 1 && Math.abs(r0.top - r1.top) < 1)) return;
+    animate(plate, [{ transformOrigin: "0 0", transform: `translate(${r0.left - r1.left}px,${r0.top - r1.top}px) scale(${r0.width / r1.width},${r0.height / r1.height})` }, { transformOrigin: "0 0", transform: "none" }], 260, { fill: "none" });
+  }
+  /** Back into the frame it came from, from wherever the opening had got to: first what belongs to the open window (the
+      panel, the header and the foot, the rulers, the highlights, the plate's lift) goes while the surface takes the
+      frame's colour; the sheet and the surface shrink into the frame together, and are gone as they arrive on it. */
+  async function flipClose(home) {
+    const d = W.dlg, E = W.el, F = W.flip;
+    const now = el => { if (!el) return null; const cs = getComputedStyle(el); return { opacity: cs.opacity, transform: cs.transform, origin: cs.transformOrigin }; };
+    const was = new Map([E.plate, E.headBar, E.side, E.strip, E.rule, E.fx, W.curtain, W.shade].filter(Boolean).map(el => [el, now(el)]));
+    const hadCurtain = F && W.curtain ? was.get(W.curtain) : null, tint0 = hadCurtain ? now(W.curtain.lastChild) : null, shade0 = F && W.shade ? was.get(W.shade) : null;
+    stopFlip(!!(F && !F.shown)); W.flying = true;
+    const P = E.plate.getBoundingClientRect();
+    if (P.width < 40 || !W.dlg.getBoundingClientRect().width) { W.flying = false; return false; }
+    const B = home.box, a = plateSheet(), S = home.sheet && home.sheet.width > 2 ? home.sheet : fitIn(B, a.w / a.h);
+    d.classList.add("swFlying", "swBack");
+    W.curtain = curtain(W.origin && W.origin.tint); W.shade = shade();
+    const D = W.curtain.getBoundingClientRect();
+    const A = [], EZ = "cubic-bezier(.4,0,.2,1)", run = (el, frames, opts) => { const x = el.animate(frames, Object.assign({ fill: "both", easing: EZ, duration: 480 }, opts)); A.push(x); return x; };
+    const v = (el, k, dflt) => { const x = was.get(el); return x ? x[k] : dflt; };
+    const fade = { duration: 200, easing: "linear" }, C0 = hadCurtain ? hadCurtain.transform : "none", C1 = curtainTo(D, B);
+    // the panel, the header and the foot go with the surface as they fade, so none of them is left outside it
+    for (const [el, ms] of [[E.side, 180], [E.headBar, 180], [E.strip, 160]]) {
+      const r = el.getBoundingClientRect(), org = `${D.left - r.left}px ${D.top - r.top}px`, t0 = el === E.side ? v(el, "transform", "none") : C0;
+      run(el, [{ transform: t0, transformOrigin: org }, { transform: C1, transformOrigin: org }]);
+      run(el, [{ opacity: v(el, "opacity", 1) }, { opacity: 0 }], { duration: ms, easing: "cubic-bezier(.4,0,1,1)" });
+    }
+    for (const el of [E.rule, E.fx]) run(el, [{ opacity: v(el, "opacity", 1) }, { opacity: 0 }], fade);
+    run(W.shade, [{ opacity: shade0 ? shade0.opacity : 1 }, { opacity: 0 }], fade);
+    run(W.curtain.lastChild, [{ opacity: tint0 ? tint0.opacity : 0 }, { opacity: 1 }], { duration: 200, easing: "ease" });
+    const T0 = v(E.plate, "transform", "none"), T1 = plateTo(P, S);
+    run(W.curtain, [{ transform: C0 }, { transform: C1 }]);
+    run(E.plate, [{ transform: T0 }, { transform: T1 }]);
+    run(W.shade, [{ transform: T0 }, { transform: T1 }]);
+    for (const el of [W.curtain, E.plate]) run(el, [{ opacity: 1 }, { opacity: 1, offset: .8 }, { opacity: 0 }], { easing: "linear" });
+    // (the window's closing never waits on frames that a hidden tab does not draw)
+    await Promise.race([Promise.all(A.map(x => x.finished.catch(() => {}))), new Promise(r => setTimeout(r, 700))]);
+    return true;
+  }
 
   async function open(id, opts = {}) {
     build();
     const E = W.el, fresh = !W.dlg.open, tok = ++W.token;
-    const from = opts.fromRect || (pressed && pressed.id === id && Date.now() - pressed.at < 1500 && cardPv(id)?.getBoundingClientRect()) || null;
+    const origin = fresh ? originOf(id, opts) : null;
     pressed = null;
-    if (fresh) resetView();
+    // (a fresh opening knows nothing of the last one's sheet: its stock, what it drew, what rang)
+    if (fresh) { resetView(); W.st = null; W.rang = null; W.dimRamp = true; W.pre = preOf(origin, opts); }
+    // (another sheet in the same window: the picture the window grew from is not this one's, and the frame to go back
+    // into is this sheet's card where one is on screen)
+    else { dropSnap(false); W.pre = null; if (W.origin && W.origin.id !== id) { const c = [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown); W.origin = c ? cardOrigin(id, c, null) : null; } }
     W.id = id; W.rec = null; W.live = null; W.geom = false; W.pieces = []; W.byId = new Map(); W.byPool = new Map(); W.orders = new Map();
     W.sel = null; W.hover = null; W.fx = []; W.set = W.set && opts.keepSet ? W.set : null;
     if (!fresh && W.view === "piece") showPane("sheet", "back");
@@ -677,14 +994,26 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     W.fill = null; W.ghost = null; W.fillRun++; stopHand(true); W.add = null; E.addBtn.hidden = true;
     renderWork(); renderFill();
     const lib = (S.library.rows || []).find(r => r.id === id) || null;
-    head(lib || { id, metal: "gold" }, true);
+    // (a sheet the page holds live, not in the Library list read here: its card says what it is until its record comes)
+    const live0 = lib ? null : allSheets().find(p => p.sheetId === id) || null;
+    head(lib || (live0 ? { id, metal: live0.metal, sheetIndex: live0.sheetIndex || live0.page, setSeq: live0.seq || null, draft: !!live0.draft, cardStartedAt: live0.cardStartedAt || null } : { id, metal: "gold" }), true);
     // (read again after pieces came off it: the plate on screen stays until the saved sheet is drawn over it)
     const again = opts.keepWork && !fresh && W.dlg.open;
+    const grow = fresh && !!origin && !still();
     if (!again) {
-      E.pv.removeAttribute("src"); E.pv.style.opacity = "1"; E.base.style.opacity = "0";
-      const url = lib?.outputs?.preview?.url; if (url) E.pv.src = cors(url);
-      if (lib?.stock) { W.st = stockOf(lib); fitPlate(); }
-      veil("Opening the sheet…");
+      // the picture shown until the sheet is drawn: the very picture of the card it was opened from, else the saved one
+      const im = origin && origin.img ? tryDo(origin.img) : null, src0 = loaded(im) ? im.currentSrc || im.src : "", url = lib?.outputs?.preview?.url;
+      E.pv.removeAttribute("src"); E.pv.style.transitionDelay = ""; W.pvCard = !!src0;
+      if (src0) E.pv.src = src0; else if (url) E.pv.src = cors(url);
+      if (fresh) {
+        // (what the last opening drew is not shown again, even for a moment)
+        setNow(E.pv, "1"); setNow(E.base, W.pre && W.pre.pieces ? "1" : "0");
+        E.base.getContext("2d").clearRect(0, 0, E.base.width, E.base.height); E.fx.getContext("2d").clearRect(0, 0, E.fx.width, E.fx.height);
+      } else { E.pv.style.opacity = "1"; E.base.style.opacity = "0"; }
+      const st0 = lib?.stock ? stockOf(lib) : origin && origin.stock && origin.stock.wPt ? origin.stock : live0 ? stockFor(live0.metal, live0) : null;
+      if (st0) { W.st = { wPt: +st0.wPt, hPt: +st0.hPt }; fitPlate(); }
+      // (a window growing out of the sheet shows it already; its panel holds the shape of what it is reading)
+      if (!grow) veil("Opening the sheet…");
     }
     // (read again after a change here: the list stays where it is, still, until the saved sheet is drawn over it, and
     // then changes in place; it used to empty to "Reading the sheet…" and fill again, Paul 27 Sep)
@@ -693,10 +1022,13 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     if (!again) { W.listKey = null; E.strip.innerHTML = ""; E.orders.innerHTML = `<li class="swNone"><div class="swWait" style="justify-content:center"><span class="owSpin"></span>Reading the sheet…</div></li>`; E.foot.innerHTML = ""; E.seg.innerHTML = ""; }
     const unstill = () => { for (const n of still0) n.inert = false; };
     if (fresh) {
-      W.dlg.classList.remove("closing");
+      W.dlg.classList.remove("closing", "swBack"); W.origin = origin;
+      if (grow) { W.dlg.classList.add("swGrow", "swFlying"); W.flying = true; }
       try { W.dlg.showModal(); } catch (_) { W.dlg.setAttribute("open", ""); }
-      if (from) grow(from);
+      // (nothing on screen to grow from: it opens as it did)
+      if (grow && !flipOpen(origin, !!(opts.select || (W.pre && W.pre.at)))) { stopFlip(); W.flying = false; W.fitLater = false; W.dlg.classList.remove("swGrow", "swFlying"); fitPlate(); veil(W.rec ? null : "Opening the sheet…"); }
     } else if (opts.slide) slidePlate(opts.slide);
+    const ready = () => { if (W.flip && W.flip.readyNow) W.flip.readyNow(); };
     try {
       const r = await api("charmNestLibrary", { op: "getSheet", id }, { quiet: true });
       if (tok !== W.token) return;
@@ -705,12 +1037,20 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
       head(rec, false); indexPieces(); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill();
       E.addBtn.hidden = !canAdd();
-      if (!rec.outputs?.preview?.url && !W.live) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
+      if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
+      // the charm clicked is the one the window opens on, as soon as the sheet's pieces are known: the panel comes in
+      // showing it (its outline is known now; its drawing, below, makes the choice exact where it was a point clicked)
+      const at = opts.at || (origin && origin.at) || null;
+      const aim = fresh ? (opts.select ? W.byPool.get(opts.select) || W.byId.get(opts.select) : at ? hitPt(at.xPt, at.yPt) : null) || null : null;
+      if (aim) { W.sel = aim; W.hover = null; lightChips(aim.rid); renderPiece(aim); showPane("piece", "forward"); }
+      paintFx(); ready();
       loadSet(tok);
       await loadGeometry(tok);
       if (tok !== W.token) return;
       veil(null);
-      if (opts.select) { const p = W.byPool.get(opts.select) || W.byId.get(opts.select); if (p) selectPiece(p, { from: opts.from || "open", flash: opts.flash }); }
+      // (unless another charm, or the list, was chosen meanwhile)
+      const p = opts.select ? W.byPool.get(opts.select) || W.byId.get(opts.select) : aim && at ? hitPt(at.xPt, at.yPt) || aim : null;
+      if (p && (!aim || W.sel === aim)) selectPiece(p, { from: opts.from || "open", flash: opts.flash, land: true });
       // the pieces that just arrived ring once where they landed
       // (and what was drawn where it landed, while the sheet saved, is now drawn for real: its pieces are on the sheet,
       // whichever opening of it shows them first)
@@ -722,46 +1062,40 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
       unstill(); W.listKey = null; if (opts.glow) W.landing = W.landing.filter(l => !l.spots.some(s => s.c && opts.glow.includes(s.c.poolId)));
       veil(null); E.orders.innerHTML = `<li class="swNone"><b>This sheet could not open.</b><br>${esc(e.message)}<br><br><button class="btn ghost sm" data-r2="retry">Try again</button></li>`;
       E.orders.querySelector("[data-r2=retry]").onclick = () => open(id, opts);
+      ready();
     }
   }
   function resetView() {
     W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = "";
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
-  function grow(from) {
-    const plate = W.el.plate;
-    requestAnimationFrame(() => {
-      const to = plate.getBoundingClientRect(); if (!to.width || !from.width) return;
-      const sx = from.width / to.width, sy = from.height / to.height, dx = from.left - to.left, dy = from.top - to.top;
-      animate(plate, [{ transformOrigin: "0 0", transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})`, borderRadius: "6px" }, { transformOrigin: "0 0", transform: "none", borderRadius: "10px" }], 360, { fill: "none" });
-      animate(W.el.side, [{ opacity: 0, transform: "translateX(18px)" }, { opacity: 1, transform: "none" }], 320, { delay: 90, fill: "backwards" });
-    });
-  }
   async function close(opts = {}) {
-    const d = W.dlg; if (!d || !d.open || d.classList.contains("closing") || W.folding) return;
+    const d = W.dlg; if (!d || !d.open || W.leaving || d.classList.contains("closing") || W.folding) return;
     W.token++; menu(false);
     // a sheet deleted for good has no card to go back into: it fades and folds away where it lay, slowly enough to be
     // seen going, and then the window closes (Paul, 27 Sep)
     if (opts.gone && !still()) {
-      W.folding = true;
+      stopFlip(); W.folding = true;
       animate(W.el.strip, [{ opacity: 1 }, { opacity: 0 }], 520, { easing: "ease-in" });
       try { await animate(W.el.plate, [{ opacity: 1, transform: "none", filter: "none" }, { opacity: .96, transform: "scale(.992)", offset: .22 }, { opacity: 0, transform: "translateY(16px) scale(.9)", filter: "grayscale(1) blur(2px)" }], 860, { easing: "cubic-bezier(.45,0,.7,.35)" }); }
       finally { W.folding = false; }
     }
-    const pv = !opts.gone && W.id && cardPv(W.id), plate = W.el.plate;
-    if (pv && !still()) {
-      const to = pv.getBoundingClientRect(), fr = plate.getBoundingClientRect();
-      if (to.width && fr.width && to.bottom > 0 && to.top < innerHeight) {
-        d.classList.add("closing");
-        await animate(plate, [{ transformOrigin: "0 0", transform: "none" }, { transformOrigin: "0 0", transform: `translate(${to.left - fr.left}px,${to.top - fr.top}px) scale(${to.width / fr.width},${to.height / fr.height})` }], 200, { easing: "cubic-bezier(.4,0,.6,1)" });
+    W.leaving = true;
+    try {
+      // back into the frame it grew out of while that is on screen (and still shows this sheet); else it fades where it is
+      const home = !opts.gone && !still() && W.origin ? tryDo(() => W.origin.rects()) : null;
+      if (!(home && home.box && onScreen(home.box) && await flipClose(home))) {
+        stopFlip();
+        if (!d.classList.contains("closing")) { d.classList.add("closing"); await new Promise(r => setTimeout(r, still() ? 120 : 160)); }
       }
-    }
-    if (!still() && !d.classList.contains("closing")) { d.classList.add("closing"); await new Promise(r => setTimeout(r, 160)); }
+    } finally { W.leaving = false; }
     try { d.close(); } catch (_) { d.removeAttribute("open"); }
   }
   function cleanup() {
-    W.dlg.classList.remove("closing"); W.token++; stopHand(true); W.add = null;
-    W.el.plate.getAnimations?.().forEach(a => a.cancel()); W.el.strip.getAnimations?.().forEach(a => a.cancel());
+    stopFlip(); dropSnap(false); W.flying = false; W.fitLater = false; W.origin = null; W.pre = null;
+    W.dlg.classList.remove("closing", "swGrow", "swFlying", "swBack"); W.token++; stopHand(true); W.add = null;
+    for (const n of [W.el.plate, W.el.strip, W.el.headBar, W.el.rule, W.el.fx, W.el.skel]) n.getAnimations?.().forEach(a => a.cancel());
+    W.el.side.getAnimations?.({ subtree: true }).forEach(a => a.cancel());
     W.landing = []; W.inbound.clear(); W.stay = 0; for (const n of [W.el.strip, W.el.foot, W.el.seg, W.el.orders]) n.inert = false;
     cancelAnimationFrame(W.raf); W.raf = 0; W.fx = [];
     tip(null);
@@ -934,15 +1268,20 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   }
   function geometryReady(tok) {
     if (tok !== W.token) return;
-    W.geom = true; paintBase();
+    W.geom = true; W.pre = null; paintBase();
     W.el.base.style.opacity = "1";
-    if (W.pieces.every(x => x.c)) W.el.pv.style.opacity = "0";
+    // (the picture shown until now goes once the drawing has come in over it: never both half there)
+    if (W.pieces.every(x => x.c)) { W.el.pv.style.transitionDelay = ".3s"; W.el.pv.style.opacity = "0"; }
+    // (the picture the window grew out of gives way to the sheet drawn here, the two fading into each other)
+    dropSnap(true);
     paintFx();
   }
 
   /* ── the plate: base (the charms as the Nest draws them) and fx (hover, focus, links, marks) ── */
-  function fitPlate() {
+  function fitPlate(force) {
     const E = W.el, st = W.st; if (!st) return;
+    // (not while the sheet flies to it: it takes its new size once it has landed)
+    if (W.flying && !force) { W.fitLater = true; return; }
     const box = E.plateBox.getBoundingClientRect(); if (box.width < 40 || box.height < 40) return;
     const availW = box.width - 32, availH = box.height - 22;
     const R = Math.round(Math.max(14, Math.min(22, availW * 0.022)));
@@ -954,10 +1293,29 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     E.plate.style.width = w + "px"; E.plate.style.height = hh + "px";
     const dpr = Math.min(2.5, devicePixelRatio || 1);
     W.dpr = dpr; W.R = R * dpr; W.k = (w * dpr - W.R) / st.wPt; W.cssW = w; W.cssH = hh;
-    for (const cv of [E.base, E.fx]) { const cw = Math.round(w * dpr), ch = Math.round(hh * dpr); if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; } }
+    for (const cv of [E.rule, E.base, E.fx]) { const cw = Math.round(w * dpr), ch = Math.round(hh * dpr); if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; } }
     // the saved preview is the plate without rulers: it sits where the plate sits
-    E.pv.style.left = R + "px"; E.pv.style.top = R + "px"; E.pv.style.width = (w - R) + "px"; E.pv.style.height = (hh - R) + "px"; E.pv.style.inset = "auto";
-    if (W.geom) paintBase(); paintFx();
+    // (inset first: set after them, it would put left and top back to auto, and the picture at the plate's corner)
+    E.pv.style.inset = "auto"; E.pv.style.left = R + "px"; E.pv.style.top = R + "px"; E.pv.style.width = (w - R) + "px"; E.pv.style.height = (hh - R) + "px";
+    placeSnap();
+    paintRule();
+    if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx();
+  }
+  /** The plate under whatever it shows: its rulers and the empty sheet, there from the first frame (the rulers are
+      their own layer, so that a closing window can let them go before the sheet). */
+  function paintRule() {
+    const cv = W.el.rule, ctx = cv.getContext("2d"), R = W.R; if (!W.st || !cv.width) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (R) drawRulers(ctx, R, W.k, cv.width - R, cv.height - R);
+    sheetEdge(ctx, cv);
+  }
+  // the sheet's edge and its inset line
+  function sheetEdge(ctx, cv) {
+    const R = W.R, k = W.k, Wp = cv.width - R, Hp = cv.height - R;
+    ctx.save(); ctx.translate(R, R);
+    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, Wp - 1, Hp - 1);
+    const ins = (+S.settings.insetPt || 0) * k; ctx.setLineDash([4 * W.dpr, 4 * W.dpr]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, Wp - 2 * ins, Hp - 2 * ins); ctx.setLineDash([]);
+    ctx.restore();
   }
   function tx0(c) { const cx = c.centerPt[0], cy = c.centerPt[1], k = W.k; return (x, y) => [(x - cx) * k, (cy - y) * k]; }
   function withPiece(ctx, x, fn) { const p = x.p, k = W.k; ctx.save(); ctx.translate(W.R + p.cxPt * k, W.R + p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
@@ -969,14 +1327,12 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   function paintBase() {
     const cv = W.el.base, ctx = cv.getContext("2d"), st = W.st, R = W.R, k = W.k; if (!st) return;
     const Wp = cv.width - R, Hp = cv.height - R;
+    // the sheet alone (the rulers are the plate's own layer, under it); before the record is read, a Nest card's sheet
+    // as the page holds it
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, cv.width, cv.height);
-    if (R) drawRulers(ctx, R, k, Wp, Hp);
-    ctx.save(); ctx.translate(R, R);
-    ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * k); ctx.strokeRect(.5, .5, Wp - 1, Hp - 1);
-    const ins = (+S.settings.insetPt || 0) * k; ctx.setLineDash([4 * W.dpr, 4 * W.dpr]); ctx.strokeStyle = "rgba(147,140,128,.35)"; ctx.lineWidth = 1; ctx.strokeRect(ins, ins, Wp - 2 * ins, Hp - 2 * ins); ctx.setLineDash([]);
-    ctx.restore();
-    for (const x of W.pieces) {
+    ctx.fillStyle = "#fffefb"; ctx.fillRect(R, R, Wp, Hp);
+    sheetEdge(ctx, cv);
+    for (const x of W.geom || !(W.pre && W.pre.pieces) ? W.pieces : W.pre.pieces) {
       if (x.gone) continue;
       withPiece(ctx, x, () => {
         // a custom order's own design is plum here too, as on the sheet's card (CustomSheet)
@@ -994,24 +1350,37 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const mates = f.rid ? (W.orders.get(f.rid) || []) : [f];
     return { f, mates };
   }
-  function paintFx(now) {
+  // (one mark that cannot be drawn never stops the others, the loop that animates them, or what asked for the drawing)
+  function paintFx(now) { try { paintMarks(now); } catch (e) { console.warn("sheet window: plate marks", e); } }
+  function paintMarks(now) {
     const cv = W.el.fx, ctx = cv.getContext("2d"), k = W.k, R = W.R; if (!W.st) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+    const t1 = now || performance.now();
     const q = W.q, matches = q ? W.pieces.filter(x => matchesQ(x, q)) : null;
     const fs = focusSet();
+    let u = 1;
     if (W.geom && (fs || (matches && matches.length < W.pieces.length))) {
-      // everything else steps back, the charms in hand come forward in their own lines
+      // everything else steps back, the charms in hand come forward in their own lines (the first time after an opening
+      // it comes gently, the sheet having just arrived)
+      if (W.dimRamp) { W.dimRamp = false; if (!still()) { W.fx.push({ kind: "dim", t0: t1, ms: 280 }); fxLoop(); } }
+      const d = W.fx.find(f => f.kind === "dim"); u = d ? Math.min(1, Math.max(0, (t1 - d.t0) / d.ms)) : 1; u = 1 - (1 - u) * (1 - u);
       const keep = new Set((fs ? fs.mates : []).concat(matches || []));
+      ctx.save(); ctx.globalAlpha = u;
       ctx.fillStyle = "rgba(255,254,251,.62)"; ctx.fillRect(R, R, cv.width - R, cv.height - R);
-      for (const x of keep) { if (x.gone) continue; withPiece(ctx, x, () => { const main = fs && x === fs.f, mate = fs && fs.mates.includes(x);
-        ctx.fillStyle = main ? "rgba(202,168,97,.42)" : mate ? "rgba(202,168,97,.22)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
+      // (the rest of the order lighter than the charm itself, which is marked last, above them)
+      for (const x of keep) { if (x.gone || (fs && x === fs.f)) continue; const mate = !!fs && fs.mates.includes(x); withPiece(ctx, x, () => {
+        ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
         if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
-        outlinePath(ctx, x); ctx.strokeStyle = main ? "#a9823f" : mate ? "rgba(169,130,63,.75)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (main ? 2 : 1.4) * W.dpr; ctx.stroke(); }); }
-    }
-    // the pieces of one order on this sheet, joined
-    if (fs && fs.mates.length > 1 && W.geom) {
+        outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.6)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (mate ? 1.2 : 1.4) * W.dpr; ctx.stroke(); }); }
+      ctx.restore();
+      if (fs && !fs.f.gone) markMain(ctx, fs.f, t1);
+    } else if (!W.geom && W.pre && W.pre.sel) markMain(ctx, W.pre.sel, t1);
+    // the point clicked on a Library picture, until the charm there is drawn
+    if (!W.geom && W.pre && W.pre.at && (!W.rec || W.sel)) markAt(ctx, W.pre.at);
+    // the pieces of one order on this sheet, joined (in an opening, once the sheet has come to rest)
+    if (fs && fs.mates.length > 1 && W.geom && !(W.flip && !W.flip.cued)) {
       const a = fs.f, t = linkProgress(now);
-      ctx.save(); ctx.strokeStyle = "rgba(169,130,63,.85)"; ctx.lineWidth = 1.4 * W.dpr; ctx.setLineDash([5 * W.dpr, 4 * W.dpr]);
+      ctx.save(); ctx.globalAlpha = u; ctx.strokeStyle = "rgba(169,130,63,.85)"; ctx.lineWidth = 1.4 * W.dpr; ctx.setLineDash([5 * W.dpr, 4 * W.dpr]);
       for (const b of fs.mates) { if (b === a || b.gone) continue;
         const x0 = R + a.p.cxPt * k, y0 = R + a.p.cyPt * k, x1 = R + b.p.cxPt * k, y1 = R + b.p.cyPt * k, mx = (x0 + x1) / 2, my = (y0 + y1) / 2 - Math.hypot(x1 - x0, y1 - y0) * .18;
         ctx.beginPath(); ctx.moveTo(x0, y0);
@@ -1024,16 +1393,14 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     }
     // where pieces were taken off: the charm fades out in clay and leaves a dashed outline of the room it freed
     for (const g of W.freed) {
-      const x = g.x, t = g.t0 ? Math.min(1, ((now || performance.now()) - g.t0) / 1000) : 1;
+      const x = g.x, t = g.t0 ? Math.min(1, (t1 - g.t0) / 1000) : 1; if (!x || !x.p) continue;
       withPiece(ctx, x, () => {
         if (t < 1) { ctx.save(); const sc = 1 - .1 * t; ctx.scale(sc, sc); ctx.globalAlpha = 1 - t; ctx.fillStyle = "rgba(176,86,63,.5)"; outlinePath(ctx, x, true); ctx.fill("evenodd"); ctx.restore(); }
         ctx.fillStyle = `rgba(176,86,63,${.06 * t})`; outlinePath(ctx, x, true); ctx.fill("evenodd");
         ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); outlinePath(ctx, x); ctx.strokeStyle = `rgba(176,86,63,${.3 + .5 * t})`; ctx.lineWidth = 1.2 * W.dpr; ctx.stroke(); ctx.setLineDash([]);
       });
     }
-    paintLanding(ctx, now);
-    paintGhost(ctx, now);
-    paintHand(ctx);
+    for (const paint of [() => paintLanding(ctx, now), () => paintGhost(ctx, now), () => paintHand(ctx)]) { try { ctx.save(); paint(); } catch (e) { console.warn("sheet window: plate marks", e); } finally { ctx.restore(); } }
     // back engraving: a small mark on each charm that has one (clay: still to approve, sage: approved)
     if (W.showBacks) for (const x of W.pieces) {
       if (x.gone || !x.eng || x.eng.kind === "none" || x.eng.kind === "skipped") continue;
@@ -1043,30 +1410,65 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     }
     // the selected charm's pulse
     for (const f of W.fx) if (f.kind === "pulse") {
-      const t = Math.min(1, ((now || performance.now()) - f.t0) / f.ms), x = f.piece; if (x.gone) continue;
+      const t = Math.min(1, (t1 - f.t0) / f.ms), x = f.piece; if (!x || !x.p || x.gone) continue;
       withPiece(ctx, x, () => { const s = 1 + .22 * t; ctx.scale(s, s); outlinePath(ctx, x); ctx.strokeStyle = `rgba(202,168,97,${.9 * (1 - t)})`; ctx.lineWidth = 3 * W.dpr / s; ctx.stroke(); });
     }
+    for (const f of W.fx) if (f.kind === "arrive") paintArrive(ctx, f, t1);
+  }
+  /** The charm in hand: warm, in a firm gold line, above the rest of its order; it pops once as the sheet it opened on
+      comes to rest (its copy in the sheet under it covered while it is bigger). */
+  function markMain(ctx, x, t1) {
+    const f = W.fx.find(e => e.kind === "arrive" && e.piece && keyOf(e.piece) === keyOf(x)), u = f ? (t1 - f.t0) / 350 : 1;
+    const s = u > 0 && u < 1 ? 1 + .08 * Math.sin(Math.PI * u) : 1;
+    withPiece(ctx, x, () => {
+      if (s !== 1) { ctx.scale(s, s); ctx.fillStyle = "#fffefb"; outlinePath(ctx, x); ctx.fill(); }
+      ctx.fillStyle = "rgba(202,168,97,.42)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
+      if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
+      outlinePath(ctx, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr / s; ctx.stroke();
+    });
+  }
+  // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
+  function markAt(ctx, at) {
+    const x = W.R + at.xPt * W.k, y = W.R + at.yPt * W.k, r = 4.6 * 72 / 25.4 * W.k;
+    ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = "rgba(202,168,97,.30)"; ctx.fill(); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr; ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, y, Math.max(2.5 * W.dpr, r * .12), 0, Math.PI * 2); ctx.fillStyle = "#b8893a"; ctx.fill(); ctx.restore();
   }
   function linkProgress(now) { const f = W.fx.find(e => e.kind === "link"); if (!f) return 1; return Math.min(1, ((now || performance.now()) - f.t0) / f.ms); }
   function fxLoop() {
     if (W.raf) return;
     const tick = now => {
+      W.raf = 0;
       W.fx = W.fx.filter(f => now - f.t0 < f.ms);
       paintFx(now);
-      W.raf = W.fx.length ? requestAnimationFrame(tick) : 0;
-      if (!W.fx.length) paintFx();
+      if (W.fx.length) W.raf = requestAnimationFrame(tick); else paintFx();
     };
     W.raf = requestAnimationFrame(tick);
   }
   function pulse(x) { if (still()) return paintFx(); const t0 = performance.now(); W.fx = W.fx.filter(f => f.kind !== "pulse" && f.kind !== "link"); W.fx.push({ kind: "pulse", piece: x, t0, ms: 900 }, { kind: "link", t0, ms: 420 }); fxLoop(); }
+  // the charm the window opened on, as the sheet comes to rest: it pops, two rings go out from it, and the rest of its
+  // order is joined to it
+  function land(x) { if (still()) return paintFx(); const t0 = performance.now(); W.fx = W.fx.filter(f => !["pulse", "link", "arrive"].includes(f.kind)); W.fx.push({ kind: "arrive", piece: x, t0, ms: 900 }, { kind: "link", t0: t0 + 160, ms: 520 }); fxLoop(); }
+  function paintArrive(ctx, f, t1) {
+    const x = f.piece, t = (t1 - f.t0) / f.ms; if (!x || !x.p || x.gone || t < 0 || t >= 1) return;
+    const rad = Math.max(8 * W.dpr, Math.max(x.p.wPt, x.p.hPt) * W.k / 2), out = u => 1 - Math.pow(1 - u, 3);
+    withPiece(ctx, x, () => {
+      for (const [d, px, a0] of [[0, 22, .95], [.16, 38, .7]]) {
+        const u = (t - d) / (1 - d); if (u <= 0 || u >= 1) continue;
+        const s = 1 + px * W.dpr * out(u) / rad;
+        ctx.save(); ctx.scale(s, s); outlinePath(ctx, x); ctx.strokeStyle = `rgba(184,137,58,${a0 * Math.pow(1 - u, 1.3)})`; ctx.lineWidth = 3.5 * W.dpr / s; ctx.stroke(); ctx.restore();
+      }
+    });
+  }
 
   /* ── pointer ── */
   function toPlate(e) {
     const r = W.el.fx.getBoundingClientRect(), sx = W.el.fx.width / r.width;
     return { x: ((e.clientX - r.left) * sx - W.R) / W.k, y: ((e.clientY - r.top) * sx - W.R) / W.k, cx: e.clientX - r.left, cy: e.clientY - r.top };
   }
-  function hitAt(e) {
-    const { x, y } = toPlate(e); if (x < 0 || y < 0 || x > W.st.wPt || y > W.st.hPt) return null;
+  function hitAt(e) { const { x, y } = toPlate(e); return hitPt(x, y); }
+  /** The charm at a point of the sheet (in points), by its drawing where the window has it, else by its outline box. */
+  function hitPt(x, y) {
+    if (!W.st || !(x >= 0 && y >= 0 && x <= W.st.wPt && y <= W.st.hPt)) return null;
     let best = null, bestD = Infinity;
     for (const pc of W.pieces) {
       if (pc.gone) continue;
@@ -1363,6 +1765,8 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const E = W.el, a = E.side.querySelector(`[data-pane="${name === "sheet" ? "piece" : "sheet"}"]`), b = E.side.querySelector(`[data-pane="${name}"]`);
     W.view = name;
     if (!b.hidden && a.hidden) return;
+    // (the panel still to come in, with the sheet flying: it comes in showing this one)
+    if (W.flip && !W.flip.shown) { a.hidden = true; b.hidden = false; return; }
     b.hidden = false;
     const d = dir === "back" ? -1 : 1;
     animate(b, [{ opacity: 0, transform: `translateX(${d * 28}px)` }, { opacity: 1, transform: "none" }], 260);
@@ -1384,7 +1788,9 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     const same = W.sel === x && W.view === "piece";
     W.sel = x; W.hover = null; tip(null);
     lightChips(x.rid);
-    pulse(x);
+    // (opened on it: it rings once the sheet has landed, its picture drawn now that its design is known)
+    if (opts.land) { paintFx(); afterCue(() => { if (W.sel === x && W.dlg.open && W.rang !== keyOf(x)) { W.rang = keyOf(x); land(x); } }); } else pulse(x);
+    if (same && x.c) { const th = W.el.detail.querySelector("canvas.swThumb"), mm = W.el.detail.querySelector("[data-r2=mm]"); if (th && th._bare) drawThumb(th, x); if (mm) mm.textContent = `${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mmOf(x)}`; }
     if (!same) renderPiece(x, opts);
     if (W.view !== "piece") showPane("piece", "forward");
     else if (!same && (opts.from === "prev" || opts.from === "next")) animate(W.el.detail, [{ opacity: 0, transform: `translateX(${opts.from === "prev" ? -16 : 16}px)` }, { opacity: 1, transform: "none" }], 220);
@@ -1406,10 +1812,10 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     let ship = ""; try { const t = row && row.order.shipBy && window.Orders?.shipTxt?.(row); ship = t && t !== "\u2014" ? "ship by " + t : ""; } catch (_) {}
     const said = String(o.buyerMessage || "").trim();
     const words = (sp.personalization || []).filter(Boolean).join(" / ");
-    const mm = x.c ? `${fmt.mm(x.c.widthPt).replace(" mm", "")} × ${fmt.mm(x.c.heightPt)}` : `${fmt.mm(x.p.wPt).replace(" mm", "")} × ${fmt.mm(x.p.hPt)}`;
+    const mm = mmOf(x);
     E.detail.innerHTML = `
       <header class="swOrderHead"><span class="fLabel">Order</span><span class="rid">${esc(x.rid || "No order")}</span><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
-      <div class="swPiece"><canvas class="swThumb" width="184" height="184"></canvas><div class="facts"><b>${esc(x.sku || x.name)}</b><span>${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
+      <div class="swPiece"><canvas class="swThumb" width="184" height="184"></canvas><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
       <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><ul class="swTrail" data-r2="trail"></ul></section>
       <section class="swSection" data-r2="off"></section>
@@ -1421,9 +1827,10 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
     renderMsgs(x, row);
     E.pieceScroll.scrollTop = 0;
   }
+  const mmOf = x => x.c ? `${fmt.mm(x.c.widthPt).replace(" mm", "")} × ${fmt.mm(x.c.heightPt)}` : `${fmt.mm(x.p.wPt).replace(" mm", "")} × ${fmt.mm(x.p.hPt)}`;
   function drawThumb(cv, x) {
     const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-    const c = x.c; if (!c) { if (x.thumb) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { const s = Math.min(cv.width / im.width, cv.height / im.height) * .86; ctx.drawImage(im, (cv.width - im.width * s) / 2, (cv.height - im.height * s) / 2, im.width * s, im.height * s); }; im.src = cors(x.thumb); } return; }
+    const c = x.c; cv._bare = !c; if (!c) { if (x.thumb) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { if (!cv._bare) return; const s = Math.min(cv.width / im.width, cv.height / im.height) * .86; ctx.drawImage(im, (cv.width - im.width * s) / 2, (cv.height - im.height * s) / 2, im.width * s, im.height * s); }; im.src = cors(x.thumb); } return; }
     const k = Math.min(cv.width / c.widthPt, cv.height / c.heightPt) * .82, cx = c.centerPt[0], cy = c.centerPt[1];
     ctx.save(); ctx.translate(cv.width / 2, cv.height / 2);
     const t = (px, py) => [(px - cx) * k, (cy - py) * k];
