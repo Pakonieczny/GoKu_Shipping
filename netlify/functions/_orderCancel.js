@@ -154,10 +154,10 @@ async function restoredSince(db, recs, prefix) {
   return new Set(recs.filter(r => (last[r.orderId] && last[r.orderId] >= (r.etsyAt || r.at)) || (knew[r.orderId] && knew[r.orderId].has(low(r.etsyStatus)))).map(r => r.orderId));
 }
 /** Etsy's cancels, many at once (the mirror's page, the sweep): one getAll of their records, then one batch.
-    opts: prefix · detectedBy · dryRun. Returns counts and the ids it created. */
+    opts: prefix · detectedBy · dryRun. Returns counts, the ids it created, and the orders not written ({ orderId, why }). */
 async function putMany(db, FV, recs, opts = {}) {
   const byId = new Map(); for (const r of recs || []) if (r && r.orderId) byId.set(r.orderId, r);
-  const list = [...byId.values()], out = { candidates: list.length, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [] };
+  const list = [...byId.values()], out = { candidates: list.length, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], failures: [] };
   if (!list.length) return out;
   const refs = list.map(r => colOf(db, opts.prefix).doc(r.orderId)), cur = new Map();
   for (let i = 0; i < refs.length; i += 100) for (const d of await db.getAll(...refs.slice(i, i + 100))) if (d.exists) cur.set(d.id, d.data());
@@ -184,7 +184,7 @@ async function putMany(db, FV, recs, opts = {}) {
           // unaware of Etsy's is not, and Etsy's cancel is recorded
           if (res.gone && !(await restoredSince(db, [x.r], opts.prefix)).has(x.r.orderId)) res = await put(db, FV, x.r, opts);
           if (res.created) { out.created++; out.ids.push(x.r.orderId); } else if (res.gone) out.restored++; else if (res.changed) out.noted++; else out.unchanged++; }
-        catch (e2) { out.failed++; out.error = s(e2.message || e2, 200); }
+        catch (e2) { out.failed++; out.error = s(e2.message || e2, 200); out.failures.push({ orderId: x.r.orderId, why: out.error }); }
       }
     }
   }
@@ -199,12 +199,15 @@ async function fromReceipts(db, FV, receipts, opts = {}) {
 /** The one-off sweep of the mirror (production): every receipt the mirror keeps as cancelled gets its record. Idempotent.
     Reads one status at a time in document order, 200 a page, and stops at its time budget (after one page at least) with
     more:true and `next` ({ s: status index, after: last document id }): called again with that as `cursor`, it goes on
-    from there, so every call makes progress. opts: dryRun · budgetMs · cursor · docId (FieldPath.documentId()). */
+    from there, so every call makes progress. An order that would not write does not fail the call (it is no `error`, so
+    op cancelSweep answers 200 with its progress and resume point): it is listed in `failures` ({ orderId, why }, the first
+    50; `failed` counts them all) and kept in the backlog, which the mirror's next run retries (`backlogged`; `backlogError`
+    when even that could not be written). opts: dryRun · budgetMs · cursor · docId (FieldPath.documentId()). */
 async function sweep(db, FV, opts = {}) {
   const until = Date.now() + (n(opts.budgetMs) || 7000), PAGE = 200, docId = opts.docId || "__name__";
   let c = opts.cursor; if (typeof c === "string") { try { c = JSON.parse(c); } catch (_) { c = null; } }
   let si = Math.max(0, Math.min(SWEEP_STATUSES.length, Math.round(n(c && c.s)))), after = c && c.after ? String(c.after) : "", pages = 0;
-  const out = { ok: true, dryRun: !!opts.dryRun, scanned: 0, cancelled: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], more: false, truncated: false };
+  const out = { ok: true, dryRun: !!opts.dryRun, scanned: 0, cancelled: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], failures: [], more: false, truncated: false };
   while (si < SWEEP_STATUSES.length) {
     if (pages && Date.now() > until) { out.more = true; out.next = { s: si, after }; break; }
     let q = db.collection(RECEIPTS).where("status", "==", SWEEP_STATUSES[si]).orderBy(docId);
@@ -217,11 +220,17 @@ async function sweep(db, FV, opts = {}) {
     if (recs.length) {
       const r = await putMany(db, FV, recs, { prefix: "", detectedBy: "sweep", dryRun: !!opts.dryRun });
       for (const k of ["created", "noted", "unchanged", "restored", "failed"]) out[k] += r[k];
-      out.ids.push(...r.ids); if (r.error) out.error = r.error;
+      out.ids.push(...r.ids); out.failures.push(...(r.failures || []));
     }
     if (snap.size < PAGE) { si++; after = ""; } else after = snap.docs[snap.docs.length - 1].id;
   }
   out.ids = out.ids.slice(0, 200);
+  if (out.failures.length) {
+    const ids = [...new Set(out.failures.map(f => f.orderId))];
+    try { await keepBacklog(db, ids); out.backlogged = ids.length; }
+    catch (e) { out.backlogged = 0; out.backlogError = s(e.message || e, 200); }
+    out.failures = out.failures.slice(0, 50);
+  }
   return out;
 }
 
