@@ -37,6 +37,7 @@ const admin = require("./firebaseAdmin");
 const align = require("./_etsyMailThreadAlign");
 const { removeCopies, loadStoredForAlign, sweepPage } = require("./_etsyMailMessageCopies");
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
+const { isAwayMessage } = require("./_etsyMailKnowledge");
 const db  = admin.firestore();
 const FV  = admin.firestore.FieldValue;
 
@@ -496,6 +497,10 @@ exports.handler = async (event) => {
       if (!m || !incoming[i].fp) continue;
 
       const direction = m.senderRole === "staff" ? "outbound" : "inbound";
+      // The shop's automatic away reply answers nothing, so it never counts
+      // as our latest reply (the pipeline and the waiting state skipped the
+      // customer's question when it did; 500-conversation study, 2026-09-28).
+      const away = direction === "outbound" && isAwayMessage(m.text);
       const j = aligned.matchOf[i];
       // A matched message keeps its stored time; a new one gets a time
       // between its neighbours.
@@ -503,13 +508,13 @@ exports.handler = async (event) => {
       if (ts != null) {
         newestAny_ms = Math.max(newestAny_ms || 0, ts);
         if (direction === "inbound")  newest_inbound_ms  = Math.max(newest_inbound_ms  || 0, ts);
-        if (direction === "outbound") newest_outbound_ms = Math.max(newest_outbound_ms || 0, ts);
+        if (direction === "outbound" && !away) newest_outbound_ms = Math.max(newest_outbound_ms || 0, ts);
         try {
           const shown = m.text || ((Array.isArray(m.imageUrls) && m.imageUrls.length) || m.messageType === "image" ? "Sent a photo" : "");
           if (direction === "inbound") {
             inboundTs.push(ts);
             if (ts >= newestInTs) { newestInTs = ts; newestInText = shown; }
-          } else if (ts >= newestOutTs) { newestOutTs = ts; newestOutText = shown; }
+          } else if (!away && ts >= newestOutTs) { newestOutTs = ts; newestOutText = shown; }
         } catch (_) { /* previews are optional */ }
       }
       if (j >= 0) continue;   // already stored

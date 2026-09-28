@@ -1074,10 +1074,15 @@ function buildListingDeliveryMessage(family, listingUrl) {
   //   - no service-script clichés ("absolutely", "happy to", "lock it in")
   //   - plain text, no markdown
   const f = ALLOWED_FAMILIES.includes(family) ? family : "custom";
+  // No "let us know if you have any questions" close (owner's rule) and the
+  // shop's sign-off on its own lines, like every other reply.
   return (
     `Here's the custom listing for your ${f}: ${listingUrl}
 
-Once you check out, we'll get to work on your order. Let us know if you have any questions.`
+Once you check out, we'll get to work on your order.
+
+Many Thanks,
+CustomBrites`
   );
 }
 
