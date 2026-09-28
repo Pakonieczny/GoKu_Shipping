@@ -6723,14 +6723,23 @@ The output must look like the input image with ONLY the user's requested change 
       }
     });
 
+    // Quick category changes overlap list loads the same way, so only the
+    // newest one may fill the set list.
+    let REVIEW_LIST_SEQ = 0;
+
     async function loadReviewSets() {
+      const listId = ++REVIEW_LIST_SEQ;
+      const listStale = () => listId !== REVIEW_LIST_SEQ;
+      cancelReviewSetLoad();
       const category = activeCategoryEl.value;
       setStatus("Loading sets...");
       reviewSetSelect.innerHTML = `<option>Loading...</option>`;
       try {
         await ensureStorageSignedIn();
+        if (listStale()) return;
         const readyToListRef = ref(storage, `${ROOT}/${category}/Ready_To_List`);
         const res = await listAll(readyToListRef);
+        if (listStale()) return;
         let sets = res.prefixes.map(p => p.name).filter(n => n.startsWith('Set_'));
 
         // Filter out approved/deleted sets via two independent layers,
@@ -6752,6 +6761,7 @@ The output must look like the input image with ONLY the user's requested change 
         try {
           const completedRef = ref(storage, `${ROOT}/Generated_Listing_Sets/Completed_Listing_Sets`);
           const completedRes = await listAll(completedRef);
+          if (listStale()) return;
           const prefix = `${category}_`;
           for (const p of completedRes.prefixes) {
             if (p.name.startsWith(prefix)) {
@@ -6769,6 +6779,7 @@ The output must look like the input image with ONLY the user's requested change 
           }
         }
 
+        if (listStale()) return;
         const allHidden = new Set([...hiddenLs, ...cloudApproved]);
         const beforeFilter = sets.length;
         sets = sets.filter(s => !allHidden.has(s));
@@ -6811,6 +6822,7 @@ The output must look like the input image with ONLY the user's requested change 
           reviewGrid.innerHTML = "";
         }
       } catch (e) {
+        if (listStale()) return;
         console.error("Error loading sets:", e);
         setStatus("Error loading sets");
         reviewSetSelect.innerHTML = `<option value="">Error loading</option>`;
@@ -7350,6 +7362,7 @@ async function updateTotalAllTimeCounter() {
             loadSetImages(reviewSetSelect.value);
           }
         } else {
+          cancelReviewSetLoad();
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
         }
       }
@@ -7388,6 +7401,7 @@ async function updateTotalAllTimeCounter() {
             loadSetImages(reviewSetSelect.value);
           }
         } else {
+          cancelReviewSetLoad();
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
         }
       }
@@ -7458,31 +7472,48 @@ function updateApproveButtonState() {
       }
     }
 
+    // Only the set picked last may draw into the Review grid. Quick clicks or
+    // arrow presses start several loads that finish in any order, so every
+    // pick takes a new number, and a load that sees a newer number stops
+    // without touching the grid, CURRENT_SET or the status line.
+    // REVIEW_LOAD_RUNNING is the load that holds the busy flag.
+    let REVIEW_LOAD_SEQ = 0;
+    let REVIEW_LOAD_RUNNING = 0;
+    function cancelReviewSetLoad() { REVIEW_LOAD_SEQ++; }
+
     async function loadSetImages(setName) {
       if (!setName) return;
 
+      const loadId = ++REVIEW_LOAD_SEQ;
+      const stale = () => loadId !== REVIEW_LOAD_SEQ;
+      REVIEW_LOAD_RUNNING = loadId;
+
       const category = activeCategoryEl.value;
+      const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
+      // Redo and Skip act on CURRENT_SET, so it follows the pick at once.
+      CURRENT_SET = { category, outputBasePath: setPath, setN: parseInt(setName.replace('Set_', '')) || 0 };
       setBusy(true);
       setStatus(`Loading ${setName}...`);
-      reviewGrid.innerHTML = "";
+      // Free the previous set's previews before they leave the page.
+      reviewGrid.querySelectorAll('img[src^="blob:"]').forEach((img) => {
+        try { URL.revokeObjectURL(img.src); } catch (_) {}
+      });
+      reviewGrid.innerHTML = `<div style="grid-column: 1 / -1; min-height: 200px; display: flex;">${getSpinnerHTML(`Loading ${setName}…`)}</div>`;
 
       try {
         await ensureStorageSignedIn();
-        const setPath = `${ROOT}/${category}/Ready_To_List/${setName}`;
+        if (stale()) return;
         const setRef = ref(storage, setPath);
+        // The manifest is read alongside the file list, not after it.
+        const manifestPromise = getBytes(ref(storage, `${setPath}/manifest.json`))
+          .then((buffer) => JSON.parse(new TextDecoder().decode(buffer)))
+          .catch(() => null);
         const res = await listAll(setRef);
+        if (stale()) return;
+        const manifestData = await manifestPromise;
+        if (stale()) return;
 
-        let parsedSetN = parseInt(setName.replace('Set_', '')) || 0;
-        CURRENT_SET = { category, outputBasePath: setPath, setN: parsedSetN };
-
-        let manifestData = null;
-        try {
-            const manifestRef = ref(storage, `${setPath}/manifest.json`);
-            const buffer = await getBytes(manifestRef);
-            const text = new TextDecoder().decode(buffer);
-            manifestData = JSON.parse(text);
-        } catch(err) {}
-
+        reviewGrid.innerHTML = "";
         const slotPlan = SLOT_MAP[category] || [];
         
         slotPlan.forEach((spec, i) => {
@@ -7603,19 +7634,23 @@ function updateApproveButtonState() {
             try {
               // 1. Instant load from local IndexedDB Cache
               let cached = await getCachedBlob(fileRef.fullPath);
+              if (stale()) return;
               if (cached && cached.blob) {
                   setBoxImage(prevBox, URL.createObjectURL(cached.blob));
               }
 
               // 2. Background verification with Firebase
               const meta = await getMetadata(fileRef);
+              if (stale()) return;
               const cloudUpdatedMs = Date.parse(meta?.updated || meta?.timeCreated || "") || 0;
 
               // Only fetch if no cache exists or cloud is newer
               if (!cached || cloudUpdatedMs > cached.updatedMs) {
                   const url = await getDownloadURL(fileRef);
+                  if (stale()) return;
                   const newBlob = await fetchAndCacheBlob(url, fileRef.fullPath, cloudUpdatedMs);
-                  
+                  if (stale()) return;
+
                   // Ensure we don't overwrite if a user clicked Redo in the meantime
                   if (REDO_STATE[key]?.status !== 'running') {
                       setBoxImage(prevBox, newBlob ? URL.createObjectURL(newBlob) : cacheBust(url));
@@ -7623,25 +7658,36 @@ function updateApproveButtonState() {
               }
             } catch (err) {
               // If it fails but we don't have a cache, mark as not found
-              if (!await getCachedBlob(fileRef.fullPath)) {
+              if (stale()) return;
+              if (!await getCachedBlob(fileRef.fullPath) && !stale()) {
                 prevBox.innerHTML = `<div class="slotRefEmpty">Not Found</div>`;
               }
             }
           }
         }));
+        if (stale()) return;
 
         setStatus(`Viewing ${category} / ${setName}`);
         try { updateSidebarRail(); } catch (_) {}
       } catch (e) {
+        if (stale()) return;
         if (e.code === 'storage/object-not-found') {
              reviewGrid.innerHTML = `<div class='slotRefEmpty'>Set '${setName}' not found (might be deleted/moved).</div>`;
         } else {
              console.error(e);
              setStatus(`Error: ${e.message}`);
+             // Don't leave the loading spinner turning after a failure.
+             if (reviewGrid.querySelector('.spinner-container')) {
+               reviewGrid.innerHTML = `<div class='slotRefEmpty'>Could not load ${setName}.</div>`;
+             }
         }
       } finally {
-        setBusy(false);
-        updateApproveButtonState(); 
+        // A newer pick holds the busy flag now; it clears it when it ends.
+        if (REVIEW_LOAD_RUNNING === loadId) {
+          REVIEW_LOAD_RUNNING = 0;
+          setBusy(false);
+          updateApproveButtonState();
+        }
       }
     }
     
@@ -7700,6 +7746,7 @@ function updateApproveButtonState() {
               setStatus(`Approved ${setName} → next: ${reviewSetSelect.value}`);
           }
       } else {
+          cancelReviewSetLoad();
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
           setStatus(`Approved ${setName} · queue clear.`);
       }
@@ -7884,6 +7931,7 @@ function updateApproveButtonState() {
               loadSetImages(reviewSetSelect.value);
           }
       } else {
+          cancelReviewSetLoad();
           reviewGrid.innerHTML = "<div class='slotRefEmpty'>No more sets to review!</div>";
           setStatus("Queue clear.");
       }
