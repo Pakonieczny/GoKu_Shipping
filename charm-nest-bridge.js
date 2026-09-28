@@ -1091,7 +1091,9 @@ const Orders = window.Orders = (() => {
       }
       if (!off.length) continue;
       const offSet = new Set(off); row.poolIds = row.poolIds.filter(id => !offSet.has(id));
-      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, opt.patch || {})); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
+      // (an order the order check found gone says so on its timeline too: the server stamps "removed" from removedBy/At)
+      const patch = opt.patch || { removedBy: "System", removedReason: `no longer open on Etsy (${row.reason || "gone"})`, removedAt: Date.now() };
+      try { await Pool.update(off, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); } catch (e) { agent({ bridge: true }, "warn", `pool record for ${row.order.receiptId}: ${e.message}`); if (opt.strict) throw e; }
       for (const id of off) B.pool.rows.delete(id);
     }
     return out;
