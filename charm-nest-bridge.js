@@ -10908,17 +10908,57 @@ const SetPicker = window.SetPicker = (() => {
   }
   const counts = sheets => METALS.map(m => { const n = sheets.filter(s => s.metal === m.key).length; return n ? `${labelOf(m.key)} ${n}` : ""; }).filter(Boolean).join(" · ");
   function previewCurrent() {
-    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ id:p.sheetId, stock:p.outputs?.report?.stock || stockFor(p.metal), poolIds:[...window.CharmNestBacks.placedIds(p)], backs:Engrave.sheetBacks(p), metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq }));
+    const sheets = allSheets().filter(p => p.charms.length).map(p => ({ id:p.sheetId, stock:p.outputs?.report?.stock || stockFor(p.metal), poolIds:[...window.CharmNestBacks.placedIds(p)], backs:Engrave.sheetBacks(p), metal:p.metal, fileBase:p.fileBase || labelOf(p.metal), preview:p.cloud?.preview, placedCount:p.placements.length, draft:p.draft || !p.setId, setSeq:p.seq, page:p }));
     preview({ name:"Current workspace", day:B.run?.day || today(), sheets, status:B.run?.status || "manual" });
   }
   function preview(g) {
     if (!g) return;
     mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map(s => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div>${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}<figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}${FACE_SWITCH}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map((s, i) => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div><div class="spPlate${s.preview ? "" : " noPic"}" data-sp="${i}" style="--ar:${(f => f ? +(f.wPt / f.hPt).toFixed(4) : 2)(s.stock && +s.stock.wPt > 0 && +s.stock.hPt > 0 ? s.stock : null)}">${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}</div><figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    F.sheets = g.sheets; F.face = "front"; F.tok++;
+    dialog.querySelectorAll("[data-sp-face]").forEach(b => b.onclick = () => turn(b.dataset.spFace));
     dialog.showModal();
   }
-  return { mount, previewCurrent, preview };
+  /* ── Front | Back · engraving (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
+     visible … I should be able to see the backings everywhere"). The same switch and the same turn as the order view's
+     Sheet tab (OrderWin turnPlate): every sheet turns to its edge, is drawn from behind and turns back. The back is the
+     sheet window's own drawing (SheetWin.drawOrder, back side): every charm whole, each one's own words in full ink,
+     mirrored as the laser sees it, nothing laid over the sheet. Nothing is read until a back is asked for. ── */
+  const F = { sheets: [], face: "front", tok: 0 };
+  const FACE_SWITCH = `<span class="owSeg spFace" role="group" aria-label="Side of the sheets"><button type="button" data-sp-face="front" class="on" aria-pressed="true">Front</button><button type="button" data-sp-face="back" aria-pressed="false" title="Turn every sheet over: each charm's back engraving, where the laser burns it">Back · engraving</button></span>`;
+  const EASE = "cubic-bezier(.2,.8,.2,1)";
+  const still = () => { try { return window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
+  function turn(face) {
+    if (!dialog || face === F.face) return; F.face = face;
+    dialog.querySelectorAll("[data-sp-face]").forEach(b => { const on = b.dataset.spFace === face; b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false"); });
+    const d = face === "back" ? 1 : -1, tok = F.tok;
+    dialog.querySelectorAll(".spPlate").forEach((pl, n) => {
+      const swap = () => { if (tok === F.tok && F.face === face) sideOf(pl, face); };
+      if (still() || !pl.animate) return swap();
+      pl.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, delay: Math.min(n, 8) * 40, easing: "cubic-bezier(.4,0,1,1)" })
+        .finished.then(() => { swap(); pl.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, swap);
+    });
+  }
+  /** One sheet shown from the side asked for; its back is drawn the first time it is turned, and kept. */
+  function sideOf(pl, face) {
+    const back = face === "back", s = F.sheets[+pl.dataset.sp]; pl.classList.toggle("back", back);
+    let host = pl.querySelector(".spBack");
+    if (!back || !s) { if (host) host.hidden = true; return; }
+    if (!host) { host = el("div", "spBack"); host.innerHTML = `<canvas role="img" aria-label="The back of this sheet: every charm's engraving, mirrored as the laser sees it"></canvas><span class="spWait" hidden></span>`; pl.appendChild(host); }
+    host.hidden = false;
+    if (host._asked) { if (host._info) try { host._info.redraw(); } catch (_) {} return; }
+    host._asked = true;
+    const cv = host.querySelector("canvas"), w = host.querySelector(".spWait");
+    const say = t => { w.hidden = !t; w.innerHTML = t ? `<i></i>${esc(t)}` : ""; };
+    const target = s.page || s.id || s.sheetId;
+    if (!target || !window.SheetWin || !SheetWin.drawOrder) { host.insertAdjacentHTML("beforeend", `<div class="hEmpty">The back of this sheet can be drawn once it is saved</div>`); return; }
+    say("Drawing the back…");
+    SheetWin.drawOrder(cv, target, "", { back: true, onInfo: inf => { host._info = inf; }, onWait: t => say(t), onProgress: (dn, n) => say(dn < n ? `Reading design ${dn + 1} of ${n}…` : null) })
+      .then(inf => { host._info = inf; say(null); host.dataset.engraved = String((inf && inf.engraved && inf.engraved()) || 0); },
+        e => { say(null); host.insertAdjacentHTML("beforeend", `<div class="hEmpty bad">The back could not be drawn: ${esc((e && e.message) || String(e))}</div>`); });
+  }
+  return { mount, previewCurrent, preview, turn };
 })();
 
 /* ═══ 24f · Upkeep — a run left on for days holds only what it still works on ════════════════════════════════════
