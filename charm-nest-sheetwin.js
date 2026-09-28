@@ -669,7 +669,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         withPiece(ctx, x, () => {
           ctx.globalAlpha = Math.min(1, .3 + t * 2);
           ctx.fillStyle = "rgba(95,122,91,.22)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-          CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+          if (!backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
           ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); outlinePath(ctx, x); ctx.strokeStyle = "#5f7a5b"; ctx.lineWidth = 1.5 * W.dpr; ctx.stroke(); ctx.setLineDash([]);
           if (t < 1) { const sc = 1 + .28 * t; ctx.scale(sc, sc); outlinePath(ctx, x); ctx.strokeStyle = `rgba(95,122,91,${.85 * (1 - t)})`; ctx.lineWidth = 3 * W.dpr / sc; ctx.stroke(); }
           ctx.globalAlpha = 1;
@@ -1369,18 +1369,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const fs = focusSet();
     let u = 1;
     if (W.geom && (fs || (matches && matches.length < W.pieces.length))) {
-      // everything else steps back, the charms in hand come forward in their own lines (the first time after an opening
-      // it comes gently, the sheet having just arrived)
+      // the charms in hand come forward in their own lines, each in its colour and ringed (the first time after an
+      // opening it comes gently, the sheet having just arrived). Nothing is laid over the sheet: every other charm on it
+      // stays whole and sharp (Paul, 28 Sep: "no weird semi-transparent haze over the sheet").
       if (W.dimRamp) { W.dimRamp = false; if (!still()) { W.fx.push({ kind: "dim", t0: t1, ms: 280 }); fxLoop(); } }
       const d = W.fx.find(f => f.kind === "dim"); u = d ? Math.min(1, Math.max(0, (t1 - d.t0) / d.ms)) : 1; u = 1 - (1 - u) * (1 - u);
       const keep = new Set((fs ? fs.mates : []).concat(matches || []));
       ctx.save(); ctx.globalAlpha = u;
-      ctx.fillStyle = "rgba(255,254,251,.62)"; ctx.fillRect(R, R, cv.width - R, cv.height - R);
       // (the rest of the order lighter than the charm itself, which is marked last, above them)
       for (const x of keep) { if (x.gone || (fs && x === fs.f)) continue; const mate = !!fs && fs.mates.includes(x); withPiece(ctx, x, () => {
+        ctx.save(); ctx.scale(1.07, 1.07); outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.55)" : "rgba(74,107,120,.55)"; ctx.lineWidth = 1.6 * W.dpr / 1.07; ctx.stroke(); ctx.restore();
         ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-        if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
-        outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.6)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (mate ? 1.2 : 1.4) * W.dpr; ctx.stroke(); }); }
+        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.6)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (mate ? 1.2 : 1.4) * W.dpr; ctx.stroke();
+        markBack(ctx, x); }); }
       ctx.restore();
       if (fs && !fs.f.gone) markMain(ctx, fs.f, t1);
     } else if (!W.geom && W.pre && W.pre.sel) markMain(ctx, W.pre.sel, t1);
@@ -1431,10 +1433,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const s = u > 0 && u < 1 ? 1 + .08 * Math.sin(Math.PI * u) : 1;
     withPiece(ctx, x, () => {
       if (s !== 1) { ctx.scale(s, s); ctx.fillStyle = "#fffefb"; outlinePath(ctx, x); ctx.fill(); }
+      // a ring just outside it, so it is told apart by its own gold and this line, not by dimming the sheet round it
+      ctx.save(); ctx.scale(1.1, 1.1); outlinePath(ctx, x); ctx.strokeStyle = "rgba(184,137,58,.85)"; ctx.lineWidth = 2.4 * W.dpr / (s * 1.1); ctx.stroke(); ctx.restore();
       ctx.fillStyle = "rgba(202,168,97,.42)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-      if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
+      if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
       outlinePath(ctx, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr / s; ctx.stroke();
+      markBack(ctx, x);
     });
+  }
+  /** A charm marked above the plate keeps its words: they are drawn again over the mark, in full ink, never covered. */
+  function markBack(ctx, x) {
+    if (!backFace() || !x.c) return;
+    const geo = engGeoOf(x, W.backs); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" }));
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
@@ -3286,7 +3296,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       withPiece(ctx, x, () => {
         ctx.globalAlpha = t; const sc = .92 + .08 * t; ctx.scale(sc, sc);
         ctx.fillStyle = "rgba(95,122,91,.24)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-        CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        if (!backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         outlinePath(ctx, x); ctx.strokeStyle = "#5f7a5b"; ctx.lineWidth = 1.8 * W.dpr / sc; ctx.stroke();
         ctx.globalAlpha = 1;
       });
@@ -3794,8 +3804,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     G.dpr = dpr; G.R = R * dpr; G.k = (cw - G.R) / st.wPt; G.Wp = cw - G.R; G.Hp = ch - G.R;
     return true;
   }
-  /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, the other charms stepped back,
-      and this order's charms in gold (the one pointed at in a firmer line). */
+  /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, every other charm drawn whole and
+      sharp, and this order's charms in gold, ringed (the one pointed at in a firmer line). */
   function paintOrderBase(G) {
     if (!layoutOrder(G)) return false;
     const cv = G.cv, b = G.base || (G.base = document.createElement("canvas")); if (b.width !== cv.width || b.height !== cv.height) { b.width = cv.width; b.height = cv.height; }
@@ -3817,24 +3827,28 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         if (x.c && !G.backSide) drawOf(ctx, G, x); else { ctx.strokeStyle = "rgba(60,54,46,.45)"; ctx.lineWidth = dpr; orderOutline(ctx, G, x); ctx.stroke(); }
       });
     }
-    ctx.fillStyle = "rgba(255,254,251,.64)"; ctx.fillRect(0, 0, G.Wp, G.Hp);
+    // (Paul, 28 Sep: "make sure that everything is always perfectly visible and there's no weird semi-transparent haze
+    //  over the sheet" — nothing is ever laid over the sheet: the order's pieces are told apart by their own gold, a
+    //  firmer line and a ring just outside them, never by washing the rest of the sheet out)
     for (const x of G.mine) {
       const on = G.focus && (x.poolId === G.focus || x.id === G.focus);
       orderPiece(ctx, G, x, () => {
+        const rs = on ? 1.1 : 1.07;
+        ctx.save(); ctx.scale(rs, rs); orderOutline(ctx, G, x); ctx.strokeStyle = on ? "rgba(184,137,58,.85)" : "rgba(184,137,58,.6)"; ctx.lineWidth = (on ? 2.4 : 1.8) * dpr / rs; ctx.stroke(); ctx.restore();
         ctx.fillStyle = on ? "rgba(202,168,97,.58)" : "rgba(202,168,97,.42)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
         if (!G.backSide) drawOf(ctx, G, x);
         orderOutline(ctx, G, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = (on ? 3.6 : 2.5) * dpr; ctx.stroke();
       });
     }
-    // from behind: every charm's own words, on the charm, where the laser burns them — this order's in a firm ink and the
-    // rest of the sheet's a little lighter, so the whole plate reads (a charm with no engraving keeps its plain back)
+    // from behind: every charm's own words, on the charm, where the laser burns them — in full ink on every charm of every
+    // order, nothing laid over them and nothing faded (a charm with no engraving keeps its plain back)
     const pills = [];
     if (G.backSide) for (const x of G.pieces) {
       const geo = engGeoOf(x, G.backs);
       if (!geo || !geo.glyphs) { if (x.eng && x.eng.text) pills.push(x); continue; }
       orderPiece(ctx, G, x, () => {
         const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
-        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "rgba(62,52,35,.72)" });
+        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "#3f3320" });
       });
     }
     ctx.restore();

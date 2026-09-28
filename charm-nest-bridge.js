@@ -1528,7 +1528,25 @@ const Master = window.Master = (() => {
     })().finally(() => { B.master.loading = null; if (changed) render(); });
     return B.master.loading;
   }
-  async function fetchEntry(sku) { sku = String(sku || "").toUpperCase(); if (!sku) return null; const r = await api("charmNestLibrary", { op: "masterGet", sku }); if (r.entry) B.master.entries.set(sku, r.entry); return r.entry; }
+  /* A SKU the Library has no entry for is remembered for 5 minutes, or until the Library changes (its index, or an entry
+     added or read in again): opening one order asked masterGet four times for it. A read on its way is shared; a failed
+     read is not remembered. */
+  const missing = new Map(), asking = new Map(), MISS_MS = 300000;
+  const libSig = () => { try { return JSON.stringify(B.master.index || null) + "|" + B.master.entries.size; } catch (_) { return ""; } };
+  async function fetchEntry(sku) {
+    sku = String(sku || "").toUpperCase(); if (!sku) return null;
+    const have = B.master.entries.get(sku); if (have) return have;
+    const m = missing.get(sku);
+    if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
+    if (asking.has(sku)) return asking.get(sku);
+    const p = (async () => {
+      const r = await api("charmNestLibrary", { op: "masterGet", sku });
+      if (r.entry) { B.master.entries.set(sku, r.entry); missing.delete(sku); }
+      else { missing.set(sku, { at: Date.now(), map: B.master.entries, sig: libSig(), entry: r.entry }); while (missing.size > 500) missing.delete(missing.keys().next().value); }
+      return r.entry;
+    })().finally(() => asking.delete(sku));
+    asking.set(sku, p); return p;
+  }
   const skuRegex = () => { try { return new RegExp(S.settings.skuPattern || DEFAULTS.skuPattern); } catch (_) { return P.SKU_PATTERN_DEFAULT; } };
   /** Render the strip under a charm (for the vision fallback) → PNG data URL. */
   /** The strip a label would occupy: the outline's width (widened 30 %), from its bottom edge down by the label gap. */
@@ -8383,7 +8401,7 @@ const OrderWin = window.OrderWin = (() => {
     // Previous and Next walk the Orders list, the view in front, what it grew out of, its motion, the timeline mounted
     // in it and the one in the header, and what the order's timeline has said so far
     row: null, rows: null, walk: true, view: "info", from: null, anims: [], closing: false, hl: null, tl: null, tlFor: null, rail: null,
-    events: null, evFor: null, cancelled: null, feed: null, offRec: null, look: 0, back: null, face: "front" };
+    events: null, evFor: null, cancelled: null, feed: null, offRec: null, look: 0, back: null, face: "front", early: null };
   const byId = id => document.getElementById(id);
   const inPull = key => Orders.rows().find(r => r.key === key) || null;
   const rowOf = key => inPull(key) || (W.row && W.row.key === key ? W.row : null);
@@ -8409,16 +8427,21 @@ const OrderWin = window.OrderWin = (() => {
     // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
     // text onto the new order; open() saves the note of the order it leaves)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
-      unmountTimeline(); W.row = null; W.rows = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
+      unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
     const note = byId("owNote");
-    note.oninput = () => { note.classList.toggle("has", !!note.value.trim()); clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700); };
+    note.oninput = () => {
+      note.classList.toggle("has", !!note.value.trim());
+      // (typed while the order is still being looked up: kept for it, and saved once it is known, earlyNote)
+      const r0 = rowOf(W.key); if (W.early && W.early.rid === W.rid) W.early.text = note.value; else if (r0 && r0.loading) W.early = { rid: W.rid, text: note.value };
+      clearTimeout(W.noteTimer); W.noteTimer = setTimeout(saveNote, 700);
+    };
     note.onblur = () => { clearTimeout(W.noteTimer); saveNote(); };
     const input = byId("owInput");
     input.oninput = () => { grow(); TeamMail.setDraft(W.rid, input.value); };
@@ -8498,9 +8521,9 @@ const OrderWin = window.OrderWin = (() => {
   function step(d) {
     if (!W.walk) return;
     const list = siblings(); const i = list.findIndex(r => r.key === W.key);
-    // a line that has just left the list (skipped, or filtered out by the fix that was applied) resumes from where it was
-    const from = i < 0 ? Math.min(W.at || 0, list.length - 1) : i;
-    const at = from + d;
+    // a line that has just left the list (skipped, or filtered out by the fix that was applied) resumes from where it was:
+    // the line that took its place is the next one
+    const at = i < 0 ? Math.min(W.at || 0, list.length) + (d > 0 ? 0 : -1) : i + d;
     if (at < 0 || at >= list.length) return;
     const next = list[at];
     if (next && next.key !== W.key) { show(next, { dir: d }); }
@@ -8518,23 +8541,44 @@ const OrderWin = window.OrderWin = (() => {
       : "Messages and the staff note save straight to the order's record, where every station reads them";
   }
 
+  /** Every line on hand of one order (the pull's, those read from the records): the staff note is the order's. */
+  const linesOfOrder = rid => [...new Set(Orders.rows().concat(W.rows || [], W.row ? [W.row] : []))].filter(x => String(x.order.receiptId) === rid);
   async function saveNote() {
-    const r = rowOf(W.key); if (!r || r.loading) return;
+    const r = rowOf(W.key); if (!r || r.loading || (W.early && W.early.rid === String(r.order.receiptId))) return;
     r.spec = r.spec || {};
     const text = byId("owNote").value;
     // a note whose last save failed is sent again, although the box already shows it
     if (text === (r.spec.staffNote || "") && r.noteUnsaved == null) return;
-    r.spec.staffNote = text; r.noteUnsaved = text;
+    // every line of the order shows it at once (Next to the order's next line showed the old note until the record
+    // answered, and a note typed there put the old words back)
+    const rid = String(r.order.receiptId), all = linesOfOrder(rid); if (!all.includes(r)) all.push(r);
+    const at = Date.now();
+    for (const x of all) { x.spec = x.spec || {}; x.spec.staffNote = text; x.noteUnsaved = text; x.noteAt = at; }
     try {
-      await saveNoteAt(r.order.receiptId, text);
+      await saveNoteAt(rid, text);
       // the order carries it too: each arrival re-reads the lines from their orders, which put the old note back
-      r.order.staffNote = text; if (r.line.staffNote) r.line.staffNote = text;
-      if (r.noteUnsaved === text) delete r.noteUnsaved;
+      let told = false;
+      for (const x of all) { x.order.staffNote = text; if (x.line.staffNote) x.line.staffNote = text; if (x.noteUnsaved === text) delete x.noteUnsaved; if (x.noteFailed) { delete x.noteFailed; told = true; } }
       // the label promises "saved automatically": a save speaks up only to end an earlier failure (it used to toast at
       // every pause in the typing)
-      if (r.noteFailed) { delete r.noteFailed; toast("Staff note saved", "ok", 1800); }
-    } catch (e) { r.noteFailed = true; toast(`Staff note not saved: ${String(e.message).replace(/^staff note not saved:\s*/i, "")} — it is sent again when you leave the note or close this window`, "bad", 6000); }
-    if (W.key === r.key) paintNote(r);
+      if (told) toast("Staff note saved", "ok", 1800);
+    } catch (e) { for (const x of all) x.noteFailed = true; toast(`Staff note not saved: ${String(e.message).replace(/^staff note not saved:\s*/i, "")} — it is sent again when you leave the note or close this window`, "bad", 6000); }
+    const cur = rowOf(W.key); if (cur && all.includes(cur)) paintNote(cur);
+  }
+  /** A note typed while its order was still being looked up (W.early) is never painted over. Once the order is known and
+   *  its record's note read (refreshNote), it is kept after that note and saved: in the box when the order is on screen,
+   *  else straight to the record (the view closed or moved on meanwhile). Paul: typed work is never lost. */
+  async function earlyNote(rid, known) {
+    const e = W.early; if (!e || e.rid !== rid) return;
+    const box = byId("owNote"), here = !!(W.dlg && W.dlg.open && W.rid === rid), r = here ? rowOf(W.key) : null;
+    if (here && (!r || r.loading)) return;   // (looked up again: it waits for that)
+    W.early = null;
+    const typed = here ? box.value : e.text, had = String(known || "").replace(/\s+$/, "");
+    if (!typed.trim()) { if (r) paintNote(r); return; }
+    const text = had.trim() && !typed.includes(had.trim()) ? had + "\n" + typed : typed;
+    if (r) { if (box.value !== text) box.value = text; r.noteUnsaved = text; clearTimeout(W.noteTimer); return saveNote(); }
+    try { await saveNoteAt(rid, text); }
+    catch (err) { if (!W.early) W.early = { rid, text }; toast(`Staff note for order ${rid} not saved: ${err.message} — it is kept here and saved when the order is opened again`, "bad", 8000); }
   }
   /** Through the station while it is linked (it keeps its own copy of the note), else straight to the order's record. */
   async function saveNoteAt(rid, text) {
@@ -8546,7 +8590,11 @@ const OrderWin = window.OrderWin = (() => {
   /** The note box shows what was typed; one that has not reached the station yet says so on the box itself. */
   function paintNote(r) {
     const note = byId("owNote"); if (!note) return;
-    if (document.activeElement !== note) note.value = r.noteUnsaved != null ? r.noteUnsaved : ((r.spec && r.spec.staffNote) || "");
+    const early = W.early && W.early.rid === String(r.order.receiptId) ? W.early : null;
+    if (document.activeElement !== note) note.value = early ? early.text : r.noteUnsaved != null ? r.noteUnsaved : ((r.spec && r.spec.staffNote) || "");
+    // an order still being read from the records has no line to keep a note on yet: what is typed meanwhile is kept
+    // (W.early) and saved once the order is known
+    note.placeholder = r.loading ? "Type a note: it is kept and saved once the order is read…" : "Leave a note on this order for the next person who opens it…";
     const unsaved = r.noteUnsaved != null;
     // a note someone left stands out, so the next person to open the order reads it first
     note.classList.toggle("has", !!note.value.trim());
@@ -8629,7 +8677,7 @@ const OrderWin = window.OrderWin = (() => {
     const rid = String(r.order.receiptId), t = byId("owTitle");
     const lit = W.hl ? " found" : "", cur = t.dataset.rid === rid && t.dataset.lit === lit && t.dataset.n === sibs.length + ":" + li;
     if (!cur) {
-      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? esc("  ·  Order " + (li + 1) + " of " + sibs.length) : "");
+      t.innerHTML = `Order <span class="num${lit}">${esc(rid)}</span>` + (sibs.length > 1 ? ` <span class="owPc">line ${li + 1} of ${sibs.length}</span>` : "");
       t.dataset.rid = rid; t.dataset.lit = lit; t.dataset.n = sibs.length + ":" + li;
     }
     const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
@@ -8637,11 +8685,14 @@ const OrderWin = window.OrderWin = (() => {
     byId("owSub").textContent = [r.order.buyer && r.order.buyer.name, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
-    W.at = Math.max(0, list.findIndex(x => x.key === r.key));
-    const on = W.walk && list.some(x => x.key === r.key);
-    const pos = byId("owPos"); if (pos) pos.textContent = on && list.length ? (W.at + 1) + " of " + list.length : "";
+    // a line that has just left the list it was walked in (its skip undone under On hold, a fix that filtered it out)
+    // keeps Previous and Next, from where it was (they used to vanish, and the walk ended there)
+    const i = list.findIndex(x => x.key === r.key);
+    if (i >= 0) { W.at = i; W.listed = r.key; }
+    const on = W.walk && list.length > 0 && (i >= 0 || W.listed === r.key);
+    const pos = byId("owPos"); if (pos) pos.textContent = on && i >= 0 ? (i + 1) + " of " + list.length : "";
     const pv = byId("owPrev"), nx = byId("owNext");
-    pv.hidden = nx.hidden = !on; pv.disabled = W.at <= 0; nx.disabled = W.at >= list.length - 1;
+    pv.hidden = nx.hidden = !on; pv.disabled = i >= 0 ? i <= 0 : W.at <= 0; nx.disabled = i >= 0 ? i >= list.length - 1 : W.at >= list.length;
     // the Skip switch is the cutting flow's: a line of the pull
     byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
   }
@@ -8761,18 +8812,20 @@ const OrderWin = window.OrderWin = (() => {
   /** The order's notes as they stand now: another station, or another sorter, may have written since this pull. Read
    *  only; a note being typed, or one waiting to be saved, is never replaced by what the record said a moment ago. */
   async function refreshNote(r) {
-    const rid = String(r.order.receiptId);
+    const rid = String(r.order.receiptId), t0 = Date.now(); let known;
     try {
       const res = await fetch(`${FN}/firebaseOrders?orderId=${encodeURIComponent(rid)}${WORKSPACE_SANDBOX ? "&sandbox=1" : ""}`, { signal: window.AbortSignal && AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined });
       if (!res.ok) return;
       const j = await res.json().catch(() => null);
       const note = j && j.success && j.data ? j.data["Staff Note"] : undefined;
       if (typeof note !== "string") return;
+      known = note;
       const cur = rowOf(W.key), typing = cur && String(cur.order.receiptId) === rid && document.activeElement === byId("owNote");
       if (typing) return;
-      for (const x of Orders.rows().concat(W.rows || (W.row ? [W.row] : []))) if (String(x.order.receiptId) === rid && x.noteUnsaved == null && ((x.spec && x.spec.staffNote) || "") !== note) { x.spec = x.spec || {}; x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
+      // (a note typed here since the record was asked is newer than what it answered, even once it is saved)
+      for (const x of linesOfOrder(rid)) if (x.noteUnsaved == null && !(x.noteAt >= t0) && ((x.spec && x.spec.staffNote) || "") !== note) { x.spec = x.spec || {}; x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
       if (cur && String(cur.order.receiptId) === rid && W.dlg && W.dlg.open) paintNote(cur);
-    } catch (_) {}
+    } catch (_) {} finally { if (W.early && W.early.rid === rid) earlyNote(rid, known != null ? known : (r.spec && r.spec.staffNote) || ""); }
   }
 
   /* ── Where it is now, and the order's Now in the header ──
@@ -8823,7 +8876,7 @@ const OrderWin = window.OrderWin = (() => {
     const card = byId("owNowCard"); if (!card) return;
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev, T = (window.OrderTimeline && OrderTimeline.TYPES) || {};
-    const who = e && (e.station || e.by) ? `<span class="who"><i></i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
+    const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc(e.station)}</b>` : ""}${esc(e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
     // timeline-ui's seal (the 118px CANCELLED ORDER one when cancelled) and the latest stamps, else plain chips
     const UI = window.OrderTimelineUI, st = UI && UI.nowStamps && W.events && W.events.length ? tryDo(() => UI.nowStamps(W.events, { ev: e, cancelled: n.cancelled ? e : null })) : null;
     const recent = st ? st.recent : (W.events || []).slice(-6).map(x => `<span class="chip" title="${esc(((T[x.type] || {}).label || x.type) + (x.at ? " · " + when(x.at) : ""))}">${esc((T[x.type] || {}).label || x.type)}</span>`).join("");
@@ -8881,7 +8934,8 @@ const OrderWin = window.OrderWin = (() => {
     const host = byId("owTimeline"), UI = window.OrderTimelineUI, rid = W.rid; if (!host || !rid) return;
     if (W.tlFor === rid && (W.tl || host.firstChild)) { tryDo(() => W.tl && W.tl.refresh && W.tl.refresh()); return; }
     if (W.tl && W.tl.destroy) tryDo(() => W.tl.destroy()); W.tl = null; host.innerHTML = ""; W.tlFor = rid;
-    if (UI && UI.mount) W.tl = tryDo(() => UI.mount(host, tlOpts(rid)));
+    // its filters sit in the tab row (spec §1); the header already holds the rail and the state
+    if (UI && UI.mount) W.tl = tryDo(() => UI.mount(host, tlOpts(rid, { toolbar: byId("owTlTools") })));
     if (!W.tl) host.innerHTML = `<div class="owTlNone"><b>The order's timeline</b><span>Every step this order takes, from the moment it came in to its shipping, is drawn here.</span></div>`;
   }
   function unmountTimeline() {
@@ -8889,10 +8943,14 @@ const OrderWin = window.OrderWin = (() => {
     W.tlFor = null; const t = byId("owTimeline"); if (t) t.innerHTML = ""; const r = byId("owRail"); if (r) r.innerHTML = "";
   }
 
-  /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and the rest stepped back (SheetWin.drawOrder),
+  /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
+     drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null };
-  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
+  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null, fade: null };
+  // while a sheet is read the plate steps back a little; only one such fade at a time, and it is always let go of, so a
+  // sheet switched while the last was still reading never leaves the plate half-faded (a haze over the charms)
+  function plateFade(a) { if (SV.fade) tryDo(() => SV.fade.cancel()); SV.fade = a || null; }
+  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; plateFade(null); const tip = byId("owPlateTip"); if (tip) tip.hidden = true; }
   const nOf = name => +((/_Sheet-(\d+)/.exec(name || "") || [])[1]) || null;
   /** Every sheet the order has pieces on: the pages this sorter holds, the pool's records, and else the Library's search. */
   async function sheetsFor(r) {
@@ -8947,11 +9005,12 @@ const OrderWin = window.OrderWin = (() => {
     }
     if (!window.SheetWin || !SheetWin.drawOrder) { plateWait(null); byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))}</b><span>The sheet window is not loaded on this page.</span></div>`); return; }
     plateWait("Reading " + sheetName(s) + "…");
-    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .35 }], { duration: 160, fill: "forwards" });
+    const fade = cv.style.visibility === "hidden" || still() ? null : cv.animate([{ opacity: 1 }, { opacity: .55 }], { duration: 160, fill: "forwards" });
+    plateFade(fade);
     try {
       const info = await SheetWin.drawOrder(cv, s.id || s.page, rid, {
-        onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); if (fade) fade.cancel(); cv.style.visibility = "";
-          if (!still()) cv.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 240, easing: "ease" });
+        onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); plateFade(null); cv.style.visibility = "";
+          if (!still()) cv.animate([{ opacity: .55 }, { opacity: 1 }], { duration: 240, easing: "ease" });
           paintPanel(inf); paintFoot(inf); },
         onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); },
         // the back side waits on nothing: the plate is drawn, and this says what is still coming
@@ -8961,7 +9020,7 @@ const OrderWin = window.OrderWin = (() => {
       plateWait(null); if (info.failed && info.failed.length) toast(`${info.failed.length} design(s) of this sheet could not be read; they show as outlines`, "bad", 6000);
     } catch (e) {
       if (tok !== SV.tok) return;
-      if (fade) fade.cancel(); plateWait(null); cv.style.visibility = "hidden";
+      plateFade(null); plateWait(null); cv.style.visibility = "hidden";
       byId("owPlateWrap").insertAdjacentHTML("beforeend", `<div class="owPlateNone"><b>${esc(sheetName(s))} could not be read</b><span>${esc(e.message)}</span><button type="button" class="btn ghost sm">Try again</button></div>`);
       byId("owPlateWrap").querySelector(".owPlateNone button").onclick = () => sheetDraw();
     }
@@ -9140,7 +9199,8 @@ const OrderWin = window.OrderWin = (() => {
   /** Turns the header number into the search field (the whole search when no view is open). */
   function focusSearch() {
     wire(); if (!W.dlg) return;
-    if (!W.dlg.open || W.closing) { if (window.OrderSearch && OrderSearch.open) OrderSearch.open(); return; }
+    if (W.closing) return;   // (shrinking closed: no search over it, Ctrl+K and "/" wait for the close to end)
+    if (!W.dlg.open) { if (window.OrderSearch && OrderSearch.open) OrderSearch.open(); return; }
     const box = findBox();
     if (!finding()) {
       W.dlg.querySelector(".owId").classList.add("finding"); box.hidden = false;
@@ -9245,6 +9305,7 @@ const OrderWin = window.OrderWin = (() => {
     const fresh = !W.dlg.open || W.closing;
     if (W.closing) { W.closing = false; stopMotion(); W.dlg.classList.remove("owBack"); }
     if (W.key && W.key !== key) { clearTimeout(W.noteTimer); saveNote(); }
+    if (W.early && W.early.rid !== rid) refreshNote({ order: { receiptId: W.early.rid } });   // (typed during a look-up the view left)
     if (!W.dlg.open) W.key = null;
     // (a look-up still running for the order this view showed before never draws its spinner line over this one)
     if (!r.loading) lookDone();
@@ -9273,11 +9334,13 @@ const OrderWin = window.OrderWin = (() => {
     if (W.view === "timeline") mountFull();
     if (W.view === "sheet" && !r.loading) { if (opts.sheetAt != null) { sheetShow().then(() => { if (SV.list && SV.at !== opts.sheetAt && SV.list[opts.sheetAt]) { SV.at = opts.sheetAt; sheetDraw(); } }); } else sheetShow(opts.sheetId, opts.poolId); }
     if (opts.tab && W.view !== "info") setView("info");
+    // the Customer tab follows the order on screen from the first frame, and so does its note: while an order outside the
+    // pull is read, the tab kept the order shown before, and a message written there went to that buyer
+    try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
+    refreshNote(r);
     if (!r.loading) {
-      try { window.CustomerMail?.orderShown(r, opts || {}); } catch (e) { console.warn("customer mail:", e); }
       grow(); paintThread();
       TeamMail.load(rid, true);
-      refreshNote(r);
     }
     // what the other stations write shows within about 20 s while the window is open and in view
     clearInterval(W.poll);
@@ -9366,6 +9429,8 @@ const OrderWin = window.OrderWin = (() => {
       return;
     }
     W.rows = rows;
+    // the note already read while the order was looked up shows at once on its lines
+    if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
     show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId });
   }
   return { open, openOrder, focusSearch, paint, close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed };
