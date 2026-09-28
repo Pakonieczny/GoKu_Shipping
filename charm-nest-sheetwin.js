@@ -2426,7 +2426,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (list) { list = list.filter(c => String(c.orderId) !== rid); list.unshift((r && r.record) || Object.assign({ orderId: rid, by: rec.by, why: rec.why, at: Date.now() }, rec.record || {})); listAt = 0; }
       return r;
     }
-    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
+    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); window.AutoCancel?.forget?.(rid); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
     /** Ids read elsewhere (AutoCancel's newest records) join the cache at once, and come into the Cancelled tab as any
      *  cancel seen live does; returns how many were new to it. */
     function absorb(more) {
@@ -2623,9 +2623,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     goneSt.state = "ok"; paint();
   }
   // (all: its lines already marked gone go too, as when a cancel is found by AutoCancel; a committed line stays with its run)
-  function dropOrder(rid, all) {
+  // (keep: a line AutoCancel keeps as gone, its piece staying on a sheet)
+  function dropOrder(rid, all, keep) {
     rid = String(rid);
-    const rows = all ? Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed") : rowsOfOrder(rid), keys = new Set(rows.map(r => r.key));
+    const rows = (all ? Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed") : rowsOfOrder(rid)).filter(r => !(keep && keep(r))), keys = new Set(rows.map(r => r.key));
     for (const r of rows) { B.orders.byKey.delete(r.key); Engrave.items().delete(r.key); for (const id of r.poolIds || []) if (!Pool.sheetOf(id)) B.pool.rows.delete(id); }
     B.orders.rows = B.orders.rows.filter(r => !keys.has(r.key));
     if (B.review && Array.isArray(B.review.items)) B.review.items = B.review.items.filter(it => String(it.rid || "") !== rid && !keys.has(it.line) && !keys.has(it.jobKey) && !(it.row && keys.has(it.row.key)) && !(it.rows || []).some(r => keys.has(r.key)));
@@ -2726,22 +2727,26 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     /** What becomes of the order here: lines to drop, pages it comes off, pages it stays on, pages to wait for, and
      *  pieces never placed. */
     function planOf(rid) {
-      const ids = idsOf(rid), rows = Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed");
-      const off = [], wait = [], left = new Map(), onPage = new Set(), loose = [];
+      const ids = idsOf(rid), off = [], wait = [], left = new Map(), onPage = new Set(), loose = [], leftIds = new Set();
       const stay = (where, n, w) => { const l = left.get(where); if (l) l.n += n; else left.set(where, Object.assign({ where, n }, w)); };
       for (const sh of allSheets()) {
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length) continue;
         for (const c of mine) onPage.add(c.poolId);
         const w = leftWhy(sh, ids);
-        if (w && w.wait || !w && busy(sh)) wait.push(sh); else if (w) stay(whereOf(sh), mine.length, w); else off.push(sh);
+        if (w && w.wait || !w && busy(sh)) wait.push(sh); else if (w) { stay(whereOf(sh), mine.length, w); for (const c of mine) leftIds.add(c.poolId); } else off.push(sh);
       }
       for (const id of ids) {
         if (onPage.has(id)) continue;
         const p = B.pool.rows.get(id);
-        if (p && p.sheetId && !GONE.includes(p.state)) stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { why: "not open in this sorter" });
+        if (p && p.sheetId && !GONE.includes(p.state)) { stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { why: "not open in this sorter" }); leftIds.add(id); }
         else if (!p || !GONE.includes(p.state)) loose.push(id);
       }
-      return { rid, ids, rows, off, wait, left: [...left.values()], loose };
+      // a line with a piece that stays on a sheet (cut, released, held…) is kept, marked gone, as Etsy's own gone lines
+      // are: the set's readiness reads it as nothing to wait on (CharmNestReadiness.decisions). Dropped, it left that piece
+      // with no decision, and the set it is cut with could never be released. Once gone it is not taken up again.
+      const stays = r => (r.poolIds || []).some(id => leftIds.has(id));
+      const rows = Orders.rows().filter(r => String(r.order.receiptId) === rid && r.state !== "committed" && !(r.state === "gone" && stays(r)));
+      return { rid, ids, rows, off, wait, left: [...left.values()], loose, stays };
     }
     function noticeText(rid, left) {
       const cut = left.filter(l => l.cut), rest = left.filter(l => !l.cut), say = [];
@@ -2783,7 +2788,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
             rec = r && r.cancelled && r.cancelled[rid];
             if (!rec) {
               if (j0 || plan.rows.length) agent({ bridge: true }, "DS", `Order ${rid} is not cancelled any more: left as it is`);
-              st = read(); delete st.jobs[rid]; save(); return "restored";
+              st = read(); delete st.jobs[rid]; save(); forget(rid); return "restored";
             }
             plan = planOf(rid);
             if (!W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length) break;
@@ -2826,7 +2831,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // 2 · its lines leave Orders and the run, and the run is saved (once more if that fails: a reload must not bring
         //     them back; a save still failing is tried again at the next check)
         if (plan.rows.length || !j.runSaved) {
-          await (plan.rows.length ? dropOrder(rid, true) : B.run ? RunCtl.save(B.run) : Promise.resolve()).catch(() => B.run && RunCtl.save(B.run));
+          await (plan.rows.length ? dropOrder(rid, true, plan.stays) : B.run ? RunCtl.save(B.run) : Promise.resolve()).catch(() => B.run && RunCtl.save(B.run));
           j.runSaved = true; upd(x => { x.runSaved = true; });
         }
         if (window.Session && Session.schedule) Session.schedule();
@@ -2909,6 +2914,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const fresh = list.filter(c => !st.known.includes(String(c.orderId)));
         st.known = [...recs.keys()].concat(st.known.filter(id => !recs.has(id))).slice(0, 300); save();
         if (window.Cancelled && Cancelled.absorb([...recs.keys()])) Orders.render();   // (the pull rule leaves them out at once)
+        // a notice whose order is not among the newest records may have been restored at another screen: asked once (one
+        // read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is set aside
+        const ask = st.notices.filter(n => !recs.has(n.rid)).map(n => n.rid).slice(0, 60);
+        if (ask.length) { const c = await api("charmNestLibrary", { op: "cancelCheck", orderIds: ask }, { quiet: true }).catch(() => null); if (c && c.cancelled) for (const id of ask) if (!c.cancelled[id]) forget(id); }
         const have = held(), due = [];
         for (const id of new Set([...Object.keys(st.jobs), ...recs.keys(), ...(window.Cancelled ? Cancelled.ids() : [])])) {
           if (st.jobs[id]) { due.push(id); continue; }
@@ -2941,9 +2950,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       };
       if (node && node.animate && !still()) node.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateX(12px)" }], { duration: 240, easing: "ease-in", fill: "forwards" }).finished.then(go, go); else go();
     }
+    /** The order is not cancelled any more (restored here or at another screen): its set-aside notice goes. */
+    function forget(rid) {
+      rid = String(rid); st = read(); if (!st.notices.some(n => n.rid === rid)) return false;
+      st.notices = st.notices.filter(n => n.rid !== rid); save();
+      for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ was cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
+      RunCtl.renderBanner(); return true;
+    }
     /** A cancel made in this window: done here already, so it is not taken up again. */
     function mine(rid, at) { st = read(); st.done[String(rid)] = { at: +at || 0, t: Date.now(), mine: true }; save(); }
-    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, mine, state: () => read() };
+    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, forget, mine, state: () => read() };
   })();
 
   /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */
