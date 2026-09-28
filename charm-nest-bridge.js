@@ -8431,7 +8431,7 @@ const OrderWin = window.OrderWin = (() => {
     // text onto the new order; open() saves the note of the order it leaves)
     W.dlg.addEventListener("close", () => {
       if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
-      W.closing = false; stopMotion(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
+      W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
@@ -8481,9 +8481,10 @@ const OrderWin = window.OrderWin = (() => {
         if (x && act === "edit" && x.text && !x.imageUrl) { input.value = input.value.trim() ? input.value.replace(/\s+$/, "") + "\n" + x.text : x.text; grow(); TeamMail.setDraft(W.rid, input.value); input.focus(); }
       }
     });
-    TeamMail.on(rid => { if (W.dlg.open && (rid == null || rid === W.rid)) { paintThread(true); paintWho(); } });
+    const thread = () => hold("thread", () => { if (W.dlg.open) { paintThread(true); paintWho(); } }, [byId("owThread")]);
+    TeamMail.on(rid => { if (W.dlg.open && (rid == null || rid === W.rid)) thread(); });
     // the thread is shared with the engraving cards: a read, from here or from a card, draws it again
-    TeamMail.onThread(rid => { if (W.dlg.open && rid === W.rid) { paintThread(true); paintWho(); } });
+    TeamMail.onThread(rid => { if (W.dlg.open && rid === W.rid) thread(); });
     // and so is the draft: written or sent from a card, this box shows the same (unless it is being typed in)
     TeamMail.onDraft(rid => { if (W.dlg.open && rid === W.rid && TeamMail.syncDraft(input, rid)) grow(); });
     byId("owTabTeam")?.addEventListener("click", () => setTimeout(() => { paintThread(true); grow(); }, 0));
@@ -8832,7 +8833,7 @@ const OrderWin = window.OrderWin = (() => {
       if (typing) return;
       // (a note typed here since the record was asked is newer than what it answered, even once it is saved)
       for (const x of linesOfOrder(rid)) if (x.noteUnsaved == null && !(x.noteAt >= t0) && ((x.spec && x.spec.staffNote) || "") !== note) { x.spec = x.spec || {}; x.spec.staffNote = note; x.order.staffNote = note; if (x.line.staffNote) x.line.staffNote = note; }
-      if (cur && String(cur.order.receiptId) === rid && W.dlg && W.dlg.open) paintNote(cur);
+      if (cur && String(cur.order.receiptId) === rid && W.dlg && W.dlg.open) hold("note", () => { const c = rowOf(W.key); if (c && String(c.order.receiptId) === rid && W.dlg.open && document.activeElement !== byId("owNote")) paintNote(c); });
     } catch (_) {} finally { if (W.early && W.early.rid === rid) earlyNote(rid, known != null ? known : (r.spec && r.spec.staffNote) || ""); }
   }
 
@@ -8947,7 +8948,7 @@ const OrderWin = window.OrderWin = (() => {
     const take = j => {
       if (W.evFor !== rid || W.feed !== f) return;
       W.events = (j && j.events) || []; W.cancelled = j && j.cancelled ? (j.cancelled[rid] || (j.cancelled.orderId ? j.cancelled : null)) : null;
-      const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r);
+      hold("now", () => { const r = rowOf(W.key); if (r && String(r.order.receiptId) === rid) paintNow(r); }, [byId("owNowCard"), byId("owNow")]);
     };
     if (f) { W.feed = f; f.subscribe(k => { if (k === "data") take(f.answer); else if (k === "error" && W.feed === f) console.warn("order view: timeline", f.error); }); f.refresh(); return; }
     Promise.resolve().then(() => T.get(rid)).then(take).catch(e => { if (W.evFor === rid) { W.events = null; console.warn("order view: timeline", e && e.message); } });
@@ -9026,12 +9027,20 @@ const OrderWin = window.OrderWin = (() => {
 
   /* ── the timeline: timeline-ui's component, in the Timeline view and (compact) in the header ── */
   function tlOpts(rid, extra) {
-    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null, pieces: W.pieces, piece: W.piece,
+    return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? heldFeed(W.feed) : null, pieces: W.pieces, piece: W.piece,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
       // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring
       stages: () => { const r = rowOf(W.key), UI = window.OrderTimelineUI; return r && String(r.order.receiptId) === rid && UI && UI.stagesFor ? UI.stagesFor(linesOf(r)) : null; },
       onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
+  }
+  /** The shared timeline feed as the mounts see it: the same reads, its answers handed on once the view has landed. */
+  function heldFeed(f) {
+    if (f._held) return f._held;
+    const P = f._held = { orderId: f.orderId, get answer() { return f.answer; }, get error() { return f.error; }, get loading() { return f.loading; }, get at() { return f.at; },
+      refresh: o => f.refresh(o), destroy: () => f.destroy(),
+      subscribe: fn => { const id = "feed" + (++H.n); let on = true; const off = f.subscribe(k => hold(id, () => { if (on) fn(k, P); }, W.dlg && [...W.dlg.querySelectorAll("#owRail > *, #owTimeline > *")])); return () => { on = false; H.q.delete(id); off(); }; } };
+    return P;
   }
   function mountRail(rid) {
     const host = byId("owRail"), UI = window.OrderTimelineUI; if (!host) return;
@@ -9092,10 +9101,12 @@ const OrderWin = window.OrderWin = (() => {
       paintPanel(null); byId("owSheetCv").style.visibility = "hidden"; byId("owPlateFoot").innerHTML = "";
       plateWait("Finding the order's sheets…");
       SV.finding = sheetsFor(r); const list = await SV.finding;
+      await landed();   // (the plate and its panel are drawn once the view has landed, never under its flight)
       if (tok !== SV.tok || SV.rid !== rid) return;
       SV.list = list; SV.at = 0; paintNow(rowOf(W.key));
       const cnt = byId("owShCount"); if (cnt) cnt.textContent = list.length ? list.length + (list.length === 1 ? " sheet" : " sheets") : "";
     } else if (SV.finding) await SV.finding;
+    await landed();
     if (SV.rid !== rid || !SV.list) return;
     if (sheetId) { const i = SV.list.findIndex(s => s.id === sheetId); if (i >= 0) SV.at = i; }
     if (poolId) SV.focus = poolId;
@@ -9373,13 +9384,50 @@ const OrderWin = window.OrderWin = (() => {
     for (const sel of q) for (const n of document.querySelectorAll(sel)) if (rectOf(n)) return n;
     return null;
   }
+  /* ── the flight (Paul, 28 Sep: "not exactly visible and they were jerky"): while the view grows or goes back, what the
+     network brings (the records of an order outside the pull, its timeline, its sheet, its note, its thread) is held,
+     not drawn into the flying view; it is drawn once the view has landed and fades in there. The view is promoted
+     (will-change) only while it flies. ── */
+  const H = { q: new Map(), wait: [], n: 0, raf: 0 };
+  const flying = () => !!(W.fly || W.closing);
+  /** Draw now, or (the view in flight, or still drawing what it held) once it lands: the latest of each kind, then its
+   *  parts fade in. */
+  function hold(key, fn, fade) {
+    if (!flying() && !H.q.size) return void fn();
+    H.q.delete(key); H.q.set(key, { fn, fade: [].concat(fade || []) });
+    if (!flying()) land();
+  }
+  /** Resolves once the view is not in flight (at once when it is not). */
+  const landed = () => flying() || H.raf ? new Promise(res => H.wait.push(res)) : Promise.resolve();
+  /** Landed: what was held is drawn one kind a frame (all at once was one long task as the view came to rest). */
+  function land() {
+    if (flying() || H.raf) return;
+    const step = () => {
+      H.raf = 0; if (flying()) return;   // (another flight: the rest waits for it to land)
+      const e = H.q.entries().next().value;
+      if (e) { H.q.delete(e[0]); tryDo(e[1].fn); if (!still() && W.dlg && W.dlg.open) fadeIn(e[1].fade); H.raf = requestAnimationFrame(step); return; }
+      for (const res of H.wait.splice(0)) res();
+    };
+    H.raf = requestAnimationFrame(step);
+  }
+  const fadeIn = nodes => { for (const n of new Set(nodes)) if (n && n.isConnected && !n.hidden) n.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: "ease" }); };
+  /** The view flies with this animation: promoted while it runs, and what was held is drawn when it ends. */
+  function flight(a) {
+    const d = W.dlg, f = W.fly = { a }; d.style.willChange = "clip-path, opacity, transform";
+    const end = () => { if (W.fly !== f) return; W.fly = null; d.style.willChange = ""; land(); };
+    a.finished.then(end, end);
+    // (a hidden tab draws no frames: the view never waits on them to land)
+    const t = a.effect && a.effect.getTiming ? a.effect.getTiming() : {}; setTimeout(end, (+t.duration || 0) + (+t.delay || 0) + 400);
+  }
+  /** The view closed: whatever was held for it goes with it. */
+  function flightGone() { W.fly = null; H.q.clear(); cancelAnimationFrame(H.raf); H.raf = 0; if (W.dlg) W.dlg.style.willChange = ""; for (const res of H.wait.splice(0)) res(); }
   function growIn(from) {
     const d = W.dlg; stopMotion(); d.classList.remove("owBack"); d.classList.add("owGrow");
-    if (still()) { W.anims.push(d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" })); return; }
+    if (still()) { const a = d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" }); W.anims.push(a); flight(a); return; }
     const r = rectOf(from);
     const run = (n, frames, o) => { if (!n) return null; const a = n.animate(frames, Object.assign({ easing: EASE, fill: "backwards" }, o)); W.anims.push(a); return a; };
-    if (!r) { run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 }); return; }
-    run(d, [{ clipPath: clipOf(r) }, { clipPath: "inset(0px 0px 0px 0px round 0px)" }], { duration: 650, easing: GROW });
+    if (!r) { flight(run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 })); return; }
+    flight(run(d, [{ clipPath: clipOf(r) }, { clipPath: "inset(0px 0px 0px 0px round 0px)" }], { duration: 650, easing: GROW }));
     // the surface starts in the colour of what was clicked and takes its own as it grows
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
     // the header, the tabs and the view come up 6px, 40ms apart, from 240ms; the rail's steps spring in
@@ -9395,14 +9443,25 @@ const OrderWin = window.OrderWin = (() => {
     if (r) {
       d.classList.add("owBack");
       const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); A.push(t.animate([{ opacity: 0 }, { opacity: 0, offset: .3 }, { opacity: 1 }], { duration: 420, easing: "ease", fill: "forwards" })); }
-      A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)", opacity: 1 }, { clipPath: clipOf(r), opacity: .9 }], { duration: 420, easing: GROW, fill: "forwards" }));
+      // (the clip alone: an opacity on the full-screen surface as well made every frame of the close a repaint)
+      d.style.willChange = "clip-path";
+      A.push(d.animate([{ clipPath: "inset(0px 0px 0px 0px round 0px)" }, { clipPath: clipOf(r) }], { duration: 420, easing: GROW, fill: "forwards" }));
     } else A.push(d.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: still() ? "none" : "scale(.985)" }], { duration: still() ? 110 : 170, easing: "ease", fill: "forwards" }));
     W.anims.push(...A);
     // (a hidden tab draws no frames: the close never waits on them)
     await Promise.race([Promise.all(A.map(a => a.finished.catch(() => {}))), new Promise(res => setTimeout(res, 600))]);
     if (!W.closing) return;   // opened again meanwhile
     try { d.close(); } catch (_) { d.removeAttribute("open"); }
-    if (r && from && from.animate) from.animate([{ boxShadow: "0 0 0 3px rgba(202,168,97,.45)" }, { boxShadow: "0 0 0 0 rgba(202,168,97,0)" }], { duration: 700, easing: "ease-out" });
+    if (r && from && from.animate) glow(from);
+  }
+  /** The gold flash on what the view went back into: a layer over it whose ring is painted once and only fades
+   *  (its box-shadow animated on the row itself repainted the row every frame). */
+  function glow(from) {
+    const r = rectOf(from); if (!r) return;
+    const g = el("i", "owGlow"), rad = tryDo(() => getComputedStyle(from).borderRadius) || "12px";
+    Object.assign(g.style, { position: "fixed", left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", borderRadius: rad, boxShadow: "0 0 0 3px rgba(202,168,97,.45)", pointerEvents: "none", zIndex: "2147483000", willChange: "opacity" });
+    document.body.appendChild(g);
+    g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 700, easing: "ease-out", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
   }
   function closeNow() { if (!W.dlg || !W.dlg.open) return; W.closing = false; stopMotion(); try { W.dlg.close(); } catch (_) { W.dlg.removeAttribute("open"); } }
 
@@ -9435,7 +9494,7 @@ const OrderWin = window.OrderWin = (() => {
       setView(v, { quiet: true, noLoad: true });
       try { W.dlg.showModal(); } catch (_) { W.dlg.setAttribute("open", ""); }
       inkTo();
-      if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) W.anims.push(W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" })); }
+      if (opts.back) { W.dlg.classList.add("owGrow"); if (!still()) { const a = W.dlg.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" }); W.anims.push(a); flight(a); } }
       else growIn(W.from);
     } else if (opts.view && opts.view !== W.view) setView(opts.view, { noLoad: true });
     else if (other && opts.dir && !still()) { const b = W.dlg.querySelector(".owBody"); b.getAnimations().forEach(a => a.cancel()); b.animate([{ opacity: .2, transform: `translateX(${opts.dir * 14}px)` }, { opacity: 1, transform: "none" }], { duration: 260, easing: EASE }); }
@@ -9520,29 +9579,33 @@ const OrderWin = window.OrderWin = (() => {
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
     if (pulled.length) return show(mine || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
-    const loading = byId("owLoading"), say = t => { if (tok !== W.look) return; loading.hidden = !t; if (t) loading.lastElementChild.textContent = t; };
+    const loading = byId("owLoading"), say = t => hold("say", () => { if (tok !== W.look) return; loading.hidden = !t; if (t) loading.lastElementChild.textContent = t; });
     W.rows = null;
     say("Looking up order " + rid + " in the sorter's records…");
     show(stub, Object.assign({}, o, { view: o.view && o.view !== "sheet" ? o.view : o.view === "sheet" ? "sheet" : "info" }));
     let rows = null, failed = null;
     try { rows = await lookUp(rid, say); } catch (e) { failed = e; console.warn("order view: look-up", e); }
-    if (tok !== W.look || !W.dlg.open || W.key !== stub.key) return;
+    // (drawn once the view has landed, never into it mid-flight; a view going back meanwhile is left to go)
+    await landed();
+    if (tok !== W.look || !W.dlg.open || W.closing || W.key !== stub.key) return;
     say(null);
+    const shown = () => { if (!still()) fadeIn([...W.dlg.querySelectorAll(".owBody > .owView:not([hidden]) > *, .owId > *, #owRail > *")]); };
     if (!rows || !rows.length) {
       stub.loading = false; stub.state = "";
       // (kept on the line, so a repaint of the view says it again; a read that failed can be tried again)
       stub.said = failed ? `The order's records could not be read just now (${esc(String(failed.message || failed).slice(0, 160))}). Its timeline and messages are still here. <button type="button" class="btn ghost xs" data-ow-retry>Try again</button>`
         : "This order has no line in the sorter's records: it was never pulled, or its run is gone. Its timeline and messages are still here.";
-      paint();
+      paint(); shown();
       TeamMail.load(rid, true); refreshNote(stub); try { window.CustomerMail?.orderShown(stub, {}); } catch (_) {}
       return;
     }
     W.rows = rows;
     // the note already read while the order was looked up shows at once on its lines
     if (stub.spec && stub.spec.staffNote) for (const row of rows) if (row.spec && !row.spec.staffNote) { row.spec.staffNote = stub.spec.staffNote; row.order.staffNote = stub.spec.staffNote; }
-    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId });
+    show(rows[0], { walk: false, view: W.view, sheetId: o.sheetId, poolId: o.poolId }); shown();
   }
-  return { open, openOrder, focusSearch, paint, close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed };
+  // (a repaint asked from outside, an image or a record arriving, waits for the view to land)
+  return { open, openOrder, focusSearch, paint: () => hold("paint", () => { if (W.dlg && W.dlg.open && !W.closing) paint(); }), close: () => shut(), isOpen: () => !!(W.dlg && W.dlg.open && !W.closing), key: () => W.key, view: () => W.view, setView: v => setView(v), repaintThread: () => paintThread(true), _sheet: () => SV.info, _feed: () => W.feed };
 })();
 
 /* ═══ 24c · RunHistory — every run that ever ran, and the way back into one ═══════════════════════════════════════════
