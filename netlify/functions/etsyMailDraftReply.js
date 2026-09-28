@@ -942,7 +942,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         one reply. If they wrote three messages, all three are open. A
         question in the live conversation that the shop's replies
         skipped (a price, a yes or no) is open too, unless the customer
-        dropped it or a purchase settled it.
+        dropped it or a purchase settled it. Not repeating a question
+        isn't dropping it, and a purchase settles it only when it came
+        after the shop's answer or includes what was asked (a
+        charm-only order placed while the shop was away doesn't settle
+        "how much to add chains?"; answer it while the order is unshipped).
       - A short follow-up ("any update?", "checking back in") points
         to the last open request in the live conversation. Answer that
         request; don't treat the nudge as a new topic.
@@ -1002,7 +1006,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         days old with no USPS scan, or the delivery estimate has
         passed, say plainly that USPS never scanned it and write the
         replacement the shop will send, with
-        ready_for_human_approval:true.
+        ready_for_human_approval:true. A missing scan doesn't say where
+        the package is: never write that it never shipped, is still
+        with us, or was lost.
       - carrierStage scan_status_unknown (also after the tracking
         image): don't answer yes or no to "has it shipped / does USPS
         have it", and don't use in-transit wording (tracking going
@@ -1011,8 +1017,14 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         "we'll confirm from the USPS scans whether it has been picked
         up" when they asked, and set ready_for_human_approval:true
         naming the missing fact (the USPS scan status). If the label is
-        more than 5 business days old, also write "If USPS never picked
-        it up, we'll send you a replacement" for a person to approve.
+        more than 5 business days old (labelBusinessDaysOld above 5),
+        also write "If USPS never picked it up, we'll send you a
+        replacement" for a person to approve. Younger than that, when
+        they ask for one, say it's too early and give the day from
+        noScanReplacementFrom ("if USPS still hasn't scanned it by
+        <that day>, we'll send you a replacement"). The lost-package
+        rule (7 days after the estimate) is only for a package USPS
+        has scanned.
         Don't work out a lost-package date from a scan the customer
         describes unless it is clearly a USPS acceptance or transit scan.
       - Give the tracking number only when the customer doesn't have
@@ -1255,8 +1267,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         the problem (USPS never scanned the label, the order is past
         the shop's own production or delivery estimate, a wrong or
         missing item, damage on arrival, something staff promised and
-        didn't send), open with one short apology ("Sorry about this.")
-        and then the remedy. Don't apologise for wear, the customer's
+        didn't send), open with one short apology that names the
+        problem ("Sorry the tracking number isn't working.") and then
+        the remedy. Don't apologise for wear, the customer's
         own address error, or a carrier delay still inside the estimate.
         When the customer accepts an offer you can't find in the
         messages, start with "Sorry for the confusion", then give what
@@ -1645,9 +1658,12 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       and no fee is asked. While why it came back isn't known, ask
       whether the address was right and give both outcomes, one
       sentence each (a wrong or old address: we reship once it's back
-      and the fee is paid; back through no fault of theirs: a person
-      arranges a replacement or refund); never offer a refund on the
-      address alone.
+      and the fee is paid; a correct address: we'll confirm from the
+      carrier's scans why it came back, and a person decides the next
+      step). Never offer a refund on the address alone, never let the
+      customer pick refund or replacement ("whichever you prefer"),
+      and never call it no fault of theirs before the cause is known
+      (a parcel nobody collected or that was refused comes back too).
 
    3.5 If tracking shows DELIVERED but the customer doesn't have it,
       say where tracking shows it was left and when, suggest checking
@@ -1770,7 +1786,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    shape is "production is around 4-6 business days, and shipping to
    [region] typically takes another [X-Y] business days." Never collapse
    this into "we estimate N weeks total" — that's the internal assessment
-   number, not the quote.
+   number, not the quote. For a placed order that hasn't shipped, whatever
+   the question (an address change, a deadline, an upgrade), say where it
+   stands instead of the general range: "it's N business days in, so it
+   should ship within the next X-Y business days", counted from the order
+   date, then the shipping range.
 
    Rules by deadline, counted in business days. Start from the realistic
    ship day: the next business day when the piece is already made or
@@ -2247,8 +2267,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         correct number and where the package is here, list both in
         missing_facts, and hold. (When the tool result also carries a
         barcode field, the tools already shortened a 420+ZIP barcode:
-        give the trackingCode once as the correct number, without
-        sending them to the USPS website.) If the label is more
+        give the trackingCode once as the correct number only when the
+        scans show USPS has it; otherwise give no number, since the
+        failing label may have been replaced.) If the label is more
         than 5 business days old or the lost-package date has come, add
         "If it hasn't been delivered, we'll send you a replacement" for
         a person to approve.
@@ -3563,6 +3584,21 @@ async function addCarrierStage(data) {
   // The newest shipment decides (a reship has its own, later label).
   const newest = out.shipments.slice().sort((a, b) => (Date.parse(b.shipDate || "") || 0) - (Date.parse(a.shipDate || "") || 0))[0];
   out.carrierStage = (newest && newest.carrierStage) || "scan_status_unknown";
+  // With no USPS scan, the owner's replacement rule counts business days
+  // from the label; give the model the count and the day it applies from
+  // so it never counts them itself or falls back to the lost-package rule.
+  const labelMs = newest ? Date.parse(newest.shipDate || "") : NaN;
+  if (Number.isFinite(labelMs) && (out.carrierStage === "label_created_not_scanned" || out.carrierStage === "scan_status_unknown")) {
+    const day = d => { const x = new Date(d); x.setUTCHours(12, 0, 0, 0); return x; };
+    const isWork = d => d.getUTCDay() !== 0 && d.getUTCDay() !== 6;
+    const today = day(simNow());
+    let cur = day(labelMs), age = 0;
+    while (cur < today) { cur.setUTCDate(cur.getUTCDate() + 1); if (isWork(cur)) age++; }
+    const from = day(labelMs);
+    for (let n = 0; n < 6; ) { from.setUTCDate(from.getUTCDate() + 1); if (isWork(from)) n++; }
+    out.labelBusinessDaysOld = age;
+    out.noScanReplacementFrom = from.toISOString().slice(0, 10);
+  }
   out.shippedMeans = "isShipped/shippedAt only mean Etsy has a shipping label for this order. Whether USPS has the package is carrierStage: "
     + "label_created_not_scanned = the label is made, USPS hasn't scanned it yet (don't say shipped or on its way); "
     + "in_transit / out_for_delivery / delivered = what USPS scanned; scan_status_unknown = no scan data yet, call generate_tracking_image to read the scans.";
@@ -3716,7 +3752,7 @@ function buildToolExecutors(ctx) {
           // listing's own entry; the family sizes below are the shop's
           // standard and may be stated (replays read the two as a clash).
           result = { ...result,
-            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Where the fact sheet words a size more closely (a standard size and how far silhouettes reach), quote it the fact sheet's way. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
             familyFacts: { family, charmStyles: require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles), metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
