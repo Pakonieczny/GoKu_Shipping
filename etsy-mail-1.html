@@ -7216,14 +7216,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     const CONFIG_COLL = "EtsyMail_Config";
     const AUTO_CFG_DOC_ID = "autoPipeline";
     const AUTO_CFG_DEFAULTS = {
-      enabled              : true,
+      enabled              : false,   // auto-send stays OFF unless the owner saved it ON
       threshold            : 0.80,
       // v3.30 — Quiet-period debounce. Minutes the latest inbound must
       // be "settled" before the pipeline runs. Prevents 3-4 rapid-fire
       // customer messages from burning 3-4 Anthropic calls when one
       // reply (after they stop typing) is what we actually want.
       quietPeriodMinutes   : 5,
-      manualAiDraftAutoSend: true,   // v1.8: defaults to ON to preserve existing behavior
+      manualAiDraftAutoSend: false,  // OFF unless the owner saved it ON
       // ─── v2.0 Step 1 (default OFF — operator opts in after deploy verifies) ──
       listingsMirrorEnabled  : false,
       intentClassifierEnabled: false,
@@ -7303,7 +7303,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (res && res.exists && res.doc) {
           const d = res.doc;
           _autoCfg = {
-            enabled              : d.enabled !== false,
+            enabled              : d.enabled === true,   // missing field => OFF
             threshold            : (typeof d.threshold === "number" && d.threshold >= 0 && d.threshold <= 1)
                                    ? d.threshold : AUTO_CFG_DEFAULTS.threshold,
             // v3.30: clamp to [0, 60] minutes. Missing field => 5 (the
@@ -7311,10 +7311,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             // disables the debounce entirely (legacy behavior).
             quietPeriodMinutes   : (typeof d.quietPeriodMinutes === "number" && d.quietPeriodMinutes >= 0 && d.quietPeriodMinutes <= 60)
                                    ? d.quietPeriodMinutes : AUTO_CFG_DEFAULTS.quietPeriodMinutes,
-            // v1.8: missing field defaults to true (preserves pre-v1.8 behavior
-            // for configs written before this toggle existed). Explicit `false`
-            // turns it off.
-            manualAiDraftAutoSend: d.manualAiDraftAutoSend !== false,
+            // Missing field => OFF; only an explicit saved `true` turns it on.
+            manualAiDraftAutoSend: d.manualAiDraftAutoSend === true,
             // v2.0 Step 1: missing field => OFF. Explicit-true semantics —
             // these features ship dormant; operator opts in.
             listingsMirrorEnabled  : d.listingsMirrorEnabled === true,
@@ -7437,10 +7435,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       ));
 
       const clean = {
-        enabled              : enabled !== false,
+        enabled              : enabled === true,
         threshold            : Math.max(0, Math.min(1, parseFloat(threshold) || AUTO_CFG_DEFAULTS.threshold)),
         quietPeriodMinutes   : quietClean,
-        manualAiDraftAutoSend: manualAiDraftAutoSend !== false,   // v1.8
+        manualAiDraftAutoSend: manualAiDraftAutoSend === true,   // v1.8
         // v2.0 Step 1: explicit-true semantics.
         listingsMirrorEnabled  : listingsMirrorEnabled === true,
         intentClassifierEnabled: intentClassifierEnabled === true,
@@ -11455,7 +11453,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const metaEl        = $("emAutoCfgMeta");
 
       const populateFromCfg = () => {
-        if (enabledInput) enabledInput.checked = _autoCfg.enabled !== false;
+        if (enabledInput) enabledInput.checked = _autoCfg.enabled === true;
         if (thr && thrVal) {
           thr.value = String(_autoCfg.threshold);
           thrVal.textContent = Math.round(_autoCfg.threshold * 100) + "%";
@@ -11467,8 +11465,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           quiet.value = String(q);
           quietVal.textContent = q === 0 ? "Off" : (q + " min");
         }
-        // v1.8: missing field = true (preserves existing behavior)
-        if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend !== false;
+        // Missing field = OFF (only an explicit saved ON checks it)
+        if (manualInput) manualInput.checked = _autoCfg.manualAiDraftAutoSend === true;
         // v2.0 Step 1: missing field = false (explicit-true required)
         if (listingsInput) listingsInput.checked = _autoCfg.listingsMirrorEnabled === true;
         if (intentInput)   intentInput.checked   = _autoCfg.intentClassifierEnabled === true;
@@ -11599,10 +11597,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const salesPilotInput      = $("emSalesPilotThreadIdsInput");
       try {
         await saveAutoConfig({
-          enabled              : enabledInput ? enabledInput.checked : true,
+          enabled              : enabledInput ? enabledInput.checked : false,
           threshold            : thr ? thr.value : AUTO_CFG_DEFAULTS.threshold,
           quietPeriodMinutes   : quiet ? quiet.value : AUTO_CFG_DEFAULTS.quietPeriodMinutes,   // v3.30
-          manualAiDraftAutoSend: manualInput ? manualInput.checked : true,   // v1.8
+          manualAiDraftAutoSend: manualInput ? manualInput.checked : false,   // v1.8
           listingsMirrorEnabled  : listingsInput ? listingsInput.checked : false,  // v2.0 Step 1
           intentClassifierEnabled: intentInput   ? intentInput.checked   : false,  // v2.0 Step 1
           // v2.0 Step 2: pilot list is a textarea — pass raw text and let
@@ -18159,14 +18157,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // toggle in Settings. Operators can now decouple this from the
         // global auto-pipeline flag — e.g., auto-pipeline ON for new
         // customer messages, but ALWAYS review AI Draft clicks before
-        // they go out (manualAiDraftAutoSend = false). Defaults to ON
-        // to preserve v1.7 behavior.
+        // they go out (manualAiDraftAutoSend = false). Both flags are OFF
+        // unless the owner saved them ON (a missing or unreadable record
+        // never turns auto-send on).
         //
         // Skipped for revise/follow_up regardless: those are explicitly
         // operator-dialogue modes; the operator wants to control the send.
         if (mode === "initial"
-            && _autoCfg.enabled
-            && _autoCfg.manualAiDraftAutoSend !== false) {
+            && _autoCfg.enabled === true
+            && _autoCfg.manualAiDraftAutoSend === true) {
           const threshold = typeof _autoCfg.threshold === "number" ? _autoCfg.threshold : 0.80;
           const aiConf = (typeof data.aiConfidence === "number" ? data.aiConfidence
                        : typeof data.confidence   === "number" ? data.confidence : 0);
