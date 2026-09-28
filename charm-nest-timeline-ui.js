@@ -6,9 +6,9 @@
  *    tl.refresh() → Promise   tl.focus(eventId) → true when shown   tl.destroy()
  *
  *  Reads OrderTimeline.get(orderId) → { events, cancelled, where }. Draws, top to bottom:
- *    Now + milestone rail  where the order is right now, and one stamp per main step (Order in → … → Completed on
- *                          Etsy): passed steps stamped, the current one pulsing, the ones to come faint outlines; a
- *                          cancelled order gets a red CANCELLED stamp across the rail
+ *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its 9-step
+ *                          rail (Arrived → … → Completed): passed steps stamped, the next one pulsing, the ones to come
+ *                          faint outlines; a cancelled order gets a red CANCELLED stamp across the rail
  *    filters               All · Milestones · Stations · Sheets · Holds & cancels · Messages, with counts, and Stamps
  *                          (the legend); non-matches dim, nothing moves
  *    lanes                 one lane per place, one column per day (idle days collapse), one stamp per event, a gold
@@ -120,23 +120,74 @@
   const laneOf = e => ETSY_SIDE.has(e.type) ? "etsy" : STATION_LANE[e.station] || (e.source === "etsy" ? "etsy" : kindOf(e.type).lane);
   const whoOf = e => String(e.by || "").trim() || (e.source === "etsy" ? "Etsy" : e.source === "station" ? "Station" : "Automatic");
   const stationName = e => STATION_NAME[e.station] || (LANE[e.lane] || LANE.office).l;
-  // the main steps (Paul): the rail, the "now" words for the step being worked towards, and where its stamp will land
+  // the milestone rail (design spec §2, the server's `where.rail`/`where.step`): each step, the events that stand for
+  // it (the stamp it shows, the event a click opens) and the lane its dashed stamp waits on
   const STAGES = [
-    { k: "in", l: "Order in", types: ["arrived", "pulled", "interpreted"], kind: "arrived", lane: "etsy", now: "Just in — being read" },
-    { k: "ok", l: "Approved", types: ["decided", "customDecided"], kind: "decided", lane: "office", now: "Waiting for approval" },
-    { k: "eng", l: "Engraving", types: ["engraveApproved"], kind: "engraveApproved", lane: "office", now: "Back engraving to approve", opt: 1 },
-    { k: "sheet", l: "On sheet", types: ["placed", "moved", "renested", "merged"], kind: "placed", lane: "sheet", now: "Waiting for a sheet" },
-    { k: "qr", l: "QR label", types: ["qrLabel", "setCommitted", "sealPrinted", "sealCompleted"], kind: "qrLabel", lane: "sheet", now: "On its sheet — QR label next" },
-    { k: "laser", l: "Laser cut", types: ["laserDone", "roseCut"], kind: "laserDone", lane: "sheet", now: "Waiting for the laser" },
-    { k: "sort", l: "Sorted", types: ["sorted"], kind: "sorted", lane: "sorting", now: "Cut — waiting to be sorted" },
-    { k: "weld", l: "Welded", types: ["welded"], kind: "welded", lane: "welding", now: "Sorted — welding next", opt: 1 },
-    { k: "asm", l: "Assembled", types: ["assembled", "packed"], kind: "assembled", lane: "assembly", now: "Assembly next" },
-    { k: "lbl", l: "Shipping label", types: ["labelPrinted"], kind: "labelPrinted", lane: "shipping", now: "Assembled — shipping label next" },
-    { k: "ship", l: "Shipped", types: ["shipped"], kind: "shipped", lane: "shipping", now: "Label printed — waiting to ship" },
-    { k: "etsy", l: "Completed on Etsy", types: ["etsyCompleted"], kind: "etsyCompleted", lane: "etsy", now: "Shipped — completing on Etsy" }
+    { k: "arrived", l: "Arrived", types: ["arrived", "pulled", "interpreted"], kind: "arrived", lane: "etsy" },
+    { k: "sheet", l: "On sheet", types: ["placed", "moved", "renested", "qrLabel", "roseLine", "included", "merged", "sizeChanged"], kind: "placed", lane: "sheet" },
+    { k: "approved", l: "Approved", types: ["engraveApproved", "setCommitted", "sealCompleted", "decided", "customDecided"], kind: "decided", lane: "office" },
+    { k: "laser", l: "Laser cut", types: ["laserDone", "roseCut"], kind: "laserDone", lane: "sheet" },
+    { k: "sorted", l: "Sorted", types: ["sorted"], kind: "sorted", lane: "sorting" },
+    { k: "welded", l: "Welded", types: ["welded"], kind: "welded", lane: "welding" },
+    { k: "assembled", l: "Assembled", types: ["assembled", "packed", "labelPrinted"], kind: "assembled", lane: "assembly" },
+    { k: "shipped", l: "Shipped", types: ["shipped"], kind: "shipped", lane: "shipping" },
+    { k: "completed", l: "Completed", types: ["etsyCompleted"], kind: "etsyCompleted", lane: "etsy" }
   ];
-  const STAGE_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STAGE_OF[t] = i; }));
-  const SHEET_I = STAGES.findIndex(s => s.k === "sheet");
+  const STOP_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STOP_OF[t] = i; }));
+
+  /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
+     `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
+  const RANK = {
+    arrived: 0, pulled: 0, interpreted: 0, pooled: 0, decided: 0, skipped: 0, customDecided: 0, designSent: 0, designDropped: 0, released: 0, restored: 0,
+    needsDecision: 1, engraveNeeded: 1, held: 1, customRead: 1,
+    placed: 2, moved: 2, renested: 2, qrLabel: 2, roseLine: 2, included: 2, merged: 2, sizeChanged: 2, setCommitted: 2, sealPrinted: 2, sealCompleted: 2, recalled: 2,
+    laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 7, labelPrinted: 7, shipped: 8, etsyCompleted: 9
+  };
+  const STAGE_BY_RANK = ["waiting", "review", "sheet", "cut", "sorted", "welded", "assembled", "packed", "shipped", "completed"];
+  const STAGE_LABEL = { waiting: "Waiting", review: "In review", held: "On hold", designed: "Design complete", sheet: "On a sheet", cut: "Cut on the laser", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped", completed: "Completed on Etsy", cancelled: "Cancelled" };
+  const PEOPLE_OUT = new Set(["", "system", "etsy", "operator", "someone"]);
+  const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, engraveApproved: 2, setCommitted: 2, sealCompleted: 2,
+    laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 8 };
+  const isDesigned = e => e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete");
+  function whereOf(events, cancelled) {
+    const list = (events || []).filter(e => e && e.type).slice().sort((a, b) => (+a.at || 0) - (+b.at || 0));
+    let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, designed = false, cancel = null, step = list.length ? 0 : -1;
+    const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
+    for (const e of list) {
+      at = Math.max(at, +e.at || 0);
+      if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]); else if (isDesigned(e)) step = Math.max(step, 2);
+      if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
+      if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
+      if (e.setId) setId = e.setId;
+      if (CANCEL_TYPES.has(e.type)) { cancel = e; continue; }
+      if (e.type === "cancelRestored") { cancel = null; continue; }
+      if (isDesigned(e)) { designed = true; if (rank <= 2 && !sheetId) { rank = 2; enter("designed", e); } continue; }
+      if (e.type === "setCommitted" || e.type === "sealCompleted") designed = true;
+      if (e.type === "removed") {
+        if (rank <= 2 && (!e.sheetId || !sheetId || e.sheetId === sheetId)) { rank = 0; sheet = ""; sheetId = ""; enter(/hold/i.test((e.data && e.data.reason) || e.text || "") ? "held" : "waiting", e); }
+        continue;
+      }
+      const r = RANK[e.type]; if (r == null) continue;
+      if (r >= 3) { if (r > rank) { rank = r; enter(STAGE_BY_RANK[r], e); } if (r === 3 && e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } continue; }
+      if (rank > 2) continue;
+      if (r === 2) { rank = 2; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } enter(sheetId ? "sheet" : designed ? "designed" : "sheet", e); continue; }
+      if (sheetId && e.type !== "held") continue;
+      rank = 0; if (e.type === "held") { sheet = ""; sheetId = ""; }
+      enter(r === 1 ? (e.type === "held" ? "held" : "review") : "waiting", e);
+    }
+    if (stage === "sheet" && !sheetId && designed) stage = "designed";
+    const isCancelled = !!(cancelled || cancel);
+    if (isCancelled) {
+      stage = "cancelled"; since = (cancel && +cancel.at) || (cancelled && +cancelled.at) || since;
+      if (!cancel && cancelled && +cancelled.at >= at) { at = +cancelled.at; if (!PEOPLE_OUT.has(String(cancelled.by || "").trim().toLowerCase())) by = cancelled.by; }
+    }
+    const label = stage === "sheet" && sheet ? `On ${sheet}` : STAGE_LABEL[stage] || stage;
+    const bits = [label];
+    if (isCancelled && sheet) bits.push(`pieces on ${sheet}`);
+    if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`at ${station}${device ? " (" + device + ")" : ""}`);
+    if (by) bits.push(`by ${by}`);
+    return { stage, label, text: bits.join(" · ").slice(0, 200), sheet, sheetId, setId, station, device, by, at, since, designed, cancelled: isCancelled, step, rail: STAGES.map(s => s.l) };
+  }
   const FILTERS = [
     ["all", "All", () => true],
     ["mile", "Milestones", e => e.milestone],
@@ -231,7 +282,7 @@
       by: str(x.by, 80), source: str(x.source, 20), station: str(x.station, 20), device: str(x.device, 40),
       lineKey: str(x.lineKey, 80), transactionId: str(x.transactionId, 30), sheetId: str(x.sheetId, 100), sheet: str(x.sheet, 80), setId: str(x.setId, 100),
       text: str(x.text, 200), data: x.data && typeof x.data === "object" && !Array.isArray(x.data) ? x.data : null,
-      milestone: x.milestone != null ? !!x.milestone : !!(typeInfo(type) || {}).milestone, pending: !!x.pending
+      milestone: x.milestone != null ? !!x.milestone : !!(typeInfo(type) || {}).milestone, pending: !!x.pending, derived: !!x.derived
     };
     e.lane = laneOf(e);
     return e;
@@ -277,6 +328,7 @@
     if (e.device) f.push(["Device", e.device]);
     if (e.source) f.push(["Recorded by", e.source === "etsy" ? "Etsy check" : e.source === "station" ? "Station" : e.source === "system" ? "Automatic" : humanKey(e.source)]);
     if (e.pending) f.push(["Status", "Saving — on its way"]);
+    if (e.derived) f.push(["From", "The order's older records (before the timeline)"]);
     const d = e.data || {};
     let n = 0;
     for (const [k, v] of Object.entries(d)) { if (used.has(k) || REASON_KEYS.has(k) || v == null || v === "" || ++n > 14) continue; f.push([humanKey(k), fmt(v)]); }
@@ -288,28 +340,29 @@
   };
   const hay = e => [e.text, e.sheet, e.sheetId, e.setId, e.lineKey, e.transactionId, e.by, e.device, (() => { try { return JSON.stringify(e.data || ""); } catch (_) { return ""; } })()].join(" ").toLowerCase();
 
-  /** Where an order stands, from its events (oldest first) and its cancel record: pure, the order view may use it. */
-  function derive(events, cancelRec) {
+  /** Where an order stands, for the rail and the Now line: its events (oldest first), its cancel record and the
+   *  server's `where` (worked out here when there is none). Pure: the order view may use it too.
+   *  → { W, stages[{first,last}], step, cur, stop, cancelled, hold, last } — step: the furthest rail step reached,
+   *  cur: the step being worked towards (-1 when all are done), stop: where a cancelled order stopped. */
+  function derive(events, cancelRec, where) {
+    events = events || [];
+    const W = where && typeof where === "object" ? where : Object.assign(whereOf(events, cancelRec), typeof where === "string" && where ? { label: where, text: where } : {});
     const stages = STAGES.map(() => ({ first: null, last: null }));
-    let lastSheet = null, lastHold = null, lastCancel = null, sheetEv = null;
+    let lastHold = null, lastCancel = null;
     for (const e of events) {
-      const i = STAGE_OF[e.type];
+      const i = STOP_OF[e.type];
       if (i != null) { const st = stages[i]; if (!st.first) st.first = e; st.last = e; }
-      if (e.type === "placed" || e.type === "moved" || e.type === "removed" || e.type === "renested" || e.type === "merged") lastSheet = e;
       if (e.type === "held" || e.type === "released" || e.type === "restored") lastHold = e;
       if (CANCEL_TYPES.has(e.type) || e.type === "cancelRestored") lastCancel = e;
-      if (e.sheetId) sheetEv = e.type === "removed" ? null : e;
     }
-    // taken off its sheet and nothing further since: the order is back to waiting for a sheet
-    let off = null;
-    if (lastSheet && lastSheet.type === "removed" && !stages.some((st, i) => i > SHEET_I && st.last && st.last.at > lastSheet.at)) { off = lastSheet; stages[SHEET_I] = { first: null, last: null }; }
-    let reached = -1; stages.forEach((st, i) => { if (st.first) reached = i; });
-    const cur = reached + 1 < STAGES.length ? reached + 1 : -1;
+    const step = clamp(Number.isFinite(+W.step) ? Math.round(+W.step) : -1, -1, STAGES.length - 1);
+    const cur = step + 1 < STAGES.length ? step + 1 : -1;
     let cancelled = null;
     if (cancelRec && typeof cancelRec === "object") cancelled = { at: +cancelRec.at || (lastCancel && lastCancel.at) || 0, by: str(cancelRec.by, 80), why: str(cancelRec.why, 400), source: cancelRec.source || (cancelRec.by === "Etsy" ? "etsy" : "sorter") };
     else if (lastCancel && lastCancel.type !== "cancelRestored") cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
-    const hold = !cancelled && lastHold && lastHold.type === "held" ? lastHold : null;
-    return { stages, reached, cur, stop: cancelled ? (cur < 0 ? STAGES.length - 1 : cur) : -1, cancelled, hold, off, sheetEv, last: events[events.length - 1] || null };
+    else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
+    const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
+    return { W, stages, step, cur, stop: cancelled ? Math.min(step + 1, STAGES.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
   }
 
   /* ════ the component's look (once per page) ════ */
@@ -327,9 +380,9 @@
 .tlNowS .why{flex-basis:100%;font:12px/1.4 var(--sans);color:#8a3a26;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tlLink{border:0;background:none;padding:0;font:600 11px var(--sans);color:var(--gold);text-decoration:underline;text-underline-offset:2px;text-decoration-color:var(--goldLine)}
 .tlLink:hover{text-decoration-color:currentColor}
-.tlRail{position:relative;flex:3 1 620px;min-width:0;max-width:980px;margin-left:auto}
-.tlStops{position:relative;display:grid;grid-template-columns:repeat(12,minmax(0,1fr));margin:0;padding:0}
-.tlTrack,.tlFill{position:absolute;top:17px;height:2px;border-radius:2px;left:calc(100% / 24);right:calc(100% / 24)}
+.tlRail{position:relative;flex:3 1 520px;min-width:0;max-width:860px;margin-left:auto}
+.tlStops{position:relative;display:grid;grid-template-columns:repeat(9,minmax(0,1fr));margin:0;padding:0}
+.tlTrack,.tlFill{position:absolute;top:17px;height:2px;border-radius:2px;left:calc(100% / 18);right:calc(100% / 18)}
 .tlTrack{background:repeating-linear-gradient(90deg,var(--ink25) 0 4px,transparent 4px 8px)}
 .tlFill{background:var(--sage);transform-origin:0 50%;transform:scaleX(0);transition:transform .9s cubic-bezier(.3,.1,.2,1)}
 .tlRail.cx .tlFill{background:linear-gradient(90deg,var(--sage) 75%,var(--clay))}
@@ -343,8 +396,6 @@
 .tlStop.c .tlSeal::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--gold2);opacity:0;animation:tlRing 2s ease-out infinite}
 .tlStop.c.paused .tlSeal::after{animation:none;opacity:.9;border-color:#c79a3a;border-style:dashed}
 .tlStop.f .tlSeal{opacity:.45}
-.tlStop.s .tlSeal{opacity:.35;transform:scale(.62)}
-.tlStop.s>span{color:var(--ink25)}
 .tlStop.x>span{color:#8a3a26}
 .tlStop.gone{opacity:.45}.tlStop.gone>span{text-decoration:line-through}
 .tlStop .tlSeal.lifted{opacity:0}
@@ -564,12 +615,16 @@
       const first = !S.loaded, fresh = first ? [] : [...next.keys()].filter(k => !S.byKey.has(k));
       S.byKey = next; S.events = [...next.values()].sort(byAt);
       S.cancelled = j.cancelled || null; S.where = j.where || null; S.loaded = true;
-      const sig = S.events.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
+      const sig = sigOf();
       if (!first && sig === S.sig) { paintNowSub(); paintSum(); return; }
       S.sig = sig;
       message(null);
       repaint({ first, fresh });
       if (first) afterFirst();
+    }
+    /** What is drawn, in one string: an answer that says the same repaints nothing (a stamp still dropping keeps going). */
+    function sigOf() {
+      return S.events.map(e => e.key + (e.pending ? "*" : "")).join("|") + "#" + (S.cancelled ? S.cancelled.at || 1 : 0) + "#" + JSON.stringify(S.where || "");
     }
     function afterFirst() {
       if (S.pendingFocus != null) { const id = S.pendingFocus; S.pendingFocus = null; if (focus(id)) return; }
@@ -588,7 +643,7 @@
     /* ── painting ── */
     function repaint(o) {
       o = o || {};
-      const D = S.D = derive(S.events, S.cancelled);
+      const D = S.D = derive(S.events, S.cancelled, whereNow());
       paintNow(D, o); paintRail(D, o);
       if (compact) return;
       paintChips(); paintCanvas(D, o); paintSum();
@@ -604,15 +659,21 @@
       else if (S.events.length) select(S.events[S.events.length - 1].key, 0, { scroll: o.first, quiet: true });
       else $(".tlDetail").innerHTML = `<p class="tlEmpty">Nothing is recorded for this order yet. Each step shows here the moment it happens.</p>`;
     }
+    /** The server's `where`; while this page has steps the server has not answered for yet (live, or still in the
+     *  outbox) it is worked out here from every step, never behind the server's own. */
+    function whereNow() {
+      const srv = S.where && typeof S.where === "object" ? S.where : null;
+      if (srv && !S.events.some(e => e.pending || e.live)) return srv;
+      const local = whereOf(S.events, S.cancelled);
+      if (!srv) return typeof S.where === "string" && S.where ? Object.assign(local, { label: S.where, text: S.where }) : local;
+      return Object.assign({}, srv, local, { step: Math.max(Number.isFinite(+srv.step) ? +srv.step : -1, local.step) });
+    }
     function nowText(D) {
+      const W = D.W;
       if (D.cancelled) return { cls: "cx", t: "Cancelled — do not proceed" };
-      if (D.hold) { const r = reasonOf(D.hold) || D.hold.text; return { cls: "hold", t: "On hold" + (r ? " — " + r.slice(0, 80) : "") }; }
-      const w = S.where && (typeof S.where === "string" ? S.where : S.where.text || S.where.label || S.where.now);
-      if (w) return { cls: D.cur < 0 && D.reached >= 0 ? "done" : "", t: String(w).slice(0, 140) };
       if (!S.events.length) return { cls: "", t: "Nothing recorded yet" };
-      if (D.off) return { cls: "", t: `Taken off ${D.off.sheet || "its sheet"} — waiting for a sheet` };
-      if (D.cur < 0) return { cls: "done", t: "Completed on Etsy" };
-      return { cls: "", t: STAGES[D.cur].now };
+      if (D.hold) { const r = reasonOf(D.hold) || D.hold.text; return { cls: "hold", t: "On hold" + (r ? " — " + r.slice(0, 80) : "") }; }
+      return { cls: W.stage === "completed" ? "done" : "", t: String(W.label || W.text || "—").slice(0, 140) };
     }
     function paintNow(D, o) {
       const nt = nowText(D), n = $(".tlNow"), T = $(".tlNowT");
@@ -628,10 +689,12 @@
         s.innerHTML = `<span>Cancelled ${esc(who)} · ${esc(shortWhen(c.at))} · ${esc(ago(c.at))}</span>${c.why ? `<span class="why" title="${esc(c.why)}">${esc(c.why)}</span>` : ""}`;
         return;
       }
-      const e = D.last; if (!e) { s.innerHTML = ""; return; }
-      const sh = D.sheetEv && !D.off ? D.sheetEv : null;
-      s.innerHTML = `${badge(e, true)}<span>${esc(labelOf(e.type))} · ${esc(shortWhen(e.at))} · ${esc(ago(e.at))}</span>` +
-        (sh ? `<span>on ${esc(sh.sheet || sh.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(sh.sheetId)}" data-pool="${esc(poolOf(sh))}">Open sheet</button>` : ""}` : "");
+      const W = D.W, e = D.last; if (!e) { s.innerHTML = ""; return; }
+      const st = W.station || e.station || "", at = +W.at || e.at;
+      const who = { station: st, by: W.by || whoOf(e), lane: STATION_LANE[st] || e.lane, source: e.source };
+      const next = D.cur >= 0 && !D.hold ? STAGES[D.cur].l : "", pool = W.sheetId ? S.events.filter(x => x.sheetId === W.sheetId).map(poolOf).filter(Boolean).pop() || "" : "";
+      s.innerHTML = `${badge(who, true)}<span>${esc(shortWhen(at))} · ${esc(ago(at))}</span>${next ? `<span>next: ${esc(next)}</span>` : ""}` +
+        (W.sheetId ? `<span>on ${esc(W.sheet || W.sheetId)}</span>${opts.onSheet ? `<button type="button" class="tlLink tlOpenSheet" data-sheet="${esc(W.sheetId)}" data-pool="${esc(pool)}">Open sheet</button>` : ""}` : "");
     }
     function paintRail(D, o) {
       const wrap = $(".tlStops"), rail = $(".tlRail");
@@ -641,8 +704,9 @@
         const n = nodes[i], st = D.stages[i];
         let c;
         if (!S.loaded) c = "f";
-        else if (D.cancelled) c = i < D.stop ? (st.first ? "d" : "s") : i === D.stop ? "x" : "f gone";
-        else c = st.first ? "d" : D.cur >= 0 && i === D.cur ? "c" : i < D.reached || D.cur < 0 ? "s" : "f";
+        else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
+        else c = i <= D.step ? "d" : i === D.cur ? "c" : "f";
+        // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
         const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "");
         if (n.dataset.sig === sig) return;
@@ -651,10 +715,10 @@
         n.className = "tlStop " + c + (c === "c" && D.hold ? " paused" : "");
         const seal = n.querySelector(".tlSeal"), rot = ev ? rotOf(ev) : 0;
         n.style.setProperty("--rot", rot + "deg");
-        seal.innerHTML = c === "d" ? stampSvg(ev, false) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at }, false)
+        seal.innerHTML = c === "d" ? stampSvg(ev || { key: "d-" + s.k, type: s.kind, at: 0 }, false) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at }, false)
           : stampSvg({ key: "g-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
-        const say = c === "d" ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "in progress now"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : c === "s" ? `${s.l}: ${s.opt ? "not needed" : "no record"}` : `${s.l}: still to come`;
+        const say = c === "d" ? (ev ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`;
         n.setAttribute("aria-label", say); n.title = say;
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
@@ -699,7 +763,7 @@
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1], fl = FILTER[S.filter] || FILTER.all;
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = D.cancelled ? [] : STAGES.map((s, i) => ({ s, i })).filter(g => g.i > D.reached).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
+      const ghosts = D.cancelled ? [] : STAGES.map((s, i) => ({ s, i })).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
       const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(timeOf(c.evs[0].at))} – ${esc(timeOf(c.evs[c.evs.length - 1].at))} · ${c.evs.length}</small>`}</div></div>`; }).join("");
@@ -708,8 +772,8 @@
       // the cancel line: at the cancel stamp (or, with only the record, where its time falls)
       let cxX = 0;
       if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + COL / 2 : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - COL * .75 }).x + COL / 2); }
-      const lastLane = last ? (LANE[last.lane] || LANE.office).l.toUpperCase() : "";
-      const nowLbl = D.hold ? "NOW · ON HOLD" : D.cur < 0 && last ? "COMPLETED" : last ? "NOW · AT " + lastLane : "NOW";
+      const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
+      const nowLbl = D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
       cv.innerHTML = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
@@ -843,6 +907,8 @@
       const tx = clamp(cx, SZ / 2 + 8, vw - SZ / 2 - 8), ty = clamp(cy, SZ / 2 + 8, vh - SZ / 2 - (cap ? 60 : 8));
       const to = `translate(${tx - SZ / 2 - loupeOff[0]}px,${ty - SZ / 2 - loupeOff[1]}px)`;
       loupe.style.transform = to;
+      const capEl = cap && loupe.querySelector(".cap");
+      if (capEl) { const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`; }
       loupeFor = b; lift.classList.add("lifted");
       anim(loupe, [{ transform: `translate(${cx - SZ / 2 - loupeOff[0]}px,${cy - SZ / 2 - loupeOff[1]}px) scale(${s0})`, opacity: .6 }, { transform: to, opacity: 1 }], 220);
     }
@@ -899,7 +965,7 @@
       e.live = Date.now(); e.pending = true;
       S.byKey.set(e.key, e); S.events = [...S.byKey.values()].sort(byAt);
       if (!S.loaded) return;   // the answer on its way merges it
-      S.sig = "";
+      S.sig = sigOf();
       repaint({ fresh: [e.key] });
     }
     function arm() {

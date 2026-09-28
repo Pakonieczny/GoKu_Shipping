@@ -1,6 +1,7 @@
 // Browser test of the order timeline component (charm-nest-timeline-ui.js) inside the sorter page, over the local
 // stand-in for the site (bridge-server.cjs). OrderTimeline.get is stubbed with one order of 31 events over six days and a
-// cancelled one. Checks the Now line and the milestone rail, the lanes and their stamps, hover (the loupe), click
+// cancelled one, each with the `where` the server's whereOf gives; one more order goes through the real client and the
+// stand-in's timelineAdd/timelineGet. Checks the Now line and the milestone rail, the lanes and their stamps, hover (the loupe), click
 // (inline detail: before → after, reason, Open sheet, Around this step), filters, a live event arriving, the 20 s
 // refresh (shortened here), focus(), an error with Retry, compact mode, reduced motion and destroy() leaving no timers.
 //   node tests/charm-nest/timeline-ui.cjs [playwright-core dir]      (SHOTS=<dir> saves the three screenshots there)
@@ -83,14 +84,15 @@ function fixture({ MAIN, CX }) {
   const ok = [];
 
   await page.goto(`${sorterOrigin}/charm-nest-1.html`);
-  await page.waitForFunction(() => window.OrderTimelineUI && document.readyState === 'complete', null, { timeout: 60000 });
-  // the shared client (its TYPES, record and onRecord are real), with get() answering from the fixture
-  await page.addScriptTag({ url: '/order-timeline.js' });
+  await page.waitForFunction(() => window.OrderTimelineUI && window.OrderTimeline && document.readyState === 'complete', null, { timeout: 60000 });
+  // the shared client (its TYPES, record and onRecord are real), with get() answering from the fixture; an order not in
+  // the fixture goes to the real get() (the stand-in's timelineGet)
   await page.evaluate(({ fx, MAIN, CX }) => {
     window.__fx = (new Function('return (' + fx + ')'))()({ MAIN, CX });
     window.__gets = 0; window.__fail = 0;
     const nativeWait = window.setTimeout.bind(window);   // the stub's own wait is not one of the component's timers
-    OrderTimeline.get = async id => { window.__gets++; await new Promise(r => nativeWait(r, 120)); if (window.__fail > 0) { window.__fail--; throw new Error('HTTP 503'); } return JSON.parse(JSON.stringify(window.__fx[id] || { events: [], cancelled: null })); };
+    const realGet = OrderTimeline.get;
+    OrderTimeline.get = async id => { if (!window.__fx[id]) return realGet(id); window.__gets++; await new Promise(r => nativeWait(r, 120)); if (window.__fail > 0) { window.__fail--; throw new Error('HTTP 503'); } return JSON.parse(JSON.stringify(window.__fx[id])); };
     // every timer the component sets, so destroy() can be checked for leftovers
     window.__tlTimers = new Set();
     const st = window.setTimeout, ct = window.clearTimeout, si = window.setInterval, ci = window.clearInterval;
@@ -101,6 +103,12 @@ function fixture({ MAIN, CX }) {
     window.clearInterval = function (id) { window.__tlTimers.delete(id); return ci.call(window, id); };
     window.__host = el => { const h = document.createElement('div'); h.className = 'tlTestHost'; h.style.cssText = 'position:fixed;inset:0;z-index:2147480000;background:var(--card);display:flex;flex-direction:column'; el.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column'; h.appendChild(el); document.body.appendChild(h); return h; };
   }, { fx: fixture.toString(), MAIN, CX });
+  // each answer carries the server's `where`, worked out by the server's own whereOf
+  const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'));
+  const where = {};
+  for (const [id, o] of Object.entries(await page.evaluate(() => window.__fx))) where[id] = Timeline.whereOf(o.events, o.cancelled);
+  await page.evaluate(w => { for (const id in w) window.__fx[id].where = w[id]; }, where);
+  assert.equal(where[MAIN].step, 6); assert.equal(where[CX].step, 2);
 
   // ── mount on a detached container: the wait line says what it waits for, then the order paints ──
   await page.evaluate(MAIN => {
@@ -116,16 +124,21 @@ function fixture({ MAIN, CX }) {
 
   // ── Now and the rail ──
   let r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, done: q('.tlStop.d').map(n => n.dataset.stage), cur: q('.tlStop.c').map(n => n.dataset.stage), fut: q('.tlStop.f').map(n => n.dataset.stage), skip: q('.tlStop.s').length, fill: q('.tlFill')[0].style.transform, ghosts: q('.tlSt.ghost').length, nowLine: (q('.tlNowLine')[0] || {}).textContent, lanes: q('.tlLane span').map(s => s.textContent), days: q('.tlDay:not(.idle)').length, idle: q('.tlDay.idle').length }; });
-  assert.deepEqual(r.done, ['in', 'ok', 'eng', 'sheet', 'qr', 'laser', 'sort', 'weld', 'asm', 'lbl'], 'passed steps stamped: ' + r.done);
-  assert.deepEqual(r.cur, ['ship'], 'the current step pulses');
-  assert.deepEqual(r.fut, ['etsy'], 'the step to come is an outline');
-  assert.equal(r.now, 'Label printed — waiting to ship');
-  assert.match(r.fill, /scaleX\(0\.9091\)/);
+  assert.deepEqual(r.done, ['arrived', 'sheet', 'approved', 'laser', 'sorted', 'welded', 'assembled'], 'passed steps stamped: ' + r.done);
+  assert.deepEqual(r.cur, ['shipped'], 'the next step pulses');
+  assert.deepEqual(r.fut, ['completed'], 'the step to come is an outline');
+  assert.equal(r.now, where[MAIN].label); assert.equal(r.now, 'Packed');
+  assert.match(r.fill, /scaleX\(0\.875\)/);
   assert.equal(r.ghosts, 2, 'the two milestones to come are dashed stamps on the lanes');
   assert.equal(r.nowLine, 'NOW · AT SHIPPING');
   assert.equal(r.days, 5); assert.equal(r.idle, 1, 'the idle day collapses');
   assert.match(r.lanes[3], /Ana P\./); assert.match(r.lanes[6], /Dana K\./);
-  ok.push('Now reads "Label printed — waiting to ship"; 10 steps stamped, Shipped pulses, Completed on Etsy an outline; 5 day columns + 1 idle; NOW · AT SHIPPING');
+  r = await page.evaluate(() => ({ sub: window.__el.querySelector('.tlNowS').textContent, rail: [...window.__el.querySelectorAll('.tlStop span')].map(s => s.textContent) }));
+  assert.deepEqual(r.rail, where[MAIN].rail, 'the rail is the server\'s 9 steps');
+  assert.match(r.sub, /Shipping/); assert.match(r.sub, /Dana K\./); assert.match(r.sub, /next: Shipped/); assert.match(r.sub, new RegExp('on ' + where[MAIN].sheet));
+  await page.click('.tlNowS .tlOpenSheet');
+  assert.deepEqual(await page.evaluate(() => window.__sheet), [where[MAIN].sheetId, null], 'Open sheet on the where\'s sheet (the last one cut)');
+  ok.push('Now reads the server\'s where ("Packed", Shipping · Dana K., next: Shipped, on RG Sheet 7 + Open sheet); the 9-step rail: 7 stamped, Shipped pulses, Completed an outline; 5 day columns + 1 idle; NOW · AT SHIPPING');
 
   // ── hover a stamp: it lifts onto the loupe at 136px with its full face ──
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
@@ -189,7 +202,7 @@ function fixture({ MAIN, CX }) {
   await page.waitForTimeout(120);
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { n: q('.tlSt[data-key]').length, anim: s ? s.getAnimations().length : -1, ring: q('.tlInkRing').length, cur: q('.tlStop.c').map(n => n.dataset.stage), done: q('.tlStop.d').length, now: q('.tlNowT')[0].textContent, h: q('.tlDetail h3')[0].textContent, ghosts: q('.tlSt.ghost').length, nowAnim: q('.tlNowLine')[0].getAnimations().length }; });
   assert.equal(r.n, 32); assert(r.anim > 0, 'the new stamp drops in'); assert.equal(r.ring, 1, 'an ink ring spreads');
-  assert.deepEqual(r.cur, ['etsy']); assert.equal(r.done, 11); assert.equal(r.now, 'Shipped — completing on Etsy');
+  assert.deepEqual(r.cur, ['completed']); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
   assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one');
   assert.equal(r.ghosts, 1); assert(r.nowAnim > 0, 'the NOW line glides');
   await page.waitForTimeout(1300);
@@ -199,7 +212,8 @@ function fixture({ MAIN, CX }) {
   await page.waitForFunction(g => window.__gets > g, g0, { timeout: 4000 });
   await page.waitForTimeout(250);
   assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 32);
-  ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail moves to Completed on Etsy; the timed refresh asks again and keeps it');
+  assert.equal(await page.$$eval('.tlStop.c', s => s.map(n => n.dataset.stage).join()), 'completed', 'the server\'s older where does not take the rail back');
+  ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail moves to Completed; the timed refresh asks again and keeps it');
 
   // ── focus(eventId) ──
   assert.equal(await page.evaluate(MAIN => window.__tl.focus(`${MAIN}~sorted~e22`), MAIN), true);
@@ -223,14 +237,14 @@ function fixture({ MAIN, CX }) {
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, sub: q('.tlNowS')[0].textContent, stamp: q('.tlCxStamp text').map(t => t.textContent).join(' '), x: q('.tlStop.x').map(n => n.dataset.stage), gone: q('.tlStop.gone').length, line: (q('.tlNowLine.cx span')[0] || {}).textContent, hatch: q('.tlAfterCx').length, ghosts: q('.tlSt.ghost').length }; });
   assert.equal(r.now, 'Cancelled — do not proceed'); assert.match(r.sub, /Cancelled on Etsy/); assert.match(r.sub, /Buyer requested/);
   assert.match(r.stamp, /CANCELLED/); assert.match(r.stamp, /DO NOT PROCEED/); assert.match(r.stamp, /ON ETSY/);
-  assert.deepEqual(r.x, ['sheet'], 'a clay ✕ where it stopped (taken off its sheet)'); assert.equal(r.gone, 8);
+  assert.deepEqual(r.x, ['laser'], 'a clay ✕ where it stopped (approved, never cut)'); assert.equal(r.gone, 5);
   assert.match(r.line, /^CANCELLED · /); assert.equal(r.hatch, 1); assert.equal(r.ghosts, 0);
   await page.click('.tlSt[data-key="removed~e37"]'); await page.waitForTimeout(350);
   assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was taken off.*not cut yet/);
   await page.click('.tlSt[data-key="etsyCancelled~e36"]'); await page.waitForTimeout(400);
   assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was cancelled.*Buyer requested/);
   await shot('tlui-3-cancelled');
-  ok.push('cancelled: red CANCELLED · DO NOT PROCEED stamp across the rail, ✕ at On sheet and later steps struck, clay line with hatching, no ghosts, reasons in the detail');
+  ok.push('cancelled: red CANCELLED · DO NOT PROCEED stamp across the rail, ✕ at Laser cut and later steps struck, clay line with hatching, no ghosts, reasons in the detail');
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
 
   // ── an error says so, with Retry; compact draws the rail only ──
@@ -241,11 +255,30 @@ function fixture({ MAIN, CX }) {
   await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 31, null, { timeout: 3000 });
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
   await page.evaluate(MAIN => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, compact: true, live: false }); }, MAIN);
-  await page.waitForFunction(() => window.__el.querySelectorAll('.tlStop.d').length === 10, null, { timeout: 3000 });
+  await page.waitForFunction(() => window.__el.querySelectorAll('.tlStop.d').length === 7, null, { timeout: 3000 });
   r = await page.evaluate(() => ({ grid: getComputedStyle(window.__el.querySelector('.tlGrid')).display, rail: window.__el.querySelector('.tlRail').getBoundingClientRect().height }));
   assert.equal(r.grid, 'none'); assert(r.rail > 30);
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
   ok.push('an error shows "Couldn\'t load the timeline: HTTP 503" with Retry, which loads it; compact draws the Now line and rail only');
+
+  // ── the real client over the stand-in: record and send three steps, then timelineGet (with its where) paints them ──
+  const REAL = '4170000001';
+  await page.evaluate(REAL => {
+    const t = Date.now() - 3 * 3600e3;
+    OrderTimeline.record({ orderId: REAL, type: 'arrived', by: 'Etsy', text: 'Order arrived from Etsy', at: t, id: 'r1' });
+    OrderTimeline.record({ orderId: REAL, type: 'placed', sheet: '14K Sheet 9', sheetId: 'sh-k9', text: 'Placed on 14K Sheet 9', at: t + 60e3, id: 'r2' });
+    OrderTimeline.record({ orderId: REAL, type: 'laserDone', by: 'Marco R.', station: 'laser', sheet: '14K Sheet 9', sheetId: 'sh-k9', text: '14K Sheet 9 laser cut', at: t + 3600e3, id: 'r3' });
+    OrderTimeline.flush();
+  }, REAL);
+  await page.waitForFunction(() => OrderTimeline.pending() === 0, null, { timeout: 8000 });
+  await page.evaluate(REAL => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: REAL, live: false }); }, REAL);
+  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 3, null, { timeout: 5000 });
+  r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; return { now: q('.tlNowT')[0].textContent, done: q('.tlStop.d').map(n => n.dataset.stage), cur: q('.tlStop.c').map(n => n.dataset.stage), approved: q('.tlStop[data-stage="approved"]')[0].title, line: q('.tlNowLine')[0].textContent, pend: q('.tlSt.pend').length }; });
+  assert.deepEqual(r.done, ['arrived', 'sheet', 'approved', 'laser'], 'a step passed with no event of its own shows done: ' + r.done);
+  assert.equal(r.approved, 'Approved: done'); assert.deepEqual(r.cur, ['sorted']);
+  assert.equal(r.now, 'Cut on the laser'); assert.match(r.line, /^NOW · /); assert.equal(r.pend, 0, 'every step came back from the server');
+  await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
+  ok.push('the real OrderTimeline over the stand-in\'s timelineAdd/timelineGet: 3 recorded steps come back, Now "Cut on the laser" from where, rail 4 done (Approved without its own event), Sorted next');
 
   // ── reduced motion: no animations run ──
   await page.emulateMedia({ reducedMotion: 'reduce' });
