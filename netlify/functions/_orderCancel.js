@@ -202,23 +202,35 @@ async function fromReceipts(db, FV, receipts, opts = {}) {
     from there, so every call makes progress. An order that would not write does not fail the call (it is no `error`, so
     op cancelSweep answers 200 with its progress and resume point): it is listed in `failures` ({ orderId, why }, the first
     50; `failed` counts them all) and kept in the backlog, which the mirror's next run retries (`backlogged`; `backlogError`
-    when even that could not be written). opts: dryRun · budgetMs · cursor · docId (FieldPath.documentId()). */
+    when even that could not be written). A page that still will not read after two more tries stops the call the same
+    calm way: ok:false, `readError`, the counts so far, and more:true with that page as `next`.
+    opts: dryRun · budgetMs · cursor · docId (FieldPath.documentId()). */
 async function sweep(db, FV, opts = {}) {
   const until = Date.now() + (n(opts.budgetMs) || 7000), PAGE = 200, docId = opts.docId || "__name__";
   let c = opts.cursor; if (typeof c === "string") { try { c = JSON.parse(c); } catch (_) { c = null; } }
   let si = Math.max(0, Math.min(SWEEP_STATUSES.length, Math.round(n(c && c.s)))), after = c && c.after ? String(c.after) : "", pages = 0;
   const out = { ok: true, dryRun: !!opts.dryRun, scanned: 0, cancelled: 0, created: 0, noted: 0, unchanged: 0, restored: 0, failed: 0, ids: [], failures: [], more: false, truncated: false };
-  while (si < SWEEP_STATUSES.length) {
-    if (pages && Date.now() > until) { out.more = true; out.next = { s: si, after }; break; }
+  // one page: its receipts, then the records they need (putMany reads them all before it writes, and is idempotent)
+  const page = async () => {
     let q = db.collection(RECEIPTS).where("status", "==", SWEEP_STATUSES[si]).orderBy(docId);
     if (after) q = q.startAfter(after);
-    const snap = await q.select(...SWEEP_FIELDS).limit(PAGE).get(); pages++;
-    out.scanned += snap.size;
-    const recs = [];
+    const snap = await q.select(...SWEEP_FIELDS).limit(PAGE).get(), recs = [];
     for (const d of snap.docs) { const x = d.data(); if (!x.receipt_id) x.receipt_id = d.id; if (isCancelled(x)) { const r = fromReceipt(x); if (r.orderId) recs.push(r); } }
-    out.cancelled += recs.length;
-    if (recs.length) {
-      const r = await putMany(db, FV, recs, { prefix: "", detectedBy: "sweep", dryRun: !!opts.dryRun });
+    return { snap, recs, r: recs.length ? await putMany(db, FV, recs, { prefix: "", detectedBy: "sweep", dryRun: !!opts.dryRun }) : null };
+  };
+  while (si < SWEEP_STATUSES.length) {
+    if (pages && Date.now() > until) { out.more = true; out.next = { s: si, after }; break; }
+    // a page that will not read is tried twice more (briefly, within the budget); still failing, the call stops calmly
+    // with what it did and that page as `next`, so the next call reads it again (ok:false, readError says why)
+    let got = null, err = null;
+    for (let t = 0; t < 3 && !got; t++) {
+      if (t) { const ms = 300 * t; if (Date.now() + ms > until) break; await new Promise(res => setTimeout(res, ms)); }
+      try { got = await page(); } catch (e) { err = e; }
+    }
+    if (!got) { out.ok = false; out.more = true; out.next = { s: si, after }; out.readError = s((err && err.message) || err, 200); break; }
+    const { snap, recs, r } = got; pages++;
+    out.scanned += snap.size; out.cancelled += recs.length;
+    if (r) {
       for (const k of ["created", "noted", "unchanged", "restored", "failed"]) out[k] += r[k];
       out.ids.push(...r.ids); out.failures.push(...(r.failures || []));
     }
