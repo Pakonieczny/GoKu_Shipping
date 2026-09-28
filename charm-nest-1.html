@@ -1131,6 +1131,48 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .ordRow .ship{font-family:var(--mono);color:var(--ink70);font-size:11px;white-space:nowrap}
 .ordRow .why{grid-column:1/-1;font-size:11.5px;color:#8a3a26;padding:2px 0 4px 8px;border-left:2px solid var(--clay)}
 .ordRow .why button{margin-left:8px}
+/* ── Orders › Cancelled (Paul, 28 Sep, A5): every cancelled order, newest first. Etsy's carry slate, a person's clay;
+   what happened on each sheet sits under the reason (sage: taken off, gold: already cut, set aside) ── */
+.ordBar.onCx #ordMetalHost,.ordBar.onCx .ordDisplay{display:none}
+.cxWrap{display:grid;gap:8px;padding:2px 0 10px}
+.cxSum{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:18px;padding:0 4px;font:11.5px var(--sans);color:var(--ink45)}
+.cxSum b{font:700 12px var(--mono);color:var(--ink70)}
+.cxLegend{margin-left:auto;display:inline-flex;gap:14px}.cxLegend span{display:inline-flex;align-items:center;gap:6px}
+.cxDot{display:inline-block;width:7px;height:7px;border-radius:50%}.cxDot.etsy{background:var(--slate)}.cxDot.person{background:var(--clay)}
+.cxList{display:grid;gap:5px}
+.cxRow{position:relative;display:grid;grid-template-columns:minmax(130px,190px) minmax(110px,.7fr) minmax(0,1.6fr) auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 12px 9px 16px;font-size:12.5px;transition:transform .13s ease,border-color .13s ease,box-shadow .17s ease}
+.cxRow::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;border-radius:0 3px 3px 0;background:var(--clay);opacity:.65}
+.cxRow.etsy::before{background:var(--slate)}
+.cxRow.open{cursor:pointer}
+.cxRow.open:hover,.cxRow.open:focus-visible{transform:translateY(-1px);border-color:var(--ink45);box-shadow:var(--hoverLift);outline:none}
+.cxRow.asking{border-color:var(--clay);box-shadow:0 0 0 3px var(--claySoft)}
+.cxId{display:grid;line-height:1.3;min-width:0}.cxId b{font:700 13px var(--mono);color:var(--ink)}.cxId span{font:11.5px var(--sans);color:var(--ink45);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cxWhat{display:flex;flex-wrap:wrap;gap:4px;min-width:0}.cxWhat span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 10.5px var(--mono);background:var(--paper2);border-radius:999px;padding:2px 8px;color:var(--ink70)}.cxWhat i{font:11px var(--sans);font-style:normal;color:var(--ink45)}
+.cxWhy{display:grid;gap:3px;min-width:0;font:12px/1.4 var(--sans);color:var(--ink70)}
+.cxWho{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cxWho time{font:10.5px var(--mono);color:var(--ink45)}
+.cxBadge{padding:2px 8px;border-radius:999px;font:700 10.5px var(--sans);white-space:nowrap}
+.cxBadge.etsy{background:var(--slateSoft);color:#33525d}.cxBadge.person{background:var(--claySoft);color:#8a3a26}
+.cxReason{overflow-wrap:anywhere}.cxReason.none{color:var(--ink45);font-style:italic}
+.cxFates{display:flex;flex-wrap:wrap;gap:3px 12px}
+.cxFates span{display:inline-flex;align-items:center;gap:6px;font:11px var(--sans);color:var(--ink45)}
+.cxFates span::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;border:1.5px solid var(--sage)}
+.cxFates span.cut{color:#7a5a1d}.cxFates span.cut::before{border-color:var(--gold);background:var(--goldSoft)}
+.cxAct{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:100px;white-space:nowrap}
+.cxAskBar{position:absolute;right:10px;top:1px;bottom:1px;display:flex;align-items:center;gap:6px;padding-left:40px;background:linear-gradient(90deg,rgba(255,254,251,0),var(--card) 34px)}
+.cxRow.asking .cxAct{visibility:hidden}
+.cxAsk{font:600 11.5px var(--sans);color:var(--ink70);margin-right:2px}
+.cxGo{font:16px/1 var(--sans);color:var(--ink25);transition:transform .15s ease,color .15s ease}.cxRow.open:hover .cxGo{color:var(--ink70);transform:translateX(2px)}
+.cxWait{display:flex;align-items:center;gap:8px;justify-content:center;padding:40px;color:var(--ink45);font:12.5px var(--sans)}
+.cxEmpty small{max-width:52ch;font-size:11.5px;line-height:1.5;color:var(--ink45)}
+.cxFoot{display:flex;justify-content:center}.cxFoot:empty{display:none}
+.cxMore{padding:8px;font:11.5px var(--sans);color:var(--ink45)}
+.cxIn{animation:cxIn .42s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0) * 32ms)}
+@keyframes cxIn{from{opacity:0;transform:translateY(8px)}}
+.cxTokenWrap{position:fixed;z-index:139;pointer-events:none}
+.cxToken,.mGhost>.cxToken{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border-radius:999px;background:var(--card);border:1px solid var(--clay);box-shadow:0 8px 22px rgba(30,24,16,.16);font:600 11.5px var(--sans);color:#8a3a26;white-space:nowrap}
+.cxToken b{font:700 11.5px var(--mono);color:var(--ink)}
+@media (max-width:900px){.cxRow{grid-template-columns:minmax(0,1fr) auto}.cxWhat,.cxWhy{grid-column:1}.cxAct{grid-column:2;grid-row:1}}
+@media (prefers-reduced-motion:reduce){.cxIn{animation:none}.cxRow,.cxGo{transition:none}}
 .sandboxPill{display:inline-flex;align-items:center;font:700 11.5px var(--mono);letter-spacing:.03em;color:#fff;background:repeating-linear-gradient(135deg,#7a2a1a 0 10px,#5a1f16 10px 20px);border:1px solid #c0553b;border-radius:999px;padding:5px 12px}
 .sandboxPill.hidden{display:none}
 /* what the orders want that the library has never heard of — one fact, said once, where master files are added */
@@ -5581,8 +5623,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-merge2"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
+<script src="charm-nest-bridge.js?v=20260928-cx-tab"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-cx-tab"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
