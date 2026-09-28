@@ -1449,7 +1449,7 @@
       const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
       const html = `<div class="tlDetIn">` +
         `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
-        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.milestone ? " · milestone" : ""}${e.pending ? " · saving…" : ""}</span>` +
+        `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.pending ? " · saving…" : ""}</span>` +
         `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
         `<div class="tlBadgeRow">${badge(e)}</div>` +
         (desc ? `<p>${esc(desc)}</p>` : "") +

@@ -98,7 +98,9 @@ const plainCopy = d => JSON.parse(JSON.stringify(d || {}));
 function timelineDb(st) {
   const doc = (c, id) => ({ id, _c: c, async get() { const d = st.doc(c, id); return { exists: !!d, id, data: () => (d ? plainCopy(d) : undefined) }; } });
   return {
-    collection: c => ({ doc: id => doc(c, id), where: (f, op, v) => ({ limit: n => ({ async get() { const docs = st.list(c).filter(x => x[f] === v).slice(0, n).map(({ _id, ...d }) => ({ id: _id, data: () => plainCopy(d) })); return { docs, size: docs.length }; } }) }) }),
+    // (as Firestore: an equality query answers in document-id order; orderBy("__name__").startAfter(id) pages it — the
+    //  store's paged reads of a long history)
+    collection: c => ({ doc: id => doc(c, id), where: (f, op, v) => { const q = after => ({ orderBy: () => q(after), startAfter: a => q(a), limit: n => ({ async get() { const docs = st.list(c).filter(x => x[f] === v && (after == null || x._id > after)).sort((a, b) => (a._id < b._id ? -1 : a._id > b._id ? 1 : 0)).slice(0, n).map(({ _id, ...d }) => ({ id: _id, data: () => plainCopy(d) })); return { docs, size: docs.length }; } }) }); return q(null); } }),
     async getAll(...refs) { return Promise.all(refs.filter(r => r && typeof r.get === 'function').map(r => r.get())); },
     batch() { const ops = []; return { set: (r, d) => ops.push(() => st.put(r._c, r.id, d)), async commit() { ops.forEach(o => o()); } }; }
   };

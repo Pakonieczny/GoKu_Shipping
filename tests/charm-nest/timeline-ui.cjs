@@ -177,16 +177,16 @@ function fixture({ MAIN, CX }) {
   const small = await welded.boundingBox();
   await welded.hover();
   await page.waitForTimeout(320);
-  const zoomAt = () => page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), cap = L.querySelector('.cap'); return { disp: getComputedStyle(L).display, w: b.width, h: b.height, top: b.top, bottom: b.bottom, cx: b.left + b.width / 2, dTop: d.top, dBottom: d.bottom, dcx: d.left + d.width / 2, dOp: getComputedStyle(s).opacity, pe: getComputedStyle(L).pointerEvents, side: L.dataset.side, capTop: cap ? cap.getBoundingClientRect().top : null, texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (cap || {}).textContent, lifted: s.classList.contains('lifted'), hov: s.matches(':hover'), shadow: getComputedStyle(L).boxShadow }; });
+  const zoomAt = () => page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), cap = L.querySelector('.cap'), X = [...window.__el.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return { disp: getComputedStyle(L).display, w: b.width, h: b.height, top: b.top, bottom: b.bottom, cx: b.left + b.width / 2, dTop: d.top, dBottom: d.bottom, dcx: d.left + d.width / 2, dOp: getComputedStyle(s).opacity, pe: getComputedStyle(L).pointerEvents, side: L.dataset.side, capTop: X ? X.getBoundingClientRect().top : null, expText: X ? X.textContent : '', texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (cap || {}).textContent, lifted: s.classList.contains('lifted'), hov: s.matches(':hover'), shadow: getComputedStyle(L).boxShadow }; });
   r = await zoomAt();
   assert.equal(r.disp, 'block'); assert(small.width < 40, 'a small dot: ' + small.width);
   assert(Math.abs(r.w - 136 * .9) <= 1.5 && Math.abs(r.h - 136 * .9) <= 1.5, `the zoomed seal is 90% of the old 136px: ${r.w}×${r.h}`);
   assert.equal(r.side, 'above'); assert(r.bottom <= r.dTop && r.bottom >= r.dTop - 16, `the seal sits just above the dot, not over it: seal bottom ${r.bottom}, dot top ${r.dTop}`);
   assert(Math.abs(r.cx - r.dcx) <= 1.5, 'centred over the dot');
   assert.equal(r.pe, 'none', 'the seal takes no pointer'); assert(+r.dOp > .9 && r.hov, 'the dot stays in sight and keeps the hover');
-  assert(r.capTop >= r.dBottom, 'the caption sits under the dot, not over it');
+  assert(r.capTop >= r.dBottom, 'the step explainer card sits under the dot, not over it (it replaced the dark caption)');
   assert.match(r.texts, /WELDED/); assert.match(r.texts, /MARCO R\./); assert.match(r.texts, /WELDING STATION/); assert.match(r.texts, /\d{1,2}:\d\d [AP]M/);
-  assert.equal(r.cap, 'Jump rings closed'); assert(r.lifted && /rgba/.test(r.shadow));
+  assert.equal(r.cap, undefined, 'no dark caption on the loupe'); assert.match(r.expText, /Welded/); assert(r.lifted && /rgba/.test(r.shadow));
   // moving within the dot keeps the seal, still and in place
   for (const [dx, dy] of [[-.3, -.3], [.3, .25], [0, .35], [-.35, 0]]) { await page.mouse.move(small.x + small.width * (.5 + dx), small.y + small.height * (.5 + dy)); await page.waitForTimeout(40); }
   await page.waitForTimeout(120);

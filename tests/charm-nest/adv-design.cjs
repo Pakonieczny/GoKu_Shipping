@@ -151,9 +151,11 @@ function fixture({ MAIN, CX, D }) {
       await close();
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 0, 'closing takes the bar out of the tab row');
 
-      // 3 · a 2-line order: "line 1 of 2", quiet, after the number
+      // 3 · a 2-line order: no "line 1 of 2" in the header any more (Paul, 28 Sep: multi-piece orders were confusing);
+      //     the piece switch says "All 2 pieces" instead
       await openKey(D, D.tid); await snap('twosheets-overview');
-      assert.equal(await page.evaluate(() => document.querySelector('#owTitle .owPc') && document.querySelector('#owTitle .owPc').textContent), 'line 1 of 2');
+      assert.equal(await page.evaluate(() => !!document.querySelector('#owTitle .owPc')), false, 'no "line 1 of 2" after the number');
+      await page.waitForFunction(() => { const sw = document.getElementById('owPieceSw'); return sw && !sw.hidden && /^All 2 pieces/.test(sw.textContent.trim()); }, null, { timeout: 10000 });
       await view('timeline'); await view('info');
       assert.equal(await page.evaluate(() => document.querySelectorAll('#owTlTools .tlBar').length), 1, 'one bar, however often the tab is shown');
       await close();
@@ -177,5 +179,5 @@ function fixture({ MAIN, CX, D }) {
     }
   } finally { await browser.close(); srv.close(); }
   if (shots.length) console.log('  shots: ' + shots.join(', '));
-  console.log('  ✓ composer inside its column, filters in the tab row, day heads inside their columns, rail names at 8.5px, cancelled without a stamp over them, badge icon, line 1 of 2, one-line dates, centred empty plate');
+  console.log('  ✓ composer inside its column, filters in the tab row, day heads inside their columns, rail names at 8.5px, cancelled without a stamp over them, badge icon, no "line 1 of 2" (the piece switch instead), one-line dates, centred empty plate');
 })().then(() => console.log('Order view design OK')).catch(e => { console.error(e); process.exit(1); });
