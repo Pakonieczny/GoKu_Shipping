@@ -435,11 +435,11 @@
   const DG = { grow: "cubic-bezier(.3,0,.1,1)", back: "cubic-bezier(.4,0,.2,1)", ease: "cubic-bezier(.2,.8,.2,1)", surface: 600, tint: 250, panel: 380, head: 560, part: 380, step: 45, close: 480, cap: 700 };
   const SRC = "button,a[href],summary,[role=button],[role=menuitem],[role=tab],[role=option],img,label,[data-id],[tabindex]:not([tabindex='-1'])";
   let press = null;
-  function remember(el) {
+  function remember(el, e) {
     if (!el || el.nodeType !== 1 || el === doc.body || el === doc.documentElement) return;
-    try { const r = el.getBoundingClientRect(); press = { el, rect: { left: r.left, top: r.top, width: r.width, height: r.height }, at: Date.now() }; } catch (_) {}
+    try { const r = el.getBoundingClientRect(); press = { el, rect: { left: r.left, top: r.top, width: r.width, height: r.height }, pt: e && e.clientX != null ? { x: e.clientX, y: e.clientY } : null, at: Date.now() }; } catch (_) {}
   }
-  doc.addEventListener("pointerdown", e => { const t = e.target; if (t && t.closest) remember(t.closest(SRC) || t); }, true);
+  doc.addEventListener("pointerdown", e => { const t = e.target; if (t && t.closest) remember(t.closest(SRC) || t, e); }, true);
   doc.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") remember(doc.activeElement); }, true);
   // (left alone: the sheet window, which has its own; the order window, being rebuilt as a full-screen view with its own)
   const skips = d => !d || d.hasAttribute("data-no-grow") || d.classList.contains("sheetWin") || d.id === "orderWin";
@@ -463,7 +463,14 @@
     if (el && dlg.contains(el)) return null;
     if (el && visible(el)) rect = rectOf(el.getBoundingClientRect());
     if (!rect || !(rect.width >= 1 && rect.height >= 1)) return null;
-    return { el, rect, tint: el && el.isConnected ? tintOf(el) : "" };
+    return { el, rect, pt: press && press.el === el ? press.pt : null, tint: el && el.isConnected ? tintOf(el) : "" };
+  }
+  /** A source nearly as big as the window (a whole sheet's canvas, a big card) would leave almost nothing to see grow:
+   *  the window grows out of the point pressed in it instead (its centre when that is not known), and goes back there. */
+  function spot(r, D, pt) {
+    if (!r || r.width * r.height < .3 * D.width * D.height) return r;
+    const x = pt && pt.x >= r.left && pt.x <= r.left + r.width ? pt.x : r.left + r.width / 2, y = pt && pt.y >= r.top && pt.y <= r.top + r.height ? pt.y : r.top + r.height / 2;
+    return { left: x - 24, top: y - 16, width: 48, height: 32 };
   }
   /** Where a closing window goes back to: what it grew out of while that is in sight (for a menu's item, the menu's
    *  button once the menu has closed); null: it fades where it is. */
@@ -503,7 +510,7 @@
       if (reduced()) { run(dlg, [{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: "ease" }); return done(200); }
       dlg.classList.add("mdIn");
       const D = dlg.getBoundingClientRect(); if (D.width < 2 || D.height < 2) return done(0);
-      const B = src ? src.rect : { left: D.left + D.width * .07, top: D.top + D.height * .07, width: D.width * .86, height: D.height * .86 };
+      const B = src ? spot(src.rect, D, src.pt) : { left: D.left + D.width * .07, top: D.top + D.height * .07, width: D.width * .86, height: D.height * .86 };
       // the surface: the window's own box and colours, laid over the screen (so no window's edge cuts it), under its parts
       const cs = getComputedStyle(dlg), surf = doc.createElement("div"); surf.className = "mdSurface"; surf.setAttribute("aria-hidden", "true");
       Object.assign(surf.style, { left: D.left + "px", top: D.top + "px", width: D.width + "px", height: D.height + "px", borderRadius: cs.borderRadius, backgroundColor: cs.backgroundColor, backgroundImage: cs.backgroundImage, boxShadow: cs.boxShadow });
@@ -526,6 +533,7 @@
       // (the tidying keeps the animations' own time, so a slowed animation is not cut short; a hidden tab, which draws
       // no frames, is tidied a while later all the same)
       Promise.race([grown.finished.catch(() => {}), wait(3000)]).then(land);
+      warm();
       const total = DG.panel + 6 * DG.step + DG.part + 120, clock = dlg.animate([], { duration: total }); st.anims.push(clock);
       clock.finished.then(() => { if (OPEN.get(dlg) === st) stopOpen(dlg); }, () => {});
       done(15000);
@@ -550,6 +558,23 @@
       }
       const sh = new CSSStyleSheet(); sh.replaceSync(text); sheetObj = sh; sheetKey = key; return sh;
     } catch (_) { return null; }
+  }
+  /** The page's styles for the closing copy, made ready when the page is idle once a window has opened (building them,
+   *  and the browser compiling them, took 45-80 ms on the first close of a session: a stall at the start of the flight). */
+  let warmed = null, warming = false;
+  function warm() {
+    if (warming) return; warming = true;
+    const go = () => {
+      warming = false;
+      try {
+        const sh = pageSheet(); if (!sh || sh === warmed) return; warmed = sh;
+        const host = doc.createElement("div"); host.setAttribute("aria-hidden", "true"); host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none";
+        const sr = host.attachShadow({ mode: "closed" }); sr.adoptedStyleSheets = [sh]; sr.innerHTML = '<div class="dlg"><div class="dlgHead"></div></div>';
+        doc.body.appendChild(host); getComputedStyle(sr.firstElementChild).color; host.remove();
+      } catch (_) {}
+    };
+    // (after the window has grown, never during its flight)
+    setTimeout(() => { if (root.requestIdleCallback) root.requestIdleCallback(go, { timeout: 2000 }); else go(); }, DG.cap + 500);
   }
   /** Everything the closing needs, read while the window is still open. */
   function snapshot(dlg) {
@@ -603,7 +628,7 @@
       const home = still ? null : homeOf(snap.src, opts.to);
       if (!home) run(host, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: still ? "none" : "translateY(6px) scale(.985)" }], { duration: still ? 120 : 220, easing: "ease" });
       else {
-        const T = home.getBoundingClientRect();
+        const T = spot(home.getBoundingClientRect(), D, snap.src && snap.src.pt);
         run(host, [{ transform: "none" }, { transform: `translate(${T.left - D.left}px,${T.top - D.top}px) scale(${T.width / D.width},${T.height / D.height})` }]);
         run(host, [{ opacity: 1 }, { opacity: 1, offset: .8 }, { opacity: 0 }], { easing: "linear" });
         if (c) run(c, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "cubic-bezier(.4,0,1,1)" });
@@ -652,6 +677,8 @@
       // (drawn before the next frame, so the window never blinks out between its closing and its copy)
       requestAnimationFrame(() => { if (!d.open && d._mdSnap === rec && !rec.used && rec.snap) { rec.used = true; flyBack(rec.snap); } });
     };
+    // (the closing copy's styles are made ready once the page has loaded, again after a window opens if they changed)
+    if (doc.readyState === "complete") warm(); else root.addEventListener("load", () => warm(), { once: true });
     doc.addEventListener("cancel", e => early(e.target), true);
     doc.addEventListener("submit", e => { const f = e.target, how = (e.submitter && e.submitter.getAttribute("formmethod")) || (f && f.getAttribute && f.getAttribute("method")); if (f && /^dialog$/i.test(how || "")) early(f.closest("dialog")); }, true);
     doc.addEventListener("close", e => {
@@ -671,7 +698,11 @@
       const r = el.getBoundingClientRect(); if (!r.width || !r.height) return;
       const a = anchor && anchor.isConnected ? anchor.getBoundingClientRect() : null;
       const ox = a ? Math.max(0, Math.min(r.width, a.left + a.width / 2 - r.left)) : r.width / 2, oy = a ? Math.max(0, Math.min(r.height, a.top + a.height / 2 - r.top)) : 0, o = `${ox}px ${oy}px`;
-      el.animate([{ opacity: 0, transform: "scale(.88)", transformOrigin: o }, { opacity: 1, transform: "none", transformOrigin: o }], { duration: 300, easing: DG.grow });
+      // (its origin set on the panel for the flight, not in the keyframes, which kept the animation off the compositor)
+      const was = el.style.transformOrigin; el.style.transformOrigin = o; const mine = el.style.transformOrigin;
+      const an = el.animate([{ opacity: 0, transform: "scale(.88)" }, { opacity: 1, transform: "none" }], { duration: 300, easing: DG.grow });
+      const back = () => { if (el.style.transformOrigin === mine) el.style.transformOrigin = was; };
+      an.finished.then(back, back);
     } catch (_) {}
   }
   // every <details> that opens as a pop-up (its panel laid over the page: the run menu, Workspace, a sheet's Options…)
