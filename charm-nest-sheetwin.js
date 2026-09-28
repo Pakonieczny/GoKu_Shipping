@@ -2366,6 +2366,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // ids learned between two reads (AutoCancel's newest records, a cancel made here): a read that set out before them
     // does not take them back out
     const learned = new Map();
+    // and the other way: orders restored here → when the restore was done. A read that set out before it (the orders check's
+    // ids, the list, AutoCancel's newest records) does not bring them back in, count them or fly them in as a new cancel
+    const restored = new Map(), restoredAt = rid => restored.get(String(rid)) || 0;
     function load(force) {
       if (loading) return loading;
       if (!force && at && Date.now() - at < 60000) return Promise.resolve(ids);
@@ -2374,6 +2377,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         .then(r => {
           const was = at ? ids : null; ids = new Set((r.ids || []).map(String));
           for (const [id, t] of learned) { if (t >= t0) ids.add(id); else if (Date.now() - t > 600000) learned.delete(id); }
+          for (const [id, t] of restored) { if (t >= t0) ids.delete(id); else if (Date.now() - t > 600000) restored.delete(id); }
           at = Date.now(); if (was) arrived([...ids].filter(id => !was.has(id))); return ids;
         })
         // (never read yet: the orders check waits, so a cancelled order cannot come back in; read once, the last list stands)
@@ -2392,8 +2396,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function history(n) {
       if (n) asked = Math.min(MAX, Math.max(asked, n));
       if (reading) return reading;
+      const t0 = Date.now();
       reading = api("charmNestLibrary", { op: "cancelList", limit: asked }, { quiet: true }).then(r => {
-        const got = r.list || [], first = !list && !at, known = new Set([...ids, ...(list || []).map(c => String(c.orderId))]);
+        const got = (r.list || []).filter(c => !(restoredAt(c.orderId) >= t0)), first = !list && !at, known = new Set([...ids, ...(list || []).map(c => String(c.orderId))]);
         list = got.slice(); more = !!r.truncated; listAt = Date.now();
         for (const [rid, c] of extra) if (!list.some(x => String(x.orderId) === rid)) list.push(c);
         sortList();
@@ -2426,12 +2431,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (list) { list = list.filter(c => String(c.orderId) !== rid); list.unshift((r && r.record) || Object.assign({ orderId: rid, by: rec.by, why: rec.why, at: Date.now() }, rec.record || {})); listAt = 0; }
       return r;
     }
-    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
+    async function restore(rid) { await api("charmNestLibrary", { op: "cancelRestore", orderId: String(rid) }, { quiet: true }); restored.set(String(rid), Date.now()); ids.delete(String(rid)); learned.delete(String(rid)); extra.delete(String(rid)); if (list) list = list.filter(c => String(c.orderId) !== String(rid)); }
     /** Ids read elsewhere (AutoCancel's newest records) join the cache at once, and come into the Cancelled tab as any
      *  cancel seen live does; returns how many were new to it. */
     function absorb(more) {
       const now = Date.now(), fresh1 = [];
-      for (const x of more || []) { const id = String(x); if (!ids.has(id)) { ids.add(id); fresh1.push(id); } learned.set(id, now); }
+      for (const x of more || []) { const id = String(x); if (now - restoredAt(id) < 60000) continue; if (!ids.has(id)) { ids.add(id); fresh1.push(id); } learned.set(id, now); }   // (a read at most a minute old: from before a restore)
       if (fresh1.length && at) arrived(fresh1);
       return fresh1.length;
     }
@@ -2480,6 +2485,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
     let want = null, drawnKey = null, limit = PAGE;
+    const missed = new Map();                                       // older ones looked up and not read → { msg, at } (msg "": none kept)
     const WAIT = `<div class="cxWait"><span class="owSpin"></span>Reading the cancelled orders…</div>`;
     /** Draws the list into the Orders tab's body (host), with the tab's search (opts.q) and "Show"'s order (opts.focus);
      *  opts.live says the pile is still the one shown, opts.clear lets go of the search. Never waits on the library. */
@@ -2495,7 +2501,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (Date.now() - listAt > 60000) history().then(redraw, e => console.warn("cancelled orders", e.message));
       // an order asked for by number and not among the pages read: looked up on its own
       const f = w.focus || (/^\d{6,}$/.test(w.q) ? w.q : "");
-      if (f && !recordOf(f) && ids.has(f) && !extra.has(f)) lookup(f).then(redraw, () => {});
+      if (f && missed.has(f) && Date.now() - missed.get(f).at > 30000) missed.delete(f);
+      if (f && !recordOf(f) && ids.has(f) && !extra.has(f) && !missed.has(f)) lookup(f).then(c => { if (!c) missed.set(f, { msg: "", at: Date.now() }); redraw(); }, e => { missed.set(f, { msg: e.message || "no answer", at: Date.now() }); redraw(); });
       paint();
     }
     function paint() {
@@ -2528,11 +2535,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }
       { const keep = new Set(list.map(c => String(c.orderId))); for (const rid of [...nodes.keys()]) if (!keep.has(rid)) nodes.delete(rid); }
       if (!rows.length) {
-        const busy = reading || (w.focus && !recordOf(w.focus) && ids.has(w.focus));
+        const f = w.focus || (/^\d{6,}$/.test(w.q) ? w.q : ""), miss = f ? missed.get(f) : null;
+        const busy = reading || (f && !recordOf(f) && ids.has(f) && !miss);
         const empty = busy ? h("div", "cxWait", `<span class="owSpin"></span>Reading the cancelled orders…`)
+          : miss && miss.msg ? h("div", "libEmpty cxEmpty", `<span>Order ${esc(f)} is cancelled, but its record could not be read: ${esc(miss.msg)}</span><button class="btn ghost sm" type="button" data-cx="retry">Try again</button>`)
           : w.q ? h("div", "libEmpty cxEmpty", `<span>No cancelled order matches “${esc(w.q)}”.</span>${w.clear ? `<button class="btn ghost sm" type="button" data-cx="all">Show every cancelled order</button>` : ""}`)
           : h("div", "libEmpty cxEmpty", `<span>No order has been cancelled.</span><small>An order Etsy cancels, or one a person cancels from a sheet or the On hold list, is kept here.</small>`);
         empty.dataset.mkey = "cxEmpty"; const all = empty.querySelector("[data-cx=all]"); if (all) all.onclick = () => w.clear();
+        const again = empty.querySelector("[data-cx=retry]"); if (again) again.onclick = () => { missed.delete(f); renderInto(w.host, w.onChange, { q: w.q, focus: w.focus, live: w.live, clear: w.clear }); };
         out.push(empty);
       }
       const at0 = host.scrollTop;
@@ -2603,7 +2613,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!at && !loading && Date.now() - warmAt > 60000) { warmAt = Date.now(); load().then(() => { if (ids.size && window.Orders) Orders.render(); }, () => {}); }
       return ids.size;
     }
-    return { load, has, history, put, restore, renderInto, count, isEtsy, fatesOf, absorb, ids: () => [...ids] };
+    return { load, has, history, put, restore, renderInto, count, isEtsy, fatesOf, absorb, restoredAt, ids: () => [...ids] };
   })();
   // the order's record is kept first; only then does it leave every list, so an interruption leaves it on hold
   async function cancelRecord(rid, o, keepSt, goneSt, paint) {
