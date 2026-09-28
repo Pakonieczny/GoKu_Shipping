@@ -459,7 +459,8 @@ const PLACED_ORDER_ROUTING_NOTE = [
   "PLACED-ORDER CHANGES ARE SUPPORT: paying an extra charge staff quoted on an order",
   "already placed (a tariff, surcharge, price difference or re-work fee), or adding rush,",
   "Priority or Express shipping to an order already paid for, is support, not sales_lead,",
-  "unless the customer also asks for a new or different piece."
+  "unless the customer also asks for a new or different piece. A size, metal or option the",
+  "linked listing already offers is not custom work."
 ].join("\n");
 
 async function classifyThread(threadId, opts = {}) {

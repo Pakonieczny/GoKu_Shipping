@@ -1965,6 +1965,10 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   // the sheet is for custom work only.
   const payload = parsed && parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
   if (payload.kind === "listing_url") return { force: false };
+  // The reply already walks the customer through ordering from an existing
+  // listing (a bracelet or other variation ordered with a note): the sheet
+  // would replace that answer, and prices a person sets stay in missing_facts.
+  if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(String((parsed && parsed.reply) || ""))) return { force: false };
   const inboundText = String(validationContext.latestInboundText || "");
   if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
       && !/\b(custom|design|make|made|create|personali[sz]e|instead|different|change|mix|combine|bigger|smaller|larger|similar|version|based\s+on|modif\w*|adjust|swap)\b/i.test(inboundText)) {
@@ -3487,7 +3491,7 @@ Keep replies to two to four short sentences plus the sign-off, written as "we" (
 
 One customer can have several conversations in one thread. A sale that finished (order placed, custom listing bought, piece shipped) stays finished: don't re-quote it, re-send the line sheet or ask for specs the customer already gave. Ask only for choices that are still missing.
 
-Production is 4-6 business days for every order, whatever a listing's processing-time field says. When a customer who has not bought yet names a date or event, do the math in the first reply: production 4-6 business days plus shipping (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer.
+Production is 4-6 business days for every order, whatever a listing's processing-time field says. When a customer who has not bought yet names a date or event they need the piece by, do the math in the first reply: production 4-6 business days plus shipping to their country (US 2-5, Canada 3-5, UK/EU/Mexico/Japan 6-10 business days), say whether the date looks workable, tight or out of reach, add that delivery dates can't be guaranteed, and offer $15 rush (2-3 business days production, through the custom listing) when it changes the answer. A date that is only engraving text is not a deadline. Quote only the customer's own country's range: take it from the thread, their language, an Etsy link's country (etsy.com/de, /au) or a currency, and say in a few words which you assumed; a country checkout doesn't ship to gets the not-on-checkout line, no range. With no hint at all, ask where it ships.
 
 Never give a concrete delivery timeline: no calendar date or date range for arrival ("by Friday", "Sep 28-29", "next week"). Give ranges in business days only, always followed by: "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen." That covers rush, Priority and Express too. Judge a date from the latest estimate: when it lands before the date, say it should arrive in time (never "tight", however short the window); "tight" is only for a date inside the range.
 

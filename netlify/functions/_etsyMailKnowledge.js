@@ -116,9 +116,11 @@ function renderKnowledgeBlock({ facts, rules }, audience) {
     "",
     "When the customer asks for a detail that none of those sources gives (a back type, a stone",
     "size, a transit time to a country, whether something can be made or engraved somewhere):",
-    "never guess or infer it from similar products. Answer everything else, say plainly in one",
-    "short sentence which detail the team is checking, hold the draft for a person, and name the",
-    "missing detail in missing_facts. A person then answers it and it is added to this sheet.",
+    "never guess or infer it from similar products. Answer everything else, name the detail in one",
+    "short clause such as \"we'll confirm the stone size here\" (never \"the team is checking\"), hold",
+    "the draft for a person, and name the missing detail in missing_facts. A person then answers it",
+    "and it is added to this sheet. Never say how a future step will reach the customer (an Etsy or",
+    "USPS email, a tracking number to follow) unless a fact says so.",
     "Listing links in these facts are the shop's own and may be sent like the add-on block's.",
     ""
   ];

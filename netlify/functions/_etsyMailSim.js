@@ -106,6 +106,15 @@ async function futureListingIds(s, threadRef, origGet) {
   return ids;
 }
 
+let _serviceIds = null;
+function serviceListingIds() {
+  if (!_serviceIds) {
+    try { _serviceIds = new Set(require("./etsyMailListingsCatalog").SERVICE_LISTING_IDS || []); }
+    catch (_) { _serviceIds = new Set(); }
+  }
+  return _serviceIds;
+}
+
 /** A thread doc as it stood at asOfMs: a custom listing, acceptance or
  *  completed sale that came later is taken off. */
 function threadAsOf(data, asOfMs, future) {
@@ -350,7 +359,10 @@ function install() {
       if (fixed) return wrapSnap(snap, { ...data, recentReceipts: rr });
       return v.changed ? wrapSnap(snap, v.data) : snap;
     }
-    if (/^EtsyMail_Listings\//.test(path) && s.futureAll && s.futureAll.has(ref.id)) return wrapSnap(snap, undefined);
+    // A listing linked only later in the thread (a custom listing made
+    // afterwards) is hidden; the shop's standing add-on listings are not.
+    if (/^EtsyMail_Listings\//.test(path) && s.futureAll && s.futureAll.has(ref.id)
+        && !serviceListingIds().has(String(ref.id))) return wrapSnap(snap, undefined);
     if (/^EtsyMail_TrackingCache\//.test(path)) {
       const v = trackingAsOf(snap.data(), s.nowMs || s.asOfMs);
       return v === null ? wrapSnap(snap, undefined) : wrapSnap(snap, v);
