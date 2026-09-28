@@ -6455,7 +6455,7 @@ const CustomSheet = window.CustomSheet = (() => {
   const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
   // motion (Paul, 27 Sep 20:09-20:24): files just dropped, still on their way into their rows; thumbnails new on a card;
   // cards whose strip of designs is about to show for the first time
-  const arriving = new Set(), popThumb = new Set(), stripNew = new Set();
+  const arriving = new Set(), popThumb = new Set(), stripNew = new Set(), ringNext = new Set();
   const D = { dlg: null, ck: null, it: null, askName: false, opening: false };
   let ver = 0, idxFor = null, idxVer = -1, idx = new Map(), lastPrune = 0;
   const ckOf = it => String(it.key || "").replace(/^[a-z]+:/, "");        // "ord:custom:…" and "cinfo:custom:…" are one card
@@ -6590,8 +6590,11 @@ const CustomSheet = window.CustomSheet = (() => {
     for (const F of fresh) arriving.add(F.id);
     e.files.push(...fresh); e.at = Date.now();
     TL.line(row, "designDropped", { id: `${c.ck}.${fresh[0].id}`, text: (fresh.length === 1 ? `Design added: ${fresh[0].name}` : `${fresh.length} designs added: ${fresh.map(F => F.name).join(", ")}`).slice(0, 200), data: { files: fresh.map(F => ({ name: F.name, kind: F.kind, size: F.size })).slice(0, 12), card: c.ck } });
-    open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
-    let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
+    const flown = open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
+    // each is read once it has landed in its row: tracing a design and drawing its picture are long tasks (50-130 ms)
+    // that made the flight jump on its way. Bounded, so one whose flight was cut short (the window closed) is read too.
+    const landed = Promise.race([Promise.resolve(flown).catch(() => {}), new Promise(r => setTimeout(r, 2600 + 140 * fresh.length))]);
+    let chain = landed; for (const F of fresh) chain = chain.then(() => ingest(F));
   }
   function remove(ck, id) {
     const e = all()[ck]; if (!e || e.sent) return;
@@ -6899,7 +6902,7 @@ const CustomSheet = window.CustomSheet = (() => {
       let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
       if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
       const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, sent, tooBig(F)].join("|");
-      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); }
+      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); if (F.thumb && ringNext.delete(F.id)) lit(n.querySelector(".cuThumb"), "cuLanded", 1000); }
       if (made && !calm) Motion.grow(n, { ms: 700 });
       prev = n;
     }
@@ -6982,21 +6985,22 @@ const CustomSheet = window.CustomSheet = (() => {
    *  into its row, and the row fills as it lands. The row's place is read on every frame, so a bar that opens above it
    *  or a list that scrolls does not make it miss. */
   function launch(fly) {
-    const d = D.dlg; if (!d || !d.open || !fly) return;
+    const d = D.dlg; if (!d || !d.open || !fly) return Promise.resolve();
     const list = d.querySelector("#cuList"), rows = fly.ids.map(id => [...list.children].find(x => x.dataset.id === id && !x._leaving)).filter(Boolean);
-    if (!rows.length) return;
-    if (motionOff()) { rows.forEach(n => land(n, true)); return; }
+    if (!rows.length) return Promise.resolve();
+    if (motionOff()) { rows.forEach(n => land(n, true)); return Promise.resolve(); }
     // the last of them in sight (a long list scrolls down to it)
     const lr = list.getBoundingClientRect(), z = rows[rows.length - 1], need = z.getBoundingClientRect().top + z.scrollHeight - lr.bottom;
     if (need > 0) list.scrollTop += need + 6;
     const box = d.querySelector("#cuAdd").getBoundingClientRect(), at = fly.at || { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files;
+    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files, landed = [];
     rows.forEach((n, i) => {
       const F = files.find(x => x.id === n.dataset.id); if (!F) { land(n, true); return; }
       const chip = el("div", "cuChip", `<i>${F.kind === "dxf" ? "DXF" : "AI"}</i><span></span>`); chip.lastChild.textContent = F.name;
       L.appendChild(chip);
-      flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => land(n));
+      landed.push(new Promise(res => flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => { land(n); res(); })));
     });
+    return Promise.all(landed);
   }
   const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, easeOut = t => 1 - Math.pow(1 - t, 3);
   function flight(chip, at, i, target, onLand) {
@@ -7028,26 +7032,29 @@ const CustomSheet = window.CustomSheet = (() => {
     arriving.delete(n.dataset.id);
     if (!n.isConnected) return;
     n.classList.remove("arriving");
-    if (!quiet) lit(n.querySelector(".cuThumb"), "cuLanded", 1000);
+    // (its picture still being drawn: the ring answers when it comes)
+    if (!quiet) { const t = n.querySelector(".cuThumb"); if (t && t.querySelector("img")) lit(t, "cuLanded", 1000); else ringNext.add(n.dataset.id); }
   }
   /** What a closed window leaves behind is cleared: chips still flying, rows still folding, rows still waiting. */
   function settle(d) {
     d.querySelectorAll(":scope > .motionLayer > .cuChip").forEach(x => x.remove());
     for (const n of [...d.querySelector("#cuList").children]) { if (n._leaving) n.remove(); else n.classList.remove("arriving"); }
-    arriving.clear();
+    arriving.clear(); ringNext.clear();
   }
   /** The window, for one card: never over another window (the order window is closed first). */
   function open(it, opts = {}) {
     const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
     D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
+    let flown = null;   // (the files just added have all landed in their rows)
     if (!d.open) {
       D.opening = true; try { paint(); } finally { D.opening = false; }
       d.showModal();
       const shown = growFrom(d, opts.from);
-      if (opts.fly) shown.then(() => launch(opts.fly));
-    } else { paint(); if (opts.fly) launch(opts.fly); }
+      if (opts.fly) flown = shown.then(() => launch(opts.fly));
+    } else { paint(); if (opts.fly) flown = launch(opts.fly); }
     if (opts.browse) d.querySelector("#cuFileIn").click();
     else if (D.askName) d.querySelector("#cuWho input").focus();
+    return flown || Promise.resolve();
   }
   /** The window goes back into its card: it closes at once (the page is usable again), and a copy of it shrinks into the
    *  card's designs, which answer. A card out of sight: the copy only fades. */
@@ -7744,10 +7751,22 @@ const Review = window.Review = (() => {
   /** The decision card inside another view (the order window): rebuilt only when its decision changed, and then with
    *  what was typed or picked carried over, as the Review list does. The window used to rebuild it on every repaint, so
    *  a repool elsewhere emptied the field being typed in. */
+  /** What was typed or picked in a decision card the order view left for another order (Previous, Next, another order
+   *  opened): kept for that decision, as the staff note is kept for its order, and put back when it is shown again. It
+   *  used to be thrown away at the first step. */
+  const typedKept = new Map();
+  function leaveCard(host) {
+    if (!host || !host._rvKey || !host.firstChild) return;
+    const was = typedIn(host).map(w => Object.assign(w, { at: null }));
+    typedKept.delete(host._rvKey); if (was.some(w => w.v !== "" && w.v !== false)) typedKept.set(host._rvKey, was);
+    while (typedKept.size > 30) typedKept.delete(typedKept.keys().next().value);
+    host._rvKey = null; host._rvStamp = null;
+  }
   function cardIn(host, it) {
     const stamp=stampOf(it);
     if(host._rvStamp===stamp&&host._rvKey===it.key&&host.firstChild)return;
-    const was=host._rvKey===it.key?typedIn(host):[];
+    if(host._rvKey!==it.key)leaveCard(host);
+    const was=host._rvKey===it.key?typedIn(host):(typedKept.get(it.key)||[]);typedKept.delete(it.key);
     host.innerHTML='';host.appendChild(card(it));host._rvStamp=stamp;host._rvKey=it.key;
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
@@ -7911,7 +7930,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -8771,6 +8790,7 @@ const OrderWin = window.OrderWin = (() => {
     } else {
       // an answered question folds away where it was (the room closes as it fades), never vanishing at once
       const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
+      if (had) Review.leaveCard(had);   // (what was picked there waits for its order to be shown again)
       const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
       fix.innerHTML = "";
       if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
