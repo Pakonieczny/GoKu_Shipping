@@ -2875,7 +2875,8 @@ function loadSettings() {
 }
 function saveSettings() { localStorage.setItem("cn.settings", JSON.stringify(S.settings)); document.documentElement.dataset.rail = S.settings.rail; }
 function stockFor(metal, sheet) {
-  const saved=sheet?.roseStock || sheet?.recalled?.stock;
+  // (keptStock: a cut sheet an Apply size left as it was keeps the size it was cut at: Gate.renderRelease)
+  const saved=sheet?.roseStock || sheet?.recalled?.stock || sheet?.keptStock;
   if(saved?.wPt && saved?.hPt)return {wPt:saved.wPt,hPt:saved.hPt,wIn:saved.wPt/72,hIn:saved.hPt/72};
   const p = STOCK_PRESETS.find(p => p.id === S.stockPreset);
   const inches = (p && p.id !== "custom" && !["gold10k", "gold14k", "rose"].includes(metal)) ? [p.w, p.h] : (S.settings.stock[metal] || DEFAULTS.stock[metal]);
@@ -3582,7 +3583,7 @@ function layoutFixed(sh) {
   return !!sh.roseCutAt || !!sh.releaseFull || !!sh.recalled || !!sh.laserDoneAt || !!(window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && set.sheetIds.includes(sh.sheetId))) ||
     !!(window.Gate && Gate.modern(sh.runId) && sh.setId && !sh.draft);
 }
-function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
+function sheetDirty(sh) { if(sh.roseCutAt)return; if(sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)){window.RoseStock?.protect(sh);sh.dirty=true;sh.status='ready';renderCard(sh);return;} delete sh.rosePlan; delete sh.rosePlanHash; delete sh.rosePlanKey; delete sh.runHold; delete sh.intakeFinalized; delete sh.intakeForceFinal; delete sh.intakeOptimized; delete sh.intakeOptimizedCount; delete sh.intakeAppend; delete sh.appendOnly; delete sh.topup; delete sh.missRearranged; delete sh.keptStock; sh.dirty = true; sh.releaseFull = false; sh.movedOn = null; sh.problem = null; if (!["nesting", "finishing"].includes(sh.status)) { sh.status = sh.charms.length ? "ready" : "idle"; sh.placements = []; sh.rejects = []; sh.layout = null; sh.outputs = null; sh.verification = null; sh.liveInfo = null; } computeSaturation(sh); renderCard(sh); }
 function activeCharms(sh) { return sh.charms.filter(c => !c.excluded); }
 /* One card per metal; a metal can hold several sheets ("pages"). The card shows the active page and tabs to switch. */
 const pagesOf = metal => S.sheets[metal].pages;
@@ -5837,7 +5838,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260928-ov2"></script>
-<script src="charm-nest-bridge.js?v=20260928-backface2"></script>
+<script src="charm-nest-bridge.js?v=20260928-a3-13"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-backface2"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
