@@ -85,6 +85,9 @@ const {
   INVESTIGATION_PROTOCOL_TEXT,
   INVESTIGATION_JSON_SCHEMA,
 } = require("./_etsyMailAnthropic");
+// The short instructions (owner, 2026-09-28). aiPromptConfig.promptVersion
+// "legacy" switches back to the long ones below.
+const SHORT_PROMPTS = require("./_etsyMailPrompts");
 const {
   getShop,
   getShopSections,
@@ -3219,7 +3222,7 @@ function buildContextPreamble({ thread, customer, mode, currentDraft, instructio
     if (thread.etsyHeadingTitle) sections.push(`Etsy heading title: ${thread.etsyHeadingTitle}`);
     if (thread.etsyOrderId)      sections.push(`Linked order ID (receiptId): ${thread.etsyOrderId}`);
     if (thread.etsyViewOrderUrl) sections.push(`Order page URL: ${thread.etsyViewOrderUrl}`);
-    sections.push(`>>> Apply the HELP REQUESTS ON EXISTING ORDERS rules from the system prompt. <<<`);
+    sections.push(`>>> This order is the topic; it is not a new sale. <<<`);
   }
 
   sections.push(`\n--- CUSTOMER CONTEXT ---`);
@@ -3275,7 +3278,7 @@ only noted in text. Read the full history, identify the
 active question per the rules in the system prompt, do any tracking or
 order lookups you need, and finish by calling compose_draft_reply.
 
-Sign-off: use exactly the SIGNATURE TO USE block from the system prompt. Never add an operator's name.`);
+Sign-off: exactly as the system prompt gives it. Never add an operator's name.`);
 
   return sections.join("\n");
 }
@@ -3551,6 +3554,8 @@ const TOOL_SPECS = [
   }
 ];
 
+const SHORT_TOOL_SPECS = SHORT_PROMPTS.shortenTools(TOOL_SPECS, SHORT_PROMPTS.SUPPORT_TOOL_TEXT);
+
 /** Shipments for a receipt from the receipts mirror (EtsyMail_Receipts,
  *  refreshed every 7-10 min by etsyMailReceiptsMirrorCron): 1 Firestore
  *  read, 0 Etsy calls. Only a SHIPPED receipt with a tracking code is
@@ -3820,7 +3825,7 @@ function buildToolExecutors(ctx) {
           // listing's own entry; the family sizes below are the shop's
           // standard and may be stated (replays read the two as a clash).
           result = { ...result,
-            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Quote the size as familyFacts.factSheetSize words it (the standard size first); add no specs the customer didn't ask for, and for a customer still choosing, add the fact sheet's larger-size-on-request clause. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Quote the size as familyFacts.factSheetSize words it (the standard size first); add no specs the customer didn't ask for, and only when they find it too small or their text won't fit, add the fact sheet's larger-size-on-request clause. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
             familyFacts: { family, factSheetSize, charmStyles: styles, metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
@@ -4706,7 +4711,8 @@ answering. Do not guess about the order's contents.`;
     // ─── 3. Build system prompt ────────────────────────────────────
     // v5.0 — append the shared investigation protocol + draft-reply-
     // specific instructions for grounding the reply in the findings.
-    const baseSystem = buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
+    const shortPrompts = SHORT_PROMPTS.useShortPrompts(promptConfig);
+    const baseSystem = shortPrompts ? "" : buildSystemPromptText(promptConfig, shopEnrichment, employeeName);
     const draftReplyInvestigationAddendum = [
       "═══ DRAFT-REPLY INVESTIGATION GROUNDING ═══════════════════════════════",
       "",
@@ -4739,10 +4745,12 @@ answering. Do not guess about the order's contents.`;
     // (_etsyMailKnowledge.js). Last in the system prompt and unchanged
     // between drafts, so it is read from the prompt cache.
     let knowledgeBlock = "";
-    try { knowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("support"); }
+    try { knowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("support", { bare: shortPrompts }); }
     catch (e) { console.warn("[draftReply] fact sheet unavailable:", e.message); }
 
-    const system = [
+    const system = shortPrompts
+      ? SHORT_PROMPTS.buildSupportSystem({ config: promptConfig, shopEnrichment, knowledgeBlock })
+      : [
       baseSystem,
       "",
       INVESTIGATION_PROTOCOL_TEXT,
@@ -4993,7 +5001,9 @@ answering. Do not guess about the order's contents.`;
           `Price: ${L.priceUsd != null ? `$${L.priceUsd.toFixed(2)} ${L.currencyCode || "USD"}` : "unknown"}`,
           `State: ${L.state || "unknown"}${r.isActive === false ? " (NOT ACTIVE)" : ""}${r.notOurShop ? " (NOT OUR SHOP)" : ""}`,
           `Variants (live from Etsy API — source of truth for what the buyer sees in the option dropdown):`,
-          variantsText
+          variantsText,
+          // Sizes and materials are often only in the description.
+          ...(L.descriptionShort ? [`Description (start): ${String(L.descriptionShort).replace(/\s+/g, " ").trim()}`] : [])
         ].join("\n");
       }).join("\n\n");
       // Audit 2026-09: sent in the first user message instead of appended
@@ -5022,7 +5032,7 @@ answering. Do not guess about the order's contents.`;
         maxTokens     : draftThinking ? AI_THINKING_MAX_TOKENS : AI_MAX_TOKENS,
         system        : systemWithListings,
         initialMessages,
-        toolSpecs     : TOOL_SPECS,
+        toolSpecs     : shortPrompts ? SHORT_TOOL_SPECS : TOOL_SPECS,
         toolExecutors,
         toolContext,
         effort        : draftEffort,
@@ -5490,25 +5500,12 @@ answering. Do not guess about the order's contents.`;
       // scrubbing, and tidy trailing whitespace
       s = s.replace(/,\s*,/g, ",");
       s = s.replace(/[ \t]+/g, " ");
-      s = s.replace(/\s+([.,;!?])/g, "$1");
+      s = s.replace(/\s+([.,;!?])(?!\d)/g, "$1");  // "solid .925" keeps its space
       s = s.split("\n").map(line => line.replace(/\s+$/, "")).join("\n");
       s = s.replace(/\n{3,}/g, "\n\n");
-      // Owner's rule: any timing range carries the no-guarantee sentence.
-      // Added in English replies when the model left it out.
-      const _timing = /\b\d+\s*-\s*\d+\s+(?:business\s+|working\s+)?(?:days?|weeks?)\b/i;
-      const _timingTopic = /\b(?:ship\w*|deliver\w*|arriv\w*|transit|production|made|mail\w*|reach\w*|get\s+(?:it|there|to\s+you))\b/i;
-      const _english = ((s.match(/\b(?:the|and|you|your|we|it|is|to)\b/gi) || []).length >= 2);
-      if (_english && !/guarantee/i.test(s)
-          && s.split(/(?<=[.!?])\s+|\n+/).some(t => _timing.test(t) && _timingTopic.test(t))) {
-        const _disc = "Unfortunately we can't guarantee delivery dates, whichever shipping option is chosen.";
-        const _sig = s.search(/\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i);
-        s = _sig > 0 ? s.slice(0, _sig).replace(/\s+$/, "") + " " + _disc + s.slice(_sig)
-                     : s.replace(/\s+$/, "") + " " + _disc;
-      }
-      // Sign-off on its own lines, never run onto the last sentence.
-      s = s.replace(/[ \t]*\n*[ \t]*Many\s+Thanks,?[ \t]*\n?[ \t]*CustomBrites\s*$/i, "\n\nMany Thanks,\nCustomBrites");
-
-      return s.trim();
+      // Owner's fixed wording: the no-guarantee sentence after a business-day
+      // range, and the sign-off on its own lines (added when missing).
+      return SHORT_PROMPTS.finishReplyText(s);
     }
 
     if (composeCall && composeCall.input && typeof composeCall.input.text === "string") {

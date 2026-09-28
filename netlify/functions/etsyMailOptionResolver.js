@@ -1141,12 +1141,13 @@ function metalSpecsForAi(ms) {
   if (!ms || typeof ms !== "object") return null;
   const clean = (v) => {
     if (typeof v === "string") {
-      return v.split(/(?<=[.!?])\s+/).filter(x => !/collateral|attach the matching|comparison \+ jewel/i.test(x)).join(" ");
+      // Water and wear-time claims come only from the fact sheet (metal-water).
+      return v.split(/(?<=[.!?])\s+/).filter(x => !/collateral|attach the matching|comparison \+ jewel|shower|swim|24\/7/i.test(x)).join(" ");
     }
     if (Array.isArray(v)) return v.map(clean);
     if (v && typeof v === "object") {
       const o = {};
-      for (const [k, x] of Object.entries(v)) if (!/collateral/i.test(k)) o[k] = clean(x);
+      for (const [k, x] of Object.entries(v)) if (!/collateral|showerSafe/i.test(k)) o[k] = clean(x);
       return o;
     }
     return v;

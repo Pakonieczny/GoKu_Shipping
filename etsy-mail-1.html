@@ -5107,6 +5107,8 @@ body.em-tabs-smart .em-smart-fwrap {
 #emSecretModal .em-learn-btn .em-smart-spin { width: 9px; height: 9px; margin: 0; }
 .em-learn-tabs .em-layout-opt { white-space: nowrap; }
 .em-learn-stats { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #57606a; margin: 6px 0 8px; flex-wrap: wrap; }
+.em-learn-ver { display: flex; align-items: center; gap: 10px; font-size: 12px; color: #57606a; margin: 0 0 8px; flex-wrap: wrap; }
+.em-learn-ver .em-layout-ctl { margin: 0; }
 .em-learn-bar { display: flex; flex: 0 0 160px; height: 6px; border-radius: 3px; overflow: hidden; background: #eaeef2; }
 .em-learn-bar i { display: block; height: 100%; }
 .em-learn-bar .u { background: #2da44e; } .em-learn-bar .l { background: #bf8700; } .em-learn-bar .r { background: #cf222e; }
@@ -5473,6 +5475,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           <button type="button" class="em-learn-btn em-learn-run" id="emLearnRunBtn" title="Turn this week's edits into rules and facts now (it also runs once a day)">Learn now</button>
         </div>
         <div id="emLearnStats" class="em-learn-stats"><span class="em-smart-spin"></span> Loading…</div>
+        <div class="em-learn-ver">
+          <span>AI instructions</span>
+          <div class="em-layout-ctl" id="emPromptVerCtl" role="radiogroup" aria-label="AI instructions">
+            <button type="button" class="em-layout-opt" role="radio" aria-checked="false" data-pver="short">Short</button>
+            <button type="button" class="em-layout-opt" role="radio" aria-checked="false" data-pver="legacy">Long (before Sep 28)</button>
+          </div>
+          <span class="em-muted" id="emPromptVerNote"></span>
+        </div>
         <div class="em-layout-ctl em-learn-tabs" id="emLearnTabs" role="tablist" aria-label="Learning">
           <button type="button" class="em-layout-opt on" role="tab" data-ltab="edits">Biggest edits<span class="n" data-lcount="edits"></span></button>
           <button type="button" class="em-layout-opt" role="tab" data-ltab="rules">Learned rules<span class="n" data-lcount="rules"></span></button>
@@ -10406,6 +10416,20 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       el.innerHTML = html;
     }
 
+    // Which instructions both inbox AIs use: the short set (default) or the
+    // long one from before 2026-09-28, kept as a way back.
+    function emLearnRenderVersion() {
+      const ctl = $("emPromptVerCtl"), note = $("emPromptVerNote");
+      const v = (emLearn.data && emLearn.data.promptVersion) || "short";
+      if (ctl) ctl.querySelectorAll("[data-pver]").forEach(b => {
+        const on = b.dataset.pver === v;
+        b.classList.toggle("on", on); b.setAttribute("aria-checked", on ? "true" : "false");
+      });
+      if (note) note.textContent = v === "short"
+        ? "one short set of rules for both AIs; facts come from the fact sheet"
+        : "the long instructions both AIs used before Sep 28";
+    }
+
     function emLearnRenderCounts() {
       const d = emLearn.data || {};
       const set = (k, v) => { const e = document.querySelector('#emLearnTabs [data-lcount="' + k + '"]'); if (e) e.textContent = v ? String(v) : ""; };
@@ -10529,7 +10553,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       try {
         const res = await emLearnApi({ op: "summary" });
         emLearn.data = res;
-        emLearnRenderStats(); emLearnRenderCounts(); emLearnRenderPanel(); emLearnRenderNote();
+        emLearnRenderStats(); emLearnRenderVersion(); emLearnRenderCounts(); emLearnRenderPanel(); emLearnRenderNote();
       } catch (e) {
         stats.innerHTML = '<span class="em-learn-err">Couldn’t load learning: ' + esc(e.message || "error") + '</span>';
       }
@@ -10556,7 +10580,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
     function emLearnWire() {
       emLearn.wired = true;
-      const tabs = $("emLearnTabs"), panel = $("emLearnPanel"), run = $("emLearnRunBtn");
+      const tabs = $("emLearnTabs"), panel = $("emLearnPanel"), run = $("emLearnRunBtn"), ver = $("emPromptVerCtl");
+      if (ver) ver.addEventListener("click", ev => {
+        const b = ev.target.closest("[data-pver]"); if (!b || b.classList.contains("on")) return;
+        emLearnAct(b, { op: "setPromptVersion", version: b.dataset.pver },
+          b.dataset.pver === "short" ? "Both AIs now use the short instructions." : "Both AIs now use the long instructions.");
+      });
       if (tabs) tabs.addEventListener("click", ev => {
         const b = ev.target.closest("[data-ltab]"); if (!b) return;
         emLearn.tab = b.dataset.ltab;
@@ -23072,7 +23101,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // the agent that needs it errors out cleanly with a 503.
       const PROMPT_DEFS = [
         { id: "intent_classifier", label: "Intent classifier", used: "Auto-pipeline → routes inbound messages to support / sales / spam / etc." },
-        { id: "sales",             label: "Sales agent",       used: "Single prompt for all sales conversations. Reads the thread, decides next action — captures spec, sends line sheet, computes quotes via resolveQuote, escalates when needed." }
+        { id: "sales",             label: "Sales agent",       used: "Used only while Settings > Learning > AI instructions is set to Long. The short instructions (the default) are built in." }
       ];
 
       function _fmtAgo(ms) {

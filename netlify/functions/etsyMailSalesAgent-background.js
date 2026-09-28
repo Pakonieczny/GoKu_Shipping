@@ -134,6 +134,9 @@ const {
   INVESTIGATION_PROTOCOL_TEXT,
   INVESTIGATION_JSON_SCHEMA,
 } = require("./_etsyMailAnthropic");
+// The short instructions (owner, 2026-09-28); aiPromptConfig.promptVersion
+// "legacy" switches back to the stored prompt plus the addenda below.
+const SHORT_PROMPTS = require("./_etsyMailPrompts");
 // ─── In-bundle module imports — guarded with try/catch ────────────────
 //
 // These modules are all part of the Step 2.3 bundle and should always be
@@ -361,6 +364,18 @@ function patchStoredSalesPrompt(text) {
   let out = String(text || "");
   for (const [from, to] of SALES_PROMPT_PATCHES) out = out.split(from).join(to);
   return out;
+}
+
+/** EtsyMail_Config/aiPromptConfig (shared with the support drafter): its
+ *  promptVersion picks the short or the legacy instructions. */
+async function loadAiPromptConfig() {
+  try {
+    const snap = await db.collection(CONFIG_COLL).doc("aiPromptConfig").get();
+    return snap.exists ? snap.data() : null;
+  } catch (e) {
+    console.warn("[salesAgent] aiPromptConfig read failed, using the short instructions:", e.message);
+    return null;
+  }
 }
 
 async function loadSalesPrompt() {
@@ -923,7 +938,7 @@ function buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId, 
         const unavailResult = {
           success: false,
           reason : "RESOLVER_UNAVAILABLE",
-          customerMessage: "Our pricing system is temporarily unavailable. A team member will follow up with your quote shortly."
+          note: "The price calculator is unavailable. State no price: escalate_to_human, and let the reply name the request and what is settled."
         };
         await writeAudit({
           threadId,
@@ -2130,9 +2145,11 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   const naPayload = parsed.next_action_payload && typeof parsed.next_action_payload === "object" ? parsed.next_action_payload : {};
   // An add-on/fee listing named in the prompt's service block needs no search.
   const pointerId = (String(naPayload.url || "").match(/listing\/(\d+)/) || [])[1];
+  // So does a listing the customer linked (already looked up before the turn).
+  const linkedIds = (Array.isArray(validationContext.linkedListingIds) ? validationContext.linkedListingIds : []).map(String);
   const listingPointer = na === "attach_collateral" && naPayload.kind === "listing_url"
     && (toolNamesCalled.includes("search_shop_listings") || toolNamesCalled.includes("lookup_listing_by_url")
-      || (!!pointerId && SERVICE_LISTING_IDS.includes(pointerId)));
+      || (!!pointerId && (SERVICE_LISTING_IDS.includes(pointerId) || linkedIds.includes(pointerId))));
   const guideFlagged = ["attach_fit_reference", "attach_metal_comparison", "attach_care_instructions", "attach_bracelet_sizing"]
     .some(f => parsed[f] === true);
   const collateralSatisfied = listingPointer || guideFlagged || parsed.attach_line_sheet === true;
@@ -2659,7 +2676,8 @@ exports.handler = async (event) => {
     const prefetchedSizingCollateral = prefetchedSizingCollateralResult.matches || [];
 
     // ── Load the unified sales prompt ──
-    const promptLoad = await loadSalesPrompt();
+    const shortPrompts = SHORT_PROMPTS.useShortPrompts(await loadAiPromptConfig());
+    const promptLoad = shortPrompts ? { ok: true, prompt: "" } : await loadSalesPrompt();
     if (!promptLoad.ok) {
       await writeAudit({
         threadId, eventType: "sales_agent_prompt_unavailable",
@@ -2678,7 +2696,7 @@ exports.handler = async (event) => {
     // the agent calls the tool without an explicit receiptId.
     const buyerUserIdForTools = (threadDocData && threadDocData.buyerUserId)
       ? String(threadDocData.buyerUserId) : null;
-    const toolSpecs     = buildToolSpecs();
+    const toolSpecs     = shortPrompts ? SHORT_PROMPTS.shortenTools(buildToolSpecs(), SHORT_PROMPTS.SALES_TOOL_TEXT) : buildToolSpecs();
     const toolExecutors = buildToolExecutors({ threadId, salesCtx, customerHistory, buyerUserId: buyerUserIdForTools, cfg });
 
     // ── Build initial messages ──
@@ -3642,7 +3660,7 @@ from your investigation, not from the default sales script.
     // The owner's fact sheet and rules learned from staff corrections
     // (_etsyMailKnowledge.js), last in the prompt so it stays cached.
     let salesKnowledgeBlock = "";
-    try { salesKnowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("sales"); }
+    try { salesKnowledgeBlock = await require("./_etsyMailKnowledge").getKnowledgeBlock("sales", { bare: shortPrompts }); }
     catch (e) { console.warn("[salesAgent] fact sheet unavailable:", e.message); }
     const missingFactsAddendum = [
       "# MISSING FACTS (system addendum)",
@@ -3655,7 +3673,9 @@ from your investigation, not from the default sales script.
       "non-empty list holds the draft for a person."
     ].join("\n");
 
-    const fullSystemPrompt = patchStoredSalesPrompt(String(promptLoad.prompt || "").trim())
+    const fullSystemPrompt = shortPrompts
+      ? SHORT_PROMPTS.buildSalesSystem({ knowledgeBlock: salesKnowledgeBlock })
+      : patchStoredSalesPrompt(String(promptLoad.prompt || "").trim())
       + "\n\n---\n\n"
       + lineSheetEagernessAddendum
       + "\n\n---\n\n"
@@ -3705,6 +3725,7 @@ from your investigation, not from the default sales script.
     //
     // This subsumes the v4.3.15 narrow acceptance-signal validator —
     // that pattern is now Rule 4 (soft-promise) in the new validator.
+    const linkedListingIds = compactReferencedListings.filter(r => r.found && r.listingId).map(r => String(r.listingId));
     let loopResult;
     let parsed = null;
     let validationResult = null;
@@ -3828,7 +3849,7 @@ from your investigation, not from the default sales script.
       validationResult = validateOptionCConsistency({
         parsed,
         toolNamesCalled,
-        validationContext: { latestInboundText, salesCtx, recommendedCollateral }
+        validationContext: { latestInboundText, salesCtx, recommendedCollateral, linkedListingIds }
       });
 
       if (validationResult.valid) {
@@ -3897,7 +3918,7 @@ from your investigation, not from the default sales script.
       // internal synopsis.
       const safeFallback = buildValidationFailureCustomerReply({
         parsed,
-        validationContext: { latestInboundText, salesCtx, recommendedCollateral },
+        validationContext: { latestInboundText, salesCtx, recommendedCollateral, linkedListingIds },
         validationResult
       });
 
@@ -4136,6 +4157,8 @@ ${validationResult.message}
           // The ship-from city is Buffalo, NY (owner, 2026-09-27).
           .replace(/\bNiagara\s+Falls,?\s*(?:NY|New\s+York)\b/gi, "Buffalo, NY").replace(/\bNiagara\s+Falls\b/gi, "Buffalo")
       : "";
+    // The owner's fixed wording (no-guarantee sentence, sign-off), as in the drafter.
+    customerFacingReply = SHORT_PROMPTS.finishReplyText(customerFacingReply);
 
     // Draft body: ALWAYS the customer-facing reply (or empty). The
     // synopsis lives only in `needsReviewSynopsis` on the draft doc.
@@ -4158,6 +4181,10 @@ ${validationResult.message}
 
     const salesMissingFacts = Array.isArray(parsed.missing_facts)
       ? parsed.missing_facts.map(x => String(x || "").trim()).filter(Boolean).slice(0, 5) : [];
+    // A draft someone should read first (review_decision, a low review
+    // confidence, escalation, or a detail the facts don't give) is never
+    // auto-sent: the pipeline reads readyForHumanApproval from the draft.
+    const salesHoldForPerson = !!wantsHumanReview || salesMissingFacts.length > 0;
     let aiConfidence = (typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1)
       ? parsed.confidence : 0.5;
     // A detail the fact sheet does not give waits for a person.
@@ -4444,7 +4471,7 @@ ${validationResult.message}
         attach_fit_reference    : parsed.attach_fit_reference     === true,
         attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
       },
-      readyForHumanApproval : !!parsed.ready_for_human_approval,
+      readyForHumanApproval : salesHoldForPerson,
       // Audit fix F3 — the auto-pipeline reads this flag from the DRAFT
       // (isAcceptanceSkip). It was only written on the thread, so the
       // acceptance reply was auto-sent next to the listing-link message.
@@ -4681,7 +4708,7 @@ ${validationResult.message}
             needs_review: !!wantsHumanReview,
             confidence  : aiConfidence
           },
-      readyForHumanApproval: !!parsed.ready_for_human_approval,
+      readyForHumanApproval: salesHoldForPerson,
       // v4.1 — customer_accepted signal for downstream listing-creator
       // automation. Mirrored on both draft and thread so a worker can
       // query either collection. quotedTotal mirrored for the same

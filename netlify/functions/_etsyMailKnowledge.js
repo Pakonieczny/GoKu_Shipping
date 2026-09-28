@@ -96,7 +96,7 @@ async function loadKnowledge({ fresh = false } = {}) {
 
 /** The text block both AIs get. Deterministic for the same facts and
  *  rules, so the prompt cache keeps hitting. audience: "support" | "sales". */
-function renderKnowledgeBlock({ facts, rules }, audience) {
+function renderKnowledgeBlock({ facts, rules }, audience, opts = {}) {
   const active = facts.filter(f => f.status === "active");
   const byFamily = new Map();
   for (const f of active) {
@@ -106,7 +106,14 @@ function renderKnowledgeBlock({ facts, rules }, audience) {
   const families = Array.from(byFamily.keys())
     .sort((a, b) => (familyRank(a) - familyRank(b)) || a.localeCompare(b));
 
-  const out = [
+  // opts.bare: the short instructions (_etsyMailPrompts.js) already say how
+  // to use the facts, so the sheet comes without that preamble.
+  const out = opts.bare ? [
+    "═══ PRODUCT AND SHOP FACTS ═══",
+    "",
+    "Listing links in these facts are the shop's own and may be sent.",
+    ""
+  ] : [
     "═══ PRODUCT AND SHOP FACTS (the owner's fact sheet) ═══",
     "",
     "State product, shipping and policy details only from these facts, the listing data you",
@@ -145,9 +152,9 @@ function renderKnowledgeBlock({ facts, rules }, audience) {
   return out.join("\n").trim();
 }
 
-async function getKnowledgeBlock(audience = "support") {
+async function getKnowledgeBlock(audience = "support", opts = {}) {
   const k = await loadKnowledge();
-  return renderKnowledgeBlock(k, audience);
+  return renderKnowledgeBlock(k, audience, opts);
 }
 
 function invalidateKnowledgeCache() { _cache = { at: 0, facts: null, rules: null }; }

@@ -11,6 +11,8 @@
  *    answerGap  {gapId, family, answer}   the answer becomes a fact
  *    dismissGap {gapId}
  *    learnNow                     run the learner now
+ *    setPromptVersion {version}   "short" (default) | "legacy": which
+ *                                 instructions both inbox AIs use
  *
  *  No model calls here and no Etsy calls; learnNow starts
  *  etsyMailLearn-background.js (one Haiku call).
@@ -35,8 +37,8 @@ const clean = (s, n) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
 
 async function summary() {
   const now = Date.now();
-  const [statsSnap, rSnap, fSnap, stSnap] = await db.getAll(
-    cfg.doc(STATS_DOC), cfg.doc(K.RULES_DOC), cfg.doc(K.FACTS_DOC), cfg.doc("learnState"));
+  const [statsSnap, rSnap, fSnap, stSnap, pcSnap] = await db.getAll(
+    cfg.doc(STATS_DOC), cfg.doc(K.RULES_DOC), cfg.doc(K.FACTS_DOC), cfg.doc("learnState"), cfg.doc("aiPromptConfig"));
   const weeks = statsSnap.exists ? ((statsSnap.data() || {}).weeks || {}) : {};
   const weekKeys = Object.keys(weeks).sort().slice(-8);
   const recent = await db.collection(OUTCOMES_COLL).where("atMs", ">=", now - 7 * 86400000).limit(400).get();
@@ -59,7 +61,8 @@ async function summary() {
   const facts = K.effectiveFacts(fSnap.exists ? fSnap.data() : null)
     .map(f => ({ id: f.id, family: f.family, text: f.text, status: f.status, source: f.source }));
   return { weeks: weekKeys.map(k => ({ week: k, ...weeks[k] })), rewrites, rules, facts, gaps,
-           families: K.FAMILY_ORDER, learnState: stSnap.exists ? stSnap.data() : null };
+           families: K.FAMILY_ORDER, learnState: stSnap.exists ? stSnap.data() : null,
+           promptVersion: require("./_etsyMailPrompts").useShortPrompts(pcSnap.exists ? pcSnap.data() : null) ? "short" : "legacy" };
 }
 
 async function setRule(id, patch) {
@@ -146,6 +149,13 @@ exports.handler = async (event) => {
         await db.collection(GAPS_COLL).doc(String(body.gapId || "")).set({ status: "dismissed", answeredBy: body.actor || null,
           answeredAtMs: Date.now() }, { merge: true });
         return json(200, { success: true });
+      case "setPromptVersion": {
+        // Short instructions (default) or the long legacy ones, for both AIs.
+        if (!["short", "legacy"].includes(body.version)) return json(400, { error: "version must be short or legacy" });
+        await cfg.doc("aiPromptConfig").set({ promptVersion: body.version, promptVersionBy: body.actor || null,
+          promptVersionAtMs: Date.now() }, { merge: true });
+        return json(200, { success: true, promptVersion: body.version });
+      }
       case "learnNow": {
         const headers = { "Content-Type": "application/json" };
         if (process.env.ETSYMAIL_EXTENSION_SECRET) headers["X-EtsyMail-Secret"] = process.env.ETSYMAIL_EXTENSION_SECRET;

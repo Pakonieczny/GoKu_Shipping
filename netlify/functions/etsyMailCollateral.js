@@ -781,7 +781,7 @@ exports.handler = async (event) => {
 // one short sentence per unnamed guide before the sign-off. Other languages
 // are left as written (the model is told to name them itself).
 const GUIDE_MENTIONS = {
-  metal_comparison : { rx: /\b(comparison|metals?\s+(card|guide|chart)|gold\s+(card|guide|chart))\b/i,
+  metal_comparison : { rx: /\b(compar(?:ison|es|ing)|metals?\s+(card|guide|chart)|gold\s+(card|guide|chart))\b/i,
                        name: "our gold comparison card (gold filled, gold plated and solid gold side by side)" },
   care_instructions: { rx: /\bcare\s+(guide|card|instructions|sheet)\b/i,
                        name: "our care guide" },
@@ -797,7 +797,10 @@ function looksEnglish(text) {
 function nameAttachedGuides(text, kinds) {
   const t = String(text || "");
   if (!t.trim() || !Array.isArray(kinds) || !kinds.length || !looksEnglish(t)) return t;
-  const names = [...new Set(kinds)].map(k => GUIDE_MENTIONS[k]).filter(g => g && !g.rx.test(t)).map(g => g.name);
+  const unique = [...new Set(kinds)];
+  // One guide and the reply already says something is attached: it is named.
+  if (unique.length === 1 && /\battach(ed|ing)?\b/i.test(t)) return t;
+  const names = unique.map(k => GUIDE_MENTIONS[k]).filter(g => g && !g.rx.test(t)).map(g => g.name);
   if (!names.length) return t;
   const add = ["We've attached " + (names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0]) + "."];
   const m = t.match(/\n\s*\n(?=\s*(?:many\s+thanks|kind\s+regards|best\s+wishes|thanks|thank\s+you|warmly|cheers)[^\n]{0,20}\n[^\n]*\s*$)/i);
