@@ -2,6 +2,14 @@
 const { randomUUID, createHash } = require('node:crypto');
 const ACTIVE = ['JOB_STATE_PENDING', 'JOB_STATE_RUNNING', 'BATCH_STATE_PENDING', 'BATCH_STATE_RUNNING'];
 const quotaFailure = (message) => /enqueued token limit|enqueued.*tokens.*limit/i.test(String(message || ''));
+// Token-limit refusals do not use one of the five retry attempts, so they
+// get their own ceiling: a set the provider keeps refusing stops after this
+// many refusals instead of cycling through the queue forever.
+const CAPACITY_REFUSAL_LIMIT = 12;
+// Refusals this set has had: those carried from earlier jobs and refused
+// submissions (capacityRefusals) plus this job's own, when it was one.
+const capacityRefusals = (record) => Number(record?.capacityRefusals || 0) +
+  (quotaFailure(record?.providerError) ? 1 : 0);
 const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha256')
   .update(JSON.stringify([session, display, sets.map(s => s.outputBasePath).sort()])).digest('hex').slice(0, 40);
 
@@ -91,4 +99,4 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   }
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
-module.exports = { admissionControl, quotaFailure, queuedName };
+module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT };

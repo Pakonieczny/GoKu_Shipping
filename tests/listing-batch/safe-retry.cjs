@@ -44,7 +44,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
       copy: async () => { throw new Error("unexpected copy"); } }),
   };
   const sandbox = {
-    quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
+    ...require("../../netlify/functions/lib/listingBatchAdmission.cjs"),
     kind: "batch_retry_missing", body: { batchName: "batch_original" },
     BATCHES_COLL: "batches", batchDocIdFromName: (n) => n,
     getDb: () => db, batchApiKey: () => "key",
