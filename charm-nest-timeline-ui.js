@@ -384,6 +384,14 @@
 .tlUI *{box-sizing:border-box}
 .tlUI button{font:inherit;color:inherit;cursor:pointer}
 .tlUI [hidden]{display:none!important}
+.tlBar.inTools{border:0;padding:0;min-height:0;flex-wrap:nowrap;gap:10px;min-width:0;font:13px/1.45 var(--sans,system-ui,sans-serif);--tlE:cubic-bezier(.2,.8,.2,1)}
+.tlBar.inTools *{box-sizing:border-box}
+.tlBar.inTools button{font:inherit;cursor:pointer}
+.tlBar.inTools [hidden]{display:none!important}
+.tlBar.inTools .tlChips{flex-wrap:nowrap;min-width:0;overflow-x:auto;scrollbar-width:none}
+.tlBar.inTools .tlChip{flex:none}
+.tlBar button.tlChip{font-size:11px}
+@media (max-width:1599px){.tlBar.inTools .tlSum:not(:has(.err)){display:none}}
 .tlUI .tlLbl{display:block;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
 .tlTop{display:flex;align-items:center;gap:14px 26px;padding:10px 18px 9px;border-bottom:1px solid var(--line2);flex-wrap:wrap;flex:none}
 .tlNow{flex:1 1 300px;min-width:240px;max-width:460px}
@@ -446,7 +454,8 @@
 .tlDay{position:absolute;top:0;bottom:0;border-right:1px dashed var(--line)}
 .tlDay.alt{background:rgba(250,247,241,.7)}
 .tlDay .dh{position:absolute;left:14px;top:10px;font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);white-space:nowrap}
-.tlDay .dh small{display:block;font:400 9.5px var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px}
+.tlDay .dh small{display:block;font:400 9.5px var(--mono);letter-spacing:.02em;color:var(--ink45);text-transform:none;margin-top:1px;overflow:hidden;text-overflow:ellipsis}
+.tlDay:not(.idle) .dh{right:8px;overflow:hidden;text-overflow:ellipsis}
 .tlDay.idle{background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(196,189,176,.22) 6px 7px)}
 .tlDay.idle .dh{left:50%;transform:translateX(-50%);text-align:center}
 .tlLaneLine{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
@@ -559,8 +568,10 @@
         if (gap > 2) { cols.push({ idle: 1, x, w: IDLE + 22, label: gap + " days" }); x += IDLE + 22; }
         else for (let g = 1; g <= gap; g++) { const dd = new Date(midnight(days[i - 1].at) + g * 864e5 + 36e5 * 12); cols.push({ idle: 1, x, w: IDLE, label: DAYN[dd.getDay()] }); x += IDLE; }
       }
-      const w = Math.max(DAYMIN, PAD * 2 + d.evs.length * COL);
-      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2 });
+      // its head's second line ("8:52 AM – 3:44 PM · 9", one time when there is one) never runs into the next day
+      const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
+      const w = Math.max(DAYMIN, PAD * 2 + d.evs.length * COL, Math.ceil(26 + span.length * 6.1));
+      cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span });
       d.evs.forEach((e, j) => { e.x = x + PAD + j * COL + COL / 2; e.y = laneY(e.lane); });
       x += w;
     });
@@ -637,7 +648,10 @@
       `<div class="tlGrid"><div class="tlLanes"></div><div class="tlScroll"><div class="tlCanvas"></div></div><div class="tlMsg" hidden></div></div>` +
       `<div class="tlDetail" aria-live="polite"></div><div class="tlLoupe" aria-hidden="true"></div>`;
     el.appendChild(box);
-    const $ = s => box.querySelector(s), $$ = s => [...box.querySelectorAll(s)];
+    // opts.toolbar: the host's own bar (the order view's tab row, spec §1) takes the filters, so the lanes keep the height
+    const tb = !compact && opts.toolbar && typeof opts.toolbar.appendChild === "function" ? opts.toolbar : null, bar = box.querySelector(".tlBar");
+    if (tb) { bar.classList.add("inTools"); tb.appendChild(bar); }
+    const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
@@ -874,7 +888,7 @@
       const ghosts = D.cancelled ? [] : STAGES.map((s, i) => ({ s, i })).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
-      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(timeOf(c.evs[0].at))} – ${esc(timeOf(c.evs[c.evs.length - 1].at))} · ${c.evs.length}</small>`}</div></div>`; }).join("");
+      const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
       const lines = LANES.map((L, i) => `<div class="tlLaneLine" style="top:${TOP + (i + 1) * LANE_H}px"></div>`).join("");
       const future = ghosts.length && last ? pathD([last].concat(ghosts)) : "";
       // the cancel line: at the cancel stamp (or, with only the record, where its time falls)
@@ -1159,10 +1173,12 @@
       box.removeEventListener("click", onClick); box.removeEventListener("pointerover", onOver); box.removeEventListener("pointerout", onOut); box.removeEventListener("keydown", onKey);
       scroller.removeEventListener("scroll", onScroll);
       try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
+      if (tb) { bar.removeEventListener("click", onClick); bar.remove(); }
       box.remove();
     }
 
     box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
+    if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
     paintRail(derive([], null), { first: true });
     if (!compact) paintLanes();
@@ -1210,5 +1226,8 @@
     card._tlLast = s ? s.dataset.key : null;
   }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow };
+  /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
+  function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
+
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, KIND, labelOf, nowStamps, wireNow, iconOf };
 })(typeof window !== "undefined" ? window : globalThis);
