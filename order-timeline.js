@@ -75,10 +75,10 @@
   const save = () => { try { localStorage.setItem(OUTBOX, JSON.stringify(box.slice(-500))); } catch (_) {} };
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
   const base = () => (location.protocol === "file:" ? "https://goldenspike.app" : "") + "/.netlify/functions/";
-  async function post(fn, body) {
+  async function post(fn, body, sandbox = cfg.sandbox) {
     const headers = { "Content-Type": "application/json" };
     if (cfg.passcode) headers["X-Edit-Passcode"] = cfg.passcode;
-    const url = base() + fn + (fn === "firebaseOrders" && cfg.sandbox ? "?sandbox=1" : "");
+    const url = base() + fn + (fn === "firebaseOrders" && sandbox ? "?sandbox=1" : "");
     const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), keepalive: true });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
@@ -88,10 +88,12 @@
   async function flush() {
     if (sending || !box.length) return;
     sending = true;
-    const batch = box.slice(0, 50);
+    // one store per batch: an event keeps the store (production or sandbox) it was recorded in
+    const sb = !!box[0].sandbox, batch = [];
+    for (const ev of box) { if (!!ev.sandbox !== sb) break; batch.push(ev); if (batch.length >= 50) break; }
     try {
-      if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch });
-      else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: cfg.sandbox });
+      if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch }, sb);
+      else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: sb }, sb);
       box = box.slice(batch.length); save(); backoff = 1000;
       if (box.length) schedule(50);
     } catch (e) {
@@ -105,7 +107,7 @@
       const orderId = digits(e && e.orderId); if (!orderId || !TYPES[e.type]) return null;
       if (cfg.mode === "station" && !STATION_TYPES.has(e.type)) return null;
       const at = Number(e.at) > 1e12 ? Number(e.at) : Date.now();
-      const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "" });
+      const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       box.push(ev); save(); schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }
@@ -117,7 +119,7 @@
     const j = await post("charmNestLibrary", { op: "timelineGet", orderId: id, sandbox: cfg.sandbox });
     // events still in this page's outbox are part of the timeline too (they are on their way)
     const known = new Set((j.events || []).map(x => x.id && x.id.split("~").pop()));
-    for (const ev of box) if (ev.orderId === id && !known.has(ev.id)) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
+    for (const ev of box) if (ev.orderId === id && !!ev.sandbox === !!cfg.sandbox && !known.has(ev.id)) (j.events = j.events || []).push(Object.assign({ pending: true }, ev));
     (j.events || []).sort((a, b) => a.at - b.at);
     return j;
   }

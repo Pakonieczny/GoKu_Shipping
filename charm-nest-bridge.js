@@ -289,6 +289,59 @@ function askEmployee() {
   return employeeName();
 }
 window.CNEmployee = { name: employeeName, ask: askEmployee };   // (the Library's Completed marks record who, charm-nest-library.js)
+/* The order timeline (order-timeline.js, loaded just before this file): the sorter writes as itself, with its sandbox,
+   the passcode api() sends and the employee on duty. B.employee is watched, so a name set anywhere (Review, the sheet
+   window, the station's hello) is the one the next event carries, whoever records it. An emit here never waits and
+   never throws: it is queued and handed over a few at a time while the page is idle (all at once in a hidden tab), so a
+   pull of three hundred lines holds no frame. `once` sends an event (its type and id) one time from this browser; the
+   ids are kept across reloads, but not in the sandbox, whose records a reset clears. */
+const TL = window.CNTimeline = (() => {
+  const T = () => window.OrderTimeline || null;
+  function sync() { try { const t = T(); if (t) t.config({ mode: "sorter", sandbox: !!WORKSPACE_SANDBOX, by: employeeName(), passcode: S.passcode || "" }); } catch (_) {} }
+  let emp = B.employee;
+  try { Object.defineProperty(B, "employee", { configurable: true, enumerable: true, get: () => emp, set: v => { emp = v; sync(); } }); } catch (_) {}
+  const SEEN = "cn.timeline.sent", keepSeen = !WORKSPACE_SANDBOX; let seen = null, seenT = 0;
+  const seenSet = () => { if (!seen) { seen = new Set(); if (keepSeen) try { for (const k of JSON.parse(localStorage.getItem(SEEN) || "[]")) seen.add(k); } catch (_) {} } return seen; };
+  function mark(k) {
+    const s = seenSet(); s.add(k);
+    if (s.size > 10000) { let n = s.size - 8000; for (const x of s) { if (n-- <= 0) break; s.delete(x); } }
+    if (keepSeen) { clearTimeout(seenT); seenT = setTimeout(() => { try { localStorage.setItem(SEEN, JSON.stringify([...s])); } catch (_) {} }, 2000); }
+  }
+  const queue = []; let pumping = false;
+  const idle = fn => (window.requestIdleCallback && !document.hidden ? requestIdleCallback(fn, { timeout: 1500 }) : setTimeout(fn, 0));
+  function pump() {
+    pumping = false; const t = T(); if (!t) { queue.length = 0; return; }
+    sync();
+    for (const e of queue.splice(0, document.hidden ? queue.length : 25)) { try { t.record(e); } catch (_) {} }
+    if (queue.length) { pumping = true; idle(pump); }
+  }
+  /** Records one event, fire-and-forget. With `once`, an event already sent from here (its type, order and id) is not. */
+  function rec(e, once) {
+    try {
+      if (!e || !e.orderId || !e.type || !T()) return false;
+      if (once) { const k = hash2(`${e.type}~${e.orderId}~${e.id}`); if (seenSet().has(k)) return false; mark(k); }
+      queue.push(Object.assign({}, e, { at: +e.at > 1e12 ? +e.at : Date.now() }));
+      if (!pumping) { pumping = true; idle(pump); }
+      return true;
+    } catch (_) { return false; }
+  }
+  /** An event about one line of the pull (a row): o carries text, data, id, at, by and once. */
+  function line(row, type, o) {
+    try {
+      if (!row || !row.order) return false;
+      const { once, ...rest } = o || {}, tid = row.line && row.line.transactionId;
+      return rec(Object.assign({ orderId: String(row.order.receiptId), type, lineKey: row.key }, tid != null ? { transactionId: String(tid) } : {}, rest), once);
+    } catch (_) { return false; }
+  }
+  /** An order entering the pull (a pull, or an arrival merged into it): once per order. */
+  function pulled(order, how, runId) {
+    try { const n = (order.lines || []).length; return rec({ orderId: String(order.receiptId), type: "pulled", id: "pull", text: `${how === "arrival" ? "Came into the sorter with the order check" : "Pulled into the sorter"} · ${n} line${n === 1 ? "" : "s"}`, data: { how, lines: n, runId: runId || null } }, true); } catch (_) { return false; }
+  }
+  const hash = s => { let a = 2166136261; for (const ch of String(s)) a = Math.imul(a ^ ch.charCodeAt(0), 16777619); return (a >>> 0).toString(36); };
+  const hash2 = s => { let b = 5381; for (const ch of String(s)) b = Math.imul(b, 33) ^ ch.charCodeAt(0); return hash(s) + "." + (b >>> 0).toString(36); };   // (the sent list keeps these, not the ids)
+  sync();
+  return { sync, rec, line, pulled, hash, pending: () => queue.length };
+})();
 /* One drawing a frame. The run banner, the rail's strip and ladder and the Orders tab were each drawn in full at every
    call, and a run step, a poke, an arrival, a log line or a pool pass called them, often several times in one go. A
    request now draws once, at the next animation frame. A hidden tab gets its frames from the page clock's 16 ms timer
@@ -821,12 +874,24 @@ const Orders = window.Orders = (() => {
       // the catalogue design of a charm-only variation SKU (MAPLE_8065-CO), and the design the line was last read as (an alias or an option's pick)
       libFacts(O.variationBase(l.sku)), libFacts(row.spec && row.spec.designSku)];
   }
+  // the order timeline: a line read, once, and again only when what it reads as changes (its SKU, metal, size, questions)
+  const readSaid = new Map();
+  function readEvent(row) {
+    try {
+      const s = row.spec; if (!s) return;
+      const qs = (s.problems || []).map(p => p.kind), sig = [s.designSku, s.material, s.form, s.size, s.chain, s.quantity, s.special ? s.special.kind : "", s.noDesign ? "nd" : "", qs.slice().sort().join("+")].join("|");
+      if (readSaid.get(row.key) === sig) return; readSaid.set(row.key, sig);
+      const what = s.noDesign ? `not cut (${s.noDesignWhy || "no design"})` : [s.designSku || "no SKU", s.material ? labelOf(s.material) : "metal not read", s.form, s.size].filter(Boolean).join(" · ");
+      TL.line(row, "interpreted", { id: row.key + "." + TL.hash(sig), once: true, text: `Read as ${what}${qs.length ? ` · ${qs.length} question${qs.length === 1 ? "" : "s"}` : ""}`.slice(0, 200),
+        data: { sku: s.designSku || null, material: s.material || null, form: s.form || null, size: s.size || null, chain: s.chain || null, quantity: s.quantity || 1, special: s.special ? s.special.kind : null, noDesign: !!s.noDesign, questions: qs } });
+    } catch (_) {}
+  }
   function interpretAll() {
     for (const row of rowsOf()) {
       // a line cut and committed is done: a later change to the maps or the library could only raise a decision on it
       if (row.state === "gone" || (row.state === "committed" && row.spec)) continue;
       const inputs = inputsOf(row), was = readAs.get(row), prev = row.spec;
-      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); }
+      if (!was || was.spec !== row.spec || inputs.some((v, i) => !Object.is(v, was.inputs[i]))) { row.spec = O.interpretLine(row.order, row.line, ctx()); readAs.set(row, { spec: row.spec, inputs }); readEvent(row); }
       row.problems = row.spec.problems.slice(); if (row.spec.noDesign) row.state = row.state === "pulled" ? "noDesign" : row.state;
       // a line that read as chain only or as completed by hand, and no longer does (the library has since given its SKU a
       // design, its completion was taken back), is a line to cut again: it used to stay "no design" for good
@@ -858,6 +923,7 @@ const Orders = window.Orders = (() => {
     const picked = wanted ? r.orders.filter(o => wanted.has(String(o.receiptId)) && !(window.Cancelled && Cancelled.has(o.receiptId))) : applyPullRule(r.orders);
     B.orders.filtered = r.orders.length - picked.length;
     await Arrivals.record(picked);
+    for (const o of picked) TL.pulled(o, "pull", run && run.runId);
     B.orders.rows = picked.flatMap(o => o.lines.map(l => ({ arrivedAt: Arrivals.at(o.receiptId), key: O.lineKey(o, l), order: o, line: l, spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, metal: null })));
     B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
     Carry.adopt();
@@ -3365,9 +3431,25 @@ const Engrave = window.Engrave = (() => {
   function classify(row) {
     const job = ensureJob(row);
     if (classifyTasks.has(job)) return classifyTasks.get(job);
-    const task = Promise.resolve().then(() => classifyOnce(row)).finally(() => { classifyTasks.delete(job); render(); });
+    const task = Promise.resolve().then(() => classifyOnce(row)).then(j => { needEvent(j); return j; }).finally(() => { classifyTasks.delete(job); render(); });
     classifyTasks.set(job, task); render();
     return task;
+  }
+  // the order timeline: a line read as needing a back engraving (once per line and words), and a person's decision on
+  // the words (confirmed, edited, none, skipped: cut plain)
+  function needEvent(job) {
+    try {
+      if (!job || !job.row || !job.row.engrave || !job.row.engrave.needed) return;
+      const t = String(job.text || "").trim();
+      TL.line(job.row, "engraveNeeded", { id: job.row.key + "." + TL.hash(t), once: true, text: (t ? `Back engraving: “${t.replace(/\n/g, " / ")}”` : "Back engraving: the words are to be confirmed").slice(0, 200), data: { text: t, source: job.source || null, confidence: job.confidence == null ? null : job.confidence, state: job.state } });
+    } catch (_) {}
+  }
+  function wordsEvent(job, by, was, how) {
+    try {
+      const t = String(job.text || "").trim(), d = job.decision || {}, at = d.at || Date.now();
+      const text = how === "none" ? `No engraving — decided by ${by}` : how === "skipped" ? `Engraving skipped by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"} by ${by}: “${t.replace(/\n/g, " / ")}”`;
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
+    } catch (_) {}
   }
   async function classifyOnce(row) {
     const job = ensureJob(row); const sp = row.spec; const owner = items();
@@ -3424,10 +3506,11 @@ const Engrave = window.Engrave = (() => {
   /** A person's decision on the words (confirm / edit / no engraving), recorded with the name. */
   async function decideWords(job, { text, none, by, note }) {
     by = by || employeeName() || askEmployee(); if (!by) { toast("Set your name first", "bad"); return; }
-    if (none) { setNone(job, `no engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
+    const wasText = job.text;
+    if (none) { setNone(job, `no engraving — decided by ${by}`); job.decision = { by, at: Date.now(), none: true }; wordsEvent(job, by, wasText, "none"); Review.remove("eng:" + job.key); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: no engraving (${by})`); Orders.render(); RunCtl.poke(); return job; }
     job.lineInput = null; job.lineMode = "auto"; job.text = String(text || "").trim(); job.lines = job.text.split(/\r?\n/).map(s => s.trim()).filter(Boolean); job.decision = { by, at: Date.now(), text: job.text, note: note || null }; job.questions = []; job.requests = { side: "back", font: null, handwriting: false, image: false }; job.confidence = 1;
     if (!job.editingBack && job.text && job.text !== (job.row.spec.personalization || []).join("\n")) { try { await DesignLink.call("notes.set", { receiptId: job.row.order.receiptId, text: `${job.row.spec.staffNote ? job.row.spec.staffNote + "\n" : ""}Engrave (${by}): ${job.text.replace(/\n/g, " / ")}` }); } catch (e) { agent({ engrave: true }, "warn", `staff note not saved: ${e.message}`); } }
-    agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`);
+    agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: words decided by ${by}: "${job.text.replace(/\n/g, " / ")}"`); wordsEvent(job, by, wasText, "words");
     Review.remove("eng:" + job.key);
     await setReady(job);
     if (job.state === "ready") { const ch = job.copies.length && sheetFor(job,job.copies[0]); if (ch && ch.fileBase) await fitJob(job); }
@@ -3683,7 +3766,7 @@ const Engrave = window.Engrave = (() => {
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
     revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
-    job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; wordsEvent(job, by, job.text, "skipped"); job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -6398,6 +6481,7 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!e.files.length) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
     for (const F of fresh) arriving.add(F.id);
     e.files.push(...fresh); e.at = Date.now();
+    TL.line(row, "designDropped", { id: `${c.ck}.${fresh[0].id}`, text: (fresh.length === 1 ? `Design added: ${fresh[0].name}` : `${fresh.length} designs added: ${fresh.map(F => F.name).join(", ")}`).slice(0, 200), data: { files: fresh.map(F => ({ name: F.name, kind: F.kind, size: F.size })).slice(0, 12), card: c.ck } });
     open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
     let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
   }
@@ -6444,6 +6528,7 @@ const CustomSheet = window.CustomSheet = (() => {
       if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
       else if (!toSheets(ck, n, words, shutting ? 700 : 0)) toast(words, "ok", 6000);
       agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
+      for (const r of rows) TL.line(r, "designSent", { id: `${r.key}.${e.sent.at}`, at: e.sent.at, by: who, text: `Custom design${e.files.length === 1 ? "" : "s"} sent to the sheets by ${who}: ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0, 200), data: { files: e.files.map(F => ({ name: F.name, qty: F.qty, metal: F.metal, pieces: F.pieces })).slice(0, 12), pieces: (lines[r.key] || []).length, placed: r.state === "pooled" } });
     } catch (err) {
       busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
     } finally { redraw(); }
@@ -6925,6 +7010,10 @@ const CustomRead = window.CustomRead = (() => {
     for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = Math.imul(a ^ c, 16777619); b = Math.imul(b, 33) ^ c; }
     return (a >>> 0).toString(16).padStart(8, "0") + (b >>> 0).toString(16).padStart(8, "0");
   }
+  // the order timeline: Claude's reading of a line, once per reading (what it was read from)
+  function readEvent(row, v) {
+    try { const pct = Math.round((+v.confidence || 0) * 100); TL.line(row, "customRead", { id: `${row.key}.${v.hash || ""}`, once: true, at: +v.at > 1e12 ? +v.at : undefined, text: `Claude reads it as ${v.kind === "regular" ? "a regular listing" : String(v.kind || "custom")} (${pct}% sure)${v.summary ? ` · ${v.summary}` : ""}`.slice(0, 200), data: { kind: v.kind || null, confidence: +v.confidence || 0, summary: v.summary || "", relatedOrder: v.relatedOrder || null } }); } catch (_) {}
+  }
   function apply() {
     Orders.interpretAll(); Orders.render(); Review.render();
     if (window.OrderWin && OrderWin.isOpen()) OrderWin.paint();
@@ -6976,7 +7065,7 @@ const CustomRead = window.CustomRead = (() => {
         st.error = "";
         for (const x of part) {
           const v = r.reads && r.reads[x.row.key];
-          if (v) { B.maps.customRead[x.row.key] = v; st.force.delete(x.row.key); changed = true; } else st.failed.add(x.row.key + "|" + x.hash);
+          if (v) { B.maps.customRead[x.row.key] = v; st.force.delete(x.row.key); changed = true; readEvent(x.row, v); } else st.failed.add(x.row.key + "|" + x.hash);
         }
         if (changed) { keep(); apply(); changed = false; }
       }
@@ -7077,15 +7166,56 @@ const Review = window.Review = (() => {
   const customKey = row => `ord:custom:${row.order.receiptId}:${row.spec.designSku || row.line.sku || row.line.listingId || row.key}`;
   // a regular listing whose metal could not be read is a question about its options: it is shown under Options
   const tabOf = it => it.kind === "needsMaterial" ? "needsMapping" : it.kind;
-  function put(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) items().push(Object.assign({ t: Date.now() }, it)); else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); }
+  function put(it) { const i = items().findIndex(x => x.key === it.key); const fresh = i < 0; if (fresh) { items().push(Object.assign({ t: Date.now() }, it)); asked(it); } else items()[i] = Object.assign(items()[i], it); if (fresh && B.run && ["review", "paused", "stopped"].includes(B.run.status)) notifyPerson("Charm Sorter needs a person", it.why || it.kind); }
   // the list at once (a person may be working in it); the strip and the banner once a frame (CNFrame)
   function redraw() { render(); LiveStrip.render(); if (window.CNFrame) CNFrame.later("banner", RunCtl.renderBanner); else RunCtl.renderBanner(); }
   function add(it) { put(it); redraw(); }
   const settled = [];                                                     // what this shift has answered, newest first
+  /* The order timeline: a question a line raises (needsDecision, once per line and kind) and a person's answer to it here
+     (decided, skipped, held). A card notes its answer as it acts (answered); the event is recorded when the question
+     leaves the line (tlSettle): at remove() for a card taken away, or at the sync for one its answer re-read away, which
+     is most of them (repool → interpretAll → syncOrderItems drops the card without passing through remove). */
+  const ASK_KINDS = new Set(["customOrder", "needsMaterial", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "orderChanged", "engraveWords", "notRepresentable", "fontMissing", "flipFailed"]);
+  const askedSeen = new Set(), answers = new Map(), skipSeen = new Map();
+  function asked(it) {
+    try {
+      if (!it || !ASK_KINDS.has(it.kind)) return;
+      const probs = it.kind === "customOrder" ? (it.problems || []) : [it.problem && it.problem.kind === it.kind ? it.problem : { kind: it.kind }];
+      for (const r of rowsOf(it)) for (const p of probs) {
+        const id = r.key + "." + p.kind; if (!p.kind || askedSeen.has(id)) continue; askedSeen.add(id);
+        TL.line(r, "needsDecision", { id, once: true, text: `${KIND_WORDS[p.kind] || p.kind}: ${it.kind === "customOrder" || !it.why ? problemText(p) : it.why}`.slice(0, 200), data: { kind: p.kind, custom: it.kind === "customOrder", why: String(it.kind === "customOrder" || !it.why ? problemText(p) : it.why).slice(0, 300) } });
+      }
+    } catch (_) {}
+  }
+  /** A card's answer, for each line it covers: type decided / skipped / held, what was answered in words, and detail. */
+  function answered(it, type, say, detail, who) {
+    try { const by = who || employeeName(), at = Date.now(); for (const r of rowsOf(it)) answers.set(r.key + "\u0000" + it.kind, { row: r, type, kind: it.kind, say: say || "", detail: detail || null, by, at }); } catch (_) {}
+  }
+  const TYPE_WORDS = { decided: "Decided", skipped: "Skipped", held: "Held" };
+  function tlSettle(full) {
+    try {
+      const now = Date.now();
+      for (const [k, a] of answers) {
+        const r = a.row, open = (r.problems || []).some(p => p.kind === a.kind);
+        const done = r.state === "gone" ? null : a.type === "held" ? !!r.hold : a.type === "skipped" ? r.state === "skipped" : !open && !r.hold && r.state !== "skipped";
+        if (done) {
+          if (a.type === "skipped") skipSeen.set(r.key, true);
+          TL.line(r, a.type, { id: `${r.key}.${a.kind}.${a.at}`, at: a.at, by: a.by, text: `${TYPE_WORDS[a.type]} by ${a.by || "?"} · ${KIND_WORDS[a.kind] || a.kind}${a.say ? ": " + a.say : ""}`.slice(0, 200), data: Object.assign({ kind: a.kind, answer: a.say || null, from: "review" }, a.detail || {}) });
+        }
+        if (done !== false || now - a.at > 600000) answers.delete(k);
+      }
+      // a line skipped from its order window (no card) is recorded when the sync first sees it skipped
+      if (full) for (const r of Orders.rows()) {
+        const sk = r.state === "skipped", was = skipSeen.get(r.key); skipSeen.set(r.key, sk);
+        if (sk && was === false) TL.line(r, "skipped", { id: `${r.key}.skip.${now}`, text: String(r.reason || "Line skipped").replace(/^line/, "Line").slice(0, 200), data: { kind: null, answer: "Skip line", from: "order" } });
+      }
+    } catch (_) {}
+  }
   function remove(key, how) {
     const n = items().length;
     const gone = items().find(x => x.key === key);
     B.review.items = items().filter(x => x.key !== key);
+    tlSettle(false);
     if (n === items().length) return;
     if (gone && !/^(eng|held):/.test(String(key))) {
       settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
@@ -7133,7 +7263,7 @@ const Review = window.Review = (() => {
       const it = keep.get(key); if (!it.rows.includes(row)) it.rows.push(row);
     } }
     // new decisions join the queue here and the queue is drawn once, below: it used to be drawn again for each one
-    for (const [key, it] of keep) { const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, problems: it.problems, why: it.why }); else put(it); }
+    for (const [key, it] of keep) { asked(it); const had = items().find(x => x.key === key); if (had) Object.assign(had, { rows: it.rows, row: it.row, problem: it.problem, problems: it.problems, why: it.why }); else put(it); }
     B.review.items = items().filter(x => !x.key.startsWith("ord:") || keep.has(x.key));
     // a changed-order notice goes with its line: one whose line left Etsy, was cut and committed, or left the list was kept for good
     B.review.items = items().filter(x => { if (!String(x.key).startsWith("chg:")) return true; const cur = x.row && B.orders.byKey?.get(x.row.key); return !!cur && !["gone", "committed"].includes(cur.state); });
@@ -7150,6 +7280,7 @@ const Review = window.Review = (() => {
       x.line = held ? held.key : (lines.find(l => l.problems && l.problems.length) || lines[0]).key;
       return true;
     });
+    tlSettle(true);
     redraw();
     CustomRead.later();                                                  // lines with no design of their own are read by Claude
   }
@@ -7186,7 +7317,13 @@ const Review = window.Review = (() => {
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
   }
 
+  // the order timeline: a line whose hold is lifted here (Release hold, the sheet window, an answer) is restored
   async function repool(row) {
+    const was = row && row.hold;
+    try { return await repoolLine(row); }
+    finally { if (was && row && !row.hold && row.state !== "gone") TL.line(row, "restored", { id: `${row.key}.${Date.now()}`, text: `Back in line · was ${String(was).replace(/^line /, "")}`.slice(0, 200), data: { was: String(was).slice(0, 300) } }); }
+  }
+  async function repoolLine(row) {
     const old0=new Set(row.poolIds || []);
     // A piece on a sheet already released to the laser, or cut in a committed set, is not taken off its sheet (as for a
     // cancelled order, takeOffGone): that sheet's files and labels went out as they are, and arranging it again rewrote
@@ -7300,7 +7437,7 @@ const Review = window.Review = (() => {
       c.innerHTML = head("Needs material", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Station read", esc(p.metalLabel || "nothing"))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}${evRow("Title", esc(r.line.title))}</div><div class="why">${esc(it.why)}</div>
         <div class="fixes"><select data-f="mat"><option value="">pick a material…</option>${METALS.map(m => `<option value="${m.key}">${esc(m.label)}</option>`).join("")}</select><button class="btn gold sm" data-a="mat">Use it (writes a staff note)</button><button class="btn ghost sm" data-a="skip">Skip line</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       bindNeeds(c, "mat", "mat");
-      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; row_material(it, m, who); };
+      c.querySelector("[data-a=mat]").onclick = async () => { const m = c.querySelector("[data-f=mat]").value; if (!m) return; const who = by(); if (!who) return; answered(it, "decided", `material ${labelOf(m)}`, { material: m }, who); row_material(it, m, who); };
     } else if (it.kind === "needsMapping") {
       /* This was a dropdown, a free-text box, a second dropdown and a button that did nothing at all until you had
          guessed the exact word it wanted. The question only ever has a handful of answers, so they are the buttons:
@@ -7324,6 +7461,7 @@ const Review = window.Review = (() => {
         [...c.querySelectorAll("button")].forEach(b => { b.disabled = true; });
         try {
           await api("charmNestLibrary", { op: "optionMapPut", listingId: wide ? "*" : p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field, value: field === "size" ? String(value).toUpperCase() : String(value).toLowerCase() }, by: who });
+          answered(it, "decided", `“${p.optionValue}” is the ${field} ${value}`, { option: p.optionName, value: p.optionValue, field, to: String(value), listing: wide ? "all" : String(p.listingId) }, who);
           await Orders.loadMaps(true);
           toast(`“${p.optionValue}” → ${value} · remembered for ${wide ? "every listing" : "this listing"}`, "ok");
           for (const rr of Orders.rows()) if (rr.problems.some(x => x.kind === "needsMapping")) await repool(rr);
@@ -7339,6 +7477,7 @@ const Review = window.Review = (() => {
         if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; }
         const who = by(); if (!who) return;
         await api("charmNestLibrary", { op: "optionMapPut", listingId: p.listingId, optionName: p.optionName, optionValue: p.optionValue, map: { field: "design", value: sku }, by: who });
+        answered(it, "decided", `Use this charm: ${sku}`, { option: p.optionName, value: p.optionValue, field: "design", sku, listing: String(p.listingId) }, who);
         await Orders.loadMaps(true);
         toast(`“${p.optionValue}” → ${sku} · remembered for listing ${p.listingId}`, "ok");
         for (const rr of Orders.rows()) if (String(rr.line.listingId) === String(p.listingId) && rr.problems.length) await repool(rr);
@@ -7348,7 +7487,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=dsku]").onclick = () => pickCharm(c.querySelector("[data-f=dsku]").value);
       bindNeeds(c, "map", "val");
       c.querySelector("[data-a=map]").onclick = () => { const val = c.querySelector("[data-f=val]").value.trim(); if (!val) return; put(c.querySelector("[data-f=field]").value, val); };
-      c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); await Orders.loadMaps(true); await repoolAll(it); });
+      c.querySelector("[data-a=ignore]").onclick = saving(c, async () => { const who = by(); if (!who) return; for (const lid of (oneOnly() ? [String(p.listingId)] : lids)) await api("charmNestLibrary", { op: "optionMapPut", listingId: lid, optionName: p.optionName, optionValue: p.optionValue, map: { field: "ignore" }, by: who }); answered(it, "decided", `“${p.optionValue}” changes nothing (ignored)`, { option: p.optionName, value: p.optionValue, field: "ignore" }, who); await Orders.loadMaps(true); await repoolAll(it); });
     } else if (it.kind === "unmatchedSku" || it.kind === "blockedSku") {
       const skus = [...B.master.entries.keys()].sort();
       c.innerHTML = head(it.kind === "blockedSku" ? "SKU blocked" : "Unmatched SKU", p.sku || "no SKU", orderSub) + (it.kind === "unmatchedSku" && !it.nested ? CustomRead.panel(r, group) : "") + `<div class="why">${esc(p.reason || it.why)}</div>
@@ -7359,8 +7498,9 @@ const Review = window.Review = (() => {
         // have a SKU, the others keep theirs
         const pairs = new Map(rowsOf(it).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(); return [String(x.line.listingId) + "\u0000" + from, { lid: String(x.line.listingId), from, title: x.line.title }]; }));
         for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, by: who, title: q.title });
+        answered(it, "decided", `Use this charm: ${sku}`, { sku, from: p.sku || null }, who);
         await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
-      c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); });
+      c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); answered(it, "decided", "Nothing to cut", { noDesign: true, sku: sku || null }, who); await Orders.loadMaps(true); await repoolAll(it); });
       const mb = c.querySelector("[data-a=master]");
       if (mb) mb.onclick = () => {
         const sku = p.sku || (sp && sp.designSku) || "";
@@ -7379,7 +7519,7 @@ const Review = window.Review = (() => {
       };
     } else if (it.kind === "missingSize") {
       c.innerHTML = head("Missing size", `${p.sku} · size ${p.size || "(none)"}`, orderSub) + `<div class="ev">${evRow("Sizes available", (p.available || []).join(", "))}${evRow("Options", (r.line.variations || []).map(v => `<q>${esc(v.name)}: ${esc(v.value)}</q>`).join(" "))}</div><div class="fixes"><select data-f="size">${(p.available || []).map(s => `<option>${esc(s)}</option>`).join("")}</select><button class="btn gold sm" data-a="size">Use this size (staff decision)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
+      c.querySelector("[data-a=size]").onclick = async () => { const s = c.querySelector("[data-f=size]").value; const who = by(); if (!who) return; r.sizeOverride = s; answered(it, "decided", `size ${s}`, { size: s }, who); try { await DesignLink.call("notes.set", { receiptId: r.order.receiptId, text: `${sp.staffNote ? sp.staffNote + "\n" : ""}Size ${s} chosen by ${who} (sorter)` }); } catch (_) {} await repool(r); };
     } else if (it.kind === "oversize") {
       c.innerHTML = head("Oversize", `${p.sku} · ${p.widthMm.toFixed(1)} × ${p.heightMm.toFixed(1)} mm`, orderSub) + `<div class="ev">${evRow("Plate", `${labelOf(p.material)} ${fmt.mm(stockFor(p.material).wPt)} × ${fmt.mm(stockFor(p.material).hPt)} under the ${fmt.pct(S.settings.maxFill)} ceiling`)}</div><div class="fixes"><button class="btn ghost sm" data-a="stock">Different stock (Settings)</button><button class="btn ghost sm" data-a="retry">Try again</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
       c.querySelector("[data-a=stock]").onclick = () => openSettings(); c.querySelector("[data-a=retry]").onclick = () => repool(r);
@@ -7404,13 +7544,13 @@ const Review = window.Review = (() => {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {
       c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${sp.designSku} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=accept]").onclick = async () => { remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true }; } else await repool(r); RunCtl.poke(); };
+      c.querySelector("[data-a=accept]").onclick = async () => { answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true }; } else await repool(r); RunCtl.poke(); };
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the line's item</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
-    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
+    const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } answered(it, "skipped", "Skip line", null, who); syncOrderItems(); Orders.render(); RunCtl.poke(); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } answered(it, "held", "Hold order", null, who); remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
     return c;
   }
   async function row_material(it, m, who) {
@@ -9631,6 +9771,7 @@ const Arrivals = window.Arrivals = (() => {
       const row = { key, order, line, arrivedAt: at(order.receiptId), spec: null, problems: [], state: "pulled", reason: null, claimedBy: null, poolIds: [], engrave: null, material: null };
       B.orders.rows.unshift(row); B.orders.byKey.set(key, row); added.push(row);
     }
+    for (const r of added) TL.pulled(r.order, "arrival", B.run && B.run.runId);
     Orders.interpretAll(); B.orders.pulledAt = Date.now();
     if (added.length) {
       state.pending = true; save();
