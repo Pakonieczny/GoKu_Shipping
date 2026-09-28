@@ -8968,7 +8968,9 @@ const OrderWin = window.OrderWin = (() => {
     const rec = inf && inf.rec, cut = rec && (rec.laserDoneAt || rec.roseCutAt);
     const facts = rec ? [sheetName(list[SV.at] || { metal: rec.metal, n: inf.sheet.n }), inf.stock ? `${Math.round(inf.stock.wPt * 25.4 / 72)} × ${Math.round(inf.stock.hPt * 25.4 / 72)} mm` : "", rec.setSeq ? "Set-" + rec.setSeq : "", cut ? "cut " + new Date(+cut).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : rec.status || ""].filter(Boolean).join(" · ") : "";
     const mine = inf ? inf.mine : [], x0 = mine.find(x => x.poolId === SV.focus) || mine[0] || null;
-    const sp = r.spec || {}, sku = (x0 && x0.sku) || sp.designSku || r.line.sku || "";
+    // (the line of the charm shown: an order split over sheets and metals speaks of that charm, not of the line opened)
+    const lr = (x0 && x0.poolId && linesOf(r).find(l => (l.poolIds || []).includes(x0.poolId))) || r;
+    const sp = lr.spec || {}, sku = (x0 && x0.sku) || sp.designSku || lr.line.sku || "";
     // every piece of the order: on this sheet, on its other sheets, and not on one yet
     const items = new Map(), add = (k, v) => items.set(k, Object.assign(items.get(k) || {}, v));
     for (const x of mine) add(x.poolId || x.id, { poolId: x.poolId, sku: x.sku, copy: x.copy, qty: x.qty, here: true, piece: x });
@@ -8976,7 +8978,7 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
     if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1 });
     const pieces = [...items.values()];
-    const eng = x0 && x0.eng && x0.eng.kind !== "none" ? x0.eng : null, re = r.engrave && r.engrave.needed ? r.engrave : null;
+    const eng = x0 && x0.eng && x0.eng.kind !== "none" ? x0.eng : null, re = lr.engrave && lr.engrave.needed ? lr.engrave : null;
     const disc = (e2, metal) => {
       const cls = /silver/.test(metal || "") ? " silver" : /rose/.test(metal || "") ? " rose" : "";
       const img = e2 && e2.back && (e2.back.outputs?.png?.url || e2.back.png || e2.back.preview);
@@ -8984,18 +8986,18 @@ const OrderWin = window.OrderWin = (() => {
     };
     const STATE = { approve: ["To approve", "bad"], words: ["Words to confirm", "bad"], preparing: ["Being prepared", ""], approved: ["Approved", "ok"], skipped: ["Cut plain", ""] };
     const engHtml = eng ? `<div class="owBackEng">${disc(eng, rec && rec.metal)}<div><div class="k ${(STATE[eng.kind] || [])[1] || ""}">Back engraving · ${esc((STATE[eng.kind] || [eng.label])[0])}</div><b>${eng.text ? "“" + esc(eng.text) + "”" : "—"}</b><span>${esc([eng.by ? "by " + eng.by : "", eng.at ? when(eng.at) : "", eng.note || ""].filter(Boolean).join(" · "))}${W.face !== "back" && eng.text ? (eng.by || eng.at ? " · " : "") + "switch to Back to see it on the sheet" : ""}</span>${eng.kind === "approve" && eng.job ? `<div class="acts"><button type="button" class="btn sage xs" data-eng="approve">Approve</button></div>` : ""}</div></div>`
-      : re ? `<div class="owBackEng">${disc({ text: re.text }, r.material)}<div><div class="k ${re.approved ? "ok" : "bad"}">Back engraving · ${re.approved ? "approved" : esc(re.state || "waiting")}</div><b>${re.text ? "“" + esc(re.text) + "”" : "—"}</b></div></div>`
+      : re ? `<div class="owBackEng">${disc({ text: re.text }, lr.material)}<div><div class="k ${re.approved ? "ok" : "bad"}">Back engraving · ${re.approved ? "approved" : esc(re.state || "waiting")}</div><b>${re.text ? "“" + esc(re.text) + "”" : "—"}</b></div></div>`
       : `<div class="owBackEng" style="grid-template-columns:1fr"><div><div class="k">Back engraving</div><span>No back engraving</span></div></div>`;
     const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.sheetId ? `<em style="--c:${esc(colorOf(it.metal))}">${esc(sheetName({ metal: it.metal, n: it.n }))}</em>` : `<em>not on a sheet yet</em>`;
     panel.innerHTML =
       (list.length ? `<section><span class="fLabel">Sheet</span><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
       `<section><span class="fLabel">Order</span><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
-      `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(r.material ? labelOf(r.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
+      `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
       `<section>${engHtml}</section>` +
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut ? " disabled" : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
-    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, r)); }
+    const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr)); }
     // an approval-waiting back is drawn as Engrave fits it
     const dsc = panel.querySelector("[data-disc]"); if (dsc && eng && eng.job && !dsc.querySelector("img") && eng.job.fit && eng.job.view && window.Engrave && Engrave.renderBack) { const cv2 = tryDo(() => Engrave.renderBack(eng.job, 176, { hatch: false, grid: false })); if (cv2) { dsc.innerHTML = ""; dsc.appendChild(cv2); } }
     panel.querySelectorAll("[data-at]").forEach(b => b.onclick = () => { if (+b.dataset.at === SV.at) return; SV.at = +b.dataset.at; SV.focus = null; paintPanel(null); sheetDraw(); });
@@ -9067,7 +9069,7 @@ const OrderWin = window.OrderWin = (() => {
   function fullSheet(select) {
     const s = SV.list && SV.list[SV.at]; if (!s || !s.id || !window.SheetWin || !SheetWin.open) return;
     const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null;
-    W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, at: SV.at, focus: select || SV.focus };
+    W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, sheetId: s.id, focus: select || SV.focus };
     closeNow();
     SheetWin.open(s.id, Object.assign(select ? { select } : {}, { origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
     const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
@@ -9078,7 +9080,8 @@ const OrderWin = window.OrderWin = (() => {
       if (!W.dlg || W.dlg.open || document.querySelector("dialog[open]")) return;
       const r = inPull(b.key) || b.row; if (!r) return;
       W.rows = b.rows;
-      show(r, { view: "sheet", walk: b.walk, highlight: b.hl, back: true, sheetAt: b.at, poolId: b.focus });
+      // (by the sheet's id, with its charm chosen: the list is read again and need not be in the same order)
+      show(r, { view: "sheet", walk: b.walk, highlight: b.hl, back: true, sheetId: b.sheetId, poolId: b.focus });
     }, 30);
   }
 

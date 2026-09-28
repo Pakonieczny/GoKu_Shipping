@@ -441,7 +441,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     E.close.onclick = () => close();
     // (Esc while the sheet is still flying in closes it: the view it was opening on has not been seen yet)
     d.addEventListener("cancel", e => { e.preventDefault(); if (!E.name.hidden) return hideName(); if (!E.menu.hidden) return menu(false); if (W.hand) return stopHand(); if (W.add) return closeAdd(); if (W.view === "piece" && !(W.flip && !W.flip.landed)) return showSheetPane(); close(); });
-    d.addEventListener("close", () => cleanup());
+    // (what was changed in here is read again by the order view: its copies of the saved sheets are dropped)
+    d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
     E.moreBtn.onclick = () => menu(E.menu.hidden);
     E.find.oninput = () => { W.q = E.find.value.trim().toLowerCase(); renderOrders(); paintFx(); };
@@ -3672,7 +3673,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const drawOf = (ctx, G, x) => { if (x.c) { const cx = x.c.centerPt[0], cy = x.c.centerPt[1], k = G.k; CharmNestPDF.drawCharm(ctx, x.c, (px, py) => [(px - cx) * k, (cy - py) * k], k); } };
   /** Sizes the plate to its box (the sheet at its shape, its rulers along the top and the left). */
   function layoutOrder(G) {
-    const cv = G.cv, st = G.st, host = cv.parentElement; if (!cv.isConnected || !st || !host) return false;
+    const cv = G.cv, st = G.st, host = cv.parentElement; if (!cv.isConnected || !st || !host || cv._order !== G) return false;
     const dpr = Math.min(2.5, devicePixelRatio || 1), aw = host.clientWidth - 44, ah = host.clientHeight - 24; if (aw < 40 || ah < 30) return false;
     const R = Math.round(Math.max(14, Math.min(22, aw * 0.022))), s = Math.min((aw - R) / st.wPt, (ah - R) / st.hPt);
     const w = Math.floor(R + st.wPt * s), hh = Math.floor(R + st.hPt * s), cw = Math.round(w * dpr), ch = Math.round(hh * dpr);
@@ -3730,7 +3731,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** The plate on screen: its still layer, and over it the order's slow gold ring (a pop as the drawing lands). */
   function paintOrder(G, now) {
-    const cv = G.cv; if (!G.base || !cv.isConnected) return;
+    const cv = G.cv; if (!G.base || !cv.isConnected || cv._order !== G) return;
     const ctx = cv.getContext("2d"), t1 = now || performance.now();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(G.base, 0, 0);
     if (still() || !G.mine.length) return;
@@ -3762,13 +3763,16 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   async function drawOrder(cv, target, orderId, opts = {}) {
     const rid = String(orderId || ""), page = target && typeof target === "object" ? target : null, id = page ? page.sheetId || "" : String(target || "");
-    const live = page || (id ? liveOf(id) : null);
+    const live = page || (id ? liveOf(id) : null), claim = cv._claim = {};
     let rec = null;
     if (id) { try { rec = await recFor(id); } catch (e) { if (!live) throw e; } }
     if (!rec) rec = recOfPage(live);
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
     const G = { cv, rec, pieces, mine: pieces.filter(x => x.rid === rid), st: rec.stock ? stockOf(rec) : stockFor(rec.metal, live || undefined), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back };
+    // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
+    // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
+    const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
     const redraw = () => { if (paintOrderBase(G)) paintOrder(G); };
     const info = {
       rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
