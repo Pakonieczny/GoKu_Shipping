@@ -71,31 +71,43 @@
   const cfg = { mode: "sorter", sandbox: false, by: "", station: "", device: "", passcode: "" };
   const OUTBOX = "orderTimeline.outbox.v1", listeners = new Set();
   let box = [], timer = 0, sending = false, backoff = 1000;
-  try { box = JSON.parse(localStorage.getItem(OUTBOX) || "[]"); if (!Array.isArray(box)) box = []; } catch (_) { box = []; }
-  const save = () => { try { localStorage.setItem(OUTBOX, JSON.stringify(box.slice(-500))); } catch (_) {} };
+  /* One outbox for the whole site: the sorter and every station page (one origin), in as many tabs as are open. A save
+     keeps what another page queued (only what this page delivered leaves), and a page sends only its own kind of event:
+     a station's door keeps station types alone, so a sorter event sent through it was dropped and forgotten. */
+  const keyOf = e => `${e && e.orderId}~${e && e.type}~${e && e.id}`, sent = new Set();
+  const disk = () => { try { const j = JSON.parse(localStorage.getItem(OUTBOX) || "[]"); return Array.isArray(j) ? j.filter(e => e && typeof e === "object") : []; } catch (_) { return []; } };
+  box = disk();
+  const mine = ev => (ev.mode ? ev.mode === cfg.mode : cfg.mode !== "station" || STATION_TYPES.has(ev.type));
+  // (another page's events stay on the disk alone, for that page: this one neither sends them nor writes them back)
+  const save = () => { try { box = box.filter(mine); const have = new Set(box.map(keyOf)); localStorage.setItem(OUTBOX, JSON.stringify(disk().filter(e => !sent.has(keyOf(e)) && !have.has(keyOf(e))).concat(box).slice(-500))); } catch (_) {} };
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
   const base = () => (location.protocol === "file:" ? "https://goldenspike.app" : "") + "/.netlify/functions/";
   async function post(fn, body, sandbox = cfg.sandbox) {
     const headers = { "Content-Type": "application/json" };
     if (cfg.passcode) headers["X-Edit-Passcode"] = cfg.passcode;
     const url = base() + fn + (fn === "firebaseOrders" && sandbox ? "?sandbox=1" : "");
-    const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), keepalive: true });
+    // (a keepalive request may carry 64 KB at most: a bigger one is refused outright, and was retried forever)
+    const text = JSON.stringify(body), r = await fetch(url, { method: "POST", headers, body: text, keepalive: text.length < 60000 });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error) throw new Error(j.error || "HTTP " + r.status);
     return j;
   }
   function schedule(ms) { clearTimeout(timer); timer = setTimeout(flush, ms); }
   async function flush() {
-    if (sending || !box.length) return;
+    const first = sending ? null : box.find(mine); if (!first) return;
     sending = true;
-    // one store per batch: an event keeps the store (production or sandbox) it was recorded in
-    const sb = !!box[0].sandbox, batch = [];
-    for (const ev of box) { if (!!ev.sandbox !== sb) break; batch.push(ev); if (batch.length >= 50) break; }
+    // one store per batch: an event keeps the store (production or sandbox) it was recorded in; ≤ 50 events, ≤ ~48 KB
+    const sb = !!first.sandbox, batch = []; let bytes = 0;
+    for (const ev of box) {
+      if (!mine(ev) || !!ev.sandbox !== sb) continue;
+      const n = JSON.stringify(ev).length; if (batch.length && (batch.length >= 50 || bytes + n > 48000)) break;
+      batch.push(ev); bytes += n;
+    }
     try {
       if (cfg.mode === "station") await post("firebaseOrders", { timeline: batch }, sb);
       else await post("charmNestLibrary", { op: "timelineAdd", events: batch, sandbox: sb }, sb);
-      box = box.slice(batch.length); save(); backoff = 1000;
-      if (box.length) schedule(50);
+      const done = new Set(batch); box = box.filter(ev => !done.has(ev)); batch.forEach(ev => sent.add(keyOf(ev))); save(); backoff = 1000;
+      if (box.some(mine)) schedule(50);
     } catch (e) {
       backoff = Math.min(backoff * 2, 120000); schedule(backoff);
       try { console.warn("[OrderTimeline] not sent yet, retrying:", e.message); } catch (_) {}
@@ -107,7 +119,7 @@
       const orderId = digits(e && e.orderId); if (!orderId || !TYPES[e.type]) return null;
       if (cfg.mode === "station" && !STATION_TYPES.has(e.type)) return null;
       const at = Number(e.at) > 1e12 ? Number(e.at) : Date.now();
-      const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox });
+      const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       box.push(ev); save(); schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }

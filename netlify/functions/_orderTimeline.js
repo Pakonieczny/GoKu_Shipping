@@ -85,12 +85,12 @@ async function get(db, orderId, opts = {}) {
   const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
   const byTime = (a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id));
-  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled), now: Date.now(), truncated: snap.size >= 2000 }; }
+  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.size >= 2000 }; }
   const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
   const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
   const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
   const events = recorded.concat(kept).sort(byTime);
-  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets }), now: Date.now(), truncated: snap.size >= 2000, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
+  const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.size >= 2000, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
   return out;
@@ -391,7 +391,10 @@ const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLin
     { stage, label, text, sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled, step, rail }
     step: the furthest step of the rail (RAIL, 0-8) the order has reached; a cancelled order stopped there.
     stage: waiting | review | held | designed | sheet | cut | sorted | welded | assembled | packed | shipped | completed | cancelled.
-    hint.sheets (from the derivation): the sheets that hold the order now, which outrank a stale removal or placement. */
+    hint.sheets (from the derivation): the sheets that hold the order now, which outrank a stale removal or placement.
+    hint.record: `cancelled` is the cancel record as read (null: there is none). The record says whether the order is
+    cancelled, as cancelCheck does: a cancel event with no record left (a restore whose cancelRestored event could not be
+    written) stays in the history but does not make it cancelled. */
 function whereOf(events, cancelled, hint = {}) {
   const list = (events || []).filter(e => e && TYPES.has(e.type)).slice().sort((a, b) => n(a.at) - n(b.at));
   let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, cut = false, designed = false, cancel = null, step = list.length ? 0 : -1;
@@ -432,7 +435,7 @@ function whereOf(events, cancelled, hint = {}) {
     else if (stage === "sheet") { stage = designed ? "designed" : "waiting"; sheet = ""; sheetId = ""; }
   }
   if (stage === "sheet" && !sheetId && designed) stage = "designed";
-  const isCancelled = !!(cancelled || cancel);
+  const isCancelled = hint.record ? !!cancelled : !!(cancelled || cancel);
   if (isCancelled) {
     const c = cancel || {}; stage = "cancelled"; since = n(c.at) || n(cancelled && cancelled.at) || since;
     // a cancel record with no event of its own: whoever cancelled it is the last to act on it
