@@ -1,4 +1,4 @@
-// Adversarial: a station opened with no Etsy token must load cleanly. The boot code used to call startOAuth("boot")
+// Adversarial: a station (or the design-message pages) opened with no Etsy token must load cleanly. The boot code used to call startOAuth("boot")
 // before `let __oauthInFlight` was reached, so every such load threw "Cannot access '__oauthInFlight' before
 // initialization". Today's behaviour is kept: no automatic Etsy login redirect, no Etsy request, no code verifier.
 // No network except loopback stubs; every etsy.com request is aborted and counted.
@@ -6,7 +6,8 @@
 'use strict';
 const fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
-const PAGES = ['weld-1', 'assembly-1', 'assembly-2', 'assembly-3', 'assembly-4', 'shipping-1', 'shipping-2', 'shipping-3', 'sorting'];
+const PAGES = ['weld-1', 'assembly-1', 'assembly-2', 'assembly-3', 'assembly-4', 'shipping-1', 'shipping-2', 'shipping-3', 'sorting',
+  'design-message', 'design-message-1'];
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
@@ -64,5 +65,5 @@ const PAGES = ['weld-1', 'assembly-1', 'assembly-2', 'assembly-3', 'assembly-4',
     }
   } finally { await browser.close(); }
   assert.deepStrictEqual(failures, [], '\n  ' + failures.join('\n  '));
-  console.log('adv-oauth-boot: all ' + PAGES.length + ' stations pass');
+  console.log('adv-oauth-boot: all ' + PAGES.length + ' pages pass');
 })().catch(e => { console.error(e.message || e); process.exit(1); });
