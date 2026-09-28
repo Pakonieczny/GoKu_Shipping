@@ -2753,7 +2753,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       for (const id of ids) {
         if (onPage.has(id)) continue;
         const p = B.pool.rows.get(id);
-        if (p && p.sheetId && !GONE.includes(p.state)) { stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { why: "not open in this sorter" }); leftIds.add(id); }
+        if (p && p.sheetId && !GONE.includes(p.state)) { stay(sheetWord(p.sheetId, p.sheetName), 1, p.state === "committed" ? { cut: true, why: "already cut" } : { open: true, sheetId: p.sheetId, why: "not open in this sorter" }); leftIds.add(id); }
         else if (!p || !GONE.includes(p.state)) loose.push(id);
       }
       // a line with a piece that stays on a sheet (cut, released, held…) is kept, marked gone, as Etsy's own gone lines
@@ -2764,9 +2764,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return { rid, ids, rows, off, wait, left: [...left.values()], loose, stays };
     }
     function noticeText(rid, left) {
-      const cut = left.filter(l => l.cut), rest = left.filter(l => !l.cut), say = [];
+      const cut = left.filter(l => l.cut), open = left.filter(l => l.open), rest = left.filter(l => !l.cut && !l.open), say = [];
+      // (a saved sheet not cut yet that this sorter has not loaded: an earlier set's, or one only in the Library)
+      const openTxt = open.length ? `take its pieces off ${joinAnd(open.map(l => l.where))} before cutting.` : "";
+      if (open.length && !cut.length && !rest.length) return `Order ${rid} is cancelled: ${openTxt}`;
       if (cut.length) say.push(`Its pieces are already cut on ${joinAnd(cut.map(l => l.where))}: set them aside.`);
       for (const l of rest) say.push(l.only ? `It is the only order on ${l.where}: delete that sheet from its menu, or set its pieces aside once cut.` : `Its pieces on ${l.where} stay (${l.why}): set them aside once cut.`);
+      if (openTxt) say.push(openTxt.charAt(0).toUpperCase() + openTxt.slice(1));
       return `Order ${rid} was cancelled. ${say.join(" ")}`;
     }
     function notify(rid, at, left) {
@@ -2785,6 +2789,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       }, 80);
     }
     const pause = ms => new Promise(r => setTimeout(r, ms));
+    /** The order's pieces on saved sheets not loaded here and not sent to the station yet, by sheet; null when the piece
+     *  records could not be read. */
+    async function farSheets(rid, plan) {
+      const r = await api("charmNestLibrary", { op: "poolList", orderId: rid, limit: 300 }, { quiet: true }).catch(() => null);
+      if (!r || !Array.isArray(r.pools)) return null;
+      const loaded = new Set(allSheets().map(sh => sh.sheetId).filter(Boolean)), known = new Set(plan.left.map(l => l.sheetId).filter(Boolean)), out = new Map();
+      for (const p of r.pools) {
+        if (!p || !p.sheetId || GONE.includes(p.state) || p.state === "committed" || p.committedAt || p.laserDoneAt || loaded.has(p.sheetId) || known.has(p.sheetId)) continue;
+        const l = out.get(p.sheetId); if (l) l.n++; else out.set(p.sheetId, { where: sheetWord(p.sheetId, p.sheetName), n: 1, open: true, sheetId: p.sheetId, why: "not open in this sorter" });
+      }
+      return [...out.values()];
+    }
     /** One order, from its record read once more to its pages read back. "done", "restored" (not cancelled any more:
      *  nothing moved) or "later" (a page still busy, a save or a read-back not through: the next check carries on). */
     async function job(rid) {
@@ -2814,6 +2830,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         }
         const etsy = rec.source === "etsy" || rec.by === "Etsy", by = etsy ? "Etsy" : String(rec.by || "someone");
         const reason = etsy ? "cancelled on Etsy" : `cancelled by ${by}`, at = +rec.at || 0;
+        // its pieces on a saved sheet this sorter has not loaded (an earlier set's, or one only in the Library), read from
+        // their piece records (one read, no Etsy call). Not taken off from here (the sheet window leaves a sheet it has not
+        // open as it is too): the run pill says to take them off before cutting, and the record says "open"
+        const far = await farSheets(rid, plan);
+        if (far) for (const l of far) plan.left.push(l);
+        if (far && !j0 && !plan.ids.size && !plan.rows.length && !plan.left.length) { st = read(); st.done[rid] = { at, t: Date.now() }; delete st.jobs[rid]; save(); return "done"; }
         // the journal: written before anything moves, and each step as it is through (read afresh each time: a poll or a
         // Set aside meanwhile reads it too)
         const upd = f => { st = read(); const x = st.jobs[rid]; if (x) { f(x); save(); } };
@@ -2869,7 +2891,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // written, so a failed write goes again with the next try
         const fates = new Map((j.fates || []).map(f => [f.sheet, f]));
         for (const t of taken) fates.set(whereOf(t.sh), { sheet: whereOf(t.sh), fate: "removed", text: `taken off ${whereOf(t.sh)}` });
-        for (const l of plan.left) if (!fates.has(l.where)) fates.set(l.where, { sheet: l.where, fate: "cut", text: l.cut ? `already cut on ${l.where}: set aside` : `stays on ${l.where} (${l.why}): set aside once cut` });
+        for (const l of plan.left) if (!fates.has(l.where)) fates.set(l.where, { sheet: l.where, fate: l.open ? "open" : "cut", text: l.cut ? `already cut on ${l.where}: set aside` : l.open ? `on ${l.where}, not cut yet: take its pieces off before cutting` : `stays on ${l.where} (${l.why}): set aside once cut` });
         if (fates.size !== (j.fates || []).length || taken.length) { j.fates = [...fates.values()]; j.fatesSaved = false; }
         if (j.fates && j.fates.length && !j.fatesSaved) {
           j.fatesSaved = await api("charmNestLibrary", { op: "cancelFates", orderId: rid, fates: j.fates }, { quiet: true }).then(() => true, () => false);
@@ -2933,17 +2955,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is set aside
         const ask = st.notices.filter(n => !recs.has(n.rid)).map(n => n.rid).slice(0, 60);
         if (ask.length) { const c = await api("charmNestLibrary", { op: "cancelCheck", orderIds: ask }, { quiet: true }).catch(() => null); if (c && c.cancelled) for (const id of ask) if (!c.cancelled[id]) forget(id); }
-        const have = held(), due = [];
+        const have = held(), due = [], far = [];
         for (const id of new Set([...Object.keys(st.jobs), ...recs.keys(), ...(window.Cancelled ? Cancelled.ids() : [])])) {
           if (st.jobs[id]) { due.push(id); continue; }
-          if (!have.has(id)) continue;
+          if (!have.has(id)) { const rec = recs.get(id), d = st.done[id]; if (rec && !(d && +d.at === +rec.at) && Date.now() - (+rec.at || 0) < 30 * 86400000) far.push(id); continue; }
           const p = planOf(id), d = st.done[id], rec = recs.get(id), noticed = !!d && (!rec || +d.at === +rec.at);
           if (p.rows.length || p.off.length || p.wait.length || p.loose.length || (p.left.length && !noticed)) due.push(id);
         }
         if (fresh.length) agent({ bridge: true }, "DS", `${fresh.length} new cancel record${fresh.length === 1 ? "" : "s"} (${fresh.slice(0, 5).map(c => c.orderId).join(", ")}${fresh.length > 5 ? "…" : ""})${due.length ? ` · ${due.length} held here, coming off` : ""}`);
-        for (const id of due) queue.add(id);
+        for (const id of due.concat(far)) queue.add(id);
         kick();
-        return due;
+        return due.concat(far);
       })().finally(() => { polling = null; });
       return polling;
     }
@@ -2958,7 +2980,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const go = () => {
         st = read(); const n = st.notices.find(x => x.rid === rid); if (!n) return RunCtl.renderBanner();
         st.notices = st.notices.filter(x => x.rid !== rid); save();
-        for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ was cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
+        for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
         const who = whoAmI() || "someone";
         tl({ orderId: rid, type: "note", by: who, text: `Pieces set aside by ${who} (${n.where})`.slice(0, 200), id: `autocancel-aside-ok-${n.at}` });
         RunCtl.renderBanner();
@@ -2969,12 +2991,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function forget(rid) {
       rid = String(rid); st = read(); if (!st.notices.some(n => n.rid === rid)) return false;
       st.notices = st.notices.filter(n => n.rid !== rid); save();
-      for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ was cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
+      for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent) && m.textContent.includes(rid)) m.close();
       RunCtl.renderBanner(); return true;
     }
     /** A cancel made in this window: done here already, so it is not taken up again. */
     function mine(rid, at) { st = read(); st.done[String(rid)] = { at: +at || 0, t: Date.now(), mine: true }; save(); }
-    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, forget, mine, state: () => read() };
+    /** A sandbox reset: the sandbox's records went, and with them what this kept of them (notices, jobs, done). */
+    function resetSandbox() {
+      try { localStorage.removeItem("cn.autoCancel.v1:sandbox"); } catch (_) {}
+      if (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX) { st = read(); queue.clear(); for (const m of document.querySelectorAll(".mNote")) if (m.close && /^Order \d+ (was|is) cancelled/.test(m.textContent)) m.close(); if (window.RunCtl) RunCtl.renderBanner(); }
+    }
+    return { start, started: () => !!tick, poll, kick, idle: () => working || Promise.resolve(), notices, pillHtml, ack, forget, mine, resetSandbox, state: () => read() };
   })();
 
   /* ── the freed room: which orders fit it, found with the nest's own collision grid, oldest order first ── */
