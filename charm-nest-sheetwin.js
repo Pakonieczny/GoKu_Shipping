@@ -2476,7 +2476,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         <div class="cxWhy"><div class="cxWho"><span class="cxBadge ${etsy ? "etsy" : "person"}">${etsy ? "Cancelled on Etsy" : `Cancelled by ${esc(c.by || "someone")}`}</span><time datetime="${c.at ? new Date(+c.at).toISOString() : ""}">${esc(when(+c.at))}</time></div>
           <div class="cxReason${why ? "" : " none"}">${why ? esc(why) : etsy ? "Etsy gave no reason" : "No reason given"}</div>
           ${fates.length ? `<div class="cxFates">${fates.map(f => `<span class="${f.cut ? "cut" : "off"}">${esc(f.text)}</span>`).join("")}</div>` : ""}</div>
-        <div class="cxAct">${etsy ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
+        <div class="cxAct">${etsy && /cancel/i.test(c.etsyStatus || "cancel") ? "" : `<button class="btn ghost sm" type="button" data-cx="restore" title="Bring the order back: it returns with the next orders check if it is still open on Etsy">Restore</button>`}${openable ? `<span class="cxGo" aria-hidden="true">›</span>` : ""}</div>`;
     }
     const nodes = new Map();                                        // orderId → { stamp, node }: rows kept, like the Orders list's
     let want = null, drawnKey = null, limit = PAGE;
