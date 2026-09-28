@@ -998,7 +998,7 @@
   <!-- Order timeline: this station records each scan, label and shipment on the order's timeline and stops a
        cancelled order ("CANCELLED ORDER — DO NOT PROCEED"). Optional: without station-timeline.js nothing changes. -->
   <script src="order-timeline.js?v=20260928-ov2"></script>
-  <script src="station-timeline.js?v=20260928-a3-5"></script>
+  <script src="station-timeline.js?v=20260928-fxS"></script>
   <script>
     (function () {
       const soft = (p) => { try { if (p && typeof p.catch === "function") p.catch(e => console.warn("StationTimeline:", e)); } catch (_) {} };
@@ -2928,7 +2928,15 @@ function metalToBadge(label){
     const carrierSel  = document.getElementById("carrierSelect");
 
     if (completeBtn) {
+      /* one Complete at a time: the button is disabled at once and a press while the post is under way is ignored, so
+         a double-click never completes the order on Etsy twice; it comes back when Etsy has answered */
+      let completeBusy = false;
       completeBtn.addEventListener("click", async () => {
+        if (completeBusy) return;
+        completeBusy = true; completeBtn.disabled = true;
+        try { await completeOrder(); } finally { completeBusy = false; completeBtn.disabled = false; }
+      });
+      async function completeOrder() {
         const receiptId = document.getElementById("etsyOrderNumber").value.trim();
         const tracking  = (trackingInp.value || "").trim();
         const carrier   = carrierSel.value;          // "chitchats" | "usps"
@@ -2981,9 +2989,9 @@ function metalToBadge(label){
 
         } catch (err) {
           console.error(err);
-          M.toast({ html: "Complete failed: " + err.message });
+          M.toast({ html: "Not completed on Etsy yet (" + err.message + "). Nothing was lost — press Complete Order to try again." });
         }
-      });
+      }
     }
 
     async function updateImageGrid(data){
@@ -3552,11 +3560,15 @@ function metalToBadge(label){
       let firstSnap = true;                       // 🔑 skip the initial payload
       db.collection("Brites_Orders")
         .doc("shipping-scan-2")
-        .onSnapshot(async docSnap => {
+        .onSnapshot(async function relay(docSnap) {
           if (!window.isEmployeeLoggedIn) return;
 
           /* ignore Firestore’s first delivery; wait for *changes* */
           if (firstSnap){ firstSnap = false; return; }
+
+          /* the red CANCELLED alert is up: the phone's scan waits (its number never reaches the fields behind the alert,
+             nor takes the focus from it) and loads once Understood is clicked */
+          if (window.StationTimeline && StationTimeline.afterAlert && StationTimeline.afterAlert(() => relay(docSnap))) return;
 
           if (docSnap.exists){
             const data = docSnap.data();
@@ -5145,7 +5157,7 @@ function metalToBadge(label){
         } catch (err) {
           console.error(err);
           stRecordLabel(false, null, err);
-          M.toast?.({ html: "Buy/print failed: " + (err.message || err) });
+          M.toast?.({ html: "Buy & Print did not finish (" + (err.message || err) + "). Check the shipment, then press Buy & Print again." });
         } finally {
 
           // Only unmute if we did NOT freeze (i.e., only on failure path)
@@ -7110,8 +7122,11 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
         }
       });
      // Wrap Buy with spinner while purchasing + fetching label via proxy
+      let ccBuyBusy = false;   // one Buy & Print at a time: a press while one is under way is ignored (Update ID may re-enable the button)
       document.getElementById("ccBuy")?.addEventListener("click", async (e) => {
         const btn = e.currentTarget;
+        if (ccBuyBusy) return;
+        ccBuyBusy = true;
         try {
           setBtnLoading(btn, true);
           await buyCcThenPrint();
@@ -7119,6 +7134,7 @@ function parseIntlAddressBlock(blockText = "", fallbackCountryCode = "") {
           handleCcApiError(err);
         } finally {
           setBtnLoading(btn, false);
+          ccBuyBusy = false;
         }
      // Final safety net: ensure ANY refreshRates waits for Update-ID
       (function(){

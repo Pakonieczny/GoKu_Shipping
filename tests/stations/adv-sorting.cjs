@@ -7,6 +7,7 @@
 //   3 · the batch alert fades in and flashes (opacity only, no per-frame background paint), smoothly
 //   4 · printing one sticker of a cancelled order: "Do it anyway" prints it (and records sorted); Stop does not;
 //       the answer is never overruled by a second pop-up
+//   5 · a second batch loaded within the 2.5 s: the first batch's late "cancelled" still raises the alert naming it
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/adv-sorting.cjs
 'use strict';
 const path = require('path'), assert = require('assert'), fs = require('fs');
@@ -173,6 +174,18 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     const sorted = st.events.filter(e => e.orderId === B && e.type === 'sorted').length;
     check(anyway === 1 && sorted === 1, `the timeline says went ahead (${anyway}) and sorted (${sorted}), and both are true`);
   }
+
+  // ── 5 · a second batch within 2.5 s of the first: the first batch's late "cancelled" still raises the alert naming it ──
+  const D = '3710000011', E = '3710000012';
+  st.delay = 3500; st.cancelled.add(D);
+  await page.evaluate(([d, e]) => {
+    SortTL.batchStart([d], { how: 'typed', batch: 'first' });
+    setTimeout(() => { SortTL.batchStart([e], { how: 'typed', batch: 'second' }); SortTL.batchLoaded(); }, 1000);
+  }, [D, E]);
+  const earlier = await page.waitForFunction(d => { const a = document.querySelector('#stCancelAlert.on'); return a && [...a.querySelectorAll('.st-list .st-who')].some(r => r.dataset.order === d); }, D, { timeout: 12000 })
+    .then(() => true, () => false);
+  check(earlier, "an earlier batch's cancelled order answering late still raises the alert naming it (a second batch loaded 1 s later)");
+  if (earlier) await page.click('#stCancelAlert .st-ok');
 
   await browser.close();
   check(errors.length === 0, 'no page errors: ' + errors.join(' | '));
