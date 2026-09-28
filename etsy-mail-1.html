@@ -9644,6 +9644,16 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const p = state.polish && state.polish.threadId === tid ? { threadId: tid, before: state.polish.before } : null;
       _typedSet(tid, { text, polish: p });
     }
+    /** True while the reply box on screen is this conversation's. Anything
+     *  that fills the box after waiting (a saved or new AI draft, Polish, a
+     *  custom-listing reply, the draft's chips) asks first, so a result that
+     *  comes back after staff moved on never lands in another customer's
+     *  reply. */
+    function replyBoxIsFor(threadId) {
+      if (!threadId || state.selectedId !== threadId) return false;
+      const ta = $("emDraftText");
+      return !ta || ta.__emThreadId === threadId;
+    }
     function dropTypedText(threadId) {
       if (!threadId) return;
       const ta = $("emDraftText");
@@ -17105,7 +17115,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       setPolishBusy(false);
       // The operator's own typing always wins over a late result.
       const now = $("emDraftText");
-      if (state.selectedId !== threadId || !now) return;
+      if (!replyBoxIsFor(threadId) || !now) return;
       if (now.value !== before) { toast("Not polished: the reply changed while Polish was working"); return; }
       const after = String((res && res.text) || "").trim();
       if (!after) { toast("Polish came back empty; your text is unchanged"); return; }
@@ -17298,6 +17308,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
           if (j >= 0) state.threads[j] = threadDoc;
+        }
+
+        // Staff moved to another conversation while the listing was made:
+        // the reply waits with its own conversation and is in the box when
+        // that one opens again (never in the conversation now on screen).
+        if (!replyBoxIsFor(threadId)) {
+          _typedSet(threadId, { text: replyText, polish: null });
+          toast("Listing reply ready for " + aiRunName(threadId));
+          return true;
         }
 
         const ta = $("emDraftText");
@@ -17875,7 +17894,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         toast("A reply for this conversation is already being written");
         return;
       }
-      const isOpen = () => state.selectedId === threadId;
+      const isOpen = () => replyBoxIsFor(threadId);
       const run = aiRunStart(threadId, mode);
       // ──── v3.30 — Manual override of quiet-period defer ──────────────
       // If this thread is currently in deferred_quiet_period (server-
@@ -21252,6 +21271,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           method: "GET",
           query: { op: "get", coll: "EtsyMail_Drafts", id: draftId }
         });
+        // Staff moved to another conversation while this loaded: leave that
+        // one alone. The draft stays saved here and loads when this opens.
+        if (!replyBoxIsFor(thread.id)) return;
         if (!res || !res.exists || !res.doc) {
           // No saved draft — make sure stale chips/status from a prior
           // thread don't bleed through.
