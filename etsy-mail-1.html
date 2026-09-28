@@ -9596,7 +9596,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if ((deskTa && deskTa.value.trim()) || (mobTa && mobTa.value.trim())) return false;
       const text = takeUnsentText(threadId);
       if (!text) return false;
-      if (deskTa) { deskTa.value = text; autoSizeDraftTextarea(deskTa); }
+      if (deskTa) { deskTa.value = text; deskTa.__emOwn = true; autoSizeDraftTextarea(deskTa); }
       if (mobTa) {
         mobTa.value = text;
         if (typeof mAutoGrow === "function") mAutoGrow(mobTa);
@@ -9606,6 +9606,89 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       toast("Your unsent reply is back in the box.", 4000);
       return true;
     }
+
+    // ─── Typed replies kept per conversation ────────────────────────────
+    // Words typed in the reply box but not sent stay with their own
+    // conversation: moving to another one, a redraw of this one, or a
+    // reload keeps them, and they are back in the box on return. Only this
+    // tab holds them (memory, plus sessionStorage for a reload); they are
+    // never sent or saved anywhere else. The box counts as the operator's
+    // once they type, paste or Polish in it (or their words were put
+    // back), so an AI draft left untouched is not kept over a newer one.
+    // Sending the reply, AI Draft, or emptying the box lets them go.
+    const TYPED_KEY = "em.typed.";
+    const _typedMem = new Map();   // threadId → { text, polish } or null (let go)
+    function _typedSet(threadId, entry) {
+      _typedMem.set(threadId, entry || null);
+      try {
+        if (entry) sessionStorage.setItem(TYPED_KEY + threadId, JSON.stringify(entry));
+        else sessionStorage.removeItem(TYPED_KEY + threadId);
+      } catch (_) {}
+    }
+    function _typedGet(threadId) {
+      if (_typedMem.has(threadId)) return _typedMem.get(threadId);
+      try {
+        const v = JSON.parse(sessionStorage.getItem(TYPED_KEY + threadId) || "null");
+        if (v && typeof v.text === "string") { _typedMem.set(threadId, v); return v; }
+      } catch (_) {}
+      return null;
+    }
+    /** Keep (or let go of) what the operator has in the reply box now on
+     *  screen, for the conversation that box belongs to. */
+    function keepTypedText() {
+      const ta = $("emDraftText");
+      if (!ta || !ta.__emThreadId || !ta.__emOwn) return;
+      const tid = ta.__emThreadId;
+      const text = ta.value || "";
+      if (!text.trim()) { _typedSet(tid, null); return; }
+      const p = state.polish && state.polish.threadId === tid ? { threadId: tid, before: state.polish.before } : null;
+      _typedSet(tid, { text, polish: p });
+    }
+    /** True while the reply box on screen is this conversation's. Anything
+     *  that fills the box after waiting (a saved or new AI draft, Polish, a
+     *  custom-listing reply, the draft's chips) asks first, so a result that
+     *  comes back after staff moved on never lands in another customer's
+     *  reply. */
+    function replyBoxIsFor(threadId) {
+      if (!threadId || state.selectedId !== threadId) return false;
+      const ta = $("emDraftText");
+      return !ta || ta.__emThreadId === threadId;
+    }
+    function dropTypedText(threadId) {
+      if (!threadId) return;
+      const ta = $("emDraftText");
+      if (ta && ta.__emThreadId === threadId) ta.__emOwn = false;
+      _typedSet(threadId, null);
+    }
+    function restoreTypedText(threadId) {
+      const deskTa = $("emDraftText");
+      if (!deskTa || deskTa.__emThreadId !== threadId || deskTa.value.trim()) return false;
+      const e = _typedGet(threadId);
+      if (!e || !String(e.text || "").trim()) return false;
+      deskTa.value = e.text;
+      deskTa.__emOwn = true;
+      autoSizeDraftTextarea(deskTa);
+      const mobTa = window.IS_MOBILE ? document.getElementById("mComposerTextarea") : null;
+      if (mobTa && !mobTa.value.trim()) {
+        mobTa.value = e.text;
+        if (typeof mAutoGrow === "function") mAutoGrow(mobTa);
+        const mSend = document.getElementById("mComposerSend");
+        if (mSend) mSend.disabled = false;
+      }
+      // Polished words come back with their Undo and their "polished" mark.
+      if (e.polish && e.polish.threadId === threadId) {
+        state.polish = { threadId, before: String(e.polish.before || "") };
+        showPolishNote(threadId);
+      }
+      return true;
+    }
+    document.addEventListener("input", (e) => {
+      const id = e && e.target && e.target.id;
+      if (id === "emDraftText") e.target.__emOwn = true;
+      else if (id === "mComposerTextarea") { const d = $("emDraftText"); if (d) d.__emOwn = true; }
+    });
+    window.addEventListener("pagehide", () => keepTypedText());
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") keepTypedText(); });
 
     // ─── v5.30 — Starred-thread toggle (robust v5.30.3) ───────────────
     //
@@ -15494,6 +15577,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     }
 
     async function openThread(threadId) {
+      keepTypedText();   // the reply typed so far stays with its conversation
       aiTextDismissFresh();
       // v5.37 — CRITICAL FIX. Clear state.messages whenever the operator
       // switches to a different thread, so leftover messages from the
@@ -16095,6 +16179,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
     };
 
     function renderDetail(thread) {
+      // The reply box is about to be rebuilt: keep what was typed in it.
+      keepTypedText();
       if (!thread) {
         $("emDetail").innerHTML = `<div class="em-detail-empty">No thread selected.</div>`;
         // v3.30 — kill the countdown ticker if we're emptying the pane
@@ -16868,8 +16954,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // ─── M5: composer send-flow wiring ────────────────────────────────
       setupComposerInteractions(t);
 
-      // A reply whose send failed after the operator had moved on comes
-      // back first; hydrateAiDraft then leaves the non-empty box alone.
+      // What the operator typed here and left unsent comes back first, then
+      // a reply whose send failed after they had moved on (when the box is
+      // still empty); hydrateAiDraft then leaves the non-empty box alone.
+      const _replyBox = $("emDraftText");
+      if (_replyBox) _replyBox.__emThreadId = t.id;
+      restoreTypedText(t.id);
       restoreUnsentText(t.id);
 
       // Load the most recent draft for this thread (if any) so the operator
@@ -17025,12 +17115,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       setPolishBusy(false);
       // The operator's own typing always wins over a late result.
       const now = $("emDraftText");
-      if (state.selectedId !== threadId || !now) return;
+      if (!replyBoxIsFor(threadId) || !now) return;
       if (now.value !== before) { toast("Not polished: the reply changed while Polish was working"); return; }
       const after = String((res && res.text) || "").trim();
       if (!after) { toast("Polish came back empty; your text is unchanged"); return; }
       if (after === before.trim()) { toast("Already reads well; nothing to change"); return; }
       now.value = after;
+      now.__emOwn = true;   // polished at the operator's asking: kept like typed words
       autoSizeDraftTextarea(now);
       state.polish = { threadId, before };
       showPolishNote(threadId);
@@ -17217,6 +17308,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         if (threadDoc) {
           const j = state.threads.findIndex(x => x && x.id === threadId);
           if (j >= 0) state.threads[j] = threadDoc;
+        }
+
+        // Staff moved to another conversation while the listing was made:
+        // the reply waits with its own conversation and is in the box when
+        // that one opens again (never in the conversation now on screen).
+        if (!replyBoxIsFor(threadId)) {
+          _typedSet(threadId, { text: replyText, polish: null });
+          toast("Listing reply ready for " + aiRunName(threadId));
+          return true;
         }
 
         const ta = $("emDraftText");
@@ -17794,7 +17894,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         toast("A reply for this conversation is already being written");
         return;
       }
-      const isOpen = () => state.selectedId === threadId;
+      const isOpen = () => replyBoxIsFor(threadId);
       const run = aiRunStart(threadId, mode);
       // ──── v3.30 — Manual override of quiet-period defer ──────────────
       // If this thread is currently in deferred_quiet_period (server-
@@ -17910,6 +18010,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // behavior because they intentionally operate on existing text.
       if (mode === "initial" && isOpen()) {
         dropPolish(threadId);   // the polished words are being replaced
+        dropTypedText(threadId);
         const oldTa = $("emDraftText");
         if (oldTa) {
           oldTa.value = "";
@@ -19132,6 +19233,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       let prefix = "";
       if (before && !/\n$/.test(before)) prefix = "\n";
       textarea.value = before + prefix + text + after;
+      textarea.__emOwn = true;   // the operator's own insert: kept like typed words
       const pos = (before + prefix + text).length;
       textarea.selectionStart = textarea.selectionEnd = pos;
       textarea.focus();
@@ -20556,7 +20658,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         stashUnsentText(threadId, snap.typed);
         return false;
       }
-      if (deskTa) { deskTa.value = snap.typed; autoSizeDraftTextarea(deskTa); }
+      if (deskTa) { deskTa.value = snap.typed; deskTa.__emOwn = true; autoSizeDraftTextarea(deskTa); }
       if (mobTa) {
         mobTa.value = snap.typed;
         if (typeof mAutoGrow === "function") mAutoGrow(mobTa);
@@ -20965,6 +21067,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       closePolishNote();
       if (deskTa) deskTa.value = "";
       if (mobTa) mobTa.value = "";
+      dropTypedText(threadId);   // this reply is sent: its kept copy goes (a failure puts it back)
       const mSendBtn = document.getElementById("mComposerSend");
       if (mSendBtn) mSendBtn.disabled = true;
       setComposerAttachments(threadId, []);
@@ -21168,6 +21271,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           method: "GET",
           query: { op: "get", coll: "EtsyMail_Drafts", id: draftId }
         });
+        // Staff moved to another conversation while this loaded: leave that
+        // one alone. The draft stays saved here and loads when this opens.
+        if (!replyBoxIsFor(thread.id)) return;
         if (!res || !res.exists || !res.doc) {
           // No saved draft — make sure stale chips/status from a prior
           // thread don't bleed through.
@@ -25037,9 +25143,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // On desktop this isn't an issue: openThread → renderDetail
       // wipes #emDetail.innerHTML, recreating the textarea fresh.
       // On mobile we don't run renderDetail, so we clear manually.
+      // The reply typed so far stays with its conversation (kept before the
+      // boxes are cleared; renderDetail below then has nothing to keep).
+      keepTypedText();
       const _desktopTa = document.getElementById("emDraftText");
       const _mobileTa  = document.getElementById("mComposerTextarea");
-      if (_desktopTa) _desktopTa.value = "";
+      if (_desktopTa) { _desktopTa.value = ""; _desktopTa.__emOwn = false; }
       if (_mobileTa)  _mobileTa.value  = "";
       if (typeof mHideAiIndicator === "function") mHideAiIndicator();
 
