@@ -695,10 +695,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      flight is taken at once (a close turns the flight round from wherever it is). (Polished the same day after a review
      at real reading times: a growth that can be followed, not a pop.) */
   // what was pressed that opens a sheet: a Library card (the Sets view's and a set's in Completed too), a Completed
-  // row, a Sets window tile
+  // row, a Sets window tile, a sheet in the Sets menu's preview
   let pressed = null;
   document.addEventListener("pointerdown", e => {
-    const t = e.target && e.target.closest && e.target.closest(".libCard[data-id], .ldItem[data-kind=sheet][data-id] > .ldLine, .hTile[data-sheet]"); if (!t) return;
+    const t = e.target && e.target.closest && e.target.closest(".libCard[data-id], .ldItem[data-kind=sheet][data-id] > .ldLine, .hTile[data-sheet], .spPlate[data-sheet]"); if (!t) return;
     const id = t.dataset.id || t.dataset.sheet || (t.parentElement && t.parentElement.dataset.id); if (!id) return;
     pressed = { id, at: Date.now(), el: t, x: e.clientX, y: e.clientY };
   }, true);
@@ -724,6 +724,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     try { c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); } catch (_) { return null; }
     return c;
   }
+  /** A sheet shown turned over (a back drawn by drawOrder: a Library card's, a Sets window tile's, the Sets menu
+      preview's) as what the window grows out of: the sheet alone, its rulers left out, where it is on screen and a copy
+      of it (the window opens on its Back then, Paul 28 Sep: the side looked at is the side that opens). */
+  function backPic(cv) {
+    const G = cv && cv._order; if (!G || !(G.Wp > 1) || !(G.Hp > 1) || !cv.width || !cv.height) return null;
+    return {
+      // the sheet inside the canvas's box r (the canvas as it lay on screen): a box of another shape is not the canvas's
+      within(r) { if (!r || !r.width || Math.abs(r.width / r.height - cv.width / cv.height) > .04 * cv.width / cv.height) return null; const sx = r.width / cv.width, sy = r.height / cv.height; return new DOMRect(r.left + G.R * sx, r.top + G.R * sy, G.Wp * sx, G.Hp * sy); },
+      snap() {
+        const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(G.Wp)); c.height = Math.max(1, Math.round(G.Hp));
+        try { c.getContext("2d").drawImage(cv, G.R, G.R, G.Wp, G.Hp, 0, 0, c.width, c.height); } catch (_) { return null; } return c;
+      }
+    };
+  }
   /** The colour a frame shows: its own background, or the nearest one behind it. */
   function bgOf(el) {
     for (let n = el; n && n.nodeType === 1; n = n.parentElement) { const c = getComputedStyle(n).backgroundColor; if (c && c !== "transparent" && !/^rgba\(.*,\s*0\)$/.test(c)) return c; }
@@ -735,13 +749,18 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const lib = (S.library.rows || []).find(r => r.id === id), st = lib && lib.stock ? stockOf(lib) : null;
     const cardNow = () => shown(card0) ? card0 : [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown) || null;
     const pic = c => { const im = c && c.querySelector("img.pv"); return shown(im) ? { im, r: picBox(im) } : null; };
+    // a card turned over (LibraryBacks) opens the window on its Back, growing out of the back it shows
+    const backOf = c => { const t = c && c.querySelector(".pvTurn.back"); return t ? backPic(t.querySelector(".pvBack canvas")) : null; };
+    const turned = !!(card0 && card0.querySelector(".pvTurn.back"));
     const o = {
-      id, stock: st, tint: bgOf(card0),
+      id, stock: st, tint: bgOf(card0), face: turned ? "back" : "front",
       rects() { const c = cardNow(); if (!c) return null; const p = pic(c); return { box: c.getBoundingClientRect(), sheet: p ? p.r : null }; },
-      img() { const p = pic(card0) || pic(cardNow()); return p ? p.im : null; }
+      img() { const p = pic(card0) || pic(cardNow()); return p ? p.im : null; },
+      back() { const b = backOf(card0) || backOf(cardNow()); return b ? b.snap() : null; }
     };
     const p = at && st && pic(card0);
-    if (p && p.r.width > 2) { const u = (at.x - p.r.left) / p.r.width, v = (at.y - p.r.top) / p.r.height; if (u >= 0 && u <= 1 && v >= 0 && v <= 1) o.at = { xPt: u * st.wPt, yPt: v * st.hPt }; }
+    // (the back is the sheet mirrored about its middle: the point clicked on it is mirrored back onto the sheet)
+    if (p && p.r.width > 2) { const u = (at.x - p.r.left) / p.r.width, v = (at.y - p.r.top) / p.r.height; if (u >= 0 && u <= 1 && v >= 0 && v <= 1) o.at = { xPt: (turned ? 1 - u : u) * st.wPt, yPt: v * st.hPt }; }
     return o;
   }
   function originOf(id, opts) {
@@ -750,17 +769,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (p && p.el.classList.contains("libCard")) return cardOrigin(id, p.el, p);
     // anything else: the rectangle it was opened from (a Completed row, a Sets window tile, the pill back from Engrave),
     // with its picture where it shows one; a row still on screen at the close takes the window back
-    const img = p && p.el.querySelector && p.el.querySelector("img.hThumb, img.pv"), r0 = opts.fromRect && opts.fromRect.width ? opts.fromRect : null;
+    const img = p && p.el.querySelector && (p.el.querySelector("img.hThumb, img.pv") || p.el.querySelector(":scope.spPlate > img")), r0 = opts.fromRect && opts.fromRect.width ? opts.fromRect : null;
     if (!r0 && !(p && shown(p.el))) return null;
+    // (its back, where it was shown turned over: what the window grows out of when it opens on its Back)
+    const bcv = p && p.el.querySelector && p.el.querySelector(".hBack canvas, .spBack canvas"), bk = opts.face === "back" && bcv ? backPic(bcv) : null;
     let first = true;
     return {
       id, tint: p ? bgOf(p.el) : "",
       rects() {
         const was = first; first = false;
         if (p && shown(p.el) && (!r0 || !was)) return { box: p.el.getBoundingClientRect(), sheet: shown(img) && img.naturalWidth ? picBox(img) : null };
-        return was && r0 ? { box: r0, sheet: img && img.naturalWidth ? r0 : null } : null;
+        return was && r0 ? { box: r0, sheet: bk ? bk.within(r0) || r0 : img && img.naturalWidth ? r0 : null } : null;
       },
-      img: img ? () => img : null
+      img: img ? () => img : null,
+      back: bcv ? () => { const b = backPic(bcv); return b ? b.snap() : null; } : null
     };
   }
   /** What the plate shows before the sheet's record is read: a Nest card's own sheet (its placements and designs, held
@@ -836,8 +858,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // what the sheet shows as it grows: a Nest card's sheet is drawn on the plate already; a picture is the window's
     // preview, or, until the preview has decoded it, a copy of it at its own size; else the card's own drawing
     if (!(W.pre && W.pre.pieces)) {
-      const im = o.img ? tryDo(o.img) : null;
-      const snap = im ? (E.pv.getAttribute("src") && loaded(E.pv) ? null : imgSnap(im)) : tryDo(o.snap);
+      // (opening on its Back: the back it was shown with, never the front picture)
+      const im = o.img && !backFace() ? tryDo(o.img) : null;
+      const snap = backFace() ? tryDo(o.back) || tryDo(o.snap) : im ? (E.pv.getAttribute("src") && loaded(E.pv) ? null : imgSnap(im)) : tryDo(o.snap);
       if (snap) {
         snap.className = "swSnap"; W.snap = snap; placeSnap(); E.plate.insertBefore(snap, E.fx);
         if (im) E.pv.addEventListener("load", () => { if (W.snap === snap) dropSnap(false); }, { once: true });
@@ -984,6 +1007,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     else { dropSnap(false); W.pre = null; if (W.origin && W.origin.id !== id) { const c = [...document.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)].find(shown); W.origin = c ? cardOrigin(id, c, null) : null; } }
     W.id = id; W.rec = null; W.live = null; W.geom = false; W.pieces = []; W.byId = new Map(); W.byPool = new Map(); W.orders = new Map();
     W.sel = null; W.hover = null; W.fx = []; W.set = W.set && opts.keepSet ? W.set : null;
+    // the side it opens on (Paul, 28 Sep): a sheet looked at from its Back (a turned Nest or Library card, Sets window
+    // tile or Sets menu preview, the order view's Sheet tab) opens on its Back, its engraving asked for at once
+    if (fresh && (opts.face || (origin && origin.face)) === "back") { W.face = "back"; sheetBacksReady(); }
     if (!fresh && W.view === "piece") showPane("sheet", "back");
     if (W.flow) W.work = W.flow; else if (!opts.keepWork) W.work = null;
     W.freed = (FREED.get(id) || []).filter(g => Date.now() - (g.at || 0) < 12 * 3600e3).map(g => Object.assign(g, { t0: 0 }));
@@ -1003,7 +1029,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (src0) E.pv.src = src0; else if (url) E.pv.src = cors(url);
       if (fresh) {
         // (what the last opening drew is not shown again, even for a moment)
-        setNow(E.pv, "1"); setNow(E.base, W.pre && W.pre.pieces ? "1" : "0");
+        setNow(E.pv, backFace() ? "0" : "1"); setNow(E.base, W.pre && W.pre.pieces ? "1" : "0");
         E.base.getContext("2d").clearRect(0, 0, E.base.width, E.base.height); E.fx.getContext("2d").clearRect(0, 0, E.fx.width, E.fx.height);
       } else { E.pv.style.opacity = "1"; E.base.style.opacity = "0"; }
       const st0 = lib?.stock ? stockOf(lib) : origin && origin.stock && origin.stock.wPt ? origin.stock : live0 ? stockFor(live0.metal, live0) : null;
@@ -1031,6 +1057,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const rec = r.sheet; if (!rec) throw new Error("This sheet is no longer in the Library.");
       if (window.LaserReview) LaserReview.record(rec);
       W.rec = rec; W.st = stockOf(rec); W.live = liveOf(id);
+      if (backFace()) W.backs = backsOf(rec, W.live, W.backsList);
       head(rec, false); indexPieces(); pruneFreed(); fitPlate(); renderStrip(); renderSheetPane(); renderFoot(); renderMenu(); unstill();
       E.addBtn.hidden = !canAdd();
       if (!rec.outputs?.preview?.url && !W.live && !W.pvCard) E.pv.removeAttribute("src"); else if (rec.outputs?.preview?.url && !E.pv.getAttribute("src")) E.pv.src = cors(rec.outputs.preview.url);
@@ -1063,7 +1090,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function resetView() {
     W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = "";
-    W.face = "front"; W.backs = null; W.backsAsked = false; W.backsWait = "";
+    W.face = "front"; W.backs = null; W.backsList = null; W.backsAsked = false; W.backsWait = "";
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
   async function close(opts = {}) {
@@ -1580,6 +1607,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /* ── the sheet pane: its orders ── */
   function renderStrip() {
+    if (!W.rec) return;   // (a window opened on its Back asks for its engraving before its record is read)
     const rec = W.rec, E = W.el, n = W.pieces.filter(x => !x.gone).length, orders = [...W.orders.keys()].filter(k => k !== "—").length;
     const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
     E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
@@ -1607,10 +1635,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** The back side asked for: the sheet's backs read once, for the whole sheet, and the engraving font loaded. Neither is
       waited on — the plate is turned already, the strip says what is still coming, and it is drawn again as it lands. */
   function sheetBacksReady() {
-    W.backs = backsOf(W.rec || { id: W.id }, W.live, null);
+    // (the page's own sheet where it holds one, before its record is read: a window opened on its Back)
+    W.backs = backsOf(W.rec || { id: W.id }, W.live || (W.rec ? null : liveOf(W.id)), W.backsList);
     if (W.backsAsked) return; W.backsAsked = true;
     const id = W.id, tok = W.token, F = window.Engrave && Engrave.fonts, jobs = [], what = [];
-    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) W.backs = backsOf(W.rec || { id }, W.live, list); }, () => {})); what.push("this sheet's back engraving"); }
+    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) { W.backsList = list; W.backs = backsOf(W.rec || { id }, W.live || (W.rec ? null : liveOf(id)), list); } }, () => {})); what.push("this sheet's back engraving"); }
     if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {})); what.push("the engraving font"); }
     if (!jobs.length) return;
     W.backsWait = "Reading " + what.join(" and ") + "…"; renderStrip();

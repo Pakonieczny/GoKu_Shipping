@@ -9261,10 +9261,11 @@ const OrderWin = window.OrderWin = (() => {
    *  this view comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
   function fullSheet(select) {
     const s = SV.list && SV.list[SV.at]; if (!s || !s.id || !window.SheetWin || !SheetWin.open) return;
-    const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null;
+    const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null, face = W.face === "back" ? "back" : "front";
     W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, sheetId: s.id, focus: select || SV.focus };
     closeNow();
-    SheetWin.open(s.id, Object.assign(select ? { select } : {}, { origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
+    // (on the side shown here: a sheet looked at from its Back opens on its Back, Paul 28 Sep)
+    SheetWin.open(s.id, Object.assign(select ? { select } : {}, { face, origin: { tint: "", stock: inf && inf.stock, rects: () => (R.width ? { box: R, sheet: R } : null), snap: snap ? () => snap : null } }));
     const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
   }
   function comeBack() {
@@ -9565,7 +9566,7 @@ const OrderWin = window.OrderWin = (() => {
 const RunHistory = window.RunHistory = (() => {
   const H = { q: "", when: "all", view: "cards", runs: [], sheets: [], sets: [], shown: [], scanned: null, loading: false, more: false, err: null, dlg: null,
     open: new Set(), media: new Map(), orders: new Map(), fetching: new Set(), busy: new Map(), notes: new Map(), noteT: new Map(), menu: null, back: false, scroll: 0, tile: null,
-    face: "front", backCv: new Map() };
+    face: "front", backCv: new Map(), miniCv: new Map() };
   try { H.view = localStorage.getItem("cn.histView") === "list" ? "list" : "cards"; } catch (_) {}
   /* "Select previous run sets or days" is a filing question, so the dialog files them: four ways to narrow by time and
      state, and a heading for every day, because a flat list of eighty runs is a wall whatever order it is in. */
@@ -9908,7 +9909,7 @@ const RunHistory = window.RunHistory = (() => {
   function stackHtml(g) {
     const sh = (g.sheets || []).slice(0, 3);
     if (!sh.length) return `<span class="hStack"><span class="hMini ph">${ICON.plate}</span></span>`;
-    return `<span class="hStack">${sh.map(s => `<span class="hMini">${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s, "calc(100% - 6px)")} src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
+    return `<span class="hStack">${sh.map(s => `<span class="hMini"${idOf(s) ? ` data-sheet="${esc(idOf(s))}"` : ""}>${s.preview ? `<img class="hThumb" crossorigin="anonymous" loading="lazy" decoding="async" alt=""${trueWidth(s, "calc(100% - 6px)")} src="${esc(cors(s.preview))}">` : ""}</span>`).join("")}</span>`;
   }
   function panelHtml(g, h) {
     const sh = g.sheets || [];
@@ -9966,7 +9967,7 @@ const RunHistory = window.RunHistory = (() => {
     // (the backs start drawing as the turn starts, so they are there when the sheets come round)
     if (face === "back") backsIn(body); else if (BK.io) { BK.io.disconnect(); BK.io = null; }
     const apply = () => { d.dataset.face = face; paintState(); };
-    const br = body.getBoundingClientRect(), plates = still() ? [] : [...body.querySelectorAll(".hPlate")].filter(p => { const r = p.getBoundingClientRect(); return r.width && r.bottom > br.top && r.top < br.bottom; });
+    const br = body.getBoundingClientRect(), plates = still() ? [] : [...body.querySelectorAll(".hPlate, .hStack")].filter(p => { const r = p.getBoundingClientRect(); return r.width && r.bottom > br.top && r.top < br.bottom; });
     if (!plates.length) return apply();
     const dir = face === "back" ? 1 : -1, P = "perspective(700px) ";
     Promise.all(plates.map(p => p.animate([{ transform: P + "rotateY(0)" }, { transform: P + `rotateY(${90 * dir}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" }).finished))
@@ -9975,8 +9976,28 @@ const RunHistory = window.RunHistory = (() => {
   /** Every sheet under root gets its back's place, and is drawn once it is in sight. */
   function backsIn(root) {
     if (H.face !== "back" || !H.dlg || !window.SheetWin || !SheetWin.drawOrder) return;
-    if (!BK.io) BK.io = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { BK.io.unobserve(e.target); if (e.target.isConnected) backOf(e.target); } }, { root: H.dlg.querySelector("#hBody"), rootMargin: "160px 0px" });
+    if (!BK.io) BK.io = new IntersectionObserver(es => { for (const e of es) if (e.isIntersecting) { BK.io.unobserve(e.target); if (e.target.isConnected) (e.target.classList.contains("hMini") ? miniOf : backOf)(e.target); } }, { root: H.dlg.querySelector("#hBody"), rootMargin: "160px 0px" });
     for (const t of root.querySelectorAll(".hTile[data-sheet]")) { hostOf(t); BK.io.observe(t); }
+    // (the List view's small stack of a set's first sheets turns with them: each its own small back, drawn the same way)
+    for (const m of root.querySelectorAll(".hMini[data-sheet]")) { miniHost(m); BK.io.observe(m); }
+  }
+  /** A stack sheet's back: its own small drawing, in the picture's place, a back already drawn moved in. */
+  function miniHost(m) {
+    let host = m.querySelector(".hMiniBack");
+    if (!host) {
+      host = el("span", "hMiniBack"); host.setAttribute("aria-hidden", "true");
+      const s = sheetOf(m.dataset.sheet), f = s && window.trueFrame?.(s.stock); if (f && f.w < f.fw - .5) host.style.width = `calc((100% - 6px) * ${+(f.w / f.fw).toFixed(4)})`;
+      m.appendChild(host);
+    }
+    const e = H.miniCv.get(m.dataset.sheet);
+    if (e && e.cv && e.cv.parentElement !== host) { host.appendChild(e.cv); if (e.info) requestAnimationFrame(() => e.info.redraw()); }
+    return host;
+  }
+  function miniOf(m) {
+    const id = m.dataset.sheet; if (!id || H.miniCv.has(id)) return;
+    const e = { id, cv: document.createElement("canvas"), info: null, failed: false, map: H.miniCv };
+    H.miniCv.set(id, e); miniHost(m);
+    BK.q.push(e); pump();
   }
   /** The back's place on a tile: the picture's own box, at the picture's true width, and a back already drawn moved in. */
   function hostOf(t) {
@@ -10002,8 +10023,8 @@ const RunHistory = window.RunHistory = (() => {
     while (BK.run < 2 && BK.q.length) {
       const e = BK.q.shift(); BK.run++;
       SheetWin.drawOrder(e.cv, e.id, "", { back: true, thumb: true, onInfo: i => { e.info = i; } })
-        .then(i => { e.info = i; if (!e.cv.isConnected && (i.pieces || []).some(x => !x.c)) H.backCv.delete(e.id); },
-          err => { console.warn("sets window: back of", e.id, err); e.failed = true; const host = e.cv.parentElement; e.cv.remove(); e.cv = null; if (host) host.appendChild(el("span", "hNoPv", "back not readable")); })
+        .then(i => { e.info = i; if (!e.cv.isConnected && (i.pieces || []).some(x => !x.c)) (e.map || H.backCv).delete(e.id); },
+          err => { console.warn("sets window: back of", e.id, err); e.failed = true; const host = e.cv.parentElement; e.cv.remove(); e.cv = null; if (host && !e.map) host.appendChild(el("span", "hNoPv", "back not readable")); })
         .finally(() => { BK.run--; pump(); paintState(); });
     }
     paintState();
@@ -10176,11 +10197,13 @@ const RunHistory = window.RunHistory = (() => {
   /* A sheet opens in the sheet window, which takes this window's place (never one window over another), and this one
      comes back where it was when the sheet window closes — unless something else has opened meanwhile. */
   function openSheet(id, tile) {
-    const img = tile && tile.querySelector("img.hThumb.on"), rect = (img || tile) && (img || tile).getBoundingClientRect();
+    // (turned over, the window opens on the sheet's Back, growing out of the back the tile shows)
+    const back = H.face === "back", bcv = back && tile && tile.querySelector(".hBack canvas");
+    const img = back ? (bcv && bcv.isConnected && bcv.width ? bcv : null) : tile && tile.querySelector("img.hThumb.on"), rect = (img || tile) && (img || tile).getBoundingClientRect();
     H.scroll = H.dlg.querySelector("#hBody").scrollTop; H.tile = id; H.back = true;
     close(true);
     if (window.SheetWin) {
-      SheetWin.open(id, rect && rect.width ? { fromRect: rect } : {});
+      SheetWin.open(id, Object.assign(rect && rect.width ? { fromRect: rect } : {}, back ? { face: "back" } : {}));
       const w = SheetWin._W && SheetWin._W.dlg; if (w) w.addEventListener("close", comeBack, { once: true });
     } else if (typeof openLibrarySheet === "function") {
       openLibrarySheet(id);
@@ -11024,10 +11047,24 @@ const SetPicker = window.SetPicker = (() => {
     if (!g) return;
     mount(); box.open = false;
     if (!dialog) { dialog = el("dialog", "hist"); dialog.id = "setPreview"; document.body.appendChild(dialog); }
-    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}${FACE_SWITCH}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map((s, i) => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div><div class="spPlate${s.preview ? "" : " noPic"}" data-sp="${i}" style="--ar:${(f => f ? +(f.wPt / f.hPt).toFixed(4) : 2)(s.stock && +s.stock.wPt > 0 && +s.stock.hPt > 0 ? s.stock : null)}">${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}</div><figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
+    dialog.innerHTML = `<form method="dialog" class="x"><button class="btn ghost sm">Close preview</button></form><h2>${esc(g.name || (g.seq ? "Set " + g.seq : "Working sheets"))}${FACE_SWITCH}</h2><p>${esc(g.day || "")} · ${esc(g.status || "")} · ${g.sheets.length} sheets</p><p>${esc(counts(g.sheets))}</p><div class="setPreviewGrid">${g.sheets.map((s, i) => `<figure><div data-back-sheet="${esc(s.id || s.sheetId || "")}">${Engrave.backsMarkup(s)}</div><div class="spPlate${s.preview ? "" : " noPic"}" data-sp="${i}"${s.id || s.sheetId ? ` data-sheet="${esc(s.id || s.sheetId)}" role="button" tabindex="0" title="Open this sheet"` : ""} style="--ar:${(f => f ? +(f.wPt / f.hPt).toFixed(4) : 2)(s.stock && +s.stock.wPt > 0 && +s.stock.hPt > 0 ? s.stock : null)}">${s.preview ? `<img crossorigin="anonymous" src="${esc(cors(s.preview))}"${(f => f && f.w < f.fw - .5 ? ` style="width:${+(f.w / f.fw * 100).toFixed(2)}%"` : "")(window.trueFrame?.(s.stock))} alt="${esc(labelOf(s.metal))} sheet preview">` : `<div class="hEmpty">Preview not saved yet</div>`}</div><figcaption><b>${esc(labelOf(s.metal))}</b> · ${s.placedCount || 0} pieces · ${O.libraryGroup(s).standalone ? "standalone · not in a set" : s.draft ? "held for a later set" : "Set " + (s.setSeq || g.seq || "—")}<small>${esc(s.fileBase || "")}</small></figcaption></figure>`).join("")}</div><p class="help">Preview only. Your current workspace stays open.</p>`;
     F.sheets = g.sheets; F.face = "front"; F.tok++;
     dialog.querySelectorAll("[data-sp-face]").forEach(b => b.onclick = () => turn(b.dataset.spFace));
+    dialog.querySelectorAll(".spPlate[data-sheet]").forEach(pl => { pl.onclick = e => openFull(pl, e); pl.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openFull(pl, null); } }; });
     dialog.showModal();
+  }
+  /** A sheet of the preview opens in the sheet window, which takes the preview's place (never one window over another)
+      and grows out of the sheet clicked, on the side shown (turned over, on its Back and on the charm clicked); the
+      preview comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
+  function openFull(pl, e) {
+    const id = pl.dataset.sheet; if (!id || !dialog || !window.SheetWin || !SheetWin.open) return;
+    const back = F.face === "back", host = pl.querySelector(".spBack"), cv = back && host && !host.hidden ? host.querySelector("canvas") : null;
+    const hit = cv && e && host._info && host._info.hitAt ? (() => { try { return host._info.hitAt(e.clientX, e.clientY); } catch (_) { return null; } })() : null;
+    const img = cv && cv.width ? cv : pl.querySelector(":scope > img"), rect = (img || pl).getBoundingClientRect();
+    const d = dialog; d.close();
+    SheetWin.open(id, Object.assign(rect.width ? { fromRect: rect } : {}, back ? { face: "back" } : {}, hit && (hit.poolId || hit.id) ? { select: hit.poolId || hit.id } : {}));
+    const w = SheetWin._W && SheetWin._W.dlg;
+    if (w) w.addEventListener("close", () => setTimeout(() => { if (dialog === d && !d.open && d.isConnected && !document.querySelector("dialog[open]")) d.showModal(); }, 0), { once: true });
   }
   /* ── Front | Back · engraving (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
      visible … I should be able to see the backings everywhere"). The same switch and the same turn as the order view's
