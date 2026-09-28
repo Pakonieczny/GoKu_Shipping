@@ -144,10 +144,14 @@
      pair of huggie hoops, drawn in the master under the same SKU with " (HUGGIE)" after it ("BUNNY_42980 (HUGGIE)"). A
      huggie set is never cut as the necklace charm: without its huggie design it is asked about under that name.
      · "X-CO" (the charm-only mark) bought as a huggie set is "X (HUGGIE)": "X-CO (HUGGIE)" is in no master file.
-     · A huggie set with no SKU has its own "Use this charm" answer (the listing's huggie), never the listing's necklace. */
+     · A huggie set with no SKU has its own "Use this charm" answer (the listing's huggie), never the listing's necklace, and
+       its own "Nothing to cut": its title is read as "<title> (HUGGIE)", so a rule saved for it never reaches the necklace
+       lines (one saved for the necklace's title still covers it, as before). */
   const HUGGIE_SET = /\bhuggie\s+charms?\s+set\b/i;
   const huggieSet = line => (line.variations || []).some(v => HUGGIE_SET.test(String(v.value != null ? v.value : v.formatted_value || "")));
-  const huggieSku = raw => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); return !s ? "" : /\(HUGGIE\)$/.test(s) ? s : (variationBase(s) || s) + " (HUGGIE)"; };
+  // (a real SKU that ends in "-CO", one the master already loaded holds itself or as a huggie, keeps its "-CO")
+  const huggieSku = (raw, masterEntry) => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); if (!s || /\(HUGGIE\)$/.test(s)) return s;
+    const base = variationBase(s), real = !!base && !!masterEntry && !!(masterEntry(s) || masterEntry(s + " (HUGGIE)")); return (base && !real ? base : s) + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   function resolveSku(line, aliases, masterEntry, noDesign) {
     const raw = String(line.sku || "").trim().toUpperCase();
@@ -323,12 +327,12 @@
     ctx = ctx || {};
     const problems = [];
     // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
-    const set = huggieSet(line), bought = set ? huggieSku(line.sku) : String(line.sku || "").trim().toUpperCase();
+    const set = huggieSet(line), bought = set ? huggieSku(line.sku, ctx.masterEntry) : String(line.sku || "").trim().toUpperCase();
     let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     const picked = optionDesign(line, ctx.optionMaps);
     if (picked) { sku = picked.sku; skuSource = "option"; }
-    const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(line.title, ctx.noDesign));
+    const listed = isNoDesign(sku, ctx.noDesign) || (!sku && isNoDesign(set ? line.title + " (HUGGIE)" : line.title, ctx.noDesign));
     // a special purchase (custom, rework, chain only, add-on…): chain only is never cut, and a special line a person
     // finished by hand (its QR label printed from Custom Orders) is done; either reads as the no-design list does
     const lk = lineKey(order, line);
