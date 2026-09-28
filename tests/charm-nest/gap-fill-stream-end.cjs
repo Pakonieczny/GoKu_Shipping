@@ -107,7 +107,7 @@ const turn = () => new Promise(r => setImmediate(r));
   /* ── 3 · the release rules the set assembly applies (Gate.policy → CharmNestOrders.sheetRelease) ── */
   {
     const O = require(path.join(root, 'charm-nest-orders.js'));
-    const c = { O_: O, TOPUP: { orders: 35, target: .75 }, selected: () => ({}) }; vm.createContext(c);
+    const c = { O_: O, TOPUP: { orders: 35, target: .75 }, selected: () => ({}), solid: m => ['gold10k', 'gold14k'].includes(m), picked: () => false }; vm.createContext(c);
     vm.runInContext(part(bridge, '  function policy(sh, seq, choices = selected()) {', '  async function upgrade(run) {'), c);
     const sh = { metal: 'gold', verification: { ok: true }, placements: [{ id: 'a' }], endedBy: 'no-room', dirty: false, status: 'complete', releaseFull: false, topup: { at: 1, tried: Array.from({ length: 30 }, (_, i) => 'o' + i) } };
     assert.deepEqual(c.policy(sh, 1), { include: false, reason: 'Filling its gaps · 30 of 35 later orders tried' }, 'a sheet filling its gaps waits');
