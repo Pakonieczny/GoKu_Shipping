@@ -7431,8 +7431,8 @@ const Review = window.Review = (() => {
   function showCard(mk, seg, kind) {
     const v = document.getElementById("reviewView");
     if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
-    // (RV.keep: a new view starts at its first 40 cards, which left an older card undrawn, so Show found nothing)
-    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.limit = RV.keep = Math.max(RV.limit, 400);
+    // (RV.want: the list is drawn down to this card, however old; raised to 400 cards, an older one was never drawn)
+    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.want = mk;
     render();
     const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
     if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
@@ -7876,6 +7876,8 @@ const Review = window.Review = (() => {
     const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
     const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
+    // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
+    if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
