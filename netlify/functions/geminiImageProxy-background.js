@@ -2323,6 +2323,47 @@ function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
   return charmQuad && [2, 3].includes(Number(slotIndex)) ? "1024x1024" : fallback;
 }
 
+// Beady Necklace charms are drawn 10% smaller since 2026-09-28 (the size
+// rules at the top of the Beady prompts in Listing_Generator_1.html). Batch
+// sets queued before then, and batch runs, generations or Redos sent from a
+// tab opened before then, still carry the old wording, so it is swapped as
+// they are sent; otherwise the queue keeps producing the larger charm. Only
+// that exact wording on Beady slots 1, 3 and 5 changes (Regular necklaces
+// share it and keep it), and only until 2026-10-05, by when that queue has
+// long drained.
+const BEADY_CHARM_SIZE_SWAPS_UNTIL = Date.parse("2026-10-05T00:00:00Z");
+const BEADY_MODEL_CHARM_SIZE_SWAPS = [
+  ["REQUIRED 25% REDUCTION", "REQUIRED 32.5% REDUCTION"],
+  ["visibly 25% smaller", "visibly 32.5% smaller"],
+  ["× 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75)",
+   "× 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675)"],
+  ["use 0.75 times the template placeholder", "use 0.675 times the template placeholder"],
+  ["charm 100 pixels tall must now be 75 pixels tall", "charm 200 pixels tall must now be 135 pixels tall"],
+];
+const BEADY_CHARM_SIZE_SWAPS = {
+  0: BEADY_MODEL_CHARM_SIZE_SWAPS,
+  2: [
+    [`CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
+    • The new charm must sit in the EXACT same position as the original charm in the reference image.
+    • The new charm must match the original charm’s on-image size EXACTLY.
+    • This is a strict size match — no scaling up or down.`,
+     `CHARM POSITION + SIZE — REQUIRED 10% REDUCTION (NON-NEGOTIABLE)
+    • The new charm must sit in the same position as the original charm in the reference image, centred on the same point, with the pointer line still pointing to it.
+    • The new charm must be exactly 10% smaller than the original charm’s on-image size in BOTH width and height: scale it to fit 0.9 × the original charm’s height and 0.9 × its width, keeping the new charm’s own proportions. An original charm 400 pixels tall becomes a new charm 360 pixels tall.
+    • Apply this reduction exactly ONCE. Never match or exceed the original charm’s size. Resize nothing else: the text, pencil, pointer line, layout and background stay exactly as they are.`],
+    ["- Any charm size mismatch vs charm image.",
+     "- Any charm that is not 10% smaller than the original charm in the reference image."],
+  ],
+  4: BEADY_MODEL_CHARM_SIZE_SWAPS,
+};
+function withCurrentBeadyCharmSize(set, slotIndex, prompt) {
+  const beady = set?.category === "Beady_Necklace" ||
+    String(set?.outputBasePath || "").startsWith("listing-generator-1/Beady_Necklace/");
+  const swaps = beady && Date.now() < BEADY_CHARM_SIZE_SWAPS_UNTIL && BEADY_CHARM_SIZE_SWAPS[slotIndex];
+  if (!swaps || typeof prompt !== "string") return prompt;
+  return swaps.reduce((text, [from, to]) => text.split(from).join(to), prompt);
+}
+
 function buildOpenAIBatchJsonlLine(key, prompt, refMime, refBase64, charmMime, charmBase64, imageSize, opts) {
   // Preserve the existing prompt's image roles and final geometry/background
   // rules while translating the transport to OpenAI's JSON image-edit schema.
@@ -14751,7 +14792,7 @@ async function _handlerImpl(event) {
           if (!Number.isFinite(slot) || slot < 0) continue;
           const refPath = String(t?.input_storage_path || "").trim();
           const charmPath = String(t?.input_charm_storage_path || "").trim();
-          const promptT = String(t?.prompt || "").trim();
+          const promptT = withCurrentBeadyCharmSize(s, slot, String(t?.prompt || "").trim());
           // charmPath is OPTIONAL for single-image tasks (Charm Maker base
           // charms use one style-reference image); the listing compositor
           // still sends both.
@@ -15903,7 +15944,7 @@ async function _handlerImpl(event) {
       //      operator reviews.
       // ------------------------------------------------------------
       const isCharmPipeline = !!(background_policy || charm_geometry_policy || charm_edit_intent);
-      let effectivePrompt = prompt;
+      let effectivePrompt = withCurrentBeadyCharmSize({ category: cat, outputBasePath }, effectiveSlot, prompt);
       if (isCharmPipeline) {
         const audited = await auditCharmPromptPreflight({
           prompt,

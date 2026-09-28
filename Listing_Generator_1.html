@@ -10113,7 +10113,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // written. Beady necklace charms came out too large in Sunburst batch runs
     // (2026-09-28), so Beady draws them 10% smaller on those three images:
     // 0.675 instead of 0.75 on the models, 0.9 of the template charm on the
-    // sizing guide.
+    // sizing guide. Until 2026-10-05 the server also swaps the old wording in
+    // Beady requests sent from older tabs or queued earlier
+    // (withCurrentBeadyCharmSize in geminiImageProxy-background.js); change
+    // both together.
     const NECKLACE_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 25% REDUCTION
     The charm must be visibly 25% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
     For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75). For a product-only scene, or when those landmarks are not visible, use 0.75 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.

@@ -73,6 +73,7 @@ async function originalSubmissionScenario() {
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
     storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
+    withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>{uploads++;return 'file-input';},
     createOpenAIImageBatch:async()=>{creates++;return {batchName:'batch_one',raw:{id:'batch_one'}};},
   });
