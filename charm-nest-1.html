@@ -2853,7 +2853,7 @@ async function gate() {
       try {
         const r = await fetch(`${FN}/authGate`, { method: "POST", headers: { "X-Edit-Passcode": pc, "Content-Type": "application/json" }, body: JSON.stringify({ app: "charm-nest-1", passcode: pc }) });
         if (!r.ok) { $("#signinErr").textContent = "That passcode was not accepted."; return; }
-        S.passcode = pc; sessionStorage.setItem("cn.passcode", pc); box.classList.add("hidden"); resolve(true);
+        S.passcode = pc; sessionStorage.setItem("cn.passcode", pc); try { if (window.CNTimeline) CNTimeline.sync(); } catch (_) {} box.classList.add("hidden"); resolve(true);
       } catch (err) { $("#signinErr").textContent = "Could not reach the sign-in service."; }
     };
   });
@@ -5581,7 +5581,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-merge2"></script>
+<script src="order-timeline.js?v=20260928-tl-review"></script>
+<script src="charm-nest-bridge.js?v=20260928-tl-review"></script>
 <script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
