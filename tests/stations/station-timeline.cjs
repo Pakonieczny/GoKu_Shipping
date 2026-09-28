@@ -1,7 +1,7 @@
 // The shared station module (station-timeline.js) on the real Welding station page (weld-1.html), in headless Chromium,
 // with Firebase, Materialize and every function stubbed here: no request leaves the machine.
 //   · a typed order and a relayed scan are recorded (who, station, device, how, stable id) and a clear order is "welded"
-//   · a cancelled order raises the full-screen alert; the guard asks inside it; Understood (Enter) records cancelAlert;
+//   · a cancelled order raises the full-screen alert; the guard asks inside it; a click on Understood records cancelAlert;
 //     afterwards Complete Order asks "Do it anyway?" and only a yes goes on (recorded, then etsyCompleted)
 //   · a slow check and an offline page: no alert, no crash, the scan says it was not checked
 //   NODE_PATH=$(npm root -g) PW_DIR=$(npm root -g)/playwright/node_modules CHROMIUM=… node tests/stations/station-timeline.cjs
@@ -129,11 +129,11 @@ const ev = (type, id) => st.events.find(e => e.type === type && e.orderId === id
   assert.strictEqual(await page.evaluate(() => window.__g1), false, 'Stop → the action does not go on');
   assert.strictEqual(await page.evaluate(() => StationTimeline.alertOpen()), true, 'the alert stays until Understood');
 
-  //   Enter = Understood → cancelAlert with the worker's name, the alert zooms out
-  await wait(500); await page.focus('.sttl-ok'); await page.keyboard.press('Enter');
+  //   a click on Understood (never Enter: a scanner ends every scan with it) → cancelAlert with the worker's name, the alert zooms out
+  await wait(500); await page.click('.sttl-ok');
   await page.waitForFunction(() => !document.querySelector('.sttl-alert'), null, { timeout: 3000 });
   await until(() => ev('cancelAlert', CANCELLED), 'cancelAlert');
-  assert.strictEqual(ev('cancelAlert', CANCELLED).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', CANCELLED).data.how, 'enter');
+  assert.strictEqual(ev('cancelAlert', CANCELLED).by, 'Tess Welder'); assert.strictEqual(ev('cancelAlert', CANCELLED).data.how, 'button');
   assert(!ev('welded', CANCELLED), 'a cancelled order is not recorded as welded');
 
   //   afterwards, Complete Order asks inline first: Stop → nothing sent; Do it anyway → sent, recorded
