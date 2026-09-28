@@ -69,7 +69,7 @@
   };
   const STATION_TYPES = new Set(["scan", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "cancelAlert", "note"]);
   const cfg = { mode: "sorter", sandbox: false, by: "", station: "", device: "", passcode: "" };
-  const OUTBOX = "orderTimeline.outbox.v1", listeners = new Set();
+  const OUTBOX = "orderTimeline.outbox.v1", listeners = new Set(), KEEP = 2000;   // at most KEEP events wait in memory (500 across a reload)
   let box = [], timer = 0, sending = false, backoff = 1000;
   /* One outbox for the whole site: the sorter and every station page (one origin), in as many tabs as are open. A save
      keeps what another page queued (only what this page delivered leaves), and a page sends only its own kind of event:
@@ -121,7 +121,8 @@
       const at = Number(e.at) > 1e12 ? Number(e.at) : Date.now();
       const ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
-      box.push(ev); save(); schedule(900);
+      box.push(ev); if (box.length > KEEP) box.splice(0, box.length - KEEP);   // (a server refusing for days: memory stays bounded)
+      save(); schedule(900);
       for (const fn of listeners) { try { fn(ev); } catch (_) {} }
       return ev;
     } catch (_) { return null; }

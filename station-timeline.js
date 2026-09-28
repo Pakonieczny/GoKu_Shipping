@@ -71,6 +71,18 @@
   function remember(id, r) { known.delete(id); known.set(id, norm(r)); saveCache(); return known.get(id); }
   function forget(id) { if (known.delete(id)) saveCache(); }
 
+  /* The orders asked about in the same moment (a Sorting batch scans them all at once) go in one request, up to the 60
+     the server answers at a time: a batch of 40 was 40 function calls at once, each a cold start that could miss the
+     2.5 s answer and let a cancelled order through unchecked. */
+  let group = null;
+  function askGrouped(o, id) {
+    if (!group || group.ids.size >= 60) {
+      const g = group = { ids: new Set() };
+      g.p = new Promise(r => setTimeout(r, 0)).then(() => { if (group === g) group = null; return o.cancelCheck([...g.ids]); });
+    }
+    group.ids.add(id);
+    return group.p;
+  }
   /* the server's answer for one order: its cancel record, null when it is not cancelled; throws when it is no answer
      (a 200 without a `cancelled` map must not count as "clear", nor wipe a cancel this page already knows) */
   function answerOf(id, j) {
@@ -86,7 +98,7 @@
       if (o && typeof o.cancelCheck === "function") {
         let ask = null;
         try {
-          ask = Promise.resolve(o.cancelCheck([id]));
+          ask = Promise.resolve(askGrouped(o, id));
           const r = answerOf(id, await withTimeout(ask, CHECK_MS));
           if (r) { state = "cancelled"; record = remember(id, r); } else { state = "clear"; forget(id); cleared.set(id, Date.now()); }
         } catch (e) {

@@ -1972,7 +1972,9 @@ async function op_cancelPut(b) {
 }
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
-  if (b.idsOnly) { const s = await col(CANCELLED).select("orderId").limit(5000).get(); return { ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }; }
+  // (newest first: past 5000 records, now that Etsy's cancels are kept here too, the oldest are the ones left out, never
+  //  the order a person cancelled today, which the orders check must keep out of the pull)
+  if (b.idsOnly) { const s = await col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(); return { ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }; }
   const s = await col(CANCELLED).orderBy("at", "desc").limit(n).get();
   // a record from before `source` was kept reads as a person's (or Etsy's, when it says so)
   return { list: s.docs.map(d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; }), truncated: s.size >= n };
