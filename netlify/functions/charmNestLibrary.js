@@ -956,6 +956,15 @@ async function op_sandboxReset(b) {
       if (gone.length < page.size) return more();   // the clock ran out inside a page
     }
   }
+  // the readings of lines are shared with production and stay, and so does production's own decision (decided); the
+  // sandbox's decision beside them (decidedSandbox) is the rehearsal's and goes with it, or the replay of the same real
+  // order meets its line already decided and its timeline says so
+  for (const KINDS = require("./_charmNestCustomRead").KINDS;;) {
+    if (late()) return more();
+    const s = await db.collection("Charm_Nest_CustomRead").where("decidedSandbox.kind", "in", KINDS).select().limit(300).get(); if (s.empty) break;
+    const batch = db.batch(); s.docs.forEach(d => batch.update(d.ref, { decidedSandbox: FV.delete() })); await batch.commit(); deleted += s.size;
+    if (s.size < 300) break;
+  }
   let filesError = null;
   try {
     const cur = await db.collection(SANDBOX).doc("current").get(), keep = cur.exists ? cur.data().path : null;

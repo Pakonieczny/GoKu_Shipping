@@ -339,8 +339,10 @@ const TL = window.CNTimeline = (() => {
   }
   const hash = s => { let a = 2166136261; for (const ch of String(s)) a = Math.imul(a ^ ch.charCodeAt(0), 16777619); return (a >>> 0).toString(36); };
   const hash2 = s => { let b = 5381; for (const ch of String(s)) b = Math.imul(b, 33) ^ ch.charCodeAt(0); return hash(s) + "." + (b >>> 0).toString(36); };   // (the sent list keeps these, not the ids)
+  /** A sandbox reset: the events waiting here go with its records, and those sent once are sent again for the replay. */
+  function forget() { if (!WORKSPACE_SANDBOX) return; queue.length = 0; seen = null; const t = T(); if (t && t.discard) t.discard(true); }
   sync();
-  return { sync, rec, line, pulled, hash, pending: () => queue.length };
+  return { sync, rec, line, pulled, hash, forget, pending: () => queue.length };
 })();
 /* One drawing a frame. The run banner, the rail's strip and ladder and the Orders tab were each drawn in full at every
    call, and a run step, a poke, an arrival, a log line or a pool pass called them, often several times in one go. A
@@ -8037,9 +8039,14 @@ const Sandbox = window.Sandbox = (() => {
     await Arrivals.pause(); let reloading = false;
     try {
       if (replay && RunCtl.clearRunState(null, { drop: "all" }) === false) return;   // a Rose Gold sheet still saving: nothing is deleted
+      // the rehearsal's timeline events still waiting to be sent (kept on the disk across the reload) go with its records,
+      // before the wipe and again after it: sent later, they would stand on the replay of the same real order numbers
+      const dropEvents = () => { try { window.CNTimeline?.forget?.(); } catch (_) {} };
+      dropEvents();
       // a sandbox that streamed for days holds more than one call can delete: each works a few seconds and says if more is left
       let r = null, records = 0, files = 0;
       for (let i = 0; i < 400; i++) { r = await api("charmNestLibrary", { op: "sandboxReset" }); records += r.deleted || 0; files += r.files || 0; if (!r.more) break; }
+      dropEvents();
       if (r.more) throw new Error(`it stopped part way (${records} record(s) and ${files} file(s) removed): press Reset again to finish`);
       toast(`Sandbox reset — ${records} record(s) and ${files} file(s) removed${r.filesError ? ` · files not deleted: ${r.filesError}` : ""}`, r.filesError ? "bad" : "ok");
       await forgetCompletions();
