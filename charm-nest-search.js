@@ -25,7 +25,7 @@
   const E = "cubic-bezier(.2,.8,.2,1)", SPRING = "cubic-bezier(.3,1.5,.5,1)";
   const St = () => (typeof S !== "undefined" ? S : null);                       // the page's state (a global of the inline script)
   const Bs = () => W.B || null;
-  const MAX = 24, CLOUD_MIN = 6, PAUSE = 250;
+  const MAX = 24, CLOUD_MIN = 6, CLOUD_MAX = 13, PAUSE = 250;   // (longer than any Etsy number: a paste of several, never looked up)
 
   /* ── the milestone rail every card carries (the order view's own nine steps, in the design prototype's order) ── */
   const RAIL = [["Arrived", "arrived"], ["On sheet", "onsheet"], ["Approved", "approved"], ["Laser cut", "lasercut"], ["Sorted", "sorted"], ["Welded", "welded"], ["Assembled", "assembled"], ["Shipped", "shipped"], ["Completed", "completed"]];
@@ -148,9 +148,17 @@
   }
   // a pool row's sheet name is its file base (…_GF_Sheet_2 or "GF Sheet 2"): the words a person reads
   function sheetWords(n) { const m = /(GF|SS|RG|10K|14K)[ _-]*Sheet[ _-]*(\d+)/i.exec(String(n || "")); return m ? `${m[1].toUpperCase()} Sheet ${m[2]}` : n ? String(n).slice(0, 28) : ""; }
+  /* An order's cancel record while it is still cancelled: one read earlier (the Cancelled list, the cloud) no longer counts
+     once the order was restored, here or on another screen (it has left Cancelled's ids, or was restored since). */
+  function cancelOf(e) {
+    const C = W.Cancelled, c = e.cloud, live = C && C.has ? C.has(e.rid) : null;
+    if (e.cancel && live !== false) return e.cancel;
+    if (c && c.cancel && !(C && C.restoredAt && C.restoredAt(e.rid) > (+c.cancel.at || 0))) return c.cancel;
+    return live ? {} : null;
+  }
   function stateOf(e) {
-    const C = W.Cancelled, c = e.cloud, rows = e.rows.filter(r => r.state !== "gone");
-    const cancel = e.cancel || (c && c.cancel) || (C && C.has && C.has(e.rid) ? {} : null);
+    const c = e.cloud, rows = e.rows.filter(r => r.state !== "gone");
+    const cancel = cancelOf(e);
     const hold = rows.find(r => r.hold);
     const sheets = sheetsOf(e);
     let reached = 0;
@@ -228,13 +236,16 @@
     const known = cloudCache.get(q);
     if (known && Date.now() - known.at < 120000) return known.found;
     const ctl = cloudCtl = new AbortController(), sig = signalOf(ctl, 20000);
-    const soft = p => p.catch(e => { if (ctl.signal.aborted) throw e; return null; });
+    let bad = 0, why = "";
+    const soft = p => p.catch(e => { if (ctl.signal.aborted) throw e; bad++; why = why || (e && e.message) || "no answer"; return null; });
     const [tl, pl, fs, ar] = await Promise.all([soft(lib("timelineGet", { orderId: q }, sig)), soft(lib("poolList", { orderId: q }, sig)),
       soft(lib("findSheets", { q, fallback: false, today: new Date().toISOString().slice(0, 10) }, sig)), soft(archive(q, sig))]);
     if (ctl.signal.aborted) throw new DOMException("aborted", "AbortError");
     const events = (tl && tl.events) || [], pools = (pl && pl.pools) || [], row = ar && ar.success && ar.row ? ar.row : null;
     const onSheet = ((fs && fs.sheets) || []).filter(s => (s.match || []).includes("order")), cutRows = ((fs && fs.rows) || []).filter(r => (r.match || []).includes("order"));
     const found = events.length || (tl && tl.cancelled) || pools.length || onSheet.length || cutRows.length || row;
+    // nothing found where a read failed is no answer: said as such, and not kept as "not in the cloud"
+    if (!found && bad) throw new Error(why);
     let c = null;
     if (found) {
       c = { rid: q, buyer: (row && row.buyer && row.buyer.name) || (tl && tl.cancelled && tl.cancelled.buyer) || "", skus: [], titles: [], listings: [], sheets: [], events, cancel: tl && tl.cancelled || null, archived: !!row,
@@ -427,7 +438,7 @@
   }
   function planCloud(R) {
     const n = R.num;
-    if (!n || n.length < CLOUD_MIN) return message(R);
+    if (!n || n.length < CLOUD_MIN || n.length > CLOUD_MAX) return message(R);
     const exact = R.all.some(e => e.rid === n || e.num === n);
     if (exact) return message(R);
     const known = cloudCache.get(n);
@@ -455,7 +466,7 @@
     else if (!R.hits.length && R.q) {
       const why = c && c.state === "none" ? "Not in this pull, on any sheet in memory, under Cancelled, or in the cloud."
         : c && c.state === "error" ? `The cloud could not be asked just now (${esc(c.err || "no answer")}). Try again in a moment.`
-        : R.num && R.num.length < CLOUD_MIN ? "Keep typing: Etsy order numbers have 10 digits." : R.num ? "" : "Try an order number, a buyer's name, a SKU or a listing number.";
+        : R.num && R.num.length < CLOUD_MIN ? "Keep typing: Etsy order numbers have 10 digits." : R.num && R.num.length > CLOUD_MAX ? "Etsy order numbers have 10 digits: look for one at a time." : R.num ? "" : "Try an order number, a buyer's name, a SKU or a listing number.";
       h = `<div class="cnsEmpty">${EMPTY_ICON}<div>No order has <b>${esc(R.q)}</b> in it${c && c.state === "none" ? "" : " here"}.</div>${why ? `<small>${why}</small>` : ""}</div>`;
     } else if (!R.q && !R.hits.length) h = `<div class="cnsEmpty">${EMPTY_ICON}<div>Nothing loaded yet.</div><small>Type a whole Etsy order number to look it up in the cloud.</small></div>`;
     if (UI.msg.innerHTML !== h) UI.msg.innerHTML = h;
@@ -555,7 +566,7 @@
   function detail(e, card) {
     if (!card) return;
     const had = card.querySelector(".cnsDetail"); if (had) { had.remove(); select(UI.sel, true); return; }
-    const st = stateOf(e), c = e.cloud, cx = e.cancel || (c && c.cancel);
+    const st = stateOf(e), c = e.cloud, cx = cancelOf(e);
     const lines = e.rows.length ? e.rows.map(r => [(r.spec && r.spec.designSku) || r.line.sku, r.line.title]) : e.skus.map((x, i) => [x, e.titles[i] || ""]);
     const evs = c ? c.events.slice(-5).reverse() : [];
     const row = (k, v) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`;
@@ -594,11 +605,13 @@
     const slash = k === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target);
     if (!cmdK && !slash) return;
     if (isOpen()) { if (cmdK) { e.preventDefault(); UI.q.focus(); UI.q.select(); } return; }
-    // one window at a time: the order window gives way to the search (it keeps its note); any other stays in front
+    // one window at a time: the order window gives way to the search (it keeps its note); any other stays in front, and
+    // so does the order window when a window is open over it (a photo, a conversation), and the sign-in screen
     // (the order view's header number is its own search field when it has one: design spec 7)
-    const dlg = doc.querySelector("dialog[open]");
+    const si = doc.getElementById("signin"); if (si && !si.classList.contains("hidden")) return;
+    const dlgs = doc.querySelectorAll("dialog[open]"), dlg = dlgs[0];
     if (dlg) {
-      if (dlg.id !== "orderWin" || !W.OrderWin) return;
+      if (dlgs.length > 1 || dlg.id !== "orderWin" || !W.OrderWin) return;
       if (typeof OrderWin.focusSearch === "function") { e.preventDefault(); try { OrderWin.focusSearch(); } catch (_) {} return; }
       if (!cmdK) return;
       e.preventDefault(); try { OrderWin.close(); } catch (_) {} return open();
