@@ -7969,6 +7969,8 @@ const Sandbox = window.Sandbox = (() => {
       if (r.more) throw new Error(`it stopped part way (${records} record(s) and ${files} file(s) removed): press Reset again to finish`);
       toast(`Sandbox reset — ${records} record(s) and ${files} file(s) removed${r.filesError ? ` · files not deleted: ${r.filesError}` : ""}`, r.filesError ? "bad" : "ok");
       await forgetCompletions();
+      // the cancelled orders' set-aside notices and jobs were the deleted records' (AutoCancel, the sandbox side only)
+      try { localStorage.removeItem("cn.autoCancel.v1:sandbox"); window.AutoCancel?.resetSandbox?.(); } catch (_) {}
       // the stream's clock, arrivals and orders went with the records: a replay starts from nothing, as the first one did
       adopt(null); Arrivals.reset();
       if (replay) { reloading = true; setTimeout(() => location.reload(), 1200); return; }

@@ -207,9 +207,10 @@ async function sweep(db, FV, opts = {}) {
   return out;
 }
 /** What became of a cancelled order's pieces, sheet by sheet (the sorter's AutoCancel as it takes them off or finds them
-    cut, and a cancel made in its sheet window): fates [{ sheet: "GF Sheet 2", fate: "removed" | "cut", text }], merged by
+    cut, and a cancel made in its sheet window): fates [{ sheet: "GF Sheet 2", fate: "removed" | "cut" | "open", text }], merged by
     sheet into the record there is. Never makes a record: an order restored meanwhile stays restored. opts: prefix. */
-const fateOf = f => ({ sheet: s(f && f.sheet, 80), fate: f && f.fate === "cut" ? "cut" : "removed", text: s(f && f.text, 160) });
+// "open": still on a saved sheet not cut yet that the sorter has not loaded (its pieces are to come off before cutting)
+const fateOf = f => ({ sheet: s(f && f.sheet, 80), fate: f && (f.fate === "cut" || f.fate === "open") ? f.fate : "removed", text: s(f && f.text, 160) });
 async function noteFates(db, orderId, fates, opts = {}) {
   const id = idOf(orderId); if (!id) return { error: "orderId required" };
   const inc = (Array.isArray(fates) ? fates : []).map(fateOf).filter(f => f.sheet).slice(0, 30);
