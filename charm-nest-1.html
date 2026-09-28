@@ -2490,6 +2490,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 @keyframes mdBackIn{from{opacity:0}}
 @media (prefers-reduced-motion:reduce){dialog.mdIn::backdrop{animation:mdBackIn .16s ease both}}
 .mGhost>.mCopy{border-radius:10px}
+.mGhost>.mLift{position:absolute;left:0;top:0;box-shadow:0 22px 44px rgba(30,24,16,.24);opacity:0;pointer-events:none}
 .mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}
 .mPlus{position:fixed;z-index:141;font:800 11.5px var(--sans);color:#3f5b3a;background:var(--card);border:1px solid #cddcc9;border-radius:999px;padding:1px 8px;box-shadow:0 4px 12px rgba(30,24,16,.12);white-space:nowrap;pointer-events:none}
 .mFound{animation:mFound 2.4s ease-out}
@@ -2755,8 +2756,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260928-m9"></script>
-<script src="charm-nest-timeline-ui.js?v=20260928-m9"></script>
+<script src="charm-nest-motion.js?v=20260928-m10"></script>
+<script src="charm-nest-timeline-ui.js?v=20260928-m10"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -4822,7 +4823,7 @@ function clearingCards(cards) {
     cards.forEach((x, i) => {
       const gone = x.gone();
       for (const g of parts[i]) if (!gone) g.remove(); else if (g._card.dataset.r === "queue") M.fade(g);   // the card's foot rises under the queue: it goes quickly
-        else g.animate([{ opacity: 1, transform: "none", filter: "none" }, { opacity: 1, offset: .12 }, { opacity: 0, transform: "scale(.985)", filter: "blur(1px)" }], { duration: 1100, easing: "ease-in-out", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
+        else g.animate([{ opacity: 1, transform: "none" }, { opacity: 1, offset: .12 }, { opacity: 0, transform: "scale(.985)" }], { duration: 1100, easing: "ease-in-out", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
       if (gone) saved.push(...x.pages.filter(p => p.cloud || p.recalled || p.persistedDone));
     });
     if (!saved.length) return;
@@ -4884,7 +4885,7 @@ function renderRail() {
   const glide = (n, from) => { n.getAnimations().forEach(a => a.cancel()); const dy = from - n.getBoundingClientRect().top; if (Math.abs(dy) >= 1) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: M.T.slide, delay: wait, easing: "cubic-bezier(.3,.1,.2,1)", fill: "backwards" }); };
   glide(head, was.top);
   for (const n of unRows) if (was.rows.has(n.dataset.mkey)) glide(n, was.rows.get(n.dataset.mkey));
-  if (was.hid && !hint.classList.contains("hidden")) M.grow(hint, { delay: wait });
+  if (was.hid && !hint.classList.contains("hidden")) M.grow(hint, { delay: wait, room: false });
 }
 function unRowEl(c) {
   const row = document.createElement("div"); row.className = "unRow"; row.draggable = true; row.dataset.mkey = "un:" + c.id;
