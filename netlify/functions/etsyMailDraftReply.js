@@ -3779,12 +3779,31 @@ function buildToolExecutors(ctx) {
         const sheet = loadOptionSheet ? await loadOptionSheet(family) : null;
         if (sheet) {
           const ms = require("./etsyMailOptionResolver").metalSpecsForAi(sheet.metalSpecs);
+          // The fact sheet words the standard charm size; when it has a
+          // line for this family, that line is the size to quote and the
+          // option sheet's own size figures are left out.
+          let factSheetSize = null, styles = require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles);
+          try {
+            const sizeId = { necklace: "neck-charm-size", huggie: "huggie-charm-size" }[family];
+            const k = sizeId ? await require("./_etsyMailKnowledge").loadKnowledge() : null;
+            const f = k && (k.facts || []).find(x => x.id === sizeId && x.status === "active");
+            factSheetSize = f ? f.text : null;
+          } catch {}
+          if (factSheetSize && styles && typeof styles === "object") {
+            styles = JSON.parse(JSON.stringify(styles));
+            delete styles._doc;
+            for (const st of Object.values(styles)) {
+              if (st && typeof st === "object" && st.universalDimensions) {
+                for (const key of ["description", "universalDimensions", "exampleCharm", "imageNote", "lineSheetSizeNote"]) delete st[key];
+              }
+            }
+          }
           // The resolver's "escalate, do NOT estimate" is about this
           // listing's own entry; the family sizes below are the shop's
           // standard and may be stated (replays read the two as a clash).
           result = { ...result,
-            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Quote the fact sheet's standard size for the family first; add no specs the customer didn't ask for, and for a customer still choosing, add the fact sheet's larger-size-on-request clause. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
-            familyFacts: { family, charmStyles: require("./_etsyMailKnowledge").scrubStyleFacts(sheet.charmStyles), metalSpecs: ms,
+            recommendation: "No catalog entry for this listing. Answer from familyFacts: silhouette sizes are standard for every listing of the family. Quote the size as familyFacts.factSheetSize words it (the standard size first); add no specs the customer didn't ask for, and for a customer still choosing, add the fact sheet's larger-size-on-request clause. Only a disc-style charm's diameter is unknown; for that, say the standard range and set ready_for_human_approval:true.",
+            familyFacts: { family, factSheetSize, charmStyles: styles, metalSpecs: ms,
             note: "The listing has no catalog entry. Silhouette sizes here apply to every listing of this family; a disc-style listing's diameter is per listing and unknown." } };
         }
       } catch {}
