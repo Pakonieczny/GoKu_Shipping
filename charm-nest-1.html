@@ -1292,6 +1292,10 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .setsWin .hMini:nth-child(1){left:0;top:10px;z-index:3}.setsWin .hMini:nth-child(2){left:7px;top:5px;z-index:2}.setsWin .hMini:nth-child(3){left:14px;top:0;z-index:1}
 .setsWin .hMini img{position:absolute;inset:3px;margin:auto;max-width:calc(100% - 6px);max-height:calc(100% - 6px);border-radius:3px;background:#fffefb;opacity:0;transition:opacity .25s ease}
 .setsWin .hMini img.on{opacity:1}
+.setsWin .hMiniBack{position:absolute;inset:3px;margin:auto;display:grid;place-items:center;visibility:hidden;pointer-events:none}
+.setsWin .hMiniBack canvas{display:block;border-radius:3px;background:#fffefb}
+.setsWin[data-face=back] .hMiniBack{visibility:visible}
+.setsWin[data-face=back] .hMini>img.hThumb{visibility:hidden}
 .setsWin .hMini.ph{display:grid;place-items:center;border-style:dashed;border-color:var(--ink25);background:var(--card2);box-shadow:none}
 .setsWin .hMini.ph svg{width:26px;height:18px;color:var(--ink25)}
 .setsWin .hSet.row .hNoteBox{margin:6px 0 0 4px}
@@ -5397,7 +5401,7 @@ function backClick(sh, e) {
   const r = cv.getBoundingClientRect(), x = v.sw / v.k - (e.clientX - r.left) * cv.width / r.width / v.k, y = (e.clientY - r.top) * cv.height / r.height / v.k;
   let best = null, bd = Infinity;
   for (const pc of B.pieces) { const d = Math.hypot(pc.p.cxPt - x, pc.p.cyPt - y); if (d < bd && d < Math.max(pc.p.wPt, pc.p.hPt)) { bd = d; best = pc; } }
-  if (best) SheetWin.open(sh.sheetId || sh.recalled.id, { select: best.poolId || best.id, fromRect: r });
+  if (best) SheetWin.open(sh.sheetId || sh.recalled.id, { select: best.poolId || best.id, fromRect: r, face: "back" });
 }
 /** What a sheet holds while the careful fill puts its charms down one at a time (drawn as they land, before the layout does):
     its placements and those charms, counted, and how full they make it by their own areas. Null when there are none. */
@@ -5444,7 +5448,8 @@ function inspectOnSheet(sh, c, el) {
   // the sheet grows out of this card into the window, with the charm lit as it was clicked, and goes back into it when
   // the window closes (Paul, 28 Sep); the window draws the sheet itself, at its own size
   const cv = el && el.tagName === "CANVAS" && el.isConnected ? el : null;
-  SheetWin.open(sh.sheetId, cv ? { select: c.poolId || c.id, origin: cardOrigin(sh, cv) } : { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
+  // (a card turned over opens the window on its Back: the side looked at is the side that opens, Paul 28 Sep)
+  SheetWin.open(sh.sheetId, cv ? { select: c.poolId || c.id, origin: cardOrigin(sh, cv), face: faceOf(cv) } : { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
   return true;
 }
 /** Where a Nest card shows its sheet, for the sheet window to grow out of and go back into: the card's picture frame, the
@@ -5993,9 +5998,9 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=20260928-m11"></script>
-<script src="charm-nest-bridge.js?v=20260928-m11"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-m11"></script>
+<script src="order-timeline.js?v=m12"></script>
+<script src="charm-nest-bridge.js?v=m12"></script>
+<script src="charm-nest-sheetwin.js?v=m12"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
