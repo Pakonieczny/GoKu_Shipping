@@ -2472,13 +2472,31 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // and the other way: orders restored here → when the restore was done. A read that set out before it (the orders check's
     // ids, the list, AutoCancel's newest records) does not bring them back in, count them or fly them in as a new cancel
     const restored = new Map(), restoredAt = rid => restored.get(String(rid)) || 0;
+    /* The whole set is read once; after it only the records written since (cancelList after: a few reads a check, not up
+       to 5000). A restore deletes its record, which that read cannot see: when the collection holds fewer than is known
+       here (its total, against what the whole read left out past 5000), the whole set is read again. A server that
+       answers no cursor is read whole each time, as before. */
+    let cursor = null, beyond = 0;
+    async function readNew() {
+      let c = cursor, add = [];
+      for (let i = 0; i < 5; i++) {
+        const r = await api("charmNestLibrary", { op: "cancelList", idsOnly: true, after: c, limit: 500 }, { quiet: true });
+        if (!r.cursor) return null;
+        add = add.concat((r.ids || []).map(String)); c = r.cursor;
+        if (!r.more) return +r.total - new Set([...ids, ...add]).size === beyond ? { add, cursor: c } : null;
+      }
+      return { add, cursor: c };   // (more than 2500 at once: the rest at the next read, from where this one stopped)
+    }
     function load(force) {
       if (loading) return loading;
       if (!force && at && Date.now() - at < 60000) return Promise.resolve(ids);
       const t0 = Date.now();
-      loading = api("charmNestLibrary", { op: "cancelList", idsOnly: true }, { quiet: true })
+      loading = (cursor ? readNew() : Promise.resolve(null))
+        .then(n => n || api("charmNestLibrary", { op: "cancelList", idsOnly: true, track: true }, { quiet: true }))
         .then(r => {
-          const was = at ? ids : null; ids = new Set((r.ids || []).map(String));
+          const was = at ? ids : null;
+          if (r.add) { ids = new Set(ids); for (const id of r.add) if (!(restoredAt(id) >= t0)) ids.add(id); cursor = r.cursor; }
+          else { ids = new Set((r.ids || []).map(String)); beyond = +r.total - ids.size; cursor = r.cursor && beyond >= 0 ? r.cursor : null; }
           for (const [id, t] of learned) { if (t >= t0) ids.add(id); else if (Date.now() - t > 600000) learned.delete(id); }
           for (const [id, t] of restored) { if (t >= t0) ids.delete(id); else if (Date.now() - t > 600000) restored.delete(id); }
           at = Date.now(); if (was) arrived([...ids].filter(id => !was.has(id))); return ids;
@@ -2812,9 +2830,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function read() {
       let s = null; try { s = JSON.parse(localStorage.getItem(KEY()) || "null"); } catch (_) {}
       s = s && typeof s === "object" ? s : {};
-      return { known: Array.isArray(s.known) ? s.known : [], done: s.done || {}, jobs: s.jobs || {}, notices: Array.isArray(s.notices) ? s.notices : [] };
+      // (cursor: where the last read of the records stopped; pend: records read, orderId → at, until done here)
+      return { known: Array.isArray(s.known) ? s.known : [], done: s.done || {}, jobs: s.jobs || {}, notices: Array.isArray(s.notices) ? s.notices : [],
+        cursor: s.cursor && typeof s.cursor === "object" ? s.cursor : null, pend: s.pend && typeof s.pend === "object" ? s.pend : {} };
     }
-    let st = read(), tick = 0, polling = null, working = null;
+    let st = read(), tick = 0, polling = null, working = null, missed = false;
     function save() {
       for (const [k, d] of Object.entries(st.done)) if (Date.now() - (+d.t || 0) > 45 * 86400000) delete st.done[k];
       try { localStorage.setItem(KEY(), JSON.stringify(st)); } catch (_) {}
@@ -2943,7 +2963,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
             pools = pl; rec = r && r.cancelled && r.cancelled[rid];
             if (!rec) {
               if (j0 || plan.rows.length) agent({ bridge: true }, "DS", `Order ${rid} is not cancelled any more: left as it is`);
-              st = read(); delete st.jobs[rid]; save(); forget(rid); return "restored";
+              st = read(); delete st.jobs[rid]; delete st.pend[rid]; save(); forget(rid); return "restored";
             }
             plan = planOf(rid);
             if (!W.flow && !(B.run && B.run.arrivalBusy) && !plan.wait.length) break;
@@ -3063,21 +3083,35 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         .catch(() => {}).finally(() => { working = null; if (queue.size) setTimeout(kick, 1000); });
       return working;
     }
-    /** The newest cancel records, read against what this sorter holds. Returns the orders queued. */
+    /** The cancel records written since the last read, read against what this sorter holds. Returns the orders queued.
+     *  (wave 4) The first read in this browser is of the newest 50, as it was; after it only what was written since
+     *  (cancelList after:, the cursor kept per workspace, so the sandbox's and the real records never mix). A record read
+     *  waits in `pend` until it is done here (or restored, or a month old), so one whose job had to wait is taken up
+     *  again at the next read, as it was while it stayed among the newest 50. */
     function poll() {
       if (polling) return polling;
       polling = (async () => {
         if (typeof S === "undefined" || !S.cloud || S.cloud.ok !== true) return [];
-        const r = await api("charmNestLibrary", { op: "cancelList", limit: 50 }, { quiet: true });
-        const list = (r.list || []).filter(c => c && c.orderId).sort((a, b) => (+b.at || 0) - (+a.at || 0));
-        const recs = new Map(list.map(c => [String(c.orderId), c]));
+        let cur = read().cursor; const got = [];
+        for (let i = 0; i < 5; i++) {
+          const first = !cur, r = await api("charmNestLibrary", first ? { op: "cancelList", limit: 50, track: true } : { op: "cancelList", after: cur, limit: 200 }, { quiet: true });
+          got.push(...(r.list || []).filter(c => c && c.orderId)); cur = r.cursor || null;
+          if (first || !cur || !r.more) break;
+        }
+        const list = got.sort((a, b) => (+b.at || 0) - (+a.at || 0)), neu = new Map(list.map(c => [String(c.orderId), c]));
         st = read();
         const fresh = list.filter(c => !st.known.includes(String(c.orderId)));
-        st.known = [...recs.keys()].concat(st.known.filter(id => !recs.has(id))).slice(0, 300); save();
-        if (window.Cancelled && Cancelled.absorb([...recs.keys()])) Orders.render();   // (the pull rule leaves them out at once)
-        // a notice whose order is not among the newest records may have been restored at another screen: asked once (one
-        // read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is set aside
-        const ask = st.notices.filter(n => !recs.has(n.rid)).map(n => n.rid).slice(0, 60);
+        st.known = [...neu.keys()].concat(st.known.filter(id => !neu.has(id))).slice(0, 300);
+        for (const c of list) st.pend[String(c.orderId)] = +c.at || 0;
+        for (const [id, a] of Object.entries(st.pend)) { const d = st.done[id]; if ((d && +d.at === +a) || Date.now() - a > 30 * 86400000) delete st.pend[id]; }
+        if (cur) st.cursor = cur;
+        save();
+        const recs = new Map(Object.entries(st.pend).map(([id, a]) => [id, neu.get(id) || { orderId: id, at: a }]));
+        if (window.Cancelled && Cancelled.absorb([...neu.keys()])) Orders.render();   // (the pull rule leaves them out at once)
+        // a notice whose order is not among the records read and not known cancelled may have been restored at another
+        // screen: asked once (one read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is
+        // set aside
+        const ask = st.notices.filter(n => !recs.has(n.rid) && !(window.Cancelled && Cancelled.has(n.rid))).map(n => n.rid).slice(0, 60);
         if (ask.length) { const c = await api("charmNestLibrary", { op: "cancelCheck", orderIds: ask }, { quiet: true }).catch(() => null); if (c && c.cancelled) for (const id of ask) if (!c.cancelled[id]) forget(id); }
         const have = held(), due = [], far = [];
         for (const id of new Set([...Object.keys(st.jobs), ...recs.keys(), ...(window.Cancelled ? Cancelled.ids() : [])])) {
@@ -3093,7 +3127,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       })().finally(() => { polling = null; });
       return polling;
     }
-    function start() { if (tick) return; tick = setInterval(() => poll().catch(() => {}), EVERY); setTimeout(() => poll().catch(() => {}), 4000); }
+    // (a hidden tab does not read on its timer: the read it missed is made the moment it shows; the orders check still asks)
+    const timed = () => { if (document.hidden) { missed = true; return; } poll().catch(() => {}); };
+    function start() {
+      if (tick) return; tick = setInterval(timed, EVERY); setTimeout(timed, 4000);
+      document.addEventListener("visibilitychange", () => { if (!document.hidden && missed) { missed = false; poll().catch(() => {}); } });
+    }
     const notices = () => st.notices.slice();
     function pillHtml() {
       return st.notices.map(n => `<div class="rbCxItem" data-rid="${esc(n.rid)}"><span>${esc(n.text)}</span><button type="button" class="btn sm" data-cxack="${esc(n.rid)}" title="the pieces are set aside: this notice goes">${ICON.check}Set aside</button></div>`).join("");
