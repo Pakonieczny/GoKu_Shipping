@@ -3014,6 +3014,65 @@ const Gate = window.Gate = (() => {
     CharmNestPDF.drawCharm(g, c, tx, k);
     return { cv, x0, y0 };
   }
+  /** What the nest has said of the charms that set off for Sheet 1: null while it has not said; else the pages the
+   *  ones that did not fit went back to (id → page) and how many stay on Sheet 1. (Asked at most every 100 ms: once it
+   *  has said, the answer is kept.) */
+  function mergeAnswer(cap) {
+    const now = performance.now(); if (cap.answer || now - (cap.askedAt || -1e9) < 100) return cap.answer || null; cap.askedAt = now;
+    const t = cap.target, on = new Set(t.charms.map(c => c.id)), back = new Map(), others = pagesOf(cap.m).filter(p => p !== t);
+    const ids = cap.pages.filter(e => e.p !== t).flatMap(e => e.charms.map(c => c.id));
+    for (const id of ids) if (!on.has(id)) { const p = others.find(x => x.charms.some(c => c.id === id)); if (p) back.set(id, p); }
+    const working = ["nesting", "finishing", "queued"].includes(t.status) || !!t._operationStarting || !!t._learnedStarting || !!t.feedWait?.length || t.dirty && !t.problem;
+    if (!back.size && working) return null;
+    const placed = new Set((t.placements || []).map(x => x.id)), stay = ids.filter(id => on.has(id) && (working || placed.has(id))).length;
+    const a = { back, stay }; if (!working) cap.answer = a; return a;
+  }
+  /** The nest said which charms fit only after the scene: the true numbers then, over the card: "+N" on its picture
+   *  for the ones Sheet 1 kept, and the ones that went back fly to their sheet's tab with its own "+N". */
+  function mergeLate(cap, showStay, shownBack) {
+    const until = Date.now() + 1800000, seq = cap.seq;
+    const tick = () => {
+      if (cap.card._mergeSeq !== seq || Date.now() > until || !cap.card.isConnected) return;
+      const a = mergeAnswer(cap); if (!a || [...FX].some(f => f.card === cap.card)) return void setTimeout(tick, 250);
+      try { lateBeat(cap, showStay ? a.stay : 0, [...a.back].filter(([id]) => !shownBack.has(id))); } catch (e) { console.warn("merge sheets: motion", e); }
+    };
+    setTimeout(tick, 0);
+  }
+  function lateBeat(cap, stay, back) {
+    const { m, card, wrap } = cap, M = window.Motion;
+    if (!stay && !back.length) return;
+    if (!wrap.isConnected || document.hidden || !M || M.reduced() || !wrap.getClientRects().length) return;
+    const o = card.getBoundingClientRect(), ox = o.left + card.clientLeft, oy = o.top + card.clientTop, wr = wrap.getBoundingClientRect();
+    const fx = document.createElement("div"); fx.className = "mergeFx"; fx.setAttribute("aria-hidden", "true"); card.appendChild(fx);
+    const anims = []; let live = true;
+    const scene = { card, stop: () => end() }; FX.add(scene);
+    function end() { if (!live) return; live = false; FX.delete(scene); for (const a of anims) try { a.cancel(); } catch (_) {} fx.remove(); }
+    const plusAt = (x, y, text, cls) => {
+      const n = document.createElement("span"); n.className = "mPlus mergeFxPlus" + (cls ? " " + cls : ""); n.textContent = text;
+      Object.assign(n.style, { left: x - ox + "px", top: y - oy + "px", zIndex: "50" }); fx.appendChild(n);
+      anims.push(n.animate([{ transform: "translate(-50%,-50%) scale(.7)", opacity: 0 }, { transform: "translate(-50%,calc(-50% - 12px)) scale(1)", opacity: 1, offset: .28 }, { transform: "translate(-50%,calc(-50% - 16px)) scale(1)", opacity: 1, offset: .62 }, { transform: "translate(-50%,calc(-50% - 30px)) scale(1)", opacity: 0 }], { duration: 980, easing: "ease-out", fill: "forwards" }));
+    };
+    let last = 1000;
+    if (stay > 0 && activePage(m) === cap.target) plusAt(wr.left + wr.width / 2, wr.top + wr.height * .45, "+" + stay);
+    // the ones that went back: from the picture to their sheet's tab, then its "+N"
+    const byPage = new Map(); for (const [id, p] of back) byPage.set(p, (byPage.get(p) || []).concat(id));
+    for (const [p, ids] of byPage) {
+      const tab = [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(x => pagesOf(m)[+x.dataset.i] === p), tr = tab && tab.getClientRects().length ? tab.getBoundingClientRect() : null;
+      const to = tr ? { x: tr.left + tr.width / 2, y: tr.top + tr.height / 2 } : { x: wr.right - 24, y: wr.top + 24 };
+      ids.slice(0, 8).forEach((id, j) => {
+        const c = cap.pages.flatMap(e => e.charms).find(x => x.id === id); if (!c?.thumb) return;
+        const img = document.createElement("img"); img.alt = ""; img.className = "mergeFxPiece"; img.src = typeof cors === "function" ? cors(c.thumb) : c.thumb;
+        const w = 22, sx = wr.left + wr.width / 2 - w / 2 - ox + (j - (Math.min(8, ids.length) - 1) / 2) * 14, sy = wr.top + wr.height / 2 - w / 2 - oy;
+        Object.assign(img.style, { left: sx + "px", top: sy + "px", width: w + "px", height: w + "px", zIndex: "46" }); fx.appendChild(img);
+        const dx = to.x - ox - w / 2 - sx, dy = to.y - oy - w / 2 - sy;
+        anims.push(img.animate([{ transform: "translate(0,0) scale(.6)", opacity: 0 }, { transform: "translate(0,-10px) scale(1)", opacity: 1, offset: .2 }, { transform: `translate(${(dx / 2).toFixed(1)}px,${(Math.min(0, dy) / 2 - 30).toFixed(1)}px) scale(.9)`, opacity: 1, offset: .6 }, { transform: `translate(${dx.toFixed(1)}px,${dy.toFixed(1)}px) scale(.5)`, opacity: 0 }], { delay: j * 60, duration: 620, easing: "cubic-bezier(.3,.1,.2,1)", fill: "both" }));
+      });
+      const at = 620 + Math.min(7, ids.length - 1) * 60, cue = new Animation(new KeyframeEffect(null, [], { duration: at }), document.timeline); anims.push(cue);
+      cue.onfinish = () => { if (!live) return; plusAt(to.x, to.y - 14, "+" + ids.length, "mergeFxBack"); if (tab && tr) anims.push(tab.animate([{ transform: "scale(1)" }, { transform: "scale(1.14)", offset: .32 }, { transform: "scale(.97)", offset: .62 }, { transform: "scale(1)" }], { duration: 700, easing: "ease-out" })); };
+      cue.play(); last = Math.max(last, at + 1000);
+    }
+    const done = new Animation(new KeyframeEffect(null, [], { duration: last }), document.timeline); anims.push(done); done.onfinish = () => end(); done.play();
+  }
   /** The scene plays on the next frame, once the card has drawn what the merge changed. */
   function mergeScene(cap, count) {
     const asked = performance.now();
@@ -3024,6 +3083,9 @@ const Gate = window.Gate = (() => {
     const { m, kind, card, wrap, cv } = cap, M = window.Motion, move = kind === "move";
     if (!card.isConnected || !wrap.isConnected || !cv.isConnected || document.hidden || !M || M.reduced() || !wrap.getClientRects().length) return;
     for (const f of [...FX]) if (f.card === card) f.stop();
+    cap.seq = card._mergeSeq = (card._mergeSeq || 0) + 1;
+    // the numbers are the nest's: shown once it says which charms fit (mergeAnswer), in the scene or after it (mergeLate)
+    let shownStay = false; const shownBack = new Set();
     // card-local: the scene rides along when the page scrolls
     const origin = () => { const r = card.getBoundingClientRect(); return { x: r.left + card.clientLeft, y: r.top + card.clientTop }; };
     const local = r => { const o = origin(); return { x: r.left - o.x, y: r.top - o.y, w: r.width, h: r.height }; };
@@ -3058,7 +3120,7 @@ const Gate = window.Gate = (() => {
       if (!live) return; live = false; FX.delete(scene); clearTimeout(timer); cancelAnimationFrame(unhiding);
       document.removeEventListener("visibilitychange", onVis); removeEventListener("resize", onResize);
       hideStyle.remove();
-      const gone = () => { for (const a of anims) try { a.cancel(); } catch (_) {} fx.remove(); };
+      const gone = () => { for (const a of anims) try { a.cancel(); } catch (_) {} fx.remove(); if (card._mergeSeq === cap.seq) mergeLate(cap, !shownStay, shownBack); };
       if (soft && fx.isConnected && !document.hidden) fx.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 160, easing: "ease-out", fill: "forwards" }).finished.then(gone, gone); else gone();
     }
     // the card laid out anew under it (a row above the picture appeared, the card was drawn again, another sheet shown): it ends
@@ -3188,6 +3250,30 @@ const Gate = window.Gate = (() => {
       cue(260, () => p.node.remove());
     };
     let late = false, sealed = false;
+    const keep = new Set(), backPlus = new Map();
+    // (a charm the nest did not fit: from where it waits on Sheet 1, back onto its spot on its own sheet (pinned there,
+    //  _mergeSpots), or into the sheet it went to; that sheet keeps its place and says "+N" once they are all back)
+    const pageIndex = pg => list.findIndex(e => e.p === pg);
+    const goBack = (p, ans) => {
+      const j = pageIndex(ans.back.get(p.c.id)); if (j < 0 || j === ti || sealed && !keep.has(j)) return false;
+      p.done = true; p.back = j; keep.add(j); shownBack.add(p.c.id);
+      if (p.counted) { p.counted = false; recount(ti, -1, false); }
+      const { b, a } = p, g = p.ghost, c0 = centre(p), mine = j === p.i;
+      const to = mine ? { x: c0.x, y: c0.y, s: 1 } : { x: slots[j].x + slots[j].w / 2, y: slots[j].y + slots[j].h / 2, s: .6 };
+      const up = { x: (g.x + to.x) / 2, y: Math.min(g.y, to.y) - Math.min(60, 14 + Math.abs(to.x - g.x) * .15) };
+      p.node.style.zIndex = "41";
+      play(p.node, [{ transform: pose(b, a, g.x, g.y, g.g), opacity: g.o }, { transform: pose(b, a, up.x, up.y, (g.g + to.s) / 2 * 1.08), opacity: 1, offset: .5 }, { transform: pose(b, a, to.x, to.y, to.s), opacity: 1 }], { duration: 440, easing: ease, fill: "forwards" });
+      cue(440, () => {
+        recount(j, +1, true); p.home = true;
+        if (mine && !p.thumb) ring(to.x, to.y, dia(p) + 4);
+        // (every one on its way back is home, and no other is still in the air to go back: its sheet says how many)
+        if (flyers.some(q => q.back === j && !q.home) || flyers.some(q => !q.landed && ans.back.get(q.c.id) === list[j].p) || backPlus.has(j)) return;
+        const n = flyers.filter(q => q.back === j).length, sb = slots[j], plus = put(document.createElement("span"), { x: sb.x + sb.w / 2, y: sb.y + sb.h * .42, w: 0, h: 0 }, "mPlus mergeFxPlus mergeFxBack", 50);
+        Object.assign(plus.style, { width: "", height: "" }); plus.textContent = "+" + n; backPlus.set(j, plus);
+        play(plus, [{ transform: "translate(-50%,-50%) scale(.7)", opacity: 0 }, { transform: "translate(-50%,calc(-50% - 10px)) scale(1)", opacity: 1, offset: .3 }, { transform: "translate(-50%,calc(-50% - 14px)) scale(1)", opacity: 1, offset: .7 }, { transform: "translate(-50%,calc(-50% - 24px)) scale(1)", opacity: 0 }], { duration: 760, easing: "ease-out", fill: "forwards" });
+      });
+      return true;
+    };
     const glide = (p, spot) => {
       p.gliding = true; const { b, a } = p, g = p.ghost, { end, rot } = onSpot(p, spot), mid = { x: (g.x + spot.x) / 2, y: Math.min(g.y, spot.y) - 12 };
       play(p.node, [{ transform: pose(b, a, g.x, g.y, g.g), opacity: GH }, { transform: pose(b, a, mid.x, mid.y, (g.g + end) / 2 * 1.08, rot * .6), opacity: .9, offset: .5 }, { transform: pose(b, a, spot.x, spot.y, end, rot), opacity: 1 }], { duration: 400, easing: ease, fill: "forwards" });
@@ -3223,12 +3309,14 @@ const Gate = window.Gate = (() => {
         { transform: pose(sb, sa, c2.x, c2.y + 1, end), opacity: 0, offset: 1 }], { duration: T.fly, easing: ease2, fill: "forwards" });
       const beat = !(j % every);
       cue(T.fly, () => {
-        shade.remove();
+        shade.remove(); p.landed = true;
         if (p.hid) { p.hid = false; unhide(p.c.id); }
-        if (across) recount(ti, +1, beat);
+        const ans = across && mergeAnswer(cap);
+        if (ans && ans.back.has(p.c.id) && goBack(Object.assign(p, { ghost: { x: c2.x, y: c2.y, g: end, o: op } }), ans)) return;
+        if (across) { recount(ti, +1, beat); p.counted = true; }
         if (spot) { settle(p, spot); return ring(c2.x, c2.y, dia(p) * end + 4); }
         if (!op) { p.done = true; return p.node.remove(); }
-        p.ghost = { x: c2.x, y: c2.y, g: end };
+        p.ghost = { x: c2.x, y: c2.y, g: end, o: op };
         const now = !late && spotOf(p.c);
         if (now) glide(p, now); else if (sealed) sink(p);
       });
@@ -3236,18 +3324,29 @@ const Gate = window.Gate = (() => {
     // (the watch below keeps an eye on the card: a flight need not measure it again)
     flyers.forEach((p, j) => cue(T.fly0 + j * step, () => flyOne(p, j)));
     // (every so often: still in place, and has the nest put down one that waits?)
-    const watch = () => cue(150, guard(() => { if (!late) for (const p of flyers) if (p.ghost && !p.gliding && !p.done) { const sp = spotOf(p.c); if (sp) glide(p, sp); } watch(); }));
+    const watch = () => cue(150, guard(() => {
+      const ans = !sealed && flyers.some(p => p.ghost && !p.gliding && !p.done && p.i !== ti) && mergeAnswer(cap);
+      if (ans) for (const p of flyers) if (p.ghost && !p.gliding && !p.done && ans.back.has(p.c.id)) goBack(p, ans);
+      if (!late) for (const p of flyers) if (p.ghost && !p.gliding && !p.done) { const sp = spotOf(p.c); if (sp) glide(p, sp); }
+      watch();
+    }));
     watch();
     cue(C0 - 120, () => { late = true; });
     // 3 · the emptied sheets condense into Sheet 1, which takes them with a small swell and grows back into its place
     const tb = slots[ti], tc = { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 };
     cue(C0, guard(() => {
+      const ans = mergeAnswer(cap);
+      if (ans) {
+        for (const p of flyers) if (p.ghost && !p.gliding && !p.done && ans.back.has(p.c.id)) goBack(p, ans);
+        for (const p of flyers) if (!p.landed && ans.back.has(p.c.id)) { const j = pageIndex(ans.back.get(p.c.id)); if (j >= 0 && j !== ti) keep.add(j); }
+      }
       sealed = true; for (const p of flyers) if (p.ghost && !p.gliding && !p.done) sink(p);
       for (const p of flyers) if (p.hid) { hidden.delete(p.c.id); p.hid = false; } paintHidden();   // (one out of sight never landed)
       // (a charm that could not be drawn went along unseen: the numbers end where the charms are)
-      list.forEach((e, i) => { if (i !== ti && counts[i]) { const d = counts[i]; recount(i, -d, false); recount(ti, d, false); } });
+      // (a sheet charms go back to keeps its number: it counts them in as they arrive)
+      list.forEach((e, i) => { if (i !== ti && !keep.has(i) && counts[i]) { const d = counts[i]; recount(i, -d, false); recount(ti, d, false); } });
       list.forEach((e, i) => {
-        if (i === ti) return;
+        if (i === ti || keep.has(i)) return;
         const b = slots[i], c = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
         play(sheets[i], [{ transform: "none", opacity: 1 }, { transform: at(b, c.x, c.y - 4, .94), opacity: 1, offset: .26 }, { transform: at(b, tc.x, tc.y, .12), opacity: 0 }], { duration: CD, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" });
         const g = tags[i]._box; play(tags[i], [{ transform: "none", opacity: 1 }, { transform: at(g, tc.x, tb.y + 4, .5), opacity: 0 }], { duration: CD * .8, easing: "cubic-bezier(.5,0,.3,1)", fill: "forwards" });
@@ -3259,13 +3358,17 @@ const Gate = window.Gate = (() => {
       play(sheets[ti], [{ transform: "none", easing: "ease-out" }, { transform: at(tb, tc.x, tc.y, 1.035), offset: .2, easing: ease }, { transform: from(tb, home) }], { duration: RD, fill: "forwards" });
     }));
     // the picture on the card shows through: the sheet that grew back is the card's own
-    cue(FADE, guard(() => { for (const x of [veil, sheets[ti]]) play(x, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: "ease-in-out", fill: "forwards" }); }));
+    cue(FADE, guard(() => {
+      const kept = [...keep].flatMap(i => [sheets[i], tags[i], ...flyers.filter(p => p.back === i).map(p => p.node), ...(backPlus.has(i) ? [backPlus.get(i)] : [])]);
+      for (const x of [veil, sheets[ti], ...kept]) play(x, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: "ease-in-out", fill: "forwards" });
+    }));
     // 4 · the picture, live again, answers: a pulse, a soft glow, "+N" (and the sheet's tab)
     cue(SET, guard(() => {
       play(wrap, [{ transform: "none" }, { transform: "scale(1.012)", offset: .34 }, { transform: "none" }], { duration: 560, easing: "ease-out" });
       const glow = put(document.createElement("i"), wr, "mergeFxGlow", 45);
       play(glow, [{ opacity: 0 }, { opacity: 1, offset: .3 }, { opacity: 0 }], { duration: 850, easing: "ease-out", fill: "forwards" });
-      if (count > 0) {
+      const ans = mergeAnswer(cap); if (ans) shownStay = true;
+      if (ans && ans.stay > 0) { count = ans.stay;
         // (over the free room the charms went into)
         const plus = put(document.createElement("span"), bay ? { x: home.x + (bay.x + bay.w / 2) / s, y: home.y + (bay.y + bay.h / 2) / s, w: 0, h: 0 } : { x: home.x + home.w / 2, y: home.y + home.h * .45, w: 0, h: 0 }, "mPlus mergeFxPlus", 50);
         Object.assign(plus.style, { width: "", height: "" }); plus.textContent = "+" + count;
@@ -5838,6 +5941,13 @@ const RunCtl = window.RunCtl = (() => {
       if (["gold10k","gold14k"].includes(d.metal) && d.solidIncluded === true) pg.solidPick = true;   // a 10K/14K sheet's own Include tick
       pg.sheetId = d.id; pg.runId = rec.runId; pg.group = set ? set.group || null : "dispatch"; pg.setId = set ? set.setId : null; pg.seq = set ? d.setSeq || set.seq : null; pg.setDay = d.day; pg.cardStartedAt = d.cardStartedAt || d.createdAt || null; pg.sheetIndex = set ? d.sheetIndex : null; pg.fileBase = d.fileBase; pg.folderPath = d.outputs?.ai?.path?.replace(/\/[^/]+$/, "") || (set ? `${set.folder}/${d.fileBase}` : `charmnest/sheets/${d.day}/${d.fileBase}`); pg.label = set ? d.label || null : null; pg.backPool = d.backPool || []; pg.backOutputs = d.backOutputs || null; pg.cloud = d.outputs ? { ai: d.outputs.ai && d.outputs.ai.url, pdf: d.outputs.pdf && d.outputs.pdf.url, labelled: d.outputs.labelled && d.outputs.labelled.url, report: d.outputs.report && d.outputs.report.url, preview: d.outputs.preview && d.outputs.preview.url } : null;
       pg.restored = true; pg.persistedDone = true;
+      // a 10K/14K sheet keeps its own size after a reload (keptStock: a cut sheet an Apply size left as it was), read from
+      // the size its record was nested at; one at the metal's size now takes the metal's size (as before)
+      delete pg.keptStock;
+      if (["gold10k", "gold14k"].includes(d.metal) && typeof stockFor === "function") {
+        const was = d.stock || {}, now = stockFor(d.metal), wPt = +was.wPt || +was.wIn * 72, hPt = +was.hPt || +was.hIn * 72;
+        if (wPt > 0 && hPt > 0 && (Math.abs(wPt - now.wPt) > 0.01 || Math.abs(hPt - now.hPt) > 0.01)) pg.keptStock = { wPt, hPt };
+      }
       if(d.metal==='rose' && d.roseStockId && window.RoseStock)await RoseStock.restore(pg,d);
       // the pieces: each placement's pool charm from the master copy, pinned at its cut position
       for (const p of d.placements || []) {
