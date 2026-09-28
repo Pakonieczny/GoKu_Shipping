@@ -42,6 +42,32 @@
     try { const a = el.animate(frames, Object.assign({ duration: ms, easing: E }, o || {})); a.finished.catch(() => {}); return a; } catch (_) { return null; }
   }
 
+  /* ── the zoomed seal (Paul, 2026-09-28): a hovered dot's seal opens directly ABOVE it, its bottom edge ZGAP over the
+     dot's top, at 90% of the old 136px loupe. It never covers the dot, which stays in sight and keeps the hover (the
+     layer takes no pointer). It flips below only when the view has no room above, and stays inside the view sideways.
+     The room under the dot belongs to the step's explainer card. ── */
+  const ZSZ = 122, ZGAP = 8, ZM = 8;
+  function zoomSpot(r, vw, vh) {
+    const up = r.top - ZGAP - ZSZ >= ZM || r.bottom + ZGAP + ZSZ > vh - ZM && r.top > vh - r.bottom;
+    return { x: clamp(r.left + r.width / 2 - ZSZ / 2, ZM, Math.max(ZM, vw - ZSZ - ZM)), y: up ? r.top - ZGAP - ZSZ : r.bottom + ZGAP, up };
+  }
+  /** Lays a fixed layer at the dot's spot and eases it up out of the dot's edge; quiet puts it there at once. */
+  function zoomIn(layer, r, quiet) {
+    layer.style.display = "block"; layer.style.transform = "none";
+    // a transformed ancestor moves a fixed layer's origin: measure where it really sits
+    const o = layer.getBoundingClientRect(), p = zoomSpot(r, root.innerWidth || 1200, root.innerHeight || 800);
+    const to = `translate(${Math.round(p.x - o.left)}px,${Math.round(p.y - o.top)}px)`;
+    layer.dataset.side = p.up ? "above" : "below"; layer.style.transformOrigin = p.up ? "50% 100%" : "50% 0";
+    layer.style.transform = to;
+    if (!quiet) anim(layer, [{ transform: `${to} translateY(${p.up ? 6 : -6}px) scale(.84)`, opacity: 0 }, { transform: to, opacity: 1 }], 240, { easing: "cubic-bezier(.2,.8,.2,1)" });
+    return p;
+  }
+  /** Eases the layer back down toward its dot: the animation, or null when motion is reduced. */
+  function zoomOut(layer) {
+    const t = layer.style.transform;
+    return anim(layer, [{ transform: t, opacity: 1 }, { transform: `${t} translateY(${layer.dataset.side === "below" ? -5 : 5}px) scale(.88)`, opacity: 0 }], 150, { easing: "ease-in" });
+  }
+
   /* ════ Stamp family: siblings of the two existing seals (Seal in charm-nest-motion.js) ════
      m = milestone: scalloped, like "Order completed"; e = event: double-ring postmark, like "QR label printed";
      a = alert: a thick notched ring. Small face (the lanes): heavy edge, ink wash, big icon. Full face (loupe, detail):
@@ -419,7 +445,6 @@
 .tlStop.f .tlSeal{opacity:.45}
 .tlStop.x>span{color:#8a3a26}
 .tlStop.gone{opacity:.45}.tlStop.gone>span{text-decoration:line-through}
-.tlStop .tlSeal.lifted{opacity:0}
 @keyframes tlRing{0%{transform:scale(.85);opacity:.85}70%,100%{transform:scale(1.4);opacity:0}}
 .tlCxStamp{position:absolute;left:50%;top:50%;width:min(270px,40%);pointer-events:none;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
 .tlCxStamp svg{display:block;width:100%;height:auto;mix-blend-mode:multiply;opacity:.93}
@@ -466,7 +491,6 @@
 @keyframes tlSelIn{from{transform:scale(.6);opacity:0}}
 .tlSt.hl::after{content:"";position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
 .tlSt.dim{opacity:.13}.tlSt.dim svg{filter:grayscale(1)}
-.tlSt.lifted{opacity:0}
 .tlSt.pend svg{opacity:.65}
 .tlSt.ghost{opacity:.42;cursor:default}.tlSt.ghost:hover{transform:rotate(var(--rot))}
 .tlSt.ghost svg{mix-blend-mode:normal}
@@ -480,7 +504,8 @@
 .tlAfterCx{position:absolute;top:34px;bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
 .tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
-.tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:136px;height:136px;pointer-events:none;border-radius:50%;background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(30,26,20,.06),0 16px 40px rgba(30,26,20,.22);display:none}
+/* the zoomed seal (zoomSpot): 122px, 90% of the old 136px, above its dot and taking no pointer, so the dot keeps the hover */
+.tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:122px;height:122px;pointer-events:none;border-radius:50%;background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(30,26,20,.06),0 16px 40px rgba(30,26,20,.22);display:none}
 .tlLoupe .lf,.tlLoupe .lf svg{width:100%;height:100%;display:block}
 .tlLoupe .cap{position:absolute;left:50%;top:100%;margin-top:8px;transform:translateX(-50%);width:max-content;max-width:280px;background:var(--velvet,#221f1b);color:#f6f1e6;font:600 11px/1.35 var(--sans);padding:5px 10px;border-radius:8px;text-align:center}
 .tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
@@ -541,11 +566,11 @@
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
 .tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
 .tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
-.tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transform-origin:50% 30%;transition:transform .16s ease-in,opacity .16s ease-in}
-.tlMini .f{opacity:0;background:#fffefb;box-shadow:0 3px 7px rgba(20,16,10,.22)}
+/* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
+.tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
+.tlMini .f{visibility:hidden}
 .tlMini:hover,.tlMini:focus-visible{z-index:6;outline:0}
-.tlMini:hover>span,.tlMini:focus-visible>span{transform:rotate(var(--rot,0deg)) scale(4.4);transition:transform .22s cubic-bezier(.2,.8,.2,1),opacity .12s}
-.tlMini:hover .s,.tlMini:focus-visible .s{opacity:0}.tlMini:hover .f,.tlMini:focus-visible .f{opacity:1}
+.tlMini:hover .s,.tlMini:focus-visible .s{transform:rotate(var(--rot,0deg)) scale(1.12)}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
 `;
   function css() {
@@ -654,7 +679,7 @@
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll");
-    let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, loupeOff = [0, 0], hideA = null;
+    let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, hideA = null;
     // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
     let lanesHtml = "", detHtml = "";
     const detUid = "tlDet" + (++UID);
@@ -1037,7 +1062,8 @@
       return null;
     }
 
-    /* ── the loupe: a hovered stamp grows to 136px on its own layer, so nothing clips it ── */
+    /* ── the loupe: a hovered dot's seal zooms to 122px ABOVE it on its own layer (zoomSpot), so nothing clips it and
+       the dot stays in sight under the pointer ── */
     function evOfEl(b) {
       if (b.dataset.key) return S.byKey.get(b.dataset.key) || null;
       const i = STAGES.findIndex(s => s.k === b.dataset.stage); if (i < 0 || !S.D) return null;
@@ -1049,29 +1075,26 @@
       const e = evOfEl(b); if (!e) return;
       if (hideA) { try { hideA.cancel(); } catch (_) {} hideA = null; }
       if (loupeFor && loupeFor !== b) liftOf(loupeFor).classList.remove("lifted");
-      const lift = liftOf(b), r = lift.getBoundingClientRect(), SZ = 136, s0 = Math.max(.1, r.width / SZ), rot = rotOf(e);
+      // above the dot itself; a flip goes under the whole stop, so a rail step keeps its name in sight
+      const lift = liftOf(b), d = lift.getBoundingClientRect(), bb = b.getBoundingClientRect(), rot = rotOf(e);
+      const r = { left: d.left, width: d.width, top: d.top, bottom: Math.max(d.bottom, bb.bottom) };
       const cap = e.text && e.text !== labelOf(e.type) ? e.text : "";
       loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>${cap ? `<div class="cap">${esc(cap.length > 110 ? cap.slice(0, 108) + "…" : cap)}</div>` : ""}`;
-      loupe.style.display = "block"; loupe.style.transform = "none";
-      // a transformed ancestor would move a fixed layer's origin: measure where it really is
-      const o = loupe.getBoundingClientRect(); loupeOff = [o.left, o.top];
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, vw = root.innerWidth || 1200, vh = root.innerHeight || 800;
-      const tx = clamp(cx, SZ / 2 + 8, vw - SZ / 2 - 8), ty = clamp(cy, SZ / 2 + 8, vh - SZ / 2 - (cap ? 60 : 8));
-      const to = `translate(${tx - SZ / 2 - loupeOff[0]}px,${ty - SZ / 2 - loupeOff[1]}px)`;
-      loupe.style.transform = to;
+      const p = zoomIn(loupe, r, quiet), vw = root.innerWidth || 1200, tx = p.x + ZSZ / 2;
       const capEl = cap && loupe.querySelector(".cap");
-      if (capEl) { const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`; }
+      if (capEl) {
+        if (p.up) { capEl.style.top = `${Math.round(r.bottom + ZGAP - p.y)}px`; capEl.style.marginTop = "0"; }   // under the dot, never over it
+        const cw = capEl.offsetWidth / 2, sh = Math.min(0, vw - 8 - (tx + cw)) || Math.max(0, 8 - (tx - cw)); if (sh) capEl.style.transform = `translateX(calc(-50% + ${Math.round(sh)}px))`;
+      }
       loupeFor = b; lift.classList.add("lifted");
-      if (!quiet) anim(loupe, [{ transform: `translate(${cx - SZ / 2 - loupeOff[0]}px,${cy - SZ / 2 - loupeOff[1]}px) scale(${s0})`, opacity: .6 }, { transform: to, opacity: 1 }], 220);
     }
     function hideLoupe(now) {
       const b = loupeFor; if (!b) return;
       loupeFor = null;
       const lift = liftOf(b);
       const done = () => { hideA = null; lift.classList.remove("lifted"); if (!loupeFor) loupe.style.display = "none"; };
-      if (now || reduced() || !lift.isConnected) return done();
-      const r = lift.getBoundingClientRect(), SZ = 136;
-      hideA = anim(loupe, [{ transform: loupe.style.transform, opacity: 1 }, { transform: `translate(${r.left + r.width / 2 - SZ / 2 - loupeOff[0]}px,${r.top + r.height / 2 - SZ / 2 - loupeOff[1]}px) scale(${Math.max(.1, r.width / SZ)})`, opacity: .6 }], 160, { easing: "ease-in" });
+      if (now || !lift.isConnected) return done();
+      hideA = zoomOut(loupe);
       if (hideA) hideA.finished.then(done, () => { lift.classList.remove("lifted"); }); else done();
     }
     const HOVER = ".tlSt[data-key], .tlStop.d, .tlStop.x";
@@ -1215,7 +1238,12 @@
   }
   function wireNow(card, onOpen) {
     if (!card) return;
-    card.querySelectorAll(".tlMini[data-tl-ev]").forEach(b => { b.onclick = ev => { ev.preventDefault(); if (typeof onOpen === "function") { try { onOpen({ id: b.dataset.tlEv }); } catch (err) { warn("onOpen", err); } } }; });
+    card.querySelectorAll(".tlMini[data-tl-ev]").forEach(b => {
+      b.onclick = ev => { ev.preventDefault(); nowZoom(card, null); if (typeof onOpen === "function") { try { onOpen({ id: b.dataset.tlEv }); } catch (err) { warn("onOpen", err); } } };
+      b.onpointerenter = b.onfocus = () => nowZoom(card, b);
+      b.onpointerleave = b.onblur = () => { if (card._tlZoomFor === b) nowZoom(card, null); };
+    });
+    if (card._tlZoomFor && !card._tlZoomFor.isConnected) nowZoom(card, null, true);   // repainted under the pointer
     const cx = card.querySelector(".tlNowSeal.cx"), s = card.querySelector(".tlNowSeal:not(.cx)");
     if (cx && card._tlCx !== cx.dataset.at) {
       card._tlCx = cx.dataset.at;
@@ -1224,6 +1252,27 @@
     if (!cx) card._tlCx = null;
     if (s && card._tlLast && card._tlLast !== s.dataset.key) { const r = s.style.getPropertyValue("--rot"); anim(s, [{ transform: `rotate(${r}) scale(1.6)`, opacity: 0 }, { transform: `rotate(${r}) scale(.94)`, opacity: 1, offset: .55 }, { transform: `rotate(${r}) scale(1)`, opacity: 1 }], 600, { easing: DROP }); }
     card._tlLast = s ? s.dataset.key : null;
+  }
+
+  /* the card's stamps zoom like the timeline's: b's full face on the card's own 122px layer above it (zoomSpot); null
+     eases it away. The face's ids are renamed in the copy so the page never holds two of one id. */
+  function nowZoom(card, b, now) {
+    let L = card._tlZoom;
+    if (b) {
+      const f = b.querySelector(".f"); if (!f) return;
+      if (!L || !L.isConnected) { L = card._tlZoom = doc.createElement("div"); L.className = "tlLoupe tlNowZoom"; L.setAttribute("aria-hidden", "true"); card.appendChild(L); }
+      if (card._tlZoomA) { try { card._tlZoomA.cancel(); } catch (_) {} card._tlZoomA = null; }
+      let h = f.innerHTML; const ids = [...new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))];
+      for (const id of ids) h = h.split(`id="${id}"`).join(`id="${id}-z"`).split(`#${id})`).join(`#${id}-z)`).split(`#${id}"`).join(`#${id}-z"`);
+      L.innerHTML = `<div class="lf" style="transform:rotate(${b.style.getPropertyValue("--rot") || "0deg"})">${h}</div>`;
+      const quiet = !!card._tlZoomFor; card._tlZoomFor = b;
+      zoomIn(L, b.getBoundingClientRect(), quiet);
+      return;
+    }
+    card._tlZoomFor = null; if (!L || L.style.display === "none") return;
+    const done = () => { card._tlZoomA = null; if (!card._tlZoomFor) L.style.display = "none"; };
+    const a = now || !L.isConnected ? null : zoomOut(L);
+    card._tlZoomA = a; if (a) a.finished.then(done, () => {}); else done();
   }
 
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
