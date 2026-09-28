@@ -1864,23 +1864,49 @@ async function op_customDecide(b) { return require("./_charmNestCustomRead").dec
 
 const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun});
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
-   record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull. ── */
+   record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
+   Since 28 Sep (A1 · A6) Etsy's own cancels land in the same record (by "Etsy", source "etsy", etsyStatus), written by
+   the inbox's receipts mirror; every writer goes through _orderCancel.js, which also stamps the order's timeline. ── */
 const CANCELLED = "Charm_Nest_Cancelled";
+const OrderCancel = require("./_orderCancel");
 const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
+/* source: "sorter" (a person cancelled it, the default) or "etsy" (the sorter saw Etsy had cancelled it; the record then
+   says by "Etsy" and the person is kept on the timeline event). etsyStatus: Etsy's word, when known. A record already
+   there is never lost: see _orderCancel.js (a person's stays over a later Etsy detection, which only adds etsyStatus). */
 async function op_cancelPut(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
-  const r = b.record && typeof b.record === "object" ? b.record : {};
-  const lines = (Array.isArray(r.lines) ? r.lines : []).slice(0, 60).map(l => ({ transactionId: str(l && l.transactionId, 30), sku: str(l && l.sku, 80), title: str(l && l.title, 200), quantity: Math.max(1, Math.round(num(l && l.quantity)) || 1), material: str(l && l.material, 40) }));
-  const doc = { orderId: id, by: str(b.by || "operator", 80), why: str(b.why, 400), at: Date.now(), buyer: str(r.buyer, 120), placedAt: num(r.placedAt), shipBy: num(r.shipBy),
-    sheets: (Array.isArray(r.sheets) ? r.sheets : []).slice(0, 30).map(x => str(x, 100)), lines, createdAt: FV.serverTimestamp() };
-  await col(CANCELLED).doc(id).set(doc);
-  delete doc.createdAt; return { ok: true, record: doc };
+  const r = b.record && typeof b.record === "object" ? b.record : {}, who = str(b.by || "operator", 80);
+  const rec = OrderCancel.record({ orderId: id, by: who, why: str(b.why, 400), at: Date.now(), buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines,
+    source: b.source === "etsy" ? "etsy" : "sorter", etsyStatus: str(b.etsyStatus || r.etsyStatus, 40) });
+  const out = await OrderCancel.put(db, FV, rec, { prefix: PREFIX, person: who, detectedBy: "sorter", eventId: str(b.eventId, 80) });
+  return out.error ? out : { ok: true, record: out.record, created: out.created, kept: out.kept };
 }
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
   if (b.idsOnly) { const s = await col(CANCELLED).select("orderId").limit(5000).get(); return { ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }; }
   const s = await col(CANCELLED).orderBy("at", "desc").limit(n).get();
-  return { list: s.docs.map(d => { const x = d.data(); delete x.createdAt; return x; }), truncated: s.size >= n };
+  // a record from before `source` was kept reads as a person's (or Etsy's, when it says so)
+  return { list: s.docs.map(d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; }), truncated: s.size >= n };
+}
+/* The one-off sweep (by hand: POST {op:"cancelSweep", dryRun?}): every receipt the inbox's mirror keeps as cancelled
+   (EtsyMail_Receipts, one equality query per status) gets its record, for the cancels older than the mirror's watermark.
+   Idempotent; answers more:true when its time ran out, so it is called again until more is false. Production only. */
+async function op_cancelSweep(b) {
+  if (PREFIX) return { error: "the sweep fills the real orders' cancel records; in the sandbox use sandboxCancel" };
+  return OrderCancel.sweep(db, FV, { dryRun: b.dryRun === true || b.dryRun === 1 || b.dryRun === "1", budgetMs: 7000 });
+}
+/* The sandbox's pretend Etsy cancel ({orderId, etsyStatus?}): the order is cancelled in the Sandbox_ records exactly as
+   the mirror would record Etsy's cancel (by "Etsy", source "etsy"), so the sorter's and the stations' handling of it can
+   be tried with no real order touched. What was ordered is read from the inbox's mirror of the order when it has one
+   (the sandbox plays real orders under their real numbers), else from `record`. Never writes production. */
+async function op_sandboxCancel(b) {
+  const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
+  const snap = await db.collection(OrderCancel.RECEIPTS).doc(id).get().catch(() => null);
+  const status = str(b.etsyStatus, 40) || "Canceled", now = Date.now();
+  const rec = snap && snap.exists ? Object.assign(OrderCancel.fromReceipt(Object.assign({}, snap.data(), { receipt_id: id, status })), { at: now, etsyAt: now })
+    : (r => OrderCancel.record({ orderId: id, source: "etsy", at: now, etsyStatus: status, buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines }))(b.record && typeof b.record === "object" ? b.record : {});
+  const out = await OrderCancel.put(db, FV, rec, { prefix: "Sandbox_", person: str(b.by, 80), detectedBy: "sandbox" });
+  return out.error ? out : { ok: true, sandbox: true, record: out.record, created: out.created, kept: out.kept };
 }
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
@@ -1892,7 +1918,7 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   masterPutIndex: op_masterPutIndex, masterGet: op_masterGet, masterGetMany: op_masterGetMany, masterList: op_masterList, masterPatch: op_masterPatch, masterPutFile: op_masterPutFile, masterListFiles: op_masterListFiles, masterRemoveFile: op_masterRemoveFile, masterRemoveSku: op_masterRemoveSku, startMaster: op_startMaster,
   jobList: op_jobList, poolPut: op_poolPut, poolUpdate: op_poolUpdate, poolList: op_poolList, poolGet: op_poolGet, backPut: op_backPut, backInvalidate: op_backInvalidate, backList: op_backList, sandboxPut: op_sandboxPut, sandboxStatus: op_sandboxStatus, sandboxReset: op_sandboxReset, sandboxStream: op_sandboxStream,
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
-  cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
+  cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
 
