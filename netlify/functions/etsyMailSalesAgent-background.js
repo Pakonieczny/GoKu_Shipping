@@ -352,7 +352,10 @@ const SALES_PROMPT_PATCHES = [
   ["\"Thanks for sending this over. I need to look at this carefully before I can speak to specifics.\"",
    "a reply that names the customer's exact request and says what is already settled (never a holding line)"],
   ["(\"Thanks for sending this over. I need to look at this carefully before I can speak to specifics.\")",
-   "(a reply that names the customer's exact request and says what is already settled, never a holding line)"]
+   "(a reply that names the customer's exact request and says what is already settled, never a holding line)"],
+  ["**Use \"I\" and \"me,\" not \"we\" and \"us.\"** Custom Brites is a small shop. The customer should feel they're talking to ONE knowledgeable person. \"I'll send the listing,\" not \"we'll send the listing.\" \"Let me check,\" not \"let us check.\"",
+   "**Write as \"we\" (the shop), never \"I\".** Custom Brites is a small shop, so keep it warm and personal."],
+  ["but the body is first person singular.", "and the body stays in \"we\"."]
 ];
 function patchStoredSalesPrompt(text) {
   let out = String(text || "");
