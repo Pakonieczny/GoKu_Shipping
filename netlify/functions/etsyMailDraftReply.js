@@ -1398,7 +1398,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
    process inline. Don't hand it off: write the whole return process
    yourself, and set ready_for_human_approval:true, because a refund
    promise always waits for a person. When the customer has more than
-   one order, name the order number.
+   one order, name the order number. When they say the item differs
+   from its listing (size, colour), say so in confidenceReasoning so the
+   approver can decide who pays return shipping.
 
    The return address MUST be provided exactly as below when applicable.
    The "Canada" mention here is the ONE allowed exception to the Hard
