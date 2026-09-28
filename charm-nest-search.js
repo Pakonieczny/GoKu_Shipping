@@ -269,7 +269,7 @@
   }
 
   /* ═══ the window ═══ */
-  const UI = { root: null, box: null, q: null, list: null, halo: null, msg: null, count: null, nodes: new Map(), R: null, sel: 0, shown: [], cloud: null, lastCount: 0, tick: 0, watch: 0, opening: false };
+  const UI = { root: null, box: null, q: null, list: null, halo: null, msg: null, count: null, nodes: new Map(), R: null, sel: 0, shown: [], cloud: null, lastCount: 0, tick: 0, watch: 0, opening: false, closing: false };
   const ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>`;
   const STYLE = `
 .cnsFind{flex:0 1 232px;min-width:34px;display:flex;align-items:center;gap:8px;height:30px;padding:0 7px 0 10px;border:1px solid var(--line);border-radius:9px;background:var(--card2);color:var(--ink45);font:500 12px var(--sans);cursor:pointer;white-space:nowrap;overflow:hidden;transition:border-color .2s,box-shadow .2s,background .2s,color .2s}
@@ -295,7 +295,7 @@
 .cnsCount b{color:var(--ink);font-size:13px}
 .cnsRes{position:relative;overflow:auto;padding:10px;min-height:0;flex:1 1 auto;overscroll-behavior:contain}
 .cnsList{display:grid;gap:8px;position:relative;z-index:1}
-.cnsHalo{position:absolute;left:10px;right:10px;top:0;height:0;border-radius:12px;border:1px solid var(--goldLine);box-shadow:0 0 0 3px rgba(202,168,97,.2),0 10px 28px rgba(169,130,63,.14);pointer-events:none;z-index:2;opacity:0;transition:transform .26s ${SPRING},height .22s ${E},opacity .18s}
+.cnsHalo{position:absolute;left:10px;right:10px;top:0;height:0;border-radius:12px;border:1px solid var(--goldLine);box-shadow:0 0 0 3px rgba(202,168,97,.2),0 10px 28px rgba(169,130,63,.14);pointer-events:none;z-index:2;opacity:0;transition:transform .26s ${SPRING},opacity .18s}
 .cnsHalo.on{opacity:1}
 .cnsCard{position:relative;display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--card);cursor:pointer;transition:border-color .18s,background .18s}
 .cnsCard:hover{border-color:var(--ink25)}
@@ -377,6 +377,8 @@
     root.addEventListener("pointermove", e => { const card = e.target.closest && e.target.closest(".cnsCard"); if (!card) return; const i = UI.shown.findIndex(h => h.e.rid === card.dataset.rid); if (i >= 0 && i !== UI.sel) select(i, true); }, { passive: true });
     // Tab stays in the box: the list is walked with the arrows
     root.addEventListener("keydown", e => { if (e.key === "Tab") { e.preventDefault(); UI.q.focus(); } });
+    // (a click anywhere in the box leaves the focus in the field: Esc, the arrows, Enter and typing stay with it)
+    root.addEventListener("mousedown", e => { if (e.target !== UI.q) e.preventDefault(); });
   }
   function trigger() {
     style();
@@ -392,9 +394,12 @@
   }
   function warm() { try { ensure(); } catch (e) { console.warn("order search index", e); } readCancelled(); }
 
-  const isOpen = () => !!(UI.root && !UI.root.hidden);
+  const isOpen = () => !!(UI.root && !UI.root.hidden && !UI.closing);
   function open(prefill) {
     mount();
+    // (still fading out after Esc: "/" or Ctrl+K pressed meanwhile opens it again, from where the fade is)
+    const back = UI.closing ? +getComputedStyle(UI.root).opacity : null;
+    if (back != null) { UI.closing = false; for (const a of UI.root.getAnimations({ subtree: true })) if (a.effect && a.effect.target && (a.effect.target === UI.root || a.effect.target === UI.box)) a.cancel(); UI.root.style.opacity = ""; UI.root.hidden = true; }
     if (isOpen()) { UI.q.focus(); UI.q.select(); return; }
     readCancelled();
     try { ensure(); } catch (e) { console.warn("order search index", e); }
@@ -405,7 +410,8 @@
     UI.nodes.forEach(n => n.remove()); UI.nodes.clear(); UI.lastCount = IX.list.length;
     refresh(true);
     UI.q.focus(); UI.q.select();
-    if (!reduced()) {
+    if (back != null && !reduced()) UI.root.animate([{ opacity: back }, { opacity: 1 }], { duration: 160, easing: "ease-out" });
+    else if (!reduced()) {
       UI.root.querySelector(".cnsBd").animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: "ease" });
       UI.box.animate([{ opacity: 0, transform: "translateY(-10px) scale(.98)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: E });
     }
@@ -418,7 +424,8 @@
     cloudAbort(); clearInterval(UI.watch);
     // focus goes back where it was (a hidden box kept it, and "/" then read as typing), unless a window took it meanwhile
     const root = UI.root, back = () => { const a = doc.activeElement; if (a && a !== doc.body && !root.contains(a)) return; const p = UI.prev; if (p && p.isConnected && p !== doc.body && !p.closest("[hidden],dialog:not([open])")) { try { p.focus({ preventScroll: true }); } catch (_) {} } if (root.contains(doc.activeElement)) doc.activeElement.blur(); };
-    const done = () => { root.hidden = true; root.style.opacity = ""; back(); };
+    UI.closing = true;
+    const done = () => { if (!UI.closing) return; UI.closing = false; root.hidden = true; root.style.opacity = ""; back(); };
     back();
     if (fast || reduced()) return done();
     UI.box.animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(-6px) scale(.99)" }], { duration: 160, easing: "ease-in" });
@@ -429,9 +436,11 @@
   /* One keystroke: the pass over the index, the cards, and the cloud if it comes to that. */
   function refresh(typed) {
     if (!isOpen()) return;
+    const was = !typed && UI.shown[UI.sel] ? UI.shown[UI.sel].e.rid : null;
     const R = UI.R = query(UI.q.value);
     UI.lastMs = R.ms;
     if (typed) { cloudAbort(); UI.sel = 0; }
+    else if (was) { const i = R.hits.findIndex(h => h.e.rid === was); if (i >= 0) UI.sel = i; }   // (the order chosen, not its place)
     paint(R);
     ticker(R);
     if (typed) planCloud(R);
@@ -499,12 +508,14 @@
     const off = list.firstChild === UI.head ? 1 : 0;
     order.forEach((n, i) => { if (list.children[i + off] !== n) list.insertBefore(n, list.children[i + off] || null); });
     if (anim) {
+      // (a card still gliding goes on from where it is seen: its glide ends before its new place is read)
+      for (const n of order) if (n._glide) { n._glide.cancel(); n._glide = null; }
       let k = 0;
       for (const n of order) {
         if (n._fresh) { n._fresh = false; n.animate([{ opacity: 0, transform: "translateY(8px) scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220, delay: Math.min(k++, 8) * 30, easing: E, fill: "backwards" }); continue; }
         const was = before.get(n.dataset.rid); if (was == null) continue;
         const dy = was - n.getBoundingClientRect().top;
-        if (Math.abs(dy) > 1) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 280, easing: E });
+        if (Math.abs(dy) > 1) n._glide = n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 280, easing: E });
       }
     }
     select(Math.min(UI.sel, Math.max(0, shown.length - 1)), true);
@@ -602,6 +613,7 @@
   const typing = t => !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) && !(UI.root && UI.root.hidden && UI.root.contains(t)));
   doc.addEventListener("keydown", e => {
     const k = e.key, cmdK = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (k === "k" || k === "K");
+    if (k === "Escape" && isOpen() && e.target !== UI.q && !doc.querySelector("dialog[open]")) { e.preventDefault(); close(); return; }
     const slash = k === "/" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing(e.target);
     if (!cmdK && !slash) return;
     if (isOpen()) { if (cmdK) { e.preventDefault(); UI.q.focus(); UI.q.select(); } return; }
