@@ -1416,8 +1416,11 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
 
    The template above is the ONE case where verbatim emission is
    preferred (return-address accuracy matters more than tonal
-   variation). Only match the item count: for a single item write
-   "it" and "its" where the template says "these", "them" and "they". For everything else in this section, you compose the
+   variation). Only three changes are allowed: match the item count
+   (for a single item write "it" and "its" where the template says
+   "these", "them" and "they"), name the order number when there is
+   more than one order, and drop "Thanks for following up." when it
+   doesn't fit (a first message or a complaint). For everything else in this section, you compose the
    reply yourself from the policy.
 
    ─── Returns: personalized items ───
