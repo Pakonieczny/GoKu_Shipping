@@ -6733,6 +6733,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
+    let flying = false;
     try {
       // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
       for (const F of e.files) {
@@ -6745,21 +6746,26 @@ const CustomSheet = window.CustomSheet = (() => {
       e.sent = { at: Date.now(), by: who, lines }; changed();
       say("Placing on the sheets…");
       for (const r of rows) await Review.repool(r);
+      agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
+      for (const r of rows) TL.line(r, "designSent", { id: `${r.key}.${e.sent.at}`, at: e.sent.at, by: who, text: `Custom design${e.files.length === 1 ? "" : "s"} sent to the sheets by ${who}: ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0, 200), data: { files: e.files.map(F => ({ name: F.name, qty: F.qty, metal: F.metal, pieces: F.pieces })).slice(0, 12), pieces: (lines[r.key] || []).length, placed: r.state === "pooled" } });
       busy.delete(ck); redraw();
       // the window goes back into its card, and a copy of the designs is seen going to the sheets (the Nest tab), which
-      // says what came (Paul, 27 Sep 20:09-20:24); a toast only when that tab is out of sight
-      const shutting = !!(D.dlg && D.dlg.open && D.ck === ck); if (shutting) shut();
+      // says what came (Paul, 27 Sep 20:09-20:24); a toast only when that tab is out of sight. All the redrawing above
+      // (the card, the sheets, the lists: 50-110 ms) is laid out in a frame of its own first, and nothing is redrawn
+      // after the window starts to go: it was, in the same task, and the copies started late and stuttered (28 Sep)
+      let shutting = !!(D.dlg && D.dlg.open && D.ck === ck);
+      if (shutting && !motionOff()) { await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0))); shutting = !!(D.dlg && D.dlg.open && D.ck === ck); }
+      if (shutting) shut();
       const placed = rows.filter(r => r.state === "pooled"), n = Object.values(lines).reduce((a, l) => a + l.length, 0), metals = [...new Set(e.files.map(F => labelOf(F.metal)))].join(" and ");
       const held = rows.find(r => r.state === "held" && r.reason);
       const sheets = `the ${metals} sheet${new Set(e.files.map(F => F.metal)).size > 1 ? "s" : ""}`;
       const words = placed.length ? `Order ${e.rid}: ${plural(n, "custom piece")} on ${sheets}` : `Order ${e.rid} is sent: ${n === 1 ? "its piece goes" : "its pieces go"} on ${sheets} with the next run`;
       if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
-      else if (!toSheets(ck, n, words, shutting ? 700 : 0)) toast(words, "ok", 6000);
-      agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
-      for (const r of rows) TL.line(r, "designSent", { id: `${r.key}.${e.sent.at}`, at: e.sent.at, by: who, text: `Custom design${e.files.length === 1 ? "" : "s"} sent to the sheets by ${who}: ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0, 200), data: { files: e.files.map(F => ({ name: F.name, qty: F.qty, metal: F.metal, pieces: F.pieces })).slice(0, 12), pieces: (lines[r.key] || []).length, placed: r.state === "pooled" } });
+      else if (toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;
+      else toast(words, "ok", 6000);
     } catch (err) {
       busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
-    } finally { redraw(); }
+    } finally { if (!flying) redraw(); }
   }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
   async function prepare(row, run) {
