@@ -1972,6 +1972,15 @@ function shouldForceLineSheetSpecStep(parsed, validationContext = {}) {
   // listing (a bracelet or other variation ordered with a note): the sheet
   // would replace that answer, and prices a person sets stay in missing_facts.
   if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(String((parsed && parsed.reply) || ""))) return { force: false };
+  // Same when the agent looked the customer's listing up this turn and
+  // answers from it, leaving only prices a person sets in missing_facts
+  // (the reply may name the listing without pasting its link).
+  const called = Array.isArray(validationContext.toolNamesCalled) ? validationContext.toolNamesCalled : [];
+  if (called.includes("lookup_listing_by_url")
+      && Array.isArray(parsed && parsed.missing_facts) && parsed.missing_facts.length
+      && !customerSelectableMissingItems(parsed).length) {
+    return { force: false };
+  }
   const inboundText = String(validationContext.latestInboundText || "");
   if (/etsy\.com\/(?:[a-z]{2}\/)?listing\/\d+/i.test(inboundText)
       && !/\b(custom|design|make|made|create|personali[sz]e|instead|different|change|mix|combine|bigger|smaller|larger|similar|version|based\s+on|modif\w*|adjust|swap)\b/i.test(inboundText)) {
@@ -2207,7 +2216,7 @@ function validateOptionCConsistency({ parsed, toolNamesCalled, validationContext
   // the family is known but customer-selectable specs are still missing,
   // the next useful sales move is not a holding reply. It is to attach the
   // family line sheet and ask the customer to pick/confirm the needed specs.
-  const forcedLineSheet = shouldForceLineSheetSpecStep(parsed, validationContext);
+  const forcedLineSheet = shouldForceLineSheetSpecStep(parsed, { ...validationContext, toolNamesCalled });
   if (forcedLineSheet.force && (na === "escalate_to_human" || na === "ask_one_question")) {
     violations.push(na === "escalate_to_human"
       ? "escalated_before_customer_specs"
