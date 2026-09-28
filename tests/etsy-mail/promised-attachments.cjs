@@ -21,6 +21,7 @@ Module._load = function (req, parent, ...rest) {
   return realLoad.call(this, req, parent, ...rest);
 };
 const C = require(path.join(FN, "etsyMailCollateral.js"));
+const S = require(path.join(FN, "etsyMailDraftSend.js"));
 Module._load = realLoad;
 
 // The owner's uploaded sheets, as stored (every doc is kind "line_sheet").
@@ -103,6 +104,20 @@ async function test(name, fn) {
     const r = await C.attachClaimedCollateral("I've attached a photo of your finished charm.", [], { pool: POOL, askModel: false });
     assert.equal(r.add.length, 0);
     assert.deepEqual(r.missing.map(c => c.kind), ["photo"]);
+  });
+
+  await test("one tracking label or file goes out once, however many copies arrive", () => {
+    // Nathan Baum's draft (2026-09-28): the draft's own tracking record and
+    // the inbox's chip for the same label, plus a repeated sheet.
+    const code = "9212490362894333515469";
+    const out = S.normalizeAttachments([
+      { type: "tracking_image", trackingCode: code, carrier: null, proxyUrl: "/t?trackingCode=" + code },
+      { attachmentId: "trk_" + code, type: "tracking_image", trackingCode: code, carrier: "USPS", proxyUrl: "/t?trackingCode=" + code },
+      { type: "tracking_image", trackingCode: "42060177" + code, proxyUrl: "/t?trackingCode=42060177" + code },
+      chip("neck"), chip("neck"), chip("care")
+    ]);
+    assert.equal(out.filter(a => a.type === "tracking_image").length, 1);
+    assert.equal(out.filter(a => a.type === "image").length, 2);
   });
 
   console.log(passed + " promised-attachment tests passed");
