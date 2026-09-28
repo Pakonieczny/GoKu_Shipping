@@ -7,12 +7,13 @@
  *                                           stages: OrderTimelineUI.stagesFor(lines) | () => its steps })
  *    tl.refresh() → Promise   tl.focus(eventId | event) → true when shown   tl.destroy()
  *    onEvents/onNow tell the host what is drawn after every change; onOpen is compact's "open this on the Timeline".
- *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring); isStud(line) → whether it is one.
+ *    stagesFor(line | lines) → a piece's own steps (Welded only for a stud earring, Engraved only with a back engraving);
+ *    isStud(line) → whether it is a stud; engraveOf(line) → true/false, null when not known yet.
  *
  *  Reads OrderTimeline.get(orderId) → { events, cancelled, where }. Draws, top to bottom:
  *    Now + milestone rail  where the order is right now (the server's `where`), and one stamp per step of its own
- *                          rail (Order in → Nested → Engraved → Laser cut → Sorted → [Welded] → Assembled → Shipped;
- *                          Welded only when a piece is a stud earring): passed steps stamped, the next one pulsing, the ones to come
+ *                          rail (Order in → Nested → [Engraved] → Laser cut → Sorted → [Welded] → Assembled → Shipped;
+ *                          Welded only when a piece is a stud earring, Engraved only when one has a back engraving): passed steps stamped, the next one pulsing, the ones to come
  *                          faint outlines; a cancelled order gets a red CANCELLED stamp across the rail
  *    filters               All · Milestones · Stations · Sheets · Holds & cancels · Messages, with counts, and Stamps
  *                          (the legend); non-matches dim, nothing moves
@@ -155,14 +156,15 @@
   const stationName = e => STATION_NAME[e.station] || (LANE[e.lane] || LANE.office).l;
   // the milestone rail (Paul, 28 Sep 21:18; the server's `where.rail`/`where.step`): the real steps a piece goes through,
   // in process order. Each step: the events that stand for it (the stamp it shows, the event a click opens) and the lane
-  // its dashed stamp waits on. `only: "stud"`: a step only a stud earring takes; for any other piece it reads `none`.
+  // its dashed stamp waits on. `only`: a step only some pieces take ("stud": a stud earring; "engrave": a piece with a
+  // back engraving); for any other piece it reads `none` and stagesFor leaves it out.
   // Approving (a sheet committed, a SKU decided) is not a step: what it needs is said under the step it blocks. Etsy's
   // completion folds into Shipped. Engraved: the piece's back engraving approved in Engrave, which writes it into its
   // sheet's back file for the laser (backPut records engraveApproved, who and when; older orders: Charm_Pool_Back).
   const STAGES = [
     { k: "arrived", l: "Order in", types: ["arrived"], kind: "arrived", lane: "etsy" },
     { k: "sheet", l: "Nested", types: ["placed", "renested"], kind: "placed", lane: "sheet" },
-    { k: "engraved", l: "Engraved", types: ["engraveApproved"], kind: "engraveApproved", lane: kindOf("engraveApproved").lane },
+    { k: "engraved", l: "Engraved", types: ["engraveApproved"], kind: "engraveApproved", lane: kindOf("engraveApproved").lane, only: "engrave", none: "No engraving" },
     { k: "laser", l: "Laser cut", types: ["laserDone", "roseCut"], kind: "laserDone", lane: "sheet" },
     { k: "sorted", l: "Sorted", types: ["sorted"], kind: "sorted", lane: "sorting" },
     { k: "welded", l: "Welded", types: ["welded"], kind: "welded", lane: "welding", only: "stud", none: "No welding" },
@@ -187,16 +189,41 @@
     return text ? STUD.test(text) && !NOT_STUD.test(text) : null;
   }
   const isStud = x => studOf(x) === true;
-  /** A piece's own steps: STAGES, with Welded only when the piece is a stud earring. Every piece of an order (an array):
-      the order's steps, Welded when any piece is a stud (or is not read yet). Nothing given: every step. */
+  /* Whether a piece carries a back engraving, read as the sorter reads it (Paul, 28 Sep: a step a piece never takes is not
+     shown). The line's Engrave state first (row.engrave): "none" (nothing to engrave, or a person said so) and "skipped"
+     (cut plain) rule it out; words, ready, blocked or written mean it has one; classify/reclassify are still reading. Then
+     its spec (CharmNestOrders.interpretLine): engraveCandidate false (no personalisation, buyer message, note, nor a Team
+     message that says more than a workflow stamp like "DESIGNED :)" or "QA1", engravingNote) or noDesign (never cut)
+     rule it out. Takes the sorter's row ({ spec, engrave }) or a piece's line carrying the same fields. null: not known
+     yet (an Etsy line alone: its order's message may still ask for one), which keeps the step. */
+  const ENGRAVES = new Set(["words", "ready", "blocked", "written"]);
+  function engraveOf(x) {
+    if (!x || typeof x !== "object") return null;
+    const g = x.engrave && typeof x.engrave === "object" ? x.engrave : null;
+    if (g && (g.state === "none" || g.state === "skipped")) return false;
+    if (g && (ENGRAVES.has(g.state) || (g.needed === true && !g.state))) return true;
+    const spec = x.spec && typeof x.spec === "object" ? x.spec : x;
+    if (spec.noDesign === true || spec.engraveCandidate === false) return false;
+    return null;
+  }
+  /** A piece's own steps: STAGES, with Welded only when the piece is a stud earring and Engraved only when it carries a
+      back engraving. Every piece of an order (an array): the order's steps, a step shown when any piece takes it (or is
+      not read yet). Nothing given: every step. */
   function stagesFor(line) {
     const list = (Array.isArray(line) ? line : [line]).filter(x => x && typeof x === "object");
     if (!list.length) return STAGES;
-    const weld = list.some(x => studOf(x) !== false);
-    return STAGES.filter(s => s.only !== "stud" || weld);
+    const weld = list.some(x => studOf(x) !== false), engrave = list.some(x => engraveOf(x) !== false);
+    return STAGES.filter(s => (s.only !== "stud" || weld) && (s.only !== "engrave" || engrave));
   }
   const ALL_STAGES = STAGES;   // (mount's own `STAGES` is the order's steps)
   const STOP_OF = {}; STAGES.forEach((s, i) => s.types.forEach(t => { STOP_OF[t] = i; }));
+  /* a piece's (or order's) own steps, plus any step it was given all the same: a step with an event of its own is always
+     drawn (a necklace that was welded, a plain piece whose back engraving was approved) */
+  function keepDone(r, evs) {
+    r = Array.isArray(r) && r.length ? ALL_STAGES.filter(s => r.some(x => x === s || (x && x.k === s.k))) : ALL_STAGES;
+    if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
+    return r.length ? r : ALL_STAGES;
+  }
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
      `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
@@ -463,7 +490,7 @@
    *  which is where the order is. → { each: [{ p, D, steps, events }], rail: [{ s, i, n, of }], step } */
   function summary(events, pieces, cancelRec) {
     const evs = (events || []).map(x => (x && x.lane ? x : norm(x))).filter(Boolean).sort(byAt), ps = pieces || [];
-    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: stagesFor(p.line) || STAGES, events: list }; });
+    const each = ps.map(p => { const list = evs.filter(e => ofPiece(e, p, ps)); return { p, D: derive(list, cancelRec), steps: keepDone(stagesFor(p.line), list), events: list }; });
     const rail = STAGES.map((s, i) => ({ s, i, n: 0, of: 0 }));
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
@@ -744,11 +771,7 @@
     /* this order's own steps (opts.stages: an array, or a function asked at every redraw, e.g. stagesFor(its lines));
        inside the component they stand in for the full rail, so an order with no stud earring has no Welded step (one
        that was welded all the same keeps it: what happened is always drawn) */
-    const withDone = (r, evs) => {
-      r = Array.isArray(r) && r.length ? ALL_STAGES.filter(s => r.some(x => x === s || (x && x.k === s.k))) : ALL_STAGES;
-      if (r.length < ALL_STAGES.length && (evs || []).some(e => e && own(STOP_OF, e.type) && !r.includes(ALL_STAGES[STOP_OF[e.type]]))) r = ALL_STAGES.filter(s => r.includes(s) || (evs || []).some(e => e && s.types.includes(e.type)));
-      return r.length ? r : ALL_STAGES;
-    };
+    const withDone = keepDone;
     const railNow = evs => { let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); } return withDone(r, evs); };
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
     const S = { events: [], byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, filter: "all", sel: null, legend: false, hl: new Set(), sig: "",
@@ -1407,5 +1430,5 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, KIND, labelOf, nowStamps, wireNow, iconOf };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf };
 })(typeof window !== "undefined" ? window : globalThis);
