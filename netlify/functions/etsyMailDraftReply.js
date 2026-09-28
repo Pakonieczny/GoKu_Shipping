@@ -139,8 +139,13 @@ try {
 let searchCollateral = null;
 let pullCollateralUrlsFromText = null;
 let nameAttachedGuides = null;
+let attachmentClaims = null;
+let attachClaimedCollateral = null;
+let describeClaims = null;
+let missingAttachmentClaims = null;
 try {
-  ({ searchCollateral, pullCollateralUrlsFromText, nameAttachedGuides } = require("./etsyMailCollateral"));
+  ({ searchCollateral, pullCollateralUrlsFromText, nameAttachedGuides,
+     attachmentClaims, attachClaimedCollateral, describeClaims, missingAttachmentClaims } = require("./etsyMailCollateral"));
 } catch (e) {
   console.warn("draftReply: etsyMailCollateral not loadable — get_collateral tool will return graceful empty.", e.message);
   searchCollateral = null;
@@ -4765,6 +4770,10 @@ answering. Do not guess about the order's contents.`;
     // mirrored receipts, this draft's lookups, numbers they sent us). The
     // raw-digit auto-fix further down only renders an image for one of these.
     const _knownTrackingCodes = new Set();
+    // The newest label on the customer's orders: a reply that says the
+    // tracking image is attached gets this one made if it has none.
+    let _newestTrackingCode = null;
+    let _newestTrackingAt = -1;
     // v5.0 — Fetch the raw-document context and prepend it to the
     // preamble. The model reads the actual Firestore documents alongside
     // the conversation turns. The investigation protocol in the system
@@ -4784,6 +4793,8 @@ answering. Do not guess about the order's contents.`;
         const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
         for (const s of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
           if (s && s.tracking_code) { _knownTrackingCodes.add(String(s.tracking_code).replace(/\s+/g, "")); _knownTrackingCodes.add(_cleanTrackingCode(s.tracking_code)); }
+          const at = s && s.tracking_code ? (Number(s.shipment_notification_timestamp) || 0) : -1;
+          if (at > _newestTrackingAt) { _newestTrackingAt = at; _newestTrackingCode = _cleanTrackingCode(s.tracking_code); }
         }
       }
       const rawContextBlock = formatContextForPrompt(AI_SLIM_CONTEXT ? slimContextForDraft(ctx) : ctx);
@@ -5770,7 +5781,15 @@ answering. Do not guess about the order's contents.`;
         && Array.isArray(prefetchedSizingCollateral) && prefetchedSizingCollateral.length > 0);
     const _attachmentClaimRx = /\b(?:i'?ve\s+attached|i\s+have\s+attached|(?:see|find)\s+(?:the\s+|our\s+)?attached|attached\s+(?:below|here|to\s+this|the\s+tracking|are|is|sheet|chart|guide|card|image|photo|picture|file|pdf)|tracking\s+(?:details|image|timeline|info(?:rmation)?|snapshot)\s+(?:below|attached|here)|pulled\s+(?:up\s+)?(?:the\s+)?(?:current\s+)?tracking(?:\s+for\s+you)?\s+below|below\s+(?:you'?ll\s+find|you\s+can\s+(?:see|find)|please\s+(?:see|find)))\b/i;
     const _claimsAttachment = parsed.text && _attachmentClaimRx.test(parsed.text);
-    if (_claimsAttachment && !_hasRealAttachment) {
+    // A promised sheet or guide is added from the uploaded files further
+    // down, and a promised tracking image is made from the newest label,
+    // so only promises nothing can supply are judged here.
+    const _claimsOnlyCollateral = !!(attachmentClaims && parsed.text) && (() => {
+      const cl = attachmentClaims(parsed.text);
+      return cl.length > 0 && cl.every(c => c.kind === "tracking" ? !!_newestTrackingCode
+        : !["photo", "file"].includes(c.kind));
+    })();
+    if (_claimsAttachment && !_hasRealAttachment && !_claimsOnlyCollateral) {
       console.warn(`[draftReply ${threadId}] AI reply claims attachment but no tracking image was generated — forcing to human review`);
       parsed.aiAttachmentClaimMismatch = true;
       parsed.confidence = 0;
@@ -5944,7 +5963,7 @@ answering. Do not guess about the order's contents.`;
     // synthesis step, dropping the image silently. Now both fields are
     // populated at the AI's source-of-truth layer so EVERY downstream
     // consumer (manual UI, auto-pipeline, reapers) sees them.
-    const trackingAttachments = trackingImages.map(img => ({
+    const _trackingAttachmentFor = img => ({
       type            : "tracking_image",
       trackingCode    : img.trackingCode,
       jobId           : img.jobId || null,
@@ -5970,7 +5989,8 @@ answering. Do not guess about the order's contents.`;
         : null,
       queuedForSend   : true,  // default: include when operator sends
       addedAt         : new Date().toISOString()
-    }));
+    });
+    const trackingAttachments = trackingImages.map(_trackingAttachmentFor);
 
     // ─── v2.8.3 — Care/sizing collateral auto-attach ──────────────
     // Mirror of the salesAgent logic. Auto-set the matching attach_*
@@ -6032,6 +6052,50 @@ answering. Do not guess about the order's contents.`;
       try {
         parsed.text = nameAttachedGuides(parsed.text, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
       } catch {}
+    }
+
+    // The reply says a sheet or guide is attached (owner, 2026-09-28: a
+    // draft said "I've attached the necklace line sheet" with no file): add
+    // that file. A claim nothing can supply holds the draft for a person.
+    if (attachClaimedCollateral && parsed.text) {
+      try {
+        const famHint = typeof parsed.attach_line_sheet === "string"
+          ? ((String(parsed.attach_line_sheet).toLowerCase().match(/necklace|huggie|hoop|stud/) || [])[0] || null)
+          : null;
+        const fix = await attachClaimedCollateral(parsed.text, attachments, {
+          family: famHint === "hoop" ? "huggie" : famHint, threadId
+        });
+        for (const rec of fix.add) {
+          attachments.push(rec);
+          collateralAttachInfo.push({
+            kind: rec.collateralKind, label: String(rec.collateralKind).replace(/_/g, " "),
+            decided: true, attached: true, collateralId: rec.collateralId, collateralName: rec.collateralName,
+            addedForClaim: true
+          });
+        }
+        // A promised tracking image that was never made: make it from the
+        // newest label on the customer's orders.
+        if (fix.missing.some(c => c.kind === "tracking") && _newestTrackingCode &&
+            !attachments.some(a => a && a.type === "tracking_image")) {
+          try {
+            const r = await toolExecutors.generate_tracking_image({ trackingCode: _newestTrackingCode });
+            const img = !r || r.error ? null
+              : (toolContext.trackingImages || []).find(t => t && String(t.trackingCode) === String(r.trackingCode || _newestTrackingCode));
+            if (img) attachments.push(_trackingAttachmentFor(img));
+          } catch (e) {
+            console.warn(`[draftReply ${threadId}] promised tracking image could not be made: ${e.message}`);
+          }
+        }
+        const stillMissing = missingAttachmentClaims(parsed.text, attachments);
+        if (stillMissing.length && !parsed.aiAttachmentClaimMismatch) {
+          parsed.aiAttachmentClaimMismatch = true;
+          parsed.confidence = 0;
+          parsed.confidenceReasoning = (parsed.confidenceReasoning || "") +
+            ` | Reply says ${describeClaims(stillMissing)} is attached but it could not be found. Forced confidence=0 for operator review.`;
+        }
+      } catch (e) {
+        console.warn(`[draftReply ${threadId}] attachment-claim check failed (non-fatal): ${e.message}`);
+      }
     }
 
     // Audit 2026-09 — second half of the attachment-claim guard: the prose

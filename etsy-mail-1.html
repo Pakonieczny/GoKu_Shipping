@@ -2345,6 +2345,68 @@
       border: 1px solid #d0d7de; border-radius: 4px;
       font-size: 12px; max-width: 260px; min-height: 32px;
     }
+    /* Customer sheets picker (Sheets button beside Attach). */
+    .em-sheets-pop {
+      position: fixed; z-index: 9000; background: #fff;
+      border: 1px solid #d0d7de; border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(31,35,40,.18);
+      display: flex; flex-direction: column; overflow: hidden;
+      animation: em-sheets-in .14s ease-out;
+    }
+    @keyframes em-sheets-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .em-sheets-head {
+      display: flex; align-items: baseline; gap: 10px; padding: 10px 14px;
+      border-bottom: 1px solid #eaeef2; font-size: 13px; font-weight: 600; color: #1f2328;
+    }
+    .em-sheets-head .em-sheets-hint { font-weight: 400; color: #656d76; font-size: 12px; }
+    .em-sheets-head .em-sheets-close {
+      margin-left: auto; cursor: pointer; color: #656d76; font-size: 18px; align-self: center;
+    }
+    .em-sheets-head .em-sheets-close:hover { color: #1f2328; }
+    .em-sheets-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      grid-auto-rows: max-content; align-content: start;
+      gap: 12px; padding: 14px; overflow-y: auto; min-height: 0;
+    }
+    .em-sheet-card {
+      display: flex; flex-direction: column; border: 1px solid #d0d7de; border-radius: 8px;
+      background: #fff; cursor: pointer; outline: none;
+      transition: border-color .12s ease, box-shadow .12s ease, transform .12s ease;
+    }
+    .em-sheet-card:hover, .em-sheet-card:focus-visible {
+      border-color: #0969da; box-shadow: 0 2px 10px rgba(9,105,218,.15); transform: translateY(-1px);
+    }
+    .em-sheet-thumb {
+      position: relative; flex: 0 0 230px; height: 230px; background: #f6f8fa; border-bottom: 1px solid #eaeef2;
+      border-radius: 7px 7px 0 0; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .em-sheet-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; opacity: 0; transition: opacity .2s ease; }
+    .em-sheet-thumb img.is-loaded { opacity: 1; }
+    .em-sheet-thumb .em-sheets-spin { position: absolute; }
+    .em-sheet-thumb img.is-loaded + .em-sheets-spin { display: none; }
+    .em-sheet-thumb.is-failed::after { content: "Preview not available"; color: #8c959f; font-size: 12px; }
+    .em-sheet-body { padding: 8px 10px 10px; }
+    .em-sheet-title { font-size: 13px; font-weight: 600; color: #1f2328; line-height: 1.3; }
+    .em-sheet-desc { font-size: 12px; color: #656d76; margin-top: 3px; line-height: 1.35; }
+    .em-sheet-badge {
+      display: none; position: absolute; top: 8px; right: 8px; align-items: center; gap: 3px;
+      background: #1a7f37; color: #fff; font-size: 11px; font-weight: 600;
+      padding: 2px 8px 2px 5px; border-radius: 999px;
+    }
+    .em-sheet-badge .material-icons { font-size: 14px; }
+    .em-compose .em-compose-bar button.em-attach-nudge { border-color: #0969da; box-shadow: 0 0 0 3px rgba(9,105,218,.25); }
+    .em-sheet-card.is-suggested { border-color: #0969da; box-shadow: 0 0 0 2px rgba(9,105,218,.22); }
+    .em-sheet-card.is-added { border-color: #1a7f37; box-shadow: none; }
+    .em-sheet-card.is-added .em-sheet-badge { display: inline-flex; }
+    .em-sheets-empty {
+      padding: 28px; color: #656d76; font-size: 13px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .em-sheets-spin {
+      width: 14px; height: 14px; border: 2px solid #d0d7de; border-top-color: #0969da;
+      border-radius: 50%; animation: em-spin .7s linear infinite;
+    }
     .em-chip.chip-image { background: #f6f8fa; }
     .em-chip.chip-listing { background: #fff4e5; border-color: #ffdca8; }
     .em-chip.chip-tracking_image { background: #e7f3ff; border-color: #adcfff; }
@@ -16299,6 +16361,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
               <div class="em-compose-bar">
                 <button id="emAiDraftBtn" class="ai" title="Generate a reply with AI"><i class="material-icons">auto_awesome</i><span>AI Draft</span></button>
                 <button id="emAttachBtn" title="Attach image (or drag &amp; drop, or paste)"><i class="material-icons">attach_file</i>Attach</button>
+                <button id="emSheetsBtn" type="button" title="Attach a customer sheet: line sheets, fit guide, metals, care, bracelet sizing"><i class="material-icons">photo_library</i>Sheets</button>
                 <button id="emCustomListingBtn" class="${manualCustomListingBusy ? 'is-loading' : ''}" ${manualCustomListingBusy ? 'disabled aria-busy="true"' : ''} title="${manualCustomListingBusy ? 'Creating custom listing…' : 'Create a real Etsy custom listing from this conversation'}"><i class="material-icons">add_business</i><span>${manualCustomListingBusy ? 'Creating…' : 'Custom Listing'}</span></button>
                 <button type="button"
                         id="emSendToDesignBtn"
@@ -19174,6 +19237,14 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           const { thumbDataUrl, status, errorText, ...rest } = a;
           return rest;
         });
+        const data = {
+          threadId,
+          draftAttachments: clean,
+          updatedAt: { __serverTimestamp: true }
+        };
+        // The AI files taken off by hand stay off when the draft reopens.
+        const aiIds = (state.aiDraftFileIds && state.aiDraftFileIds[threadId]) || [];
+        if (aiIds.length) data.removedAttachmentIds = aiIds.filter(id => !clean.some(a => a.attachmentId === id));
         await api("firestoreProxy", {
           method: "POST",
           body: {
@@ -19182,11 +19253,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             id  : draftId,
             merge: true,
             actor: getEmployeeName() || "operator",
-            data: {
-              threadId,
-              draftAttachments: clean,
-              updatedAt: { __serverTimestamp: true }
-            }
+            data
           }
         });
       } catch (e) {
@@ -19407,9 +19474,234 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       persistComposerAttachments(threadId).catch(() => {});
     }
 
+    // ─── Customer sheets picker ─────────────────────────────────────
+    // The Sheets button beside Attach lists the uploaded, customer-facing
+    // collateral images (line sheets, fit guide, metals, care, bracelet
+    // sizing) as large thumbnails. A click adds the sheet as a file chip,
+    // the same record the AI uses, so Send delivers it like any image.
+    let _sheetsCache = null;          // { at, items }
+    const SHEET_BLURBS = {
+      necklace         : "Charm sizes, metals, chain styles and lengths for custom necklaces",
+      huggie           : "Charm sizes, metals and hoop options for custom huggie earrings",
+      stud             : "Charm sizes, metals and backs for custom stud earrings",
+      line_sheet       : "Sizes, metals and options for this product",
+      fit_reference    : "How each chain length sits on the neck (16, 18, 20 inches and more)",
+      metal_comparison : "Gold filled, gold plated and 14k solid gold side by side",
+      care_instructions: "How to wear, clean and store the jewellery",
+      bracelet_sizing  : "How bracelets sit at each length and how to measure the wrist"
+    };
+    const SHEET_ORDER = ["necklace", "huggie", "stud", "line_sheet", "fit_reference",
+                         "metal_comparison", "bracelet_sizing", "care_instructions"];
+
+    // Which sheet a collateral doc is. Every doc is stored as kind
+    // "line_sheet"; the real kind lives in the category or the name.
+    function sheetKindOf(c) {
+      const t = ((c.category || "") + " " + (c.name || "") + " " + (c.kind || "")).toLowerCase();
+      if (/care/.test(t)) return "care_instructions";
+      if (/metal_comparison|metals? comparison|filled vs|plated vs/.test(t)) return "metal_comparison";
+      if (/bracelet/.test(t)) return "bracelet_sizing";
+      if (/fit_reference|fit reference|chain length on body/.test(t)) return "fit_reference";
+      if (/huggie|hoop/.test(t)) return "huggie";
+      if (/\bstud/.test(t)) return "stud";
+      if (/necklace/.test(t)) return "necklace";
+      return "line_sheet";
+    }
+
+    // Customer-facing only: active, an uploaded image Etsy can show, and
+    // not marked internal. PDFs and link-only entries are left out.
+    function isCustomerSheet(c) {
+      if (!c || c.active === false) return false;
+      if (c.customerFacing === false || c.internal === true) return false;
+      if (!c.storagePath || !/^image\//.test(String(c.uploadedContentType || ""))) return false;
+      const t = ((c.category || "") + " " + (c.name || "")).toLowerCase();
+      return !/\b(internal|staff|team only|wholesale|cost sheet|price list)\b/.test(t);
+    }
+
+    function sheetTitleOf(c, kind) {
+      const n = String(c.name || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+      if (n) return n;
+      return kind.replace(/_/g, " ");
+    }
+
+    async function loadCustomerSheets() {
+      if (_sheetsCache && Date.now() - _sheetsCache.at < 5 * 60 * 1000) return _sheetsCache.items;
+      const res = await api("etsyMailCollateral", { method: "POST", body: { op: "list" } });
+      const items = ((res && res.items) || []).filter(isCustomerSheet).map(c => {
+        const kind = sheetKindOf(c);
+        return { doc: c, kind, title: sheetTitleOf(c, kind), blurb: SHEET_BLURBS[kind] || String(c.description || "").split(/(?<=\.)\s/)[0] };
+      });
+      items.sort((a, b) => SHEET_ORDER.indexOf(a.kind) - SHEET_ORDER.indexOf(b.kind) || a.title.localeCompare(b.title));
+      _sheetsCache = { at: Date.now(), items };
+      return items;
+    }
+
+    // Same record shape the server adds for a promised sheet.
+    function sheetAttachmentRecord(c, kind) {
+      const ct = c.uploadedContentType || "image/png";
+      return {
+        attachmentId  : "att_collateral_" + c.id,
+        type          : "image",
+        status        : "ready",
+        storagePath   : c.storagePath,
+        proxyUrl      : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(c.storagePath),
+        contentType   : ct,
+        bytes         : typeof c.uploadedSizeBytes === "number" ? c.uploadedSizeBytes : null,
+        filename      : c.uploadedFilename || ((c.name || kind) + "." + (ct.split("/")[1] || "png")),
+        source        : "collateral",
+        collateralId  : c.id,
+        collateralName: c.name || null,
+        collateralKind: kind === "necklace" || kind === "huggie" || kind === "stud" ? "line_sheet" : kind,
+        queuedForSend : true,
+        addedAt       : new Date().toISOString(),
+        addedBy       : getEmployeeName() || "operator"
+      };
+    }
+
+    function composerHasSheet(threadId, c) {
+      return getComposerAttachments(threadId).some(a =>
+        a.collateralId === c.id || (a.storagePath && a.storagePath === c.storagePath));
+    }
+
+    function closeSheetsPicker() {
+      const pop = document.getElementById("emSheetsPop");
+      if (pop) pop.remove();
+      document.removeEventListener("mousedown", _sheetsOutside, true);
+      document.removeEventListener("keydown", _sheetsKey, true);
+      window.removeEventListener("resize", closeSheetsPicker);
+    }
+    function _sheetsOutside(e) {
+      const pop = document.getElementById("emSheetsPop");
+      const btn = document.getElementById("emSheetsBtn");
+      if (pop && !pop.contains(e.target) && !(btn && btn.contains(e.target))) closeSheetsPicker();
+    }
+    function _sheetsKey(e) { if (e.key === "Escape") { e.stopPropagation(); closeSheetsPicker(); } }
+
+    function placeSheetsPicker(pop, btn) {
+      const r = btn.getBoundingClientRect();
+      const w = Math.min(740, window.innerWidth - 32);
+      const left = Math.max(16, Math.min(r.left, window.innerWidth - w - 16));
+      const above = r.top - 16;
+      const below = window.innerHeight - r.bottom - 16;
+      pop.style.width = w + "px";
+      pop.style.left = left + "px";
+      if (above >= 320 || above >= below) {
+        pop.style.bottom = (window.innerHeight - r.top + 8) + "px";
+        pop.style.maxHeight = Math.min(620, above - 8) + "px";
+      } else {
+        pop.style.top = (r.bottom + 8) + "px";
+        pop.style.maxHeight = Math.min(620, below - 8) + "px";
+      }
+    }
+
+    async function openSheetsPicker(opts = {}) {
+      const btn = $("emSheetsBtn");
+      const threadId = state.selectedId;
+      if (!btn || !threadId) return;
+      if (document.getElementById("emSheetsPop")) { closeSheetsPicker(); if (!opts.keepOpen) return; }
+      const pop = document.createElement("div");
+      pop.id = "emSheetsPop";
+      pop.className = "em-sheets-pop";
+      pop.setAttribute("role", "dialog");
+      pop.setAttribute("aria-label", "Customer sheets");
+      pop.innerHTML =
+        '<div class="em-sheets-head">Customer sheets' +
+          '<span class="em-sheets-hint">' + esc(opts.hint || "Click a sheet to attach it; click again to take it off") + '</span>' +
+          '<i class="material-icons em-sheets-close" title="Close">close</i>' +
+        '</div>' +
+        '<div class="em-sheets-grid"><div class="em-sheets-empty" style="grid-column:1/-1;"><span class="em-sheets-spin"></span>Loading sheets…</div></div>';
+      document.body.appendChild(pop);
+      placeSheetsPicker(pop, btn);
+      pop.querySelector(".em-sheets-close").addEventListener("click", closeSheetsPicker);
+      document.addEventListener("mousedown", _sheetsOutside, true);
+      document.addEventListener("keydown", _sheetsKey, true);
+      window.addEventListener("resize", closeSheetsPicker);
+
+      const grid = pop.querySelector(".em-sheets-grid");
+      let items;
+      try {
+        items = await loadCustomerSheets();
+      } catch (e) {
+        grid.innerHTML = '<div class="em-sheets-empty" style="grid-column:1/-1;">Could not load the sheets. ' + esc(e.message || "") + '</div>';
+        return;
+      }
+      if (!document.body.contains(pop) || state.selectedId !== threadId) return;
+      if (!items.length) {
+        grid.innerHTML = '<div class="em-sheets-empty" style="grid-column:1/-1;">No customer sheets uploaded yet. Add them in Settings under Collateral.</div>';
+        return;
+      }
+      grid.innerHTML = items.map((it, i) => {
+        const added = composerHasSheet(threadId, it.doc);
+        const src = "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(it.doc.storagePath);
+        return (
+          '<div class="em-sheet-card' + (added ? " is-added" : "") + (opts.focusKind && opts.focusKind === it.kind ? " is-suggested" : "") +
+            '" role="button" tabindex="0" data-i="' + i + '" title="' + esc(added ? "Attached. Click to take it off" : "Attach " + it.title) + '">' +
+            '<div class="em-sheet-thumb"><img src="' + esc(src) + '" alt="" decoding="async"><span class="em-sheets-spin"></span>' +
+              '<span class="em-sheet-badge"><i class="material-icons">check</i>Added</span></div>' +
+            '<div class="em-sheet-body"><div class="em-sheet-title">' + esc(it.title) + '</div>' +
+              (it.blurb ? '<div class="em-sheet-desc">' + esc(it.blurb) + '</div>' : '') +
+            '</div>' +
+          '</div>'
+        );
+      }).join("");
+      const toggle = (card) => {
+        const it = items[Number(card.dataset.i)];
+        if (!it || state.selectedId !== threadId) return;
+        const atts = getComposerAttachments(threadId);
+        if (composerHasSheet(threadId, it.doc)) {
+          setComposerAttachments(threadId, atts.filter(a =>
+            !(a.collateralId === it.doc.id || (a.storagePath && a.storagePath === it.doc.storagePath))));
+          card.classList.remove("is-added");
+          card.title = "Attach " + it.title;
+        } else {
+          atts.push(sheetAttachmentRecord(it.doc, it.kind));
+          setComposerAttachments(threadId, atts);
+          card.classList.add("is-added");
+          card.title = "Attached. Click to take it off";
+        }
+        renderComposerChips();
+        persistComposerAttachments(threadId).catch(() => {});
+      };
+      grid.querySelectorAll(".em-sheet-thumb img").forEach(img => {
+        const done = () => img.classList.add("is-loaded");
+        const failed = () => { done(); img.parentNode.classList.add("is-failed"); };
+        if (img.complete && img.naturalWidth) done();
+        else { img.addEventListener("load", done); img.addEventListener("error", failed); }
+      });
+      grid.querySelectorAll(".em-sheet-card").forEach(card => {
+        card.addEventListener("click", () => toggle(card));
+        card.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(card); }
+        });
+      });
+      const first = grid.querySelector(".em-sheet-card.is-suggested") || grid.querySelector(".em-sheet-card");
+      if (first && opts.focusKind) first.scrollIntoView({ block: "nearest" });
+    }
+
+    // A send came back because the reply promises a file that is not on it
+    // and the server could not find that exact file. A sheet or guide opens
+    // the Sheets picker at the right one; a photo points at Attach.
+    function showPromisedFilePicker(missing) {
+      const list = Array.isArray(missing) ? missing : [];
+      const sheet = list.find(c => c && c.kind !== "photo" && c.kind !== "tracking");
+      if (sheet) {
+        const focusKind = sheet.kind === "line_sheet" ? (sheet.family || "line_sheet") : sheet.kind === "file" ? null : sheet.kind;
+        const names = { line_sheet: "line sheet", care_instructions: "care guide", metal_comparison: "gold comparison card",
+                        fit_reference: "length guide", bracelet_sizing: "bracelet sizing chart", file: "file" };
+        const what = sheet.kind === "file" ? "a file" : "the " + (sheet.family ? sheet.family + " " : "") + (names[sheet.kind] || String(sheet.kind).replace(/_/g, " "));
+        openSheetsPicker({ keepOpen: true, focusKind, hint: "The reply says " + what + " is attached. Pick it here, or change that line." });
+        return;
+      }
+      const btn = $("emAttachBtn");
+      if (btn && list.some(c => c && c.kind === "photo")) {
+        btn.classList.add("em-attach-nudge");
+        setTimeout(() => btn.classList.remove("em-attach-nudge"), 4000);
+      }
+    }
+
     /** Main setup: wire drag/drop, paste, attach button, send button.
      *  Called on every thread open (render re-creates the DOM). */
     function setupComposerInteractions(thread) {
+      closeSheetsPicker();
       const card   = $("emComposerCard");
       const ta     = $("emDraftText");
       const input  = $("emAttachInput");
@@ -19488,6 +19780,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // Otherwise let the paste proceed normally
       });
 
+      const sheetsBtn = $("emSheetsBtn");
+      if (sheetsBtn) sheetsBtn.addEventListener("click", () => openSheetsPicker());
+
       // Attach button → file input
       if (attach && input) {
         attach.addEventListener("click", () => input.click());
@@ -19565,8 +19860,21 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const existing = getComposerAttachments(threadId) || [];
       const trackingChipsToPreserve = existing.filter(a => a && a.type === "tracking_image");
 
-      if (Array.isArray(draft.draftAttachments)) {
-        const atts = draft.draftAttachments.map(a => ({
+      // The AI's own sheets and guides come back unless someone removed
+      // them: an empty chip list saved over them used to drop the file the
+      // reply says is attached.
+      const aiFiles = draft.generatedByAI === true && Array.isArray(draft.attachments)
+        ? draft.attachments.filter(a => a && a.type === "image" && a.source === "collateral" && a.attachmentId)
+        : [];
+      state.aiDraftFileIds = state.aiDraftFileIds || {};
+      state.aiDraftFileIds[threadId] = aiFiles.map(a => a.attachmentId);
+      const removedIds = Array.isArray(draft.removedAttachmentIds) ? draft.removedAttachmentIds : [];
+      const saved = Array.isArray(draft.draftAttachments) ? draft.draftAttachments : null;
+      const lost = aiFiles.filter(a => !removedIds.includes(a.attachmentId) &&
+        !(saved || []).some(x => x && x.attachmentId === a.attachmentId));
+
+      if (saved || lost.length) {
+        const atts = (saved || []).concat(lost).map(a => ({
           ...a,
           status: a.status || "ready"
         }));
@@ -19898,6 +20206,15 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             const codes = Array.isArray(e.data.pending) ? e.data.pending.join(", ") : "";
             toast(`Tracking image still generating${codes ? " (" + codes + ")" : ""} — sending manually without the pending image.`);
             force = true;
+            continue;
+          }
+          if (code === "PROMISED_ATTACHMENT_PENDING") {
+            // The reply promises a tracking image the server is making now;
+            // it goes out with it as soon as it is ready.
+            if (Date.now() >= deadline) throw new Error("the tracking image the reply mentions is still being made. Send again in a minute");
+            setLocalSendState(threadId, local, "file");
+            const ms = Math.max(2000, Math.min(15000, Number(e.data.retryAfterMs) || 5000));
+            await new Promise(r => setTimeout(r, ms));
             continue;
           }
           if (code === "PREVIOUS_SEND_PENDING" || code === "DRAFT_BUSY" || /currently sending/i.test((e && e.message) || "")) {
@@ -20419,7 +20736,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         allowSendWithoutPendingTracking: true,
         // v3.2 — Tag this enqueue as manual so the thread badge reads
         // "Manually Sent" once the extension confirms delivery.
-        sendOrigin          : "manual"
+        sendOrigin          : "manual",
+        // The English words, for the server's "says it's attached" check.
+        claimText           : englishText
       };
 
       let resp;
@@ -20438,6 +20757,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             toast(back ? `Not sent: ${why}. Your reply is back in the box.`
                        : `Not sent: ${why}. Your reply was kept for that thread's reply box.`, 7000);
           }
+          if (back && e && e.data && e.data.errorCode === "PROMISED_ATTACHMENT_MISSING") showPromisedFilePicker(e.data.missing);
         };
         if (window.SendFlight && state.selectedId === threadId) window.SendFlight.retract(local.id).then(putBack, putBack);
         else putBack();
@@ -20460,6 +20780,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       if (resp && resp.draftId) state._optimInsertedFor.add(resp.draftId);
       const skipped = resp && Array.isArray(resp.skippedPendingTracking) ? resp.skippedPendingTracking : [];
       if (skipped.length) toast("Tracking image still generating — the reply went without it.", 5000);
+      const addedFiles = resp && Array.isArray(resp.addedForClaim) ? resp.addedForClaim : [];
+      if (addedFiles.length) toast("Attached " + addedFiles.join(", ").replace(/[_-]+/g, " ").replace(/\.(png|jpe?g|webp|gif|pdf)\b/gi, "") + ", as the reply says.", 5000);
 
       // Send to Design: the reply is queued, so its note goes to the
       // design chat now. It runs on its own; the Etsy send never waits
@@ -20645,6 +20967,20 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }
         hideCustomListingReplyPreview();
 
+        // An AI draft written before the customer's latest message answers
+        // an older one (owner, 2026-09-28: a September draft about a custom
+        // necklace sat in the box under a new message about missing
+        // clasps). Keep the box empty for the new reply instead.
+        const draftMadeMs = tsToMs(d.createdAt);
+        if ((!d.status || d.status === "draft") && d.generatedByAI === true && draftMadeMs &&
+            tsToMs(thread.lastInboundAt) > draftMadeMs) {
+          setComposerAttachments(thread.id, []);
+          renderComposerChips();
+          if (typeof renderTrackingImages === "function") renderTrackingImages([]);
+          hideSendStatus();
+          return;
+        }
+
         // v0.9.1 #5: don't re-populate the composer for a draft that has
         // already been sent / failed. Reopening a thread after a clean
         // send used to re-fill the textarea with the just-sent text and
@@ -20681,6 +21017,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           }
         }
         if (isHydratableState && d.text) aiTextMarkFresh(thread.id, d.text);
+        // The draft's own chips first: the tracking sync below saves the
+        // chip list, and run before them it saved an empty list over the
+        // AI's line sheet (owner, 2026-09-28: "I've attached the necklace
+        // line sheet" with no file).
+        if (isHydratableState) hydrateComposerFromDraft(thread.id, d);
         renderAiDraftCard(d);
 
         // v5.7.1 — Tracking images must hydrate independently of the AI card body.
@@ -21250,7 +21591,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // on this thread, then "syncing…" until the scraped copy arrives.
         const syncTag = m.localOptimistic
           ? ' <span class="em-msg-sync"' + (m._state === "waiting" ? ' title="Goes out right after your previous message"' : '') + '>· ' +
-            (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : "syncing…") + '</span>'
+            (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : m._state === "file" ? "adding the tracking image…" : "syncing…") + '</span>'
           : '';
 
         // Render any message that has imageUrls as inline thumbnails —
@@ -24946,7 +25287,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         }
         // Not yet confirmed by Etsy: the same small state as on desktop.
         const syncTag = m.localOptimistic
-          ? " · " + (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : "syncing…")
+          ? " · " + (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : m._state === "file" ? "adding the tracking image…" : "syncing…")
           : "";
         return {
           key : String(m.id),

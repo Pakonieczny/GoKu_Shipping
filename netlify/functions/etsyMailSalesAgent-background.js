@@ -4397,6 +4397,34 @@ ${validationResult.message}
       if (replyText) replyText = nameAttachedGuides(replyText, collateralAttachInfo.filter(i => i.attached).map(i => i.kind));
     } catch {}
 
+    // The reply says a sheet or guide is attached: make sure it is (owner,
+    // 2026-09-28). A claim nothing can supply holds the draft for a person.
+    let salesClaimMismatch = false;
+    try {
+      const { attachClaimedCollateral, describeClaims } = require("./etsyMailCollateral");
+      if (replyText) {
+        const fix = await attachClaimedCollateral(replyText, attachmentsToWrite, {
+          family: familyFromParsedAndContext(parsed, { latestInboundText, salesCtx, recommendedCollateral }),
+          threadId
+        });
+        for (const rec of fix.add) {
+          attachmentsToWrite.push(rec);
+          collateralAttachInfo.push({ kind: rec.collateralKind, label: String(rec.collateralKind).replace(/_/g, " "),
+            decided: true, attached: true, collateralId: rec.collateralId, collateralName: rec.collateralName, addedForClaim: true });
+          if (rec.collateralKind === "line_sheet" && !(lineSheetAttachInfo && lineSheetAttachInfo.attached)) {
+            lineSheetAttachInfo = collateralAttachInfo[collateralAttachInfo.length - 1];
+          }
+        }
+        if (fix.missing.length) {
+          salesClaimMismatch = true;
+          aiConfidence = 0;
+          console.warn(`salesAgent: reply says ${describeClaims(fix.missing)} is attached but none could be attached (${threadId})`);
+        }
+      }
+    } catch (e) {
+      console.warn(`salesAgent: attachment-claim check failed (non-fatal): ${e.message}`);
+    }
+
     // Audit fix F1 — never replace a reply that is waiting to be sent
     // (queued) or is being sent right now. The draft slot is one per
     // thread; writing status "draft" over it meant the Etsy helper found
@@ -4462,6 +4490,9 @@ ${validationResult.message}
       // reason="no_active_collateral_for_kind" means the operator
       // hasn't uploaded the required collateral yet.
       aiCollateralAttachInfo: collateralAttachInfo,
+      aiAttachmentClaimMismatch: salesClaimMismatch,
+      // A new draft starts with none of its files taken off by hand.
+      removedAttachmentIds  : [],
       // v5.21 — What the AI itself set on its JSON output. The
       // keyword-driven auto-set machinery is gone, so any true value
       // here came from the AI's semantic read of the question.
@@ -4471,7 +4502,7 @@ ${validationResult.message}
         attach_fit_reference    : parsed.attach_fit_reference     === true,
         attach_bracelet_sizing  : parsed.attach_bracelet_sizing   === true
       },
-      readyForHumanApproval : salesHoldForPerson,
+      readyForHumanApproval : salesHoldForPerson || salesClaimMismatch,
       // Audit fix F3 — the auto-pipeline reads this flag from the DRAFT
       // (isAcceptanceSkip). It was only written on the thread, so the
       // acceptance reply was auto-sent next to the listing-link message.
@@ -4708,7 +4739,7 @@ ${validationResult.message}
             needs_review: !!wantsHumanReview,
             confidence  : aiConfidence
           },
-      readyForHumanApproval: salesHoldForPerson,
+      readyForHumanApproval: salesHoldForPerson || salesClaimMismatch,
       // v4.1 — customer_accepted signal for downstream listing-creator
       // automation. Mirrored on both draft and thread so a worker can
       // query either collection. quotedTotal mirrored for the same

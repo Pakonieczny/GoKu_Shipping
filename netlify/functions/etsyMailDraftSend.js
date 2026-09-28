@@ -80,6 +80,13 @@ const admin = require("./firebaseAdmin");
 const crypto = require("crypto");   // audit fix F16 (text fingerprint in audit rows)
 const { requireExtensionAuth, CORS } = require("./_etsyMailAuth");
 const { buildOptimisticDoc } = require("./etsyMailOptimisticMessage");
+let attachClaimedCollateral = null;
+let missingAttachmentClaims = null;
+let describeClaims = null;
+let refreshCollateralAttachments = null;
+try {
+  ({ attachClaimedCollateral, missingAttachmentClaims, describeClaims, refreshCollateralAttachments } = require("./etsyMailCollateral"));
+} catch { attachClaimedCollateral = null; }
 
 const db = admin.firestore();
 const FV = admin.firestore.FieldValue;
@@ -339,6 +346,57 @@ function demoteThreadWriteOnlyInTxn(tx, prefetch, reason) {
 async function demoteThreadStandalone(threadId, reason) {
   if (!threadId) return null;
   return await db.runTransaction(async (tx) => demoteThreadInTxn(tx, threadId, reason));
+}
+
+// A reply promises the tracking image but the draft has none: start one for
+// the newest label on the customer's orders (read from the stored receipts,
+// no Etsy call) and record it on the draft so the next send attempt waits
+// for it. Returns the tracking code, or null when there is no label.
+async function startPromisedTrackingImage(threadId, draftId) {
+  try {
+    const { fetchClassificationContext } = require("./_etsyMailAnthropic");
+    const ctx = await fetchClassificationContext(threadId, { messageLimit: 1, perMessageCap: 200, receiptLimit: 10 });
+    let code = null, newest = -1;
+    for (const r of (ctx && Array.isArray(ctx.recentReceipts) ? ctx.recentReceipts : [])) {
+      const raw = (r && r.raw && typeof r.raw === "object") ? r.raw : (r || {});
+      for (const sh of (Array.isArray(raw.shipments) ? raw.shipments : [])) {
+        const at = sh && sh.tracking_code ? (Number(sh.shipment_notification_timestamp) || 0) : -1;
+        if (at > newest) { newest = at; code = String(sh.tracking_code).replace(/\s+/g, ""); }
+      }
+    }
+    if (!code) return null;
+    const fetch = require("node-fetch");
+    const base = (process.env.URL || "https://goldenspike.app").replace(/\/$/, "");
+    const res = await fetch(base + "/.netlify/functions/etsyMailTrackingSnapshot", {
+      method : "POST",
+      headers: { "Content-Type": "application/json",
+                 ...(process.env.ETSYMAIL_EXTENSION_SECRET ? { "X-EtsyMail-Secret": process.env.ETSYMAIL_EXTENSION_SECRET } : {}) },
+      body   : JSON.stringify({ trackingCode: code, draftId }),
+      timeout: 6000
+    });
+    const b = await res.json().catch(() => ({}));
+    if (!res.ok || !b.trackingCode) return null;
+    await db.runTransaction(async (tx) => {
+      const ref = db.collection(DRAFTS_COLL).doc(draftId);
+      const snap = await tx.get(ref);
+      const cur = snap.exists ? (snap.data() || {}) : {};
+      // A failed earlier try for this label is replaced by the new job.
+      const list = (Array.isArray(cur.trackingImages) ? cur.trackingImages : [])
+        .filter(i => !(i && String(i.trackingCode) === String(b.trackingCode) && i.status === "failed"));
+      if (list.some(i => i && String(i.trackingCode) === String(b.trackingCode))) return;
+      list.push({
+        trackingCode: b.trackingCode, jobId: b.jobId || null, status: b.status || "pending",
+        carrier: b.carrier || null, carrierDisplay: b.carrierDisplay || null, statusText: b.statusText || null,
+        imageUrl: b.imageUrl || null, imageStoragePath: b.imageStoragePath || null, queuedForSend: true,
+        addedForClaim: true
+      });
+      tx.set(ref, { threadId, trackingImages: list, updatedAt: FV.serverTimestamp() }, { merge: true });
+    });
+    return String(b.trackingCode);
+  } catch (e) {
+    console.warn("startPromisedTrackingImage failed:", e.message);
+    return null;
+  }
 }
 
 /** Normalize an attachments array for persistence. Strips sentinels,
@@ -771,6 +829,95 @@ exports.handler = async (event) => {
       }
       const normalized = normalizeAttachments(recon.merged);
 
+      // Owner's rule (2026-09-28): a reply that promises a file goes out
+      // with exactly that file, never without it and never a stand-in.
+      //  - A sheet or guide on the send points at the current file.
+      //  - A promised sheet or guide that is missing is added: the draft's
+      //    own file first, else the uploaded one for the same product.
+      //  - A promised tracking image still being made is waited for (the
+      //    inbox retries), and one never made is started from the newest
+      //    label on the customer's orders.
+      //  - Only a promised photo nobody attached comes back to the sender,
+      //    who is asked to pick it.
+      const addedForClaim = [];
+      if (!orderLink && refreshCollateralAttachments) {
+        try {
+          const fresh = await refreshCollateralAttachments(normalized);
+          if (fresh.changed) normalized.splice(0, normalized.length, ...normalizeAttachments(fresh.attachments));
+        } catch (e) { console.warn("enqueue: collateral refresh failed:", e.message); }
+      }
+      if (!orderLink && missingAttachmentClaims && cleanText) {
+        const claimText = typeof body.claimText === "string" && body.claimText.trim() ? body.claimText : cleanText;
+        const texts = claimText === cleanText ? [cleanText] : [claimText, cleanText];
+        const missingNow = () => {
+          const all = [];
+          for (const t of texts) for (const c of missingAttachmentClaims(t, normalized)) {
+            if (!all.some(x => x.kind === c.kind && x.family === c.family)) all.push(c);
+          }
+          return all;
+        };
+        if (missingNow().length) {
+          let draftNow = {};
+          try {
+            const ds = await db.collection(DRAFTS_COLL).doc(draftIdForRecon).get();
+            draftNow = ds.exists ? (ds.data() || {}) : {};
+          } catch { draftNow = {}; }
+          for (const t of texts) {
+            try {
+              const fix = await attachClaimedCollateral(t, normalized, { prefer: draftNow.attachments || null, threadId });
+              for (const rec of normalizeAttachments(fix.add)) {
+                if (normalized.some(a => a.storagePath && a.storagePath === rec.storagePath)) continue;
+                normalized.push(rec);
+                addedForClaim.push(rec.filename || "attachment");
+              }
+            } catch (e) {
+              console.warn("enqueue: promised file lookup failed:", e.message);
+            }
+          }
+          let still = missingNow();
+          if (still.some(c => c.kind === "tracking")) {
+            const imgs = (Array.isArray(draftNow.trackingImages) ? draftNow.trackingImages : []).filter(i => i && i.trackingCode);
+            const isReady = i => i.status === "ready" || !!i.imageUrl || !!i.imageStoragePath;
+            // A made image the sender took off still goes: the words promise it.
+            for (const img of imgs.filter(isReady)) {
+              const a = trackingImageEntryToAttachment(img);
+              if (a && !normalized.some(x => x.type === "tracking_image" && String(x.trackingCode) === String(a.trackingCode))) {
+                normalized.push(...normalizeAttachments([a]));
+                addedForClaim.push(a.filename || "tracking image");
+              }
+            }
+          }
+          if (missingNow().some(c => c.kind === "tracking")) {
+            const waiting = (Array.isArray(draftNow.trackingImages) ? draftNow.trackingImages : [])
+              .filter(img => img && img.trackingCode && img.status !== "failed" && !(img.status === "ready" || img.imageUrl || img.imageStoragePath));
+            let started = null;
+            if (!waiting.length) started = await startPromisedTrackingImage(threadId, draftIdForRecon);
+            if (waiting.length || started) {
+              await audit(threadId, draftIdForRecon, "draft_enqueue_waiting_promised_attachment", employeeName || "operator", {
+                trackingCodes: waiting.length ? waiting.map(i => i.trackingCode) : [started], textPreview: cleanText.slice(0, 160)
+              }).catch(() => {});
+              return json(409, {
+                error      : "waiting for the tracking image the reply mentions",
+                errorCode  : "PROMISED_ATTACHMENT_PENDING",
+                retryAfterMs: 5000
+              });
+            }
+          }
+          still = missingNow();
+          if (still.length) {
+            const what = describeClaims(still);
+            await audit(threadId, draftIdForRecon, "draft_enqueue_needs_promised_attachment", employeeName || "operator", {
+              missing: still, textPreview: cleanText.slice(0, 160), attachmentCount: normalized.length
+            }).catch(() => {});
+            return json(409, {
+              error    : `the reply says a ${what} is attached. Pick it, or change that line`,
+              errorCode: "PROMISED_ATTACHMENT_MISSING",
+              missing  : still
+            });
+          }
+        }
+      }
+
       if (!cleanText && !normalized.length) {
         return bad("Draft must have text or at least one attachment");
       }
@@ -1087,6 +1234,7 @@ exports.handler = async (event) => {
         sendOrigin   : inferredSendOriginForRecon,
         attachmentCount: normalized.length,
         attachmentTypes: normalized.map(a => a.type),
+        addedForClaim,
         skippedPendingTracking: recon.skippedPendingTracking || []
       });
 
@@ -1139,6 +1287,7 @@ exports.handler = async (event) => {
         // uses this for its optimistic message so the UI reflects backend
         // reconciliation, not stale composer-chip state.
         attachments : normalized,
+        addedForClaim,
         skippedPendingTracking: recon.skippedPendingTracking || [],
         pollUrl     : `/.netlify/functions/etsyMailDraftSend?op=status&draftId=${encodeURIComponent(draftId)}`
       });

@@ -808,6 +808,320 @@ function nameAttachedGuides(text, kinds) {
   return t.trimEnd() + " " + add.join(" ");
 }
 
+// ─── A reply that says something is attached must carry it ─────────────
+// Owner, 2026-09-28: a draft said "I've attached the necklace line sheet"
+// with no file on it. A reply that promises a file must carry exactly that
+// file (the right kind and the right product), never a stand-in.
+//
+// attachmentClaims reads a reply and lists what it says is attached to this
+// message: a line sheet (and for which product), one of the guides, the
+// tracking image, a photo, or an unnamed file ("see the attached").
+// missingAttachmentClaims keeps the ones the attachments don't cover.
+// attachClaimedCollateral finds the promised sheet or guide and returns it
+// to add. A link pasted in the text is not a file, nor is a file sent in an
+// earlier message.
+const CLAIM_VERB_RX = new RegExp([
+  "\\b(?:i|we)(?:'ve|’ve|\\s+have)\\s+(?:also\\s+|just\\s+|now\\s+|again\\s+|gone\\s+ahead\\s+and\\s+)?(?:attached|included|enclosed|added|pulled(?:\\s+up)?)\\b",
+  "\\b(?:i|we)(?:'m|’m|\\s+am|'re|’re|\\s+are)\\s+(?:also\\s+|just\\s+)?(?:attaching|including|enclosing|sending|sharing|adding)\\b",
+  "\\b(?:i|we)\\s+(?:attach|enclose|include)\\b",
+  "\\battached\\s+(?:is|are|you'?ll|you\\s+will|here|below)\\b",
+  "\\b(?:see|find|check(?:\\s+out)?|look\\s+at|view|open|in|on)\\s+(?:the\\s+|our\\s+)?attached\\b",
+  "\\b(?:is|are)\\s+attached\\b",
+  "\\battached\\s+(?:here|below|to\\s+this\\s+(?:message|reply))\\b",
+  "\\bhere(?:'s|’s|\\s+is|\\s+are)\\s+(?:the\\s+|our\\s+|a\\s+)",
+  "\\b(?:sheet|guide|chart|card|photos?|pictures?|images?|screenshots?|files?|pdf|tracking|details|info(?:rmation)?|timeline|snapshot|history)\\s+(?:is\\s+|are\\s+)?(?:attached|below)\\b",
+  "\\bbelow\\s+(?:you'?ll|you\\s+can|please)\\s+(?:find|see)\\b"
+].join("|"), "i");
+const CLAIM_PAST_RX = /\b(?:earlier|previous(?:ly)?|last\s+(?:message|time|week|reply|email)|already\s+sent|sent\s+(?:you\s+)?before|above)\b/i;
+const CLAIM_GUIDES = [
+  { kind: "care_instructions", rx: /\b(?:care|aftercare)\s+(?:guide|card|instructions?|sheet)\b/gi },
+  { kind: "metal_comparison",  rx: /\b(?:metals?|gold)\s+(?:comparison|card|guide|chart)\b|\bcomparison\s+(?:card|chart|guide|sheet)\b/gi },
+  { kind: "fit_reference",     rx: /\b(?:fit|length)\s+(?:guide|reference|chart|card)\b/gi },
+  { kind: "size_chart",        rx: /\b(?:siz(?:e|ing))\s+(?:guide|chart|card)\b|\bwrist\s+(?:chart|guide)\b/gi }
+];
+const CLAIM_SHEET_RX    = /\bsheets?\b/i;
+const CLAIM_TRACKING_RX = /\btracking\b|\bscan\s+(?:history|activity)\b/i;
+const CLAIM_PHOTO_RX    = /\b(?:photos?|pictures?|pics|images?|screenshots?|mock-?ups?|proofs?|drawings?|sketch(?:es)?|renders?|previews?)\b/i;
+const CLAIM_FILE_RX     = /\b(?:files?|pdfs?|documents?)\b/i;
+// Other languages: which kind of file, when the words say so.
+const FOREIGN_ATTACH_RX = /\b(?:adjunt[oaé]\w*|te\s+adjunto|anex[oa]s?|anexei|anexad[oa]s?|ci-joint\w*|pi[eè]ces?\s+jointes?|je\s+joins|anbei|angeh[äa]ngt|im\s+anhang|allegat[oaie]|in\s+allegato|bijlage|bijgevoegd|w\s+za[łl][ąa]czniku|za[łl][ąa]czam)\b|(?:додаю|додав(?:ла)?|додан[оі]|прикріпи?л\S*|прикрепи?л\S*|у\s+вкладенні|во\s+вложении|прилагаю|вкладення)/i;
+const FOREIGN_SHEET_RX    = /\b(?:lijnblad|hoja\s+de\s+(?:opciones|l[ií]nea|tallas|medidas)|cat[aá]logo|feuille|fiche|blatt|[üu]bersicht|foglio|scheda|folha|arkusz)\b|(?:аркуш|лист\s+(?:опцій|варіантів|розмірів)|таблиц)/i;
+const FOREIGN_TRACKING_RX = /\b(?:seguimiento|rastreo|suivi|sendungsverfolgung|tracciamento|rastreamento|track\s*&\s*trace)\b|(?:відстеженн|отслеживани|трек)/i;
+const FOREIGN_PHOTO_RX    = /\b(?:fotos?|foto's|bild(?:er)?|immagin[ei]|imagen(?:es)?|zdj[eę]ci[ea])\b|(?:фото|зображенн|картинк)/i;
+const FAMILY_WORDS = [
+  { family: "necklace", rx: /\b(?:necklaces?|pendants?|ketting|collar|collier|halskette|collana|colar|naszyjnik)\b|(?:намист|кулон|ожерель)/i },
+  { family: "huggie",   rx: /\b(?:huggies?|hoops?)\b/i },
+  { family: "stud",     rx: /\bstuds?\b|\bstud\s+earrings?\b/i }
+];
+const COLLATERAL_CLAIM_KINDS = new Set(["line_sheet", "care_instructions", "metal_comparison", "fit_reference", "bracelet_sizing"]);
+const KIND_NAME_WORDS = {
+  care_instructions: ["care", "aftercare", "cleaning", "polish"],
+  metal_comparison : ["metal comparison", "metals comparison", "gold filled vs", "filled vs", "plated vs", "comparison"],
+  fit_reference    : ["fit reference", "on body", "necklace fit", "chain length"],
+  bracelet_sizing  : ["bracelet sizing", "bracelet size", "wrist"]
+};
+const CLAIM_NAMES = { line_sheet: "line sheet", care_instructions: "care guide", metal_comparison: "gold comparison card",
+                      fit_reference: "length guide", bracelet_sizing: "bracelet sizing chart", tracking: "tracking image",
+                      photo: "photo", file: "file" };
+
+function familiesIn(text) {
+  return FAMILY_WORDS.filter(f => f.rx.test(String(text || ""))).map(f => f.family);
+}
+
+function attachmentClaims(text) {
+  const t = String(text || "");
+  if (!t.trim()) return [];
+  const out = [];
+  const add = (c) => { if (!out.some(o => o.kind === c.kind && o.family === c.family)) out.push(c); };
+  const replyFamilies = familiesIn(t);
+  const oneFamily = (s) => { const f = familiesIn(s); return f.length === 1 ? f[0] : (!f.length && replyFamilies.length === 1 ? replyFamilies[0] : null); };
+  // Another language: its own words for "attached". A short English reply
+  // can look foreign by word count, so the English reading runs as well.
+  if (!looksEnglish(t)) {
+    for (const s of t.split(/(?<=[.!?])\s+|\n+/)) {
+      if (!FOREIGN_ATTACH_RX.test(s)) continue;
+      if (FOREIGN_SHEET_RX.test(s)) add({ kind: "line_sheet", family: oneFamily(s) });
+      else if (FOREIGN_TRACKING_RX.test(s)) add({ kind: "tracking", family: null });
+      else if (FOREIGN_PHOTO_RX.test(s)) add({ kind: "photo", family: null });
+      else add({ kind: "file", family: null });
+    }
+  }
+  const bracelet = /\b(?:bracelets?|wrists?|anklets?)\b/i.test(t);
+  // "I've attached the tracking here" with the carrier's tracking link in
+  // the reply: the link is what was promised.
+  const trackingLink = /tools\.usps\.com|TrackConfirmAction|ups\.com\/track|fedex\.com\/\S*track|dhl\.\S*track|parcelsapp|17track|aftership/i.test(t);
+  for (const s of t.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!CLAIM_VERB_RX.test(s) || CLAIM_PAST_RX.test(s)) continue;
+    let rest = s;
+    for (const g of CLAIM_GUIDES) {
+      g.rx.lastIndex = 0;
+      if (!g.rx.test(rest)) { g.rx.lastIndex = 0; continue; }
+      g.rx.lastIndex = 0;
+      rest = rest.replace(g.rx, " ");
+      // A size chart is the bracelet card; for a necklace it is the sheet.
+      if (g.kind === "size_chart") add(bracelet ? { kind: "bracelet_sizing", family: null } : { kind: "line_sheet", family: oneFamily(s) });
+      else add({ kind: g.kind, family: null });
+    }
+    if (CLAIM_SHEET_RX.test(rest)) {
+      add({ kind: "line_sheet", family: oneFamily(s) });
+      rest = rest.replace(/\bsheets?\b/gi, " ");
+    }
+    // A link or web address is text, not a file; so is "here is the
+    // tracking info" followed by the scans in the text.
+    const link = /\blinks?\b|https?:\/\/|\bwww\.|\.com\//i.test(s);
+    const attachWord = /\battach|\bbelow\b|\benclos|\bpulled\b/i.test(s);
+    if (link) continue;
+    if (attachWord && CLAIM_TRACKING_RX.test(rest)) { if (!trackingLink) add({ kind: "tracking", family: null }); }
+    else if (CLAIM_PHOTO_RX.test(rest)) add({ kind: "photo", family: null });
+    else if (CLAIM_FILE_RX.test(rest) || /\bthe\s+attached\s*[.!]?\s*$/i.test(s.trim())) add({ kind: "file", family: null });
+  }
+  return out;
+}
+
+// What an attachment on a draft or a send is, from its name and kind.
+function attachmentKindOf(a) {
+  if (!a || typeof a !== "object") return null;
+  if (a.type === "tracking_image") return "tracking";
+  if (a.type !== "image") return a.type || null;
+  const name = String(a.collateralName || a.name || a.filename || "").replace(/[_-]+/g, " ").toLowerCase();
+  for (const k of Object.keys(KIND_NAME_WORDS)) {
+    if (KIND_NAME_WORDS[k].some(w => name.includes(w))) return k;
+  }
+  if (/line\s*sheet/.test(name)) return "line_sheet";
+  const ck = a.collateralKind || a.category || a.kind;
+  if (ck && COLLATERAL_CLAIM_KINDS.has(ck)) return ck;
+  if (/^tracking[\s-]/.test(name)) return "tracking";
+  return "photo";
+}
+
+function familyOf(c) {
+  const hay = [c && (c.collateralName || c.name), c && c.filename, c && c.category, c && c.description,
+               ...((c && Array.isArray(c.keywords)) ? c.keywords : [])].map(v => String(v || "").replace(/[_-]+/g, " ")).join(" | ");
+  return familiesIn(hay);
+}
+
+// Exactly the promised kind: a photo is a picture of our own (not a sheet,
+// guide or tracking image); only "see the attached" with no kind named is
+// covered by any file.
+function claimCovered(claim, attachments) {
+  const all = (Array.isArray(attachments) ? attachments : []).filter(Boolean);
+  if (claim.kind === "file") return all.some(a => a.type !== "listing") || all.length > 0;
+  const same = all.filter(a => attachmentKindOf(a) === claim.kind);
+  if (!same.length) return false;
+  if (claim.kind !== "line_sheet" || !claim.family) return true;
+  // A family sheet is covered by that family's sheet, or by a sheet that
+  // names no family (a staff upload called "line sheet").
+  return same.some(a => { const f = familyOf(a); return !f.length || f.includes(claim.family); });
+}
+
+function missingAttachmentClaims(text, attachments) {
+  return attachmentClaims(text).filter(c => !claimCovered(c, attachments));
+}
+
+function collateralAttachmentRecord(hit, kind) {
+  const ct = hit.uploadedContentType || hit.contentType || "image/png";
+  return {
+    attachmentId  : "att_collateral_" + (hit.id || Math.random().toString(36).slice(2, 10)),
+    type          : "image",
+    storagePath   : hit.storagePath,
+    proxyUrl      : "/.netlify/functions/etsyMailImage?path=" + encodeURIComponent(hit.storagePath),
+    contentType   : ct,
+    bytes         : typeof hit.uploadedSizeBytes === "number" ? hit.uploadedSizeBytes : null,
+    filename      : hit.uploadedFilename || ((hit.name || kind) + "." + (ct.split("/")[1] || "png")),
+    source        : "collateral",
+    collateralId  : hit.id || null,
+    collateralName: hit.name || null,
+    collateralKind: kind,
+    queuedForSend : true,
+    addedAt       : new Date().toISOString(),
+    addedForClaim : true
+  };
+}
+
+// The uploaded, active sheets and guides (a handful of documents). Cached
+// for a minute per function instance; no lastUsedAt writes.
+let _poolCache = null;
+async function activeCollateralPool() {
+  if (_poolCache && Date.now() - _poolCache.at < 60000) return _poolCache.items;
+  const snap = await db.collection(COLLATERAL_COLL).where("active", "==", true).limit(100).get();
+  const items = [];
+  snap.forEach(d => {
+    const c = trimForCaller({ id: d.id, ...(d.data() || {}) });
+    if (c.storagePath && c.uploadedContentType) items.push(c);
+  });
+  _poolCache = { at: Date.now(), items };
+  return items;
+}
+
+const FAMILIES = ["necklace", "huggie", "stud"];
+function asFamily(v) {
+  const f = familiesIn(String(v || ""));
+  if (f.length === 1) return f[0];
+  const w = String(v || "").toLowerCase().trim();
+  return FAMILIES.includes(w) ? w : (w === "hoop" ? "huggie" : null);
+}
+
+// Which product a sheet is for when the reply doesn't say: the product the
+// AI was working on, then the sale's saved spec, then what the customer
+// wrote (newest first), then a one-word answer from a small model reading
+// the reply and the customer's last messages. Null only when all fail.
+async function resolveSheetFamily({ replyText, family, threadId, askModel = true } = {}) {
+  const fromReply = familiesIn(replyText);
+  if (fromReply.length === 1) return { family: fromReply[0], how: "reply" };
+  const hinted = asFamily(family);
+  if (hinted) return { family: hinted, how: "hint" };
+  if (!threadId) return { family: null, how: null };
+  let inbound = [];
+  try {
+    const sc = await db.collection("EtsyMail_SalesContext").doc(String(threadId)).get();
+    const spec = sc.exists ? ((sc.data() || {}).accumulatedSpec || {}) : {};
+    const f = asFamily(spec.family);
+    if (f) return { family: f, how: "sales_spec" };
+  } catch {}
+  try {
+    const ms = await db.collection("EtsyMail_Threads").doc(String(threadId)).collection("messages")
+      .orderBy("timestamp", "desc").limit(12).get();
+    ms.forEach(d => { const m = d.data() || {}; if (m.direction === "inbound" && m.text) inbound.push(String(m.text)); });
+  } catch {}
+  for (const m of inbound) {
+    const f = familiesIn(m);
+    if (f.length === 1) return { family: f[0], how: "customer" };
+  }
+  if (!askModel || !process.env.ANTHROPIC_API_KEY) return { family: null, how: null };
+  try {
+    const { callClaudeRaw } = require("./_etsyMailAnthropic");
+    const res = await callClaudeRaw({
+      model: "claude-haiku-4-5-20251001", maxTokens: 10, useThinking: false,
+      system: "A jewellery shop's reply promises its line sheet. The shop has three line sheets: necklace (charms on chains), huggie (charm hoop earrings) and stud (stud earrings). Answer with one word: necklace, huggie or stud.",
+      messages: [{ role: "user", content: [{ type: "text", text:
+        "Customer's recent messages (newest first):\n" + inbound.slice(0, 4).map(m => "- " + m.slice(0, 600)).join("\n") +
+        "\n\nShop's reply:\n" + String(replyText || "").slice(0, 1500) }] }]
+    });
+    const word = (res.content || []).filter(b => b.type === "text").map(b => b.text).join(" ").toLowerCase();
+    const f = FAMILIES.find(x => word.includes(x));
+    if (f) return { family: f, how: "model" };
+  } catch (e) {
+    console.warn("resolveSheetFamily: model pick failed:", e.message);
+  }
+  return { family: null, how: null };
+}
+
+// Finds the promised sheet or guide for each claim the attachments miss.
+// Returns { add: [attachment records], missing: [claims still not covered] }.
+//   family   : the product the AI was working on, when the reply doesn't say
+//   threadId : lets the product come from the conversation when needed
+//   prefer   : the files the AI chose for this draft, used first
+// Tracking images and photos are not found here; they stay missing.
+async function attachClaimedCollateral(text, attachments, { pool, family = null, prefer = null, threadId = null, askModel = true } = {}) {
+  const missing = missingAttachmentClaims(text, attachments);
+  if (!missing.length) return { add: [], missing: [] };
+  const add = [];
+  const still = [];
+  let items = pool;
+  for (const c of missing) {
+    if (!COLLATERAL_CLAIM_KINDS.has(c.kind)) { still.push(c); continue; }
+    const claim = { ...c };
+    if (claim.kind === "line_sheet" && !claim.family) {
+      // The AI's own sheet for this draft names the product.
+      const own = (Array.isArray(prefer) ? prefer : []).find(a => a && a.type === "image" && attachmentKindOf(a) === "line_sheet" && familyOf(a).length === 1);
+      const r = own ? { family: familyOf(own)[0] } : await resolveSheetFamily({ replyText: text, family, threadId, askModel });
+      claim.family = r.family;
+    }
+    const covered = (attachments || []).concat(add);
+    const own = (Array.isArray(prefer) ? prefer : []).find(a => a && a.type === "image" && a.storagePath && a.proxyUrl &&
+      claimCovered(claim, [a]) && (claim.kind !== "line_sheet" || familyOf(a).includes(claim.family)) &&
+      !covered.some(x => x && x.attachmentId === a.attachmentId));
+    if (own) { add.push(own); continue; }
+    if (!Array.isArray(items)) { try { items = await activeCollateralPool(); } catch { items = []; } }
+    const same = items.filter(x => x && x.storagePath && x.uploadedContentType && attachmentKindOf({ type: "image", ...x }) === claim.kind);
+    const hit = claim.kind === "line_sheet"
+      ? (claim.family ? same.find(x => familyOf(x).includes(claim.family)) : (same.length === 1 ? same[0] : null))
+      : same[0];
+    if (hit && !covered.some(x => x && x.collateralId === hit.id)) add.push(collateralAttachmentRecord(hit, claim.kind));
+    else if (!hit) still.push(claim);
+  }
+  return { add, missing: still };
+}
+
+// A sheet or guide on a draft points at the file that was current when the
+// draft was written. If the owner has since replaced or retired it, point
+// the attachment at the current file of the same kind and product.
+async function refreshCollateralAttachments(attachments, { pool } = {}) {
+  const list = Array.isArray(attachments) ? attachments : [];
+  if (!list.some(a => a && a.type === "image" && /^att_collateral_/.test(String(a.attachmentId || "")))) return { attachments: list, changed: 0 };
+  let items = pool;
+  if (!Array.isArray(items)) { try { items = await activeCollateralPool(); } catch { return { attachments: list, changed: 0 }; } }
+  let changed = 0;
+  const out = list.map(a => {
+    if (!a || a.type !== "image" || !/^att_collateral_/.test(String(a.attachmentId || ""))) return a;
+    const id = String(a.attachmentId).slice("att_collateral_".length);
+    let cur = items.find(x => x.id === id);
+    if (!cur) {
+      const kind = attachmentKindOf(a);
+      const fam = familyOf(a);
+      cur = COLLATERAL_CLAIM_KINDS.has(kind)
+        ? items.find(x => attachmentKindOf({ type: "image", ...x }) === kind && (kind !== "line_sheet" || !fam.length || familyOf(x).some(f => fam.includes(f))))
+        : null;
+    }
+    if (!cur || cur.storagePath === a.storagePath) return a;
+    changed++;
+    const rec = collateralAttachmentRecord(cur, attachmentKindOf({ type: "image", ...cur }));
+    return { ...a, ...rec, attachmentId: a.attachmentId === "att_collateral_" + cur.id ? a.attachmentId : rec.attachmentId };
+  });
+  return { attachments: out, changed };
+}
+
+function describeClaims(claims) {
+  return (claims || []).map(c => (c.family && c.kind === "line_sheet" ? c.family + " " : "") + (CLAIM_NAMES[c.kind] || c.kind)).join(", ");
+}
+
+module.exports.attachmentClaims = attachmentClaims;
+module.exports.missingAttachmentClaims = missingAttachmentClaims;
+module.exports.attachClaimedCollateral = attachClaimedCollateral;
+module.exports.attachmentKindOf = attachmentKindOf;
+module.exports.refreshCollateralAttachments = refreshCollateralAttachments;
+module.exports.resolveSheetFamily = resolveSheetFamily;
+module.exports.describeClaims = describeClaims;
 module.exports.nameAttachedGuides = nameAttachedGuides;
 module.exports.searchCollateral = searchCollateral;
 module.exports.pullCollateralUrlsFromText = pullCollateralUrlsFromText;
