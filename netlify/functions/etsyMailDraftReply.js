@@ -51,7 +51,7 @@
  *  ═══ ENV VARS ═══
  *
  *  ANTHROPIC_API_KEY              required
- *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-5
+ *  ETSYMAIL_AI_MODEL              optional; default claude-sonnet-5-5 (owner, 2026-09-28)
  *  ETSYMAIL_AI_EFFORT             optional; default "high"
  *  ETSYMAIL_AI_MAX_TOKENS         optional; default 12000 (Sonnet 4.6 counts
  *                                 thinking + response + tool-use ALL
@@ -384,7 +384,7 @@ const DISCOUNT_CODES_COLL = "EtsyMail_DiscountCodes";
 // remains on Sonnet 4.6 by default — phased rollout: support first, then
 // sales once the cheaper model proves out on confidence-score and
 // human-review-rate metrics.
-const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-5";
+const AI_MODEL     = process.env.ETSYMAIL_AI_MODEL    || "claude-sonnet-5-5";
 const AI_EFFORT    = process.env.ETSYMAIL_AI_EFFORT   || "high";
 const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10);
 
@@ -398,7 +398,7 @@ const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10
 //                the audit); Sonnet 5 and newer reason by default, so pair
 //                it with ETSYMAIL_AI_PIPELINE_MODEL=claude-sonnet-4-6
 // ETSYMAIL_AI_PIPELINE_MODEL model for those in-process pipeline drafts;
-//                            default claude-sonnet-5 (trial D9). The AI Draft
+//                            default claude-sonnet-5-5 (trial D9, then Sonnet 5.5). The AI Draft
 //                            button keeps ETSYMAIL_AI_MODEL.
 // ETSYMAIL_AI_SLIM_CONTEXT   on by default: slim receipts + message index in
 //                            the raw block; "0" sends the full documents
@@ -410,7 +410,7 @@ const AI_MAX_TOKENS = parseInt(process.env.ETSYMAIL_AI_MAX_TOKENS || "12000", 10
 //                            only (e.g. 120000 once drafts run in-process in
 //                            the 15-minute pipeline); unset = no timeout
 const AI_ADAPTIVE_THINKING = String(process.env.ETSYMAIL_AI_ADAPTIVE_THINKING || "pipeline").trim().toLowerCase();
-const AI_PIPELINE_MODEL    = process.env.ETSYMAIL_AI_PIPELINE_MODEL || "claude-sonnet-5";
+const AI_PIPELINE_MODEL    = process.env.ETSYMAIL_AI_PIPELINE_MODEL || "claude-sonnet-5-5";
 const AI_CACHE_TAIL        = process.env.ETSYMAIL_AI_CACHE_TAIL === "1";
 const AI_SLIM_CONTEXT      = process.env.ETSYMAIL_AI_SLIM_CONTEXT !== "0";
 const AI_CACHE_TTL         = process.env.ETSYMAIL_AI_CACHE_TTL === "5m" ? undefined : "1h";

@@ -113,7 +113,7 @@
  *
  *    ANTHROPIC_API_KEY             required
  *    ETSYMAIL_EXTENSION_SECRET     gates this endpoint
- *    ETSYMAIL_SALES_MODEL          override; default claude-sonnet-5
+ *    ETSYMAIL_SALES_MODEL          override; default claude-sonnet-5-5
  *    ETSYMAIL_SALES_EFFORT         override; default "high"
  *    ETSYMAIL_SALES_MAX_TOKENS     override; default 6000
  */
@@ -233,7 +233,7 @@ const AUDIT_COLL    = "EtsyMail_Audit";
 const CONFIG_COLL   = "EtsyMail_Config";
 
 // ─── Model config ───────────────────────────────────────────────────────
-const AI_MODEL          = process.env.ETSYMAIL_SALES_MODEL || "claude-sonnet-5";
+const AI_MODEL          = process.env.ETSYMAIL_SALES_MODEL || "claude-sonnet-5-5";
 // AI_EFFORT controls how much "thinking" budget Anthropic's Sonnet 4.6
 // allocates to each sales-agent turn. Allowed values per Anthropic API:
 //   low | medium | high | xhigh | max

@@ -65,7 +65,7 @@ const MANUAL_LISTING_DEFAULT_PRICE_USD = Math.max(1, Number(process.env.ETSYMAIL
 const AI_MODEL =
   process.env.ETSYMAIL_LISTING_CREATOR_MODEL ||
   process.env.ETSYMAIL_SALES_MODEL ||
-  "claude-sonnet-5";
+  "claude-sonnet-5-5";
 // Sonnet 5 and newer always reason and that counts toward max_tokens, so these
 // short single-shot calls get low effort and room for the reasoning.
 const REASONS_BY_DEFAULT = /^claude-(?:sonnet-5|opus-5|fable-5)/.test(AI_MODEL);

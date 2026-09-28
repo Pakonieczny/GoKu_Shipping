@@ -20,7 +20,7 @@ const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
 const { callClaudeRaw } = require("./_etsyMailAnthropic");
 const { POLISH } = require("./_etsyMailPrompts");
 
-const MODEL       = process.env.ETSYMAIL_AI_MODEL || "claude-sonnet-5";
+const MODEL       = process.env.ETSYMAIL_AI_MODEL || "claude-sonnet-5-5";
 const MAX_TEXT    = 4000;    // characters of staff text accepted
 const MAX_CONTEXT = 900;     // characters of customer messages, for tone
 const MAX_TOKENS  = 3000;    // a short message plus a little low-effort reasoning
