@@ -1021,7 +1021,9 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         naming the missing fact (the USPS scan status). If the label is
         more than 5 business days old (labelBusinessDaysOld above 5),
         also write "If USPS never picked it up, we'll send you a
-        replacement" for a person to approve. Younger than that, when
+        replacement" for a person to approve (not for a package the
+        customer or the tracking says came back to us: section 7, 3.4
+        decides that one). Younger than that, when
         they ask for one, say it's too early and give the day from
         noScanReplacementFrom ("if USPS still hasn't scanned it by
         <that day>, we'll send you a replacement"). The lost-package
@@ -3659,6 +3661,9 @@ function slimContextForDraft(ctx) {
       shipping_charged  : money(r.total_shipping_cost),
       currency          : (r.grandtotal && r.grandtotal.currency_code) || null,
       country_iso       : r.country_iso || null,
+      // The address the order went to, so a returned-parcel reply can
+      // quote it when asking whether it was right.
+      ship_to           : text(r.formatted_address || [r.first_line, r.second_line, r.city, r.state, r.zip].filter(Boolean).join(", "), 200),
       is_gift           : !!r.is_gift,
       message_from_buyer: r.message_from_buyer ? String(r.message_from_buyer).slice(0, 300) : null,
       items: tx.map(t => ({
