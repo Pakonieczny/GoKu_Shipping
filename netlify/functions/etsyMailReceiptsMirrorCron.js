@@ -143,18 +143,19 @@ const FV = admin.firestore.FieldValue;
 // own. A page with no cancelled receipt costs nothing; one with some costs one
 // getAll of their records and one batch. It must never break the mirror: the
 // helper loads inside try/catch, every call is caught, and it gets at most
-// CANCEL_HOOK_MS before the mirror moves on without it.
+// CANCEL_HOOK_MS in a whole run (all its pages together) before the mirror
+// moves on without it.
 let OrderCancel = null;
 try { OrderCancel = require("./_orderCancel"); }
 catch (e) { console.warn("[mirror-cron] cancel records off (helper did not load):", e && e.message); }
 const CANCEL_HOOK_MS = 8000;
-async function noteEtsyCancels(receipts) {
+async function noteEtsyCancels(receipts, capMs = CANCEL_HOOK_MS) {
   if (!OrderCancel) return null;
   let timer = null;
   try {
     const work = Promise.resolve().then(() => OrderCancel.fromReceipts(db, FV, receipts, { detectedBy: "mirror" }))
       .catch(e => ({ error: String((e && e.message) || e).slice(0, 200) }));
-    const cap = new Promise(res => { timer = setTimeout(() => res({ error: "timed out" }), CANCEL_HOOK_MS); });
+    const cap = new Promise(res => { timer = setTimeout(() => res({ error: "timed out" }), Math.max(0, capMs)); });
     const out = await Promise.race([work, cap]);
     if (out && out.error) console.warn("[mirror-cron] cancel records not written this page:", out.error);
     return out || null;
@@ -619,6 +620,7 @@ exports.handler = meter.wrapHandler(async () => {
   let lastErrorMsg = null;
   const changedBuyerIds = new Set();
   const etsyCancels = { created: 0, noted: 0, errors: 0, off: false };
+  let etsyCancelsMs = 0;   // what the cancel hook has taken of this run (CANCEL_HOOK_MS at most, all pages together)
   let customerRebuild = { attempted: 0, updated: 0, skipped: 0, errors: [], missingIndexFallbackCount: 0 };
 
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -664,11 +666,16 @@ exports.handler = meter.wrapHandler(async () => {
     }
 
     // Charm Nest: the cancelled receipts of this page become cancel records
-    // (never throws; see noteEtsyCancels). Once it has timed out, the rest of
-    // this run goes without it (op cancelSweep catches up on any it missed).
+    // (never throws; see noteEtsyCancels). Once its time for this run is used
+    // up, the rest of the run goes without it (op cancelSweep catches up on
+    // any it missed).
     try {
-      const cx = etsyCancels.off ? null : await noteEtsyCancels(receipts);
+      const left = CANCEL_HOOK_MS - etsyCancelsMs;
+      if (left <= 0) etsyCancels.off = true;
+      const t0 = Date.now(), cx = etsyCancels.off ? null : await noteEtsyCancels(receipts, left);
+      if (!etsyCancels.off) etsyCancelsMs += Math.max(0, Date.now() - t0);
       if (cx) { etsyCancels.created += cx.created || 0; etsyCancels.noted += cx.noted || 0; if (cx.error) etsyCancels.errors += 1; if (cx.error === "timed out") etsyCancels.off = true; }
+      if (etsyCancelsMs >= CANCEL_HOOK_MS) etsyCancels.off = true;
     } catch (_) { /* never into the mirror */ }
 
     // Track changed buyers so the 3-minute receipt mirror also refreshes
