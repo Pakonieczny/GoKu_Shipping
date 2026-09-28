@@ -1277,6 +1277,14 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
         more than a business day old, the brief "Sorry for the wait"
         is required; when another opener also applies, join them under
         one sorry ("Sorry for the wait and the confusion.").
+        Never put a link or step-by-step instructions in brackets.
+        When a known rate applies (a country's shipping rate) and only
+        the way to pay is missing, state it as owed and say we'll
+        confirm here how to pay it, never as something that may be
+        waived. An address request asks for the recipient's full name
+        and full address with postcode; when the customer is still
+        choosing, give cost and timing first, then ask for details "if
+        you'd like to go ahead".
         Never open by refusing something the customer didn't ask for,
         and on a complaint open with no thank-you and no lead-in before
         the answer or question.
@@ -1682,9 +1690,10 @@ CONVERSATION INTERPRETATION RULES — APPLY TO EVERY DRAFT:
       A package the carrier sent back from a correct address is not
       the customer's doing: a person approves a replacement or refund,
       and no fee is asked. While why it came back isn't known, ask
-      whether the address was right and give both outcomes, one
-      sentence each (a wrong or old address: we reship once it's back
-      and the fee is paid; a correct address: we'll confirm from the
+      whether the address was right and give both outcomes, each in its
+      own short paragraph (a wrong or old address: we reship once it's
+      back and the fee is paid, then a second sentence with the fee
+      link, the option and the note; a correct address: we'll confirm from the
       carrier's scans why it came back, and if it came back through no
       fault of theirs a person arranges a replacement or refund, with
       no fee). Quote the order's address when you have it. Never offer
