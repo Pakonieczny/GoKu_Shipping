@@ -8852,7 +8852,10 @@ const OrderWin = window.OrderWin = (() => {
     }
     const qty = sibs.reduce((n, x) => n + (+((x.spec && x.spec.quantity) || x.line.quantity) || 1), 0);
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
-    byId("owSub").textContent = [r.order.buyer && r.order.buyer.name, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
+    // (an order still being read: what is known of it, and a skeleton where the rest is coming)
+    const sub = byId("owSub"), buyer = r.order.buyer && r.order.buyer.name;
+    if (r.loading) sub.innerHTML = (buyer ? esc(buyer) + " · " : "") + '<span class="owSk" aria-hidden="true"></span>';
+    else sub.textContent = [buyer, qty ? qty + (qty === 1 ? " piece" : " pieces") : "", ship].filter(Boolean).join(" · ");
     // Previous and Next walk the Orders list the person is looking at, and only then
     const list = W.walk ? siblings() : [];
     // a line that has just left the list it was walked in (its skip undone under On hold, a fix that filtered it out)
@@ -8925,9 +8928,9 @@ const OrderWin = window.OrderWin = (() => {
     paintPieces(r, sibs);
     const mp = byId("owMetal"); mp.textContent = r.material ? labelOf(r.material) : (sp.materialLabel || (r.loading ? "…" : "no material"));
     mp.className = "pill " + (r.material || r.loading ? "neutral" : "bad");
-    const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r));
+    const ph = byId("owPhoto"); const url = tryDo(() => Orders.imageFor(r)) || (r.loading ? r.peek : null);
     ph.classList.remove("zoom");
-    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : '<span class="ph">no image</span>';
+    ph.innerHTML = url ? '<img crossorigin="anonymous" alt="" src="' + esc(cors(url)) + '">' : r.loading ? '<span class="owSk owSkPic" aria-hidden="true"></span>' : '<span class="ph">no image</span>';
     ph.dataset.lid = String(r.line.listingId || ""); if (url) ph.dataset.painted = "1"; else { delete ph.dataset.painted; if (r.line.listingId) tryDo(() => Orders.wantImage(r.line.listingId)); }
     // the charm's vector design under the listing photo, as the lists show the two side by side (the window showed the
     // photo alone, or "no image" while the photo was not ready)
@@ -8944,7 +8947,8 @@ const OrderWin = window.OrderWin = (() => {
     // the team's messages are in the Team tab beside this, in full: not repeated here among what the customer wrote
     const notes = byId("owNotes");
     notes.className = said.length ? "owSaid" : "owSaid none";
-    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? "Reading the order…" : r.said || "— the customer wrote nothing —";
+    notes.innerHTML = said.length ? said.map(([k, v2]) => `<span class="lbl">${esc(k)}</span>${esc(v2)}`).join("") : r.loading ? '<span class="owSk" aria-hidden="true"></span><span class="owSk short" aria-hidden="true"></span>' : r.said || "— the customer wrote nothing —";
+    if (r.loading) notes.setAttribute("aria-label", "Reading the order…"); else notes.removeAttribute("aria-label");
     const again = notes.querySelector("[data-ow-retry]"); if (again) again.onclick = () => openOrder(String(r.order.receiptId), { view: W.view, keepFrom: true, highlight: W.hl || undefined });
     paintNote(r);
     const st = tryDo(() => Orders.statePill(r)) || ["neutral", r.state || "—"], where = tryDo(() => Orders.placeOf(r));
@@ -8953,7 +8957,9 @@ const OrderWin = window.OrderWin = (() => {
     // only the options the sorter could map: a custom order is read from exactly these
     const placed = (+r.order.createTs || 0) * 1000, rid = String(r.order.receiptId), onum = String(r.order.orderNumber || "");
     const bought = tryDo(() => O.purchaseOptions(r.line, sp)) || [];
-    byId("owMeta").innerHTML = r.loading ? mcell("Order", rid) :
+    // (an order still being read: its number, what is known, and a skeleton block for each field still coming)
+    const skel = lbl => '<div class="m sk"><i>' + esc(lbl) + '</i><span class="owSk" aria-hidden="true"></span></div>';
+    byId("owMeta").innerHTML = r.loading ? mcell("Order", rid) + (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name) : skel("Buyer")) + ["Purchased", "Quantity", "Metal", "State", "Ship by", "Listing", "Title"].map(skel).join("") :
       mcell("Order", rid + (onum && onum !== rid ? " · #" + onum : "")) +
       (placed ? mcell("Purchased", when(placed)) : r.arrivedAt ? mcell("Arrived", when(r.arrivedAt)) : "") +
       (r.order.buyer && r.order.buyer.name ? mcell("Buyer", r.order.buyer.name + (r.order.isGift ? " · gift" : "")) : r.order.isGift ? mcell("Gift", "yes") : "") +
@@ -9627,8 +9633,8 @@ const OrderWin = window.OrderWin = (() => {
   }
 
   /* ── opening and closing: the view grows out of what was clicked (an Orders row, a search result, a charm) and goes
-     back into it (Paul, 28 Sep; the sheet window's curve). The view is opaque from the first frame, its clip growing
-     from the clicked rectangle to the screen; the header, the tabs and the view come up as it lands. Closing shrinks it
+     back into it (Paul, 28 Sep; the sheet window's curve). The view is opaque and drawn from the first frame, scaled
+     and clipped onto the clicked rectangle and growing from it to the screen, its header, rail, tabs and view with it. Closing shrinks it
      into its origin, which flashes gold, or fades where the origin is gone. Nothing waits on it: a click or a close in
      flight is taken at once. ── */
   let pressed = null;
@@ -9679,27 +9685,36 @@ const OrderWin = window.OrderWin = (() => {
   /** The view flies with this animation: promoted while it runs, and what was held is drawn when it ends. */
   function flight(a) {
     const d = W.dlg, f = W.fly = { a }; d.style.willChange = "clip-path, opacity, transform";
-    const end = () => { if (W.fly !== f) return; W.fly = null; d.style.willChange = ""; land(); };
+    const end = () => { if (W.fly !== f) return; W.fly = null; d.style.willChange = ""; d.style.transformOrigin = ""; land(); };
     a.finished.then(end, end);
     // (a hidden tab draws no frames: the view never waits on them to land)
     const t = a.effect && a.effect.getTiming ? a.effect.getTiming() : {}; setTimeout(end, (+t.duration || 0) + (+t.delay || 0) + 400);
   }
   /** The view closed: whatever was held for it goes with it. */
-  function flightGone() { W.fly = null; H.q.clear(); cancelAnimationFrame(H.raf); H.raf = 0; if (W.dlg) W.dlg.style.willChange = ""; for (const res of H.wait.splice(0)) res(); }
+  function flightGone() { W.fly = null; H.q.clear(); cancelAnimationFrame(H.raf); H.raf = 0; if (W.dlg) { W.dlg.style.willChange = ""; W.dlg.style.transformOrigin = ""; } for (const res of H.wait.splice(0)) res(); }
   function growIn(from) {
     const d = W.dlg; stopMotion(); d.classList.remove("owBack"); d.classList.add("owGrow");
     if (still()) { const a = d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: "ease" }); W.anims.push(a); flight(a); return; }
     const r = rectOf(from);
     const run = (n, frames, o) => { if (!n) return null; const a = n.animate(frames, Object.assign({ easing: EASE, fill: "backwards" }, o)); W.anims.push(a); return a; };
     if (!r) { flight(run(d, [{ opacity: 0, transform: "scale(.985)" }, { opacity: 1, transform: "none" }], { duration: 220 })); return; }
-    flight(run(d, [{ clipPath: clipOf(r) }, { clipPath: "inset(0px 0px 0px 0px round 0px)" }], { duration: 650, easing: GROW }));
+    // the view itself flies (Paul, 28 Sep: "a beautiful and seamless animation"; it flew as a blank cream box, its header,
+    // tabs and view coming up only as it landed): drawn whole before it starts (the header, the rail's frame, the tabs,
+    // the Overview or its skeleton: show, paint), laid over what was clicked at the scale that covers it, top left on
+    // top left, clipped to it, and grown from there to the screen on the same curve and time. Transform and clip-path
+    // only: the view is laid out once, at its own size, never in flight. What the network brings still waits for it to
+    // land (hold) and fades in there.
+    const w = d.offsetWidth || innerWidth, h = d.offsetHeight || innerHeight, s = Math.min(1, Math.max(r.width / w, r.height / h, .02));
+    const cw = Math.min(w, r.width / s), ch = Math.min(h, r.height / s);
+    // (the clip's corner is given at a few points of the curve, so it stays 12px on screen, easing to square as it lands,
+    // whatever the scale: one radius for the whole flight grew with the view)
+    const at = p => { const k = s + (1 - s) * p, rd = Math.max(0, Math.min(12 * (1 - p) / k, cw / 2, ch / 2)); return { offset: p, clipPath: `inset(0px ${((w - cw) * (1 - p)).toFixed(2)}px ${((h - ch) * (1 - p)).toFixed(2)}px 0px round ${rd.toFixed(2)}px)` }; };
+    const frames = [0, .15, .35, .6, 1].map(at);
+    Object.assign(frames[0], { transform: `translate(${r.left}px, ${r.top}px) scale(${s})` }); Object.assign(frames[4], { transform: "translate(0px, 0px) scale(1)" });
+    d.style.transformOrigin = "0 0";
+    flight(run(d, frames, { duration: 650, easing: GROW }));
     // the surface starts in the colour of what was clicked and takes its own as it grows
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
-    // the header, the tabs and the view come up 6px, 40ms apart, from 240ms; the rail's steps spring in
-    const view = d.querySelector(`.owBody > .owView[data-view="${W.view}"]`);
-    const parts = [d.querySelector(".owId"), d.querySelector(".owRight"), d.querySelector(".owTabsV"), d.querySelector(".owLoading:not([hidden])"), view];
-    parts.filter(Boolean).forEach((n, i) => run(n, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 240 + i * 40 }));
-    run(d.querySelector(".owRail"), [{ opacity: 0, transform: "scale(.96)" }, { opacity: 1, transform: "none" }], { duration: 420, delay: 320, easing: "cubic-bezier(.3,1.4,.5,1)" });
   }
   async function shut() {
     const d = W.dlg; if (!d || !d.open || W.closing) return;
@@ -9844,6 +9859,13 @@ const OrderWin = window.OrderWin = (() => {
     const mine = opts.row && opts.row.key ? pulled.find(r => r.key === opts.row.key) : null;
     if (pulled.length) return show(mine || pulled[0], o);
     const tok = ++W.look, stub = stubRow(rid);
+    // what the page already knows of the order (the search index as it stands, the picture already fetched) is drawn
+    // at once, so the view flies with it; nothing is read or built for it here
+    tryDo(() => {
+      const ix = window.OrderSearch && OrderSearch._IX, e = ix && ix.gen ? ix.by.get(rid) : null; if (!e) return;
+      if (e.buyer) stub.order.buyer.name = e.buyer;
+      for (const l of e.listings || []) { const u = ListMedia.peek(l); if (u) { stub.peek = u; break; } }
+    });
     const loading = byId("owLoading"), say = t => hold("say", () => { if (tok !== W.look) return; loading.hidden = !t; if (t) loading.lastElementChild.textContent = t; });
     W.rows = null;
     say("Looking up order " + rid + " in the sorter's records…");
