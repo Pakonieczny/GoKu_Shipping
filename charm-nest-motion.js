@@ -80,8 +80,13 @@
     const dx = tr.left + tr.width / 2 - (r.left + r.width / 2), dy = tr.top + tr.height / 2 - (r.top + r.height / 2);
     const s = Math.max(.03, Math.min(.4, (tr.height * 1.4) / r.height, (tr.width * 1.2) / r.width));
     const bend = Math.min(140, 36 + Math.abs(dx) * .12 + Math.abs(dy) * .08) * (dy <= 0 ? 1 : -.4);
-    const card = g._card;
-    if (card) card.animate([{ boxShadow: "0 1px 2px rgba(0,0,0,.06)" }, { boxShadow: "0 22px 44px rgba(30,24,16,.24)", offset: .16 }, { boxShadow: "0 10px 24px rgba(30,24,16,.16)", offset: .7 }, { boxShadow: "0 2px 6px rgba(30,24,16,.1)" }], { duration: ms, fill: "forwards" });
+    // the lift shadow is a still layer under the copy that only fades (a shadow animated per frame repainted the whole
+    // card on every frame: a big card's flight stuttered)
+    if (g._card) {
+      const sh = doc.createElement("i"); sh.className = "mLift"; g.insertBefore(sh, g._card);
+      Object.assign(sh.style, { width: g._card.style.width, height: g._card.style.height, borderRadius: getComputedStyle(g._card).borderRadius });
+      sh.animate([{ opacity: 0 }, { opacity: 1, offset: .16 }, { opacity: .6, offset: .7 }, { opacity: .2 }], { duration: ms, fill: "forwards" });
+    }
     const a = g.animate([
       { transform: "translate(0,0) scale(1)", opacity: 1 },
       { transform: "translate(0,-10px) scale(1.015)", opacity: 1, offset: .16 },
@@ -114,11 +119,14 @@
   function grow(node, opts = {}) {
     if (!node || !node.isConnected || reduced()) return;
     const h = node.getBoundingClientRect().height; if (!h) return;
+    // room: false — the rows around it already glide into their places (reconcile), so it only fades in where it stands;
+    // folding its height as well dropped them back first, and they jumped before gliding
+    if (opts.room === false) { node.animate([{ opacity: 0, transform: "translateY(-6px)" }, { opacity: 0, offset: .3 }, { opacity: 1, transform: "none" }], { duration: opts.ms || T.grow, easing: "cubic-bezier(.3,.1,.2,1)", delay: opts.delay || 0, fill: "backwards" }); return; }
     node.animate([{ opacity: 0, transform: "translateY(-6px)", maxHeight: "0px", overflow: "hidden" }, { opacity: 0, maxHeight: h + "px", offset: .45, overflow: "hidden" }, { opacity: 1, transform: "none", maxHeight: h + "px", overflow: "hidden" }], { duration: opts.ms || T.grow, easing: "cubic-bezier(.3,.1,.2,1)", delay: opts.delay || 0, fill: "backwards" });
   }
   /** Something removed with no destination fades and folds away where it was. */
   async function fade(g) {
-    await g.animate([{ opacity: 1, transform: "none", filter: "none" }, { opacity: 0, transform: "scale(.96)", filter: "blur(1px)" }], { duration: T.fade, easing: "ease-in", fill: "forwards" }).finished.catch(() => {});
+    await g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.96)" }], { duration: T.fade, easing: "ease-in", fill: "forwards" }).finished.catch(() => {});
     g.remove();
   }
 
@@ -170,7 +178,7 @@
     for (const [k, n] of now) {
       if (before.has(k)) continue;
       const spec = take(arrivals, k);
-      if (spec && spec.from) flyIn(spec.from, n, spec); else if (seen(n.getBoundingClientRect())) grow(n, { delay: hold ? hold + 120 : 0 });
+      if (spec && spec.from) flyIn(spec.from, n, spec); else if (seen(n.getBoundingClientRect())) grow(n, { delay: hold ? hold + 120 : 0, room: false });
     }
   }
 
