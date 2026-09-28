@@ -2014,8 +2014,7 @@ function metalToBadge(label){
       } else if (localStorage.getItem(TOKEN_KEYS.refresh)) {
         refreshAccessToken();
       } else {
-        // No tokens at all → start OAuth silently (like design/sorting)
-        startOAuth("boot");
+        // No tokens at all → no automatic Etsy login; staff connect with the Connect Etsy button
       }
     })();
 
