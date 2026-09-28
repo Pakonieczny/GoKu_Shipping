@@ -4,7 +4,7 @@
 */
 
 const admin = require("./firebaseAdmin");
-const { admissionControl, quotaFailure, queuedName } = require("./lib/listingBatchAdmission.cjs");
+const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14134,6 +14134,7 @@ async function _handlerImpl(event) {
       for (const b of open) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         if (b.state === "JOB_STATE_FAILED" && quotaFailure(b.providerError) && !b.retryRequested &&
+            b.retryStatus !== "capacity_refused" &&
             !b.collected && !b.retryBatchName && !b.responsesFile && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") {
           await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({ retryRequested: true,
             retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
@@ -14218,6 +14219,9 @@ async function _handlerImpl(event) {
             retryRequested: false, retryStatus: "complete_or_protected",
             retryError: retry?.error?.message || null,
           }, { merge: true });
+        } else if (retry?.capacityExhausted) {
+          // Stopped for good and marked on its record; the rest of the queue carries on.
+          console.warn("[batch_sweep] retry stopped:", b.batchName, retry.error?.message);
         } else if (!retry?.ok) {
           console.warn("[batch_sweep] retry postponed:", b.batchName, retry?.error?.message || "unknown error");
           break;
@@ -14961,6 +14965,7 @@ async function _handlerImpl(event) {
         retryOf: sourceName || null,
         retryRequested: body?.retryRequested === true && !sourceName.startsWith("batch_local_"),
         retryAttempt: Number(body?.retryAttempt || 0),
+        capacityRefusals: Number(body?.capacityRefusals || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
@@ -15004,9 +15009,12 @@ async function _handlerImpl(event) {
       } catch (err) {
         if (!claim?.token) throw err;
         await admission.release(claim, err);
-        if (quotaFailure(err?.message)) await admission.rejected(sourceName);
+        const refused = quotaFailure(err?.message);
+        if (refused) await admission.rejected(sourceName);
         await getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(sourceName)).set({
           retryError: String(err?.message || err).slice(0, 500),
+          // A refusal at submission counts toward the set's refusal ceiling too.
+          ...(refused ? { capacityRefusals: admin.firestore.FieldValue.increment(1) } : {}),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         return json(200, { ok: true, queued: true, batchName: sourceName,
@@ -15030,7 +15038,7 @@ async function _handlerImpl(event) {
         const d = doc.data();
         const state = String(d.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_");
         if (!(["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(state)) ||
-            d.collected || d.responsesFile || d.retryBatchName ||
+            d.collected || d.responsesFile || d.retryBatchName || d.retryStatus === "capacity_refused" ||
             d.sets?.length !== 1 || d.sets[0]?.setKind === "charm_maker") {
           protectedCount++;
           continue;
@@ -15059,13 +15067,21 @@ async function _handlerImpl(event) {
       const originalSnap = await originalRef.get();
       if (!originalSnap.exists) return json(404, { error: { message: "Original batch record is missing" } });
       const original = originalSnap.data();
+      const refusals = capacityRefusals(original);
+      if (!original.retryBatchName && refusals >= CAPACITY_REFUSAL_LIMIT) {
+        const message = `Stopped after ${refusals} token-limit refusals from OpenAI; this set will not retry automatically.`;
+        await originalRef.set({ retryRequested: false, retryStatus: "capacity_refused", retryError: message,
+          retryStartedAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return json(409, { capacityExhausted: true, error: { message } });
+      }
       if (original.locallyQueued) {
         if (original.retryBatchName) return json(200, { ok: true, batchName: original.retryBatchName });
         if (original.state !== "JOB_STATE_QUEUED") return json(409, { error: { message: "This queued submission is no longer pending" } });
         return module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify({
           kind: "batch_submit", model: original.model, sets: original.sets,
           imageSize: original.imageSize, sessionId: original.sessionId,
-          retryOf: originalName, retryRequested: true, retryAttempt: 0, displayName: original.displayName,
+          retryOf: originalName, retryRequested: true, retryAttempt: 0, capacityRefusals: refusals,
+          displayName: original.displayName,
         }) });
       }
       if (Number(original.retryAttempt || 0) >= 5) {
@@ -15130,6 +15146,7 @@ async function _handlerImpl(event) {
           retryOf: originalName,
           retryRequested: original.retryRequested === true,
           retryAttempt: Number(original.retryAttempt || 0) + (quotaFailure(original.providerError) ? 0 : 1),
+          capacityRefusals: refusals,
           displayName: original.locallyQueued ? original.displayName : `retry-${set.category}-Set_${set.setN}-${originalName}`.slice(0, 100),
         }) });
         const result = JSON.parse(response.body || "{}");
@@ -15224,7 +15241,8 @@ async function _handlerImpl(event) {
         await getDb().runTransaction(async (tx) => {
           const snap = await tx.get(ref);
           const d = snap.data();
-          if (d && !d.collected && !d.retryBatchName && d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
+          if (d && !d.collected && !d.retryBatchName && d.retryStatus !== "capacity_refused" &&
+              d.sets?.length === 1 && d.sets[0].setKind !== "charm_maker")
             tx.set(ref, { retryRequested: true, retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         });
         await admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp()).rejected(batchName);
@@ -15670,6 +15688,7 @@ async function _handlerImpl(event) {
           retryBatchName: d.retryBatchName || null,
           retryRequested: !!d.retryRequested,
           retryAttempt: Number(d.retryAttempt || 0),
+          capacityRefusals: capacityRefusals(d),
           retryStatus: d.retryStatus || null,
           retryError: d.retryError || null,
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,

@@ -137,4 +137,30 @@ async function cancellationFeedbackScenario() {
   assert.equal(db.data.get('batches/batch_live_0').providerStatus,'cancelled');
   assert((await admissionControl(db,'batches',()=>123).reserve('next')).token,'only confirmed cancellation frees capacity');
 }
-(async()=>{await unitScenarios();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();console.log('Shared admission: concurrency, capacity, validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+async function submitRefusalCountScenario() {
+  // A token-limit refusal at submission adds one to the set's refusal count,
+  // which stops it at the ceiling instead of letting it loop.
+  const db=database(0);
+  db.data.set('batches/batch_src',{batchName:'batch_src',state:'JOB_STATE_FAILED',collected:false,retryRequested:true});
+  const start=src.indexOf('    if (kind === "batch_submit") {');
+  const end=src.indexOf('    if (kind === "batch_retry_queue") {',start);
+  const body={kind:'batch_submit',sessionId:'sess_original',displayName:'retry-x',retryOf:'batch_src',capacityRefusals:3,
+    sets:[{category:'Beady_Necklace',setN:9,outputBasePath:'listing-generator-1/Beady_Necklace/Ready_To_List/Set_9',
+      tasks:[{type:'edits',slotIndex:0,prompt:'p',input_storage_path:'ref.png',input_charm_storage_path:'charm.png'}]}]};
+  const result=await vm.runInNewContext(`(async()=>{ ${src.slice(start,end)} })()`,{
+    kind:'batch_submit', body, modelConfig:{id:'gpt-image-2.5-sunburst',supportsBatch:true},
+    apiKeyForImageModel:()=> 'test', batchDocIdFromName:x=>x, getDb:()=>db, BATCHES_COLL:'batches', admissionControl, queuedName, quotaFailure,
+    normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
+    admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>1,increment:n=>({increment:n})}}},
+    process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}),
+    runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
+    storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
+    buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
+    withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
+    uploadOpenAIBatchFile:async()=>'file-input',
+    createOpenAIImageBatch:async()=>{throw new Error('Enqueued token limit reached; limit 1,000,000');},
+  });
+  assert.equal(result.queued,true);
+  assert.deepEqual(db.data.get('batches/batch_src').capacityRefusals,{increment:1});
+}
+(async()=>{await unitScenarios();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});

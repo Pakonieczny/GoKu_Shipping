@@ -13041,6 +13041,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
     let _batchNextSweepAt = null;
     let _batchRetryLimit = 30;
     let _batchListLoadedAt = 0;
+    // Refresh, the automatic poll, actions and the Charm Maker panel can
+    // each ask for batch_list at once, and the answers can come back out of
+    // order. Number every request; the dashboard and _lastBatchList take an
+    // answer only when nothing newer has been applied, so an older answer
+    // never puts stale numbers back on screen.
+    let _batchListSeq = 0;
+    let _batchListDataSeq = 0;
+    let _batchPanelSeq = 0;
     let _recoveryInFlight = false;
     let _retryInFlight = false;
     const _batchSafeText = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
@@ -13049,10 +13057,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
     async function refreshBatchJobsPanel() {
       const listEl = document.getElementById("batchJobsList");
       if (!listEl) return;
+      const seq = ++_batchListSeq;
       try {
         const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
+        if (seq < _batchPanelSeq) return { ok: true, stale: true, batches: _lastBatchList };
+        _batchPanelSeq = seq;
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
-        _lastBatchList = batches;
+        if (seq >= _batchListDataSeq) { _batchListDataSeq = seq; _lastBatchList = batches; }
         _batchSweepInfo = resp?.sweep || null;
         if (resp?.admissionError) _batchSweepInfo = { ...(_batchSweepInfo || {}), lastError: resp.admissionError };
         _batchNextSweepAt = Number(resp?.nextSweepAt || 0) || null;
@@ -13117,6 +13128,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
           checkStatus.textContent = `Saved progress loaded · Refresh checks OpenAI now.`;
         return { ok: true, batches };
       } catch (err) {
+        // A newer answer is already on screen; this late failure changes nothing.
+        if (seq < _batchPanelSeq) return { ok: true, stale: true, batches: _lastBatchList };
+        _batchPanelSeq = seq;
         // Keep the dashboard already on screen; the status line says the load failed.
         if (!_lastBatchList.length) listEl.innerHTML = `<div class="muted" style="font-size: 11px; color: #fca5a5;">Failed to load batches: ${_batchSafeText(err?.message || err)}</div>`;
         const checkStatus = document.getElementById("batchRefreshStatus");
@@ -13200,6 +13214,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         }
       }
 
+      // Sets the server stopped after too many token-limit refusals.
+      const capacityStopped = effective.filter((b) => b.retryStatus === "capacity_refused" && !b.collected);
       const attention = effective.filter((b) => !b.retryRequested &&
         (b.collected ? b.results?.failedCount > 0 :
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
@@ -13251,6 +13267,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Waiting for images"; headlineColor = "#93c5fd";
       } else if (running > 0 || waitingRetries > 0) {
         headline = "In progress"; headlineColor = "#93c5fd";
+      } else if (capacityStopped.length) {
+        headline = "Stopped: token limit"; headlineColor = "#fca5a5";
       } else {
         headline = "Pending"; headlineColor = "#fde68a";
       }
@@ -13319,12 +13337,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : notSubmitted ? `${notSubmitted} sets still need to be submitted. Keep the original submission tab open.`
         : attention ? "Some jobs need attention. Open Details & actions to review them."
         : "";
+      const capacityNote = capacityStopped.length
+        ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
       const sweepProblem = !allDone && (sweep?.lastError ? `Collector error: ${sweep.lastError}` :
         sweep?.runningSince && !sweepIsRunning ? "The image collector has not finished its last check." :
         sweepStale ? "The image collector has not completed a check in over 25 minutes." :
         sweep?.lastResult?.collectErrors ? `${sweep.lastResult.collectErrors} image collection attempt(s) failed. Open Details & actions.` : "");
       const queueExplanation = explanation ? `<p class="batch-note">${_batchSafeText(explanation)}</p>` : "";
-      const alertHtml = sweepProblem ? `<div class="batch-alert" role="alert">${_batchSafeText(sweepProblem)}</div>` : "";
+      const alertHtml = [capacityNote, sweepProblem].filter(Boolean)
+        .map((text) => `<div class="batch-alert" role="alert">${_batchSafeText(text)}</div>`).join("");
       // Action buttons: only show what's actionable. Cancel-all if
       // anything is still running. Recover-all if there are failed /
       // expired batches the user could pull partial results from.
@@ -13340,7 +13361,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName;
       });
       const retryable = recoverableBatches.filter((b) => !b.responsesFile && !b.retryRequested &&
-        b.retryStatus !== "submitting");
+        b.retryStatus !== "submitting" && b.retryStatus !== "capacity_refused");
 
       const buttons = [];
       if (cancellableBatches.length > 0) {
@@ -13367,7 +13388,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const done = counts.successfulRequestCount ?? counts.completed ?? counts.completed_count ?? 0;
         const failures = counts.failedRequestCount ?? counts.failed ?? counts.failed_count ?? 0;
         const results = b.results || {};
-        const message = b.providerError || b.error?.message || b.error || b.statusError ||
+        const message = (b.retryStatus === "capacity_refused" && b.retryError) ||
+          b.providerError || b.error?.message || b.error || b.statusError ||
           b.retryError || results.failures?.[0]?.error || "";
         const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
         return `<div style="padding:6px 0; border-top:1px solid var(--line); overflow-wrap:anywhere;">
@@ -13901,11 +13923,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
           }).join("");
         } catch (_) { /* orchestration listing is optional */ }
 
+        const listSeq = ++_batchListSeq;
         const resp = await postJson("geminiImageProxy", { kind: "batch_list", limit: 1000, includeCollected: true });
         const batches = Array.isArray(resp?.batches) ? resp.batches : [];
         // Feed the shared auto-poll loop (same list the Generate tab uses —
-        // it polls status and auto-collects EVERY open batch, charm or not).
-        _lastBatchList = batches;
+        // it polls status and auto-collects EVERY open batch, charm or not),
+        // unless a newer answer already did.
+        if (listSeq >= _batchListDataSeq) { _batchListDataSeq = listSeq; _lastBatchList = batches; }
 
         const mine = batches.filter(_isCharmMakerBatch);
         if (mine.length === 0) {
