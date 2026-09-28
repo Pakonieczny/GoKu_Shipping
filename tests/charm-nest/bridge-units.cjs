@@ -48,6 +48,14 @@ const pass = (name) => console.log('  ✓', name);
       sp = O.interpretLine(order, v('ZODIAC REVAMP', zod, '1706155793'), cx({ optionMaps: om })); assert.strictEqual(sp.designSku, 'PISCES_68933'); assert.strictEqual(sp.skuSource, 'option'); assert.deepStrictEqual(sp.problems, []);
       sp = O.interpretLine(order, v('ZODIAC REVAMP', [zod[0], { name: 'Zodiac Sign', value: 'Libra' }], '1706155793'), cx({ optionMaps: om })); assert.deepStrictEqual(sp.problems.map(p => p.kind), ['needsMapping'], 'Libra is asked on its own');
       sp = O.interpretLine(order, v('ZODIAC REVAMP', zod, '42'), cx({ optionMaps: om })); assert.deepStrictEqual(sp.problems.map(p => p.kind), ['needsMapping'], 'another listing\'s Pisces is its own question');
+      // charm-only listings (Paul, 27 Sep): Necklace CHARM and CHARM + Engraving are the SKU; Huggie CHARM SET is "SKU (HUGGIE)"
+      lib['BUNNY_42980'] = {}; lib['BUNNY_42980 (HUGGIE)'] = {}; lib['DRAGON 11'] = {};
+      const ct = (sku, val, lid) => v(sku, [{ name: 'Metal Choice', value: 'Gold Filled' }, { name: 'Charm Type', value: val }], lid || '4457224966');
+      for (const val of ['Necklace CHARM', 'CHARM + Engraving']) { sp = O.interpretLine(order, ct('Bunny_42980', val), cx()); assert.strictEqual(sp.designSku, 'BUNNY_42980', val); assert.deepStrictEqual(sp.problems, []); }
+      sp = O.interpretLine(order, ct('Bunny_42980', 'Huggie CHARM SET'), cx()); assert.strictEqual(sp.designSku, 'BUNNY_42980 (HUGGIE)'); assert.strictEqual(sp.form, 'huggie'); assert.deepStrictEqual(sp.problems, []); assert.strictEqual(sp.boughtSku, 'BUNNY_42980 (HUGGIE)');
+      sp = O.interpretLine(order, ct('Dragon 11', 'Huggie CHARM SET'), cx()); assert.strictEqual(sp.designSku, 'DRAGON 11 (HUGGIE)', 'no huggie design: asked under its own name, never the necklace charm'); assert.deepStrictEqual(sp.problems.map(p => p.kind + ':' + p.sku), ['unmatchedSku:DRAGON 11 (HUGGIE)']); assert(!sp.readable, 'not read as a custom order');
+      sp = O.interpretLine(order, ct('Dragon 11', 'Huggie CHARM SET'), cx({ aliases: { '4457224966': { sku: 'BR-ALS-02' } } })); assert.strictEqual(sp.designSku, 'DRAGON 11 (HUGGIE)', "the listing's answer is not the huggie set's");
+      sp = O.interpretLine(order, ct('Dragon 11', 'Huggie CHARM SET'), cx({ aliases: { '4457224966': { v: 2, bySku: { 'DRAGON 11 (HUGGIE)': 'BUNNY_42980 (HUGGIE)' } } } })); assert.strictEqual(sp.designSku, 'BUNNY_42980 (HUGGIE)', 'a person\'s answer for the huggie set');
     }
     sp = O.interpretLine(order, mk({ sku: 'CHAIN-18', variations: [] }), ctx); assert(sp.noDesign); assert.deepStrictEqual(sp.problems, []);
     sp = O.interpretLine(order, mk({ sku: 'BR-CMP-01', variations: [{ name: 'Size', value: 'XL' }] }), ctx); assert(sp.problems.some(p => p.kind === 'missingSize'), 'sized line with no design for that size is held');
@@ -60,7 +68,8 @@ const pass = (name) => console.log('  ✓', name);
     for (const v of ['18"', '16.5"', '45cm', '16 inches']) assert(one('LENGTH', v).startsWith('chain:'), 'a length: ' + v);
     assert.strictEqual(one('Charm Type', 'Necklace CHARM'), 'form:necklace', 'the shop writes the words in its own order');
     assert.strictEqual(one('Charm Type', 'CHARM + Engraving'), 'form:charm', 'and adds a word that is not the choice');
-    for (const v of ['Huggie CHARM SET', 'Tag1 (front engrave)']) assert.strictEqual(one('Charm Type', v), 'unmapped', 'anything it cannot read stays for a person: ' + v);
+    assert.strictEqual(one('Charm Type', 'Tag1 (front engrave)'), 'unmapped', 'anything it cannot read stays for a person');
+    assert.strictEqual(one('Charm Type', 'Huggie CHARM SET'), 'form:huggie', 'a charm-only listing\'s huggie set (Paul, 27 Sep): its SKU\'s (HUGGIE) design');
     // each of these held real lines in the shop's own run — the words say plainly what the other option's name asks for
     assert.strictEqual(one('Charm Type', '18 Inch'), 'chain:18 Inch', 'a length under a form option is still a length');
     for (const n of ['Necklace Length in inches', 'LENGTH', 'Length'])

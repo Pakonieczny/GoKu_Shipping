@@ -189,6 +189,10 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .shTabs button i{font-style:normal;opacity:.7;margin-left:6px;font-weight:500}
 .shTabs button .spin{margin-left:6px;width:10px;height:10px;flex-basis:10px;vertical-align:-1px}
 .shTabs select{flex:0 0 auto;font:600 11px var(--sans);letter-spacing:.02em;padding:3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);max-width:150px;cursor:pointer}
+/* a sheet tab folding away (Motion) keeps its look on the motion layer, outside the row that styled it */
+.mGhost>[data-mkey^="sheetTab:"]{font:600 10.5px var(--sans);letter-spacing:.02em;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--card2);color:var(--ink70);white-space:nowrap}
+.mGhost>[data-mkey^="sheetTab:"].on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.mGhost>[data-mkey^="sheetTab:"] i{font-style:normal;opacity:.7;margin-left:6px;font-weight:500}
 .shHead .sw{width:12px;height:12px;border-radius:3px;background:var(--accent);flex:0 0 auto}
 .shHead .name{font:17px var(--serif);min-width:0;white-space:nowrap;flex:0 0 auto}
 .shHead .stock{display:none}
@@ -1358,6 +1362,8 @@ dialog.setsWin.closing::backdrop{animation:hsFadeOut .17s ease both}
 .egChip:hover{background:var(--paper2)}
 .egChip b{font:600 11.5px var(--mono)}
 .egChip span{font:11.5px var(--serif);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* the Engraving tab that takes a card in (Motion.arrive) keeps its dark face while it is open, so its light words stay readable */
+#engraveView .egTab.on.mGot{background-color:var(--ink)!important}
 .rvItem{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:var(--sh);padding:12px 14px;display:grid;gap:8px;--accent:var(--gold2);border-left:5px solid var(--accent)}
 .rvItem[data-kind=placement]{--accent:var(--slate);container-type:inline-size}
 .rvItem.full{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;overflow:auto}.rvItem[data-kind=flipFailed],.rvItem[data-kind=notRepresentable],.rvItem[data-kind=orderChanged]{--accent:var(--clay)}
@@ -1921,6 +1927,20 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .toast .toastUndo{border:1px solid rgba(244,236,220,.35);background:transparent;color:#f4ecdc;border-radius:7px;padding:1px 9px;font:650 11.5px var(--sans);cursor:pointer;margin-left:2px;flex:0 0 auto;align-self:center}
 .toast .toastUndo:hover{background:#f4ecdc;color:var(--velvet)}
 @media (prefers-reduced-motion:reduce){.ldMark,.ldLine,.ldChev,.ldPanel,.ldThumb img,.libTabs button{transition:none}.ldIn,.ldHit,.ldFound,.libTabs .cnt.pulse,#libBody.ldSwap,#libDone.ldSwap{animation:none}}
+/* a Library card on its way to a tab (Paul, 27 Sep 20:09-20:24) looks as it did in its list: laid out at the list's
+   width under the list's own container rules, its corner check left behind */
+.mGhost:has(>.mCopy.librarySheet,>.mCopy.setCard,>.mCopy.ldItem,>.mCopy.libCard){container-name:workspace}
+.mGhost .libCard{position:relative}
+.mGhost .ldMark:not(.ldMarkSet){display:none}
+/* the list scrolled past the bar: a small sign at its top stands for the tab something goes to (or comes from) */
+.ldSign{position:fixed;z-index:139;display:inline-flex;align-items:center;gap:5px;padding:3px 11px 3px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card);box-shadow:0 6px 18px rgba(30,24,16,.14);font:650 11px/16px var(--sans);color:var(--ink70);white-space:nowrap;pointer-events:none;animation:ldSignIn .32s cubic-bezier(.3,1.3,.5,1)}
+.ldSign svg{width:11px;height:11px;flex:0 0 11px}
+@keyframes ldSignIn{from{opacity:0;transform:translateY(-6px)}}
+/* Undo set: what the station is doing, at the set's title, until that line goes to the Orders tab */
+.setUndoChip{display:inline-flex;align-items:center;gap:6px;font:600 10.5px var(--mono);color:var(--ink70);background:var(--paper2);border:1px solid var(--line);border-radius:999px;padding:2px 9px;white-space:nowrap;animation:ldFade .3s ease}
+.setUndoChip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--ink70);border-radius:50%;animation:spin .7s linear infinite}
+.setUndoChip.ok{color:#3c5a39;background:var(--sageSoft);border-color:#cddcc9}
+@media (prefers-reduced-motion:reduce){.setUndoChip,.ldSign{animation:none}}
 /* the sheet cards: the same sheet with less around it */
 .sheets{gap:10px}
 .shHead{padding-top:6px;padding-bottom:3px}
@@ -2036,6 +2056,169 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
 .cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
 .cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
+/* Custom Orders: the order's own designs (CustomSheet). Plum is custom's colour everywhere: on the card, in the window and
+   on the sheets. A card takes .ai / .dxf files dropped on it; its designs sit in a strip under it. */
+.doneRow.cuDropOk{position:relative}
+/* files held over Review (Paul, 27 Sep 20:21: "the drag and drop hover states must be beautiful responsive from one list
+   card to another"): every card that takes them wears a calm dashed plum line and a breath of plum; the one under the
+   pointer fills with plum and says what a drop does there, with its order number; the cards that take none step back.
+   The mark hands over from card to card in one short crossfade. */
+.cuDropVeil{position:absolute;inset:5px;z-index:3;border-radius:11px;display:grid;place-content:center;justify-items:center;gap:7px;padding:10px 18px;text-align:center;pointer-events:none;opacity:0;border:1.5px dashed rgba(125,86,168,.5);background:rgba(142,107,184,.04);transition:opacity .2s ease,background-color .22s ease,border-color .22s ease,box-shadow .22s ease}
+.cuDropVeil>*{opacity:0;transform:translateY(5px);transition:opacity .18s ease,transform .28s cubic-bezier(.2,.8,.2,1)}
+body.cuDragging .cuDropOk .cuDropVeil{opacity:1}
+.cuDropOk.cuDragOver .cuDropVeil{background:rgba(249,246,253,.96);border-color:rgba(125,86,168,0);box-shadow:inset 0 0 0 2px #8e6bb8,0 12px 30px rgba(77,52,112,.18)}
+.cuDropOk.cuDragOver .cuDropVeil>*{opacity:1;transform:none}
+.cuDropOk.cuDragOver .cuDropVeil>i{transition-delay:.06s}
+.cuDropVeil b{font:500 19px/1.25 var(--serif);color:#4d3470}
+.cuDropVeil b .mono{font:600 .84em var(--mono);letter-spacing:.02em;white-space:nowrap}
+.cuDropVeil i{font:500 12px/1.4 var(--sans);font-style:normal;color:#6f5c8c;max-width:52ch}
+.cuVeilIc{width:36px;height:36px;border-radius:50%;background:#eee5f8;color:#6a4a93;display:grid;place-items:center;box-shadow:0 0 0 6px rgba(142,107,184,.08)}
+.cuVeilIc svg{width:19px;height:19px}
+.cuDropOk.cuDragOver .cuVeilIc svg{animation:cuBob 1.2s ease-in-out infinite}
+@keyframes cuBob{0%,100%{transform:translateY(-1.5px)}50%{transform:translateY(2px)}}
+.cuDropOk.cuNoFade .cuDropVeil,.cuDropOk.cuNoFade .cuDropVeil>*{transition:none}
+body.cuDragging #dropAll{display:none!important}
+#rvList>.reviewListRow{transition:opacity .25s ease,filter .25s ease}
+body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturate(.55)}
+/* the note at the foot of the list while files are held where none is taken: where they go, or why that card takes none */
+.cuTip{position:fixed;z-index:160;bottom:22px;left:50%;display:flex;align-items:center;gap:9px;max-width:min(520px,calc(100vw - 32px));padding:9px 15px 9px 13px;border-radius:999px;background:var(--velvet);color:#f3eee4;font:600 12px/1.35 var(--sans);box-shadow:0 12px 30px rgba(20,16,10,.28);pointer-events:none;opacity:0;transform:translate(-50%,10px);transition:opacity .2s ease,transform .28s cubic-bezier(.2,.8,.2,1)}
+.cuTip.on{opacity:1;transform:translate(-50%,0)}
+.cuTip i{flex:none;width:8px;height:8px;border-radius:50%;background:#b597dc;box-shadow:0 0 0 3px rgba(181,151,220,.25)}
+/* a button that cannot act yet stays in its place, greyed, and says why (its title; pressed, what is missing lights up) */
+.btn[aria-disabled="true"]{opacity:.45;cursor:default}.btn.ghost[aria-disabled="true"]:hover{background:transparent}
+/* the card's place for its designs while it has none: a dashed plum slot as tall as the buttons beside it (a click there
+   chooses the files) */
+.cuHint{display:inline-flex;align-items:center;gap:7px;min-height:36px;box-sizing:border-box;padding:6px 12px 6px 10px;border:1.5px dashed rgba(125,86,168,.5);border-radius:9px;background:transparent;font:600 12px/1.3 var(--sans);color:#5d3f82;cursor:pointer;text-align:left;transition:background-color .15s,border-color .15s,color .15s}
+.cuHint svg{flex:none;width:15px;height:15px}
+.cuHint:hover{background:#f8f4fc;border-color:#8e6bb8;color:#4d3470}
+.cuHint:focus-visible,.cuDzThumbs:focus-visible,.cuDesigns .linkBtn:focus-visible,.cuAdd:focus-visible,.cuQty button:focus-visible,.cuRm:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}
+.cuHint.cuNudge,.cuWho input.cuNudge{animation:cuNudge .9s ease-out}
+@keyframes cuNudge{0%{box-shadow:0 0 0 0 rgba(142,107,184,.55);background-color:#f3ecfb}35%{box-shadow:0 0 0 5px rgba(142,107,184,.25)}100%{box-shadow:0 0 0 11px rgba(142,107,184,0)}}
+.cuDesigns{grid-column:1/-1;grid-row:2;display:flex;align-items:center;gap:10px 14px;flex-wrap:wrap;padding:9px 12px;border-radius:10px;background:var(--card2);border:1px solid var(--line2);animation:aiIn .25s ease-out}
+@container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
+@container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
+@container(max-width:500px){.doneRow .cuDesigns{padding:8px 10px;gap:8px 10px}.doneRow .cuDesigns .linkBtn{margin-left:0}}
+.cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
+.cuDesigns.cuGot{animation:aiIn .25s ease-out,cuGot 1.2s ease-out}
+@keyframes cuGot{0%{box-shadow:0 0 0 0 rgba(142,107,184,.5)}35%{box-shadow:0 0 0 6px rgba(142,107,184,.2);background-color:#f1e9fa}100%{box-shadow:0 0 0 12px rgba(142,107,184,0)}}
+.cuDzLbl{font:700 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;color:#6a4a93;white-space:nowrap}
+.cuDzThumbs{display:flex;gap:6px;border:0;background:none;padding:0;border-radius:9px;cursor:pointer}.cuDzThumbs:disabled{cursor:default}
+.cuDzT{position:relative;width:44px;height:44px;border-radius:8px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;font:700 13px var(--sans);color:#a4432c;transition:transform .15s,border-color .15s}
+.cuDzThumbs:not(:disabled):hover .cuDzT{border-color:rgba(125,86,168,.5)}.cuDzT.bad{background:var(--claySoft)}
+.cuDzT.new{animation:cuPop .55s cubic-bezier(.3,1.5,.5,1) both}
+@keyframes cuPop{from{transform:scale(.6);opacity:0}to{transform:none;opacity:1}}
+.cuDzT img{width:100%;height:100%;object-fit:contain;border-radius:7px}
+.cuDzT i{position:absolute;right:-3px;bottom:-3px;width:11px;height:11px;border-radius:50%;box-shadow:0 0 0 2px var(--card)}
+.cuDzMore{align-self:center;font:600 11px var(--mono);color:var(--ink45)}
+.cuDzSum{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font:12px var(--sans);color:var(--ink70);min-width:0}
+.cuDzSum b{font-weight:600;color:var(--ink)}.cuDzM{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.cuDzM i{width:8px;height:8px;border-radius:50%}
+.cuDzWhy{color:var(--ink45)}.cuDesigns.ready .cuDzWhy{color:#5d3f82;font-weight:600}.cuDesigns.todo .cuDzWhy{color:#8a6420;font-weight:600}
+.cuDesigns .linkBtn{margin-left:auto;border:0;background:none;padding:2px 0;font:600 12px var(--sans);color:#6a4a93;text-decoration:underline;text-underline-offset:2px;cursor:pointer;white-space:nowrap}
+.cuThumb .spin,.cuDzT .spin{width:16px;height:16px;border:2px solid rgba(0,0,0,.12);border-top-color:#7d56a8;border-radius:50%;animation:spin .7s linear infinite}
+.prov .cuTag,.cuTag{color:#5d3f82;font-weight:600}
+/* the designs window: one row per file, its picture, its size, the five metals beside it, how many to cut. It stands at a
+   fixed height from the top, so a row added or removed grows or shortens it downwards instead of moving it all. */
+dialog.cuDlg{width:min(900px,96vw);margin-block:max(5vh,20px) auto;transition:box-shadow .2s ease}
+dialog.cuDlg.dragOver{box-shadow:0 0 0 3px rgba(142,107,184,.75),0 24px 80px rgba(0,0,0,.32)}
+.cuDlg .dlgHead{align-items:flex-start}.cuDlgTitle{min-width:0;display:grid;gap:3px}
+.cuDlgTitle .sub{font:12px var(--sans);color:var(--ink45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cuAll{display:flex;align-items:center;gap:14px;padding:9px 18px;border-bottom:1px solid var(--line2);background:var(--card2)}
+.cuAll[hidden],.cuWho[hidden],.cuAdd[hidden]{display:none}
+.cuAllL{font:600 12px var(--sans);color:var(--ink70);margin-right:auto;white-space:nowrap}
+.cuList{padding:2px 18px;min-height:110px}
+.cuFile{position:relative;display:grid;grid-template-columns:84px minmax(0,1fr) auto auto 28px;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--line2)}
+.cuFile:last-child{border-bottom:0}
+/* a file on its way in: its row waits as a dashed plum slot, and fills as the file lands */
+.cuFile>*{transition:opacity .35s ease}
+.cuFile::before{content:"";position:absolute;z-index:-1;inset:10px 0;border:1.5px dashed rgba(125,86,168,.45);border-radius:12px;background:#faf7fd;opacity:0;pointer-events:none;transition:opacity .35s ease}
+.cuFile.arriving>*{opacity:0}.cuFile.arriving::before{opacity:1}
+.cuFile.cuNudge{animation:cuRowNudge 1.1s ease-out}
+@keyframes cuRowNudge{0%,35%{background-color:#f5eefc}100%{background-color:transparent}}
+.cuThumb{width:84px;height:84px;box-sizing:border-box;border-radius:10px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;overflow:hidden}
+.cuThumb.cuLanded{animation:cuLand 1s ease-out}
+@keyframes cuLand{0%{box-shadow:0 0 0 0 rgba(142,107,184,.6);border-color:#8e6bb8}45%{box-shadow:0 0 0 7px rgba(142,107,184,.2)}100%{box-shadow:0 0 0 13px rgba(142,107,184,0)}}
+.cuThumb img{width:100%;height:100%;object-fit:contain}.cuThumb .x{font:700 18px var(--sans);color:#a4432c}
+.cuFile.bad .cuThumb{background:var(--claySoft);border-color:#e7c3b7}
+.cuMeta{display:grid;gap:3px;min-width:0}
+.cuMeta b{font:600 13px var(--sans);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cuMeta .dim{font:11.5px var(--sans);color:var(--ink45)}.cuMeta .err{font:600 11.5px var(--sans);color:#a4432c}.cuMeta .warn,.cuSum .warn{font:600 11.5px var(--sans);color:#8a6420}
+.cuMetals{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.cuM{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font:600 11.5px var(--sans);color:var(--ink70);cursor:pointer;white-space:nowrap;transition:background-color .15s,border-color .15s,color .15s,box-shadow .15s}
+.cuM i{width:9px;height:9px;border-radius:50%;background:var(--mc);box-shadow:inset 0 0 0 1px rgba(0,0,0,.14)}
+.cuM:hover{border-color:var(--mc);color:var(--ink)}
+.cuM.on{background:color-mix(in srgb,var(--mc) 17%,#fff);border-color:var(--mc);color:var(--ink);box-shadow:0 0 0 1px var(--mc) inset}
+.cuM:focus-visible{outline:2px solid #8e6bb8;outline-offset:2px}
+.cuQty{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--card)}
+.cuQty button{border:0;background:none;width:30px;height:30px;font:600 15px var(--sans);color:var(--ink70);cursor:pointer}.cuQty button:hover:not(:disabled){background:var(--paper2);color:var(--ink)}.cuQty button:disabled{opacity:.35;cursor:default}
+.cuQty button:focus-visible{outline-offset:-2px}
+.cuQty b{font:600 12px var(--mono);min-width:36px;text-align:center;color:var(--ink)}
+.cuRm{grid-column:-2/-1;border:0;background:none;width:30px;height:30px;border-radius:50%;color:var(--ink45);font:400 19px/1 var(--sans);cursor:pointer}.cuRm:hover{background:var(--claySoft);color:#a4432c}
+.cuAdd{display:flex;align-items:center;justify-content:center;gap:10px;width:calc(100% - 36px);box-sizing:border-box;margin:6px 18px 16px;padding:13px;border:1.5px dashed var(--line);border-radius:12px;background:none;color:var(--ink70);font:500 12.5px var(--sans);cursor:pointer;transition:border-color .15s,background-color .15s,color .15s}
+.cuAdd:hover,.cuDlg.dragOver .cuAdd{border-color:#8e6bb8;background:#f8f4fc;color:#4d3470}
+.cuDlg.dragOver .cuAdd{border-style:solid}
+.cuAddIc{width:22px;height:22px;border-radius:50%;background:var(--paper2);display:grid;place-items:center;font:600 15px var(--sans);color:var(--ink70);transition:background-color .15s,color .15s}
+.cuDlg.dragOver .cuAddIc{background:#8e6bb8;color:#fff;animation:cuBob 1.2s ease-in-out infinite}
+.cuEmpty{display:grid;place-items:center;gap:5px;padding:30px 0;color:var(--ink45);font:12.5px var(--sans);text-align:center;animation:cuIn .4s .3s ease-out both}.cuEmpty b{font:500 18px var(--serif);color:var(--ink70)}
+@keyframes cuIn{from{opacity:0}to{opacity:1}}
+.cuSum{font:12px var(--sans);color:var(--ink70);gap:4px 12px!important;min-width:0;flex-wrap:wrap}.cuSum b{font-weight:600;color:var(--ink)}
+.cuSum .warn{display:inline-block}.cuSum .warn.cuNudge{animation:cuShake .5s ease-in-out}
+@keyframes cuShake{0%,100%{transform:none}20%{transform:translateX(-4px)}40%{transform:translateX(4px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+.cuWho{display:inline-flex;align-items:center;gap:6px}
+/* a file flying in (on the window's own layer), and the window going back into its card (on the page's) */
+.cuChip{position:absolute;left:0;top:0;display:inline-flex;align-items:center;gap:7px;max-width:240px;padding:5px 11px 5px 5px;border-radius:9px;background:var(--card);border:1px solid rgba(125,86,168,.45);box-shadow:0 14px 30px rgba(45,30,70,.24);font:600 12px/1.2 var(--sans);color:var(--ink);white-space:nowrap;transform-origin:50% 50%;will-change:transform,opacity}
+.cuChip span{overflow:hidden;text-overflow:ellipsis}
+.cuChip i{flex:none;font:700 9.5px/1 var(--mono);font-style:normal;letter-spacing:.05em;color:#fff;background:#7d56a8;border-radius:5px;padding:5px}
+.cuDlgGhost{position:fixed;overflow:hidden;border-radius:15px;background:var(--card);color:var(--ink);box-shadow:0 24px 80px rgba(0,0,0,.32);will-change:transform,opacity}
+.cuShade{position:fixed;inset:0;background:rgba(20,18,15,.52)}
+@media(max-width:760px){.cuFile{grid-template-columns:64px minmax(0,1fr) 30px;gap:10px 12px}.cuThumb{width:64px;height:64px}.cuFile .cuMetals,.cuFile .cuQty{grid-column:2/-1;justify-content:flex-start}.cuFile .cuQty{justify-self:start}.cuFile .cuRm{grid-column:3;grid-row:1}.cuAll{flex-wrap:wrap;gap:8px}.cuAll .cuMetals{justify-content:flex-start}.cuDlg .dlgFoot{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.cuDropVeil,.cuDropVeil>*,.cuTip,.cuFile>*,.cuFile::before,#rvList>.reviewListRow,dialog.cuDlg{transition:none}.cuVeilIc svg,.cuDlg.dragOver .cuAddIc,.cuHint.cuNudge,.cuWho input.cuNudge,.cuFile.cuNudge,.cuThumb.cuLanded,.cuDesigns,.cuDzT.new,.cuEmpty,.cuSum .warn.cuNudge{animation:none!important}}
+/* ── Motion (Paul, 27 Sep 20:09-20:24): what a click moves is seen going where it goes, slowly enough to follow ── */
+#motionLayer,.motionLayer{position:fixed;inset:0;z-index:140;pointer-events:none;overflow:hidden}
+.mGhost{position:fixed;pointer-events:none;will-change:transform,opacity}
+.mGhost>.mCopy{border-radius:10px}
+.mGot{background-color:var(--sageSoft)!important;box-shadow:0 0 0 3px rgba(95,122,91,.28);transition:background-color .9s ease-out,box-shadow .9s ease-out}
+.mPlus{position:fixed;z-index:141;font:800 11.5px var(--sans);color:#3f5b3a;background:var(--card);border:1px solid #cddcc9;border-radius:999px;padding:1px 8px;box-shadow:0 4px 12px rgba(30,24,16,.12);white-space:nowrap;pointer-events:none}
+.mFound{animation:mFound 2.4s ease-out}
+@keyframes mFound{0%,30%{box-shadow:0 0 0 3px rgba(169,130,63,.55),0 10px 30px rgba(169,130,63,.18)}100%{box-shadow:0 0 0 0 rgba(169,130,63,0)}}
+.mNote{position:fixed;z-index:305;pointer-events:none;display:flex;align-items:center;gap:10px;max-width:min(460px,calc(100vw - 16px));padding:8px 6px 11px 13px;border-radius:11px;background:var(--velvet);color:#f3eee4;font:600 12px/1.4 var(--sans);box-shadow:0 12px 30px rgba(20,16,10,.3)}
+.mNoteArrow{position:absolute;top:-5px;width:11px;height:11px;background:var(--velvet);transform:rotate(45deg);border-radius:2px}
+.mNoteArrow[hidden]{display:none}
+.mNoteT{min-width:0}
+.mNoteA{display:flex;align-items:center;gap:2px;flex:none}
+.mNoteBtn,.mNoteX{pointer-events:auto}
+.mNoteBtn{border:0;background:transparent;color:var(--gold2);font:700 12px var(--sans);padding:5px 9px;border-radius:7px;cursor:pointer}
+.mNoteBtn:hover,.mNoteBtn:focus-visible{background:rgba(255,255,255,.09);outline:none}
+.mNoteX{border:0;background:transparent;color:#f3eee4;opacity:.5;font-size:15px;line-height:1;padding:4px 7px;cursor:pointer;border-radius:7px}.mNoteX:hover{opacity:1;background:rgba(255,255,255,.08)}
+.mNoteBar{position:absolute;left:12px;right:12px;bottom:5px;height:2px;border-radius:2px;background:rgba(202,168,97,.6);transform-origin:left;animation:mNoteBar linear forwards}
+.mNote.paused .mNoteBar{animation-play-state:paused}
+@keyframes mNoteBar{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+/* the seals: ink on the paper and on the button, never in the way of a click */
+.sealRow{display:inline-flex;align-items:center;flex-wrap:wrap;pointer-events:none;margin:-34px 0 -20px 30px;min-width:0}
+.sealRow .seal+.seal{margin-left:-14px}
+.sealRow.mini{margin:-10px 0 -10px -16px}.sealRow.mini .seal+.seal{margin-left:-6px}
+.seal{position:relative;display:inline-block;flex:none;width:var(--sz,112px);height:var(--sz,112px);border-radius:50%;transform:rotate(var(--rot,-8deg));mix-blend-mode:multiply;opacity:.94;pointer-events:auto;transition:filter .9s ease-out,opacity .2s}
+.seal svg{display:block;width:100%;height:100%;overflow:visible;pointer-events:none}
+.seal.loose{position:absolute;z-index:3}
+.seal.pending{opacity:0}
+.seal.wet{filter:saturate(1.4) brightness(.8);transition:none}
+.sealRow.press .seal{transform:rotate(var(--rot)) scale(.955);transition:transform .08s ease-out}
+.sealRow.spring .seal{animation:sealSpring .55s cubic-bezier(.3,1.7,.5,1)}
+@keyframes sealSpring{0%{transform:rotate(var(--rot)) scale(.955)}100%{transform:rotate(var(--rot)) scale(1)}}
+.seal.wobble{animation:sealWobble .65s ease-out}
+@keyframes sealWobble{0%,100%{transform:rotate(var(--rot))}18%{transform:rotate(calc(var(--rot) - 5deg)) scale(1.03)}42%{transform:rotate(calc(var(--rot) + 3.5deg))}68%{transform:rotate(calc(var(--rot) - 1.5deg))}}
+.sealTool{position:absolute;z-index:4;pointer-events:none;will-change:transform,opacity}
+.sealTool svg{display:block;width:100%;height:100%}
+.sealRing{position:absolute;z-index:2;border-radius:50%;border:2px solid var(--ink);pointer-events:none;box-sizing:border-box}
+.sealMore{align-self:center;font:700 10.5px var(--sans);color:var(--ink45);margin:0 12px 0 34px;pointer-events:auto;white-space:nowrap}
+.btn.sealedPrint{background:#e6ebf8;border-color:#a7b6de;color:#22408f}
+.btn.sealedPrint:hover,.btn.sealedPrint.hov{background:#d9e1f4;opacity:1}
+.btn.sealedDone{background:#e2eee6;border-color:#a0c4ac;color:#19663f}
+.btn.sealedDone:hover,.btn.sealedDone.hov{background:#d4e7da;opacity:1}
+.btn.hov{opacity:.9}.btn.ghost.hov{background:var(--card2)}.btn.act{transform:translateY(1px)}
+.btn.working{opacity:1;cursor:progress}
+.btn.working:disabled{opacity:1}
+@container(max-width:1100px){.doneRow .rowActions .sealRow:not(.mini){margin:-30px 0 -30px -54px}}
+@media(prefers-reduced-motion:reduce){.seal,.sealRow.press .seal{transition:none}.seal.wobble,.sealRow.spring .seal,.mFound{animation:none}}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -2257,6 +2440,8 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="vendor/clipper-6.4.2.js"></script>
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
+<script src="charm-nest-dxf.js?v=20260927-custom"></script>
+<script src="charm-nest-motion.js?v=20260927-seals"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -2264,7 +2449,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 <script src="charm-nest-readiness.js?v=20260925-audit"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260927-varsku"></script>
+<script src="charm-nest-orders.js?v=20260927-huggie"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -4218,23 +4403,166 @@ async function previewPng(sh) {
 
 /* ═══ 10 · rendering: rail ══════════════════════════════════════════════ */
 const labelOf = m => (METALS.find(x => x.key === m) || {}).label || m;
-function renderRail() {
-  const host = $("#srcList"); host.innerHTML = "";
-  for (const src of S.sources) host.appendChild(srcRowEl(src));
-  $("#srcCount").textContent = S.sources.length;
-  const un = $("#unList"); un.innerHTML = "";
-  for (const c of S.unassigned) {
-    const row = document.createElement("div"); row.className = "unRow"; row.draggable = true;
-    row.innerHTML = `<img crossorigin="anonymous" src="${cors(c.thumb)}" alt=""><span class="unName" title="${esc(c.sourceName)}">${esc(c.name || `#${c.index + 1}`)}${c.metalHint ? ` <span class="mchip" data-m="${c.metalHint}" title="suggested"><i class="sw"></i>${esc(labelOf(c.metalHint))}?</span>` : ""}</span><span class="unBtns">${METALS.map(m => `<button title="${m.label}" data-m="${m.key}"><i style="background:${m.color}"></i></button>`).join("")}</span>`;
-    row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/charm", c.id); e.dataTransfer.effectAllowed = "move"; });
-    $$("button", row).forEach(b => b.onclick = () => assignCharm(c, b.dataset.m));
-    un.appendChild(row);
+/* ── Motion on the Nest tab (Paul, 27 Sep 20:09-20:24: "anytime things would disappear from my user screen due to
+   clicking ... have to have a accompanied ... animation of what is actually happening and where things are being
+   removed from and moved into"). The rail's two lists and a card's sheet tabs are keyed (Motion.reconcile): a file
+   removed folds away where it stood and the rows under it glide up into its room; a charm sent to a metal flies from
+   its row to its own thumbnail on that metal's card, and the card answers with its ring. A card's Clear lets its
+   picture fade into the empty sheet while the tabs of the sheets it took fold away, and says where a saved sheet still
+   is. Nothing here waits: the work is done first, the motion only shows it. ── */
+const nestCard = metal => $(`.sheetCard[data-m="${metal}"]`);
+const charmName = c => c.name || `#${c.index + 1}`;
+/** Where a charm sent to a metal shows on its card: its thumbnail in the card's queue, or, while it waits for the sheet's
+ *  current work (or is out of the queue's sight), the card's name. Resolved late: the card redraws meanwhile. */
+const cardSpot = (metal, id) => () => {
+  const card = nestCard(metal); if (!card) return null;
+  const q = $('[data-r="queue"]', card), img = id != null && q ? $$("img[data-cid]", q).find(i => i.dataset.cid === String(id)) : null;
+  if (img) { const r = img.getBoundingClientRect(), b = q.getBoundingClientRect(); if (r.width && r.left >= b.left - 1 && r.right <= b.right + 1) return img; }
+  return $(".shHead .name", card);
+};
+/** A card answers once: its ring in the metal's colour (.sheetCard.pulse). */
+function ringCard(card) { if (!card) return; card.classList.remove("pulse"); void card.offsetWidth; card.classList.add("pulse"); setTimeout(() => card.classList.remove("pulse"), 1300); }
+/** The card that took charms answers as they land (flown: copies are on their way; otherwise the spot takes them now);
+ *  charms that wait for the sheet's current work to end say so under the card's name, or they would seem lost. */
+function cardTook(metal, charms, flown) {
+  const M = window.Motion, card = nestCard(metal); if (!M || !card || !charms.length) return;
+  const waiting = charms.filter(c => c.pendingMetal === metal), one = charms.length === 1 ? charms[0] : null;
+  setTimeout(() => {
+    ringCard(card);
+    if (!flown) M.arrive(cardSpot(metal, one && one.id), { plus: "+" + charms.length });
+    if (waiting.length) M.note(cardSpot(metal), { text: `${waiting.length === 1 ? charmName(waiting[0]) : waiting.length + " charms"} join${waiting.length === 1 ? "s" : ""} ${labelOf(metal)} as soon as its sheet is free`, ms: 7000 });
+  }, flown && !M.reduced() ? M.T.fly * .86 : 0);
+}
+/** A charm sent from the queue to a metal: its row flies to the charm's place on that metal's card. */
+function sendCharm(c, metal) {
+  window.Motion?.expect("un:" + c.id, { to: cardSpot(metal, c.id) });
+  assignCharm(c, metal); cardTook(metal, [c], true);
+}
+/** Still copies of the card-queue thumbnails `pick` takes (by charm id), where they stand, under `root`. */
+function queueGhosts(root, pick, max = 16) {
+  const M = window.Motion, out = []; if (!M || M.reduced()) return out;
+  for (const q of $$('[data-r="queue"]', root)) {
+    const b = q.getBoundingClientRect(); if (!b.height || b.bottom < 0 || b.top > innerHeight) continue;
+    for (const img of $$("img[data-cid]", q)) {
+      if (out.length >= max || !pick(img.dataset.cid)) continue;
+      const r = img.getBoundingClientRect(); if (!r.width || r.right < b.left || r.left > b.right) continue;
+      const g = M.ghost(img, r, 0, img);   // the queue's own look, which a copy outside it no longer inherits
+      Object.assign(g._card.style, { objectFit: "contain", background: "#fff", borderWidth: "1px", borderStyle: img.style.borderStyle || "solid", borderColor: "var(--line)", borderRadius: "6px" });
+      out.push(g);
+    }
   }
+  return out;
+}
+/** A charm taken off a card's sheet (Exclude): the charm alone, drawn as the sheet draws it on a clear ground (so its
+ *  neighbours are not covered), rises a little and fades where it stood. Returns what plays it, or null when it is not
+ *  on a sheet in sight. */
+function liftFromSheet(sh, c) {
+  const M = window.Motion, p = sh.placements.find(x => x.id === c.id), v = sh._view, cv = sh.el && $('[data-r="canvas"]', sh.el);
+  if (!M || M.reduced() || !p || !v || !cv || !cv.width) return null;
+  const r = cv.getBoundingClientRect(); if (!r.width || r.bottom < 0 || r.top > innerHeight) return null;
+  const k = v.k, d = Math.hypot(c.widthPt || 0, c.heightPt || 0) * (p.scale || 1), w = p.wPt || d, h = p.hPt || d;
+  const pad = 3 * k + 4 * devicePixelRatio, px = v.R + (p.xPt != null ? p.xPt : p.cxPt - w / 2) * k, py = v.R + (p.yPt != null ? p.yPt : p.cyPt - h / 2) * k;
+  const x0 = Math.max(0, Math.floor(px - pad)), y0 = Math.max(0, Math.floor(py - pad)), x1 = Math.min(cv.width, Math.ceil(px + w * k + pad)), y1 = Math.min(cv.height, Math.ceil(py + h * k + pad));
+  if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+  const box = document.createElement("div"), piece = document.createElement("canvas"); piece.width = x1 - x0; piece.height = y1 - y0; piece.style.cssText = "display:block;width:100%;height:100%";
+  try {   // as paintPreview draws a placed charm: its tint, then its lines
+    const g2 = piece.getContext("2d"), cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+    g2.translate(v.R - x0 + p.cxPt * k, v.R - y0 + p.cyPt * k); g2.rotate(p.angle * Math.PI / 180); if (p.scale) g2.scale(p.scale, p.scale);
+    g2.fillStyle = c.custom ? CUSTOM_TINT : sh.selected === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
+    g2.beginPath(); CharmNestPDF.pathToCanvas(g2, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(g2, m, tx); g2.fill("evenodd");
+    CharmNestPDF.drawCharm(g2, c, tx, k);
+  } catch (_) { return null; }
+  box.appendChild(piece);
+  const s = r.width / cv.width, g = M.ghost(box, { left: r.left + x0 * s, top: r.top + y0 * s, width: (x1 - x0) * s, height: (y1 - y0) * s }, 0, document.body);
+  g._card.style.borderRadius = "0";
+  return () => g.animate([{ opacity: 1, transform: "none" }, { opacity: 1, transform: "none", offset: .18 }, { opacity: 0, transform: "translateY(-14px) scale(.9)" }], { duration: 1150, easing: "cubic-bezier(.4,0,.3,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
+}
+/** A card's Clear, or Clear queues: each card's picture and queue fade into the empty sheet where they stood, while the
+ *  tabs of the sheets it took fold away (setSheetTabs); a sheet saved to the cloud is still in the Library, and a note
+ *  under the Library tab says so. Called before the clear, with {el, pages, gone()} per card; what it returns plays it
+ *  for the cards whose gone() says they were cleared (a card that refused keeps its picture, unmoved). */
+function clearingCards(cards) {
+  const M = window.Motion; if (!M) return () => {};
+  const inView = n => { const r = n && n.getClientRects().length ? n.getBoundingClientRect() : null; return !!r && r.width > 0 && r.bottom > 0 && r.top < innerHeight; };
+  const parts = cards.map(x => M.reduced() ? [] : [$(".shPreviewWrap", x.el), $('[data-r="queue"]', x.el)].filter(n => inView(n) && (n.dataset.r !== "queue" || n.children.length)).map(n => M.ghost(n, null, 0, n)));
+  return () => {
+    const saved = [];
+    cards.forEach((x, i) => {
+      const gone = x.gone();
+      for (const g of parts[i]) if (!gone) g.remove(); else if (g._card.dataset.r === "queue") M.fade(g);   // the card's foot rises under the queue: it goes quickly
+        else g.animate([{ opacity: 1, transform: "none", filter: "none" }, { opacity: 1, offset: .12 }, { opacity: 0, transform: "scale(.985)", filter: "blur(1px)" }], { duration: 1100, easing: "ease-in-out", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
+      if (gone) saved.push(...x.pages.filter(p => p.cloud || p.recalled || p.persistedDone));
+    });
+    if (!saved.length) return;
+    const lib = '#modeSeg button[data-mode="library"]', p = saved[0];
+    M.note(lib, { text: saved.length > 1 ? `${saved.length} saved sheets are still in the Library` : `${p.page > 1 ? `${labelOf(p.metal)} sheet ${p.page}` : `The ${labelOf(p.metal)} sheet`} is still in the Library`, actions: [{ label: "Show", fn: () => $(lib)?.click() }], ms: 8000 });
+  };
+}
+/** Move the rest on (the card's own buttons): the thumbnails of the charms that did not fit fly to the tab of the sheet
+ *  they now wait on; with none in sight, that tab answers. */
+function moveOn(sh) {
+  const M = window.Motion, el = sh.el, ids = new Set(sh.rejects), gs = el ? queueGhosts(el, id => ids.has(id), 8) : [];
+  const next = overflowToNextSheet(sh);
+  if (!M || !next || !el) { gs.forEach(g => g.remove()); return next; }
+  const tab = () => { const pages = pagesOf(sh.metal); return $$('[data-r="tabs"] button[data-i]', el).find(b => pages[+b.dataset.i] === next) || null; };
+  if (!gs.length) M.pulse(tab); else gs.forEach((g, i) => setTimeout(() => M.fly(g, tab, { plus: i ? false : "+" + ids.size }), i * 110));
+  return next;
+}
+/* A card's sheet tabs are keyed by their sheet, so a sheet Clear takes away folds out of the row where it stood and the
+   tabs after it glide into its room, and a new sheet's tab opens its own room rather than popping in. */
+const sheetTabKeys = new WeakMap(); let sheetTabSeq = 0;
+function setSheetTabs(tabs, html, pages) {
+  if (!window.Motion) { tabs.innerHTML = html; return; }
+  const t = document.createElement("template"); t.innerHTML = html;
+  const nodes = [...t.content.children], box = tabs.getBoundingClientRect();
+  for (const n of nodes) { const pg = n.matches("button[data-i]") ? pages[+n.dataset.i] : null; if (!pg) continue; let k = sheetTabKeys.get(pg); if (!k) sheetTabKeys.set(pg, k = "sheetTab:" + ++sheetTabSeq); n.dataset.mkey = k; }
+  for (const n of tabs.children) { const r = n.getBoundingClientRect(); if (r.right <= box.left || r.left >= box.right) delete n.dataset.mkey; }   // one scrolled out of the row's sight has nothing to show going
+  reconcileFolding(tabs, nodes);
+}
+/** Motion.reconcile, and one thing more for what just goes with nowhere to go: it folds away first, and only then do the
+ *  ones after it glide into its room (gliding over it while it faded read as a jumble). wait: that pause in ms, shared
+ *  when two lists move together (foldWait of each, taken before either is redrawn). */
+const foldWait = (host, nodes) => { const M = window.Motion, now = new Set(nodes.map(n => n.dataset.mkey)); return M && [...host.children].some(n => n.dataset.mkey && !now.has(n.dataset.mkey) && !M.pending(n.dataset.mkey)) ? M.T.fade : 0; };
+function reconcileFolding(host, nodes, opts, wait = foldWait(host, nodes)) {
+  const M = window.Motion; if (!M) { host.replaceChildren(...nodes); return 0; }
+  const had = new Set([...host.children].map(n => n.dataset.mkey).filter(Boolean));
+  M.reconcile(host, nodes, opts);
+  if (wait) for (const n of nodes) if (had.has(n.dataset.mkey)) for (const a of n.getAnimations()) a.effect.updateTiming({ delay: wait });
+  return wait;
+}
+/** Master files' place in the Workspace menu: its own entry while the menu is open, else the menu. */
+const masterSpot = () => { const mm = $("#moreMenu"), b = mm && mm.open ? $('button[data-mode="master"]', mm) : null; return b && b.getClientRects().length ? b : mm; };
+
+function renderRail() {
+  // keyed rows (see "Motion on the Nest tab" above): what leaves is seen going, what stays glides into its room
+  const M = window.Motion, animate = !!M && !M.reduced() && !$("#app").classList.contains("railOff");
+  const src = $("#srcList"), un = $("#unList"), head = un.previousElementSibling, hint = $("#unHint");
+  const srcRows = S.sources.map(srcRowEl), unRows = S.unassigned.map(unRowEl);
+  const wait = Math.max(foldWait(src, srcRows), foldWait(un, unRows));   // the two lists and the heading between them move as one
+  const was = animate && head.getClientRects().length ? { top: head.getBoundingClientRect().top, hid: hint.classList.contains("hidden"), rows: new Map([...un.children].map(n => [n.dataset.mkey, n.getBoundingClientRect().top])) } : null;
+  // the charms' list first, while each of its rows still stands where it was seen (the files above it move it after)
+  reconcileFolding(un, unRows, { animate, clip: $("#railScroll") }, wait);
+  reconcileFolding(src, srcRows, { animate, clip: $("#railScroll") }, wait);
+  $("#srcCount").textContent = S.sources.length;
   $("#unCount").textContent = S.unassigned.length;
-  $("#unHint").classList.toggle("hidden", S.unassigned.length > 0);
+  hint.classList.toggle("hidden", S.unassigned.length > 0);
+  if (!was) return;
+  // the Unassigned heading and the charms' rows glide from where they were seen to where the files above left them,
+  // and the hint opens its room instead of popping in
+  const glide = (n, from) => { n.getAnimations().forEach(a => a.cancel()); const dy = from - n.getBoundingClientRect().top; if (Math.abs(dy) >= 1) n.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: M.T.slide, delay: wait, easing: "cubic-bezier(.3,.1,.2,1)", fill: "backwards" }); };
+  glide(head, was.top);
+  for (const n of unRows) if (was.rows.has(n.dataset.mkey)) glide(n, was.rows.get(n.dataset.mkey));
+  if (was.hid && !hint.classList.contains("hidden")) M.grow(hint, { delay: wait });
+}
+function unRowEl(c) {
+  const row = document.createElement("div"); row.className = "unRow"; row.draggable = true; row.dataset.mkey = "un:" + c.id;
+  row.innerHTML = `<img crossorigin="anonymous" src="${cors(c.thumb)}" alt=""><span class="unName" title="${esc(c.sourceName)}">${esc(c.name || `#${c.index + 1}`)}${c.metalHint ? ` <span class="mchip" data-m="${c.metalHint}" title="suggested"><i class="sw"></i>${esc(labelOf(c.metalHint))}?</span>` : ""}</span><span class="unBtns">${METALS.map(m => `<button title="${m.label}" data-m="${m.key}"><i style="background:${m.color}"></i></button>`).join("")}</span>`;
+  row.addEventListener("dragstart", e => { e.dataTransfer.setData("text/charm", c.id); e.dataTransfer.effectAllowed = "move"; });
+  $$("button", row).forEach(b => b.onclick = () => sendCharm(c, b.dataset.m));
+  return row;
 }
 function srcRowEl(src) {
-  const el = document.createElement("div"); el.className = "srcRow"; el.dataset.id = src.id; fillSrcRow(el, src); return el;
+  const el = document.createElement("div"); el.className = "srcRow"; el.dataset.id = src.id; el.dataset.mkey = "src:" + src.id; fillSrcRow(el, src); return el;
 }
 function renderRailRow(src) { const el = $(`.srcRow[data-id="${src.id}"]`); if (el) fillSrcRow(el, src); }
 function fillSrcRow(el, src) {
@@ -4248,10 +4576,18 @@ function fillSrcRow(el, src) {
     <div class="srcState">${["parsing", "silhouettes", "queued"].includes(src.state) ? '<span class="spin"></span>' : ""}<span>${esc(state)}</span>${cloud ? `<span>· ${cloud}</span>` : ""}</div>
     ${rv ? `<div class="srcState">${rv}</div>` : ""}
     <div class="srcKids">${perMetal.map(x => `<span class="mchip" data-m="${x.m.key}"><i class="sw"></i>${x.m.label} ${x.n}</span>`).join("")}${src.state === "master" ? `<button class="btn gold xs" data-tolib="1">Index into the charm library</button><button class="btn ghost xs" data-nestanyway="1">Nest these charms anyway</button>` : ""}${unN ? `<span class="mchip" data-m="none">⚠ ${unN} unassigned</span>` : ""}${src.state === "ready" ? METALS.map(m => `<button class="mchip" data-m="${m.key}" data-assign="${m.key}" title="Send every charm in this file to ${m.label}" style="cursor:pointer"><i class="sw"></i>→</button>`).join("") : ""}</div>`;
-  $(".srcX", el).onclick = () => removeSource(src);
-  { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes; removeSource(src); CN.setMode("master"); Master.indexFile({ name, data: bytes }).catch(e => toast(e.message, "bad", 7000)); }; }
+  // the file and its charms not yet placed are gone for good: its row folds away (renderRail), and so do their thumbnails on the cards
+  $(".srcX", el).onclick = () => { const ids = new Set(src.charms.map(c => c.id)), gs = queueGhosts(document, id => ids.has(id)); removeSource(src); const went = !S.sources.includes(src); gs.forEach(g => went ? Motion.fade(g) : g.remove()); };
+  // the file goes to Master files: its row flies to that screen's place in the Workspace menu, which answers with a note
+  { const b = $("[data-tolib]", el); if (b) b.onclick = () => { const name = src.name, bytes = src.bytes, key = "src:" + src.id;
+    window.Motion?.expect(key, { to: masterSpot, plus: false, note: { text: `${name} went to Master files`, ms: 6000 } });
+    removeSource(src); if (S.sources.includes(src)) window.Motion?.expect(key, {});   // a file that could not leave takes its flight back
+    CN.setMode("master"); Master.indexFile({ name, data: bytes }).catch(e => toast(e.message, "bad", 7000)); }; }
   { const b = $("[data-nestanyway]", el); if (b) b.onclick = () => { src.forceNest = true; src.state = "queued"; renderRail(); pumpParse(); }; }
-  $$("[data-assign]", el).forEach(b => b.onclick = () => assignSource(src, b.dataset.assign));
+  // every charm of the file to one metal: its rows in Unassigned fly to their places on that metal's card
+  $$("[data-assign]", el).forEach(b => b.onclick = () => { const metal = b.dataset.assign, going = S.unassigned.filter(c => c.sourceId === src.id);
+    going.forEach((c, i) => window.Motion?.expect("un:" + c.id, { to: cardSpot(metal, c.id), plus: i ? false : "+" + going.length }));
+    assignSource(src, metal); cardTook(metal, going, true); });
 }
 function updateTopSub() {
   const total = allSheets().reduce((n, sh) => n + activeCharms(sh).length, 0);
@@ -4295,21 +4631,24 @@ function buildCards() {
     q("nest").onclick = () => { const pg = cur(); if (pg.recalled && !pg.charms.length) { if (window.Recall) Recall.rebuild(pg).catch(e => toast(e.message, "bad", 7000)); return; } pg._byHand = true; startNest(pg); }; q("stop").onclick = () => stopNest(cur());
     q("dl").onclick = () => ProductionExports.live(cur(), "ai");
     q("dxf").onclick = () => ProductionExports.live(cur(), "dxf");
-    q("second").onclick = () => overflowToNextSheet(cur());
+    q("second").onclick = () => moveOn(cur());
     q("report").onclick = () => openReport(cur());
     /* Clear on sheet 1 empties every sheet of the metal. It took an open run's sheets with it — in Auto, between two
        arrivals, the orders on them were stranded as "waiting" — and it asked nothing first. */
     q("clear").onclick = () => { const pg = cur(); const block = clearBlock(pg); if (block) { paintClear(pg); return; }
       const pages = pg.page > 1 ? [pg] : pagesOf(m.key), n = pages.reduce((k, p) => k + p.charms.length, 0);
       if (n && !confirm(`Clear ${pg.page > 1 ? sheetName(pg) : pages.length > 1 ? `all ${pages.length} ${m.label} sheets` : m.label} — ${n} charm${n === 1 ? "" : "s"}? Sheets already saved to the cloud stay in the Library.`)) return;
-      if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); };
+      // seen, not just gone (Paul, 27 Sep): the picture fades into the empty sheet, the tabs it took fold away (clearingCards)
+      const play = clearingCards([{ el, pages: pages.slice(), gone: () => pg.page > 1 ? !pagesOf(m.key).includes(pg) : !pagesOf(m.key).some(p => p.charms.length) }]);
+      if (pg.page > 1) { if (pg.status === "nesting") stopNest(pg); pg.charms.forEach(c => { c.metal = null; }); pg.charms = []; removePage(pg); } else clearMetal(m.key); renderRail(); updateTopSub(); play(); };
     // drag & drop on the card
     ["dragenter", "dragover"].forEach(ev => el.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); el.classList.add("dragOver"); e.dataTransfer.dropEffect = "copy"; }));
     ["dragleave", "drop"].forEach(ev => el.addEventListener(ev, e => { el.classList.remove("dragOver"); }));
     el.addEventListener("drop", e => {
       e.preventDefault(); e.stopPropagation(); $("#dropAll").classList.remove("on");
       const cid = e.dataTransfer.getData("text/charm");
-      if (cid) { const c = S.unassigned.find(x => x.id === cid) || allCharms().find(x => x.id === cid); if (c) assignCharm(c, m.key); return; }
+      // a charm carried here by hand: its row folds away in the rail and the card takes it where it now shows
+      if (cid) { const c = S.unassigned.find(x => x.id === cid) || allCharms().find(x => x.id === cid); if (c) { const queued = S.unassigned.includes(c); assignCharm(c, m.key); if (queued) cardTook(m.key, [c], false); } return; }
       if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, m.key);
     });
     q("canvas").addEventListener("click", e => onPreviewClick(cur(), e));
@@ -4356,7 +4695,7 @@ function renderTabs(sh) {
     + pages.map((pg, i) => i < from && pg !== sh ? "" : `<button type="button" class="${pg === sh ? "on" : ""}" data-i="${i}" title="${esc(sheetName(pg))}">Sheet ${pg.page}<span data-st>${tabStatus(pg)}</span></button>`).join("");
   tabs._of = pages; tabs._n = pages.length;
   if (tabs._html === html) return;
-  tabs._html = html; tabs.innerHTML = html;
+  tabs._html = html; setSheetTabs(tabs, html, pages);
   $$("button", tabs).forEach(b => b.onclick = () => showPage(sh.metal, +b.dataset.i));
   const pick = $("[data-older]", tabs); if (pick) pick.onchange = () => { if (pick.value !== "") showPage(sh.metal, +pick.value); };
 }
@@ -4395,6 +4734,7 @@ function renderCard(sh) {
   if (rc) bits.push("recalled");
   // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
   if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
+  { const cu = sh.charms.filter(c => c.custom && !c.excluded).length; if (cu) bits.push(`<span class="cuTag" title="Custom orders' own designs on this sheet, tinted plum">${cu} custom</span>`); }
 
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
   prov.title = sh.fileBase ? `Saved as ${sh.fileBase}` : (sh.runId ? `Run ${sh.runId}` : "");
@@ -4417,7 +4757,7 @@ function renderCard(sh) {
   const rj = q("rejects"); const byId = new Map(sh.charms.map(c => [c.id, c]));
   if (sh.movedOn && sh.movedOn.n) { rj.classList.remove("hidden"); rj.title = sh.movedOn.names.join(", "); rj.innerHTML = `<b>${sh.movedOn.n} moved to sheet ${sh.movedOn.page}</b><button type="button" class="btn ghost xs" data-goto="${sh.movedOn.page - 1}">open it</button>`; $("[data-goto]", rj).onclick = e => showPage(sh.metal, +e.currentTarget.dataset.goto); }
   // (the pieces a Stop on the run banner left unplaced wait for Resume on this sheet: see resumeLater)
-  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length && !sh.resumeWait) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => overflowToNextSheet(sh); }
+  else if ((sh.status === "partial" || sh.status === "complete") && sh.rejects.length && !sh.resumeWait) { rj.classList.remove("hidden"); rj.title = sh.rejects.map(id => byId.get(id)?.name || id).join(", "); rj.innerHTML = `<b>${sh.rejects.length} need another sheet${sh.endedBy === "cap" ? ", held back by the fill ceiling" : ""}</b><button type="button" class="btn ghost xs" data-r2="second">Move them on</button>`; $("[data-r2=second]", rj).onclick = () => moveOn(sh); }
   else { rj.classList.add("hidden"); rj.title = ""; }
   // queue thumbnails
   const placed = new Set(sh.placements.map(p => p.id)), rejected = new Set(sh.rejects);
@@ -4538,6 +4878,13 @@ function drawPreviewNow(sh) {
   paintPreview(cv, sh, false, R);
   const hint = $(`[data-r="canvasHint"]`, sh.el); hint.textContent = sh.placements.length ? "click a charm to inspect · pin" : "";
 }
+/* A custom order's own design on a sheet (CustomSheet): a plum tint and a dashed plum ring just outside its outline, drawn
+   on screen only — never into a sheet's files. */
+const CUSTOM_TINT = "rgba(125,86,168,.20)";
+function customRing(ctx, c, tx, k) {
+  ctx.save(); ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
+  ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = Math.max(1.5, 1.6 * k); ctx.setLineDash([Math.max(3, 3 * k), Math.max(2, 2 * k)]); ctx.stroke(); ctx.restore();
+}
 function paintPreview(cv, sh, clean, R) {
   R = R || 0; const ctx = cv.getContext("2d"); const st = stockFor(sh.metal, sh); const W = cv.width - R, H = cv.height - R; const k = W / st.wPt;
   if (!clean) { sh._view = { R, k }; cv._backSheetScale = k * cv.clientWidth / cv.width; }   // the on-screen canvas only; offscreen renders must not disturb click mapping
@@ -4566,10 +4913,12 @@ function paintPreview(cv, sh, clean, R) {
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
-      ctx.fillStyle = sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
+      // a custom order's own design is plum, so it stands out on the sheet (Paul, 27 Sep: "clearly identified as Custom")
+      ctx.fillStyle = c.custom ? (sel === c.id ? "rgba(125,86,168,.42)" : CUSTOM_TINT) : sel === c.id ? "rgba(202,168,97,.35)" : "rgba(200,162,78,.10)";
       ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
     }
     CharmNestPDF.drawCharm(ctx, c, tx, k);
+    if (!clean && c.custom) customRing(ctx, c, tx, k);
     if (sh._forClaude) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(190,40,40,.9)"; ctx.lineWidth = Math.max(1, 0.6 * k); ctx.stroke(); }
     ctx.restore();
     if (!clean && c.pinned) { ctx.fillStyle = "#caa861"; ctx.beginPath(); ctx.arc(p.cxPt * k, p.cyPt * k, Math.max(3, 2 * k), 0, Math.PI * 2); ctx.fill(); }
@@ -4586,8 +4935,9 @@ function paintPreview(cv, sh, clean, R) {
       const c = byId.get(g.id); if (!c || onSheet.has(g.id)) continue;
       const live = g === sh.probe, cx = c.centerPt[0], cy = c.centerPt[1], tx = (x, y) => [(x - cx) * k, (cy - y) * k];
       ctx.save(); ctx.translate(g.cxPt * k, g.cyPt * k); ctx.rotate(g.angle * Math.PI / 180);
-      ctx.fillStyle = "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
+      ctx.fillStyle = c.custom ? CUSTOM_TINT : "rgba(200,162,78,.10)"; ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, tx); ctx.fill("evenodd");
       CharmNestPDF.drawCharm(ctx, c, tx, k);
+      if (c.custom && !live) customRing(ctx, c, tx, k);
       if (live) { ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx); ctx.strokeStyle = "rgba(40,90,180,.9)"; ctx.lineWidth = Math.max(1, .3 * k); ctx.stroke(); }
       ctx.restore();
     }
@@ -4667,9 +5017,16 @@ function openCharm(sh, c, placement) {
   $("#ciName").onchange = line ? null : e => renameCharm(c, e.target.value);
   const pin = $("#ciPin"); if (pin) pin.onclick = () => { c.pinned = c.pinned && !c.arrivalPin ? null : { cxPt: pl.cxPt, cyPt: pl.cyPt, angle: pl.angle }; delete c.arrivalPin; closeDlg(dlg); renderCard(sh); toast(c.pinned ? `${c.name}: pinned — Re-nest places the others around it` : `${c.name}: unpinned`, ""); };
   // leaving a charm out takes it off and keeps the others where they are; taking it back adds it to the gaps
-  const ex = $("#ciExclude"); if (ex) ex.onclick = () => { c.excluded = !c.excluded; closeDlg(dlg); sh.placements = sh.placements.filter(p => p.id !== c.id); if (sh.placements.length && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected))) { sh.appendOnly = true; sh.dirty = true; if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready"; renderCard(sh); } else sheetDirty(sh); };
+  // (Paul, 27 Sep: seen, not just gone) the charm's piece of the picture rises and fades where it stood; one not on the sheet: the card answers
+  const ex = $("#ciExclude"); if (ex) ex.onclick = () => { const lift = c.excluded ? null : liftFromSheet(sh, c); c.excluded = !c.excluded; closeDlg(dlg); sh.placements = sh.placements.filter(p => p.id !== c.id); if (sh.placements.length && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected))) { sh.appendOnly = true; sh.dirty = true; if (!["nesting", "finishing", "queued"].includes(sh.status)) sh.status = "ready"; renderCard(sh); } else sheetDirty(sh); if (lift) lift(); else if (c.excluded && window.Motion && !Motion.reduced()) ringCard(sh.el); };
   $("#ciSingle").onclick = async () => { const src = sourceOf(c.sourceId); const b = await CharmNestPDF.buildSingleCharm(c, src.parsed); download(b, `${safeName(c.name || "charm")}.ai`, "application/illustrator"); };
-  $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { closeDlg(dlg); assignCharm(c, b.dataset.move); });
+  // the charm is seen leaving the inspector for its new metal's card: a copy of its picture flies to where it now shows
+  $$("[data-move]", $("#rpBody")).forEach(b => b.onclick = () => { const metal = b.dataset.move, M = window.Motion, img = $("#rpBody img");
+    const g = M && !M.reduced() && img && img.getClientRects().length ? M.ghost(img, null, 0, document.body) : null;
+    closeDlg(dlg); assignCharm(c, metal);
+    const went = c.pendingMetal === metal || pagesOf(metal).some(p => p.charms.includes(c));
+    if (g) { if (went) M.fly(g, cardSpot(metal, c.id)); else g.remove(); }
+    if (went) cardTook(metal, [c], !!g); });
   openDlg(dlg);
 }
 function openReport(sh) {
@@ -5085,7 +5442,10 @@ async function boot() {
   $("#fileInput").onchange = e => { intake(e.target.files); e.target.value = ""; };
   $("#btnEarlierSets").onclick = () => { if (window.RunHistory) RunHistory.show(""); };
   $("#btnNestAll").onclick = () => allSheets().forEach(sh => { if (activeCharms(sh).length && !["nesting", "finishing"].includes(sh.status)) { sh._byHand = true; startNest(sh); } });
-  $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return; METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); };
+  // every row folds away together (renderRail), and each card's picture fades into its empty sheet (clearingCards)
+  $("#btnClearAll").onclick = () => { if (!confirm("Clear every queue and source? Nothing in the cloud is touched.")) return;
+    const play = clearingCards(METALS.map(m => ({ el: S.sheets[m.key].cardEl, pages: pagesOf(m.key).slice(), gone: () => !pagesOf(m.key).some(p => p.charms.length) })).filter(x => x.el && x.pages.some(p => p.charms.length)));
+    METALS.forEach(m => clearMetal(m.key)); S.sources = []; S.unassigned = []; renderRail(); updateTopSub(); play(); };
   $("#stCompareGPU").onclick = compareGPUSpeed;
   $("#dlgSettings").addEventListener("close", () => { cancelGPUComparison(); document.documentElement.dataset.rail = S.settings.rail; });   // a density tried and not saved goes back
   $("#btnSettings").onclick = () => { $("#moreMenu").open = false; openSettings(); }; $("#btnSaveSettings").onclick = e => { e.preventDefault(); readSettings(); closeDlg($("#dlgSettings")); };
@@ -5128,6 +5488,8 @@ async function boot() {
   document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#dropAll").classList.remove("on"); } });
   document.addEventListener("dragover", e => e.preventDefault());
   document.addEventListener("drop", e => { e.preventDefault(); dragDepth = 0; $("#dropAll").classList.remove("on"); if (e.dataTransfer.files && e.dataTransfer.files.length) intake(e.dataTransfer.files, null); });
+  // a drop taken by something else (a custom order's card) still ends the page's drag veil
+  window.resetPageDrop = () => { dragDepth = 0; $("#dropAll").classList.remove("on"); };
   window.addEventListener("resize", () => METALS.forEach(m => drawPreview(activePage(m.key))));
   // a sheet nesting out of sight shows on its tab: each second the tabs' marks of its metal are brought up to date (and once
   // more after it stops, so its tab does not keep the spinner); the whole row of every metal used to be written again
@@ -5146,12 +5508,12 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260927-varsku"></script>
-<script src="charm-nest-sheetwin.js?v=20260927-sw10"></script>
+<script src="charm-nest-bridge.js?v=20260928-qr"></script>
+<script src="charm-nest-sheetwin.js?v=20260927-moves"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260926-ldline"></script>
+<script src="charm-nest-library.js?v=20260927-moves"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin" aria-labelledby="owTitle">
   <div class="owBox">

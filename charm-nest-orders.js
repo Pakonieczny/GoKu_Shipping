@@ -139,11 +139,19 @@
        One saved for a line with no SKU is the listing's own (sku); one saved before 27 Sep (no v) stands in as it did.
      · A listing whose variations share one SKU while an option picks the charm (Zodiac Sign: Pisces) is answered under
        Options, once per listing and value (optionDesign). */
+  /* Charm-only listings (Paul, 27 Sep; about 1,000 of them): one SKU for all three Charm Type choices. "Necklace CHARM" and
+     "CHARM + Engraving" are the necklace charm, the listing's SKU; "Huggie CHARM SET" is the small charms that hang from a
+     pair of huggie hoops, drawn in the master under the same SKU with " (HUGGIE)" after it ("BUNNY_42980 (HUGGIE)"). A
+     huggie set is never cut as the necklace charm: without its huggie design it is asked about under that name. */
+  const HUGGIE_SET = /\bhuggie\s+charms?\s+set\b/i;
+  const huggieSet = line => (line.variations || []).some(v => HUGGIE_SET.test(String(v.value != null ? v.value : v.formatted_value || "")));
+  const huggieSku = raw => { const s = String(raw || "").trim().toUpperCase().replace(/\s+/g, " "); return !s ? "" : /\(HUGGIE\)$/.test(s) ? s : s + " (HUGGIE)"; };
   const variationBase = raw => { const m = /^(.+?)[\s_-]+CO$/i.exec(String(raw || "").trim()); return m ? m[1].trim().toUpperCase() : ""; };
   function resolveSku(line, aliases, masterEntry, noDesign) {
     const raw = String(line.sku || "").trim().toUpperCase();
     const a = aliases && aliases[String(line.listingId)], up = s => s ? String(s).trim().toUpperCase() : "";
-    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = a && a.sku && (!raw || !a.v) ? up(a.sku) : "";
+    // (the listing's answer is its necklace charm's: never a huggie set's)
+    const own = raw && a && a.bySku ? up(a.bySku[raw]) : "", whole = a && a.sku && (!raw || !a.v) && !/\(HUGGIE\)$/.test(raw) ? up(a.sku) : "";
     if (raw && (!masterEntry || masterEntry(raw) || isNoDesign(raw, noDesign))) return { sku: raw, source: "transaction" };
     if (own) return { sku: own, source: "alias" };
     const base = raw && variationBase(raw);
@@ -310,7 +318,9 @@
   function interpretLine(order, line, ctx) {
     ctx = ctx || {};
     const problems = [];
-    let { sku, source: skuSource } = resolveSku(line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
+    // the SKU as bought: a charm-only listing's Huggie CHARM SET is its SKU's huggie design
+    const set = huggieSet(line), bought = set ? huggieSku(line.sku) : String(line.sku || "").trim().toUpperCase();
+    let { sku, source: skuSource } = resolveSku(set ? Object.assign({}, line, { sku: bought }) : line, ctx.aliases, ctx.masterEntry, ctx.noDesign);
     // an option that picks the charm (a person's answer for this listing) wins over the SKU the variations share
     const picked = optionDesign(line, ctx.optionMaps);
     if (picked) { sku = picked.sku; skuSource = "option"; }
@@ -327,10 +337,11 @@
     const spec = { designSku: sku || null, skuSource, material, materialKey: metalKey || null, materialLabel: line.metalLabel || (material ? CARD_LABEL[material] : ""), form: null, size: null, chain: null, quantity: Math.max(1, Math.round(+line.quantity || 1)), personalization: (line.personalization || []).map(s => visible(s).trim()).filter(Boolean), buyerMessage: visible(line.buyerMessage || order.buyerMessage || ""), staffNote: String(line.staffNote || order.staffNote || ""), messages: (line.messages || order.messages || []).slice(-5), updateTs: +order.updateTs || 0, options: [], problems, noDesign, sources: { material: "station classifier (Metal/Colour option first)", sku: skuSource } };
     if (special) spec.special = special;
     if (done) spec.customDone = done;
+    spec.boughtSku = bought; if (set) spec.huggieSet = true;
     // a line with no design of its own (not on the no-design list, not finished by hand) is one Claude reads to tell a
     // custom order from a regular listing whose SKU is not indexed yet (Custom Orders)
-    const bought = special && special.signals[0] === "option";
-    spec.readable = !listed && !done && !bought && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
+    const byOption = special && special.signals[0] === "option";
+    spec.readable = !listed && !done && !byOption && !set && !(sku && ctx.masterEntry && ctx.masterEntry(sku)) && !!ctx.masterEntry;
     if (noDesign) spec.noDesignWhy = done ? "completed by hand (Custom Orders)" : listed ? "on the no-design list" : special.label.toLowerCase() + " · not laser cut";
     for (const v of line.variations || []) {
       const name = v.name || v.formatted_name, value = String(v.value != null ? v.value : v.formatted_value || "").replace(/&quot;/g, "\"").trim();
@@ -339,7 +350,8 @@
       let mapped = hit ? { field: hit.field, value: hit.value, source: hit.source } : null;
       if (!mapped) {                                                            // deterministic name rules, no free-text reading
         const asForm = formByWords(value);
-        if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
+        if (HUGGIE_SET.test(value)) mapped = { field: "form", value: "huggie", source: "rule:huggie-set" };
+        else if (isSizeOption(name) && looksLikeSize(value)) mapped = { field: "size", value: SIZE_VALUES[bareValue(value)] || bareValue(value).toUpperCase().replace(/\s+/g, ""), source: "rule:size" };
         else if (isChainOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
         else if (isChainOption(name) && asForm) mapped = { field: "form", value: asForm, source: "rule:form" };
         else if (isFormOption(name) && looksLikeLength(value)) mapped = { field: "chain", value, source: "rule:length" };
@@ -359,7 +371,7 @@
     if (!noDesign && !sku && !optionOpen) problems.push({ kind: "unmatchedSku", reason: "no SKU on the transaction and no alias for the listing", listingId: String(line.listingId || ""), title: line.title || "" });
     if (ctx.masterEntry && sku && !noDesign) {
       const entry = ctx.masterEntry(sku);
-      if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
+      if (!entry) { if (!optionOpen) problems.push({ kind: "unmatchedSku", reason: set && skuSource === "transaction" ? "Huggie CHARM SET: its huggie design is not in any master file" : "not in any master file", sku, listingId: String(line.listingId || ""), title: line.title || "" }); }
       else if (entry.blocked) problems.push({ kind: "blockedSku", reason: entry.blocked, sku });
       else if (entry.sizes && Object.keys(entry.sizes).length) { if (!spec.size || !entry.sizes[spec.size]) problems.push({ kind: "missingSize", sku, size: spec.size, available: Object.keys(entry.sizes) }); }
     }
@@ -694,7 +706,7 @@
     if (solid && options.combineSolids) return {key:"solid-waiting", name:"14K / 10K Solid Waiting for Approval", setId:null, seq:null, standalone:true, working:true};
     return {key:(solid ? "standalone:"+sheet.metal+":" : "working:")+sheet.day+":"+scope, name:solid ? "Standalone "+(sheet.metal === "gold10k" ? "10K" : "14K") : "Incomplete Sheets: Waiting to be filled!", setId:null, seq:null, standalone:solid, working:true};
   }
-  return { SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, interpretLine, lineKey, poolId,
+  return { SPECIAL, specialOf, engravingNote, sortingLabel, sortingMetal, visible, purchaseDetails, purchaseOptions, libraryGroup, METAL_TO_CARD, CARD_TO_METAL, CARD_TAG, CARD_LABEL, DEFAULT_OPTION_MAP, FORM_VALUES, SIZE_VALUES, norm, optionLookup, isNoDesign, resolveSku, variationBase, optionDesign, huggieSku, interpretLine, lineKey, poolId,
     orderPlacedAt, orderDay, intakePlan, completionDay, completionTime, compareCompleted, completedTitle, localDay, dateTag, dateTagOfDay, setId, setLabel, setFolder, sheetName, sheetFolder, toB36, encodeOrderList, safeChunks, evaluateOrder, planRelease, sheetRelease, kinGroups, FAST_MATERIALS, SLOW_MATERIALS, RUN_STEPS, HALF, nextStep, stepIndex, DONE_STATES,
     RUN_RECORD, FINISHED_LINE, closedOrders, utf8Bytes, textHash, indexEntries, archiveParts };
 });

@@ -834,6 +834,12 @@ const Orders = window.Orders = (() => {
       // a special line finished by hand (Custom Orders), or a chain-only line, that the run had held for a decision is
       // not cut either: it never went to the pool, so nothing is on a sheet for it
       if ((row.spec.customDone || (row.spec.special && row.spec.special.notCut)) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "waiting", "oversize"].includes(row.state)) { row.state = "noDesign"; row.reason = null; }
+      // a custom order's own designs sent to the sheets from its card (CustomSheet): what it is cut from is settled, and
+      // its designs carry no back to engrave; a line with pieces of its own goes on like any other
+      if (window.CustomSheet && CustomSheet.sentOf(row) && !row.spec.customDone) {
+        row.problems = []; row.spec.engraveCandidate = false; const m0 = CustomSheet.metalOf(row); if (m0) row.spec.material = m0;
+        if (CustomSheet.piecesOf(row) && !row.hold && !(row.poolIds || []).length && ["held", "unmatched", "oversize", "noDesign"].includes(row.state)) { row.state = "pulled"; row.reason = null; }
+      }
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
     }
     Review.syncOrderItems();
@@ -1087,39 +1093,116 @@ const Orders = window.Orders = (() => {
      screen: one used to be kept for every line ever drawn, until its line left the list. */
   const orderNodes=new Map(),NODES_KEPT=200;
   const dayMemo=new WeakMap(),dayOf=r=>{const at=O.orderPlacedAt(r),m=dayMemo.get(r);if(m&&m.at===at)return m.day;const day=O.orderDay(r);dayMemo.set(r,{at,day});return day;};
+  /* ── motion (Paul, 27 Sep 20:09-20:24): what a click in this tab moves from one pile to another is seen going there.
+     Each row carries its line's key as its motion name (data-mkey) and the list is one keyed update (Motion.reconcile).
+     A row that leaves just after a person acted on its order (its Release hold, or the order window opened on it) lifts
+     and flies to the pill that holds it now, which answers, and a note says what happened, with Show; a row that leaves
+     on its own (a refresh, another station, the run) folds away where it was; what stays glides into the gap. Only a
+     redraw of the pile and view already on screen moves: a pile switch, a filter, a sort or the tab shown draws at once. */
+  const PILL = p => `#ordChips [data-pile="${p || ""}"]`, ORDERS_TAB = '#modeSeg [data-mode="orders"]';
+  // the pill, or while it has none (its count was 0; it is drawn with the same redraw) the Orders tab button itself
+  const pillOf = (p, rid) => Object.assign(() => document.querySelector(PILL(p)) || document.querySelector(ORDERS_TAB), { ordRid: rid });
+  const acted = new Map();                                        // receipt id → { t, win, lit }: what a person acted on
+  const mine = rid => { const a = acted.get(String(rid)); return !!a && Date.now() - a.t < 10000; };
+  let drawnOn = "", drawnLimit = 0;                               // the pile and view last drawn on screen ("" hidden since)
+  /** Once, when the tab is built: which order a person acts on (a row's own button, or anything in the order window
+   *  opened on it), and the tab being hidden (shown again, it is drawn at once). */
+  function watch(v) {
+    document.addEventListener("click", e => {
+      const t = e.target; if (!t || !t.closest || v.classList.contains("hidden")) return;
+      const now = Date.now(); for (const [k, a] of acted) if (now - a.t > 60000) acted.delete(k);
+      const row = t.closest('#ordItems [data-mkey^="ord:"]');
+      if (row) { if (t.closest("button")) acted.set(row.dataset.rid, { t: now }); return; }
+      const r = t.closest("#orderWin") && window.OrderWin && OrderWin.isOpen() ? rowsOf().find(x => x.key === OrderWin.key()) : null;
+      if (r) acted.set(String(r.order.receiptId), { t: now, win: true });
+    }, true);
+    if (window.MutationObserver) new MutationObserver(() => { if (v.classList.contains("hidden")) drawnOn = ""; }).observe(v, { attributes: true, attributeFilter: ["class"] });
+  }
+  const lit = n => { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); };
+  const lineNode = key => [...document.querySelectorAll('#ordItems [data-mkey^="ord:"]')].find(n => n.dataset.key === key) || null;
+  /** "Show" in a note: the pile that holds the line now, scrolled to it and marked (filters let go when they hide it). */
+  function showLine(key, pile) {
+    OV.pile = pile || null;
+    if (!visibleRows().some(x => x.key === key)) { OV.metal = OV.form = OV.eng = null; OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; }
+    if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
+    const i = visibleRows().findIndex(x => x.key === key);
+    if (i >= (OV.limit || 48)) { OV.limit = i + 12; renderBody(); }
+    const n = lineNode(key); if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); lit(n); }
+  }
+  /** "Show" for a cancelled order: the Cancelled pile (read from the library), at that order. */
+  function showCancelled(rid) {
+    OV.pile = "cancelled";
+    if (!onScreen() && typeof setMode === "function") setMode("orders"); else renderNow();
+    let n = 0;
+    const look = () => { const c = [...document.querySelectorAll("#ordBody .cxRow")].find(x => x.dataset.rid === String(rid)); if (c) { c.scrollIntoView({ behavior: "smooth", block: "center" }); lit(c); } else if (++n < 30 && OV.pile === "cancelled") setTimeout(look, 150); };
+    look();
+  }
+  /** Where a row that left went, when a person's click sent it; null (it folds away where it was) otherwise. One note an
+   *  order: its other lines fly with it in silence. */
+  function leaveFor(noted) {
+    return (mk, node) => {
+      const rid = node.dataset.rid, key = node.dataset.key; if (!key || !mine(rid)) return null;
+      const r = rowsOf().find(x => x.key === key), first = !noted.has(rid); noted.add(rid);
+      // a newer move of the same order says what is true now: the note its last move left goes
+      const note = (text, fn, title) => { if (!first) return null; for (const n of document.querySelectorAll(".mNote")) if (n._anchor && n._anchor.ordRid === rid && n.close) n.close(); return { text, actions: [{ label: "Show", title, fn }] }; };
+      if (!r || r.state === "gone")
+        return window.Cancelled && Cancelled.has(rid) ? { to: pillOf("cancelled", rid), plus: first ? "+1" : false, note: note(`Order ${rid} is cancelled · kept under Cancelled`, () => showCancelled(rid), "open Cancelled at this order") } : null;
+      // off hold: back in line under Open Orders (which counted it already: no "+1")
+      if (OV.pile === "hold" && !r.hold) {
+        const still = rowsOf().filter(x => String(x.order.receiptId) === rid && x.hold && x.state !== "gone").length;
+        return { to: pillOf("", rid), plus: false, note: note(still ? `A line of order ${rid} is back in line · ${still} still on hold` : `Order ${rid} is back in line`, () => showLine(key, ""), "open Open Orders at this order") };
+      }
+      if (visibleRows().some(x => x.key === key)) return null;   // only further down: the sort took it past what is drawn
+      // still in this pile, outside the filters now (a material or a kind chosen in the order window)
+      return { to: pillOf(OV.pile, rid), plus: false, note: note(`Order ${rid} is outside these filters now`, () => showLine(key, OV.pile), "show it, letting go of the filters") };
+    };
+  }
+  const empties = new Map();                                      // one node for each empty state, kept like the rows
+  function blank(id, html, wire) {
+    let n = empties.get(id);
+    if (!n) { n = el("div", "libEmpty"); n.dataset.mkey = "ordEmpty:" + id; n.innerHTML = html; if (wire) wire(n); empties.set(id, n); }
+    return n;
+  }
+  /** The same list update without motion (no Motion script): nodes in order, the rest taken out, none rebuilt. */
+  function put(list, nodes) {
+    nodes.forEach((n, i) => { if (list.children[i] !== n) list.insertBefore(n, list.children[i] || null); });
+    const keep = new Set(nodes); for (const c of [...list.children]) if (!keep.has(c)) c.remove();
+  }
   function renderBody() {
     if(window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
+    // the order window open over the list: the list is drawn when it closes, so what was done in it is seen going where
+    // it went (drawn behind the window, it moved where nobody could see it)
+    const win = document.getElementById("orderWin");
+    if (win && win.open && drawnOn && window.Motion && !Motion.reduced()) {
+      if (!win._ordLater) { win._ordLater = true; win.addEventListener("close", () => { win._ordLater = false; const now = Date.now(); for (const a of acted.values()) if (a.win) { a.t = now; a.win = false; } renderBody(); }, { once: true }); }
+      return;
+    }
     const at = host.scrollTop;                                             // a run writing to the list must not scroll it away
     const rows = visibleRows();
     const alive=new Set(rowsOf().map(r=>r.key));for(const key of orderNodes.keys())if(!alive.has(key))orderNodes.delete(key);
-    if (OV.pile === "cancelled") { listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
+    if (OV.pile === "cancelled") { drawnOn = ""; listKey = "cancelled"; if (window.Cancelled) Cancelled.renderInto(host, () => { const v = document.getElementById("ordersView"); if (v && v.querySelector("#ordChips")) renderHead(v); }); else host.innerHTML = '<div class="libEmpty">The cancelled orders open with the sheet window script.</div>'; return; }
     const nextKey=JSON.stringify([OV.pile,OV.q,OV.metal,OV.form,OV.eng,OV.sort,OV.desc,viewMode()]);
     if(nextKey!==listKey){OV.limit=48;listKey=nextKey;}
     const anchor=at>0?[...host.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>host.getBoundingClientRect().top):null;
     const anchorKey=anchor?.dataset.key, anchorTop=anchor?.getBoundingClientRect().top;
     const restore = () => { if (at) host.scrollTop = at; };
-    if (!rowsOf().length) {
-      host.innerHTML = '<div class="libEmpty"><span>Nothing pulled yet \u2014 press <b>Pull orders</b> above.</span></div>';   // one line: .libEmpty stacks its children
-      return;
-    }
-    if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) { host.innerHTML = '<div class="libEmpty">No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.</div>'; return; }
-    if (!rows.length) {
-      host.innerHTML = '<div class="libEmpty">Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button></div>';
-      host.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; render(); };
-      return;
-    }
     const cards = viewMode() === "cards";
     let list=host.querySelector('#ordItems');if(!list){host.innerHTML='<div id="ordItems"></div>';list=host.firstElementChild;}list.className=cards?'ordCards':'ordList';
-    const wanted=[],place=node=>{const index=wanted.length;wanted.push(node);if(list.children[index]!==node)list.insertBefore(node,list.children[index]||null);};
+    // an empty pile says so in the list itself, so the last row out is still seen going (and the words come in softly)
+    const wanted=[],mounts=[],pairs=[],rebuilt=[];let shown=[];
+    if (!rowsOf().length) wanted.push(blank("none", '<span>Nothing pulled yet — press <b>Pull orders</b> above.</span>'));   // one line: .libEmpty stacks its children
+    else if (!rows.length && OV.pile === "hold" && !OV.q && !OV.metal && !OV.form && !OV.eng) wanted.push(blank("hold", 'No order is on hold. An order taken off a sheet, or held from Review, waits here until someone puts it back.'));
+    else if (!rows.length) wanted.push(blank("filters", 'Nothing matches these filters.<br><button class="btn ghost sm" id="ordClear" style="margin-top:10px">Show everything</button>', n => { n.querySelector("#ordClear").onclick = () => { OV.pile = null; OV.metal = null; OV.form = null; OV.eng = null; OV.q = ""; const box = document.getElementById("ordQ"); if (box) box.value = ""; render(); }; }));
+    else {
     let lastDay=null;
-    const shown=rows.slice(0,OV.limit || 48);
+    shown=rows.slice(0,OV.limit || 48);
     // a heading counts its day's orders in the list: counted only where headings are drawn, for the days on screen
     const dayCounts=new Map();
     if(OV.sort==='arrival'){for(const r of shown)dayCounts.set(dayOf(r).key,new Set());for(const row of rows){const ids=dayCounts.get(dayOf(row).key);if(ids)ids.add(row.order.receiptId);}}
     for (const r of shown) {
       const date=dayOf(r);
-      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;place(heading);lastDay=date.key;}
+      if(OV.sort==='arrival' && date.key!==lastDay){const heading=[...list.querySelectorAll('.ordDay')].find(n=>n.dataset.day===date.key)||el('div','ordDay');heading.dataset.day=date.key;heading.dataset.mkey='day:'+date.key;const text=`<span>${esc(date.label)}</span><small>${dayCounts.get(date.key).size} order${dayCounts.get(date.key).size === 1 ? "" : "s"} · Toronto time</small>`;if(heading.innerHTML!==text)heading.innerHTML=text;wanted.push(heading);lastDay=date.key;}
       const sp = r.spec || {}, m = r.material || "none";
       const st = stateWords(r), due = dueOf(r), where = placeOf(r);
       const attn = r.problems.length || ["held", "unmatched", "oversize"].includes(r.state);
@@ -1128,29 +1211,42 @@ const Orders = window.Orders = (() => {
       const mail = window.CustomerMail ? CustomerMail.badgeStamp(r.order.receiptId) : "", team = window.TeamMail ? TeamMail.stamp(r) : "";
       const stamp=JSON.stringify([cards,r.order,r.line,r.spec,r.state,st,r.hold,r.wait,why,where,due,date,mail,team]);
       const cached=orderNodes.get(r.key);
-      if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);place(cached.node);ListMedia.mount(cached.node,r);continue;}
+      if(cached?.stamp===stamp){orderNodes.delete(r.key);orderNodes.set(r.key,cached);wanted.push(cached.node);mounts.push([cached.node,r]);continue;}
       const node = el("div", (cards ? "ocard" : "doneRow workRow orderListRow") + " hoverItem" + (attn ? " attn" : ""));
-      node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key;
+      node.setAttribute("role","button"); node.tabIndex=0; node.dataset.m = m; node.dataset.key = r.key; node.dataset.mkey = "ord:" + r.key;
       node.title = r.order.receiptId + " · " + (sp.designSku || r.line.sku || "no SKU") + " — " + r.line.title;
       const qty = sp.quantity || r.line.quantity || 1;
       const identity=`<div class="engravingIdentity"><span class="queueLabel">Order</span><div class="engravingOrder"><b class="mono onum">${esc(r.order.receiptId)}</b><span class="sku mono">${esc(sp.designSku || r.line.sku || 'No SKU')}</span></div><span class="purchaseLabel">${wordsOf(sp) ? 'Personalisation' : 'Item'}</span><span class="rowExcerpt" title="${esc(wordsOf(sp) || r.line.title || '')}">${esc(wordsOf(sp) || r.line.title || 'No title')}</span>${where ? `<span class="rowExcerpt dim">${esc(where.set)} · ${esc(where.sheet)}</span>` : ''}</div>`;
-      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button">Release hold</button>' : ''}${gateBtn}</div>`;
+      node.innerHTML=ListMedia.pair(r)+identity+`<div class="purchaseSummary">${purchaseMarkup(r)}</div><div class="rowActions">${team ? TeamMail.mark(r) : ""}${mail && mail !== "null" ? CustomerMail.badge(r.order.receiptId) : ""}<span class="ost ${st[0]}">${esc(st[1])}</span><span class="rowFacts">Qty ${qty} · <span class="due ${due.cls}">Ship by ${esc(due.txt)}</span></span>${why ? `<span class="rowExcerpt reviewReason" title="${esc(why)}">${esc(why)}</span>` : ''}${r.hold ? '<button class="btn ghost sm relHold" type="button" title="back in line: the run places it on the next sheet that fits">Release hold</button>' : ''}${gateBtn}</div>`;
       const number=node.querySelector('.onum');if(number){const time=el('span','orderTime');time.textContent=date.time;time.title=date.label;number.appendChild(time);}
       node.onclick = e => { if (e.target.closest("button,[role=button]") !== node && e.target.closest("button,[role=button]")) return; OrderWin.open(r.key); };
       node.onkeydown=e=>{if(e.target===node && (e.key==="Enter" || e.key===" ")){e.preventDefault();OrderWin.open(r.key);}};
-      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); }; }
+      // Release hold: the line goes back in line; drawn at once, so it is seen leaving On hold for Open Orders
+      { const rh = node.querySelector(".relHold:not([data-gate])"); if (rh) rh.onclick = e => { e.stopPropagation(); Review.repool(r); render(); }; }
       { const gb = node.querySelector("[data-gate]"); if (gb) gb.onclick = e => { e.stopPropagation(); gb.disabled = true; (gb.dataset.gate === "release" ? Gate.release(gb.dataset.gm) : Gate.cutAnyway(gb.dataset.gm)).catch(err => toast(err.message, "bad", 6000)); }; }
       // an order can be several lines on several cards: hovering one lifts all of them, the way the station does
       node.dataset.rid = String(r.order.receiptId);
-      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
-      place(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});ListMedia.mount(node,r);
+      // (the old node's decoded pictures move over once the update has measured where the old node stood)
+      if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)pairs.push([node,pair]);rebuilt.push(node);}
+      wanted.push(node);orderNodes.delete(r.key);orderNodes.set(r.key,{stamp,node});mounts.push([node,r]);
     }
     if(orderNodes.size>NODES_KEPT){const onList=new Set(shown.map(r=>r.key));for(const key of orderNodes.keys()){if(orderNodes.size<=NODES_KEPT)break;if(!onList.has(key))orderNodes.delete(key);}}
-    const keep=new Set(wanted);for(const child of [...list.children])if(!keep.has(child))child.remove();
+    }
+    // the pile and view on screen, drawn before: what changed is seen changing (not "Show more", which only adds below)
+    const same = drawnOn === nextKey && drawnLimit === OV.limit && list.childElementCount > 0;
+    // the scroll is put back as soon as the list holds its new rows (Motion.reconcile reads `clip` then, before it
+    // measures where the rows now stand), so what stays glides from where it was seen, not from where the scroll put it
+    let settled = false;
+    const settle = () => { if (settled) return; settled = true; restore(); if(anchorKey){const same2=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same2)host.scrollTop+=same2.getBoundingClientRect().top-anchorTop;} };
+    if (window.Motion) Motion.reconcile(list, wanted, { animate: same, leave: leaveFor(new Set()), get clip() { settle(); return host; } });
+    else put(list, wanted);
+    for (const [node, pair] of pairs) node.querySelector('.comparePair')?.replaceWith(pair);
+    for (const [node, r] of mounts) ListMedia.mount(node, r);
     ListMedia.more(list,rows.length,shown.length,()=>{OV.limit=(OV.limit || 48)+48;renderBody();});
-
-    restore();
-    if(anchorKey){const same=[...host.querySelectorAll('[data-key]')].find(n=>n.dataset.key===anchorKey);if(same)host.scrollTop+=same.getBoundingClientRect().top-anchorTop;}
+    settle();
+    drawnOn = onScreen() ? nextKey : ""; drawnLimit = OV.limit;
+    // what a person changed that stays in this pile (Release hold under Open Orders, Send now) is marked where it is
+    if (same) { const now = rebuilt.filter(n => { const a = acted.get(n.dataset.rid); return a && !a.lit && mine(n.dataset.rid); }); for (const n of now) { lit(n); acted.get(n.dataset.rid).lit = true; } }
   }
   /* The tab used to be one `v.innerHTML = …` on every call, and it is called from fifteen places — RunCtl.renderBanner's
      last line among them, which itself has eighteen callers, and Pool.addAll every five rows. Pooling two hundred lines
@@ -1183,6 +1279,7 @@ const Orders = window.Orders = (() => {
     v.querySelector("#ordSort").onchange = e => { OV.sort = e.target.value; OV.desc = false; renderBody(); };
     v.querySelector("#ordPull").onclick = async () => { if (v.querySelector("#ordPull").disabled) return; try { await pull(null); } catch (e) { toast(e.message, "bad", 7000); agent({ bridge: true }, "warn", e.message); } };
     Sandbox.mountPanel(v);
+    watch(v);
   }
   /** Update totals and filters without rebuilding the search field. */
   function renderHead(v) {
@@ -1195,6 +1292,10 @@ const Orders = window.Orders = (() => {
     // between arrivals there is no Stop to press: say what the run is doing with the lines instead
     pull.title = !running ? "refresh open orders using the pull rule in Settings" : B.run.status === "processed" ? "the open run holds these lines · new orders join it as they arrive" : "a run is open — stop it first, or its lines would be replaced under it";
     v.querySelector("#ordSort").value = OV.sort;
+    // the search box always shows the search the list is narrowed by: the sheet window's "In Orders" set it before the
+    // tab was first drawn, and the box came up empty over a list of one order's lines (Paul, 27 Sep 22:28: "It's only
+    // showing me two orders in the orders tab where it says 360")
+    { const q = v.querySelector("#ordQ"); if (q && q.value !== OV.q && document.activeElement !== q) q.value = OV.q; }
     const charmTotal=v.querySelector("#ordCharmTotal");
     charmTotal.innerHTML=`<b>${totals.charms}</b> charms`;
     charmTotal.title="Total charm quantity across these open orders; chain-only and packaging items are excluded";
@@ -1208,9 +1309,16 @@ const Orders = window.Orders = (() => {
     const forms = Object.keys(byForm).filter(f => f !== "none" || OV.form === "none").sort((a2, b2) => byForm[b2] - byForm[a2]);
     const engN = all.filter(r => r.engrave && r.engrave.needed).length;
     const heldN = new Set(all.filter(r => r.hold).map(r => String(r.order.receiptId))).size, cxN = window.Cancelled ? Cancelled.count() : 0;
-    v.querySelector("#ordChips").innerHTML = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
+    const pills = v.querySelector("#ordChips"), pillsHtml = chip(!OV.pile,"","Open Orders",totals.orders,"","Distinct open order numbers, across all materials")
       + (heldN || OV.pile === "hold" ? chip(OV.pile === "hold","hold","On hold",heldN,"","Orders a person put on hold or took off a sheet; release them from here or from the sheet window") : "")
       + (cxN || OV.pile === "cancelled" ? chip(OV.pile === "cancelled","cancelled","Cancelled",cxN,"","Orders cancelled from the sorter, kept as a record; restore one to bring it back") : "");
+    // redrawn only when a count or the pile changes, so a pill a row just flew into keeps its answer (Paul, 27 Sep); a
+    // pill that was not there (the first order put on hold, the first one cancelled) opens where it stands
+    if (pills._html !== pillsHtml) {
+      const had = new Set([...pills.querySelectorAll("[data-pile]")].map(b => b.dataset.pile));
+      pills.innerHTML = pillsHtml; pills._html = pillsHtml;
+      if (had.size && window.Motion && !Motion.reduced() && onScreen()) for (const b of pills.querySelectorAll("[data-pile]")) if (!had.has(b.dataset.pile)) b.animate([{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "none" }], { duration: 560, easing: "cubic-bezier(.3,1.3,.5,1)" });
+    }
     const sel = (id, ttl, any, opts, cur) => opts.length > 1 || cur ? `<select class="ordMetal" id="${id}" title="${esc(ttl)}">${[`<option value="">${esc(any)}</option>`].concat(opts.map(o => `<option value="${esc(o[0])}"${cur === o[0] ? " selected" : ""}>${esc(o[1])} \u00b7 ${o[2]}</option>`)).join("")}</select>` : "";
     v.querySelector("#ordMetalHost").innerHTML =
       sel("ordMetal", "narrow it to one material", "Any material", metals.map(m => [m, m === "none" ? "No material" : labelOf(m), byMetal[m] || 0]), OV.metal)
@@ -1234,11 +1342,20 @@ const Orders = window.Orders = (() => {
   function renderNow() {
     window.CNFrame?.cancel("orders");
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
-    if (!v || (v.classList.contains("hidden") && !wanted)) { const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : ""; return; }
+    if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
     if (!v.dataset.built) { v.dataset.built = "1"; buildHead(v); }
     renderHead(v);
     renderBody();
-    const tb = document.getElementById("tabOrdersN"); if (tb) tb.textContent = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "";
+    tabCount();
+  }
+  /** The Orders tab's count (open orders). A change while the station is in use (an order in, an order gone) shows as a
+   *  soft ring round the number, not a jump: a line put on hold or released stays an open order and leaves it as it is. */
+  function tabCount() {
+    const tb = document.getElementById("tabOrdersN"); if (!tb) return;
+    const t = B.orders.rows.length ? String(orderTotals(B.orders.rows).orders) : "", was = tb.textContent;
+    if (was === t) return;
+    tb.textContent = t;
+    if (was && t && window.Motion && !Motion.reduced() && tb.animate) tb.animate([{ boxShadow: "0 0 0 0 rgba(169,130,63,.7)" }, { boxShadow: "0 0 0 6px rgba(169,130,63,0)" }], { duration: 1200, easing: "cubic-bezier(.2,.7,.3,1)" });
   }
   /** The Orders tab on one pile (the sheet window's "In Orders"), with the search set to an order when one is given. */
   function showPile(pile, q) {
@@ -1851,9 +1968,11 @@ const Pool = window.Pool = (() => {
       not fit (row.state says which). */
   async function preparePool(row, run) {
     const sp = row.spec;
-    if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     // a custom line whose QR label is being printed (Custom Orders) waits: printed, it is completed by hand, not cut
     if (window.CustomPrint && CustomPrint.printing(row.key)) return null;
+    // a custom order sent from its card is cut from its own designs, each on the metal picked for it (CustomSheet)
+    if (sp && !sp.customDone && window.CustomSheet && CustomSheet.sentOf(row)) return CustomSheet.prepare(row, run);
+    if (!sp || sp.noDesign) { row.state = "noDesign"; return null; }
     row.problems = row.problems.filter(p => !["unmatchedSku", "blockedSku", "missingSize", "oversize"].includes(p.kind));   // re-derived below on every attempt
     if (row.problems.length) { row.state = "held"; row.reason = Review.problemText(row.problems[0]); return null; }
     let entry = Master.entryFor(sp.designSku) || await Master.fetchEntry(sp.designSku);
@@ -1882,15 +2001,19 @@ const Pool = window.Pool = (() => {
     const { sp, pools, charms } = prep;
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
-    let page=window.LiveNest ? LiveNest.intakePage(sp.material, run, row.order.receiptId) : pagesOf(sp.material).at(-1);
-    if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(sp.material);
-    S.sheets[sp.material].active=pagesOf(sp.material).indexOf(page);if(!page.el)window.CN?.showPage(sp.material,S.sheets[sp.material].active);   // the card shows the page its buttons act on
-    if (run) page.runId = run.runId;
-    for (const c of charms) if (!page.charms.includes(c)) page.charms.push(c);
+    // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
+    const byMetal = new Map(); for (const c of charms) { const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
+    for (const [metal, list] of byMetal) {
+      let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
+      if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(metal);
+      S.sheets[metal].active=pagesOf(metal).indexOf(page);if(!page.el)window.CN?.showPage(metal,S.sheets[metal].active);   // the card shows the page its buttons act on
+      if (run) page.runId = run.runId;
+      for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
+      if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
+    }
     for (const p of pools) B.pool.rows.set(p.poolId, p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
-    if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
-    agent({ metal: sp.material, pool: true }, "POOL", `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
+    agent({ metal: sp.material, pool: true }, "POOL", prep.custom ? `${row.order.receiptId} · custom designs: ${[...byMetal].map(([m, l]) => `${l.length} → ${labelOf(m)}`).join(", ")}` : `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
   async function poolAdd(row, run) {
     const prep = await preparePool(row, run); if (!prep) return;
@@ -2851,7 +2974,13 @@ const Engrave = window.Engrave = (() => {
     refresh(job);if(measure)Session.schedule();return true;
   }
   async function resplit(job) { const vars = G.splitVariants(job.lines); const i = (job.splitIndex || 0) + 1; const pick = vars[i % vars.length]; job.splitIndex = i; job.lineInput=pick.slice(); job.lineMode="preserve"; job.lines = pick; job.text = pick.join("\n"); agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId}: re-split as "${pick.join(" / ")}"`); await fitJob(job); }
-  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return; revokeBacks(job); job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`); await Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
+  async function skip(job, by) { by = by || employeeName() || askEmployee(); if (!by) return;
+    // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
+    // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
+    revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
+    job.state = "skipped"; job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
+    if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
   async function approve(job, by) {
     if(job.backSaving || job.approvalPreparing) return;
@@ -2875,6 +3004,7 @@ const Engrave = window.Engrave = (() => {
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    goes(job, { to: EG_TAB("done") });                     // the card in front flies up into Decided, which counts it (Paul, 27 Sep)
     job.state = "approved"; job.approvedBy = by; job.approvedAt = Date.now(); job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: by });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
@@ -3273,6 +3403,94 @@ const Engrave = window.Engrave = (() => {
     v?.querySelectorAll(".rvItem").forEach(c => { c._dispose?.(); clearTimeout(c._wordsTimer); c._ro?.disconnect(); });
     EG.card = null; EG.cardKey = null;
   }
+  /* ── motion (Paul, 27 Sep 20:09-20:24: nothing a click moves may just vanish or pop up; slow enough to follow). The card
+     in front is seen going where its job went: Approve and No engraving send a copy of it up into Decided, which counts
+     it; Close on a back being edited folds it away where it stood (the edit is dropped); Close on a placement folds it
+     back down into its row in the list, and a row opened grows into the card. The next card slides in under the copy
+     from the queue's side, where the Placements tab is. Only copies move: the next card is there and answers its keys at
+     once, so someone pressing A again and again never waits for any of it (copies still in the air hurry to make way). */
+  const MO = () => window.Motion && !Motion.reduced() ? Motion : null;
+  const EG_TAB = id => `#engraveView .ordBar .egTab[data-tab="${id}"]`;
+  const ENTER = { slide: { ms: 640, delay: 90 }, fade: { ms: 420, delay: 40 }, grow: { ms: 620, delay: 0 } };
+  let outgoing = null, unlaunched = null, entering = null, growsFrom = null;
+  const inAir = new Set();
+  /** The card in front is about to go (its job decided, dropped or closed): the next drawing of the tab, which takes it
+   *  away, sends a copy of it where spec says (spec.to a tab, spec.fold, spec.row, else it fades). */
+  function goes(job, spec, card = EG.card) {
+    if (!MO() || !card || card !== EG.card || EG.cardKey !== job.key || !card.isConnected || !card.getClientRects().length) return;
+    outgoing = Object.assign({ key: job.key, card, until: Date.now() + 10000 }, spec);
+  }
+  /** Just before the tab is drawn again: a copy of the card that goes, where it stands (its scrolled panes as they were). */
+  function copyOutgoing() {
+    const o = outgoing; outgoing = null;
+    if (!o || o.until < Date.now() || !o.card.isConnected || !MO()) return null;
+    const r = o.card.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return null;
+    const g = Motion.ghost(o.card, r, null, o.card), a = [o.card, ...o.card.querySelectorAll("*")], b = [g._card, ...g._card.querySelectorAll("*")];
+    a.forEach((n, i) => { if (n.scrollTop && b[i]) b[i].scrollTop = n.scrollTop; });
+    return (unlaunched = { g, o });
+  }
+  /** Once the tab is drawn again: the copy goes, and the card now in front comes in. */
+  function launch({ g, o }) {
+    unlaunched = null;
+    if (EG.cardKey === o.key && EG.card && EG.card.isConnected) { g.remove(); return; }   // the same card is back in front: nothing left
+    for (const x of inAir) for (const an of x.getAnimations({ subtree: true })) an.playbackRate = Math.max(an.playbackRate, 2.4);
+    inAir.add(g); const landed = () => { inAir.delete(g); };
+    if (o.to) Motion.fly(g, o.to, { plus: o.plus, note: o.note }).then(() => { landed(); if (EG.tab === "done") mark(doneRowOf(o.key)); });
+    else if (o.row) intoRow(g, o.key).then(landed);
+    else if (o.quick) g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "ease-in", fill: "forwards" }).finished.catch(() => {}).then(() => { g.remove(); landed(); });   // Back / Next: a quick crossfade
+    else Motion.fade(g).then(landed);
+    if (EG.card && EG.card.isConnected && EG.cardKey !== o.key) enter(EG.card, o.enter || "slide");
+  }
+  /** The card now in front comes in: from the queue's side, faded in, or grown out of the row it was opened from. A card
+   *  drawn again while it is still coming in carries on from where it was (play), rather than jumping into place. */
+  function enter(card, kind, rect) { entering = { key: card.dataset.key, kind, rect, t: performance.now() }; play(card); }
+  function play(card) {
+    const e = entering; if (!e || !MO() || card.dataset.key !== e.key) return;
+    const k = ENTER[e.kind], el = performance.now() - e.t; if (el >= k.delay + k.ms) { entering = null; return; }
+    // (only transforms toward the page's start, clips and fades: nothing that could make the page scroll or the back redraw)
+    const frames = e.kind === "grow" ? [{ clipPath: clipTo(card.getBoundingClientRect(), e.rect), opacity: .55 }, { clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 }]
+      : e.kind === "fade" ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: "translateX(-26px)" }, { opacity: 1, transform: "none" }];
+    const an = card.animate(frames, { duration: k.ms, delay: k.delay, easing: "cubic-bezier(.25,.1,.2,1)", fill: "backwards" });
+    an.currentTime = el;
+  }
+  /** A card drawn: it carries on coming in, or grows out of the row a person opened it from. */
+  function cardShown(card) {
+    const f = growsFrom; growsFrom = null;
+    if (f && f.key === card.dataset.key && f.until > Date.now() && MO()) enter(card, "grow", f.rect); else play(card);
+  }
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  /** The clip that shows only the part of `box` (a rect, or a width with a rect) that lies over `r`. */
+  function clipTo(box, r, w = box.width) {
+    const t = clamp(r.top - box.top, 0, box.height), b = clamp(box.top + box.height - r.bottom, 0, box.height - t), l = clamp(r.left - box.left, 0, w), ri = clamp(box.left + w - r.right, 0, w - l);
+    return `inset(${t}px ${ri}px ${b}px ${l}px round 10px)`;
+  }
+  /** Close: the card folds back down into its row in the list, which is brought into view and marked. */
+  function intoRow(g, key) {
+    const list = document.querySelector("#engraveView .egPlacementList"), row = list && [...list.children].find(n => n.dataset.mkey === "eg:" + key);
+    if (!row) return Motion.fade(g);
+    const lr = list.getBoundingClientRect(); let r = row.getBoundingClientRect();
+    if (r.top < lr.top || r.bottom > lr.bottom) { row.scrollIntoView({ block: "nearest" }); r = row.getBoundingClientRect(); }
+    const to = clipTo(g._rect, r, parseFloat(g.style.width) || g._rect.width);
+    setTimeout(() => mark(row), Motion.T.slide * .8);
+    return g.animate([{ clipPath: "inset(0px 0px 0px 0px round 12px)", opacity: 1 }, { clipPath: to, opacity: .9, offset: .78 }, { clipPath: to, opacity: 0 }], { duration: Motion.T.slide, easing: "cubic-bezier(.45,.05,.2,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
+  }
+  /** A row opened: a copy of the list around it, which dissolves while the row grows into its card. */
+  function listCopy(row) {
+    const list = row.closest(".egPlacementList"); if (!list) return null;
+    const r = list.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return null;
+    const g = Motion.ghost(list, r, null, list); g._card.scrollTop = list.scrollTop; return g;
+  }
+  /** Where something landed, marked with a soft glow that fades. */
+  function mark(n) { if (!n || !n.isConnected) return; n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  const doneRowOf = key => [...document.querySelectorAll("#egDone .doneRow")].find(n => n.dataset.key === key) || null;
+  /** "Show" in a note: Decided, at this job, opened. */
+  function showDecided(key) {
+    const v = document.getElementById("engraveView"); if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("engrave");
+    EG.tab = "done"; EG.chosen = true; EG.openDone = key;
+    const i = decidedOrder().findIndex(j => j.key === key); if (i >= doneLimit) doneLimit = i + 1;
+    render();
+    const rw = doneRowOf(key); if (rw) { rw.scrollIntoView({ block: "nearest", behavior: "smooth" }); mark(rw); }
+  }
   function renderWorking(v, jobs) {
     const host = v.querySelector("[data-eg-working]"); if (!host) return;
     const n = jobs.filter(isWorking).length;
@@ -3331,19 +3549,18 @@ const Engrave = window.Engrave = (() => {
   const placementRows = new WeakMap();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   function renderPlacementRows(list, queue) {
-    const wanted = new Set();
     if(placementQuery!==EG.q){placementLimit=40;placementQuery=EG.q;}
-    queue.slice(0,placementLimit).forEach((job,index) => {
+    const shown = queue.slice(0,placementLimit), nodes = shown.map(job => {
       let row = placementRows.get(job);
       if (!row) {
         row = el("div", "doneRow placementRow hoverItem");
-        row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key;
+        row.setAttribute("role","button"); row.tabIndex=0; row.dataset.open=job.key; row.dataset.mkey="eg:"+job.key;
         row.innerHTML=ListMedia.pair(job.row)+'<div class="engravingIdentity"><span class="queueLabel">Engraving</span><div class="engravingOrder"><b class="mono" data-order></b><span class="sku mono"></span><span class="mailSlot" hidden></span><span class="teamSlot" hidden></span></div><span class="purchaseLabel">Words on the back</span><span class="w"></span><span class="dim" data-stage></span></div><div class="purchaseSummary" data-purchase></div>';
-        const open=()=>{if(isWorking(job))return;EG.focus=job.key;EG.list=false;render();};
+        // (the card it opens grows out of this row: where it stands is kept for the next drawing, see cardShown)
+        const open=()=>{if(isWorking(job))return;const lg=MO()&&listCopy(row);if(lg)growsFrom={key:job.key,rect:row.getBoundingClientRect(),until:Date.now()+3000};EG.focus=job.key;EG.list=false;render();if(lg)lg.animate([{opacity:1},{opacity:0}],{duration:300,easing:"ease-out",fill:"forwards"}).finished.catch(()=>{}).then(()=>lg.remove());};
         row.onclick=e=>{if(!e.target.closest('[data-vector][role=button],[data-listing][role=button]'))open();}; row.onkeydown=e=>{if(e.target===row && (e.key==="Enter" || e.key===" ")){e.preventDefault();open();}};
         placementRows.set(job,row);
       }
-      wanted.add(row);
       const busy=isWorking(job), receipt=String(job.row.order.receiptId), sku=job.row.spec.designSku || "";
       row.dataset.rid=receipt; row.setAttribute("aria-busy",String(busy)); row.setAttribute("aria-disabled",String(busy));
       row.setAttribute("aria-label",`${busy ? "Preparing" : "Open"} engraving for order ${receipt} · ${sku}`);
@@ -3354,10 +3571,16 @@ const Engrave = window.Engrave = (() => {
       const purchase=purchaseMarkup(job.row);
       if(row._purchase!==purchase){row.querySelector('[data-purchase]').innerHTML=purchase;row._purchase=purchase;}
       write('[data-stage]',busy ? (job.state === "classify" ? "Reading words…" : "Preparing preview…") : "");
-      if(list.children[index] !== row) list.insertBefore(row,list.children[index] || null);
-      ListMedia.mount(row,job.row);
+      return row;
     });
-    [...list.children].forEach(row=>{if(!wanted.has(row))row.remove();});
+    /* One keyed update (Motion.reconcile; Paul, 27 Sep 20:09-20:24): a placement that leaves the list is seen going, up
+       into Decided when it was decided there (the sheet window's approvals), otherwise fading where it stood (read as
+       needing no engraving, its order gone); the rows under it glide up into the gap, and one that arrives opens its
+       room. A new search is another list, drawn as it is. */
+    const same = list._egQ === EG.q; list._egQ = EG.q;
+    if (window.Motion) Motion.reconcile(list, nodes, { animate: same, clip: list, leave: mk => { const j = items().get(String(mk).slice(3)); return j && DECIDED.includes(j.state) ? { to: EG_TAB("done") } : null; } });
+    else { nodes.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); }); const keep = new Set(nodes); [...list.children].forEach(row => { if (!keep.has(row)) row.remove(); }); }
+    shown.forEach((job, i) => ListMedia.mount(nodes[i], job.row));
     ListMedia.more(list,queue.length,Math.min(placementLimit,queue.length),()=>{placementLimit+=40;render();});
   }
   /** Repaint the card in place: the picture, the numbers, the chips. The pane is only rebuilt when what it holds changes. */
@@ -3415,8 +3638,9 @@ const Engrave = window.Engrave = (() => {
         v.querySelector("[data-eg-list]").onclick = () => { EG.list = true; EG.tab = "place"; EG.chosen = true; render(); };
       }
       console.error("Engrave preview could not render", error);
-    } finally { rendering = false; }
+    } finally { rendering = false; if (unlaunched) { unlaunched.g.remove(); unlaunched = null; } }   // (a copy never left on the screen)
   }
+  const decidedOrder = () => decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
   function renderView() {
     LiveStrip.render();
     const v = document.getElementById("engraveView");
@@ -3462,6 +3686,7 @@ const Engrave = window.Engrave = (() => {
     // so does the search box: a rebuild used to drop its focus, the new card took it, and the next letters typed into the
     // search were read as the card's shortcuts (A approves, S skips)
     const searching = (() => { const a = document.activeElement; return a && a.id === "egQ" && v.contains(a) ? { start: a.selectionStart, end: a.selectionEnd } : null; })();
+    const out = copyOutgoing();                      // the card in front that is going, copied where it stands (launch, below)
     disposeCards();
     v.innerHTML = `<div class="ordBar egBar">
         <span class="controlGroup">${tabBtn("place", "Placements", queue.length, "info")}${tabBtn("done", "Decided", done.length, "ok")}
@@ -3472,7 +3697,8 @@ const Engrave = window.Engrave = (() => {
         <div class="egNext" id="egNext"></div></div>
       <div class="egPane grow scroll"${tab === "done" ? "" : " hidden"}><div id="egBacks"></div></div>`;
     renderWorking(v, jobs);
-    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { EG.tab = b.dataset.tab; EG.chosen = true; render(); });
+    // a tab pressed shows what it holds softly (a quick fade), rather than at a blink
+    v.querySelectorAll(".egTab[data-tab]").forEach(b => b.onclick = () => { const was = EG.tab; EG.tab = b.dataset.tab; EG.chosen = true; render(); const p = was !== EG.tab && MO() && document.querySelector("#engraveView .egPane:not([hidden])"); if (p) p.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 280, easing: "ease-out" }); });
     { const q = v.querySelector("#egQ"); q.oninput = () => { EG.q = q.value; render(); }; if (searching) { q.focus({ preventScroll: true }); q.setSelectionRange(searching.start, searching.end); } }
     if (tab === "place") {
       const q = v.querySelector("#egQueue");
@@ -3482,7 +3708,7 @@ const Engrave = window.Engrave = (() => {
         renderPlacementRows(q.firstElementChild,queue);
       }
       else if (focus) {
-        const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key;
+        const c = placementCard(focus, queue.length); c.classList.add("full"); q.appendChild(c); EG.card = c; EG.cardKey = focus.key; cardShown(c);
         const ta = typing && typing.key === focus.key && c.querySelector('[data-f="words"]');
         if (ta) { const n = ta.value.length; ta.focus({ preventScroll: true }); ta.setSelectionRange(Math.min(typing.start, n), Math.min(typing.end, n)); }
       }
@@ -3495,7 +3721,7 @@ const Engrave = window.Engrave = (() => {
     }
     if (tab === "done") {
       const bk = v.querySelector("#egBacks");
-      const decided = decidedJobs().filter(matchesQ).sort((a, b) => (b.row.arrivedAt || 0) - (a.row.arrivedAt || 0) || (b.approvedAt || 0) - (a.approvedAt || 0));
+      const decided = decidedOrder();
       const stateWord = j2 => j2.state === "written" ? "Saved to sheet" : j2.state === "skipped" ? "No engraving" : j2.backPending ? "Approved · back file waits for the cloud" : "Approved";
       const stateWhy = j2 => j2.state === "written" ? "the back file is saved with the sheet" : j2.state === "skipped" ? "cut plain, nothing on the back" : j2.backPending ? "approved — the back file is written when the cloud answers again (" + esc(j2.backPending) + ")" : "approved — the back file is written when the sheet is";
       const fmtT = t => t ? new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
@@ -3540,13 +3766,22 @@ const Engrave = window.Engrave = (() => {
         const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
         const who = employeeName() || askEmployee(); if (!who) return;
         if (!confirm(`Reopen ${j2.row.order.receiptId}? It goes back to the words step, and any back file already written for it is superseded.`)) return;
-        const go = () => { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); };
+        // (Paul, 27 Sep 20:09-20:24) the row is seen leaving Decided for Placements, which counts it back in, and the card
+        // it opens as is marked where it landed
+        const go = () => {
+          const rw = doneRowOf(j2.key), r = rw && MO() && rw.getBoundingClientRect(), g = r && r.height ? Motion.ghost(rw, r, null, rw) : null;
+          try { sendBack(j2, `reopened by ${who}`); EG.tab = "place"; EG.focus = j2.key; EG.list = false; EG.chosen = true; render(); } catch (e) { if (g) g.remove(); throw e; }
+          if (!g) return;
+          if (EG.cardKey === j2.key && EG.card && EG.card.isConnected) enter(EG.card, "slide");
+          Motion.fly(g, EG_TAB("place"), {}).then(() => { if (EG.cardKey === j2.key && EG.card) mark(EG.card.querySelector(".pvWords") || EG.card); });
+        };
         // a recalled set's sheet is rebuilt from the master files first: the button says so while it runs (it used to
         // sit there as if nothing had been pressed)
         if (j2.recalledFrom && j2.recalledFrom.recalled) { if (b.disabled) return; b.disabled = true; b.textContent = "Rebuilding the sheet…"; Recall.rebuild(j2.recalledFrom).then(() => { const pool = B.pool.rows; for (const [pid, p] of pool) if (String(p.orderId) === String(j2.row.order.receiptId) && (p.sku === (j2.row.spec && j2.row.spec.designSku) || p.sku === j2.row.line.sku) && !j2.row.poolIds.includes(pid)) j2.row.poolIds.push(pid); go(); }).catch(e => { if (b.isConnected) { b.disabled = false; b.textContent = "Reopen"; } toast(`Could not rebuild the sheet: ${e.message}`, "bad", 7000); }); return; }
         go();
       });
     }
+    if (out) launch(out);
   }
   /* The card's messages: Team and Customer, two tabs like the order window's, with the one last chosen in front. Both
      panes are kept per line (TeamCard, CustomerMail.cardPane): drawing the card again only puts them back. */
@@ -3789,7 +4024,7 @@ const Engrave = window.Engrave = (() => {
       group.style.setProperty('--spacing',pending/100);
     }
     const capOut = card.querySelector("[data-cap]");
-    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { card._flushSpacing?.(); if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "turnLeft" || a === "turnRight") {rotateTo(job,(job.fit?.angle || 0)+(a === "turnLeft" ? 90 : -90));} else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone")); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
+    card.querySelectorAll("[data-a]").forEach(b => { const a = b.dataset.a; if (a === "usewords" || a === "linecount" || a === "spacing") return; if (a === "angle") { b.onchange = () => { card._flushSpacing?.(); const v = +b.value; if (Number.isFinite(v)) rotateTo(job, v); }; b.addEventListener("keydown", e => e.stopPropagation()); return; } b.onclick = () => { card._flushSpacing?.(); if (a === "approve") approve(job); else if (a === "centre") centreText(job); else if (a === "turnLeft" || a === "turnRight") {rotateTo(job,(job.fit?.angle || 0)+(a === "turnLeft" ? 90 : -90));} else if (a === "close") { if(job.backSaving) return; if(job.editingBack) {goes(job, { fold: true }, card);items().delete(job.key);Review.remove("eng:"+job.key);} else goes(job, { row: true }, card); EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (a === "prev" || a === "next") { const q = queuedJobs([...items().values()].filter(matchesQ).filter(j2 => j2.row.state !== "gone")); const i = q.findIndex(j2 => j2.key === job.key); const j3 = q[(i + (a === "next" ? 1 : q.length - 1)) % q.length]; if (j3) { if (j3.key !== job.key) goes(job, { enter: "fade", quick: true }, card); EG.focus = j3.key; EG.card = null; EG.cardKey = null; render(); } }
       else if (a === "resplit") resplit(job); else if (a === "skip") skip(job); else if (a === "back") sendBack(job); }; });
     const lineControl=card.querySelector('[data-a="linecount"]');
     if(lineControl) lineControl.onchange=async()=>{
@@ -3798,7 +4033,7 @@ const Engrave = window.Engrave = (() => {
       await applyWords();
     };
     void capOut;
-    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {items().delete(job.key);Review.remove("eng:"+job.key);} EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
+    card.addEventListener("keydown", e => { if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT" || e.repeat || e.target.closest?.(".pvMail")) return; const k = e.key.toLowerCase(); if (["a","s","escape","arrowleft","arrowright","arrowup","arrowdown"].includes(k)) card._flushSpacing?.(); if (k === "a") { e.preventDefault(); approve(job); } else if (k === "s") { e.preventDefault(); skip(job); } else if (e.key === "Escape") { if(job.editingBack && !job.backSaving) {goes(job, { fold: true }, card);items().delete(job.key);Review.remove("eng:"+job.key);} else goes(job, { row: true }, card); EG.list = true; EG.card = null; EG.cardKey = null; render(); } else if (e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); rotateTo(job, (job.fit ? job.fit.angle || 0 : 0) + (e.key === "ArrowLeft" ? 1 : -1)); } else if (e.key === "ArrowLeft") { e.preventDefault(); nudge(job, -0.25, 0); } else if (e.key === "ArrowRight") { e.preventDefault(); nudge(job, 0.25, 0); } else if (e.key === "ArrowUp") { e.preventDefault(); nudge(job, 0, 0.25); } else if (e.key === "ArrowDown") { e.preventDefault(); nudge(job, 0, -0.25); } });
     // the next card takes focus only when the person was already working in this pane, so a held key cannot run the queue.
     // It never takes focus from a field someone is typing in: the card's single-key shortcuts (A approve, S no engraving,
     // arrows nudge) would otherwise receive the rest of what they type.
@@ -3846,6 +4081,7 @@ const LaserReview = window.LaserReview = (()=>{
     frame=0;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
+      if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
@@ -4154,8 +4390,56 @@ const Sets = window.Sets = (() => {
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
-    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => { if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return; try { const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set; if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`); const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st); byRun().set(local.runId || st.setId, local); await undo(local); toast(`${st.name} undone`, "ok"); if (onUndo) onUndo(); } catch (e) { toast(e.message, "bad", 6000); } };
+    // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
+    // the station reopens its orders, and says so at its title; that line then goes to the Orders tab, where the orders
+    // are open again, the card settles, and a note under Orders says what happened. What changed is drawn again after
+    // (onUndo: the Library's Current glides; a set opened under Completed is read again in place).
+    const ub = card.querySelector("[data-undo]"); if (ub) ub.onclick = async () => {
+      if (!confirm(`Undo the completion of ${st.name}? The orders return to the station's list; every file is kept.`)) return;
+      const menu = ub.closest("details"); if (menu) menu.open = false;
+      const U = undoing(card);
+      try {
+        const known = [...byRun().values()].find(x => x.setId === st.setId), whole = known || !st.partial ? null : (await api("charmNestLibrary", { op: "setGet", setId: st.setId }, { label: "Reading the set" })).set;
+        if (!known && st.partial && !whole) throw new Error(`${st.name} could not be read — nothing was undone`);
+        const local = known || Object.assign({ setId: st.setId, name: st.name, orders: {}, sheetIds: st.sheetIds || [], materials: st.materials || [], labelFiles: st.labelFiles || [] }, whole || st);
+        byRun().set(local.runId || st.setId, local);
+        const n = (local.committed || []).length;       // (what the station reopens: undo empties the list)
+        U.says(n ? `Reopening ${n} order${n === 1 ? "" : "s"} at the station…` : "Undoing the completion…");
+        await undo(local);
+        await U.done(st, n);
+        if (onUndo) onUndo(card);
+      } catch (e) { U.fail(); toast(e.message, "bad", 6000); }
+    };
     return card;
+  }
+  /** A set card whose completion is being undone: lifted, with what is happening at its title, until done() sends its
+   *  line to the Orders tab (the orders are open there again) and it settles, or fail() sets it down as it was. */
+  function undoing(card) {
+    const M = window.Motion, still = !M || M.reduced(), head = card.querySelector(":scope > .sh"), title = head && head.querySelector(".nm");
+    const chip = el("span", "setUndoChip"); chip.setAttribute("role", "status"); chip.innerHTML = `<i class="spin" aria-hidden="true"></i><span></span>`;
+    if (title) title.after(chip);
+    card.setAttribute("aria-busy", "true");
+    const lift = still || !card.animate ? null : card.animate([{ translate: "0 0" }, { translate: "0 -4px", boxShadow: "0 18px 38px rgba(30,24,16,.2)" }], { duration: 380, easing: "cubic-bezier(.3,.1,.2,1)", fill: "forwards" });
+    const settle = () => { card.removeAttribute("aria-busy"); if (!lift) return Promise.resolve(); lift.reverse(); return lift.finished.then(() => lift.cancel(), () => {}); };
+    const seen = e => { if (!e || !e.isConnected) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+    return {
+      says(text) { chip.querySelector("span").textContent = text; },
+      async done(st, n) {
+        const name = O.setLabel(st.seq) || st.name, orders = document.querySelector('#modeSeg button[data-mode="orders"]');
+        const here = () => { const c = [...document.querySelectorAll(".setCard")].find(x => x._laserSet && x._laserSet.setId === st.setId); return c && c.querySelector("[data-set-title]"); };
+        if (n && M && seen(orders) && seen(chip)) {
+          chip.classList.add("ok"); chip.innerHTML = `<span>${n} order${n === 1 ? "" : "s"} open again</span>`;
+          const g = M.ghost(chip, chip.getBoundingClientRect(), null, chip); chip.remove();
+          M.fly(g, orders, { plus: false }).then(() => M.note(orders, { text: `${name}: completion undone · its ${n} order${n === 1 ? " is" : "s are"} open again at the station, every file kept`, actions: typeof setMode === "function" ? [{ label: "Show", title: "Open the Orders tab", fn: () => setMode("orders") }] : [], ms: 9000 }));
+        } else {
+          chip.remove();
+          const text = n ? `${name}: completion undone · its ${n} order${n === 1 ? " is" : "s are"} open again at the station, every file kept` : `${name}: completion undone · awaiting review again, every file kept`;
+          if (M && seen(here())) M.note(here, { text, ms: 7000 }); else toast(text, "ok", 5000);
+        }
+        await settle();
+      },
+      fail() { chip.remove(); settle(); }
+    };
   }
   async function renderLibrary(body, opts) {
     // the Completed tab is drawn by charm-nest-library.js; this is the Current tab's Sets view
@@ -4193,7 +4477,8 @@ const Sets = window.Sets = (() => {
       LaserReview.sections(body);
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
-        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => renderLibrary(body)});
+        // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
+        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
       }
       LaserReview.changed();
@@ -5008,6 +5293,8 @@ const CustomPrint = window.CustomPrint = (() => {
   const undos = new Map();      // line key → { keys, rows, who, timer }: the card's "Marked completed · Undo"
   const asking = new Map();     // card key → the step that waits for a name, asked in the card
   const fails = new Map();      // card key → { why }: "Not printed" on the card for a while
+  const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
+  const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
   const UNDO_MS = 12000;
   let queue = Promise.resolve(), lastFrame = null;
   const PRINTER = "QR Printer.html";
@@ -5060,6 +5347,8 @@ const CustomPrint = window.CustomPrint = (() => {
     });
   }
   const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
+  /** What the cloud record of one line says about it. */
+  const targetOf = (r, rec) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
   function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
   /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
@@ -5073,13 +5362,13 @@ const CustomPrint = window.CustomPrint = (() => {
     let label = null;
     try { label = rows.length ? O.sortingLabel(rows[0].order, rows[0].line) : null; } catch (_) { label = null; }
     if (!label && !(rec && (rec.label || rec.hasLabel))) { toast("There is nothing to print for that card", "bad"); return; }
-    const targets = rows.length ? rows.map(r => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" }))
+    const targets = rows.length ? rows.map(r => targetOf(r, rec))
       : [{ key: rec.key, receiptId: rec.receiptId, transactionId: rec.transactionId, sku: rec.sku, title: rec.title, category: rec.category, kind: rec.kind }];
     // a line still open is left alone by the pool while its label is printed (a run pooling it meanwhile cut it as well)
     const held = it.done ? [] : rows.map(r => r.key).filter(k => !printing.has(k));
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
-    fails.delete(key); say(key, "Waiting for the printer…");
+    fails.delete(key); acting.set(key, "print"); say(key, "Waiting for the printer…");
     queue = queue.then(async () => {
       if (!label) {
         say(key, "Reading its label…");
@@ -5096,15 +5385,71 @@ const CustomPrint = window.CustomPrint = (() => {
       for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } }
       const done = Object.keys(saved);
       if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
-      release(); busy.delete(key);
-      // printed from Open: "Marked completed · Undo" on the card (a dialog closed without printing looks the same here)
-      if (!it.done && done.length) offerUndo(done, rows.filter(r => saved[r.key]), who);
-      settle(); say(key, null);
+      release(); busy.delete(key); acting.delete(key);
+      // printed from Open: the seal is pressed on the button and the card flies to Completed, where a note offers Undo
+      // (a dialog closed without printing looks the same here); printed again: a new seal is pressed on the card
+      if (done.length) sealed(it, rows, saved, done, who, "print");
+      settle(); say(key, null); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
-    }).catch(e => { failed(key, e.message); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(release);
+    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+  }
+  /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
+   *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
+   *  still be printed from Completed. A line on its way to the laser is cut there: it is left as it is. */
+  function complete(it) {
+    const key = it.key; if (busy.has(key) || asking.has(key)) return;
+    withName(key, who => completeAs(it, who));
+  }
+  function completeAs(it, who) {
+    const key = it.key; if (busy.has(key)) return;
+    const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
+    if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
+    const held = rows.map(r => r.key).filter(k => !printing.has(k));
+    for (const k of held) printing.add(k);
+    const release = () => { for (const k of held) printing.delete(k); };
+    fails.delete(key); acting.set(key, "complete"); say(key, "Completing…");
+    queue = queue.then(async () => {
+      let label = null; try { label = O.sortingLabel(rows[0].order, rows[0].line); } catch (_) { label = null; }
+      const saved = {}; let putErr = null, cut = 0;
+      for (const r of rows) {
+        if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
+        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
+      }
+      const done = Object.keys(saved), rid = rows[0].order.receiptId;
+      if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+      release(); busy.delete(key); acting.delete(key);
+      if (done.length) sealed(it, rows, saved, done, who, "button");
+      settle(); say(key, null); pressSoon();
+      agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
+      if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
+      else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
+    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("Complete Order: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+  }
+  /* ── the seal and the move (Paul, 27 Sep 20:09-20:24): what was pressed is stamped on the button that did it, with
+     who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
+  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]';
+  const mkeyOf = rows => "cu:" + Review.cardKey(rows[0]);
+  function sealed(it, rows, saved, done, who, how) {
+    const rec = saved[done[0]] || {}, list = window.Seal ? Seal.list(rec) : [], st = list.filter(x => x.how === (how === "button" ? "button" : "print")).pop() || { how, at: Date.now(), by: who };
+    const mk = mkeyOf(rows); fresh.set(mk, +st.at || Date.now());
+    if (it.done || !window.Motion) return;                                // printed again: stamped where the card is
+    offerUndo(done, rows.filter(r => saved[r.key]), who);
+    const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
+    const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
+    Motion.expect(mk, { to: DONE_SW, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: st, label: how === "button" ? "Complete Order" : "Print QR label" },
+      note: inWin ? null : { text: `Order ${rid} moved to Completed · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] } });
+  }
+  /** The seals just pressed are stamped where they show (the card in Completed, the order window's bar). */
+  function pressSoon() { requestAnimationFrame(() => requestAnimationFrame(() => { if (window.Seal) Seal.pressPending(); fresh.clear(); })); }
+  /** Back to Open, seen: the card leaves Completed for the Open switch, or flies into Open from the Completed switch. */
+  function comesBack(rows, note) {
+    if (!window.Motion || !rows.length) return;
+    const mk = mkeyOf(rows);
+    Motion.expect(mk, { to: OPEN_SW, note: note ? { text: note, actions: [{ label: "Show", fn: () => Review.showCard(mk, "open") }] } : null });
+    Motion.expectIn(mk, { from: DONE_SW });
   }
   /** "Marked completed · Undo" on the card for UNDO_MS: the lines it completed, by their keys. */
   function offerUndo(keys, rows, who) {
@@ -5116,12 +5461,21 @@ const CustomPrint = window.CustomPrint = (() => {
   function undo(it) {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
+    comesBack(u.rows);
     takeBack(it.key, u.rows, u.who, "undo");
+  }
+  /** Undo from the note under Completed: the lines it completed, by their keys. */
+  function undoKeys(keys) {
+    const u = keys.map(k => undos.get(k)).find(Boolean);
+    if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
+    clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
+    comesBack(u.rows);
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, u.who, "undo");
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); takeBack(it.key, rows, who, "reopen"); });
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
   }
   /** Each line's record deleted, the page following each as it goes (a failure part way leaves it saying what the cloud
    *  holds), then the lines put back for cutting; a failure of either is said as what it is. */
@@ -5148,11 +5502,21 @@ const CustomPrint = window.CustomPrint = (() => {
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
   function statusHtml(it, sz) {
     const b = busy.get(it.key);
-    if (b) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(b)}</span>`;
+    if (b && !acting.has(it.key)) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(b)}</span>`;
+    if (b) return "";
     if (asking.has(it.key)) return `<span class="cuWho"><input type="text" data-cu-name maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with this custom order" autocomplete="off"><button type="button" class="btn gold ${sz}" data-cu-name-ok>OK</button></span>`;
-    if (undoOf(it)) return `<span class="cuUndo" role="status">Marked completed · <button type="button" class="btn ghost ${sz}" data-cu-undo title="take the completion back (the printed label is not undone)">Undo</button></span>`;
+    if (sz === "xs" && undoOf(it)) return `<span class="cuUndo" role="status">Marked completed · <button type="button" class="btn ghost ${sz}" data-cu-undo title="take the completion back (the printed label is not undone)">Undo</button></span>`;
     return "";
   }
+  /** The button pressed, while its work runs: { act: "print" | "complete", text }; null when nothing runs. */
+  const working = it => busy.has(it.key) && acting.has(it.key) ? { act: acting.get(it.key), text: busy.get(it.key) } : null;
+  /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
+  function buttonHtml(it, act, cls, label, title, sz, attrs) {
+    const w = working(it), more = attrs ? " " + attrs : "";
+    if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
+    return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
+  }
+  const freshOf = mk => fresh.get(mk) || 0;
   /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
   function failed(key, why) {
     const was = fails.get(key); if (was) clearTimeout(was.timer);
@@ -5170,8 +5534,669 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
-  const stamp = it => [busy.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
-  return { print, reopen, undo, statusHtml, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+  const stamp = it => [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key)].join("|");
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+})();
+
+/* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
+   Paul, 27 Sep 19:45: a custom order's card takes the order's own designs, .ai or .dxf files dropped on it. A window
+   shows each file as a picture with the five metals beside it: one click puts a design on a metal. "Send to Sheet" puts
+   every piece on the next open sheet of its metal, as any order line goes on (Pool.poolAdd, at once rather than at the
+   next update), and the pieces show as Custom on the sheets (a plum tint), so they are easy to pick out.
+   Kept per card with the workspace (B.customDesigns): each file's bytes, as PDF (a .dxf is read into one by
+   CharmNestDXF), its metal and how many to cut; once sent, a copy of each file in the cloud and which pieces went to
+   which line. A line sent reads as settled (no question about its SKU, no back to engrave) and comes back on a sheet
+   after a reload or in a later run the way any line does, from these files. Nothing here calls Etsy. */
+const CustomSheet = window.CustomSheet = (() => {
+  if (!B.customDesigns) B.customDesigns = {};
+  const ACCEPT = /\.(ai|dxf)$/i;
+  const all = () => B.customDesigns || (B.customDesigns = {});
+  const geo = new Map();          // file id → Promise<{ parsed, g, charms }>: traced once a session, from its bytes
+  const pending = new Map();      // file id → the File dropped, until it is read
+  const busy = new Map();         // card key → what is happening (a spinner on the card, and in the window)
+  // motion (Paul, 27 Sep 20:09-20:24): files just dropped, still on their way into their rows; thumbnails new on a card;
+  // cards whose strip of designs is about to show for the first time
+  const arriving = new Set(), popThumb = new Set(), stripNew = new Set();
+  const D = { dlg: null, ck: null, it: null, askName: false, opening: false };
+  let ver = 0, idxFor = null, idxVer = -1, idx = new Map(), lastPrune = 0;
+  const ckOf = it => String(it.key || "").replace(/^[a-z]+:/, "");        // "ord:custom:…" and "cinfo:custom:…" are one card
+  const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
+  const metalOf = k => METALS.find(m => m.key === k) || null;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const safe = s => String(s || "design").replace(/[^\w.\-]+/g, "_").slice(0, 60);
+  function changed() { ver++; try { Session.schedule(); } catch (_) {} redraw(); }
+  function redraw() { try { Review.render(); } catch (_) {} if (D.dlg && D.dlg.open) paint(); }
+  /** The line keys of every card sent, to the card they went with (read by interpretAll and preparePool). */
+  function index() {
+    if (idxFor !== all() || idxVer !== ver) { idx = new Map(); for (const e of Object.values(all())) if (e && e.sent) for (const k of Object.keys(e.sent.lines || {})) idx.set(k, e); idxFor = all(); idxVer = ver; }
+    return idx;
+  }
+  const sentOf = row => (row && index().get(row.key)) || null;
+  const piecesOf = row => { const e = sentOf(row); return e ? (e.sent.lines[row.key] || []).length : 0; };
+  /** The metal of a sent line's first piece: the line reads as that metal (lists, the day's plan). */
+  const metalOfRow = row => { const e = sentOf(row), pc = e && (e.sent.lines[row.key] || [])[0], F = pc && e.files.find(x => x.id === pc.f); return (F && F.metal) || null; };
+  /** Every line of the card that can still take designs: not on a sheet, not completed. */
+  const openLines = it => linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone) && !["committed", "skipped"].includes(r.state));
+  const defaultMetal = it => { const r = linesOf(it)[0], m = r && r.spec && r.spec.material; return metalOf(m) ? m : null; };
+  const defaultQty = it => Math.max(1, linesOf(it).reduce((n, r) => n + ((r.spec && r.spec.quantity) || 1), 0));
+  /** Why the card's designs cannot be sent yet, or "" when they can. */
+  function notReady(e) {
+    if (!e || !e.files.length) return "Drop the order's .ai or .dxf designs on its card first";
+    if (e.files.some(F => F.state === "reading")) return "Its designs are still being read";
+    const bad = e.files.find(F => F.state === "error"); if (bad) return `${bad.name} could not be read — remove it or drop it again`;
+    const none = e.files.filter(F => !F.metal); if (none.length) return none.length === 1 ? `Pick the metal for ${none[0].name}` : `Pick a metal for each design (${none.length} have none)`;
+    const big = e.files.find(F => tooBig(F)); if (big) return `${big.name} is too big for the ${labelOf(big.metal)} plate`;
+    return "";
+  }
+  function tooBig(F) {
+    if (!F.metal || !F.maxPt) return false;
+    const st = stockFor(F.metal), ins = +S.settings.insetPt || 0;
+    return F.maxAreaPt2 > (st.wPt - 2 * ins) * (st.hPt - 2 * ins) * (+S.settings.maxFill || 0.8) || F.minPt > Math.max(st.wPt, st.hPt) - 2 * ins;
+  }
+  /** What the Review card draws from: its designs and where they stand. */
+  function cardOf(it) {
+    const ck = ckOf(it), e = all()[ck] || null, row = linesOf(it)[0];
+    if (!row || it.done) return null;
+    const cut = !!(row.spec && row.spec.special && row.spec.special.notCut);
+    const sent = !!(e && e.sent);
+    const open = openLines(it).length > 0;
+    // a card takes designs while it can still be cut from them: not sent, not completed, not chain only (never cut)
+    return { ck, e, files: e ? e.files : [], sent, open, cut, busy: busy.get(ck) || "", why: sent ? "" : notReady(e), dropOk: !sent && open && !cut };
+  }
+  // the card's own designs only (one card's file being read no longer rebuilds every other custom card, which also
+  // dropped the drag state of the card under the pointer)
+  const stamp = it => { const e = all()[ckOf(it)]; return [busy.get(ckOf(it)) || "", e ? e.files.map(F => F.id + F.state + F.metal + F.qty + (tooBig(F) ? "!" : "")).join() + (e.sent ? "s" + (e.sent.by || "") : "") : ""].join("|"); };
+
+  /* ── reading a design: its PDF (a .dxf read into one), traced as a master's is ── */
+  function read(F) {
+    if (geo.has(F.id)) return geo.get(F.id);
+    const task = (async () => {
+      if (!F.bytes || !F.bytes.length) {
+        if (!F.cloud || !(F.cloud.url || F.cloud.path)) throw new Error("its file is no longer on this browser — drop it again");
+        const url = F.cloud.url || (await api("charmNestOutput", { op: "url", path: F.cloud.path })).url;
+        F.bytes = await CharmNestAssets.bytes(url);
+      }
+      const parsed = await P.parseSource(F.bytes, F.name);
+      const g = await (P.groupCharmsAsync || P.groupCharms)(parsed, { minPt: +S.settings.minPt || 6 });
+      if (!g.charms.length) throw new Error("no closed cut outline in it — a piece's outline must be a closed black or grey line");
+      // loose ink within reach of a piece is part of that piece (as a master's is, Pool.readMasterCharm)
+      for (const m of g.orphans) {
+        if (!m.bbox) continue;
+        const c = g.charms.find(c => { const b = c.bbox, pad = 2; return m.bbox[0] >= b[0] - pad && m.bbox[1] >= b[1] - pad && m.bbox[2] <= b[2] + pad && m.bbox[3] <= b[3] + pad; });
+        if (c && !c.members.includes(m)) c.members.push(m);
+      }
+      for (const c of g.charms) { const r = P.integrateRings(c); if (r.left.length) throw new Error("a hoop could not join its piece — " + r.left[0]); }
+      await P.buildSilhouettes(parsed, g.charms, +S.settings.silhouetteRes || 6);
+      const charms = g.charms.filter(c => !c.open);
+      if (!charms.length) throw new Error("its outlines are not closed — every piece needs a closed cut line");
+      return { parsed, g, charms };
+    })();
+    geo.set(F.id, task); task.catch(() => geo.delete(F.id));
+    return task;
+  }
+  /** The size a piece is cut at: its cut outline, curves followed (its box counts their control points). */
+  function outlineBox(seg) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity], at = p => { if (p[0] < b[0]) b[0] = p[0]; if (p[1] < b[1]) b[1] = p[1]; if (p[0] > b[2]) b[2] = p[0]; if (p[1] > b[3]) b[3] = p[1]; };
+    for (const sub of seg.subpaths || []) {
+      let cur = null;
+      for (const sg of sub) {
+        if (sg[0] === "m" || sg[0] === "l") { at(sg[1]); cur = sg[1]; }
+        else if (sg[0] === "c" && cur) { const [a, c2, e] = [sg[1], sg[2], sg[3]]; for (let i = 1; i <= 24; i++) { const t = i / 24, u = 1 - t; at([u * u * u * cur[0] + 3 * u * u * t * a[0] + 3 * u * t * t * c2[0] + t * t * t * e[0], u * u * u * cur[1] + 3 * u * u * t * a[1] + 3 * u * t * t * c2[1] + t * t * t * e[1]]); } cur = e; }
+      }
+    }
+    return Number.isFinite(b[0]) ? b : seg.bbox;
+  }
+  /** Every piece of a file, as drawn, on white: the picture beside it in the window and on the card. */
+  function thumbOf(charms, size) {
+    const b = charms.reduce((a, c) => [Math.min(a[0], c.bbox[0]), Math.min(a[1], c.bbox[1]), Math.max(a[2], c.bbox[2]), Math.max(a[3], c.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+    const pad = Math.max(2, (b[2] - b[0]) * .06), w = b[2] - b[0] + 2 * pad, h = b[3] - b[1] + 2 * pad, s = size / Math.max(w, h);
+    const cv = document.createElement("canvas"); cv.width = size; cv.height = size; const ctx = cv.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
+    const ox = (size - w * s) / 2, oy = (size - h * s) / 2, tx = (x, y) => [ox + (x - b[0] + pad) * s, oy + (b[3] + pad - y) * s];
+    for (const c of charms) P.drawCharm(ctx, c, tx, s);
+    return cv.toDataURL("image/png");
+  }
+  async function ingest(F) {
+    try {
+      const file = pending.get(F.id); pending.delete(F.id);
+      if (!file) throw new Error("the file was not read");
+      const raw = new Uint8Array(await file.arrayBuffer());
+      if (F.kind === "dxf") { if (!window.CharmNestDXF) throw new Error("the .dxf reader is not loaded — reload the page"); const r = await CharmNestDXF.toPdf(raw, F.name); F.bytes = r.bytes; F.units = r.meta.units; }
+      else F.bytes = raw;
+      F.hash = await sha256(F.bytes);
+      const { charms } = await read(F);
+      const bb = charms.reduce((a, c) => { const o = outlineBox(c.outline); return [Math.min(a[0], o[0]), Math.min(a[1], o[1]), Math.max(a[2], o[2]), Math.max(a[3], o[3])]; }, [Infinity, Infinity, -Infinity, -Infinity]);
+      Object.assign(F, { pieces: charms.length, wMm: (bb[2] - bb[0]) * MM, hMm: (bb[3] - bb[1]) * MM, thumb: thumbOf(charms, 176),
+        maxPt: Math.max(...charms.map(c => Math.max(c.widthPt || 0, c.heightPt || 0))), minPt: Math.max(...charms.map(c => Math.min(c.widthPt || 0, c.heightPt || 0))), maxAreaPt2: Math.max(...charms.map(c => c.areaPt2 || 0)), state: "ready", error: null });
+      popThumb.add(F.id);
+    } catch (err) { F.state = "error"; F.error = String((err && err.message) || err).replace(F.name + ": ", ""); geo.delete(F.id); }
+    changed();
+  }
+  /** Files dropped on a card (or added in its window): read one after another, the window open at once to show them.
+   *  opts.at: where they were dropped (they are seen flying from there into their rows); opts.from: the card. */
+  function add(it, files, opts = {}) {
+    const c = cardOf(it); if (!c) return;
+    const list = [...(files || [])], ok = list.filter(f => ACCEPT.test(f.name || "")), bad = list.length - ok.length;
+    if (bad) toast(ok.length ? `${plural(bad, "file")} left out: only .ai and .dxf designs go on a custom order` : "Only .ai and .dxf designs can go on a custom order", "bad", 5000);
+    if (!ok.length) return;
+    if (c.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
+    if (!c.open) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
+    if (c.cut && !c.files.length) { toast("That order is not laser cut, so it takes no designs", "bad", 5000); return; }
+    const row = linesOf(it)[0];
+    const e = all()[c.ck] || (all()[c.ck] = { ck: c.ck, rid: String(row.order.receiptId), at: Date.now(), files: [], sent: null });
+    const metal = e.files.length ? e.files[e.files.length - 1].metal || defaultMetal(it) : defaultMetal(it), qty = defaultQty(it);
+    const fresh = ok.map(f => ({ id: uid(), name: f.name, kind: /\.dxf$/i.test(f.name) ? "dxf" : "ai", size: f.size || 0, bytes: null, hash: null, cloud: null, metal, qty, pieces: 0, wMm: 0, hMm: 0, thumb: null, state: "reading", error: null }));
+    fresh.forEach((F, i) => pending.set(F.id, ok[i]));
+    if (!e.files.length) stripNew.add(c.ck);           // the card's strip of designs opens its room when it first shows
+    for (const F of fresh) arriving.add(F.id);
+    e.files.push(...fresh); e.at = Date.now();
+    open(it, { from: opts.from || cardNode(c.ck), fly: { at: opts.at || null, ids: fresh.map(F => F.id) } }); changed();
+    let chain = Promise.resolve(); for (const F of fresh) chain = chain.then(() => ingest(F));
+  }
+  function remove(ck, id) {
+    const e = all()[ck]; if (!e || e.sent) return;
+    e.files = e.files.filter(F => F.id !== id); geo.delete(id); pending.delete(id); arriving.delete(id); popThumb.delete(id);
+    if (!e.files.length) delete all()[ck];
+    changed();
+  }
+  function setMetal(ck, id, m) { const e = all()[ck]; if (!e || e.sent) return; for (const F of e.files) if (id == null || F.id === id) F.metal = m; changed(); }
+  function setQty(ck, id, d) { const e = all()[ck]; if (!e || e.sent) return; const F = e.files.find(x => x.id === id); if (!F) return; F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed(); }
+
+  /* ── Send to Sheet ── */
+  async function send(it) {
+    const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
+    // not ready: what is missing is shown where it is fixed (the window, its reason lit), or, with no design yet, the
+    // card's drop area is lit and says what it takes
+    const why = notReady(e);
+    if (why) { if (e && e.files.length) { open(it, { from: cardNode(ck) }); nudge(); } else { lit(cardNode(ck)?.querySelector(".cuHint"), "cuNudge"); toast(why, "bad", 5000); } return; }
+    const who = employeeName(); if (!who) { open(it, { askName: true, from: cardNode(ck) }); return; }
+    const rows = openLines(it);
+    if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
+    const say = t => { busy.set(ck, t); redraw(); };
+    try {
+      // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
+      for (const F of e.files) {
+        say(`Reading ${F.name}…`); await read(F);
+        if (!F.cloud && S.cloud.ok) { say(`Saving ${F.name}…`); try { F.cloud = await uploadBytes(`charmnest/custom/${e.rid}/${String(F.hash || F.id).slice(0, 12)}-${safe(F.name.replace(ACCEPT, ""))}.pdf`, F.bytes, "application/pdf", `Saving ${F.name}`); } catch (err) { agent({ bridge: true }, "warn", `${e.rid}: ${F.name} was not copied to the cloud (${err.message}); it is kept on this browser`); } }
+      }
+      // the pieces: every copy of every design; with more than one line on the card, the copies are shared out over them
+      const lines = {}; for (const r of rows) lines[r.key] = [];
+      for (const F of e.files) for (let q = 0; q < F.qty; q++) { const r = rows[q % rows.length]; const { charms } = await read(F); for (let i = 0; i < charms.length; i++) lines[r.key].push({ f: F.id, i }); }
+      e.sent = { at: Date.now(), by: who, lines }; changed();
+      say("Placing on the sheets…");
+      for (const r of rows) await Review.repool(r);
+      busy.delete(ck); redraw();
+      // the window goes back into its card, and a copy of the designs is seen going to the sheets (the Nest tab), which
+      // says what came (Paul, 27 Sep 20:09-20:24); a toast only when that tab is out of sight
+      const shutting = !!(D.dlg && D.dlg.open && D.ck === ck); if (shutting) shut();
+      const placed = rows.filter(r => r.state === "pooled"), n = Object.values(lines).reduce((a, l) => a + l.length, 0), metals = [...new Set(e.files.map(F => labelOf(F.metal)))].join(" and ");
+      const held = rows.find(r => r.state === "held" && r.reason);
+      const sheets = `the ${metals} sheet${new Set(e.files.map(F => F.metal)).size > 1 ? "s" : ""}`;
+      const words = placed.length ? `Order ${e.rid}: ${plural(n, "custom piece")} on ${sheets}` : `Order ${e.rid} is sent: ${n === 1 ? "its piece goes" : "its pieces go"} on ${sheets} with the next run`;
+      if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
+      else if (!toSheets(ck, n, words, shutting ? 700 : 0)) toast(words, "ok", 6000);
+      agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
+    } catch (err) {
+      busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
+    } finally { redraw(); }
+  }
+  /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
+  async function prepare(row, run) {
+    const e = sentOf(row), mine = (e && e.sent.lines[row.key]) || [];
+    if (!mine.length) { row.state = "noDesign"; row.reason = "made with its order's other line"; return null; }
+    const sp = row.spec, rid = row.order.receiptId, pools = [], charms = [];
+    for (const [n, pc] of mine.entries()) {
+      const F = e.files.find(x => x.id === pc.f); if (!F) throw new Error("a design sent for it is missing");
+      if (tooBig(F)) { row.state = "oversize"; row.reason = `${F.name} does not fit the ${labelOf(F.metal)} plate`; return null; }
+      const src = await sourceOf(e, F), base = src.charms[pc.i]; if (!base) throw new Error(`${F.name} has no piece ${pc.i + 1}`);
+      const copy = n + 1, poolId = O.poolId(row.order, row.line, copy);
+      const c = Object.assign({}, base, { id: `${src.id}:${poolId}`, pinned: null });
+      Object.assign(c, { name: `${rid} · Custom · ${F.name.replace(ACCEPT, "")}${mine.length > 1 ? ` · ${copy}/${mine.length}` : ""}`, custom: true, customCk: e.ck, order: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0,
+        orderInfo: { receiptId: rid, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", copy, quantity: mine.length, form: sp.form, size: sp.size, custom: true, file: F.name },
+        poolId, metal: F.metal, lineKey: row.key, excluded: false, engravable: false, backKeepOut: null });
+      pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
+      charms.push(c);
+    }
+    row.engrave = { needed: false, state: "none", approved: true };
+    return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
+  }
+  /** One pool source per file, as a master's (Pool.masterCharm): its pieces traced once, every copy sharing them. */
+  async function sourceOf(e, F) {
+    const id = "cust:" + String(F.hash || F.id).slice(0, 16);
+    const had = S.poolSources[id]; if (had && had.charms && had.charms.length) { had.usedAt = Date.now(); return had; }
+    const { parsed, g, charms } = await read(F);
+    const src = { id, pool: true, custom: true, name: `${F.name} (custom · ${e.rid})`, sku: "CUSTOM", bytes: F.bytes, hash: F.hash, parsed, group: g, charms, metal: null, state: "ready", t0: performance.now(), cloud: F.cloud ? { path: F.cloud.path, url: F.cloud.url } : null, persisting: null, usedAt: Date.now() };
+    charms.forEach((c, i) => Object.assign(c, { id: id + ":" + i, sourceId: id, sourceName: src.name, index: i, name: F.name, sku: "CUSTOM", namedBy: "custom", excluded: false, cloud: F.cloud ? { ai: F.cloud.url, aiPath: F.cloud.path, png: null, pngPath: null } : null, upAngle: null, engravable: false, backKeepOut: null, custom: true }));
+    S.poolSources[id] = src;
+    return src;
+  }
+  /** Designs of orders that have left (cut and done, or gone) and are on no sheet any more go after an hour. */
+  function prune() {
+    const t = Date.now(); if (t - lastPrune < 60000 || !B.orders.pulledAt || !Orders.rows().length) return; lastPrune = t;
+    const live = new Set(); for (const r of Orders.rows()) if (r.spec && r.spec.special && !["gone", "committed"].includes(r.state)) live.add(Review.cardKey(r));
+    for (const r of Orders.rows()) { const e = sentOf(r); if (e && !["gone", "committed"].includes(r.state)) live.add(e.ck); }
+    const onSheet = new Set(); for (const p of allSheets()) for (const c of p.charms || []) if (c.customCk) onSheet.add(c.customCk);
+    let n = 0; for (const [ck, e] of Object.entries(all())) if (!live.has(ck) && !onSheet.has(ck) && t - ((e && e.at) || 0) > 3600e3) { for (const F of (e && e.files) || []) geo.delete(F.id); delete all()[ck]; n++; }
+    if (n) { ver++; try { Session.schedule(); } catch (_) {} }
+  }
+
+  /* ── the card: a drop area, its designs in a strip, Send to Sheet ── */
+  const cardNodes = new Map();    // card key → its card in the Review list (the window opens from it and goes back into it)
+  const cardNode = ck => { const n = cardNodes.get(ck); return n && n.isConnected ? n : null; };
+  const motionOff = () => !window.Motion || Motion.reduced();
+  const DROP_IC = `<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 2.2v7.4M5.1 6.8 8 9.7l2.9-2.9M2.6 10.4v2a1.3 1.3 0 0 0 1.3 1.3h8.2a1.3 1.3 0 0 0 1.3-1.3v-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  /** A light that answers for a moment (a class put on, then taken off). */
+  function lit(n, cls, ms = 1100) { if (!n) return; n.classList.remove(cls); void n.offsetWidth; n.classList.add(cls); clearTimeout(n["_" + cls]); n["_" + cls] = setTimeout(() => n.classList.remove(cls), ms); }
+  function stripHtml(it) {
+    const c = cardOf(it); if (!c || !c.files.length) return "";
+    const byMetal = new Map(); for (const F of c.files) if (F.state === "ready") byMetal.set(F.metal, (byMetal.get(F.metal) || 0) + F.pieces * F.qty);
+    const n = c.files.reduce((a, F) => a + (F.state === "ready" ? F.pieces * F.qty : 0), 0), rid = linesOf(it)[0].order.receiptId;
+    // where the designs stand, in a few words: ready, what is still missing (in amber), or sent, by whom and when
+    const words = c.sent ? `Sent${c.e.sent.by ? " by " + c.e.sent.by : ""}${c.e.sent.at ? " · " + fmtT(c.e.sent.at) : ""}` : c.why || "Ready to send";
+    return `<div class="cuDesigns${c.sent ? " sent" : c.why ? " todo" : " ready"}" role="group" aria-label="Designs for order ${esc(rid)}">` +
+      `<span class="cuDzLbl">${c.sent ? "On the sheets" : "Custom designs"}</span>` +
+      `<button type="button" class="cuDzThumbs" data-cu-designs title="${c.sent ? "These designs are on the sheets" : "Open the designs: each one's metal and how many to cut"}"${c.sent ? " disabled" : ""}>` +
+      c.files.slice(0, 6).map(F => `<span class="cuDzT${F.state === "error" ? " bad" : ""}${F.thumb && popThumb.has(F.id) ? " new" : ""}">${F.thumb ? `<img alt="" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin"></span>' : "!"}${F.metal ? `<i style="background:${esc(metalOf(F.metal).color)}" title="${esc(labelOf(F.metal))}"></i>` : ""}</span>`).join("") +
+      (c.files.length > 6 ? `<span class="cuDzMore">+${c.files.length - 6}</span>` : "") + `</button>` +
+      `<span class="cuDzSum"><b>${plural(c.files.length, "design")} · ${plural(n, "piece")}</b>${[...byMetal].filter(([m]) => m).map(([m, k]) => `<span class="cuDzM"><i style="background:${esc(metalOf(m).color)}"></i>${esc(labelOf(m))}${byMetal.size > 1 ? " × " + k : ""}</span>`).join("")}<span class="cuDzWhy">${esc(words)}</span></span>` +
+      (c.sent ? "" : `<button type="button" class="linkBtn" data-cu-designs>Edit designs</button>`) + `</div>`;
+  }
+  /** Send to Sheet, and, while the card has no design, the place to drop them (a click there chooses the files). A Send to
+   *  Sheet that cannot send yet stays in its place, greyed, and says why (its drop area beside it lights up when pressed). */
+  function buttonsHtml(it, primary) {
+    const c = cardOf(it); if (!c) return "";
+    if (c.busy) return `<span class="cuStat" role="status"><span class="spin"></span>${esc(c.busy)}</span>`;
+    if (c.sent || !c.open || (c.cut && !c.files.length)) return "";
+    const ready = !c.why, none = !c.files.length;
+    const tip = ready ? "Put every design on the next open sheet of its metal" : none ? "Its designs come first: drop the order's .ai or .dxf files on this card" : c.why;
+    return `<button type="button" class="btn ${ready && primary ? "gold" : "ghost"} sm" data-cu-send${ready ? "" : ' aria-disabled="true"'} title="${esc(tip)}">Send to Sheet</button>` +
+      (none ? `<button type="button" class="cuHint" data-cu-designs title="Drop the order's .ai or .dxf design files on this card, or click to choose them">${DROP_IC}<span>Drop .ai / .dxf designs here</span></button>` : "");
+  }
+  const hasFiles = ev => !!ev.dataTransfer && [...(ev.dataTransfer.types || [])].includes("Files");
+  const veilWords = () => `${drag.n ? plural(drag.n, "file") + " · " : ""}.ai and .dxf designs only · you pick each one's metal next`;
+  function wire(node, it) {
+    const c = cardOf(it); if (!c) return;
+    node._cuIt = it; node._cuCk = c.ck; cardNodes.set(c.ck, node);
+    node.querySelectorAll("[data-cu-designs]").forEach(b => b.onclick = ev => { ev.stopPropagation(); open(it, { browse: !c.files.length, from: node }); });
+    const sb = node.querySelector("[data-cu-send]"); if (sb) sb.onclick = ev => { ev.stopPropagation(); send(it); };
+    // what just came onto the card: its strip of designs opens its room the first time, a new picture settles in
+    const strip = node.querySelector(".cuDesigns");
+    if (strip && stripNew.delete(c.ck) && !motionOff()) queueMicrotask(() => { if (strip.isConnected) Motion.grow(strip, { ms: 700 }); });
+    for (const F of c.files) if (F.thumb) popThumb.delete(F.id);
+    if (!c.dropOk) return;
+    node.classList.add("cuDropOk");
+    const rid = linesOf(it)[0].order.receiptId, veil = el("div", "cuDropVeil"); veil.setAttribute("aria-hidden", "true");
+    veil.innerHTML = `<span class="cuVeilIc">${DROP_IC}</span><b>Drop to add to order <span class="mono">${esc(rid)}</span></b><i>${esc(veilWords())}</i>`;
+    node.appendChild(veil);
+    // rebuilt in the middle of a drag: it takes its state at once, with no second fade (the one under the pointer keeps it)
+    if (drag.on) {
+      node.classList.add("cuNoFade"); requestAnimationFrame(() => requestAnimationFrame(() => node.classList.remove("cuNoFade")));
+      if (drag.ck === c.ck) { if (drag.hot && drag.hot !== node) drag.hot.classList.remove("cuDragOver"); drag.hot = node; node.classList.add("cuDragOver"); }
+    }
+  }
+
+  /* ── files dragged over Review (Paul, 27 Sep 20:21: "the drag and drop hover states must be beautiful responsive from one
+     list card to another"). As Dropbox, Figma and Atlassian's drop targets do: while files are over the page, every card
+     that takes them is marked calmly (a dashed plum line), the rest step back, and the card under the pointer says in
+     words what a drop does there, with its order number. The card under the pointer is read from where each dragover
+     lands, not counted from enter / leave pairs (a child entered or a card redrawn under the pointer no longer loses or
+     sticks the mark); moving to the next card hands the mark over, and crossing the small gap between two cards keeps it.
+     The drag ends when the page is left (every element entered has been left), on Esc, on a drop, or at the first move
+     of the pointer after it (the page hears no pointer while a drag is over it). Elsewhere the pointer shows that no drop
+     is taken there, and a small note at the foot of the list says where the designs go, or why that card takes none. ── */
+  const drag = { on: false, over: new Set(), hot: null, ck: "", grace: 0, n: 0, tip: null };
+  const inReview = () => { const v = document.getElementById("reviewView"); return !!v && !v.classList.contains("hidden"); };
+  const otherWindow = () => [...document.querySelectorAll("dialog[open]")].some(x => x !== D.dlg && x.matches(":modal"));
+  const engaged = ev => hasFiles(ev) && (D.dlg && D.dlg.open ? true : inReview() && !otherWindow());
+  function fileCount(ev) { try { const l = ev.dataTransfer.items; return l ? [...l].filter(x => x.kind === "file").length : 0; } catch (_) { return 0; } }
+  /** Where the pointer is: the open window (it takes every drop), a card that takes designs, or neither. */
+  function spot(t) {
+    if (D.dlg && D.dlg.open) return { take: D.dlg };
+    const card = t && t.closest ? t.closest("#rvList > .reviewListRow") : null;
+    if (card && card.classList.contains("cuDropOk")) return { take: card };
+    return { card, gap: !card && !!(t && t.closest && t.closest("#rvList")) };
+  }
+  function setHot(n) {
+    if (drag.hot === n) { if (n) says(n); return; }
+    const was = drag.hot; drag.hot = n; drag.ck = n && n !== D.dlg ? n._cuCk || "" : "";
+    if (was) { was.classList.remove(was === D.dlg ? "dragOver" : "cuDragOver"); if (was === D.dlg) addWords(); }
+    if (n) { n.classList.add(n === D.dlg ? "dragOver" : "cuDragOver"); says(n); }
+  }
+  /** The drop target's words: on a card, how many files and what comes next; in the window, whose order they go to. */
+  function says(n) {
+    if (n === D.dlg) { const t = n.querySelector(".cuAddT"), rid = D.it && linesOf(D.it)[0] ? linesOf(D.it)[0].order.receiptId : ""; const w = `Drop to add ${drag.n === 1 ? "it" : "them"} to order ${rid}`; if (t && t.textContent !== w) t.textContent = w; return; }
+    const i = n.querySelector(".cuDropVeil i"), w = veilWords(); if (i && i.textContent !== w) i.textContent = w;
+  }
+  function track(ev) {
+    const s = spot(ev.target); drag.n = fileCount(ev) || drag.n;
+    if (s.take) { clearTimeout(drag.grace); drag.grace = 0; setHot(s.take); }
+    else if (s.gap && drag.hot && drag.hot !== D.dlg) { if (!drag.grace) drag.grace = setTimeout(() => { drag.grace = 0; setHot(null); tip(null); }, 140); }
+    else { clearTimeout(drag.grace); drag.grace = 0; setHot(null); }
+    tip(s);
+    return !!drag.hot;
+  }
+  function begin(ev) { drag.over.add(ev.target); if (drag.on) return; drag.on = true; document.body.classList.add("cuDragging"); }
+  function endDrag() {
+    clearTimeout(drag.grace); drag.grace = 0; drag.over.clear(); setHot(null); drag.n = 0;
+    if (drag.on) { drag.on = false; document.body.classList.remove("cuDragging"); tip(null); }
+    if (window.resetPageDrop) window.resetPageDrop();
+  }
+  /** The note at the foot of the list while files are held over something that takes none. */
+  function tip(s) {
+    let words = "";
+    if (drag.on && !drag.hot && !(D.dlg && D.dlg.open)) words = (s && s.card && whyNot(s.card)) || (document.querySelector("#rvList > .cuDropOk") ? "Drop the designs on their order's card" : "Only an open custom order's card takes designs");
+    let t = drag.tip;
+    if (!words) { if (t) t.classList.remove("on"); return; }
+    if (!t) { t = drag.tip = el("div", "cuTip", "<i></i><span></span>"); t.setAttribute("role", "status"); document.body.appendChild(t); }
+    const w = t.lastChild; if (w.textContent !== words) w.textContent = words;
+    if (!t.classList.contains("on")) { const v = document.getElementById("reviewView"), r = v && v.getBoundingClientRect(); t.style.left = (r && r.width ? r.left + r.width / 2 : innerWidth / 2) + "px"; t.classList.add("on"); }
+  }
+  /** Why a card under the pointer takes no designs, in plain words. */
+  function whyNot(card) {
+    const who = card.dataset.rid ? `Order ${card.dataset.rid}` : "This one";
+    if (!card.classList.contains("cuRow")) return "Only a custom order's card takes designs";
+    if (card.classList.contains("cuDone")) return `${who} is completed: reopen it to add designs`;
+    const c = card._cuIt ? cardOf(card._cuIt) : null;
+    if (c && c.sent) return `${who}: its designs are already on the sheets`;
+    if (c && c.cut) return `${who} is not laser cut, so it takes no designs`;
+    if (c && !c.open) return `${who} is already on a sheet`;
+    return "Only an open custom order's card takes designs";
+  }
+  document.addEventListener("dragenter", ev => {
+    if (!engaged(ev)) return;
+    begin(ev); const ok = track(ev);
+    ev.preventDefault(); ev.dataTransfer.dropEffect = ok ? "copy" : "none";
+  }, true);
+  document.addEventListener("dragover", ev => {
+    if (!engaged(ev)) return;
+    if (!drag.on) begin(ev);
+    const ok = track(ev);
+    ev.preventDefault(); ev.dataTransfer.dropEffect = ok ? "copy" : "none";
+  }, true);
+  document.addEventListener("dragleave", ev => {
+    if (!drag.on) return;
+    drag.over.delete(ev.target); for (const n of drag.over) if (!n.isConnected) drag.over.delete(n);
+    if (!drag.over.size) endDrag();
+  }, true);
+  document.addEventListener("dragend", endDrag, true);
+  document.addEventListener("drop", ev => {
+    if (!engaged(ev)) { if (drag.on) endDrag(); return; }
+    // what is marked is where it goes (a drop in the gap just after a card is that card's)
+    const s = spot(ev.target), to = s.take || (drag.grace ? drag.hot : null), at = { x: ev.clientX, y: ev.clientY };
+    endDrag();
+    ev.preventDefault(); ev.stopPropagation();
+    if (to === D.dlg) { if (D.it) add(D.it, ev.dataTransfer.files, { at }); }
+    else if (to && to._cuIt) add(to._cuIt, ev.dataTransfer.files, { at, from: to });
+    else toast(s.card ? whyNot(s.card) : "Drop the designs on their custom order's card", "bad", 4000);
+  }, true);
+  for (const t of ["pointermove", "pointerdown"]) document.addEventListener(t, () => { if (drag.on) endDrag(); }, { capture: true, passive: true });
+  addEventListener("blur", () => { if (drag.on) endDrag(); });
+
+  /* ── the designs window: each file as a picture, its metal one click away, how many to cut. It opens out of its card
+     and goes back into it; files dropped are seen flying into their rows; a design removed folds its row away, one
+     added opens its room (Paul, 27 Sep 20:09-20:24). ── */
+  function build() {
+    if (D.dlg) return D.dlg;
+    const d = el("dialog", "cuDlg"); d.id = "cuDlg"; d.setAttribute("aria-labelledby", "cuDlgT"); d.setAttribute("aria-describedby", "cuDlgSub");
+    d.innerHTML = `<div class="dlg"><div class="dlgHead"><div class="cuDlgTitle"><h3 id="cuDlgT"></h3><div class="sub" id="cuDlgSub"></div></div><div class="right"><button type="button" class="btn ghost sm" data-x>Close</button></div></div>
+      <div class="cuAll" hidden><span class="cuAllL" id="cuAllL">Same metal for all</span><span class="cuMetals" data-all role="radiogroup" aria-labelledby="cuAllL"></span></div>
+      <div class="dlgBody cuList" id="cuList"></div>
+      <button type="button" class="cuAdd" id="cuAdd"><span class="cuAddIc" aria-hidden="true">+</span><span class="cuAddT"></span></button><input type="file" id="cuFileIn" multiple accept=".ai,.dxf" hidden>
+      <div class="dlgFoot"><span class="left cuSum" id="cuSum" role="status"></span><span class="cuWho" id="cuWho" hidden><input type="text" maxlength="60" size="12" placeholder="Your name" aria-label="Your name, recorded with the sheets" autocomplete="off"></span><button type="button" class="btn ghost sm" data-later>Send later</button><button type="button" class="btn gold sm" data-send>Send to Sheet</button></div></div>`;
+    document.body.appendChild(d); D.dlg = d;
+    d.querySelectorAll("[data-x],[data-later]").forEach(b => b.onclick = () => shut());
+    d.addEventListener("cancel", ev => { ev.preventDefault(); shut(); });      // Esc: back into its card, as Close does
+    d.addEventListener("close", () => { settle(d); D.ck = null; D.it = null; D.askName = false; endDrag(); });
+    const inp = d.querySelector("#cuFileIn"); inp.onchange = () => { const f = [...inp.files]; inp.value = ""; if (D.it) add(D.it, f); };
+    d.querySelector("#cuAdd").onclick = () => inp.click();
+    d.querySelector("[data-send]").onclick = () => {
+      if (!D.it || busy.get(D.ck)) return;
+      if (notReady(all()[D.ck])) { nudge(); return; }
+      const who = d.querySelector("#cuWho input");
+      if (!employeeName()) { const v = who.value.trim(); if (!v) { D.askName = true; paint(); who.focus(); lit(who, "cuNudge"); return; } B.employee = v; try { localStorage.setItem("cn.employee", v); } catch (_) {} }
+      send(D.it);
+    };
+    d.querySelector("#cuWho input").onkeydown = ev => { ev.stopPropagation(); if (ev.key === "Enter") { ev.preventDefault(); d.querySelector("[data-send]").click(); } };
+    return d;
+  }
+  // the metals, a group of choices: one stop for Tab (the one chosen), the arrows choose within it
+  const chips = (sel, data) => { const has = METALS.some(m => m.key === sel); return METALS.map((m, i) => `<button type="button" role="radio" aria-checked="${sel === m.key}" tabindex="${sel === m.key || (!has && !i) ? 0 : -1}" class="cuM${sel === m.key ? " on" : ""}" data-m="${m.key}" ${data} style="--mc:${m.color}" title="${esc(m.long)}"><i></i>${esc(m.label)}</button>`).join(""); };
+  function rowHtml(F) {
+    const big = tooBig(F), err = F.state === "error";
+    const size = F.state === "ready" ? `${F.wMm.toFixed(1)} × ${F.hMm.toFixed(1)} mm · ${plural(F.pieces, "piece")}${F.kind === "dxf" && F.units ? ` · DXF in ${F.units}` : ""}` : "";
+    return `<div class="cuThumb">${F.thumb ? `<img alt="${esc(F.name)}" src="${F.thumb}">` : F.state === "reading" ? '<span class="spin" aria-hidden="true"></span>' : '<span class="x" aria-hidden="true">!</span>'}</div>` +
+      `<div class="cuMeta"><b title="${esc(F.name)}">${esc(F.name)}</b>${F.state === "reading" ? '<span class="dim">Reading the design…</span>' : err ? `<span class="err">${esc(F.error || "could not be read")}</span>` : `<span class="dim">${esc(size)}</span>${big ? `<span class="err">Too big for the ${esc(labelOf(F.metal))} plate</span>` : !F.metal ? '<span class="warn">Pick a metal for it</span>' : ""}`}</div>` +
+      (err ? "" : `<div class="cuMetals" role="radiogroup" aria-label="Metal for ${esc(F.name)}">${chips(F.metal, "")}</div>` +
+        `<div class="cuQty" role="group" aria-label="How many of ${esc(F.name)} to cut" title="How many of this design to cut"><button type="button" data-q="-1" aria-label="Cut one fewer"${F.qty <= 1 ? " disabled" : ""}>−</button><b aria-live="polite">× ${F.qty}</b><button type="button" data-q="1" aria-label="Cut one more"${F.qty >= 99 ? " disabled" : ""}>+</button></div>`) +
+      `<button type="button" class="cuRm" data-rm aria-label="Remove ${esc(F.name)}" title="Remove this design">×</button>`;
+  }
+  // a row redrawn keeps the focus where it was (the metal just chosen with the arrows, the + pressed again and again)
+  const focusOf = host => { const a = document.activeElement; if (!a || a === host || !host.contains(a)) return null; return a.dataset.m ? `[data-m="${a.dataset.m}"]` : a.dataset.q ? `[data-q="${a.dataset.q}"]` : a.hasAttribute("data-rm") ? "[data-rm]" : null; };
+  const refocus = (host, sel) => { if (!sel) return; let b = host.querySelector(sel); if (b && b.disabled) b = host.querySelector("[data-q]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); };
+  const addWords = () => { const d = D.dlg, e = D.ck && all()[D.ck], t = d && d.querySelector(".cuAddT"); if (t) t.innerHTML = e && e.files.length ? "Drop more .ai or .dxf files here, or <u>browse</u>" : "Drop the order's .ai or .dxf files here, or <u>browse</u>"; };
+  function paint() {
+    const d = D.dlg; if (!d || !D.ck) return;
+    const e = all()[D.ck], it = D.it, row = it && linesOf(it)[0];
+    if (!row) { d.close(); return; }
+    const sp = row.spec || {}, spc = sp.special || {}, m0 = defaultMetal(it);
+    d.querySelector("#cuDlgT").textContent = `Designs for order ${row.order.receiptId}`;
+    d.querySelector("#cuDlgSub").textContent = [spc.label || "Custom order", sp.designSku || row.line.sku || "", `${plural(defaultQty(it), "piece")} ordered`, m0 ? `${labelOf(m0)} on the order` : "no metal on the order"].filter(Boolean).join(" · ");
+    const files = e ? e.files : [], sent = !!(e && e.sent), busyNow = busy.get(D.ck) || "", calm = D.opening || !d.open || motionOff();
+    // one metal for every design (with two or more), its bar opening or folding its room
+    const allRow = d.querySelector(".cuAll"), grp = allRow.querySelector("[data-all]");
+    bar(allRow, files.length > 1 && !sent, calm);
+    const same = files.length && files.every(F => F.metal === files[0].metal) ? files[0].metal : null;
+    if (grp._sig !== String(same)) { const f = focusOf(grp); grp.innerHTML = chips(same, "data-all-m"); grp._sig = String(same); refocus(grp, f); }
+    // one row per design, kept while it reads the same and redrawn in place when it changes; one removed folds away
+    // where it stood, one added opens its room (and, just dropped, waits for its file to land in it)
+    const list = d.querySelector("#cuList");
+    if (list._ck !== D.ck) { list.replaceChildren(); list._ck = D.ck; }
+    const ids = new Set(files.map(F => F.id));
+    for (const n of [...list.children]) { if (n._leaving) continue; if (n.classList.contains("cuEmpty")) { if (files.length) n.remove(); } else if (!ids.has(n.dataset.id)) fold(n, calm); }
+    let prev = null;
+    for (const F of files) {
+      let n = [...list.children].find(x => x.dataset.id === F.id && !x._leaving); const made = !n;
+      if (made) { n = el("div", "cuFile"); n.dataset.id = F.id; if (prev) prev.after(n); else list.prepend(n); if (arriving.has(F.id) && !motionOff()) n.classList.add("arriving"); }
+      const sig = [F.state, F.metal, F.qty, F.thumb ? 1 : 0, F.error, sent, tooBig(F)].join("|");
+      if (n._sig !== sig) { const f = focusOf(n); n.classList.toggle("bad", F.state === "error"); n.innerHTML = rowHtml(F); n._sig = sig; refocus(n, f); }
+      if (made && !calm) Motion.grow(n, { ms: 700 });
+      prev = n;
+    }
+    if (!files.length && !list.querySelector(":scope > .cuEmpty")) list.appendChild(el("div", "cuEmpty", `<b>No designs yet</b><span>The order's .ai or .dxf files show here as soon as you drop them</span>`));
+    const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
+    d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
+    // Send to Sheet stays where it is, greyed while it cannot send, and says why (pressed, the reason lights up)
+    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow;
+    if (why && !busyNow) sb.setAttribute("aria-disabled", "true"); else sb.removeAttribute("aria-disabled");
+    sb.title = busyNow ? busyNow : why ? (files.length ? why : "Its designs come first: drop the order's .ai or .dxf files here") : "Put every design on the next open sheet of its metal";
+    const later = d.querySelector("[data-later]"), keep = files.length && !sent;
+    later.textContent = keep ? "Send later" : "Close"; later.title = keep ? "Close the window: the designs stay on the order's card until you send them" : "Close the window";
+    d.querySelector("#cuWho").hidden = !(D.askName && !employeeName());
+    d.querySelector("#cuAdd").hidden = sent;
+    if (drag.hot === d) says(d); else addWords();
+  }
+  /** A bar of the window shown or hidden opens or folds its room, rather than making everything under it jump. */
+  function bar(n, show, calm) {
+    if (show) { if (n._fold) { n._fold.cancel(); n._fold = null; } if (!n.hidden) return; n.hidden = false; if (!calm) Motion.grow(n, { ms: 600 }); return; }
+    if (n.hidden || n._fold) return;
+    if (calm) { n.hidden = true; return; }
+    const h = n.offsetHeight, a = n._fold = n.animate([{ height: h + "px", opacity: 1, overflow: "hidden" }, { height: "0px", opacity: 0, paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }], { duration: 480, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" });
+    a.finished.then(() => { if (n._fold !== a) return; n._fold = null; n.hidden = true; a.cancel(); }, () => {});
+  }
+  /** A design removed: its row slides a little toward its × as it fades, then closes its gap (the rows under it rise
+   *  into place and the window shortens with it). The design itself is gone at once. */
+  function fold(n, calm) {
+    n._leaving = true; n.inert = true; n.classList.remove("arriving");
+    if (calm) { n.remove(); return; }
+    const h = n.offsetHeight;
+    n.animate([
+      { height: h + "px", opacity: 1, transform: "none", overflow: "hidden" },
+      { height: h + "px", opacity: 0, transform: "translateX(24px)", offset: .42, overflow: "hidden" },
+      { height: "0px", opacity: 0, transform: "translateX(24px)", paddingTop: "0px", paddingBottom: "0px", borderBottomWidth: "0px", overflow: "hidden" }
+    ], { duration: 700, easing: "cubic-bezier(.4,0,.2,1)", fill: "forwards" }).finished.then(() => n.remove(), () => n.remove());
+  }
+  /** Send pressed before the designs are ready: the reason lights up, and the design it is about takes the focus. */
+  function nudge() {
+    const d = D.dlg, e = D.ck && all()[D.ck]; if (!d || !d.open || !e) return;
+    lit(d.querySelector("#cuSum .warn"), "cuNudge");
+    const F = e.files.find(x => x.state === "error") || e.files.find(x => !x.metal && x.state !== "reading") || e.files.find(x => tooBig(x)) || null;
+    const n = F && [...d.querySelector("#cuList").children].find(x => x.dataset.id === F.id && !x._leaving); if (!n) return;
+    lit(n, "cuNudge");
+    const f = F.state === "error" ? n.querySelector("[data-rm]") : n.querySelector('.cuM[tabindex="0"]'); if (f) f.focus({ preventScroll: true });
+    n.scrollIntoView({ block: "nearest", behavior: motionOff() ? "auto" : "smooth" });
+  }
+  function wireDlg() {
+    const d = D.dlg, list = d.querySelector("#cuList");
+    list.onclick = ev => {
+      const n = ev.target.closest(".cuFile"); if (!n || n._leaving || !D.ck) return; const id = n.dataset.id;
+      const m = ev.target.closest("[data-m]"); if (m) { setMetal(D.ck, id, m.dataset.m); return; }
+      const q = ev.target.closest("[data-q]"); if (q) { setQty(D.ck, id, +q.dataset.q); return; }
+      if (ev.target.closest("[data-rm]")) {
+        // the focus goes on to the next design's × (or the one before, or the add box) as the row folds away
+        const rows = [...list.children].filter(x => x.classList.contains("cuFile") && !x._leaving), i = rows.indexOf(n), next = rows[i + 1] || rows[i - 1];
+        const had = n.contains(document.activeElement);
+        remove(D.ck, id);
+        if (had) (next ? next.querySelector("[data-rm]") : d.querySelector("#cuAdd"))?.focus({ preventScroll: true });
+      }
+    };
+    d.querySelector(".cuAll").onclick = ev => { const m = ev.target.closest("[data-m]"); if (m && D.ck) setMetal(D.ck, null, m.dataset.m); };
+    d.addEventListener("keydown", ev => {
+      const b = ev.target.closest && ev.target.closest(".cuM"); if (!b) return;
+      const k = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: "first", End: "last" }[ev.key]; if (!k) return;
+      ev.preventDefault();
+      const group = [...b.parentElement.querySelectorAll(".cuM")], i = group.indexOf(b);
+      const to = k === "first" ? group[0] : k === "last" ? group[group.length - 1] : group[(i + k + group.length) % group.length];
+      to.focus(); to.click();
+    });
+  }
+  /** The layer copies fly on: the page's, or the window's own (the window sits above the whole page). */
+  function layerIn(d) { let l = d.querySelector(":scope > .motionLayer"); if (!l) { l = el("div", "motionLayer"); l.setAttribute("aria-hidden", "true"); d.appendChild(l); } return l; }
+  function pageLayer() { let l = document.getElementById("motionLayer"); if (!l) { l = el("div"); l.id = "motionLayer"; l.setAttribute("aria-hidden", "true"); document.body.appendChild(l); } return l; }
+  /** The window opens out of its card: from the card's middle, small and clear, to its place. */
+  function growFrom(d, from) {
+    const src = from && from.isConnected ? from.getBoundingClientRect() : null;
+    if (!src || !src.width || motionOff()) return Promise.resolve();
+    const r = d.getBoundingClientRect(), dx = src.left + src.width / 2 - (r.left + r.width / 2), dy = src.top + src.height / 2 - (r.top + r.height / 2);
+    const s = Math.max(.3, Math.min(.8, src.height / r.height));
+    try { d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 380, easing: "ease-out", pseudoElement: "::backdrop" }); } catch (_) {}
+    return d.animate([
+      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 },
+      { opacity: 1, offset: .35 },
+      { transform: "none", opacity: 1 }
+    ], { duration: 500, easing: "cubic-bezier(.2,.75,.2,1)" }).finished.catch(() => {});
+  }
+  /** Files just added, seen going in: a chip with each one's name lifts where it was dropped (or from the add box), flies
+   *  into its row, and the row fills as it lands. The row's place is read on every frame, so a bar that opens above it
+   *  or a list that scrolls does not make it miss. */
+  function launch(fly) {
+    const d = D.dlg; if (!d || !d.open || !fly) return;
+    const list = d.querySelector("#cuList"), rows = fly.ids.map(id => [...list.children].find(x => x.dataset.id === id && !x._leaving)).filter(Boolean);
+    if (!rows.length) return;
+    if (motionOff()) { rows.forEach(n => land(n, true)); return; }
+    // the last of them in sight (a long list scrolls down to it)
+    const lr = list.getBoundingClientRect(), z = rows[rows.length - 1], need = z.getBoundingClientRect().top + z.scrollHeight - lr.bottom;
+    if (need > 0) list.scrollTop += need + 6;
+    const box = d.querySelector("#cuAdd").getBoundingClientRect(), at = fly.at || { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    const L = layerIn(d), files = (all()[D.ck] || { files: [] }).files;
+    rows.forEach((n, i) => {
+      const F = files.find(x => x.id === n.dataset.id); if (!F) { land(n, true); return; }
+      const chip = el("div", "cuChip", `<i>${F.kind === "dxf" ? "DXF" : "AI"}</i><span></span>`); chip.lastChild.textContent = F.name;
+      L.appendChild(chip);
+      flight(chip, at, i, () => n.isConnected && !n._leaving ? n.querySelector(".cuThumb") : null, () => land(n));
+    });
+  }
+  const easeIO = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2, easeOut = t => 1 - Math.pow(1 - t, 3);
+  function flight(chip, at, i, target, onLand) {
+    const w = chip.offsetWidth, h = chip.offsetHeight, x0 = at.x + i * 10, y0 = at.y + i * 8;   // a small fan, as a handful is held
+    const ms = 1050, t0 = performance.now() + i * 140;
+    let landed = false;
+    chip.style.opacity = "0";
+    const step = now => {
+      if (!chip.isConnected) return;
+      const q = Math.min(1, (now - t0) / ms); if (q < 0) { requestAnimationFrame(step); return; }
+      const t = target(), tr = t ? t.getBoundingClientRect() : null;
+      if (!tr || !tr.width) { chip.animate([{ opacity: chip.style.opacity || 1 }, { opacity: 0 }], { duration: 240, fill: "forwards" }).finished.then(() => chip.remove(), () => chip.remove()); if (!landed) { landed = true; onLand(); } return; }
+      const x1 = tr.left + tr.width / 2, y1 = tr.top + tr.height / 2;
+      // it lifts (0-14%), then follows a curve that rises and comes down into the row, shrinking to the picture it becomes
+      const up = Math.min(1, q / .14), p = easeIO(Math.max(0, (q - .1) / .9)), bend = Math.min(120, 40 + Math.hypot(x1 - x0, y1 - y0) * .16);
+      const cx = (x0 + x1) / 2, cy = Math.min(y0, y1) - bend;
+      const x = (1 - p) * (1 - p) * x0 + 2 * (1 - p) * p * cx + p * p * x1, y = (1 - p) * (1 - p) * y0 + 2 * (1 - p) * p * cy + p * p * y1 - (1 - p) * 10 * up;
+      const end = Math.min(1, (tr.width * .92) / w);
+      const s = q < .14 ? .6 + .44 * easeOut(up) : q < .6 ? 1.04 - .04 * ((q - .14) / .46) : 1 + (end - 1) * easeIO((q - .6) / .4);
+      chip.style.transform = `translate(${x - w / 2}px,${y - h / 2}px) scale(${s})`;
+      chip.style.opacity = String(q < .14 ? up : q < .86 ? 1 : Math.max(0, 1 - (q - .86) / .14));
+      if (!landed && q >= .86) { landed = true; onLand(); }
+      if (q < 1) requestAnimationFrame(step); else chip.remove();
+    };
+    requestAnimationFrame(step);
+  }
+  /** A file has landed in its row: the row shows, its picture answers with a plum ring. */
+  function land(n, quiet) {
+    arriving.delete(n.dataset.id);
+    if (!n.isConnected) return;
+    n.classList.remove("arriving");
+    if (!quiet) lit(n.querySelector(".cuThumb"), "cuLanded", 1000);
+  }
+  /** What a closed window leaves behind is cleared: chips still flying, rows still folding, rows still waiting. */
+  function settle(d) {
+    d.querySelectorAll(":scope > .motionLayer > .cuChip").forEach(x => x.remove());
+    for (const n of [...d.querySelector("#cuList").children]) { if (n._leaving) n.remove(); else n.classList.remove("arriving"); }
+    arriving.clear();
+  }
+  /** The window, for one card: never over another window (the order window is closed first). */
+  function open(it, opts = {}) {
+    const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
+    D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
+    if (!d.open) {
+      D.opening = true; try { paint(); } finally { D.opening = false; }
+      d.showModal();
+      const shown = growFrom(d, opts.from);
+      if (opts.fly) shown.then(() => launch(opts.fly));
+    } else { paint(); if (opts.fly) launch(opts.fly); }
+    if (opts.browse) d.querySelector("#cuFileIn").click();
+    else if (D.askName) d.querySelector("#cuWho input").focus();
+  }
+  /** The window goes back into its card: it closes at once (the page is usable again), and a copy of it shrinks into the
+   *  card's designs, which answer. A card out of sight: the copy only fades. */
+  function shut() {
+    const d = D.dlg; if (!d || !d.open) return;
+    const ck = D.ck, box = d.getBoundingClientRect();
+    let g = null;
+    if (!motionOff()) {
+      g = el("div", "cuDlgGhost cuDlg"); g.inert = true;
+      Object.assign(g.style, { left: box.left + "px", top: box.top + "px", width: box.width + "px", height: box.height + "px" });
+      const copy = d.querySelector(".dlg").cloneNode(true); for (const x of copy.querySelectorAll("[id]")) x.removeAttribute("id"); g.appendChild(copy);
+    }
+    d.close();
+    if (!g) return;
+    const L = pageLayer(), shade = el("div", "cuShade"); L.append(shade, g);
+    shade.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 480, easing: "ease-out", fill: "forwards" }).finished.then(() => shade.remove(), () => shade.remove());
+    const card = cardNode(ck), to = card && (card.querySelector(".cuDzThumbs") || card), tr = to && to.getBoundingClientRect();
+    if (!tr || !tr.width || tr.bottom < 0 || tr.top > innerHeight) { g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: 380, easing: "ease-in", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove()); return; }
+    const dx = tr.left + tr.width / 2 - (box.left + box.width / 2), dy = tr.top + tr.height / 2 - (box.top + box.height / 2);
+    const s = Math.max(.04, Math.min(.5, (tr.height * 1.3) / box.height, (tr.width * 1.3) / box.width));
+    g.animate([
+      { transform: "none", opacity: 1 },
+      { transform: `translate(${dx * .3}px,${dy * .3}px) scale(${(1 + s) / 1.7})`, opacity: 1, offset: .42 },
+      { transform: `translate(${dx * .92}px,${dy * .92}px) scale(${s * 1.15})`, opacity: .7, offset: .85 },
+      { transform: `translate(${dx}px,${dy}px) scale(${s})`, opacity: 0 }
+    ], { duration: 660, easing: "cubic-bezier(.45,.05,.3,1)", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
+    setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 560);
+  }
+  /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what
+   *  came, with Show. false when that cannot be seen (the caller says it in a toast instead). */
+  function toSheets(ck, n, words, delay) {
+    const tab = document.querySelector('#modeSeg [data-mode="nest"]');
+    if (!window.Motion || !tab || !tab.getClientRects().length) return false;
+    const note = { text: words, actions: [{ label: "Show", title: "open the sheets", fn: () => { try { CN.setMode("nest"); } catch (_) {} } }] };
+    setTimeout(() => {
+      const pics = cardNode(ck)?.querySelector(".cuDzThumbs"), r = pics && pics.getBoundingClientRect();
+      if (!r || !r.width || motionOff() || r.bottom < 0 || r.top > innerHeight) { Motion.pulse(tab, { note }); return; }
+      Motion.fly(Motion.ghost(pics, r, r.width, document.body), tab, { note, plus: "+" + n });
+    }, delay || 0);
+    return true;
+  }
+  return { add, send, prepare, sentOf, piecesOf, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -5379,7 +6404,15 @@ const Review = window.Review = (() => {
     const gone = items().find(x => x.key === key);
     B.review.items = items().filter(x => x.key !== key);
     if (n === items().length) return;
-    if (gone && !/^(eng|held):/.test(String(key))) settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+    if (gone && !/^(eng|held):/.test(String(key))) {
+      settled.unshift({ key, row:gone.row || gone.rows?.[0] || null, kind: gone.kind, why: gone.why || "", lines: (gone.rows || [gone.row]).filter(Boolean).length, orders: [...new Set((gone.rows || [gone.row]).filter(Boolean).map(r2 => r2.order.receiptId))], by: how || employeeName() || "", t: Date.now() });
+      const d0 = settled[0], rid = d0.orders[0] || "", who = d0.orders.length > 1 ? `${d0.orders.length} orders` : rid ? "Order " + rid : "The decision";
+      // held: the order is under Orders › On hold (its decision is kept under Completed); answered: under Completed
+      const held = (gone.rows || [gone.row]).filter(Boolean).every(r2 => r2.hold);
+      if (window.Motion) Motion.expect(mkeyOf(gone), held
+        ? { to: ORDERS_TAB, note: { text: `${who} ${d0.orders.length > 1 ? "are" : "is"} on hold under Orders · release ${d0.orders.length > 1 ? "them" : "it"} there`, actions: [{ label: "Show", fn: () => showHeld() }] } }
+        : { to: DONE_SW, note: { text: `${who} moved to Completed · ${KIND_WORDS[gone.kind] || "answered"}`, actions: [{ label: "Show", fn: () => showCard("settled:" + d0.key + ":" + d0.t, "done") }] } });
+    }
     if (settled.length > 200) settled.length = 200;
     redraw();
   }
@@ -5437,6 +6470,8 @@ const Review = window.Review = (() => {
     redraw();
     CustomRead.later();                                                  // lines with no design of their own are read by Claude
   }
+  /** A card's motion name: a custom order keeps one name open or completed (so it is seen moving between the two). */
+  const mkeyOf = it => it.kind === "customOrder" ? "cu:" + String(it.key).replace(/^[a-z]+:/, "") : String(it.key);
   /** Every line the item speaks for — the group when it has one, the single row otherwise. */
   const rowsOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r.state !== "gone");
   /** Apply one decision to every line it covers, then re-pool them together. */
@@ -5449,7 +6484,23 @@ const Review = window.Review = (() => {
     const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
     RV.filter=null;RV.cseg="open";RV.limit=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
-    if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});c.classList.add('pulse');setTimeout(()=>c.classList.remove('pulse'),1300);}
+    if(c){const button=c.querySelector('[data-review-open]');if(button?.getAttribute('aria-expanded')==='false')button.click();c.scrollIntoView({behavior:'smooth',block:'center'});found(c);}
+  }
+  /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
+  function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** "Show" for a held order: the Orders tab, its On hold pile. */
+  function showHeld() {
+    if (typeof setMode === "function") setMode("orders");
+    const b = document.querySelector('#ordChips [data-pile="hold"]'); if (b && !b.classList.contains("on")) b.click();
+  }
+  /** "Show" in a note: Review, the folder (and chip) the card is in now, scrolled to it and marked. */
+  function showCard(mk, seg, kind) {
+    const v = document.getElementById("reviewView");
+    if (v && v.classList.contains("hidden") && typeof setMode === "function") setMode("review");
+    RV.cseg = seg === "done" ? "done" : "open"; RV.filter = kind && RV.cseg === "open" ? kind : null; RV.limit = Math.max(RV.limit, 400);
+    render();
+    const n = [...document.querySelectorAll("#rvList .reviewListRow")].find(x => x.dataset.mkey === mk);
+    if (n) { n.scrollIntoView({ behavior: "smooth", block: "center" }); found(n); }
   }
 
   async function repool(row) {
@@ -5621,8 +6672,9 @@ const Review = window.Review = (() => {
         <div class="fixes"><input list="rvSkus" data-f="sku" placeholder="pick the charm from the master index…"><datalist id="rvSkus">${skus.map(s => `<option value="${esc(s)}">`).join("")}</datalist><button class="btn gold sm" data-a="alias" title="every line of this listing with this SKU uses that charm from now on">Use this charm</button><button class="btn ghost sm" data-a="nodesign" title="this line never needs a design — remembered, so it stops asking">Nothing to cut</button><button class="btn ghost sm" data-a="hold" title="hold the whole order until someone sorts it out">Hold order</button>${it.kind === "blockedSku" ? `<button class="btn ghost sm" data-a="master">Open Master</button>` : ""}</div>`;
       bindNeeds(c, "alias", "sku"); CustomRead.wire(c, group);
       c.querySelector("[data-a=alias]").onclick = saving(c, async () => { const sku = c.querySelector("[data-f=sku]").value.trim().toUpperCase(); if (!sku) return; const who = by(); if (!who) return; if (!B.master.entries.has(sku)) { toast(`${sku} is not in the master index`, "bad"); return; } const lids = [...new Set(rowsOf(it).map(x => String(x.line.listingId)))];
-        // for the listing and the SKU each line came with: on a listing whose variations each have a SKU, the others keep theirs
-        const pairs = new Map(rowsOf(it).map(x => { const from = String(x.line.sku || "").trim().toUpperCase(); return [String(x.line.listingId) + "\u0000" + from, { lid: String(x.line.listingId), from, title: x.line.title }]; }));
+        // for the listing and the SKU each line came with (a huggie set's "X (HUGGIE)"): on a listing whose variations each
+        // have a SKU, the others keep theirs
+        const pairs = new Map(rowsOf(it).map(x => { const from = x.spec && x.spec.boughtSku != null ? x.spec.boughtSku : String(x.line.sku || "").trim().toUpperCase(); return [String(x.line.listingId) + "\u0000" + from, { lid: String(x.line.listingId), from, title: x.line.title }]; }));
         for (const q of pairs.values()) await api("charmNestLibrary", { op: "aliasPut", listingId: q.lid, sku, fromSku: q.from || undefined, by: who, title: q.title });
         await Orders.loadMaps(true); toast(`${p.sku || "No SKU"} → ${sku} remembered${lids.length > 1 ? ` on ${lids.length} listings` : ""}`, "ok"); for (const rr of Orders.rows()) if (lids.includes(String(rr.line.listingId))) await repool(rr); });
       c.querySelector("[data-a=nodesign]").onclick = saving(c, async () => { const who = by(); if (!who) return; const sku = p.sku || (sp && sp.designSku); if (sku) await api("charmNestLibrary", { op: "noDesignPut", sku, by: who, note: r.line.title }); else await api("charmNestLibrary", { op: "noDesignPut", pattern: "^" + String(r.line.title).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").slice(0, 40), by: who, note: "by title" }); await Orders.loadMaps(true); await repoolAll(it); });
@@ -5675,7 +6727,7 @@ const Review = window.Review = (() => {
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
     } else { c.innerHTML = head(it.kind, it.why || "", orderSub); }
     const skipB = c.querySelector("[data-a=skip]"); if (skipB) skipB.onclick = () => { const who = by(); if (!who) return; for (const rr of rowsOf(it)) { rr.state = "skipped"; rr.reason = `line skipped by ${who}`; rr.problems = []; rr.hold = `line skipped by ${who}`; } syncOrderItems(); Orders.render(); RunCtl.poke(); };
-    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
+    const holdB = c.querySelector("[data-a=hold]"); if (holdB) holdB.onclick = () => { const who = by(); if (!who) return; const g = rowsOf(it); for (const rr of g) { rr.hold = `held by ${who}`; rr.reason = rr.hold; rr.state = "held"; } remove(it.key); Orders.render(); RunCtl.poke(); const ords = [...new Set(g.map(x => x.order.receiptId))]; if (!window.Motion) toast(`${ords.length === 1 ? ords[0] : ords.length + " orders"} held by ${who} — release them from the Orders tab`, ""); };
     return c;
   }
   async function row_material(it, m, who) {
@@ -5698,22 +6750,36 @@ const Review = window.Review = (() => {
   // cseg: Open or Completed, the one switch at the front of the bar, for every filter (Paul, 27 Sep: one global Completed
   // folder, no longer Custom Orders' own); filter: the kind chip, shared by both
   const RV = { filter: null, limit:40, open:null, cseg:"open" };
+  // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
+  const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]';
+  const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
+  // the card last acted on (its buttons, or its question in the order window): a card that leaves just after is seen
+  // going where its answer sent it; one that leaves on its own (another station, a new pull) folds away where it was
+  let acted = { mk: "", t: 0 };
+  document.addEventListener("click", e => {
+    const t = e.target; if (!t || !t.closest) return;
+    const card = t.closest("#rvList .reviewListRow"); if (card && card.dataset.mkey) { acted = { mk: card.dataset.mkey, t: Date.now() }; return; }
+    const fix = t.closest("#owFix"); if (fix && fix._rvKey) { const it = items().find(x => x.key === fix._rvKey); if (it) acted = { mk: mkeyOf(it), t: Date.now() }; }
+  }, true);
   let reviewFilter=null;
   const reviewRows=new Map();
   /** What a decision card is drawn from: while it reads the same, the card (and whatever is typed in it) is kept. */
   function stampOf(it) {
     const row=it.row || rowsOf(it)[0],group=rowsOf(it);
-    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints],it.kind==="customOrder"?CustomPrint.stamp(it):"",CustomRead.stamp(row)]);
+    return JSON.stringify([it.kind,it.why,it.problem,it.problems,row?.spec,row?.line,row?.poolIds,row?.state,group.map(r=>[r.key,r.order.receiptId]),!!it.info,!!it.done,it.record&&[it.record.lastPrintedAt,it.record.prints,(it.record.stamps||[]).length,it.record.completedAt],it.kind==="customOrder"?CustomPrint.stamp(it)+"|"+CustomSheet.stamp(it):"",CustomRead.stamp(row)]);
   }
   /* ── Custom Orders that ask nothing, and those completed ── */
   const infoItems = new Map();
   const whenOf = t => { if (!t) return ""; const d = new Date(t), today = new Date(); return d.toDateString() === today.toDateString() ? fmtT(t) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + fmtT(t); };
   function customWhy(row, done, rec) {
     rec = rec || (row && row.spec && row.spec.customDone) || null;
+    // completed by Complete Order (no label printed) or by printing its label; a label printed since is said too
+    if (done && rec && rec.how === "button") return `Completed${rec.completedBy ? " by " + rec.completedBy : ""}${rec.completedAt ? " · " + whenOf(rec.completedAt) : ""}${rec.prints ? ` · QR label printed${rec.prints > 1 ? ` ${rec.prints}×` : ""}` : ""}`;
     if (done) return `QR label printed${rec && rec.lastPrintedBy ? " by " + rec.lastPrintedBy : ""}${rec && rec.lastPrintedAt ? " · " + whenOf(rec.lastPrintedAt) : ""}${rec && rec.prints > 1 ? ` · printed ${rec.prints}×` : ""}`;
-    const sp = row.spec, spc = sp.special;
+    const sp = row.spec, spc = sp.special, mine = CustomSheet.sentOf(row);
+    if ((row.poolIds || []).length) return `${spc.label} · ${mine ? "its own designs, on their way" : "on its way"} to the laser (${Orders.statePill(row)[1]})`;
+    if (mine) return `${spc.label} · its designs go on the sheets with the next run`;
     if (sp.noDesign) return `${spc.label} · not laser cut${spc.notCut ? "" : " (no-design list)"} · print its QR label when it is ready`;
-    if ((row.poolIds || []).length) return `${spc.label} · on its way to the laser (${Orders.statePill(row)[1]})`;
     return `${spc.label} · nothing to decide · cut with the next run`;
   }
   /** Special lines that ask nothing are listed under Custom Orders too; completed ones (their QR label printed) under
@@ -5738,7 +6804,7 @@ const Review = window.Review = (() => {
       done.push(itemFor("cdone:rec:" + lineKey, { rows: [], row: null, done: true, record: rec, rid: rec.receiptId, why: customWhy(null, true, rec) }));
     }
     for (const k of [...infoItems.keys()]) if (!seen.has(k)) infoItems.delete(k);
-    const at = it => (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
+    const at = it => (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
     done.sort((a, b) => at(b) - at(a));
     return { open, done, recent };
   }
@@ -5762,31 +6828,46 @@ const Review = window.Review = (() => {
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null),busy=cu?CustomPrint.statusHtml(it,'sm'):'';
     // Claude's reading of a line with no design of its own: its confidence beside the label, the card's edge in its colour
     const aiChip=row&&!it.done&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&row?CustomRead.bandOf(row):'';
-    const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');
+    const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
     const queue=cu?(it.done?'Custom order · completed':it.info?'Custom order':'Review required'):'Review required';
-    const decide=!it.info;
-    // a custom card prints the sorting station's QR sticker for its order (CustomPrint); a completed one prints it again
-    // or reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
+    // a custom card has no "Review & resolve" (Paul, 27 Sep 19:45): its question is answered in the order window, which a
+    // click on the card opens; the other kinds keep theirs
+    const decide=!it.info&&!cu;
+    // a custom card prints the sorting station's QR sticker for its order (CustomPrint), completes it without one
+    // (Complete Order) or sends the order's own designs to the sheets (CustomSheet); a completed one prints it again or
+    // reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
+    const cs=cu&&!it.done&&row?CustomSheet.cardOf(it):null,sendFirst=!!(cs&&!cs.sent&&!cs.why&&!cs.busy);
+    // completed: every seal of the order (each print, and Complete Order when it was used) beside its print button, which
+    // takes the print seal's colour once a label was printed (Paul, 27 Sep 20:09-20:18)
+    const mk=mkeyOf(it),printed=cu&&it.done&&rec&&window.Seal&&Seal.hasPrint(rec);
+    const seals=cu&&it.done&&rec&&window.Seal?Seal.row(rec,{pending:CustomPrint.freshOf(mk)}):'';
+    const printBtn=cu&&printable(it)&&!cs?.busy?(it.done
+        ?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn')
+        :CustomPrint.buttonHtml(it,'print',sendFirst?'ghost':'gold','Print QR label',"print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed",'sm')):'';
     const acts=busy?busy
-      :(cu?CustomPrint.failNote(it):'')+(cu&&printable(it)?`<button class="btn ${it.done?'ghost':'gold'} sm" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done?' again':' and mark it completed'}">${it.done?'Print again':'Print QR label'}</button>`:'')
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>`:'')
+      :(cu?CustomPrint.failNote(it):'')+printBtn+seals
+      +(cu&&!it.done&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm'):'')
+      +(cs?CustomSheet.buttonsHtml(it,true):'')
+      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'')
       +(decide?`<button class="btn ghost sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div><div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(it):''}<div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
     const btn=node.querySelector('[data-review-open]'),detail=node.querySelector('.reviewDetails');
     const show=()=>{if(!btn)return;if(!detail.childNodes.length){detail.appendChild(card(it));const f=putTyped(detail,was.splice(0));if(f&&!node.isConnected)node._refocus=f;}detail.hidden=false;node.classList.add('open');btn.textContent='Close details';btn.setAttribute('aria-expanded','true');};
     if(btn)btn.onclick=()=>{if(detail.hidden){RV.open=it.key;show();}else{RV.open=null;detail.hidden=true;node.classList.remove('open');btn.textContent='Review & resolve';btn.setAttribute('aria-expanded','false');}};
     if(cu){
       const pb=node.querySelector('[data-cu-print]');if(pb)pb.onclick=()=>CustomPrint.print(it);
+      const cb=node.querySelector('[data-cu-complete]');if(cb)cb.onclick=()=>CustomPrint.complete(it);
       const rb=node.querySelector('[data-cu-reopen]');if(rb)rb.onclick=()=>CustomPrint.reopen(it);
+      if(cs)CustomSheet.wire(node,it);
       const who=CustomPrint.wire(node,it);if(who)node._refocus=()=>who.focus({preventScroll:true});
       // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
       // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
       if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
         const openIt=()=>OrderWin.open(row.key);
-        node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails'))return;openIt();};
+        node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails,.cuDesigns'))return;openIt();};
         node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
     }
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
@@ -5796,13 +6877,14 @@ const Review = window.Review = (() => {
   const settledRows = new WeakMap();
   function settledRow(d) {
     let node = settledRows.get(d); if (node) return node;
-    node=el('div','doneRow workRow reviewListRow rvSettled');node.dataset.rid=String(d.orders?.[0] || '');
+    node=el('div','doneRow workRow reviewListRow rvSettled');node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;
     node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} lines</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions"><span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span></div>`;
     settledRows.set(d, node); return node;
   }
   function render() {
     if(window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
+    try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
     // the old Decided chip is Completed now
     if (RV.filter === "done") { RV.filter = null; RV.cseg = "done"; }
@@ -5820,7 +6902,7 @@ const Review = window.Review = (() => {
     // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
-    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && (it.record.lastPrintedAt || it.record.printedAt)) || 0;
+    const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
     const finished = cl.done.concat(settled.filter(d => !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
@@ -5834,9 +6916,9 @@ const Review = window.Review = (() => {
     const f = RV.filter && kinds.has(RV.filter) ? RV.filter : null;
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
-    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open, cl.recent);
+    const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
     const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
-      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open, cl.recent);
+      : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
@@ -5852,8 +6934,35 @@ const Review = window.Review = (() => {
     v.querySelectorAll("[data-cseg]").forEach(b => b.onclick = () => { RV.cseg = b.dataset.cseg; RV.filter = null; render(); });
     const host = v.querySelector("#rvList");
     const what = f ? (KIND_WORDS[f] || f) : "";
-    if (!list.length) host.innerHTML = `<div class="libEmpty">${doneMode ? (f === "customOrder" ? "No custom order completed yet — print its QR label from Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}</div>`;
-    else {const desired=list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})),keep=new Set(desired.map(x=>x.node));desired.forEach(({it,node},i)=>{if(host.children[i]!==node)host.insertBefore(node,host.children[i]||null);const r=it.settled?it.settled.row:it.row;if(r)ListMedia.mount(node,r);});for(const node of [...host.children])if(!keep.has(node))node.remove();for(const {node} of desired)if(node._refocus){const f=node._refocus;node._refocus=null;f();}}
+    // one keyed update (Motion.reconcile): what leaves is seen going where it went, what stays glides into the gap
+    const where = new Map();
+    for (const it of all.concat(cl.open)) where.set(mkeyOf(it), { seg: "open", kind: tabOf(it), it });
+    for (const it of finished) where.set(it.settled ? it.settled.key : mkeyOf(it), { seg: "done", kind: tabOf(it), it });
+    const ridWhere = new Map(); for (const it of all.concat(cl.open)) for (const r of rowsOf(it)) if (!ridWhere.has(String(r.order.receiptId))) ridWhere.set(String(r.order.receiptId), { kind: tabOf(it), mk: mkeyOf(it) });
+    const leave = (mk, node) => {
+      const w = where.get(mk), rid = node && node.dataset.rid, mine = acted.mk === mk && Date.now() - acted.t < 10000;
+      const who = rid ? "Order " + rid : "The decision";
+      if (w && w.seg !== RV.cseg) return { to: w.seg === "done" ? DONE_SW : OPEN_SW, note: mine ? { text: `${who} moved to ${w.seg === "done" ? "Completed" : "Open"}`, actions: [{ label: "Show", fn: () => showCard(w.it.settled ? "settled:" + w.it.settled.key + ":" + w.it.settled.t : mk, w.seg) }] } : null };
+      if (w && f && w.kind !== f) return { to: chipSel(w.kind), note: mine ? { text: `${who} is now under ${KIND_WORDS[w.kind] || w.kind}`, actions: [{ label: "Show", fn: () => showCard(mk, w.seg, w.kind) }] } : null };
+      if (!w && mine && rid && ridWhere.has(rid) && ridWhere.get(rid).mk !== mk) {
+        // read again as another kind of question (e.g. "Not a custom order"): it is under that chip now
+        const o = ridWhere.get(rid);
+        return { to: chipSel(o.kind), note: { text: `${who} is now under ${KIND_WORDS[o.kind] || o.kind}`, actions: [{ label: "Show", fn: () => showCard(o.mk, "open", o.kind) }] } };
+      }
+      if (!w && mine) {
+        // answered: its lines went back to the orders (on hold, or in line for the sheets)
+        const rows = Orders.rows().filter(r => String(r.order.receiptId) === String(rid)), held = rows.some(r => r.hold);
+        return { to: ORDERS_TAB, note: { text: held ? `${who} is on hold under Orders` : `${who} is back in line for the sheets`, actions: held ? [{ label: "Show", fn: () => showHeld() }] : [] } };
+      }
+      return null;
+    };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
+    const sameView = host._mView === view && host.childElementCount > 0; host._mView = view;
+    if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
+    else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
+    for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
+    for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     v.querySelector('.egPane.scroll').scrollTop=oldScroll;
     if(active?.isConnected)active.focus({preventScroll:true});
@@ -5871,7 +6980,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, repool, customItemFor, printable };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -6629,7 +7738,11 @@ const OrderWin = window.OrderWin = (() => {
       if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
       Review.cardIn(slot, item);
     } else {
+      // an answered question folds away where it was (the room closes as it fades), never vanishing at once
+      const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
+      const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
       fix.innerHTML = "";
+      if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
       if (r.engrave && r.engrave.needed && !r.engrave.approved) {
         const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
         const b = el("button", "btn ghost sm", "Open it in Engraving");
@@ -6652,18 +7765,25 @@ const OrderWin = window.OrderWin = (() => {
     const busy = CustomPrint.statusHtml(it, "xs"), can = Review.printable(it);
     const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || "Custom order";
     const why = it.info || it.done ? it.why : can ? "decide below, or print its label once made by hand" : "a decision waits below";
-    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can]);
+    const rec = it.record || null, printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
+    const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can, rec && (rec.stamps || []).length, rec && rec.prints]);
     bar.hidden = false;
     if (bar._stamp === stamp) return;
     bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
     // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
+    // completed: its seals, small, beside the print button (each with who and when on hover; the Review card shows them
+    // full size), the newest pressed there as it happens
+    const seals = it.done && rec && window.Seal ? Seal.row(rec, { size: 34, pending: CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
-      (busy ? busy
-        : CustomPrint.failNote(it) + (can ? `<button type="button" class="btn ${it.done ? "ghost" : "gold"} xs" data-cu-print title="print the sorting station's 1 × 1 in QR sticker for this order${it.done ? " again" : " and mark it completed"}">${it.done ? "Print again" : "Print QR label"}</button>` : "") +
-          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="back to Open (the printed label is not undone)">Reopen</button>` : ""));
+      (busy && !busy.includes("cuUndo") ? busy
+        : CustomPrint.failNote(it) + (can ? (it.done ? CustomPrint.buttonHtml(it, "print", printed ? "sealedPrint" : "ghost", printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${printed ? " again" : ""}`, "xs", "data-seal-btn")
+            : CustomPrint.buttonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs")) : "") + seals +
+          (can && !it.done ? CustomPrint.buttonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs") : "") +
+          (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>` : "") + (busy && busy.includes("cuUndo") ? busy : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
     const pb = bar.querySelector("[data-cu-print]"); if (pb) pb.onclick = () => CustomPrint.print(now());
+    const cb = bar.querySelector("[data-cu-complete]"); if (cb) cb.onclick = () => CustomPrint.complete(now());
     const rb = bar.querySelector("[data-cu-reopen]"); if (rb) rb.onclick = () => CustomPrint.reopen(now());
     const who = CustomPrint.wire(bar, it); if (who) who.focus({ preventScroll: true });
   }
@@ -7565,7 +8685,7 @@ const Session = window.Session = (() => {
     return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
-      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
@@ -7657,7 +8777,7 @@ const Session = window.Session = (() => {
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
       if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
-      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map();
+      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {};
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
         const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
@@ -7899,10 +9019,16 @@ const Arrivals = window.Arrivals = (() => {
       const t = Date.now(); if (lastTick && t - lastTick > 60000 && state.nextCheck < t + 10000) state.nextCheck = t + 10000; lastTick = t;
       paint();
       if (busy || paused || S.settings.pollOrders === "off") return;
+      /* A gap fill ends once every order of the stream is in (CN.settleTopups), asked at every tick with no check out. It
+         was asked only between checks, and at 1000x there is no between: the next check is due 600 ms after the last one
+         began and a check (the stream's step, the station's sweep) takes longer, so each tick started the next check at
+         once and a sheet still filling its gaps was never released and never got its QR label (Paul, 27 Sep 22:21: "The
+         system still does not successfully auto-generate the QR codes when a given sheet is full"). */
+      window.CN?.settleTopups?.();
       if (Date.now() >= state.nextCheck && !held()) {
         if (navigator.locks) navigator.locks.request(storageKey(), { ifAvailable: true }, lock => { if (!lock) return; let shared; try { shared = JSON.parse(localStorage.getItem(storageKey()) || "null"); } catch (_) {} if (shared?.nextCheck > Date.now()) { Object.assign(state.seen, shared.seen); state.lastCheck = shared.lastCheck; state.nextCheck = shared.nextCheck; return; } return check(); }).catch(e => { state.error = e.message; });
         else check();
-      } else { processPending().catch(e => { state.error = e.message; }); window.CN?.settleTopups?.(); }   // (a gap fill ends once every order of the stream is in)
+      } else processPending().catch(e => { state.error = e.message; });
     }, streaming() ? 250 : 1000);   // a stream step is 12 s at 50x: a whole second late would be most of a simulated minute
   }
   /** A sandbox reset deletes the records under the checks: none starts meanwhile, and one still out is waited for and its
