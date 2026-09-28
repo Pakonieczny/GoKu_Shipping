@@ -31,7 +31,25 @@
     requestAnimationFrame(() => inp.focus());
     return "";
   }
-  function hideName() { const bar = W.el && W.el.name; if (bar && !bar.hidden) { bar.hidden = true; bar.innerHTML = ""; } }
+  // an order with pieces on another 10K/14K sheet that stays out: the choice is asked in the same bar (Paul, 28 Sep: the
+  // person decides), resolving to the sheets to include, or null to leave things as they were
+  function askSplit(sh, split) {
+    const bar = W.el.name; if (!bar) return Promise.resolve([sh]);
+    const nm = p => `${p.metal === "gold10k" ? "10K" : "14K"} Sheet ${p.page}`;
+    const orders = [...new Set(split.flatMap(x => x.orders))], others = split.map(x => x.sheet);
+    return new Promise(resolve => {
+      bar.innerHTML = `<span class="swAsk">${orders.length === 1 ? `Order ${esc(orders[0])} is` : `${orders.length} orders are`} also on ${esc(others.map(nm).join(", "))}, which ${others.length > 1 ? "are" : "is"} not in the set.</span><button type="button" class="btn sage xs" data-sp="all">Include ${others.length > 1 ? "all" : "both"}</button><button type="button" class="btn ghost xs" data-sp="one">Only this sheet</button><button type="button" class="swIcon" data-sp="x" title="Cancel" aria-label="Cancel">${ICON.close}</button>`;
+      bar.setAttribute("aria-label", "An order on two sheets"); bar.hidden = false;
+      const done = v => { if (W.asked !== done) return; W.asked = null; bar.onkeydown = null; hideName(); bar.setAttribute("aria-label", "Your name"); resolve(v); };
+      W.asked = done;   // Esc, or the window closing, is a Cancel
+      bar.querySelector("[data-sp=all]").onclick = () => done([sh, ...others]);
+      bar.querySelector("[data-sp=one]").onclick = () => done([sh]);
+      bar.querySelector("[data-sp=x]").onclick = () => done(null);
+      bar.onkeydown = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(null); } };
+      requestAnimationFrame(() => bar.querySelector("[data-sp=all]").focus());
+    });
+  }
+  function hideName() { if (W.asked) return W.asked(null); const bar = W.el && W.el.name; if (bar && !bar.hidden) { bar.hidden = true; bar.innerHTML = ""; } }
   const still = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const EASE = "cubic-bezier(.2,.8,.2,1)";
   const h = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
@@ -279,6 +297,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 .swName input{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:13px var(--sans);background:var(--card2);color:var(--ink)}
 .swName input:focus{outline:2px solid rgba(74,107,120,.35);border-color:var(--slate);background:var(--card)}
 .swName .swIcon{width:26px;height:26px}.swName .swIcon svg{width:12px;height:12px}
+.swName .swAsk{flex:1;min-width:0;padding:0 4px;color:var(--ink);line-height:1.35}
 /* a long step list or suggestion list scrolls in its own box: the orders list below always keeps room (1280×720 and the stacked layout) */
 .swPane[data-pane=sheet]>.swSheetMsg{max-height:30vh;overflow:hidden auto;overscroll-behavior:contain;border-radius:12px}
 .swPane[data-pane=sheet]:has(>[data-r=work]:not([hidden])):has(>[data-r=fill]:not([hidden]))>.swSheetMsg{max-height:21vh}
@@ -1244,6 +1263,11 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
   async function makeLabel(btn) {
     const plan = labelPlan(), id = W.id, rec = W.rec; if (!plan) return;
     const sh = allSheets().find(p => p.sheetId === id), run = window.B && B.run;
+    let sheets = [sh];
+    if (plan.kind === "include" && sh && Gate.splitWith) {
+      const split = Gate.splitWith(sh, true);
+      if (split.length) { btn.disabled = true; sheets = await askSplit(sh, split); btn.disabled = false; if (!sheets || W.id !== id) return; }
+    }
     const box = W.el.foot.querySelector("[data-r2=qr]"), text = box && box.querySelector("[data-r2=qrText]");
     btn.disabled = true; if (box) box.classList.add("remaking"); if (text) text.textContent = "Making the QR label…";
     const reason = () => { const set = Sets.ofRun(run.runId).find(s => s.group === "dispatch" && !s.committedAt); return set ? Gate.policy(sh, set.seq).reason : "there is no open set to join"; };
@@ -1258,7 +1282,7 @@ dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
         if (sh.draft) throw new Error(reason());
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${sheetName(sh)} released by hand at ${fmt.pct(sh.density || 0)} full, with its QR label for ${new Set(sh.charms.filter(c => sh.placements.some(p => p.id === c.id)).map(ridOf)).size} orders`);
       } else if (plan.kind === "include") {
-        await Gate.changeMembership(sh.metal, true, sh);
+        await Gate.changeMembership(sh.metal, true, sheets);
         if (sh.draft) throw new Error(reason());
       } else if (plan.kind === "relabel") {
         await Gate.assemble(run);

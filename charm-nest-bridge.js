@@ -2198,6 +2198,36 @@ const Gate = window.Gate = (() => {
   // (the run still arranges a metal's sheets once one of them is in, as it did once the metal was: only the set is per sheet)
   const anyPicked = (m, choices = selected(), runId = B.run?.runId) => choices[m] === true || allSheets().some(p => p.metal === m && p.solidPick === true && (!runId || !p.runId || p.runId === runId));
   const nestable = (sh, run) => !modern(run?.runId) || !solid(sh.metal) || anyPicked(sh.metal, run?.solidIncluded || selected(), run?.runId) || sh.isolated;
+  /* The one exception: an order with pieces on two 10K/14K sheets (Paul, 28 Sep: "if there is an order that spans two
+     sheets then you'd have to inform the user with a pop-up, and then let the user make the decision of what to do").
+     splitWith lists the other sheets that share an order with this one and would stay on the other side of the set. */
+  const ordersOn = sh => { const ids = new Set((sh.placements || []).map(p => p.id)); return new Set((sh.charms || []).filter(c => ids.has(c.id) && c.order).map(c => String(c.order).split("/")[0])); };
+  function splitWith(sh, included) {
+    const mine = ordersOn(sh); if (!mine.size) return [];
+    return allSheets().filter(p => p !== sh && solid(p.metal) && (p.runId || null) === (sh.runId || null) && picked(p) !== !!included && membershipEditable(p))
+      .map(p => ({ sheet: p, orders: [...ordersOn(p)].filter(id => mine.has(id)) })).filter(x => x.orders.length);
+  }
+  /** The choice, in a small window of its own (the Options panel closes first: never a pop-up over a pop-up). Resolves
+   *  to the sheets to change, or null when the person leaves things as they were. */
+  function askSplit(sh, included, split) {
+    const name = p => `${labelOf(p.metal)} Sheet ${p.page}`;
+    const buyer = id => { const r = Orders.rows().find(r => String(r.order?.receiptId) === id); return r?.order?.buyer?.name || ""; };
+    const others = split.map(x => x.sheet), orders = [...new Set(split.flatMap(x => x.orders))], one = orders.length === 1;
+    const line = x => `<li><b>${esc(name(x.sheet))}</b><span>${x.orders.slice(0, 4).map(id => `Order ${esc(id)}${buyer(id) ? ` · ${esc(buyer(id))}` : ""}`).join("<br>")}${x.orders.length > 4 ? `<br>and ${x.orders.length - 4} more` : ""}</span></li>`;
+    return new Promise(resolve => {
+      const d = document.createElement("dialog"); d.className = "splitDlg"; d.setAttribute("aria-labelledby", "splitT"); d.setAttribute("aria-describedby", "splitP");
+      d.innerHTML = `<div class="dlg"><div class="dlgHead"><h3 id="splitT">${one ? "An order is" : orders.length + " orders are"} on two sheets</h3></div>
+        <div class="dlgBody"><p id="splitP">${esc(name(sh))} shares ${one ? "an order" : orders.length + " orders"} with ${others.length > 1 ? "sheets that are" : "a sheet that is"} ${included ? "not in the current set" : "staying in the current set"}. ${included ? "Included" : "Taken out"} on its own, ${one ? "the order is" : "these orders are"} cut in two parts, at different times.</p><ul class="splitList">${split.map(line).join("")}</ul></div>
+        <div class="dlgFoot"><div class="left"><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div><button type="button" class="btn ghost sm" data-k="one">Only ${esc(name(sh))}</button><button type="button" class="btn sage sm" data-k="all">${included ? "Include" : "Take out"} ${others.length > 1 ? "all " + (others.length + 1) + " sheets" : "both sheets"}</button></div></div>`;
+      document.body.appendChild(d);
+      const done = v => { if (d.open) d.close(); d.remove(); resolve(v); };
+      d.querySelector("[data-k=all]").onclick = () => done([sh, ...others]);
+      d.querySelector("[data-k=one]").onclick = () => done([sh]);
+      d.querySelector("[data-k=cancel]").onclick = () => done(null);
+      d.addEventListener("cancel", e => { e.preventDefault(); done(null); });
+      d.showModal(); d.querySelector("[data-k=all]").focus();
+    });
+  }
   function policy(sh, seq, choices = selected()) {
     return O_.sheetRelease({ material: sh.metal, verified: !!sh.verification?.ok, placed: sh.placements.length,
       stopped: sh.endedBy === "stopped", dirty: sh.dirty || ["nesting", "finishing", "queued"].includes(sh.status), full: !!sh.releaseFull, topup: sh.topup && !sh.topup.closedAt ? { tried: (sh.topup.tried || []).length, of: TOPUP.orders } : false }, { seq, selected: solid(sh.metal) ? Object.assign({}, choices, { [sh.metal]: picked(sh, choices) }) : choices });
@@ -2326,11 +2356,15 @@ const Gate = window.Gate = (() => {
     const run=B.run;
     if(run && (['complete','abandoned'].includes(run.status) || committing(run)))return Promise.reject(new Error(committing(run) ? 'The set is being committed · try again when it finishes' : 'This run is finished'));
     const choices=run ? (run.solidIncluded ||= {}) : (R.solidIncluded ||= {});
-    if(solid(m) && sh){
-      // the tick is this sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
+    const list=(Array.isArray(sh) ? sh : [sh]).filter(Boolean);   // one sheet, or the sheets an order spans (askSplit)
+    if(solid(m) && list.length){
+      // the tick is each sheet's own: every sheet of the metal first keeps the metal's tick as it stands, then only the
       // sheets' own are read (a new sheet starts out of the set)
-      for(const p of allSheets().filter(p=>p.metal===m && typeof p.solidPick!=='boolean'))p.solidPick=choices[m]===true;
-      choices[m]=false; sh.solidPick=!!included;
+      for(const mm of new Set([m, ...list.map(p=>p.metal)].filter(solid))){
+        for(const p of allSheets().filter(p=>p.metal===mm && typeof p.solidPick!=='boolean'))p.solidPick=choices[mm]===true;
+        choices[mm]=false;
+      }
+      for(const p of list)p.solidPick=!!included;
     } else choices[m]=!!included;
     if(m==='rose' && included)for(const page of allSheets().filter(p=>p.metal==='rose'&&p.persistedDone&&p.verification?.ok&&!p.roseCutAt))window.RoseStock?.plan(page).catch(e=>toast('Rose Gold contour: '+e.message,'bad'));
     if (run) {
@@ -2402,7 +2436,17 @@ const Gate = window.Gate = (() => {
     if(sh.el)sh.el.querySelector(".shHead").title=policy(sh,seq).reason;   // the same hover answer the Gold and Silver cards give
     const retry=node.querySelector('[data-solid="retry"]');retry.hidden=!R.membershipError;
     retry.onclick=()=>changeMembership(m,m==='rose'?!!selected()[m]:picked(sh),sh).catch(()=>{});
-    include.onchange=e=>{if(!membershipEditable(sh))return renderRelease(sh,node);changeMembership(m,e.target.checked,sh).catch(()=>{});};
+    include.onchange=async e=>{
+      if(!membershipEditable(sh))return renderRelease(sh,node);
+      const want=e.target.checked,split=solid(m)?splitWith(sh,want):[];let list=[sh];
+      if(split.length){
+        const details=node.querySelector('.sheetOptions');if(details){details.open=false;(R.optionsOpen ||= {})[m]=false;}
+        list=await askSplit(sh,want,split);
+        if(!list || !membershipEditable(sh))return renderRelease(sh,node);   // left as it was
+        list=list.filter(membershipEditable);
+      }
+      changeMembership(m,want,list).catch(()=>{});
+    };
     for(const [axis,value] of [['w',st.wIn],['h',st.hIn]]){
       const input=node.querySelector('[data-solid="'+axis+'"]');
       input.disabled=sizeLocked;
@@ -2531,7 +2575,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */

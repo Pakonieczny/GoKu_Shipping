@@ -33,5 +33,23 @@ const inSet=()=>pages.filter(p=>!p.draft&&p.setId==='set').map(p=>p.page);
   assert.deepEqual(inSet(),[3,1]);
   // nothing ticked: the metal waits for you again
   await Gate.changeMembership('gold14k',false,pages[2]);assert(!Gate.nestable(pages[2],run),"nothing ticked: the metal waits");
+  // an order with pieces on two sheets (Paul, 28 Sep): the other sheet is named, so the person decides
+  const piece=(p,id,order)=>{p.charms.push({id,poolId:'p'+id,order});p.placements.push({id});};
+  piece(pages[0],'x1','900/1');piece(pages[1],'x2','900/2');piece(pages[1],'y2','901/1');
+  await Gate.changeMembership('gold14k',true,pages[1]);assert.deepEqual(inSet(),[2,1],'Sheet 2 in, Sheet 1 out');
+  assert.equal(Gate.splitWith(pages[0],true).length,0,'including Sheet 1 joins order 900 up');
+  assert.equal(Gate.splitWith(pages[1],false).length,0,'taking Sheet 2 out too joins it up');
+  await Gate.changeMembership('gold14k',false,pages[1]);
+  const split=Gate.splitWith(pages[1],true);assert.equal(split.length,1);assert.equal(split[0].sheet,pages[0]);assert.deepEqual([...split[0].orders],['900'],'including Sheet 2 alone splits order 900, and only 900');
+  assert.equal(Gate.splitWith(pages[2],true).length,0,'a sheet sharing no order asks nothing');
+  // "Take out both sheets": one change for the two
+  await Gate.changeMembership('gold14k',false,[pages[1],pages[0]]);assert.deepEqual(pages.filter(p=>p.metal==='gold14k'&&!p.draft).map(p=>p.page),[]);
+  // "Include both sheets"
+  await Gate.changeMembership('gold14k',true,[pages[0],pages[1]]);assert.deepEqual(pages.filter(p=>p.metal==='gold14k'&&!p.draft).map(p=>p.page).sort(),[1,2]);
+  // an order across 10K and 14K counts too
+  piece(pages[4],'z1','902/1');piece(pages[0],'z2','902/2');
+  assert.equal(Gate.splitWith(pages[4],true).length,0,'14K Sheet 1 is in, so including 10K Sheet 2 joins the order up');
+  assert.deepEqual([...Gate.splitWith(pages[0],false).map(x=>x.sheet.sheetId)],['gold14k-2'],'taking 14K Sheet 1 out splits order 900 (Sheet 2 stays in), not 902 (10K Sheet 2 is out)');
+  await Gate.changeMembership('gold10k',true,[pages[4]]);assert.deepEqual([...Gate.splitWith(pages[0],false).map(x=>x.sheet.sheetId)].sort(),['gold10k-2','gold14k-2'],'an order across 10K and 14K counts too');
   console.log('solid-per-sheet: ok');
 })().catch(e=>{console.error(e);process.exit(1);});

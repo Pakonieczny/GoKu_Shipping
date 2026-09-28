@@ -389,6 +389,12 @@ dialog.wide{width:min(980px,95vw)}
 .dlgBody{padding:16px 18px;overflow:auto}
 .dlgFoot{padding:11px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;background:var(--card2);flex:0 0 auto;align-items:center}
 .dlgFoot .left{margin-right:auto;display:flex;gap:8px;align-items:center}
+dialog.splitDlg{width:min(470px,94vw)}
+.splitDlg .dlgBody p{margin:0 0 12px;line-height:1.5;color:var(--ink70)}
+.splitList{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.splitList li{display:flex;gap:14px;align-items:baseline;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card2)}
+.splitList b{flex:0 0 auto;font-weight:650}
+.splitList span{color:var(--ink70);font-variant-numeric:tabular-nums;line-height:1.45}
 .field{display:grid;gap:4px;margin-bottom:12px}
 .field label{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink45);font-weight:700}
 .field input,.field select{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--card);width:100%}
@@ -5508,8 +5514,8 @@ async function boot() {
 }
 boot();
 </script>
-<script src="charm-nest-bridge.js?v=20260928-solid"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-solid"></script>
+<script src="charm-nest-bridge.js?v=20260928-split"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-split"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260925-audit"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
