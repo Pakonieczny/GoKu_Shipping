@@ -27,7 +27,7 @@ async function main() {
   ev(A.rid, 'welded', NOW - DAY * 1000, { station: 'welding' }, 'Sandbox_');   // the sandbox plays the same number
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
-  const ctl = { gets: [], hold: null, holdMs: 0, fail: false, pass: '' };
+  const ctl = { gets: [], masterGets: [], hold: null, holdMs: 0, fail: false, pass: '' };
   const errors = [];
   async function session(settings) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -35,6 +35,7 @@ async function main() {
     // the timeline reads, counted, and held, failed or refused (a passcode) on demand
     await context.route(u => /\/\.netlify\/functions\/charmNestLibrary/.test(u.href), async route => {
       let b = {}; try { b = JSON.parse(route.request().postData() || '{}'); } catch (_) {}
+      if (b.op === 'masterGet') { ctl.masterGets.push({ t: Date.now(), sku: b.sku }); }
       if (b.op !== 'timelineGet') return route.fallback();
       const hdr = route.request().headers()['x-edit-passcode'] || '';
       ctl.gets.push({ rid: b.orderId, sandbox: b.sandbox, pass: hdr, t: Date.now() });
@@ -78,7 +79,7 @@ async function main() {
     // 1 · the reads per open
     let perOpen = [];
     await check('one timelineGet per open: Overview, the header rail and the Timeline tab share it', async () => {
-      let t0 = Date.now(); const fns = {}, onReq = r => { const m = /\/\.netlify\/functions\/([\w-]+)/.exec(r.url()); if (m) { let op = ''; try { op = JSON.parse(r.postData() || '{}').op || ''; } catch (_) {} const k = m[1] + (op ? ':' + op : ''); fns[k] = (fns[k] || 0) + 1; } };
+      let t0 = Date.now(); const t1 = t0; const fns = {}, onReq = r => { const m = /\/\.netlify\/functions\/([\w-]+)/.exec(r.url()); if (m) { let op = ''; try { op = JSON.parse(r.postData() || '{}').op || ''; } catch (_) {} const k = m[1] + (op ? ':' + op : ''); fns[k] = (fns[k] || 0) + 1; } };
       page.on('request', onReq);
       await page.evaluate(k => OrderWin.open(k), keyOf(A)); await railReady(page); await sleep(600);
       page.off('request', onReq); console.log('      every cloud call of one open (Overview, 0.6 s after the rail is drawn):', JSON.stringify(fns));
@@ -88,6 +89,9 @@ async function main() {
       t0 = Date.now();
       await page.evaluate(k => OrderWin.open(k, { view: 'timeline' }), keyOf(A)); await fullReady(page); await railReady(page); await sleep(800);
       perOpen.push(gets(A.rid, t0));
+      const mg = ctl.masterGets.filter(g => g.t >= t1 && g.sku === A.sku).length;
+      console.log('      masterGet for its SKU (no Library entry), over both opens:', mg);
+      assert(mg <= 1, 'a missing Library entry is remembered: masterGet ' + mg + ' times for ' + A.sku);
       console.log('      timelineGet per open (Overview then Timeline tab, back and forth; opened on Timeline):', perOpen.join(', '));
       assert.deepEqual(perOpen, [1, 1], 'timelineGet calls per open');
     });

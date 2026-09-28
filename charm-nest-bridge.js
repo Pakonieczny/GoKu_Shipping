@@ -1528,7 +1528,25 @@ const Master = window.Master = (() => {
     })().finally(() => { B.master.loading = null; if (changed) render(); });
     return B.master.loading;
   }
-  async function fetchEntry(sku) { sku = String(sku || "").toUpperCase(); if (!sku) return null; const r = await api("charmNestLibrary", { op: "masterGet", sku }); if (r.entry) B.master.entries.set(sku, r.entry); return r.entry; }
+  /* A SKU the Library has no entry for is remembered for 5 minutes, or until the Library changes (its index, or an entry
+     added or read in again): opening one order asked masterGet four times for it. A read on its way is shared; a failed
+     read is not remembered. */
+  const missing = new Map(), asking = new Map(), MISS_MS = 300000;
+  const libSig = () => { try { return JSON.stringify(B.master.index || null) + "|" + B.master.entries.size; } catch (_) { return ""; } };
+  async function fetchEntry(sku) {
+    sku = String(sku || "").toUpperCase(); if (!sku) return null;
+    const have = B.master.entries.get(sku); if (have) return have;
+    const m = missing.get(sku);
+    if (m && m.map === B.master.entries && m.sig === libSig() && Date.now() - m.at < MISS_MS) return m.entry;
+    if (asking.has(sku)) return asking.get(sku);
+    const p = (async () => {
+      const r = await api("charmNestLibrary", { op: "masterGet", sku });
+      if (r.entry) { B.master.entries.set(sku, r.entry); missing.delete(sku); }
+      else { missing.set(sku, { at: Date.now(), map: B.master.entries, sig: libSig(), entry: r.entry }); while (missing.size > 500) missing.delete(missing.keys().next().value); }
+      return r.entry;
+    })().finally(() => asking.delete(sku));
+    asking.set(sku, p); return p;
+  }
   const skuRegex = () => { try { return new RegExp(S.settings.skuPattern || DEFAULTS.skuPattern); } catch (_) { return P.SKU_PATTERN_DEFAULT; } };
   /** Render the strip under a charm (for the vision fallback) → PNG data URL. */
   /** The strip a label would occupy: the outline's width (widened 30 %), from its bottom edge down by the label gap. */
