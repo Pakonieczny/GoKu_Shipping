@@ -2420,6 +2420,10 @@ const Gate = window.Gate = (() => {
           <label>Width <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="w" value="${+(st.wIn*25.4).toFixed(2)}"></label>
           <label>Height <span>mm</span><input type="number" min="5" max="500" step="0.1" data-solid="h" value="${+(st.hIn*25.4).toFixed(2)}"></label>
         </div><div class="sheetSizeAction"><span class="help" data-solid="size-help"></span><button type="button" class="btn ghost xs" data-solid="size">Apply size</button></div></section>
+        ${solid(m) ? `<section class="sheetOptionSection" data-solid="merge" hidden><h4>Merge sheets</h4><p class="help sheetMergeHelp" data-solid="merge-help"></p>
+          <div class="sheetMergeActions" data-solid="merge-actions"><button type="button" class="btn ghost xs" data-solid="merge-move">Move all onto Sheet 1</button><button type="button" class="btn ghost xs" data-solid="merge-renest">Re-nest both sheets</button></div>
+          <div class="sheetMergeAsk" data-solid="merge-ask" role="group" aria-label="Confirm merge" hidden><span class="help" data-solid="merge-ask-text"></span><span class="sheetMergeAskBtns"><button type="button" class="btn ghost xs" data-solid="merge-cancel">Cancel</button><button type="button" class="btn sage xs" data-solid="merge-go">Merge</button></span></div>
+          <div class="sheetMergeBusy" data-solid="merge-busy" role="status" hidden><span class="spin" aria-hidden="true"></span><span data-solid="merge-busy-text"></span></div></section>` : ""}
       </div></details>`;
       const details=node.querySelector('.sheetOptions');
       details.ontoggle=()=>{(R.optionsOpen ||= {})[m]=details.open;};
@@ -2479,6 +2483,173 @@ const Gate = window.Gate = (() => {
       } catch(e){toast('Size not applied: '+e.message,'bad');}
       finally {node._sizeApplying=false;renderRelease(sh,node);}
     };
+    if(solid(m))paintMerge(sh,node);
+  }
+
+  /* ── Merge sheets (Paul, 28 Sep: "add a new button that allows two sheets to be merged into one, especially when the
+     user changes the size of the available sheet and now there's more room to fit the charms, but they're stuck in the
+     second sheet"). A 10K or 14K sheet made bigger kept its charms, and so did the sheets after it. From the Options of
+     either card, two ways:
+       · Move all onto Sheet 1: every charm of the metal's later sheets goes onto its first sheet that can still change,
+         which is nested again at its size; what still does not fit moves on to the next sheet as any overflow does, and
+         the sheets emptied go (their tabs fold away).
+       · Re-nest both sheets: every charm of those sheets is nested again from the first of them on, oldest orders first,
+         as a fresh run of the same flow: each sheet refills in turn (overflowToNextSheet follows _mergeNext), and a sheet
+         left empty at the end goes.
+     Only sheets that can still change take part (not cut, not recalled, not in a committed set, not while a set commits,
+     none being rewritten in the sheet window) and only those of one run. A sheet in the current set leaves it while it is
+     nested again and goes back in with a new QR label, as after a size change (assemble); a sheet that goes leaves the
+     set first, and its saved record is archived at the run's next checkpoint (LiveNest.finish). No charm is dropped on
+     the way: each moves before its sheet goes, an order's copies stay together (keepOrdersWhole), and the approved
+     engraving backs go with their charms. ── */
+  const MERGE = {};   // metal → { ask, busy, done }: this page's own, never saved (R is)
+  const busyPage = p => ["nesting", "finishing", "queued"].includes(p.status) || !!p._operationStarting || !!p._learnedStarting || !!(p.persisted && !p.persistedDone);
+  const mergeable = p => solid(p.metal) && p.charms.length > 0 && modern(p.runId) && membershipEditable(p) && !p.roseCutAt && !p.laserDoneAt && !holding(p);
+  const charmsWord = n => `${n} charm${n === 1 ? "" : "s"}`;
+  const sheetsWord = list => list.length === 1 ? `Sheet ${list[0].page}` : `Sheets ${list.slice(0, -1).map(p => p.page).join(", ")} and ${list.at(-1).page}`;
+  /** The metal's sheets a merge takes: the first that can still change, and the later ones of its run. null: nothing to merge. */
+  function mergePlan(m) {
+    if (!solid(m)) return null;
+    const open = pagesOf(m).filter(mergeable); if (open.length < 2) return null;
+    const target = open[0], sources = open.slice(1).filter(p => (p.runId || null) === (target.runId || null));
+    if (!sources.length) return null;
+    const pages = [target, ...sources], count = list => list.reduce((n, p) => n + p.charms.length, 0);
+    return { target, sources, pages, moving: count(sources), total: count(pages) };
+  }
+  /** What a press will do, in the words the panel asks with. */
+  function mergeWords(plan, kind) {
+    const t = plan.target, st = stockFor(t.metal, t), mm = v => +(v * 25.4).toFixed(1), inSet = plan.pages.some(p => p.setId && !p.draft);
+    if (kind === "move") return `${charmsWord(plan.moving)} from ${sheetsWord(plan.sources)} go onto Sheet ${t.page}, which is nested again at ${mm(st.wIn)} × ${mm(st.hIn)} mm. Whatever does not fit moves on to the next sheet.` +
+      (picked(t) ? (inSet ? ` Sheet ${t.page} gets a new QR label once it is nested.` : "") : plan.sources.some(p => picked(p)) ? ` Sheet ${t.page} is not in the current set, so these orders leave it.` : "");
+    return `All ${charmsWord(plan.total)} on ${sheetsWord(plan.pages)} are nested again from Sheet ${t.page} on, oldest orders first. A sheet left empty is removed.` + (inSet ? " Sheets in the current set get new QR labels once nested." : "");
+  }
+  // a sheet that goes: its saved record is archived at the run's next checkpoint (LiveNest.finish), as a repacked open
+  // sheet's is, and the run forgets its hold and its note (only a record the cloud has: archiving an unknown one would stop the run)
+  function retirePage(run, p) {
+    if (!run || p.runId !== run.runId) return;
+    if (p.sheetId && p.cloud) (run.intakeRecovery ||= { retire: [], backs: [] }).retire.push(p.sheetId);
+    const key = p.sheetId || p.metal + "-" + p.page; delete (run.sheetHolds || {})[key]; if (run.sheets) delete run.sheets[key];
+  }
+  /** The merge as it is seen: the charms' thumbnails leave the sheet they were on (its queue, when the card shows it, or
+   *  its tab) and fly to Sheet 1, each onto its own thumbnail there; a tab left empty folds away as the row is drawn again
+   *  (setSheetTabs). Taken before the charms move; what it returns plays it once they have. */
+  function mergeFlight(m, sources, target, moving) {
+    const M = window.Motion, card = S.sheets[m]?.cardEl, none = () => {};
+    if (!M || !card || typeof document === "undefined") return none;
+    const tabOf = p => [...card.querySelectorAll('[data-r="tabs"] button[data-i]')].find(b => pagesOf(m)[+b.dataset.i] === p) || null;
+    const ids = new Set(moving.map(c => c.id)), ghosts = [];
+    if (!M.reduced()) {
+      if (sources.includes(activePage(m)) && typeof queueGhosts === "function") ghosts.push(...queueGhosts(card, id => ids.has(id), 12).map(g => ({ g, id: g._card.dataset.cid })));
+      else for (const p of sources) {
+        const r = tabOf(p)?.getBoundingClientRect(); if (!r || !r.width) continue;
+        p.charms.filter(c => c.thumb).slice(0, 6).forEach((c, i, all) => {
+          const img = document.createElement("img"), s = 26; img.src = typeof cors === "function" ? cors(c.thumb) : c.thumb; img.alt = "";
+          const g = M.ghost(img, { left: r.left + r.width / 2 - s / 2 + (i - (all.length - 1) / 2) * 7, top: r.top + r.height / 2 - s / 2, width: s, height: s }, 0, card);
+          Object.assign(g._card.style, { objectFit: "contain", background: "#fff", border: "1px solid var(--line)", borderRadius: "6px" });
+          ghosts.push({ g, id: c.id });
+        });
+      }
+    }
+    return () => {
+      if (!ghosts.length) { M.pulse(() => tabOf(target)); return; }
+      const to = id => typeof cardSpot === "function" && activePage(m) === target ? cardSpot(m, id) : () => tabOf(target);
+      ghosts.forEach(({ g, id }, i) => setTimeout(() => M.fly(g, to(id), { plus: i ? false : "+" + moving.length }), i * 110));
+    };
+  }
+  function repaintMerge(m) { for (const p of pagesOf(m)) { const node = p.el?.querySelector?.(".shGate"); if (node) renderRelease(p, node); } }
+  /** Merge a metal's sheets: kind "move" (all onto its first open sheet) or "renest" (all of them again, oldest first).
+   *  Resolves once the sheets it took are nested and saved (or it stopped), true when it ran. */
+  function mergeSheets(m, kind) {
+    const plan = mergePlan(m), st = MERGE[m] || (MERGE[m] = {});
+    if (!plan || st.busy || !["move", "renest"].includes(kind)) return Promise.resolve(false);
+    const run = B.run, t = plan.target, ops = window.CharmNestOperations;
+    st.ask = null; st.done = null;
+    st.busy = { kind, text: "Waiting for the sheets to finish their current step…", pages: new Set(plan.pages), before: new Set(pagesOf(m)), target: t };
+    repaintMerge(m);
+    const work = async ctx => {
+      // looked at again in its turn: a sheet may have started nesting, been cut or committed meanwhile
+      const now = mergePlan(m);
+      if (B.run !== run || !now || now.target !== t || now.sources.length !== plan.sources.length || now.sources.some((p, i) => p !== plan.sources[i])) throw new Error("the sheets changed meanwhile. Look again and press it once more");
+      if (pagesOf(m).some(busyPage)) throw new Error("a sheet of this metal is nesting or saving. Try again when it is done");
+      const { sources, pages } = plan;
+      st.busy.text = kind === "move" ? `Moving ${charmsWord(plan.moving)} onto Sheet ${t.page}…` : `Gathering ${charmsWord(plan.total)} onto Sheet ${t.page}…`; repaintMerge(m);
+      // every sheet taking part is nested again from scratch: pins go, as with Apply size
+      for (const p of pages) { for (const c of p.charms) { c.pinned = null; delete c.arrivalPin; } p.feedWait = null; sheetDirty(p); }
+      // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is nested again)
+      if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { try { await assemble(run, ctx); } catch (e) { changed(); throw e; } }
+      const moving = sources.flatMap(p => p.charms), poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
+      let flight = () => {}; try { flight = mergeFlight(m, sources, t, moving); } catch (e) { console.warn("merge sheets: motion", e); }
+      // onto Sheet 1 first, with their approved backs; only then is anything taken away
+      t.charms = t.charms.concat(moving).sort((a, b) => (+a.orderDate || 0) - (+b.orderDate || 0));
+      for (const c of moving) c.metal = m;
+      for (const p of sources) {
+        const backs = (p.backPool || []).filter(b => poolIds.has(b.poolId));
+        if (backs.length) t.backPool = (t.backPool || []).filter(b => !poolIds.has(b.poolId)).concat(backs);
+        p.backPool = (p.backPool || []).filter(b => !poolIds.has(b.poolId));
+        p.charms = []; p.placements = []; p.rejects = []; p.feedWait = null; p.movedOn = null;
+      }
+      if (kind === "move") for (const p of sources.slice().reverse()) { retirePage(run, p); removePage(p); }
+      else { for (let i = 0; i < pages.length - 1; i++) pages[i]._mergeNext = pages[i + 1]; for (const p of sources) sheetDirty(p); }
+      const prim = S.sheets[m]; if (prim.pages[prim.active] !== t && window.CN?.showPage) window.CN.showPage(m, prim.pages.indexOf(t));
+      t._byHand = true; startNest(t);
+      agent({ metal: m, run: run?.runId }, "nest", kind === "move" ? `Merged by hand: ${charmsWord(plan.moving)} from ${sheetsWord(sources)} moved onto Sheet ${t.page}, which is nested again; what does not fit moves on` : `Re-nest by hand: ${charmsWord(plan.total)} of ${sheetsWord(pages)} nested again from Sheet ${t.page} on, oldest orders first`);
+      st.busy.text = `Nesting Sheet ${t.page}…`;
+      changed();
+      try { flight(); } catch (e) { console.warn("merge sheets: motion", e); }
+      return true;
+    };
+    const task = ops ? ops.run({ key: "sheet-merge:" + m, label: `Merging ${labelOf(m)} sheets`, resources: ["production:" + (run?.runId || t.runId || t.sheetId || m)], priority: 20 }, work) : work(null);
+    // (once the charms have moved, the merge is done: only its line can still go wrong)
+    const after = () => watchMerge(m, st).catch(e => { for (const p of pagesOf(m)) delete p._mergeNext; st.busy = null; console.warn("merge sheets", e); repaintMerge(m); }).then(() => true);
+    return task.then(after, e => {
+      st.busy = null; st.done = { text: "Not merged: " + e.message, at: Date.now(), bad: true };
+      toast("Sheets not merged: " + e.message, "bad"); repaintMerge(m); return false;
+    });
+  }
+  /** The merge runs on as its sheets nest: its line says which, until none of them is working. Then a sheet the rerun
+   *  left empty goes, and the line says where the charms are. */
+  async function watchMerge(m, st) {
+    const b = st.busy, until = Date.now() + 3600000, mine = () => pagesOf(m).filter(p => b.pages.has(p) || !b.before.has(p));
+    const held = p => p.status === "queued" && typeof heldForResume === "function" && heldForResume(p);   // a stopped run's: it waits for Resume
+    for (;;) {
+      await new Promise(r => setTimeout(r, 400));
+      const p = mine().find(p => busyPage(p) && !held(p));
+      if (!p || Date.now() > until) break;
+      const text = p.status === "nesting" ? `Nesting Sheet ${p.page} · ${p.placements.length} of ${activeCharms(p).length} placed` : p.status === "finishing" ? `Writing Sheet ${p.page}…` : p.persisted && !p.persistedDone && !["queued"].includes(p.status) ? `Saving Sheet ${p.page}…` : `Sheet ${p.page} waits its turn…`;
+      if (text !== b.text) { b.text = text; repaintMerge(m); }
+    }
+    for (const p of pagesOf(m)) delete p._mergeNext;
+    const run = B.run, gone = [];
+    if (b.kind === "renest") for (const p of mine().reverse()) if (p !== b.target && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
+    const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
+    st.busy = null;
+    st.done = { at: Date.now(), bad: !!trouble, text: trouble ? `Sheet ${trouble.page} needs a look: ${trouble.problem}` : waiting ? `Sheet ${waiting.page} waits for Resume` : ["Done", ...left.map(p => `Sheet ${p.page}: ${charmsWord(p.charms.length)}`)].join(" · ") };
+    if (gone.length) { agent({ metal: m, run: run?.runId }, "nest", `Re-nest: ${gone.length === 1 ? `Sheet ${gone[0]} was left empty and removed` : `${gone.length} sheets were left empty and removed`}`); changed(); }
+    repaintMerge(m); setTimeout(() => repaintMerge(m), 12500);
+  }
+  /** The panel's Merge sheets section: shown while the metal has two sheets or more that can change, or a merge runs. */
+  function paintMerge(sh, node) {
+    const m = sh.metal, sec = node.querySelector('[data-solid="merge"]'); if (!sec) return;
+    const st = MERGE[m] || (MERGE[m] = {}), q = k => sec.querySelector(`[data-solid="merge-${k}"]`);
+    const plan = st.busy ? null : mergePlan(m), done = st.done && Date.now() - st.done.at < 12000 ? st.done : null;
+    sec.hidden = !st.busy && !plan && !done;
+    if (sec.hidden) { st.ask = null; return; }
+    const blocked = !!plan && pagesOf(m).some(busyPage), asking = !!(plan && st.ask && !blocked);
+    if (!asking) st.ask = null;
+    const move = q("move"), renest = q("renest"), help = q("help");
+    if (plan) { move.textContent = `Move all onto Sheet ${plan.target.page}`; renest.textContent = plan.pages.length === 2 ? "Re-nest both sheets" : `Re-nest all ${plan.pages.length} sheets`; }
+    q("actions").hidden = asking || (!plan && !st.busy);
+    move.disabled = renest.disabled = !!st.busy || !plan || blocked;
+    q("ask").hidden = !asking; q("busy").hidden = !st.busy;
+    if (st.busy) q("busy-text").textContent = st.busy.text;
+    help.hidden = !!st.busy || asking;
+    help.classList.toggle("bad", !!done?.bad);
+    help.textContent = done ? done.text : blocked ? "Wait until the sheets finish nesting and saving." : plan ? `${sheetsWord(plan.sources)} ${plan.sources.length > 1 ? "hold" : "holds"} ${charmsWord(plan.moving)}. Move them onto Sheet ${plan.target.page}, or nest ${plan.pages.length === 2 ? "both sheets" : "all " + plan.pages.length + " sheets"} again from the start.` : "";
+    if (asking) { q("ask-text").textContent = mergeWords(plan, st.ask); q("go").textContent = st.ask === "move" ? "Merge" : "Re-nest"; }
+    const ask = kind => { st.ask = kind; st.done = null; paintMerge(sh, node); q("go").focus(); };
+    move.onclick = () => ask("move"); renest.onclick = () => ask("renest");
+    q("cancel").onclick = () => { st.ask = null; paintMerge(sh, node); move.focus(); };
+    q("go").onclick = () => { const kind = st.ask; st.ask = null; mergeSheets(m, kind); };
   }
 
   async function load() {
@@ -2575,7 +2746,7 @@ const Gate = window.Gate = (() => {
     el2.className = cls; el2.classList.remove("hidden"); el2.innerHTML = html;
     const b = el2.querySelector("[data-gate]"); if (b) b.onclick = () => { b.disabled = true; (b.dataset.gate === "release" ? release(m) : cutAnyway(m)).catch(e => toast(e.message, "bad", 6000)); };
   }
-  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, state: () => R };
+  return { solidSelected:(m, sh) => sh && solid(m) ? picked(sh) : anyPicked(m), splitWith, changeMembership, flush, projectLibraryRecords, refreshMembership, load, plan, afterPool, release, cutAnyway, renderCard, footprint, modern, policy, assemble, holding, keep, upgrade, selected, nestable, renderRelease, mergePlan, mergeSheets, state: () => R };
 })();
 
 /* ═══ 21 · Engrave — the words, the checked flip, the fit, the review, the back files ═══ */
