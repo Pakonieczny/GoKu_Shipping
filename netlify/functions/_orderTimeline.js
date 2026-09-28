@@ -84,12 +84,12 @@ async function get(db, orderId, opts = {}) {
   ]);
   const recorded = snap.docs.map(d => { const x = d.data(); delete x.createdAt; x.id = d.id; return x; });
   const cancelled = can.exists ? (x => { delete x.createdAt; return x; })(can.data()) : null;
-  const byTime = (a, b) => a.at - b.at || String(a.id).localeCompare(String(b.id));
-  if (!derived) { const events = recorded.sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.size >= 2000 }; }
+  const sandbox = !!opts.prefix;
+  if (!derived) { const events = chronology(recorded, { sandbox }).sort(byTime); return { orderId: id, events, cancelled, where: whereOf(events, cancelled, { record: true }), now: Date.now(), truncated: snap.size >= 2000 }; }
   const { events: raw, sheets, errors, timedOut } = derived.value || { events: [], sheets: null, errors: [], timedOut: true };
   const cancelEvents = cancelled ? finalize(id, cancelEventsOf(id, cancelled)) : [];
   const kept = dedupe(recorded, cancelEvents.concat(raw)); kept.forEach(e => { delete e.series; });
-  const events = recorded.concat(kept).sort(byTime);
+  const events = chronology(recorded.concat(kept), { sandbox }).sort(byTime);
   const out = { orderId: id, events, cancelled, where: whereOf(events, cancelled, { sheets, record: true }), now: Date.now(), truncated: snap.size >= 2000, derived: { count: kept.length, dropped: cancelEvents.length + raw.length - kept.length } };
   if (errors && errors.length) out.derived.errors = errors.slice(0, 12);
   if (timedOut) out.derived.timedOut = true;
@@ -237,7 +237,8 @@ async function deriveEvents(db, id, opts) {
   // Etsy: when the order was placed, shipped, completed or cancelled
   const placedAt = rc && msOf(rc.created_timestamp) || arrival && msOf(arrival.createTs) || arch && arch.status && msOf(arch.status.createdTs) || pools.map(p => msOf(p.orderDate)).find(Boolean) || 0;
   ev("arrived", placedAt, { id: "d-etsy-placed", by: "Etsy", source: "etsy", text: "Order placed on Etsy", milestone: true, data: rc ? { etsyStatus: s(rc.status, 40) } : null });
-  if (arrival) ev("arrived", msOf(arrival.firstSeenAt), { id: "d-first-seen", by: "System", source: "sorter", station: "sorter", text: "First seen by the sorter", milestone: false });
+  // (seenAt: the real clock's moment, which the sandbox's ledger keeps beside the stream's simulated firstSeenAt)
+  if (arrival) ev("arrived", msOf(arrival.seenAt) || msOf(arrival.firstSeenAt), { id: "d-first-seen", by: "System", source: "sorter", station: "sorter", text: "First seen by the sorter", milestone: false, data: msOf(arrival.seenAt) ? { clock: "real", firstSeenAt: msOf(arrival.firstSeenAt) } : null });
   const ships = rc ? (rc.raw && Array.isArray(rc.raw.shipments) ? rc.raw.shipments : []).map(x => ({ at: msOf(x.shipment_notification_timestamp || x.notification_date), carrier: s(x.carrier_name, 40), tracking: s(x.tracking_code, 60) }))
     : arch && Array.isArray(arch.shipments) ? arch.shipments.map(x => ({ at: msOf(x.notificationTs), carrier: s(x.carrier, 40), tracking: s(x.trackingCode, 60) })) : [];
   ships.filter(x => x.at).slice(0, 5).forEach((x, i) => ev("shipped", x.at, { id: `d-etsy-shipped-${i}`, by: "Etsy", source: "etsy", station: "shipping", text: `Shipped${x.carrier ? " with " + x.carrier : ""}${x.tracking ? " · " + x.tracking : ""}`, data: { carrier: x.carrier, tracking: x.tracking } }));
@@ -374,6 +375,49 @@ function dedupe(recorded, derived) {
   return kept;
 }
 
+/* ── chronology (Paul, 28 Sep 21:18, points 3 and 4): the order's arrival ("Order in") is the anchor, it is there once,
+   and nothing is drawn before it. Run on the whole answer (recorded + derived), after dedupe.
+   Production: the anchor is the Etsy order's own time (the mirror's created_timestamp, else the one the arrivals ledger
+   kept from Etsy's list); the sorter's first sight of it is folded into it (data.firstSeenAt). An event stamped before
+   it (a browser's clock a little behind Etsy's) is drawn at it, its own time kept (data.recordedAt, approx).
+   Sandbox: the stream replays real Etsy orders on a simulated clock (the replayed order's Etsy time and the ledger's
+   firstSeenAt are the stream's), while everything else is stamped on the real clock: the two cannot be compared. Its
+   anchor is the real-clock moment the sandbox first saw the order (an arrival marked data.clock "real"). An older
+   arrival kept only the simulated time, whose real moment cannot be known: it is drawn no later than the first thing
+   that happened to the order (data.simAt keeps what the stream said). A custom reading and its decision live in
+   Charm_Nest_CustomRead, which both workspaces share and a sandbox reset keeps, so their times can be a reading made
+   before the sandbox replayed the order: they never move the anchor, and like anything else before it, they are drawn
+   at it. Nothing is dropped and no time is made up: a time moves only to the anchor, and keeps its own beside it. ── */
+const SHARED_CLOCK = new Set(["customRead", "customDecided"]);
+const ARRIVED_FIRST = (a, b) => (a.type === "arrived" ? -1 : b.type === "arrived" ? 1 : 0);
+const recAt = e => (e.data && n(e.data.recordedAt)) || n(e.at);
+/** Oldest first; at the same moment the arrival leads, then what was moved to it, in its own order. */
+const byTime = (a, b) => n(a.at) - n(b.at) || ARRIVED_FIRST(a, b) || recAt(a) - recAt(b) || String(a.id).localeCompare(String(b.id));
+function chronology(events, opts = {}) {
+  const list = (events || []).filter(Boolean), arr = list.filter(e => e.type === "arrived" && n(e.at) > 0);
+  if (!arr.length) return list;   // no arrival known: nothing to anchor to, and none is made up
+  const sandbox = !!opts.sandbox, early = (a, b) => n(a.at) - n(b.at);
+  const real = e => !!(e.data && e.data.clock === "real"), etsy = e => e.source === "etsy" || e.by === "Etsy";
+  const pref = sandbox ? arr.filter(real) : arr.filter(etsy);
+  const anchor = (pref.length ? pref : arr).slice().sort(early)[0];
+  const rest = list.filter(e => e.type !== "arrived");
+  const data = Object.assign({}, anchor.data || {});
+  // the other arrivals say the same thing (the order came in): folded into the one, their times kept
+  for (const e of arr) {
+    if (e === anchor) continue;
+    const sim = sandbox && !real(e), k = sim ? (etsy(e) ? "simEtsyAt" : "simFirstSeenAt") : etsy(e) ? "etsyAt" : "firstSeenAt";
+    if (!n(data[k])) data[k] = n(e.at);
+  }
+  let at = n(anchor.at);
+  if (sandbox && !real(anchor)) {
+    const first = rest.reduce((m, e) => (!SHARED_CLOCK.has(e.type) && n(e.at) > 0 ? Math.min(m, n(e.at)) : m), Infinity);
+    if (first < at) { data.simAt = at; data.approx = true; at = first; }
+  }
+  const out = [Object.assign({}, anchor, { at, milestone: true, data })];
+  for (const e of rest) out.push(n(e.at) < at ? Object.assign({}, e, { at, data: Object.assign({}, e.data || {}, { recordedAt: n(e.at), approx: true }) }) : e);
+  return out;
+}
+
 /* ── where the order is now ── */
 const RANK = {
   arrived: 0, pulled: 0, interpreted: 0, pooled: 0, decided: 0, skipped: 0, customDecided: 0, designSent: 0, designDropped: 0, released: 0, restored: 0,
@@ -397,7 +441,7 @@ const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLin
     cancelled, as cancelCheck does: a cancel event with no record left (a restore whose cancelRestored event could not be
     written) stays in the history but does not make it cancelled. */
 function whereOf(events, cancelled, hint = {}) {
-  const list = (events || []).filter(e => e && TYPES.has(e.type)).slice().sort((a, b) => n(a.at) - n(b.at));
+  const list = (events || []).filter(e => e && TYPES.has(e.type)).slice().sort(byTime);
   let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, cut = false, designed = false, cancel = null, step = list.length ? 0 : -1;
   const enter = (st, e) => { if (st !== stage) since = n(e.at); stage = st; };
   for (const e of list) {
@@ -449,4 +493,4 @@ function whereOf(events, cancelled, hint = {}) {
   if (by) bits.push(`by ${by}`);
   return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
 }
-module.exports = { RAIL, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

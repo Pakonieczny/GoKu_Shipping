@@ -154,7 +154,9 @@ put(`Sandbox_Order_Timeline/${RID}~pulled~x`, { orderId: RID, type: 'pulled', at
   // from Etsy (the mirror): placed, completed; its shipment is the one the station recorded (within 3 minutes)
   const placed = byId.get(`${RID}~arrived~d-etsy-placed`);
   assert(placed && placed.at === T0 - H && placed.by === 'Etsy' && placed.milestone === true, 'placed on Etsy: ' + JSON.stringify(placed));
-  assert(byId.get(`${RID}~arrived~d-first-seen`).at === T0 && byId.get(`${RID}~arrived~d-first-seen`).milestone === false, 'first seen by the sorter');
+  // one arrival (Paul, 28 Sep 21:18): the sorter's first sight is folded into Etsy's own time, the anchor
+  assert(!byId.has(`${RID}~arrived~d-first-seen`) && placed.data.firstSeenAt === T0 && has('arrived').length === 1, 'one arrival, first seen folded in: ' + JSON.stringify(has('arrived')));
+  assert(a.events[0] === placed && a.events.every(e => e.at >= placed.at), 'nothing before the order came in');
   assert.strictEqual(has('shipped').length, 1, 'shipped once: the recorded one wins over the mirror\'s within 3 minutes');
   assert(!has('shipped')[0].derived && has('shipped')[0].by === 'Kim', 'the recorded shipment stays');
   assert(has('etsyCompleted', e => e.derived && e.at === T0 + 5 * D).length === 1, 'completed on Etsy');
@@ -214,7 +216,10 @@ put(`Sandbox_Order_Timeline/${RID}~pulled~x`, { orderId: RID, type: 'pulled', at
   const bt = t => b.events.filter(e => e.type === t);
   assert(bt('pulled').length === 1 && !bt('pulled')[0].derived, 'the sandbox\'s recorded event');
   // (a custom reading is shared by both workspaces, as _charmNestCustomRead keeps it; a decision is per workspace)
-  assert(bt('arrived').some(e => e.at === S0) && !b.events.some(e => e.at < S0 - 2 * H && !/^custom/.test(e.type)), 'only the sandbox\'s history: ' + JSON.stringify(b.events.map(e => [e.type, e.at - S0])));
+  assert(!b.events.some(e => e.at < S0 - 2 * H), 'only the sandbox\'s history: ' + JSON.stringify(b.events.map(e => [e.type, e.at - S0])));
+  // one arrival, first; the shared reading (made a week before the sandbox replayed the order) drawn at it, its time kept
+  assert(bt('arrived').length === 1 && b.events[0].type === 'arrived' && b.events.every(e => e.at >= b.events[0].at), 'the arrival leads: ' + JSON.stringify(b.events.map(e => [e.type, e.at - S0])));
+  assert(bt('customRead').length === 1 && bt('customRead')[0].at === b.events[0].at && bt('customRead')[0].data.recordedAt === T0 + 20 * M, 'a shared reading from before is drawn at the arrival');
   assert(bt('customDecided').length === 1 && bt('customDecided')[0].by === 'Sim', 'the sandbox\'s own custom decision');
   assert(bt('placed').length === 1 && bt('placed')[0].sheet === 'GF Sheet 1', 'placed on its sandbox sheet');
   assert(bt('cancelled').length === 1 && bt('cancelled')[0].by === 'Sim' && /rehearsal/.test(bt('cancelled')[0].text), 'its cancel record is an event');
@@ -222,8 +227,21 @@ put(`Sandbox_Order_Timeline/${RID}~pulled~x`, { orderId: RID, type: 'pulled', at
   assert(b.cancelled && b.cancelled.by === 'Sim', 'its cancel record');
   assert(b.where.stage === 'cancelled' && b.where.sheet === 'GF Sheet 1' && /pieces on GF Sheet 1/.test(b.where.text) && b.where.step === 1, 'where: cancelled on the sheet, the rail stopped at On sheet: ' + JSON.stringify(b.where));
 
-  /* 3 · the rules on their own: dedupe and where */
+  /* 3 · the rules on their own: chronology, dedupe and where */
   const ev = (type, at, o) => Object.assign({ orderId: RID, type, at, data: null, text: '' }, o);
+  const chron = (list, sandbox) => Timeline.chronology(list, { sandbox }).sort(Timeline.byTime);
+  // img3: the sandbox stream stamped the arrival on its simulated clock, hours after the real-clock sheet work
+  const c3 = chron([ev('placed', T0, { id: 'p' }), ev('pooled', T0 + M, { id: 'q' }), ev('arrived', T0 + 3 * H, { id: 'e', source: 'etsy', by: 'Etsy' }), ev('arrived', T0 + 3 * H + M, { id: 'f' }), ev('qrLabel', T0 + 4 * H, { id: 'l' })], true);
+  assert.deepStrictEqual(c3.map(e => [e.type, e.at - T0]), [['arrived', 0], ['placed', 0], ['pooled', M], ['qrLabel', 4 * H]], 'a simulated arrival is drawn no later than the first real step: ' + JSON.stringify(c3.map(e => [e.type, e.at - T0])));
+  assert(c3[0].data.simAt === T0 + 3 * H && c3[0].data.approx && c3[0].data.simFirstSeenAt === T0 + 3 * H + M, 'what the stream said is kept');
+  // img1: a real-clock arrival; readings from before it (shared cache, an earlier replay) are drawn at it, in their order
+  const c1 = chron([ev('customRead', T0 - 2 * D, { id: 'r1' }), ev('interpreted', T0 - 2 * D + M, { id: 'r2' }), ev('arrived', T0, { id: 'e', source: 'etsy', by: 'Etsy' }), ev('arrived', T0 + M, { id: 'f', data: { clock: 'real' } }), ev('interpreted', T0 + 2 * M, { id: 'r3' })], true);
+  assert.deepStrictEqual(c1.map(e => [e.type, e.id, e.at - T0]), [['arrived', 'f', M], ['customRead', 'r1', M], ['interpreted', 'r2', M], ['interpreted', 'r3', 2 * M]], 'the sandbox anchors on its real-clock arrival: ' + JSON.stringify(c1.map(e => [e.type, e.id, e.at - T0])));
+  assert(c1[1].data.recordedAt === T0 - 2 * D && c1[1].data.approx, 'a time moved to the anchor keeps its own');
+  // production: Etsy's own time is the anchor, first seen folded in; a step a minute early (a slow clock) waits for it
+  const cp = chron([ev('pulled', T0 - M, { id: 'u' }), ev('arrived', T0, { id: 'e', source: 'etsy', by: 'Etsy' }), ev('arrived', T0 + 5 * M, { id: 'f' })], false);
+  assert(cp.length === 2 && cp[0].id === 'e' && cp[0].at === T0 && cp[0].data.firstSeenAt === T0 + 5 * M && cp[1].at === T0 && cp[1].data.recordedAt === T0 - M, 'production: ' + JSON.stringify(cp));
+  assert.deepStrictEqual(chron([ev('placed', T0, { id: 'p' })], false).map(e => e.at), [T0], 'no arrival known: nothing moves');
   const d = Timeline.dedupe([ev('placed', T0, { sheetId: 'A' })], [ev('placed', T0 + 2 * M, { sheetId: 'A' }), ev('placed', T0 + M, { sheetId: 'B' }), ev('placed', T0 + 10 * M, { sheetId: 'A' }), ev('laserDone', T0 + 4 * M, { sheetId: 'A' }), ev('placed', T0 + 9 * H, { sheetId: 'A', data: { approx: true } })]);
   assert.deepStrictEqual(d.map(e => [e.type, e.sheetId, e.at - T0]), [['placed', 'B', M], ['placed', 'A', 10 * M], ['laserDone', 'A', 4 * M]], 'dedupe: same type and sheet within ±3 min, or any time when the time is a bound');
   const w = (list, c, h) => Timeline.whereOf(list, c, h);
