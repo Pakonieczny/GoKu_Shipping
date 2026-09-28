@@ -8850,6 +8850,56 @@ const OrderWin = window.OrderWin = (() => {
     // the Skip switch is the cutting flow's: a line of the pull
     byId("owSkipBox").hidden = !inPull(r.key) || r.state === "gone";
   }
+  /* ── the decision box opens and folds (Paul, 28 Sep: "not exactly visible", "jerky") on transform, opacity and
+     clip-path only: its room is taken or given back at once, what is around it glides from where it was drawn, and the
+     box is revealed down from its top edge, or a still copy of it folds up to that edge as it fades. Its height used to
+     be animated frame by frame (the whole view laid out again on every frame), and it popped in at once. On the line
+     already shown only: a step to another line slides the whole view in instead. ── */
+  const FOLD = { ms: 620, ease: "cubic-bezier(.3,.1,.2,1)" };
+  /** Where things are drawn before the box changes (null: no fold now). */
+  function foldFrom(fix, key) {
+    const same = fix._for === key; fix._for = key;
+    if (!same || still() || flying() || !window.Motion || !W.dlg || !W.dlg.open || !fix.getClientRects().length) return null;
+    const box = fix.querySelector(":scope > .owFix"), sc = fix.closest(".owMain");
+    const near = [...fix.parentNode.children, sc && sc.querySelector(".owPics")].filter(n => n && n !== fix && n.getClientRects().length);
+    return { fix, sc, card: !!fix.querySelector(".owFix > .owFixCard"), rect: box ? box.getBoundingClientRect() : null, near: near.map(n => [n, n.getBoundingClientRect()]), g: null };
+  }
+  /** The box changed: it opens or folds, and what is around it glides into its place. */
+  function foldTo(f) {
+    if (!f) return;
+    const { fix } = f, box = fix.querySelector(":scope > .owFix"), card = !!fix.querySelector(".owFix > .owFixCard");
+    const opens = card && !f.card, folds = f.card && !card;
+    if (!opens && !folds) { if (f.g) f.g.remove(); return; }
+    // (a fold still running is taken up from where it is drawn now: its rects were read with it)
+    for (const a of (fix._fold || []).splice(0)) { try { a.cancel(); } catch (_) {} }
+    if (fix._ghost) { fix._ghost.remove(); fix._ghost = null; }
+    const A = fix._fold = [], run = (n, frames, o) => { const a = n.animate(frames, Object.assign({ duration: FOLD.ms, easing: FOLD.ease, fill: "backwards" }, o)); A.push(a); return a; };
+    let shift = 0;
+    for (const [n, b] of f.near) {
+      if (!n.isConnected || !n.getClientRects().length) continue;
+      const r = n.getBoundingClientRect(), dx = b.left - r.left, dy = b.top - r.top;
+      if (!shift && fix.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING) shift = dy;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+      run(n, [{ transform: `translate(${dx}px,${dy}px)` }, { transform: "none" }]);
+    }
+    const radius = n => { const s = getComputedStyle(n).borderTopLeftRadius; return s && s !== "0px" ? " round " + s : ""; };
+    if (opens && box) {
+      const h = box.getBoundingClientRect().height, rd = radius(box);
+      run(box, [{ clipPath: `inset(0px 0px ${h}px 0px${rd})`, opacity: 0 }, { opacity: 1, offset: .45 }, { clipPath: `inset(0px 0px 0px 0px${rd})`, opacity: 1 }]);
+    }
+    if (folds) {
+      if (box) run(box, [{ opacity: 0 }, { opacity: 1 }]);   // (the engraving's line, when it takes the room)
+      const g = f.g; if (!g) return;
+      fix._ghost = g;
+      // the copy's bottom edge rises with what is under it; kept within the scrolled view it stands in
+      const R = f.rect, h = R.height, v = f.sc ? f.sc.getBoundingClientRect() : null, rd = radius(box || g.firstElementChild || g);
+      const top = v ? Math.max(0, Math.min(h, v.top - R.top)) : 0, bot = v ? Math.max(0, Math.min(h - top, R.bottom - v.bottom)) : 0;
+      const rise = Math.min(h - top, Math.max(bot, shift > 1 ? Math.min(h, shift) : h));
+      const a = g.animate([{ clipPath: `inset(${top}px 0px ${bot}px 0px${rd})`, opacity: 1 }, { clipPath: `inset(${top}px 0px ${rise}px 0px${rd})`, opacity: 0 }], { duration: FOLD.ms, easing: FOLD.ease, fill: "forwards" });
+      const gone = () => { g.remove(); if (fix._ghost === g) fix._ghost = null; };
+      a.finished.then(gone, gone); setTimeout(gone, FOLD.ms + 400);   // (a hidden tab draws no frames)
+    }
+  }
   /** Paint the window from the row it is showing. */
   function paint() {
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open && !W.closing) W.dlg.close(); return; }
@@ -8906,19 +8956,18 @@ const OrderWin = window.OrderWin = (() => {
     // another order arriving) never empties a field being typed in. Every other decision a line waits on (an option to
     // map, an unknown SKU) is made in Review, not in this window (Paul, 28 Sep: "remove this from the UI ... move up
     // everything that is below to fill up the empty space"); a custom order's question has no other place.
-    const fix = byId("owFix");
+    const fix = byId("owFix"), fold = foldFrom(fix, r.key);
     const item = inPull(r.key) ? Review.items().find(x => x.kind === "customOrder" && (x.rows || [x.row]).some(y => y && y.key === r.key) && !String(x.key).startsWith("eng:")) : null;
     if (item) {
       let slot = fix.querySelector(".owFix > .owFixCard");
       if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
       Review.cardIn(slot, item);
     } else {
-      // an answered question folds away where it was (the room closes as it fades), never vanishing at once
+      // an answered question folds away where it was (a still copy of it folds up as it fades), never vanishing at once
       const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
       if (had) Review.leaveCard(had);   // (what was picked there waits for its order to be shown again)
-      const rect = box && window.Motion && !Motion.reduced() ? box.getBoundingClientRect() : null, g = rect && rect.height ? Motion.ghost(box, rect, null, box) : null;
+      if (fold && box && fold.rect && fold.rect.height) fold.g = Motion.ghost(box, fold.rect, null, box);
       fix.innerHTML = "";
-      if (g) { Motion.fade(g); fix.animate([{ height: rect.height + "px", overflow: "hidden" }, { height: fix.scrollHeight + "px", overflow: "hidden" }], { duration: 620, easing: "cubic-bezier(.3,.1,.2,1)" }); }
       if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
         const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
         const b = el("button", "btn ghost sm", "Open it in Engraving");
@@ -8927,6 +8976,7 @@ const OrderWin = window.OrderWin = (() => {
       }
     }
     if (inPull(r.key)) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
+    foldTo(fold);
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
