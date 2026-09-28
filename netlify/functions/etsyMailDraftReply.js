@@ -65,7 +65,7 @@
 
 const admin = require("./firebaseAdmin");
 const { CORS, requireExtensionAuth } = require("./_etsyMailAuth");
-const { applyDeterministicVetoes, unansweredInboundText, deliveryDateSentence } = require("./_etsyMailVetoes");
+const { applyDeterministicVetoes, unansweredInboundText, deliveryDateSentence, remedyOfferSentence } = require("./_etsyMailVetoes");
 const { simNow } = require("./_etsyMailSim");
 // v3.7+ — callClaudeRaw added alongside runToolLoop. The translate ops
 // (op:"detectLanguage" and op:"translate") and the v4.0 summarize op
@@ -5634,13 +5634,10 @@ answering. Do not guess about the order's contents.`;
     }
     // A reply that offers a remedy only a person can grant (refund, remake,
     // reship, replacement, free item) always waits for that person, even if
-    // the model forgot to ask for review. Checked per sentence: "we" plus a
-    // remedy word. The return template's "once it arrives we'll process
-    // your refund" counts too: the owner wants every refund promise seen.
-    const _remedySentence = (parsed.text || "")
-      .split(/(?<=[.!?])\s+|\n+/)
-      .find(t => /\b(?:we|we['\u2019](?:ll|d|re)|us)\b/i.test(t)
-        && /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b|\b\d+\s*%\s*off\b/i.test(t));
+    // the model forgot to ask for review. Checked per sentence
+    // (_etsyMailVetoes.remedyOfferSentence): "we" plus a remedy word, or an
+    // offer to send or make a new item or part ("We'll send you a new clasp").
+    const _remedySentence = remedyOfferSentence(parsed.text);
     if (parsed.text && !parsed.aiEscalationRequested && _remedySentence) {
       parsed.aiEscalationRequested = true;
       parsed.aiRemedyOfferReview = true;

@@ -123,6 +123,10 @@ function applyDeterministicVetoes({ inboundText, draftText, draftToolCalls, excl
   const outboundHits = runVetoPatterns(draftText, excludePatternIds);
   for (const h of outboundHits) reasons.push("outbound_" + h.id + ": " + h.reason);
 
+  // Owner's rule: no delivery dates in any draft, support or sales (the
+  // sales AI had only its prompt).
+  if (draftText && deliveryDateSentence(draftText)) reasons.push("outbound_delivery_date: delivery date promised");
+
   const returnedError = (tc) => {
     if (!ORDER_DATA_TOOLS.has(tc.name)) return false;
     const out = (tc.outputPreview && typeof tc.outputPreview === "object") ? tc.outputPreview
@@ -187,8 +191,30 @@ function deliveryDateSentence(text) {
     .find(t => DATE_RX.test(t) && ARRIVE_RX.test(t) && !LOST_RX.test(t)) || null;
 }
 
+/** Owner's rule: a refund, remake, reship, replacement, discount or free
+ *  item waits for a person. The first sentence of a reply that offers one,
+ *  or null: "we" plus a remedy word, or an offer to send or make a new item
+ *  or part ("We'll send you a new clasp", "We'll make you a new one").
+ *  A new listing, link, proof, photo or message is sales work, not a remedy.
+ *  The return template's "once it arrives we'll process your refund"
+ *  counts too: the owner wants every refund promise seen. */
+const REMEDY_WE_RX = /\b(?:we|we['’](?:ll|d|re)|us)\b/i;
+const REMEDY_WORD_RX = /\b(?:refund(?:ed|ing)?|remake|re-?make|reship|re-?send|replacement|replace|free\s+of\s+charge|at\s+no\s+(?:extra\s+)?(?:cost|charge)|on\s+the\s+house|store\s+credit|discount)\b|\b\d+\s*%\s*off\b/i;
+const _NEW_ITEM = "(?:(?:a|an)\\s+(?:brand[\\s-]?new|new|fresh|spare)|another|(?:brand[\\s-]?)?new\\s+(?:ones?|pairs?|sets?))";
+const _NOT_ITEM = "(?:(?:custom(?:\\s+order)?|private|personali[sz]ed|reserved|updated|separate|revised)\\s+)?" +
+  "(?:listings?|links?|proofs?|mock-?ups?|photos?|pictures?|images?|previews?|quotes?|invoices?|messages?|e-?mails?|updates?|notes?" +
+  "|reviews?|tracking|labels?|codes?|drafts?|address(?:es)?|designs?|options?|selections?|batch(?:es)?|look|attempt|way|day|week|time)\\b";
+// "You can get another chain length" is the customer buying, not an offer.
+const NEW_ITEM_OFFER_RX = new RegExp("\\b(?:send|ship|mail|post|make|craft|create|redo|re-do|(?<!\\byou\\s+(?:can\\s+|could\\s+|may\\s+|might\\s+)?)get)\\b[^.!?\\n]{0,40}?\\b" +
+  _NEW_ITEM + "\\b(?!\\s+" + _NOT_ITEM + ")", "i");
+function remedyOfferSentence(text) {
+  return String(text || "").split(/(?<=[.!?])\s+|\n+/)
+    .find(t => (REMEDY_WE_RX.test(t) && REMEDY_WORD_RX.test(t)) || NEW_ITEM_OFFER_RX.test(t)) || null;
+}
+
 module.exports = {
   deliveryDateSentence,
+  remedyOfferSentence,
   DETERMINISTIC_VETO_PATTERNS,
   runVetoPatterns,
   applyDeterministicVetoes,
