@@ -1984,14 +1984,39 @@ async function op_cancelPut(b) {
   const out = await OrderCancel.put(db, FV, rec, { prefix: PREFIX, person: who, detectedBy: "sorter", eventId: str(b.eventId, 80) });
   return out.error ? out : { ok: true, record: out.record, created: out.created, kept: out.kept };
 }
+/* What was written since a read (wave 4: the orders check read every record each time, AutoCancel its newest 50 every 2
+   minutes): `after` is where the last read stopped, the answer's `cursor` where this one did, `more` that a page is left.
+   In the order written, by createdAt (every writer sets it; a cancel made again after a restore sets it anew; its own
+   single-field index) and then by id, so a batch of the mirror's, all one createdAt, pages through with nothing skipped.
+   Not `at`: an Etsy cancel's `at` is when Etsy changed the receipt, often long before its record is written (the sweep).
+   A restore deletes its record, which no read of what was written sees: `total` (a count) with the ids lets the reader
+   see the collection hold fewer than it knows, and read the whole set again. `track` on a whole read asks for the cursor
+   (the newest written, taken first: a record written meanwhile is read next time) and, with idsOnly, the total. */
+const cursorOf = d => { const t = d && (d.data() || {}).createdAt; return t && typeof t.seconds === "number" ? { s: t.seconds, n: t.nanoseconds || 0, id: d.id } : null; };
+const countOf = () => col(CANCELLED).count().get().then(s => s.data().count);
 async function op_cancelList(b) {
   const n = Math.max(1, Math.min(500, Math.round(num(b.limit)) || 200));
+  const tidyRec = d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; };
+  if (b.after !== undefined) {
+    const a = b.after && typeof b.after === "object" ? b.after : {}, s0 = Math.round(num(a.s)), n0 = Math.round(num(a.n)), id0 = orderIdOf(a.id);
+    if (!(s0 > 0) || !(n0 >= 0 && n0 < 1e9) || !id0) return { error: "bad cursor" };
+    let q = col(CANCELLED).orderBy("createdAt").orderBy(docOrder()).startAfter(new admin.firestore.Timestamp(s0, n0), id0).limit(n);
+    if (b.idsOnly) q = q.select("orderId", "createdAt");
+    const [s, total] = await Promise.all([q.get(), b.idsOnly ? countOf() : null]);
+    const out = { cursor: (s.size && cursorOf(s.docs[s.size - 1])) || { s: s0, n: n0, id: id0 }, more: s.size >= n };
+    return b.idsOnly ? Object.assign(out, { ids: s.docs.map(d => d.id), total }) : Object.assign(out, { list: s.docs.map(tidyRec) });
+  }
+  const top = b.track ? await col(CANCELLED).orderBy("createdAt", "desc").orderBy(docOrder(), "desc").select("createdAt").limit(1).get() : null;
+  const track = top ? { cursor: (top.size && cursorOf(top.docs[0])) || { s: 1, n: 0, id: "0" } } : {};
   // (newest first: past 5000 records, now that Etsy's cancels are kept here too, the oldest are the ones left out, never
   //  the order a person cancelled today, which the orders check must keep out of the pull)
-  if (b.idsOnly) { const s = await col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(); return { ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }; }
+  if (b.idsOnly) {
+    const [s, total] = await Promise.all([col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(), top ? countOf() : null]);
+    return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {});
+  }
   const s = await col(CANCELLED).orderBy("at", "desc").limit(n).get();
   // a record from before `source` was kept reads as a person's (or Etsy's, when it says so)
-  return { list: s.docs.map(d => { const x = d.data(); delete x.createdAt; if (!x.source) x.source = x.by === "Etsy" ? "etsy" : "sorter"; return x; }), truncated: s.size >= n };
+  return Object.assign({ list: s.docs.map(tidyRec), truncated: s.size >= n }, track);
 }
 /* The one-off sweep (by hand: POST {op:"cancelSweep", dryRun?}): every receipt the inbox's mirror keeps as cancelled
    (EtsyMail_Receipts, one equality query per status) gets its record, for the cancels older than the mirror's watermark.
