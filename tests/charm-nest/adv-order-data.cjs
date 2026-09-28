@@ -179,7 +179,8 @@ async function main() {
     await check('2000+ steps: drawn quickly and said to be cut short', async () => {
       const t0 = Date.now();
       await page.evaluate(k => OrderWin.open(k, { view: 'timeline' }), keyOf(D)); await fullReady(page); const ms = Date.now() - t0;
-      const s = await page.evaluate(() => ({ sum: document.querySelector('#owTimeline .tlSum').textContent, stamps: document.querySelectorAll('#owTimeline .tlSt[data-key]').length, count: document.getElementById('owTlCount').textContent }));
+      // (the filters and the summary live in the view's own tab row since the design pass: look in both)
+      const s = await page.evaluate(() => ({ sum: (document.querySelector('#owTimeline .tlSum') || document.querySelector('#owTlTools .tlSum') || document.querySelector('.tlSum') || {}).textContent || '', stamps: document.querySelectorAll('#owTimeline .tlSt[data-key]').length, count: document.getElementById('owTlCount').textContent }));
       console.log(`      2000+ steps: first paint ${ms} ms, ${s.stamps} stamps, count ${s.count}, summary "${s.sum}"`);
       assert(ms < 8000, 'painted in ' + ms + ' ms');
       assert.match(s.sum, /2000|first|cut short|more/i, 'says it is truncated: ' + s.sum);
