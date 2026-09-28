@@ -2328,18 +2328,23 @@ const SheetEvents = window.SheetEvents = (() => {
       send([...ordersOf(sh)].map(([rid, o]) => ev("renested", rid, o, w, { id: `${w.sheetId || sh.metal + "-" + sh.page}-${at}`, at, by, text: `${w.sheet} nested again by hand` })));
     } catch (e) { console.warn("[SheetEvents] renested", e); }
   }
-  /** Options → Merge sheets: each order that moves (move) or is nested again (renest), from its sheet to the target. */
-  function merged(kind, pages, target, at) {
+  /** Options → Merge sheets: each order that moves (move) or is nested again (renest), from its sheet to the target.
+   *  With `later` (Move all) nothing is sent yet: the sheets are read as they are now, and the function returned sends,
+   *  once the nest is done, only the orders whose pieces all landed on the target (placed: the target's placed charm ids);
+   *  an order that did not fit and stayed on its own sheet did not move. */
+  function merged(kind, pages, target, at, later) {
     try {
-      const to = where(target), by = who(), out = [];
+      const to = where(target), by = who(), out = [], pieces = new Map();
       for (const p of kind === "move" ? pages.filter(p => p !== target) : pages) {
-        const from = where(p);
-        for (const [rid, o] of ordersOf(p)) out.push(ev("merged", rid, o, from, { id: `${at}-${from.sheetId || p.page}`, at, by,
+        const from = where(p), own = new Map();
+        for (const c of p.charms || []) { const rid = ridOf(c); if (rid) (own.get(rid) || own.set(rid, []).get(rid)).push(c.id); }
+        for (const [rid, o] of ordersOf(p)) { const e = ev("merged", rid, o, from, { id: `${at}-${from.sheetId || p.page}`, at, by,
           text: kind === "move" ? `Moved from ${from.sheet} onto ${to.sheet} (merge)` : p === target ? `${to.sheet} re-nested with its later sheets` : `${from.sheet} merged into ${to.sheet} and re-nested`,
-          data: { kind, from: from.sheet, to: to.sheet, fromSheetId: from.sheetId, toSheetId: to.sheetId } }));
+          data: { kind, from: from.sheet, to: to.sheet, fromSheetId: from.sheetId, toSheetId: to.sheetId } }); out.push(e); pieces.set(e, own.get(rid) || []); }
       }
-      send(out);
-    } catch (e) { console.warn("[SheetEvents] merged", e); }
+      if (!later) { send(out); return null; }
+      return placed => { try { send(out.filter(e => { const ids = pieces.get(e) || []; return ids.length && ids.every(id => placed.has(id)); })); } catch (e) { console.warn("[SheetEvents] merged", e); } };
+    } catch (e) { console.warn("[SheetEvents] merged", e); return null; }
   }
   /** Apply size (10K, 14K, Rose Gold): every order on the metal's sheets that change, with the old and new mm. */
   function sizeChanged(pages, fromMm, toMm) {
@@ -2421,7 +2426,7 @@ const Gate = window.Gate = (() => {
   const R = { lastReleased: {}, released: {}, forceFill: {}, loaded: false, plan: null };
   // a selection save in progress or just failed is this page's own business: the workspace carried "Saving selection…" and
   // the old error across a reload, where nothing was saving any more (run.membershipDirty is the lasting record of a save owed)
-  for (const k of ["membershipError", "membershipPending", "membershipTask", "membershipRun"]) Object.defineProperty(R, k, { value: null, writable: true, enumerable: false });
+  for (const k of ["membershipError", "membershipPending", "membershipTask", "membershipRun", "sizeKept"]) Object.defineProperty(R, k, { value: null, writable: true, enumerable: false });
   const O_ = window.CharmNestOrders;
   const modern = runId => (!B.run && !runId) || (!!B.run && B.run.releasePolicy === 2 && (!runId || runId === B.run.runId));
   const selected = () => B.run?.solidIncluded || R.solidIncluded || {};
@@ -2700,7 +2705,8 @@ const Gate = window.Gate = (() => {
     const apply=node.querySelector('[data-solid="size"]');apply.disabled=sizeLocked||!editable(sh)||!!node._sizeApplying||merging;
     apply.textContent=node._sizeApplying?'Applying size…':'Apply size';
     apply.setAttribute('aria-busy',String(!!node._sizeApplying));
-    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
+    const kept=R.sizeKept?.[m],keptNow=kept&&Date.now()-kept.at<60000?kept.text:'';   // (the last Apply size left a cut sheet as it was)
+    node.querySelector('[data-solid="size-help"]').textContent=sizeLocked?'Dimensions belong to this saved sheet.':node._sizeApplying?'Your size change is queued for saving.':keptNow?keptNow:merging?'Wait until the merge finishes.':!editable(sh)?'This material is in use or its set is locked.':'5–500 mm per side';
     apply.onclick=async()=>{
       const width=node.querySelector('[data-solid="w"]'),height=node.querySelector('[data-solid="h"]'),w=+width.value,h=+height.value;
       if(![w,h].every(n=>Number.isFinite(n)&&n>=5&&n<=500))return toast('Use a width and height between 5 and 500 mm','bad');
@@ -2714,7 +2720,11 @@ const Gate = window.Gate = (() => {
         S.settings.stock[m]=[w/25.4,h/25.4];saveSettings();
         if(+width.value===w)width._draft=false;
         if(+height.value===h)height._draft=false;
-        const resized=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt);
+        // a sheet already cut (laser done) or released keeps its size and its layout, as a recalled or RG cut sheet does,
+        // whether or not its set is committed: nesting it again would move pieces whose files already went out
+        const cut=p=>!!(p.laserDoneAt||p.releaseFull||holding(p)||Sets.ofRun(p.runId).some(s=>s.committedAt&&(s.sheetIds||[]).includes(p.sheetId)));
+        const pages=pagesOf(m).filter(p=>!p.recalled&&!p.roseCutAt),resized=pages.filter(p=>!cut(p)),keptPages=pages.filter(cut);
+        (R.sizeKept ||= {})[m]=keptPages.length?{at:Date.now(),text:keptPages.map(p=>`${window.SheetEvents?.label?.(p)||sheetName(p)} is cut: kept at its size`).join(' · ')}:null;
         window.SheetEvents?.sizeChanged(resized,[was.wIn*25.4,was.hIn*25.4],[w,h]);   // on the orders' timelines (idle time)
         for(const p of resized){for(const c of p.charms){c.pinned=null;delete c.arrivalPin;}sheetDirty(p);}
         changed();
@@ -2828,7 +2838,9 @@ const Gate = window.Gate = (() => {
       }
       // a sheet in the current set leaves it before a charm moves (a new QR label comes once it is written again)
       if (run && modern(run.runId) && pages.some(p => p.setId && !p.draft)) { try { await assemble(run, ctx); } catch (e) { changed(); throw e; } }
-      window.SheetEvents?.merged(kind, pages, t, st.busy.at);   // each order that moves, from its sheet to Sheet 1 (idle time)
+      // each order that moves, from its sheet to Sheet 1 (idle time); Move all records it once the nest is done, for the
+      // orders that landed on Sheet 1 (watchMerge), never for one that did not fit and stayed where it was
+      const tell = window.SheetEvents?.merged(kind, pages, t, st.busy.at, moveIn); if (typeof tell === "function") st.busy.tell = tell;
       const moving = sources.flatMap(p => p.charms), poolIds = new Set(moving.map(c => c.poolId).filter(Boolean));
       // onto Sheet 1 first, with their approved backs; only then is anything taken away
       for (const c of moving) { c.pinned = null; delete c.arrivalPin; c.metal = m; }
@@ -2880,6 +2892,7 @@ const Gate = window.Gate = (() => {
       if (text !== b.text) { b.text = text; repaintMerge(m); } else { const a = activePage(m); if (a?.el && typeof renderProgress === "function") renderProgress(a); }
     }
     for (const p of pagesOf(m)) { delete p._mergeNext; delete p._mergeSpots; }
+    if (b.tell) { const t = b.target, on = new Set(t.placements.filter(pl => t.charms.some(c => c.id === pl.id)).map(pl => pl.id)); b.tell(on); b.tell = null; }
     const run = B.run, gone = [];
     for (const p of [...b.pages].reverse()) if (p !== b.target && pagesOf(m).includes(p) && !p.charms.length && !busyPage(p) && pagesOf(m).indexOf(p) > 0) { gone.push(p.page); retirePage(run, p); removePage(p); }
     const left = mine().filter(p => p.charms.length), trouble = left.find(p => p.problem), waiting = left.find(held);
