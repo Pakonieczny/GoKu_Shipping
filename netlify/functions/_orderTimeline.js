@@ -32,7 +32,9 @@ const TYPES = new Set([
   "scan", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "cancelAlert",
   "note", "teamMessage", "customerMessage", "other"
 ]);
-const MILESTONES = new Set(["arrived", "decided", "engraveApproved", "placed", "qrLabel", "setCommitted", "laserDone", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "sealCompleted"]);
+// the steps of the rail (RAIL): order in, nested, engraved, laser cut, sorted, welded, assembled, shipped (Etsy's
+// completion with it); approving, QR labels, sets committed and packing are steps in between, not milestones
+const MILESTONES = new Set(["arrived", "placed", "renested", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
 // what a production station may write through the open door (firebaseOrders): its own scans and what it did with them
 const STATION_TYPES = new Set(["scan", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "etsyCompleted", "cancelAlert", "note"]);
 const STATIONS = new Set(["sorting", "welding", "assembly", "shipping", "design", "laser", "sorter", "qr", "inbox"]);
@@ -428,13 +430,18 @@ const RANK = {
 const STAGE_OF = ["waiting", "review", "sheet", "cut", "sorted", "welded", "assembled", "packed", "shipped", "completed"];
 const STAGE_LABEL = { waiting: "Waiting", review: "In review", held: "On hold", designed: "Design complete", sheet: "On a sheet", cut: "Cut on the laser", sorted: "Sorted", welded: "Welded", assembled: "Assembled", packed: "Packed", shipped: "Shipped", completed: "Completed on Etsy", cancelled: "Cancelled" };
 const PEOPLE_OUT = new Set(["", "system", "etsy", "operator", "someone"]);
-// the order view's milestone rail (design spec §2): the furthest step an event has reached
-const RAIL = ["Arrived", "On sheet", "Approved", "Laser cut", "Sorted", "Welded", "Assembled", "Shipped", "Completed"];
-const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, engraveApproved: 2, setCommitted: 2, sealCompleted: 2,
-  laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 8 };
+// the order view's milestone rail (Paul, 28 Sep 21:18; charm-nest-timeline-ui.js STAGES, keep the two alike): the real
+// steps a piece goes through. Welded is a stud earring's only: the page leaves it out for an order with no stud (its
+// stagesFor), and `step` passes over it. Approving is not a step; Etsy's completion folds into Shipped. Engraved: the
+// back engraving approved in Engrave and written into its sheet's back file (backPut's engraveApproved).
+const RAIL = ["Order in", "Nested", "Engraved", "Laser cut", "Sorted", "Welded", "Assembled", "Shipped"];
+const RAIL_KEYS = ["arrived", "sheet", "engraved", "laser", "sorted", "welded", "assembled", "shipped"];
+// the furthest step of the rail an event shows the order has reached
+const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
+  engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
 /** Where the order is now, from its events (oldest first) and its cancel record:
     { stage, label, text, sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled, step, rail }
-    step: the furthest step of the rail (RAIL, 0-8) the order has reached; a cancelled order stopped there.
+    step: the furthest step of the rail (RAIL, 0-7) the order has reached; a cancelled order stopped there.
     stage: waiting | review | held | designed | sheet | cut | sorted | welded | assembled | packed | shipped | completed | cancelled.
     hint.sheets (from the derivation): the sheets that hold the order now, which outrank a stale removal or placement.
     hint.record: `cancelled` is the cancel record as read (null: there is none). The record says whether the order is
@@ -447,7 +454,7 @@ function whereOf(events, cancelled, hint = {}) {
   for (const e of list) {
     at = Math.max(at, n(e.at));
     if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]);
-    else if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) step = Math.max(step, 2);
+    else if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) step = Math.max(step, 1);
     if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
     if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
     if (e.setId) setId = e.setId;
@@ -493,4 +500,4 @@ function whereOf(events, cancelled, hint = {}) {
   if (by) bits.push(`by ${by}`);
   return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
 }
-module.exports = { RAIL, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, RAIL_KEYS, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };

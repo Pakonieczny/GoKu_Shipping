@@ -9029,6 +9029,8 @@ const OrderWin = window.OrderWin = (() => {
     return Object.assign({ orderId: rid, highlight: W.hl || null, live: true, feed: W.feed && W.feed.orderId === rid ? W.feed : null, pieces: W.pieces, piece: W.piece,
       onSheet: (sheetId, poolId) => { setView("sheet"); sheetShow(sheetId, poolId); },
       onOpen: ev => { if (W.view !== "timeline") setView("timeline"); tryDo(() => W.tl && W.tl.focus && W.tl.focus(ev)); },
+      // the order's own steps, header rail and Timeline alike: Welded only when one of its pieces is a stud earring
+      stages: () => { const r = rowOf(W.key), UI = window.OrderTimelineUI; return r && String(r.order.receiptId) === rid && UI && UI.stagesFor ? UI.stagesFor(linesOf(r)) : null; },
       onNow: () => {}, onEvents: list => { if (Array.isArray(list) && W.evFor === rid) { W.events = list.slice(); paintNow(rowOf(W.key)); } } }, extra || {});
   }
   function mountRail(rid) {
