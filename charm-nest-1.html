@@ -5021,20 +5021,22 @@ function onPreviewClick(sh, e) {
 function inspectOnSheet(sh, c, el) {
   if (!c || !sh.sheetId || !window.SheetWin || !sh.placements.some(p => p.id === c.id)) return false;
   // the sheet grows out of this card into the window, with the charm lit as it was clicked, and goes back into it when
-  // the window closes (Paul, 28 Sep): the card is drawn now, not on its next frame, so the picture that grows shows it
+  // the window closes (Paul, 28 Sep); the window draws the sheet itself, at its own size
   const cv = el && el.tagName === "CANVAS" && el.isConnected ? el : null;
-  if (cv) try { drawPreviewNow(sh); } catch (_) {}
   SheetWin.open(sh.sheetId, cv ? { select: c.poolId || c.id, origin: cardOrigin(sh, cv) } : { select: c.poolId || c.id, fromRect: el && el.getBoundingClientRect ? el.getBoundingClientRect() : null });
   return true;
 }
 /** Where a Nest card shows its sheet, for the sheet window to grow out of and go back into: the card's picture frame, the
-    sheet inside it (the rulers and the rest of the 100 × 50 mm frame left out), and a copy of what it shows now. */
+    sheet inside it (the rulers and the rest of the 100 × 50 mm frame left out), the frame's colour around the sheet, the
+    sheet itself (the window draws it), and a copy of what the card shows. Once the card shows another of its sheets (a
+    tab, a merge that retired this one), the window no longer goes back into it. */
 function cardOrigin(sh, cv) {
   const st = stockFor(sh.metal, sh), area = () => { const v = sh._view; return v && cv.width ? { R: v.R, w: Math.min(cv.width - v.R, st.wPt * v.k), h: Math.min(cv.height - v.R, st.hPt * v.k) } : null; };
+  const f = trueFrame(st), small = !!f && (f.w < f.fw - 1 || f.h < f.fh - 1);
   return {
-    stock: { wPt: st.wPt, hPt: st.hPt },
+    stock: { wPt: st.wPt, hPt: st.hPt }, sheet: sh, tint: small ? TRAY : "#f3efe6",
     rects() {
-      const a = area(); if (!a || !cv.isConnected || !cv.getClientRects().length) return null;
+      const a = area(); if (!a || !cv.isConnected || !cv.getClientRects().length || activePage(sh.metal) !== sh || !pagesOf(sh.metal).includes(sh)) return null;
       const r = cv.getBoundingClientRect(), sx = r.width / cv.width, sy = r.height / cv.height;
       return { box: (cv.closest(".shPreviewWrap") || cv).getBoundingClientRect(), sheet: new DOMRect(r.left + a.R * sx, r.top + a.R * sy, a.w * sx, a.h * sy) };
     },
@@ -5571,7 +5573,7 @@ async function boot() {
 boot();
 </script>
 <script src="charm-nest-bridge.js?v=20260928-merge"></script>
-<script src="charm-nest-sheetwin.js?v=20260928-grow"></script>
+<script src="charm-nest-sheetwin.js?v=20260928-grow2"></script>
 <script src="charm-nest-mail.js?v=20260926-audit3"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-true"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
