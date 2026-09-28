@@ -3791,27 +3791,63 @@ function topupRoom(sh, waiting = true) {
    is nested again, and with nothing more arriving it never was. Once every order of the sandbox stream is in and taken
    in, a sheet still filling its gaps and at rest is released as it stands and joins its set with its label. A run in
    production keeps Paul's rule (75% or 35 later orders); the sheet window's "Make QR label" releases one by hand. */
+/* A release here is finished only once the sheet is in its set with its QR label (sandbox check, 28 Sep). The gap fill
+   was marked closed first and the save and the set assembly came after, so when either failed the sheet stayed closed
+   outside its set, without a label, and nothing tried again. Now a sheet the stream released (topup.streamEnd, kept on
+   its record and in the workspace) is owed its label until it has one: a failed step is tried again 5 s and 30 s later,
+   then its card says "No QR yet: retrying" (never a pop-up) and the next load of the page tries again (the count of
+   tries, _qrRetry, is not kept across a reload). Its orders stay on it throughout; the calls are the sorter's own
+   records, never Etsy. */
+const QR_RETRY = [5000, 30000];
+const qrLabelled = (sh, modern) => !modern ? !!sh._qrSaved : !!sh.setId && !sh.draft && !!(sh.label?.files || []).length;
+function qrRetryNote(sh) {
+  const r = sh._qrRetry; if (!r || r.tries <= QR_RETRY.length) return "";
+  return `<span title="${esc(`The QR label could not be made yet (${r.error || "the cloud did not answer"}). It is tried again when the page next loads; the sheet window's Make QR label makes it now. Its orders stay on the sheet.`)}">No QR yet: retrying</span>`;
+}
 let settlingTopups = false;
 async function settleTopups() {
   const run = window.B?.run;
-  if (settlingTopups || !run || !window.Sandbox?.done?.() || ["complete", "abandoned"].includes(run.status) || window.Arrivals?.held?.() || window.Arrivals?.state?.().pending) return;
-  const resting = sh => ["gold", "silver"].includes(sh.metal) && sh.topup && !sh.topup.closedAt && sh.runId === run.runId && ["complete", "partial"].includes(sh.status) && !sh.dirty && !!sh.persistedDone &&
-    !sh.feedWait?.length && !!sh.verification?.ok && !sh.runHold && !sh.problem && !sh._operationStarting && !sh.keepRelease && activeCharms(sh).every(c => sh.placements.some(p => p.id === c.id));
-  const pages = allSheets().filter(resting); if (!pages.length) return;
+  if (settlingTopups || !run || ["complete", "abandoned"].includes(run.status)) return;
+  const streamOver = !!window.Sandbox?.done?.() && !window.Arrivals?.held?.() && !window.Arrivals?.state?.().pending;
+  const modern = !!window.Gate && Gate.modern(run.runId), now = Date.now();
+  const atRest = sh => ["gold", "silver"].includes(sh.metal) && sh.topup && sh.runId === run.runId && ["complete", "partial"].includes(sh.status) && !sh.dirty && !!sh.persistedDone &&
+    !sh.feedWait?.length && !!sh.verification?.ok && !sh.runHold && !sh._operationStarting && !sh.keepRelease && activeCharms(sh).every(c => sh.placements.some(p => p.id === c.id));
+  const resting = sh => streamOver && atRest(sh) && !sh.topup.closedAt && !sh.problem;
+  // (a set assembly that failed leaves "Set membership was not saved" on the sheet: the retry is what answers it)
+  const owed = sh => !!sh.topup?.streamEnd && !!sh.topup.closedAt && !!sh.releaseFull && !(sh._qrRetry?.next > now) && !qrLabelled(sh, modern) &&
+    (!sh.problem || /^Set membership was not saved/.test(sh.problem)) && atRest(sh);
+  const pages = allSheets().filter(sh => resting(sh) || owed(sh)); if (!pages.length) return;
   settlingTopups = true;
+  const failed = new Map();
   try {
     for (const sh of pages) {
-      const t = sh.topup; t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4);
-      sh.releaseFull = true; sh._renderAreas = null;
-      log(sh, `Gap fill done, every order of the stream is in: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`);
-      agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: every order of the stream is in, so its gap fill ends (${(t.tried || []).length} of ${TOPUP.orders} later orders tried) · released at ${fmt.pct(sh.density || 0)} with its QR label`);
-      renderCard(sh);
-      await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: t } }, { quiet: true });
+      const t = sh.topup;
+      if (!t.closedAt) {
+        t.closedAt = topupNow(); t.density = +(+sh.density || 0).toFixed(4); t.streamEnd = true;
+        sh.releaseFull = true; sh._renderAreas = null;
+        log(sh, `Gap fill done, every order of the stream is in: ${fmt.pct(t.base)} → ${fmt.pct(t.density)}, sheet released`);
+        agent({ metal: sh.metal, run: sh.runId }, "nest", `${sheetName(sh)}: every order of the stream is in, so its gap fill ends (${(t.tried || []).length} of ${TOPUP.orders} later orders tried) · released at ${fmt.pct(sh.density || 0)} with its QR label`);
+        renderCard(sh);
+      }
+      try { await api("charmNestLibrary", { op: "putSheet", sheet: { id: sh.sheetId, releaseFull: true, topup: t } }, { quiet: true }); sh._qrSaved = true; }
+      catch (e) { failed.set(sh, e.message); }
     }
-    if (window.Gate && Gate.modern(run.runId)) await Gate.assemble(run);
+    if (modern && pages.some(sh => !failed.has(sh))) {
+      try { await Gate.assemble(run); } catch (e) { for (const sh of pages) if (!failed.has(sh)) failed.set(sh, e.message); }
+    }
     window.Session?.schedule?.();
-  } catch (e) { agent({ bridge: true }, "warn", `Gap fill release: ${e.message} · the sheet window's "Make QR label" can finish it`); }
-  finally { settlingTopups = false; }
+  } catch (e) { for (const sh of pages) if (!failed.has(sh)) failed.set(sh, e.message); }
+  finally {
+    for (const sh of pages) {
+      if (qrLabelled(sh, modern)) { if (sh._qrRetry) { delete sh._qrRetry; renderCard(sh); } continue; }
+      const tries = (sh._qrRetry?.tries || 0) + 1, error = failed.get(sh) || "the sheet did not join its set";
+      sh._qrRetry = { tries, error, next: tries <= QR_RETRY.length ? Date.now() + QR_RETRY[tries - 1] : Infinity };
+      if (/^Set membership was not saved/.test(sh.problem || "")) sh.problem = null;   // said calmly by the note instead
+      if (tries > QR_RETRY.length) agent({ bridge: true }, "warn", `${sheetName(sh)}: no QR label yet after ${tries} tries (${error}) · tried again when the page next loads; the sheet window's "Make QR label" can make it now`);
+      renderCard(sh);
+    }
+    settlingTopups = false;
+  }
 }
 function usableArea(sh) {
   const st=stockFor(sh.metal,sh),inset=+S.settings.insetPt||0,clearance=+S.settings.clearancePt||0,ins=inset+Math.max(0,clearance)/2;
@@ -5076,6 +5112,7 @@ function renderCard(sh) {
   if (rc) bits.push("recalled");
   // a Gold or Silver sheet filling its gaps is not released yet: say so where the set is named (see topupSettle)
   if (sh.topup && !sh.topup.closedAt) bits.push(`<span title="Goes to the laser at ${TOPUP.target * 100}% full or once ${TOPUP.orders} later orders have tried its gaps">filling gaps · ${(sh.topup.tried || []).length} of ${TOPUP.orders} orders tried</span>`);
+  { const qr = qrRetryNote(sh); if (qr) bits.push(qr); }   // a stream release still owed its QR label (settleTopups)
   { const cu = sh.charms.filter(c => c.custom && !c.excluded).length; if (cu) bits.push(`<span class="cuTag" title="Custom orders' own designs on this sheet, tinted plum">${cu} custom</span>`); }
 
   prov.innerHTML = bits.length ? "· " + bits.join(" · ") : "";
