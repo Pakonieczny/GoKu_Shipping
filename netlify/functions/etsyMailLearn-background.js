@@ -105,7 +105,10 @@ async function runLearning({ force = false } = {}) {
 
   try {
     const pendSnap = await db.collection(OUTCOMES_COLL).where("learnStatus", "==", "pending").limit(BATCH).get();
-    const outcomes = pendSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // A polished reply's wording is the model's, not a staff correction
+    // (recordOutcome already skips these; this catches any that slip by).
+    const polished = pendSnap.docs.filter(d => (d.data() || {}).polished === true);
+    const outcomes = pendSnap.docs.filter(d => (d.data() || {}).polished !== true).map(d => ({ id: d.id, ...d.data() }));
 
     const cfg = db.collection(K.CONFIG_COLL);
     const [rSnap, fSnap] = await db.getAll(cfg.doc(K.RULES_DOC), cfg.doc(K.FACTS_DOC));
@@ -191,6 +194,7 @@ async function runLearning({ force = false } = {}) {
         learnedInto: learnedFrom.get(o.id) || [], learnIgnored: ignoredWhy.get(o.id) || null
       });
     }
+    for (const d of polished) batch.update(d.ref, { learnStatus: "skip", learnedAtMs: now });
     await batch.commit();
 
     // Keep 180 days of outcomes.

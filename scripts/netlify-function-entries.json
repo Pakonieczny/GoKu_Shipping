@@ -66,6 +66,7 @@
     "etsyMailOptionResolver.js",
     "etsyMailOrder.js",
     "etsyMailOrderLink.js",
+    "etsyMailPolish.js",
     "etsyMailPurgeInbox.js",
     "etsyMailReapers.js",
     "etsyMailReceiptsMirrorCron.js",
