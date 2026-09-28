@@ -8953,7 +8953,9 @@ const OrderWin = window.OrderWin = (() => {
         onInfo: inf => { if (tok !== SV.tok) return; inf.sheetAt = SV.at; SV.info = inf; if (SV.focus) inf.focus(SV.focus); if (fade) fade.cancel(); cv.style.visibility = "";
           if (!still()) cv.animate([{ opacity: .35 }, { opacity: 1 }], { duration: 240, easing: "ease" });
           paintPanel(inf); paintFoot(inf); },
-        onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); }
+        onProgress: (d, n) => { if (tok === SV.tok) plateWait(d < n ? `Drawing the sheet · design ${d} of ${n}` : null); },
+        // the back side waits on nothing: the plate is drawn, and this says what is still coming
+        onWait: t => { if (tok === SV.tok) plateWait(t); }
       });
       if (tok !== SV.tok) return;
       plateWait(null); if (info.failed && info.failed.length) toast(`${info.failed.length} design(s) of this sheet could not be read; they show as outlines`, "bad", 6000);
@@ -8978,7 +8980,8 @@ const OrderWin = window.OrderWin = (() => {
   }
   function paintFoot(inf) {
     const live = inf.pieces.length, orders = new Set(inf.pieces.map(x => x.rid).filter(Boolean)).size, rec = inf.rec;
-    byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
+    const eng = W.face === "back" && inf.engraved ? tryDo(() => inf.engraved()) || 0 : 0;
+    byId("owPlateFoot").innerHTML = `<span><b>${live}</b> charm${live === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span>${rec.density ? `<span><b>${Math.round(rec.density * 100)}%</b> full</span>` : ""}<span class="r">${W.face === "back" ? `Back side, mirrored as the laser sees it${eng ? ` · ${eng} engraved` : " · nothing engraved on this sheet"}` : "Hover a charm for its order · click to open it"}</span>`;
   }
   /** The panel beside the plate: the sheets, the order, its charm, its back engraving and every piece of it. */
   function paintPanel(inf) {

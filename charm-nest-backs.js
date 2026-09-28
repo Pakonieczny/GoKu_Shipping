@@ -58,6 +58,65 @@
     const h = +b.previewHPt || (+b.pageHPt > 10 * pt + .5 ? +b.pageHPt - 4 * pt - .5 : 0);
     return w > 2 * pad && h > 2 * pad ? {w, h, pad} : null;
   }
+  /* ── the words where the laser burns them ───────────────────────────────
+     Every sheet view that turns to its Back draws each charm's own engraving with this: the same words, the same place,
+     the same size and the same mirroring as the written back file. A back file (charm-nest-pdf buildBackFile §7b) is the
+     charm's cut geometry mirrored about its outline's centre (x = cx) and then turned hoop-up by 90° − upAngle about
+     that centre (charm-nest-geom backView, steps 3 and 6); the words are laid out in that back frame, at `centre` and
+     `angle`, by CharmNestGeom.layoutLines. Undoing those two steps puts each glyph back into the charm's own front
+     (source pt) frame, so any drawing of the charm — a plate mirrored as the laser sees it — lays the words exactly
+     where they are cut, readable from behind. `glyphs` is null when the engraving font is not loaded yet; `centre`,
+     `size` and the words are still true, so the caller can say what is there.                                        */
+  const linesOf = b => {
+    const l = Array.isArray(b.lines) ? b.lines.map(v => String(v == null ? '' : v)) : String(b.text == null ? '' : b.text).split(/\r?\n/);
+    return l.filter(v => v !== '').length ? l : [];
+  };
+  function engraveOn(back, charm, opts = {}) {
+    if (!back || back.invalidated) return null;
+    const lines = linesOf(back); if (!lines.length) return null;
+    const bb = (charm && charm.outline && charm.outline.bbox) || (charm && charm.bbox) || null;
+    const cp = charm && charm.centerPt;
+    const cx = bb ? (bb[0] + bb[2]) / 2 : cp ? +cp[0] : 0, cy = bb ? (bb[1] + bb[3]) / 2 : cp ? +cp[1] : 0;
+    const angleDeg = back.upAngle == null ? 0 : 90 - +back.upAngle;                 // backView step 6
+    const a = -angleDeg * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+    // back frame → the charm's own frame: turn back, then mirror back about x = cx
+    const toFront = (x, y) => { const dx = x - cx, dy = y - cy; return [2 * cx - (cx + dx * ca - dy * sa), cy + dx * sa + dy * ca]; };
+    const c = Array.isArray(back.centre) && back.centre.length === 2 ? [+back.centre[0], +back.centre[1]] : [cx, cy];
+    const size = +back.sizePt || 0, PT = 72 / 25.4;
+    const out = { poolId: back.poolId || null, text: lines.join('\n'), lines, size, capPt: +back.capMm > 0 ? +back.capMm * PT : size * 0.66,
+      centre: toFront(c[0], c[1]), angleDeg, approvedAt: +back.approvedAt || 0, glyphs: null };
+    const G = opts.geom || (typeof CharmNestGeom !== 'undefined' ? CharmNestGeom : typeof window !== 'undefined' ? window.CharmNestGeom : null);
+    const font = opts.font || null;
+    if (font && G && G.layoutLines && size > 0 && Number.isFinite(c[0]) && Number.isFinite(c[1])) try {
+      const L = G.layoutLines(lines, font, size, back.lineGap == null ? null : +back.lineGap, +back.angle || 0, c);
+      const pt = (o, kx, ky, x, y) => { const p = toFront(x, y); o[kx] = p[0]; o[ky] = p[1]; };
+      out.glyphs = L.glyphs.map(g => ({ cmds: g.cmds.map(k => {
+        const o = { type: k.type };
+        if (k.type !== 'Z') pt(o, 'x', 'y', k.x, k.y);
+        if (k.type === 'C' || k.type === 'Q') pt(o, 'x1', 'y1', k.x1, k.y1);
+        if (k.type === 'C') pt(o, 'x2', 'y2', k.x2, k.y2);
+        return o;
+      }) }));
+      if (L.capPt) out.capPt = L.capPt;
+    } catch (_) { out.glyphs = null; }
+    return out;
+  }
+  /** Fills one piece's words on a canvas already set up to draw that charm: `tx` is the charm's own source-pt mapping. */
+  function drawEngrave(ctx, geo, tx, opts = {}) {
+    if (!geo || !geo.glyphs || !geo.glyphs.length) return false;
+    ctx.save(); ctx.fillStyle = opts.fill || '#3f3320'; if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
+    ctx.beginPath();
+    for (const g of geo.glyphs) { let cur = null;
+      for (const k of g.cmds) {
+        if (k.type === 'M') { const p = tx(k.x, k.y); ctx.moveTo(p[0], p[1]); cur = [k.x, k.y]; }
+        else if (k.type === 'L') { const p = tx(k.x, k.y); ctx.lineTo(p[0], p[1]); cur = [k.x, k.y]; }
+        else if (k.type === 'C') { const p1 = tx(k.x1, k.y1), p2 = tx(k.x2, k.y2), p = tx(k.x, k.y); ctx.bezierCurveTo(p1[0], p1[1], p2[0], p2[1], p[0], p[1]); cur = [k.x, k.y]; }
+        else if (k.type === 'Q' && cur) { const p1 = tx(k.x1, k.y1), p = tx(k.x, k.y); ctx.quadraticCurveTo(p1[0], p1[1], p[0], p[1]); cur = [k.x, k.y]; }
+        else if (k.type === 'Z') ctx.closePath();
+      }
+    }
+    ctx.fill('nonzero'); ctx.restore(); return true;
+  }
   function markup(backs, stock = {}) {
     if (!backs?.length) return '';
     return `<section class="sheetBacks" aria-label="Back engravings" data-stock-w="${+stock.wPt || 0}" data-stock-h="${+stock.hPt || 0}"><div class="backPieces">${backs.map(b => {
@@ -174,5 +233,5 @@
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, {once:true}); else mount();
   }
-  return {placedIds, forSheet, markup, dimensions, previewUrl, recoverPreview};
+  return {placedIds, forSheet, markup, dimensions, previewUrl, recoverPreview, engraveOn, drawEngrave};
 });

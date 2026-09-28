@@ -144,7 +144,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swMenu .swPass input{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:12.5px var(--sans)}
 .swBody{display:grid;grid-template-columns:minmax(0,1fr) 380px;min-height:0}
 .swStage{display:grid;grid-template-rows:minmax(0,1fr) auto;min-width:0;min-height:0;background:var(--paper)}
-.swPlateBox{position:relative;min-height:0;display:grid;place-items:center;padding:14px 16px 8px;overflow:hidden}
+.swPlateBox{position:relative;min-height:0;display:grid;place-items:center;padding:14px 16px 8px;overflow:hidden;perspective:1600px}
 .swPlate{position:relative;border-radius:10px;box-shadow:0 1px 2px rgba(30,26,20,.06),0 12px 34px rgba(30,26,20,.10);background:#fffefb;overflow:hidden;touch-action:none}
 .swPlate canvas,.swPlate img.swPv{position:absolute;inset:0;width:100%;height:100%;display:block}
 .swPlate img.swPv{object-fit:fill;transition:opacity .35s ease}
@@ -162,6 +162,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swTip em i{width:7px;height:7px;border-radius:50%;background:var(--c,#caa861)}
 .swStrip{display:flex;align-items:center;gap:14px;padding:7px 16px 9px;font:11.5px var(--sans);color:var(--ink45);min-width:0;white-space:nowrap;overflow:hidden;min-height:30px}
 .swStrip .swToggle{margin:-4px 0}
+.swStrip .spin{width:10px;height:10px;flex:0 0 10px;border:2px solid var(--line);border-top-color:var(--gold2);border-radius:50%;animation:swSpin .8s linear infinite}
 .swStrip b{font:600 12px var(--mono);color:var(--ink)}
 .swStrip .grow{flex:1}
 .swLegend{display:inline-flex;align-items:center;gap:6px}
@@ -391,7 +392,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   const W = {
     dlg: null, el: {}, id: null, rec: null, live: null, st: null, pieces: [], byId: new Map(), byPool: new Map(), orders: new Map(),
     set: null, setSheets: [], sel: null, hover: null, view: "sheet", q: "", filter: "all", token: 0, geom: false, view0: null,
-    k: 1, R: 0, dpr: 1, showBacks: true, fx: [], raf: 0, pools: new Map(), trailFor: null, from: null, ro: null, freed: [], work: null, fill: null, fillRun: 0, ghost: null, flow: null,
+    k: 1, R: 0, dpr: 1, showBacks: true, face: "front", backs: null, backsAsked: false, backsWait: "", fx: [], raf: 0, pools: new Map(), trailFor: null, from: null, ro: null, freed: [], work: null, fill: null, fillRun: 0, ghost: null, flow: null,
     // motion: orders leaving with the change in progress (rid → { how, keep }), orders drawn where they land until
     // their sheet is saved, the list's view last drawn, and how long a flight keeps the view it started from
     going: new Map(), landing: [], inbound: new Map(), listKey: null, listQ: null, stay: 0
@@ -635,7 +636,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const k = W.k / W.dpr, R = W.R / W.dpr; let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
     for (const s of spots) { const c = s.c || {}, r = Math.max(+c.widthPt || 20, +c.heightPt || 20) / 2; x0 = Math.min(x0, s.cxPt - r); y0 = Math.min(y0, s.cyPt - r); x1 = Math.max(x1, s.cxPt + r); y1 = Math.max(y1, s.cyPt + r); }
     const m = h("i", "swSpot"); m.setAttribute("aria-hidden", "true");
-    Object.assign(m.style, { left: R + x0 * k + "px", top: R + y0 * k + "px", width: Math.max(10, (x1 - x0) * k) + "px", height: Math.max(10, (y1 - y0) * k) + "px" });
+    Object.assign(m.style, { left: R + (backFace() ? W.st.wPt - x1 : x0) * k + "px", top: R + y0 * k + "px", width: Math.max(10, (x1 - x0) * k) + "px", height: Math.max(10, (y1 - y0) * k) + "px" });
     W.el.plate.insertBefore(m, W.el.fx); setTimeout(() => m.remove(), 6000);
     return m;
   }
@@ -1062,6 +1063,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function resetView() {
     W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = "";
+    W.face = "front"; W.backs = null; W.backsAsked = false; W.backsWait = "";
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
   async function close(opts = {}) {
@@ -1318,7 +1320,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.restore();
   }
   function tx0(c) { const cx = c.centerPt[0], cy = c.centerPt[1], k = W.k; return (x, y) => [(x - cx) * k, (cy - y) * k]; }
-  function withPiece(ctx, x, fn) { const p = x.p, k = W.k; ctx.save(); ctx.translate(W.R + p.cxPt * k, W.R + p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
+  /* The plate turned to its Back (W.face): the sheet is mirrored about its own vertical middle, as it lies under the
+     laser. Mirroring the whole plate is mirroring each piece's centre and its own frame, so a piece stays where the metal
+     has it and everything drawn on it — its outline, its cut-outs, its engraving — comes out the right way round. */
+  const backFace = () => W.face === "back";
+  const plateX = cxPt => W.R + (backFace() && W.st ? W.st.wPt - cxPt : cxPt) * W.k;
+  function withPiece(ctx, x, fn) { const p = x.p, k = W.k; ctx.save(); ctx.translate(plateX(p.cxPt), W.R + p.cyPt * k); if (backFace()) ctx.scale(-1, 1); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
   function outlinePath(ctx, x, holes) {
     const c = x.c; ctx.beginPath();
     if (!c) { const w = x.p.wPt * W.k / (x.p.scale || 1), hh = x.p.hPt * W.k / (x.p.scale || 1); ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * W.dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
@@ -1338,8 +1345,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         // a custom order's own design is plum here too, as on the sheet's card (CustomSheet)
         const cu = x.c && x.c.custom;
         ctx.fillStyle = cu ? "rgba(125,86,168,.20)" : "rgba(200,162,78,.10)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
-        if (x.c) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
+        if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
         else { ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; outlinePath(ctx, x); ctx.stroke(); }
+        // from behind, this charm's own words, where the laser burns them (a charm with no engraving stays plain)
+        if (backFace() && x.c) { const geo = engGeoOf(x, W.backs); if (geo) tryDo(() => CharmNestBacks.drawEngrave(ctx, geo, tx0(x.c), { fill: "#2f2512" })); }
         if (cu) { outlinePath(ctx, x); ctx.strokeStyle = "rgba(125,86,168,.9)"; ctx.lineWidth = 1.6 * W.dpr; ctx.setLineDash([4 * W.dpr, 3 * W.dpr]); ctx.stroke(); ctx.setLineDash([]); }
       });
     }
@@ -1382,7 +1391,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const a = fs.f, t = linkProgress(now);
       ctx.save(); ctx.globalAlpha = u; ctx.strokeStyle = "rgba(169,130,63,.85)"; ctx.lineWidth = 1.4 * W.dpr; ctx.setLineDash([5 * W.dpr, 4 * W.dpr]);
       for (const b of fs.mates) { if (b === a || b.gone) continue;
-        const x0 = R + a.p.cxPt * k, y0 = R + a.p.cyPt * k, x1 = R + b.p.cxPt * k, y1 = R + b.p.cyPt * k, mx = (x0 + x1) / 2, my = (y0 + y1) / 2 - Math.hypot(x1 - x0, y1 - y0) * .18;
+        const x0 = plateX(a.p.cxPt), y0 = R + a.p.cyPt * k, x1 = plateX(b.p.cxPt), y1 = R + b.p.cyPt * k, mx = (x0 + x1) / 2, my = (y0 + y1) / 2 - Math.hypot(x1 - x0, y1 - y0) * .18;
         ctx.beginPath(); ctx.moveTo(x0, y0);
         if (t >= 1) ctx.quadraticCurveTo(mx, my, x1, y1);
         else { const n = 18; for (let i = 1; i <= Math.ceil(n * t); i++) { const s = Math.min(t, i / n), u = 1 - s; ctx.lineTo(u * u * x0 + 2 * u * s * mx + s * s * x1, u * u * y0 + 2 * u * s * my + s * s * y1); } }
@@ -1404,7 +1413,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // back engraving: a small mark on each charm that has one (clay: still to approve, sage: approved)
     if (W.showBacks) for (const x of W.pieces) {
       if (x.gone || !x.eng || x.eng.kind === "none" || x.eng.kind === "skipped") continue;
-      const cx = R + x.p.cxPt * k, cy = R + x.p.cyPt * k, r = Math.max(3.5, Math.min(6, 1.6 * k / W.dpr)) * W.dpr;
+      const cx = plateX(x.p.cxPt), cy = R + x.p.cyPt * k, r = Math.max(3.5, Math.min(6, 1.6 * k / W.dpr)) * W.dpr;
       ctx.beginPath(); ctx.arc(cx, cy, r + 2 * W.dpr, 0, Math.PI * 2); ctx.fillStyle = "#fff"; ctx.fill();
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fillStyle = x.eng.kind === "approved" ? "#5f7a5b" : "#b0563f"; ctx.fill();
     }
@@ -1429,7 +1438,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   // a point clicked on a picture, where its charm is not known yet: a gold ring about a charm's size, and its centre
   function markAt(ctx, at) {
-    const x = W.R + at.xPt * W.k, y = W.R + at.yPt * W.k, r = 4.6 * 72 / 25.4 * W.k;
+    const x = plateX(at.xPt), y = W.R + at.yPt * W.k, r = 4.6 * 72 / 25.4 * W.k;
     ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fillStyle = "rgba(202,168,97,.30)"; ctx.fill(); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr; ctx.stroke();
     ctx.beginPath(); ctx.arc(x, y, Math.max(2.5 * W.dpr, r * .12), 0, Math.PI * 2); ctx.fillStyle = "#b8893a"; ctx.fill(); ctx.restore();
   }
@@ -1463,7 +1472,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /* ── pointer ── */
   function toPlate(e) {
     const r = W.el.fx.getBoundingClientRect(), sx = W.el.fx.width / r.width;
-    return { x: ((e.clientX - r.left) * sx - W.R) / W.k, y: ((e.clientY - r.top) * sx - W.R) / W.k, cx: e.clientX - r.left, cy: e.clientY - r.top };
+    const px = ((e.clientX - r.left) * sx - W.R) / W.k;
+    return { x: backFace() && W.st ? W.st.wPt - px : px, y: ((e.clientY - r.top) * sx - W.R) / W.k, cx: e.clientX - r.left, cy: e.clientY - r.top };
   }
   function hitAt(e) { const { x, y } = toPlate(e); return hitPt(x, y); }
   /** The charm at a point of the sheet (in points), by its drawing where the window has it, else by its outline box. */
@@ -1564,8 +1574,40 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
     E.strip.innerHTML = `<span><b>${n}</b> charm${n === 1 ? "" : "s"}</span><span><b>${orders}</b> order${orders === 1 ? "" : "s"}</span><span><b>${fmt.pct(rec.density || 0)}</b> full</span><span><b>${fmt.area(rec.freePt2 || 0).replace(" mm²", "")}</b> mm² free</span>` +
       `<span class="grow"></span>` + (W.freed.length ? `<span class="swLegend"><i class="freed"></i>Freed room</span>` : "") + (backs + ok ? (backs ? `<span class="swLegend"><i></i>${backs} back${backs === 1 ? "" : "s"} to approve</span>` : "") + (ok ? `<span class="swLegend"><i class="ok"></i>${ok} back${ok === 1 ? "" : "s"} approved</span>` : "") + `<button class="swToggle" data-r2="backs" aria-pressed="${W.showBacks}">${W.showBacks ? "Hide" : "Show"} marks</button>` : "") +
-      `<span>Hover a charm for its order · click to open it</span>`;
+      `<button class="swToggle" data-r2="face" aria-pressed="${backFace()}" title="${backFace() ? "Turn the sheet back to its front" : "Turn the sheet over: every charm's back engraving, where the laser burns it"}">${backFace() ? "Front" : "Back · engraving"}</button>` +
+      (W.backsWait ? `<span class="swLegend"><span class="spin"></span>${esc(W.backsWait)}</span>` : "") +
+      `<span>${backFace() ? "Back side, mirrored as the laser sees it" : "Hover a charm for its order · click to open it"}</span>`;
     const t = E.strip.querySelector("[data-r2=backs]"); if (t) t.onclick = () => { W.showBacks = !W.showBacks; renderStrip(); paintFx(); };
+    const f = E.strip.querySelector("[data-r2=face]"); if (f) f.onclick = () => turnPlate(backFace() ? "front" : "back");
+  }
+  /** Front | Back: the plate turns to its edge, is drawn from the other side, and turns back (the order view turns the
+      same way: OrderWin turnPlate). Nothing is read before it turns — the words arrive on the plate as they come. */
+  function turnPlate(face) {
+    if (face === W.face || !W.el.plate || W.flying) return;
+    W.face = face;
+    const E = W.el, d = face === "back" ? 1 : -1;
+    const paint = () => { E.pv.style.opacity = face === "back" || (W.pieces.length && W.pieces.every(x => x.c)) ? "0" : "1";
+      paintRule(); if (W.geom || (W.pre && W.pre.pieces)) paintBase(); paintFx(); renderStrip(); };
+    if (face === "back") sheetBacksReady();
+    if (still() || !W.st) return paint();
+    E.plate.animate([{ transform: "rotateY(0)" }, { transform: `rotateY(${90 * d}deg)` }], { duration: 300, easing: "cubic-bezier(.4,0,1,1)" })
+      .finished.then(() => { paint(); E.plate.animate([{ transform: `rotateY(${-90 * d}deg)` }, { transform: "rotateY(0)" }], { duration: 380, easing: EASE }); }, () => paint());
+  }
+  /** The back side asked for: the sheet's backs read once, for the whole sheet, and the engraving font loaded. Neither is
+      waited on — the plate is turned already, the strip says what is still coming, and it is drawn again as it lands. */
+  function sheetBacksReady() {
+    W.backs = backsOf(W.rec || { id: W.id }, W.live, null);
+    if (W.backsAsked) return; W.backsAsked = true;
+    const id = W.id, tok = W.token, F = window.Engrave && Engrave.fonts, jobs = [], what = [];
+    if (id) { jobs.push(backsFor(id).then(list => { if (tok === W.token) W.backs = backsOf(W.rec || { id }, W.live, list); }, () => {})); what.push("this sheet's back engraving"); }
+    if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(tryDo(() => Engrave.loadFonts())).catch(() => {})); what.push("the engraving font"); }
+    if (!jobs.length) return;
+    W.backsWait = "Reading " + what.join(" and ") + "…"; renderStrip();
+    Promise.all(jobs).then(() => {
+      if (tok !== W.token) return;
+      W.backsWait = ""; for (const x of W.pieces) { x._engGeo = null; x._engGeoKey = null; }
+      renderStrip(); if (backFace() && (W.geom || (W.pre && W.pre.pieces))) { paintBase(); paintFx(); }
+    });
   }
   function renderSheetPane() {
     const E = W.el, all = [...W.orders.entries()];
@@ -3663,7 +3705,76 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const base = g.charms[x.index] && (!x.hash || g.charms[x.index].hash === x.hash) ? g.charms[x.index] : g.charms.find(c => c.hash === x.hash);
     if (base) x.c = Object.assign({}, base, { id: x.id, name: x.name });
   }
+  /* ── the back of a sheet: every charm's own engraving, where the laser burns it (Paul, 28 Sep: "make sure I can see
+     all of the back engraving on all of the charms … a standard for all sheets") ──
+     The words of the whole sheet, every order on it, come from the backs the record already carries (the one getSheet
+     read) and, for a sheet this sorter holds, the page's own; a saved sheet whose record carries none is asked once for
+     the whole sheet (backList, cached), never once per charm, and never from Etsy. An engraving approved but not written
+     yet is drawn from its open Engrave job. CharmNestBacks.engraveOn undoes the back file's mirror and hoop-up turn, so
+     the words sit on the charm exactly as they are cut — same place, same size, same mirroring. ── */
+  const sheetBacks = new Map();   // sheet id → { at, p }: one read of a sheet's backs, kept for a minute
+  function backsFor(id) {
+    const hit = sheetBacks.get(id); if (hit && Date.now() - hit.at < 60000) return hit.p;
+    const p = api("charmNestLibrary", { op: "backList", sheetId: id }, { quiet: true }).then(r => (r && r.backs) || []);
+    p.catch(() => { if (sheetBacks.get(id) && sheetBacks.get(id).p === p) sheetBacks.delete(id); });
+    sheetBacks.set(id, { at: Date.now(), p }); if (sheetBacks.size > 12) sheetBacks.delete(sheetBacks.keys().next().value);
+    return p;
+  }
+  /** Every back this page already knows of a sheet, newest approval per piece. */
+  function backsOf(rec, live, extra) {
+    const id = (rec && rec.id) || null, m = new Map();
+    const add = b => {
+      if (!b || !b.poolId || b.invalidated || (b.sheetId && id && b.sheetId !== id)) return;
+      const p = m.get(b.poolId); if (!p || (+b.approvedAt || 0) >= (+p.approvedAt || 0)) m.set(b.poolId, b);
+    };
+    for (const b of (rec && rec.backPool) || []) add(b);
+    for (const b of (live && live.backPool) || []) add(b);
+    for (const b of extra || []) add(b);
+    if (window.Engrave && Engrave.items) tryDo(() => { for (const j of Engrave.items().values()) for (const b of j.backs || []) add(b); });
+    return m;
+  }
+  const backFont = weight => { const F = window.Engrave && Engrave.fonts; return F && ((weight === "Semibold" && F.Semibold) || F.Regular) || null; };
+  /** An engraving approved in Engrave but not written yet, as a back record: its fitted words, in the same back frame. */
+  function backOfJob(x) {
+    const j = x.eng && x.eng.job; if (!j || !j.fit || !j.view || !j.fit.centre) return null;
+    return { poolId: x.poolId, text: j.text, lines: j.lines, sizePt: j.fit.size, capMm: j.fit.capMm, weight: j.fit.weight,
+      centre: j.fit.centre, angle: j.fit.angle || 0, lineGap: j.fit.layout && j.fit.layout.lineGap, upAngle: j.view.upAngle, approvedAt: +j.approvedAt || 0 };
+  }
+  /** The back side asked for: the sheet's backs read once for the whole sheet and the engraving font loaded, the plate
+      drawn again as they land. Nothing waits on them — the plate is already there, and a small note says what it waits
+      for while they come. */
+  function ensureBacks(G, opts) {
+    if (G.backsAsked) return; G.backsAsked = true;
+    const id = G.rec && G.rec.id, wait = t => { if (opts && opts.onWait) tryDo(() => opts.onWait(t)); };
+    const F = window.Engrave && Engrave.fonts, jobs = [], what = [];
+    if (id) { jobs.push(backsFor(id).then(list => { G.backs = backsOf(G.rec, G.live, list); }, () => {})); what.push("this sheet's back engraving"); }
+    if (window.Engrave && Engrave.loadFonts && !(F && F.ok)) { jobs.push(Promise.resolve(Engrave.loadFonts()).catch(() => {})); what.push("the engraving font"); }
+    if (!jobs.length) return;
+    wait("Reading " + what.join(" and ") + "…");
+    Promise.all(jobs).then(() => {
+      wait(null);
+      for (const x of G.pieces) { x._engGeo = null; x._engGeoKey = null; }
+      if (G.cv.isConnected && G.cv._order === G) soonPaint(G);
+    });
+  }
+  /** The words of one piece in the charm's own frame, worked out once per drawing and kept with the piece. */
+  function engGeoOf(x, backs) {
+    if (!x.c || !window.CharmNestBacks || !CharmNestBacks.engraveOn) return null;
+    const rec = (x.poolId && backs && backs.get(x.poolId)) || (x.eng && x.eng.back) || backOfJob(x);
+    if (!rec) return null;
+    const key = [x.poolId || x.id, +rec.approvedAt || 0, rec.sizePt, rec.angle, !!backFont(rec.weight)].join("|");
+    if (x._engGeo && x._engGeoKey === key) return x._engGeo;
+    x._engGeoKey = key; x._engGeo = tryDo(() => CharmNestBacks.engraveOn(rec, x.c, { font: backFont(rec.weight) })) || null;
+    return x._engGeo;
+  }
   function orderPiece(ctx, G, x, fn) { const p = x.p, k = G.k; ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale); fn(); ctx.restore(); }
+  /** Where a piece's words land on the plate, through the very transform they are drawn with (the view's own check). */
+  function engPointOf(G, x, geo) {
+    const c = x.c, p = x.p, k = G.k, a = p.angle * Math.PI / 180, s = p.scale || 1;
+    const lx = (geo.centre[0] - c.centerPt[0]) * k * s, ly = (c.centerPt[1] - geo.centre[1]) * k * s;
+    const px = p.cxPt * k + (lx * Math.cos(a) - ly * Math.sin(a)), py = p.cyPt * k + (lx * Math.sin(a) + ly * Math.cos(a));
+    return { x: G.R + (G.backSide ? G.Wp - px : px), y: G.R + py };
+  }
   function orderOutline(ctx, G, x, holes) {
     const c = x.c; ctx.beginPath();
     if (!c) { const w = x.p.wPt * G.k / (x.p.scale || 1), hh = x.p.hPt * G.k / (x.p.scale || 1); ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * G.dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
@@ -3715,11 +3826,22 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         orderOutline(ctx, G, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = (on ? 3.6 : 2.5) * dpr; ctx.stroke();
       });
     }
+    // from behind: every charm's own words, on the charm, where the laser burns them — this order's in a firm ink and the
+    // rest of the sheet's a little lighter, so the whole plate reads (a charm with no engraving keeps its plain back)
+    const pills = [];
+    if (G.backSide) for (const x of G.pieces) {
+      const geo = engGeoOf(x, G.backs);
+      if (!geo || !geo.glyphs) { if (x.eng && x.eng.text) pills.push(x); continue; }
+      orderPiece(ctx, G, x, () => {
+        const c = x.c, k = G.k, cx = c.centerPt[0], cy = c.centerPt[1];
+        CharmNestBacks.drawEngrave(ctx, geo, (px, py) => [(px - cx) * k, (cy - py) * k], { fill: mine.has(x) ? "#2f2512" : "rgba(62,52,35,.72)" });
+      });
+    }
     ctx.restore();
     ctx.strokeStyle = "rgba(176,86,63,.9)"; ctx.lineWidth = Math.max(1, .5 * G.k); ctx.strokeRect(.5, .5, G.Wp - 1, G.Hp - 1);
     ctx.restore();
-    // from behind, the order's words read the right way round on its charm
-    if (G.backSide) for (const x of G.mine) {
+    // the words of a charm whose drawing or engraving font is not here yet: said on the plate until they can be drawn
+    if (G.backSide) for (const x of pills) {
       const words = x.eng && x.eng.text; if (!words) continue;
       const px = R + G.Wp - x.p.cxPt * G.k, py = R + x.p.cyPt * G.k, size = Math.max(9 * dpr, Math.min(14 * dpr, Math.min(x.p.wPt, x.p.hPt) * G.k * .22));
       ctx.save(); ctx.font = `italic ${size}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -3772,14 +3894,20 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       roseCutAt: (rec && rec.roseCutAt) || live.roseCutAt || null, roseLine: !!(live.rosePlan || live.roseProtected), live: true });
     const pieces = piecesOf(rec);
     for (const x of pieces) x.eng = engOf(x, rec);
-    const G = { cv, rec, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back };
+    const G = { cv, rec, live, pieces, mine: pieces.filter(x => x.rid === rid), st: live ? stockFor(rec.metal, live) : rec.stock ? stockOf(rec) : stockFor(rec.metal), focus: null, img: null, k: 1, R: 0, dpr: 1, t0: 0, raf: 0, soon: 0, backSide: !!opts.back, backs: backsOf(rec, live), backsAsked: false };
     // (the plate belongs to the latest drawing asked of it: one still being read for another sheet or order never lays it
     // out or paints it again, and its ring stops, so a sheet switched while the last was drawing is not resized or painted over)
     const was = cv._order; if (cv._claim === claim) { if (was && was !== G) { cancelAnimationFrame(was.raf); cancelAnimationFrame(was.soon); was.raf = was.soon = 0; } cv._order = G; }
     const redraw = () => { if (paintOrderBase(G)) paintOrder(G); };
     const info = {
       rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
-      redraw, focus: poolId => { G.focus = poolId || null; redraw(); }, back: on => { G.backSide = !!on; redraw(); },
+      redraw, focus: poolId => { G.focus = poolId || null; redraw(); },
+      // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
+      back: on => { G.backSide = !!on; if (G.backSide) ensureBacks(G, opts); redraw(); },
+      engraved: () => G.pieces.filter(x => engGeoOf(x, G.backs) || (x.eng && x.eng.text)).length,
+      // what the back of this sheet says: every charm that carries words, whose it is, and where on the plate they are drawn
+      words: () => G.pieces.map(x => { const geo = engGeoOf(x, G.backs); const text = (geo && geo.text) || (x.eng && x.eng.text) || ""; if (!text) return null;
+        return Object.assign({ poolId: x.poolId, rid: x.rid, text, drawn: !!(geo && geo.glyphs) }, geo ? engPointOf(G, x, geo) : {}); }).filter(Boolean),
       hitAt: (x, y) => hitOrder(G, x, y),
       // where a piece's centre is on the screen
       pointOf: key => { const x = pieces.find(p => p.poolId === key || p.id === key), r = cv.getBoundingClientRect(); if (!x || !G.base || !r.width) return null; const px = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), py = G.R + x.p.cyPt * G.k; return { x: r.left + px * r.width / cv.width, y: r.top + py * r.height / cv.height }; },
@@ -3787,6 +3915,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       snap: () => { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; try { c.getContext("2d").drawImage(G.base || cv, 0, 0); } catch (_) { return null; } return c; }
     };
     if (opts.onInfo) tryDo(() => opts.onInfo(info));
+    if (G.backSide) ensureBacks(G, opts);
     const url = rec.outputs && rec.outputs.preview && rec.outputs.preview.url;
     if (url && !live) { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = () => { G.img = im; soonPaint(G); }; im.src = cors(url); }
     redraw();
