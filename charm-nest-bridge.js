@@ -909,6 +909,8 @@ const Orders = window.Orders = (() => {
       }
       if (row.materialOverride) { row.spec.material = row.materialOverride; row.problems = row.problems.filter(p => p.kind !== "needsMaterial"); } if (row.sizeOverride) { row.spec.size = row.sizeOverride; row.problems = row.problems.filter(p => p.kind !== "missingSize"); } row.material = row.spec.material;
     }
+    // what a line was read as is kept for the lines on the list: it used to keep one for every line the session read
+    if (readSaid.size > rowsOf().length) { const live = new Set(rowsOf().map(r => r.key)); for (const k of readSaid.keys()) if (!live.has(k)) readSaid.delete(k); }
     Review.syncOrderItems();
   }
   async function pull(run, { silent = false, receiptIds = null } = {}) {
@@ -1473,7 +1475,7 @@ const Orders = window.Orders = (() => {
     const v = document.getElementById("ordersView"), box = v && v.querySelector("#ordQ"); if (box) box.value = OV.q;
     render();
   }
-  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone };
+  return { view: () => OV, showPile, showCancelled, cancelArrived, pull, claim, unclaim, revalidate, render, renderNow, renderBody, markStale, loadMaps, interpretAll, lineRecord, rowFromRecord, rows: rowsOf, visibleRows, placeOf, imageFor, wantImage, shipTxt, statePill: stateWords, applyPullRule, ctx, keepRest, takeOffGone, _kept: () => readSaid.size };
 })();
 
 /* ═══ 19 · Master — SKU labels under charms, per-SKU designs, the index ══════ */
@@ -7435,9 +7437,16 @@ const Review = window.Review = (() => {
         if (done !== false || now - a.at > 600000) answers.delete(k);
       }
       // a line skipped from its order window (no card) is recorded when the sync first sees it skipped
-      if (full) for (const r of Orders.rows()) {
-        const sk = r.state === "skipped", was = skipSeen.get(r.key); skipSeen.set(r.key, sk);
-        if (sk && was === false) TL.line(r, "skipped", { id: `${r.key}.skip.${now}`, text: String(r.reason || "Line skipped").replace(/^line/, "Line").slice(0, 200), data: { kind: null, answer: "Skip line", from: "order" } });
+      if (full) {
+        const live = new Set();
+        for (const r of Orders.rows()) {
+          const sk = r.state === "skipped", was = skipSeen.get(r.key); skipSeen.set(r.key, sk); live.add(r.key);
+          if (sk && was === false) TL.line(r, "skipped", { id: `${r.key}.skip.${now}`, text: String(r.reason || "Line skipped").replace(/^line/, "Line").slice(0, 200), data: { kind: null, answer: "Skip line", from: "order" } });
+        }
+        // both are kept for the lines on the list: they used to keep one for every line the session saw (a line back on
+        // it is asked nothing twice, the timeline sending a question once)
+        for (const k of skipSeen.keys()) if (!live.has(k)) skipSeen.delete(k);
+        for (const id of askedSeen) if (!live.has(id.slice(0, id.lastIndexOf(".")))) askedSeen.delete(id);
       }
     } catch (_) {}
   }
@@ -8047,7 +8056,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
