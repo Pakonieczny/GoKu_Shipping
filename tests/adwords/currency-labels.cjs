@@ -157,13 +157,14 @@ async function consoleChecks(){
  vm.runInContext('var d={currency:"USD"};var perfFmt='+fm[1],cx);
  check(cx.perfFmt(250)==='US$250'&&cx.perfFmt(-50)==='\u2212US$50','performance chart axis reads US$');
 
- // Campaign tree: editing a budget confirms, relabels the button and reports in the budget currency.
- const said=[],bge={attrs:{'data-id':'7','data-b':'10','data-res':''},getAttribute(k){return this.attrs[k];},setAttribute(k,v){this.attrs[k]=v;},innerHTML:'$10 CAD'};
- const tx=vm.createContext({DASH:{budgetCurrency:'CAD',lastMetrics:[]},cmdReport:{budgetCurrency:'CAD'},BUDGET_OVERRIDES:{},Intl,console,esc:s=>String(s==null?'':s),
-  prompt:()=>'15',confirm:m=>{said.push(m);return true;},toast:m=>said.push(m),api:async()=>({ok:true})});
- vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+pick('wireServing')+'\n'+pick('wireCampRows'),tx);
- tx.wireCampRows({querySelectorAll:sel=>sel==='.bge'?[bge]:[]});await bge.onclick.call(bge,{stopPropagation(){}});
- check(/\(\$10 CAD \u2192 \$15 CAD\)/.test(said[0])&&/^\$15 CAD /.test(bge.innerHTML)&&/^Budget \$10 CAD \u2192 \$15 CAD/.test(said[1]),'campaign tree budget edit names CAD ('+said.join(' | ')+')');
+ // Campaign tree: the in-place budget editor names the budget currency in its question, its check and its report.
+ const {JSDOM}=require('jsdom'),tdom=new JSDOM('<div id="snapshot"><table><tbody><tr class="cdet" data-cid="7"><td><div class="campaignSettings"><button class="bge" data-id="7" data-b="10" data-res="">$10 CAD</button></div></td></tr></tbody></table></div>');
+ const said=[],tx=vm.createContext({document:tdom.window.document,DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'7',budget:10}]},cmdReport:{budgetCurrency:'CAD'},cmdMetrics:[],BUDGET_OVERRIDES:{},Intl,console,
+  esc:s=>String(s==null?'':s),cmdAttr:s=>String(s==null?'':s),cmdOpening(){},renderCommand(){},toast:m=>said.push(m),api:async()=>({ok:true})});
+ vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+span('var CMD_EDIT=null','// Extend how long a campaign runs'),tx);
+ const tdoc=tdom.window.document;tx.cmdEditOpen('budget',tdoc.querySelector('.bge'));const asked=tdoc.querySelector('.cmdEdit label').textContent;
+ tx.CMD_EDIT.value='15';await tx.cmdEditBudget(false);const jump=tdoc.querySelector('.cmdEdit .ieQ').textContent;await tx.cmdEditBudget(true);
+ check(/\(CAD\)$/.test(asked)&&/\(\$10 CAD \u2192 \$15 CAD\)/.test(jump)&&/^Budget \$10 CAD \u2192 \$15 CAD$/.test(said[0])&&tx.DASH.lastMetrics[0].budget===15&&!tdoc.querySelector('.cmdEdit'),'campaign tree budget edit names CAD ('+[asked,jump].concat(said).join(' | ')+')');
 
  // Ad Doctor "Set" budget and enable confirmations name the account currency.
  const sm=[],bx=vm.createContext({DASH:{budgetCurrency:'CAD',control:{dryRun:false},lastMetrics:[]},Intl,console,confirm:m=>{sm.push(m);return true;},toast:m=>sm.push(m),

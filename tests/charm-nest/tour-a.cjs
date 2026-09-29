@@ -4,7 +4,7 @@
 //   1 · the designs window's Send to Sheet, with a run under way: the window goes back into its card, the tour switches
 //       to the Nest tab, opens the Gold sheet through NestFocus.open(sheetId, { poolIds, caption }), lands the piece
 //       (land), eases it back (close), and goes home: the Review tab, Custom Orders, the same scroll; nothing left over;
-//       only transform, opacity and clip-path animated; about 3-5 s; frames measured once (a warning only);
+//       only transform, opacity and clip-path animated; about 7.5-9 s (Paul, 29 Sep 01:30: "a bit slower", each caption held 1.3 s to be read); frames measured once (a warning only);
 //   2 · the card's own Send to Sheet with no run open: the design waits (NestFocus.waiting), and Esc mid-tour skips
 //       to the end and goes home at once.
 // Screenshots to SHOTS (default /mnt/project-files/plans/tour/a-*.png).
@@ -38,8 +38,10 @@ function recorders() {
   try { new PerformanceObserver(l => { if (M.rec) for (const e of l.getEntries()) M.long.push([Math.round(e.startTime - M.t0), Math.round(e.duration)]); }).observe({ entryTypes: ['longtask'] }); } catch (_) {}
   const loop = t => { if (M.rec) { M.frames.push(t - M.t0); const m = window.CN && CN.S.mode; if (m !== M.mode) { M.modes.push([m, Math.round(t - M.t0)]); M.mode = m; } const c = document.querySelector('#tourLayer .tourCoin'); if (c) M.coin.add(Math.round(c.getBoundingClientRect().left) + ',' + Math.round(c.getBoundingClientRect().top)); } requestAnimationFrame(loop); };
   requestAnimationFrame(loop);
-  window.__start = () => Object.assign(M, { rec: true, frames: [], long: [], anims: [], modes: [], mode: null, coin: new Set(), t0: performance.now() });
-  window.__stop = () => { M.rec = false; const d = []; for (let i = 2; i < M.frames.length; i++) d.push(M.frames[i] - M.frames[i - 1]); return { d, long: M.long, anims: M.anims, modes: M.modes, coin: M.coin.size }; };
+  // the tour's captions, each with when it came (watched from __start: at init the document is not there yet)
+  const capObs = new MutationObserver(ms => { if (M.rec) for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 && /tourCap/.test(n.className)) M.caps.push([n.textContent, Math.round(performance.now() - M.t0)]); });
+  window.__start = () => { try { capObs.observe(document.documentElement, { childList: true, subtree: true }); } catch (_) {} return Object.assign(M, { rec: true, frames: [], long: [], anims: [], modes: [], mode: null, coin: new Set(), caps: [], t0: performance.now() }); };
+  window.__stop = () => { M.rec = false; const d = []; for (let i = 2; i < M.frames.length; i++) d.push(M.frames[i] - M.frames[i - 1]); return { d, long: M.long, anims: M.anims, modes: M.modes, coin: M.coin.size, caps: M.caps }; };
 }
 // part B's NestFocus, as its contract says, reduced to what the tour needs: the Gold card's canvas and a spot on it
 function standIn() {
@@ -125,9 +127,14 @@ function standIn() {
     if (NF) check(landed.length === end1.poolIds.length && end1.poolIds.every(id => landed.includes(id)) && end1.calls.some(c => c[0] === 'close'), `each piece landed on it (land ${landed.length}/${end1.poolIds.length}) and the sheet eased back (close)`);
     check(end1.state === 'pooled' && end1.gold === 1 && !end1.dlg, `placed first, as before: pooled, 1 piece on Gold, the window closed (${end1.state}, ${end1.gold})`);
     check(r1.coin >= 20, `the coin is seen moving (${r1.coin} positions)`);
+    // (Paul, 29 Sep 01:30) a caption at each step, each standing long enough to be read
+    const said = r1.caps.map(c => c[0]), steps = [/^Order 4175423829/, /^To the Nest tab/, /^GF 14\/20 · Sheet 1/, /^(Placed|Queued) on Sheet 1/, /^Back to Review/];
+    const stood = r1.caps.slice(0, -1).map((c, i) => r1.caps[i + 1][1] - c[1]);
+    check(steps.every((re, i) => re.test(said[i] || '')) && said.length === steps.length, `each step said in its caption: ${JSON.stringify(said)}`);
+    check(stood.every(ms => ms >= 1200), `each caption stood long enough to read, 1.2 s at least (${stood.join(', ')} ms)`);
     // (the tour starts once the window is back in its card: CustomSheet.send passes that as its delay, 480 ms)
     const tour = took - began - 480;
-    check(tour >= 3000 && tour <= 5200, `about 3-5 s for one sheet: ${tour} ms from the window back in its card to home (${took} ms from the press)`);
+    check(tour >= 6800 && tour <= 9600, `about 7.5-9 s for one sheet (a bit slower, each step said and held to be read): ${tour} ms from the window back in its card to home (${took} ms from the press)`);
     check(!end1.left && !end1.views.some(Boolean), `nothing left over: no tour layer nodes, no view animation (${end1.left}, ${end1.views})`);
     const props = [...new Set(r1.anims.flatMap(a => a.props))], layout = props.filter(p => LAYOUT.test(p)), tourProps = [...new Set(r1.anims.filter(a => /^tour/.test(a.cls) || a.cls === 'mGhost tourCard').flatMap(a => a.props))];
     check(tourProps.every(p => ['transform', 'opacity', 'clipPath'].includes(p)) && !layout.length, `only transform, opacity and clip-path animated (tour: ${tourProps.join(',')}; all: ${props.join(',')})`);
