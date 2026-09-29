@@ -4,7 +4,8 @@
 */
 
 const admin = require("./firebaseAdmin");
-const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT } = require("./lib/listingBatchAdmission.cjs");
+const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
+  neverStarted } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14113,6 +14114,7 @@ async function _handlerImpl(event) {
       };
 
       let statusChecked = 0, collected = 0, collectErrors = 0, resumed = 0, retriesSubmitted = 0;
+      let stalledCancelled = 0, stalledRestarted = 0;
 
       const open = [];
       // A 250-document first page can be saturated by failed jobs forever,
@@ -14154,10 +14156,57 @@ async function _handlerImpl(event) {
           // multi-set job would be refused by batch_retry_missing and stop the refill.
           if (state === "JOB_STATE_FAILED" && quotaFailure(st?.providerError) && !st?.responsesFile &&
               !b.retryBatchName && b.sets?.length === 1 && b.sets[0].setKind !== "charm_maker") b.retryRequested = true;
+          // OpenAI accepted this job hours ago and has not started it. It
+          // still holds a place (cancelling counts as running until OpenAI
+          // confirms); its set is queued again below once it is cancelled.
+          if (neverStarted(b, st, Date.now())) {
+            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName });
+            if (stop?.cancelRequested) {
+              stalledCancelled++;
+              b.stallCancelRequestedAt = true;
+              if (stop.state) b.state = stop.state;
+            } else if (!stop?.ok) {
+              console.warn("[batch_sweep] stalled job not cancelled:", b.batchName, stop?.error?.message || "unknown error");
+            }
+          }
         }
         if (isSucceeded(state)) {
           const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
           if (col?.ok) { collected++; b.collected = true; } else collectErrors++;
+        }
+      }
+      // Queue the set of each job cancelled because OpenAI never started it,
+      // once OpenAI confirms the cancel. Never while another open job or
+      // queued record already covers that set.
+      const setsInFlight = new Set();
+      for (const o of open) {
+        if (o.collected || o.retryBatchName || !o.batchName) continue;
+        const st = normState(o.state);
+        if (["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "JOB_STATE_SUCCEEDED"].includes(st) ||
+            o.retryRequested && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(st)) {
+          for (const s of o.sets || []) setsInFlight.add(String(s?.outputBasePath || ""));
+        }
+      }
+      const restartable = open.filter((b) => b.stallCancelRequestedAt && !b.collected && !b.retryBatchName &&
+        !b.stallRestartBlocked && !b.stallRestartClosed &&
+        ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(b.state)));
+      if (restartable.length) await guardRef.set({ stage: "restarting stalled jobs" }, { merge: true });
+      for (const b of restartable) {
+        if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
+        const path = String(b.sets?.[0]?.outputBasePath || "");
+        if (!path || setsInFlight.has(path)) continue;
+        const restart = await inProcess({ kind: "batch_restart_stalled", batchName: b.batchName });
+        if (restart?.batchName && restart.batchName !== b.batchName) {
+          b.retryBatchName = restart.batchName;
+          setsInFlight.add(path);
+          if (restart.created) {
+            stalledRestarted++;
+            // Submitted by the refill below, after the sets already waiting.
+            open.push({ batchName: restart.batchName, state: "JOB_STATE_QUEUED", locallyQueued: true,
+              retryRequested: true, retryAttempt: 0, collected: false, sets: b.sets });
+          }
+        } else if (!restart?.ok) {
+          console.warn("[batch_sweep] stalled restart postponed:", b.batchName, restart?.error?.message || "unknown error");
         }
       }
       await guardRef.set({ stage: "checking retry capacity" }, { merge: true });
@@ -14270,6 +14319,7 @@ async function _handlerImpl(event) {
         stage: "idle",
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
+          stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
           refillContinuing: refillNeedsContinuation },
       }, { merge: true });
@@ -14287,7 +14337,7 @@ async function _handlerImpl(event) {
         }
       }
       return json(200, { ok: true, statusChecked, collected, collectErrors, resumed,
-        retriesSubmitted, waiting: waiting.length, openBatches: open.length });
+        retriesSubmitted, stalledCancelled, stalledRestarted, waiting: waiting.length, openBatches: open.length });
     } catch (err) {
       try { await guardRef.set({ runningSince: null, stage: "failed",
         lastFailureAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -14981,6 +15031,8 @@ async function _handlerImpl(event) {
         retryRequested: body?.retryRequested === true && !sourceName.startsWith("batch_local_"),
         retryAttempt: Number(body?.retryAttempt || 0),
         capacityRefusals: Number(body?.capacityRefusals || 0),
+        // Times this set was restarted because OpenAI never started its job.
+        stallRestarts: Number(body?.stallRestarts || 0),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         state: "JOB_STATE_PENDING",
@@ -15097,6 +15149,7 @@ async function _handlerImpl(event) {
           kind: "batch_submit", model: original.model, sets: original.sets,
           imageSize: original.imageSize, sessionId: original.sessionId,
           retryOf: originalName, retryRequested: true, retryAttempt: 0, capacityRefusals: refusals,
+          stallRestarts: Number(original.stallRestarts || 0),
           displayName: original.displayName,
         }) });
       }
@@ -15166,6 +15219,7 @@ async function _handlerImpl(event) {
           retryRequested: original.retryRequested === true,
           retryAttempt: Number(original.retryAttempt || 0) + (quotaFailure(original.providerError) ? 0 : 1),
           capacityRefusals: refusals,
+          stallRestarts: Number(original.stallRestarts || 0),
           displayName: original.locallyQueued ? original.displayName : `retry-${set.category}-Set_${set.setN}-${originalName}`.slice(0, 100),
         }) });
         const result = JSON.parse(response.body || "{}");
@@ -15191,6 +15245,145 @@ async function _handlerImpl(event) {
           retryStartedAt: null, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         return json(502, { error: { message: `Selective retry failed: ${err?.message || err}` } });
       }
+    }
+
+    // The collector's watchdog (see neverStarted): cancel a listing job that
+    // OpenAI accepted hours ago and never started. Nothing was made, so
+    // nothing is billed. The provider answer is checked again here, so a job
+    // that started meanwhile is left alone.
+    if (kind === "batch_stall_cancel") {
+      const batchName = String(body?.batchName || "").trim();
+      if (!/^batch_[A-Za-z0-9_-]+$/.test(batchName) || batchName.startsWith("batch_local_")) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
+      }
+      const ref = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(batchName));
+      const saved = (await ref.get()).data();
+      if (!saved) return json(404, { error: { message: "Batch record is missing" } });
+      const apiKey = batchApiKey(batchName);
+      const live = await getGeminiBatchJob(apiKey, batchName);
+      if (!neverStarted(saved, { providerStatus: live?.providerStatus, batchStats: live?.metadata?.batchStats }, Date.now())) {
+        return json(200, { ok: true, skipped: true, state: live?.state || saved.state || null });
+      }
+      // Recorded before the cancel, so a cancel that lands after this worker
+      // stops is still known to be the collector's, and the set is queued.
+      await ref.set({ stallCancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        retryStatus: "stalled", retryError: null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      const cancelled = await cancelGeminiBatchJob(apiKey, batchName);
+      const state = cancelled?.state || "JOB_STATE_RUNNING";
+      await ref.set({ state, providerStatus: cancelled?.providerStatus || null,
+        batchStats: cancelled?.metadata?.batchStats || live?.metadata?.batchStats || null,
+        responsesFile: cancelled?.response?.responsesFile || null,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      return json(200, { ok: true, cancelRequested: true, state, providerStatus: cancelled?.providerStatus || null });
+    }
+
+    // Queue again the set of a job the watchdog cancelled, once OpenAI has
+    // confirmed the cancel. Like batch_retry_missing: images the provider
+    // finished while cancelling are saved first (they were billed), only
+    // slots the set still lacks are sent, an approved set is never touched,
+    // and the new queued record waits for a place like every other set.
+    if (kind === "batch_restart_stalled") {
+      const batchName = String(body?.batchName || "").trim();
+      if (!/^batch_[A-Za-z0-9_-]+$/.test(batchName) || batchName.startsWith("batch_local_")) {
+        return json(400, { error: { message: "Invalid batch identifier" } });
+      }
+      const db = getDb();
+      const ref = db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName));
+      const saved = (await ref.get()).data();
+      if (!saved) return json(404, { error: { message: "Batch record is missing" } });
+      if (saved.retryBatchName) return json(200, { ok: true, batchName: saved.retryBatchName });
+      if (!saved.stallCancelRequestedAt || saved.stallRestartBlocked || saved.stallRestartClosed || saved.collected ||
+          saved.sets?.length !== 1 || saved.sets[0]?.setKind === "charm_maker") {
+        return json(409, { error: { message: "This job was not stopped by the collector for a restart" } });
+      }
+      const apiKey = batchApiKey(batchName);
+      const live = await getGeminiBatchJob(apiKey, batchName);
+      const state = live?.metadata?.state || live?.state || "UNKNOWN";
+      const stats = live?.metadata?.batchStats || null;
+      const respFile = live?.response?.responsesFile || null;
+      await ref.set({ state, providerStatus: live?.providerStatus || null, batchStats: stats,
+        responsesFile: respFile, updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      // It finished after all: the collector saves it as usual.
+      if (state === "JOB_STATE_SUCCEEDED") return json(200, { ok: true, succeeded: true, state });
+      if (!["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(state)) return json(200, { ok: true, waiting: true, state });
+      const set = saved.sets[0];
+      assertAllowedOutputBase(set.outputBasePath);
+      const bucket = admin.storage().bucket();
+      const close = async (retryStatus, retryError = null) => {
+        await ref.set({ stallRestartClosed: true, retryRequested: false, retryStatus, retryError,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      };
+      // Approval moves the set away from Ready_To_List; never refill it there.
+      const approvedPath = `listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/${set.category}_Set_${set.setN}/`;
+      const [approved] = await bucket.getFiles({ prefix: approvedPath, maxResults: 1 });
+      if (approved.length) {
+        await close("complete_or_protected", "This set is already in Completed_Listing_Sets; it was not restarted");
+        return json(200, { ok: true, protected: true });
+      }
+      const finishedWhileCancelling = !!respFile && Number(stats?.successfulRequestCount || 0) > 0;
+      const collectHere = async (extra) => {
+        const res = await module.exports.handler({ httpMethod: "POST", headers: {},
+          body: JSON.stringify({ kind: "batch_collect", batchName, force: true, ...extra }) });
+        const parsed = JSON.parse(res.body || "{}");
+        if (res.statusCode !== 200 || !parsed.ok) throw new Error(parsed.error?.message || "Could not save the provider results");
+        return parsed;
+      };
+      if (finishedWhileCancelling) await collectHere({ importOnly: true });
+
+      const [presentFiles] = await bucket.getFiles({ prefix: `${set.outputBasePath}/` });
+      const presentSlots = new Set(presentFiles.map((f) =>
+        /^Slot_(\d+)\.png$/i.exec(f.name.slice(set.outputBasePath.length + 1))?.[1]).filter(Boolean).map(Number));
+      const allTasks = Array.isArray(set.allTasks) ? set.allTasks : set.tasks;
+      const missingTasks = (allTasks || []).filter((t) => Number.isInteger(Number(t?.slotIndex)) &&
+        !presentSlots.has(Number(t.slotIndex) + 1));
+      // Copied slots ride along with the new job (its submission copies
+      // them), as in batch_retry_missing; only an all-copy set is done here.
+      const toGenerate = missingTasks.filter((t) => t.type !== "copy");
+      if (!toGenerate.length) {
+        try {
+          for (const t of missingTasks) {
+            const dest = bucket.file(`${set.outputBasePath}/Slot_${Number(t.slotIndex) + 1}.png`);
+            const [exists] = await dest.exists();
+            if (!exists) await bucket.file(t.source_storage_path).copy(dest);
+          }
+        } catch (err) {
+          // Stop here rather than retry the same failing copy every sweep.
+          await close("failed", `Could not copy a missing image: ${String(err?.message || err).slice(0, 300)}`);
+          return json(200, { ok: true, closed: true });
+        }
+        // Everything is saved: finish the set (manifest, charm) from this
+        // job's results when it has any, as a normal collection would.
+        if (finishedWhileCancelling) await collectHere({});
+        else await close("complete");
+        return json(200, { ok: true, complete: true, missing: 0 });
+      }
+
+      const restarts = Number(saved.stallRestarts || 0) + 1;
+      // A name no other record has: submission reuses a job with the same name.
+      const displayName = `stall-restart-${set.category}-Set_${set.setN}-${Date.now().toString(36)}`.slice(0, 100);
+      const localName = queuedName(saved.sessionId || "", displayName, [set]);
+      const localRef = db.collection(BATCHES_COLL).doc(localName);
+      const outcome = await db.runTransaction(async (tx) => {
+        const current = (await tx.get(ref)).data() || {};
+        if (current.retryBatchName) return { batchName: current.retryBatchName };
+        if (current.stallRestartBlocked || current.stallRestartClosed || current.collected) return { blocked: true };
+        tx.set(localRef, {
+          batchName: localName, docId: localName, displayName, sessionId: saved.sessionId || "",
+          state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true, retryAttempt: 0,
+          capacityRefusals: Number(saved.capacityRefusals || 0), stallRestarts: restarts,
+          collected: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
+          sets: [{ ...set, tasks: missingTasks, allTasks }], retryOf: batchName,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        tx.set(ref, { retryBatchName: localName, retryStatus: "restarted", retryRequested: false,
+          stallRestartedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        return { batchName: localName, created: true };
+      });
+      if (outcome.blocked) return json(200, { ok: true, blocked: true });
+      return json(200, { ok: true, ...outcome, missing: toGenerate.length, stallRestarts: restarts });
     }
 
     if (["batch_status", "batch_collect", "batch_cancel"].includes(kind) &&
@@ -15451,6 +15644,14 @@ async function _handlerImpl(event) {
         throw new Error(`Batch collection interrupted; retry collection: ${streamErr?.message || streamErr}`);
       }
 
+      // A restart of a job OpenAI never started keeps only the images it
+      // finished while cancelling. The set's manifest, charm move and
+      // collected mark wait for the job that completes the set.
+      if (body?.importOnly) {
+        return json(200, { ok: true, batchName, imported: succeededCount, failedCount,
+          failures: failures.slice(0, 20) });
+      }
+
       // Missing upstream results must remain visible as failed slots.
       for (const [key, route] of routeByKey) {
         if (!seenResultKeys.has(key)) recordResult(route, false, null, "No result returned for this image");
@@ -15708,6 +15909,11 @@ async function _handlerImpl(event) {
           retryRequested: !!d.retryRequested,
           retryAttempt: Number(d.retryAttempt || 0),
           capacityRefusals: capacityRefusals(d),
+          // A job the collector cancelled because OpenAI never started it:
+          // "pending" until its set is queued again (or the restart stops).
+          stallRestart: !d.stallCancelRequestedAt ? null : d.retryBatchName ? "restarted" :
+            d.stallRestartBlocked ? "cancelled" : d.stallRestartClosed ? "closed" : "pending",
+          stallRestarts: Number(d.stallRestarts || 0),
           retryStatus: d.retryStatus || null,
           retryError: d.retryError || null,
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,
@@ -15757,6 +15963,22 @@ async function _handlerImpl(event) {
       // queued submission; its state, results and saved images are kept.
       const cancelRef = getDb().collection(BATCHES_COLL).doc(batchDocIdFromName(batchName));
       const saved = (await cancelRef.get().catch(() => null))?.data?.() || {};
+      // A job the collector already stopped because OpenAI never started it:
+      // cancelling it means its set is not queued again. If that already
+      // happened, the queued restart is cancelled in its place.
+      if (saved.stallCancelRequestedAt && !saved.collected && (saved.providerStatus === "cancelling" ||
+          ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(String(saved.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_")))) {
+        const restartName = await getDb().runTransaction(async (tx) => {
+          const current = (await tx.get(cancelRef)).data() || {};
+          if (current.retryBatchName) return current.retryBatchName;
+          tx.set(cancelRef, { stallRestartBlocked: true, retryRequested: false,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+          return null;
+        });
+        if (restartName) return module.exports.handler({ httpMethod: "POST", headers: {},
+          body: JSON.stringify({ ...body, batchName: restartName }) });
+        return json(200, { ok: true, state: saved.state, restartCancelled: true, batchName });
+      }
       if (["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(String(saved.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_"))) {
         const unqueued = await getDb().runTransaction(async (tx) => {
           const gate = await tx.get(getDb().collection("LG1_Config").doc("batchAdmission"));
@@ -15768,6 +15990,8 @@ async function _handlerImpl(event) {
         return unqueued ? json(200, { ok: true, state: saved.state, retryCancelled: true, batchName }) :
           json(409, { error: { message: "Its retry is being submitted; refresh before cancelling" } });
       }
+      // The collector was stopping this job itself: it must not queue it again.
+      if (saved.stallCancelRequestedAt) await cancelRef.set({ stallRestartBlocked: true }, { merge: true });
       const cancellation = await cancelGeminiBatchJob(apiKey, batchName);
       try {
         const db = getDb();
@@ -15775,8 +15999,10 @@ async function _handlerImpl(event) {
           () => db.collection(BATCHES_COLL).doc(batchDocIdFromName(batchName)).set({
             state: cancellation?.state || "JOB_STATE_CANCELLED",
             providerStatus: cancellation?.providerStatus || null,
-            // A cancelled job never goes back into the retry queue.
+            // A cancelled job never goes back into the retry queue, and the
+            // collector never restarts a job a person cancelled.
             retryRequested: false,
+            stallRestartBlocked: true,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           }, { merge: true }),
           "batch.cancelMirror"

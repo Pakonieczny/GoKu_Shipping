@@ -292,5 +292,10 @@ const env = { ANTHROPIC_API_KEY: 'test-key' };
     assert.equal(out.costUsd, C.estimateCostUsd(out.usage), 'reported usage and cost agree');
   }
 
+  // 14. Every client above was given its fetch, so node-fetch was never loaded. A
+  //     module-level load would also bypass other suites' per-module fetch stubs,
+  //     because Node caches a package's resolution per directory.
+  assert.ok(!Object.keys(require.cache).some(k => /[\\/]node-fetch[\\/]/.test(k)), 'an injected fetch never loads node-fetch');
+
   console.log('claude-client: Sonnet 5.5 client streams, retries, prices and bridges offline.');
 })().catch(error => { console.error(error); process.exit(1); });

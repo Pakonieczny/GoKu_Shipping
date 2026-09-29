@@ -1,9 +1,9 @@
 // netlify/functions/googleAdsDiag.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only ground-truth diagnostic. Open in a browser:
-//   https://goldenspike.app/.netlify/functions/googleAdsDiag?key=<EDIT_PASSCODE>
+//   https://goldenspike.app/.netlify/functions/googleAdsDiag?key=<passcode>
 // Nothing links to it any more; it reads account data, so it needs the passcode
-// and refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
+// and refuses outright while no passcode is set (_adsCheckGate.js).
 // Shows, independent of the console/snapshot:
 //   1) EVERY campaign that actually exists in your Google Ads account (live read,
 //      no date segment — paused/zero-impression campaigns included)
@@ -85,7 +85,7 @@ function tdiff(ms) { if (!ms) return ""; const s = Math.floor((Date.now() - ms) 
 const esc = s => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 exports.handler = async (event) => {
-  const refused = refuse(event, "the Ad Autopilot diagnostic");
+  const refused = await refuse(event, "the Ad Autopilot diagnostic");
   if (refused) return refused;
   const r = await run();
   const wantsHtml = (event.headers && /text\/html/.test(event.headers.accept || ""));

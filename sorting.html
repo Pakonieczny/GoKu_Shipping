@@ -1586,7 +1586,10 @@ window.SortTL = (function () {
       // (by "" must stay "": the outbox would fill it in with the name it was set up with)
       const c = O.config({ by });
       if (c && c.mode !== "station") O.config({ mode: "station", station: "sorting", device: DEVICE });
-      return O.record({ orderId: id, type, at, by, station: "sorting", device: DEVICE, id: `${DEVICE}-${id}-${type}-${Math.floor(at / 60000)}`,
+      // (each sticker printed is a print of its own, a seal of its own on the order's timeline: its id is its moment, so
+      //  a sticker printed again within the minute is not folded into the one before; Paul, 29 Sep 02:08)
+      const when = type === "labelPrinted" ? at : Math.floor(at / 60000);
+      return O.record({ orderId: id, type, at, by, station: "sorting", device: DEVICE, id: `${DEVICE}-${id}-${type}-${when}`,
                         text: String(text || "").slice(0, 200), data: d });
     } catch (e) { console.warn("Timeline record failed:", e); return null; }
   }
