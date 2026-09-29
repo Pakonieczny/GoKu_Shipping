@@ -9,6 +9,7 @@ const ctx={console,Date,Number,String,Object,Array,Math,Intl,JSON,Set,Map,isFini
 vm.createContext(ctx);vm.runInContext(html.match(/var BASIS_NAMES=\{[^}]*\};/)[0],ctx);
 for(const name of ['rpYmd','rpParse','basisName','basisLabel'])vm.runInContext(pick(name),ctx);
 vm.runInContext(html.slice(html.indexOf('/* Each channel owns'),html.indexOf('function pmaxProductChoices(')),ctx);
+vm.runInContext(html.match(/var _MON=\[[^\]]*\];/)[0]+'\n'+['reportNumber','fmtMon','totalBudgetLine'].map(pick).join('\n'),ctx);
 for(const name of ['currentResearchChannel','researchState','friendlyResearchError','researchCheckChannel','auditTime','auditStatus','renderScanAudit'])vm.runInContext(pick(name),ctx);
 const realRender=ctx.renderGrowthPerformance;let passed=0;async function test(name,fn){await fn();passed++;console.log('PASS',name);}
 (async()=>{
@@ -47,5 +48,16 @@ await test('on phones the conversion basis is never cut off: the date range take
   // Measured in Chromium: side by side at 360-480 px the basis select clipped "conversion date" by 4-24 px.
   assert.match(html,/@media\(max-width:480px\)\{\.gpControls>label:first-child\{flex-basis:100%\}\}/);
   for(const key of ['search','dialog'])assert.match(ctx.performanceControls(key,{range:{preset:'14d'},busy:false}),/^<div class="gpControls" data-perf-controls="\w+"><label>Reporting dates<select[^>]*data-perf-preset>/,'the date range is the first control');});
+await test('a Google total budget reads as its total in the campaign notes and the dialog, never as a daily budget',async()=>{
+  const t={id:'5',name:'Holiday products',channel:'PERFORMANCE_MAX',status:'ENABLED',budget:4.2,budgetPeriod:'CUSTOM_PERIOD',budgetTotal:150,startDate:'2026-11-01',endDate:'2026-11-30'},st=ctx.GROWTH_PERF.product,saved={data:st.data,metrics:ctx.DASH.lastMetrics,api:ctx.api};
+  st.data=null;ctx.DASH.lastMetrics=[t,c1];ctx.renderGrowthPerformance('product');const notes=node('existingProductCampaigns').innerHTML;
+  assert.match(notes,/Schedule: 2026-11-01 → 2026-11-30 · <span class="totalBudget" title="[^"]+">Total \$150\.00 CAD for 30 days to Nov 30<\/span><\/div>/);
+  assert.match(notes,/Daily budget \$28\.00 CAD/);assert(!notes.includes('$4.20'),'the per-remaining-day figure is not shown as a daily budget');
+  ctx.PERF_DIALOG={id:'5',lane:'product',name:'Holiday products',range:{preset:'custom',start:'2026-08-01',end:'2026-08-02'}};
+  ctx.api=async(a,r)=>a==='dailyStats'?{ok:true,range:r,campaigns:[{id:'5',name:'Holiday products',totals:{cost:2},series:[]}],currency:'USD',cdAvailable:true}:{ok:true,currentVersion:1,versions:[]};
+  await ctx.loadPerformanceDialog();const facts=node('performanceBody').innerHTML.match(/<p class="gpScope perfFacts">(.*?)<\/p>/)[1];
+  assert.match(facts,/Total \$150\.00 CAD for 30 days to Nov 30/);assert(!facts.includes('/day'),'the dialog shows no daily budget for a total budget');
+  ctx.closePerformanceDialog();st.data=saved.data;ctx.DASH.lastMetrics=saved.metrics;ctx.api=saved.api;
+});
 console.log(`${passed} focused UI behavior checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

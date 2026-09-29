@@ -65,7 +65,7 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
     { name: 'Necklace', assets: copy, keywords: [{ text: 'zodiac necklace', real: true, searches: 900 }, { text: 'star necklace', real: true, searches: 400 }] }
   ];
   const built = E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, { label: longOccasion }, copy,
-    { dailyBudget: 7.555, maxCpc: 1.237, startDate: ymd(5), endDate: ymd(40), countries: ['2124', '2840'], smartBidding: false, negatives: ['kit', 'free', 'diy, crafts', 'kit'], withAssets: false, adGroups });
+    { dailyBudget: 7.555, maxCpc: 1.237, startDate: ymd(5), endDate: ymd(40), countries: ['2124', '2840'], smartBidding: false, negatives: ['kit', 'free', 'diy, crafts', 'kit', { text: 'For Free', matchType: 'phrase' }], withAssets: false, adGroups });
   const ops = built.ops;
   check(Object.keys(ops[0])[0] === 'campaignBudgetOperation' && Object.keys(ops[1])[0] === 'campaignOperation', 'budget, then campaign, precede everything that references them');
   const budget = creates(ops, 'campaignBudgetOperation')[0], campaign = creates(ops, 'campaignOperation')[0];
@@ -81,8 +81,23 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   check(keywords.length === 5 && keywords.every(k => googleKeyword(k.text)), 'only valid keyword text is sent');
   check(keywords.some(k => k.text === 'star earrings gold' && k.matchType === 'EXACT'), 'a comma keyword is cleaned instead of failing the create');
   check(built.keywordSummary.dropped.length === 1 && built.keywordSummary.measured === 3, 'the summary reports dropped and measured keywords');
-  const negatives = criteria.filter(c => c.negative).map(c => c.keyword.text);
-  check(!negatives.includes('kit') && negatives.includes('free') && negatives.includes('diy crafts') && negatives.length === 2, 'negatives are valid, deduplicated and never block our own keyword');
+  const negatives = criteria.filter(c => c.negative).map(c => c.keyword.text + '|' + c.keyword.matchType);
+  check(negatives.join() === 'diy crafts|BROAD,for free|PHRASE' && built.negatives.join() === 'diy crafts,for free', 'negatives are valid, deduplicated, keep their match type and never block our own keyword or a buying search ("free")');
+
+  // The default exclusions, read the way Google matches negatives: broad needs every word in any order,
+  // phrase the words together in order. Negatives never match close variants.
+  const blocks = (n, q) => n.matchType === 'PHRASE' ? (' ' + q + ' ').includes(' ' + n.text + ' ') : n.matchType === 'EXACT' ? n.text === q : n.text.split(' ').every(w => q.split(' ').includes(w));
+  const defaults = Array.from(vm.runInContext('DEFAULT_NEGATIVES', ctx), n => typeof n === 'string' ? { text: n, matchType: 'BROAD' } : { text: n.text, matchType: n.matchType });
+  check(defaults.every(n => googleKeyword(n.text) && ['BROAD', 'PHRASE'].includes(n.matchType)) && new Set(defaults.map(n => n.text)).size === defaults.length, 'every default exclusion is valid, unique keyword text with a match type');
+  check(['nickel free earrings', 'tarnish free necklace', 'lead free', 'hypoallergenic nickel free', 'free shipping'].every(q => !defaults.some(n => blocks(n, q))), 'no default exclusion blocks "nickel free earrings", "tarnish free necklace", "lead free" or "free shipping"');
+  check(['free download charm', 'free patterns', 'earrings for free'].every(q => defaults.some(n => blocks(n, q))) && !defaults.some(n => n.text === 'bulk') && defaults.some(n => n.text === 'cheap' && n.matchType === 'BROAD'),
+    'freebie searches stay excluded by phrase; "bulk" (team gifts) stays searchable and "cheap" stays excluded');
+  const sent = creates(E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, null, copy, { dailyBudget: 5, maxCpc: 1, withAssets: false,
+    adGroups: [{ name: 'Earrings', assets: copy, keywords: ['moon stud earrings', 'star stud earrings', 'moon hoop earrings', 'star hoop earrings'].map(text => ({ text })) }] }).ops, 'campaignCriterionOperation').filter(c => c.negative).map(c => c.keyword);
+  check(JSON.stringify(sent.map(k => [k.text, k.matchType])) === JSON.stringify(defaults.map(n => [n.text, n.matchType])), 'a campaign built with the defaults sends every exclusion with its match type');
+  const necklaces = E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, null, copy, { dailyBudget: 5, maxCpc: 1, withAssets: false, negatives: ['earrings', { text: 'free earrings', matchType: 'PHRASE' }, 'shipping', 'free svg'],
+    adGroups: [{ name: 'Necklace', assets: copy, keywords: ['zodiac necklace', 'star necklace', 'moon necklace', 'zodiac charm necklace'].map(text => ({ text })) }] });
+  check(necklaces.negatives.join() === 'earrings,free svg', 'a product word can still be excluded; "free earrings" and "shipping" would stop buying searches and are left out');
   const names = creates(ops, 'adGroupOperation').map(g => g.name);
   check(names[0] === 'Earrings · Libra season, October birthdays and Halloween celestial' && names[0].length <= 70, 'long ad group names end on a whole word');
   const refs = new Set(creates(ops, 'adGroupOperation').map(g => g.resourceName));

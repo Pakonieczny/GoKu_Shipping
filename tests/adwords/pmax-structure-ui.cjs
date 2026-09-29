@@ -69,6 +69,8 @@ const TARGETS=[target('101','BA · Necklaces PMax'),target('102','BA · Rings PM
 
   const camp='customers/123/campaigns/-2',fresh={mutateOperations:[{campaignCriterionOperation:{create:{campaign:camp,location:{geoTargetConstant:'geoTargetConstants/2840'}}}},{campaignCriterionOperation:{create:{campaign:camp,language:{languageConstant:'languageConstants/1000'}}}},...S.negativeOps(camp,S.PMAX_DEFAULT_NEGATIVES)]};
   check(A.apPmaxSearches(fresh)==='English searches only · 16 excluded searches (makers, resellers, jobs, digital files)'&&A.apPmaxSearches({mutateOperations:[]})==='','a new campaign says which searches it serves on (and nothing when there is nothing to say)');
+  const studio=meta=>({designStudioSpec:{},countries:['2840'],meta:{kind:'designStudioPmax',...meta}});
+  check(A.apPmaxSearches(studio({languages:['English'],negatives:S.PMAX_DEFAULT_NEGATIVES.map(x=>x.text)}))===A.apPmaxSearches(fresh)&&A.apPmaxSearches(studio({}))==='','a Design Studio draft, whose operations are built at publication, says the same from its details');
 
   let act=A.approvalAction(join(),false);
   check(act.tag==='Product ads'&&act.from==='Opportunities'&&act.to==='Google Ads · joins BA · Necklaces PMax'&&act.publish==='Add to campaign'&&A.approvalAction(join(),true).publish==='Validate draft'&&A.approvalTitle(join())==='Add Animal necklaces to BA · Necklaces PMax','a joining draft is titled and labelled as joining its campaign (validated first in a dry run)');
@@ -79,6 +81,8 @@ const TARGETS=[target('101','BA · Necklaces PMax'),target('102','BA · Rings PM
   const render=html.slice(html.indexOf('function renderApprovals('),html.indexOf('\n}',html.indexOf('function renderApprovals('))),at=s=>{const i=render.indexOf(s);assert.ok(i>=0,'renderApprovals has '+s);return i;};
   check(at('pl.meta.kind==="pmaxAddToCampaign"){var jn=apPmaxJoin(a)')<at('else if(a.type==="pmax"&&pl.meta){var m=pl.meta;')&&at('pl.meta.kind==="pmaxBrandExclusion"){var bx=apBrandExclusion(pl)')<at('else if(pl.mutateOperations){var c=parseCreative')&&at('(pl.meta||{}).kind==="pmaxNegatives"){var pn=apPmaxNegatives(pl)')<at('else if(pl.service==="adGroupCriteria"||pl.service==="campaignCriteria")'),'each new draft gets its own card before the generic ones');
   check(at('["Searches",esc(apPmaxSearches(pl))]')>at('else if(a.type==="pmax"&&pl.meta){var m=pl.meta;'),'the new campaign card carries the searches it serves on');
+  const studioRow=at('["Countries",esc(apCountries(sct))+apCountryEdit(a.id,sct,reviewed)],["Searches",isSP?esc(apPmaxSearches(pl)):""]');
+  check(studioRow>at('else if(a.type==="studio"&&pl.meta){var sm=pl.meta')&&studioRow<at('else if(a.type==="pmax"&&pl.meta&&pl.meta.kind==="pmaxAddToCampaign")'),'the Design Studio Performance Max card says it too, after its countries');
 
   // ===== B. Opportunity card: join a campaign, or start one =====
   const src=html.slice(html.indexOf('function pmaxProductChoices('),html.indexOf('function renderOpportunities(){'));

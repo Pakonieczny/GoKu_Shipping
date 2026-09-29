@@ -19,6 +19,11 @@ await test('no browser pop-ups for campaign edits, the activity log, deleting a 
   assert.doesNotMatch(html,/function renderTimeline\(|function loadBlock\(|querySelectorAll\(["']\.ctl["']\)/,'unreachable timeline, .ctl handler and loadBlock are gone');
   assert.doesNotMatch(html,/function (?:renderPerf|rowHtml|detailHtml|analysisHtml|actIcon|optDot|fieldVal|wirePerf|doAnalyze|analysisWait|setBudget|campStatus|campStartNow|campSetCountries|schedHtml|schedHint)\(|#ptable|var P=\{sortKey|tr\.prow|tr\.pdetail|renderPerf\(\)/,
     'the unreachable old performance view (its slider, confirm pop-ups, emoji action icons, state and styles) is gone; Overview edits campaigns in place');
+  assert.doesNotMatch(html,/function (?:campaignSpendHtml|amountWithCurrency)\(/,'the uncalled campaign spend table is gone');
+  assert.doesNotMatch(html.match(/var API_MUTATING=new Set\(\[[^\]]*\]\)/)[0],/"(?:setCountries|startNow)"/,'API_MUTATING lists only changes the page can still ask for');
+  const retired=/\banalyzeCampaign\b/;
+  for(const f of ['brites-adwords.html','netlify/functions/googleAdsAutopilot.js','netlify/functions/googleAdsAutopilotKick.js','netlify/functions/googleAdsAutopilot-background.js'])
+    assert.doesNotMatch(read(f),retired,f+' has no campaign analysis action: Ad Doctor diagnoses campaigns');
 });
 
 await test('plain words: current tab names, no decorative emoji in working UI, readable date mismatch',()=>{
