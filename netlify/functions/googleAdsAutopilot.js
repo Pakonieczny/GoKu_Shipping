@@ -6762,13 +6762,14 @@ function _suggestedBudget(value, current, ceiling) {
 }
 // Researches one campaign's real metrics and returns a structured optimization read.
 // Honest like Google's own recommendations: if there isn't enough data, it says so.
-async function analyzeCampaign(campaignId, { force } = {}) {
+async function analyzeCampaign(campaignId, { force, cacheOnly } = {}) {
   const f = fb(); const ctrl = await control();
   const id = String(campaignId).replace(/\D/g, "");
   const cacheKey = "analysis_" + id;
   if (f && !force) {
     try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 6 * 60 * 60 * 1000 && x.analysis) return x.analysis; } } catch (e) {}
   }
+  if (cacheOnly) return null; // the console's quick check: a fresh analysis is a paid AI call, run by the background worker
   const c = await latestSnapshotCampaign(id);
   if (!c) return { score: null, status: "unknown", summary: "No snapshot for this campaign yet — run Measure first.", actions: [], campaignId: id, currency: CURRENCY };
   const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;

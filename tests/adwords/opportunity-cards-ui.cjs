@@ -68,6 +68,14 @@ await test('occasion date, markets, data age and eligibility reason are on the c
   assert.match(pb,/<b>Budget<\/b> — .*Measured demand limits this/);assert.match(pb,/the lower of daily budget ÷ expected CPC and the ~0\.5 a day/);assert.match(pb,/data fetched /);
   const q=Object.assign({},o,{eligibility:{ready:false,measuredKeywords:4,expectedSales:0.2,reason:'Measured demand supports ~0.2 expected sales over the run, too few for a test.'}});ctx.OPPS=[q];
   const hq=ctx.oppCard(q,0,100);assert.match(hq,/disabled>Too few expected sales<\/button>/);assert.match(hq,/oppCardBlock">Measured demand supports ~0\.2 expected sales/);delete ctx.DASH;today='2026-10-01';});
+await test('a web-verified occasion date links the page it was verified on: a small external link, http(s) only',()=>{today='2026-10-21';
+  const card=dc=>{const o=served(research(300),{durationDays:11,startDate:'2026-10-21',dateCheck:dc});ctx.OPPS=[o];return ctx.oppCard(o,0,100);},web=url=>({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com',url});
+  const h=card(web('https://www.timeanddate.com/holidays/canada/halloween?a=1&b="2"')),a=/verified on <a class="oppDateSrc" href="([^"]*)" target="_blank" rel="noopener noreferrer"[^>]*>([^<]*)<\/a>/.exec(h);
+  assert(a,'source link');assert.equal(a[1],'https://www.timeanddate.com/holidays/canada/halloween?a=1&amp;b=&quot;2&quot;');assert.equal(a[2],'timeanddate.com ↗');assert.match(h,/confirmed by web research: timeanddate\.com/);
+  assert(!card({source:'calendar rule',proposedDate:'2026-10-30',reference:null,url:null}).includes('oppDateSrc'),'a calendar-rule date has no source link');
+  assert(!card({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com'}).includes('oppDateSrc'),'research saved before sources were kept shows no link');
+  for(const url of ['javascript:alert(1)','https://evil.example@good.example/x','//cdn.example/x',' https://lead.example/x','ftp://files.example/x'])assert(!card(web(url)).includes('oppDateSrc'),url);
+  today='2026-10-01';});
 await test('editing the dates keeps a valid window: one-day runs allowed, an end before the start is corrected',()=>{today='2026-10-01';const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
   const els={},el=s=>els[s]||(els[s]={value:'',textContent:'',title:'',min:'',classList:{toggle(){}}}),key=s=>s.replace(/\[data-i="\d+"\]/,''),cards={querySelector:s=>el(key(s)),querySelectorAll:s=>[el(key(s))]};
   el('.opBud').value='10';el('.opStart').value='2026-10-05';el('.opEnd').value='2026-10-05';ctx.oppRecalc(cards,0);assert.equal(el('.opEnd').value,'2026-10-05');assert.equal(el('.opDur').textContent,1);assert.equal(el('.opDurU').textContent,'day');
