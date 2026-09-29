@@ -122,7 +122,9 @@
       const orderId = digits(e && e.orderId); if (!orderId || !TYPES[e.type]) return null;
       if (cfg.mode === "station" && !STATION_TYPES.has(e.type)) return null;
       const at = Number(e.at) > 1e12 ? Number(e.at) : Date.now();
-      let ev = Object.assign({}, e, { orderId, at, by: e.by || cfg.by || "", station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
+      // (an event that says who, even "" — nobody signed in at the station — keeps it: only an event with no by at all
+      //  takes the configured person, so a seal never names someone who was not there)
+      let ev = Object.assign({}, e, { orderId, at, by: e.by != null ? e.by : (cfg.by || ""), station: e.station || cfg.station || "", device: e.device || cfg.device || "", sandbox: !!cfg.sandbox, mode: cfg.mode });
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       // kept as plain JSON: details that are not (a circular object) are left out here, where they stopped the outbox for good
       try { ev = JSON.parse(JSON.stringify(ev)); } catch (_) { ev.data = null; ev = JSON.parse(JSON.stringify(ev)); }
