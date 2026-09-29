@@ -4527,6 +4527,11 @@ const Engrave = window.Engrave = (() => {
   // Keyed rows keep decoded thumbnails, focus and scroll position while each
   // classifier/worker result arrives. Navigation away also retains the cache.
   const placementRows = new WeakMap();
+  /* A decided row's two pictures, kept by its key (Paul, 29 Sep: "the thumbnails annoyingly keep on resuming every single
+     time the card expands"): opening or closing a row draws the Decided list again, and each drawing made new thumbnails
+     that loaded again, a spinner and then the picture. The pair already drawn moves into the new row instead, as Orders
+     and Review do, so only the part that opens changes; its ↺ still resets, and a changed design still loads anew. */
+  const donePairs = new Map();
   let placementLimit=40, placementQuery=null, doneLimit=40, doneQuery=null;
   function renderPlacementRows(list, queue) {
     if(placementQuery!==EG.q){placementLimit=40;placementQuery=EG.q;}
@@ -4730,18 +4735,22 @@ const Engrave = window.Engrave = (() => {
           }).join("") + `</div>`
         : `<div class="libEmpty">${window.Recall && Recall.on() ? "Nothing in this set was engraved." : "nothing decided yet"}</div>`;
       bk.querySelectorAll(".doneRow").forEach(rw => {
+        const kept=donePairs.get(rw.dataset.key),fresh=rw.querySelector(".comparePair");
+        if(kept&&fresh&&!kept.isConnected)fresh.replaceWith(kept);
+        const pair=rw.querySelector(".comparePair");if(pair){donePairs.delete(rw.dataset.key);donePairs.set(rw.dataset.key,pair);}
         const toggle=()=>{EG.openDone=EG.openDone===rw.dataset.key?null:rw.dataset.key;render();};
         rw.addEventListener("click",e=>{if(!e.target.closest("button, a, [role=button], .doneDetail"))toggle();});
         rw.addEventListener("keydown",e=>{if(e.target===rw && (e.key==="Enter" || e.key===" ")){e.preventDefault();toggle();}});
         ListMedia.mount(rw,items().get(rw.dataset.key)?.row);
       });
+      if(donePairs.size>400)for(const [k,p] of donePairs){if(donePairs.size<=400)break;if(!p.isConnected)donePairs.delete(k);}
       bk.closest(".egPane.scroll").scrollTop=oldDoneScroll;
       const doneHost=bk.querySelector("#egDone");if(doneHost)ListMedia.more(doneHost,decided.length,Math.min(doneLimit,decided.length),()=>{doneLimit+=40;render();});
       { const rw = bk.querySelector(".doneRow.open"); const j2 = rw && items().get(rw.dataset.key); const host = rw && rw.querySelector(".frontHost");
         if (j2 && host) void mountPlacementThumbnail(host,j2); }
 
       // a picture that will not load is retried once with a fresh request, then says so instead of a broken icon
-      bk.querySelectorAll("img").forEach(im => im.addEventListener("error", () => { if (im.dataset.retry) { im.dataset.retry = ""; im.src = im.src.replace(/([?&])_r=\d+/, "$1").replace(/[?&]$/, "") + (im.src.includes("?") ? "&" : "?") + "_r=" + Date.now(); return; } const d = document.createElement("div"); d.className = im.classList.contains("mini") ? "mini" : "noPic"; d.textContent = im.classList.contains("mini") ? "" : "the picture did not load — the .ai file is still there"; im.replaceWith(d); }));
+      bk.querySelectorAll(".doneDetail img").forEach(im => im.addEventListener("error", () => { if (im.dataset.retry) { im.dataset.retry = ""; im.src = im.src.replace(/([?&])_r=\d+/, "$1").replace(/[?&]$/, "") + (im.src.includes("?") ? "&" : "?") + "_r=" + Date.now(); return; } const d = document.createElement("div"); d.className = im.classList.contains("mini") ? "mini" : "noPic"; d.textContent = im.classList.contains("mini") ? "" : "the picture did not load — the .ai file is still there"; im.replaceWith(d); }));
       bk.querySelectorAll("[data-a=reopen]").forEach(b => b.onclick = () => {
         const j2 = items().get(b.closest(".doneRow").dataset.key); if (!j2) return;
         const who = employeeName() || askEmployee(); if (!who) return;
