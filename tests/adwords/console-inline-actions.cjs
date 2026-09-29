@@ -41,7 +41,7 @@ Object.assign(w,{DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'77',budget:35,stat
   BUDGET_OVERRIDES:{},END_DATE_OVERRIDES:{},REPORT_CAMPAIGN_OPEN:new Set(),_cmdRestoring:false,_MON:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   api:async(action,body)=>{calls.push([action,JSON.parse(JSON.stringify(body))]);const r=reply[action];return typeof r==='function'?r(body):r||{ok:true};},
   toast:m=>toasts.push(String(m)),renderDiag(){},loadCampaignTree(){}});
-w.eval(['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
+w.eval(['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireServing','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
 const camp=()=>w.cmdMetrics[0];
 w.renderCommand=function(){const c=camp(),snap=d.getElementById('snapshot');
   snap.innerHTML='<table><tbody><tr class="crow" data-i="0" data-cid="77"><td>Autumn necklaces</td></tr><tr class="cdet" data-d="0" data-cid="77" style="display:none"><td><div class="campaignSettings"><button class="btn ghost sm bge" data-id="77" data-b="'+c.budget+'" data-res="customers/1/campaignBudgets/5">'+c.budget+'</button><button class="btn ghost sm sce" data-id="77" data-end="'+(c.endDate||'')+'" data-name="Autumn necklaces">schedule</button><button class="btn ghost sm cst" data-id="77" data-name="Autumn necklaces" data-to="'+(c.status==='ENABLED'?'PAUSED':'ENABLED')+'">'+(c.status==='ENABLED'?'Pause campaign':'Enable campaign')+'</button></div><div class="adlvl"></div></td></tr></tbody></table>';
@@ -151,7 +151,6 @@ await test('one indicator per wait, shell top bar, phone channel tabs and a shad
   assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-shell"/);
   assert.doesNotMatch(read('brites-groups.css'),/\.topbar|\.brand\b/,'the top bar is styled only by the shell');
   assert.match(html,/\.rail\{[^}]*box-shadow:none[^}]*\}\s*body\.navOpen \.rail\{transform:none;box-shadow:14px 0 40px rgba\(0,0,0,\.25\)\}/);
-  assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
-});
+  assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);});
 console.log(passed+' console inline action checks passed.');
 })().catch(e=>{console.error(e);process.exit(1);});
