@@ -179,7 +179,9 @@
   const take = (m, k) => { const e = m.get(k); if (!e) return null; m.delete(k); return e.until > Date.now() ? e : null; };
   const pending = (k) => { const e = leaves.get(String(k)); return !!(e && e.until > Date.now()); };
   /* A row another animation is already carrying (the Send to Sheet tour lifts the card itself): its list makes no copy
-     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node. */
+     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node.
+     A list may also hold such a row where it stood while it is carried (carrying(k): the Review list does), so nothing
+     moves under the carrier; the carrier lets go (carry(k, 0)) once the list is out of sight. */
   const carried = new Map();
   function carry(mkey, ms = 8000) { const k = String(mkey || ""); if (!k) return; if (ms > 0) carried.set(k, Date.now() + ms); else carried.delete(k); }
   const isCarried = k => { const u = carried.get(String(k)); if (!u) return false; if (u > Date.now()) return true; carried.delete(String(k)); return false; };
@@ -977,6 +979,6 @@
     wait();
   }
 
-  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
+  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, carrying: isCarried, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);
