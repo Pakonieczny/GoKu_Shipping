@@ -20,8 +20,8 @@ const bare={...c,BritesCampaignStyles:undefined};vm.createContext(bare);vm.runIn
  assert.equal(card2.querySelectorAll('[data-campaign-style]:checked').length,3);assert.equal(card2.querySelector('[data-style-budget="pmax"]').value,'5');assert.equal(card2.querySelector('[data-style-duration="pmax"]').value,'14');
  const confirm2=card2.querySelector('[data-submission-confirm]');assert.match(card2.querySelector('[data-style-plan]').textContent,/Maximize conversion value/);assert(!confirm2.disabled&&!confirm2.checked);assert.equal(requests,2);
  const card3=c.adDesignSubmissionCard({id:'test',summary:'Test'});c.wireAdDesignSubmission(card3,{id:'test',reviewHash:'changed',designReview:{context:{countries:['2840']}}});assert.equal(card3.querySelectorAll('[data-campaign-style]:checked').length,0);
- // Budgets are labelled in the account currency, and the account ceiling is visible before preparing.
- c.DASH={budgetCurrency:'CAD',control:{maxDailyBudgetTotal:100},lastMetrics:[{status:'ENABLED',budget:28,budgetRes:'b1'},{status:'PAUSED',budget:50,budgetRes:'b2'}]};
+ // Budgets are labelled in the account currency, and the account ceiling is visible before preparing; an ended campaign spends nothing, as the server counts it.
+ c.DASH={budgetCurrency:'CAD',control:{maxDailyBudgetTotal:100},lastMetrics:[{status:'ENABLED',budget:28,budgetRes:'b1'},{status:'PAUSED',budget:50,budgetRes:'b2'},{status:'ENABLED',primaryStatus:'ENDED',budget:40,budgetRes:'b3'}]};
  const card4=c.adDesignSubmissionCard({id:'ceiling',summary:'Ceiling'});c.wireAdDesignSubmission(card4,{id:'ceiling',reviewHash:'h',designReview:{context:{countries:['2840']}}});assert.match(card4.querySelector('[data-style-budget="pmax"]').closest('label').textContent,/\(CAD\)/);
  const pick=(k,b,days)=>{const x=card4.querySelector('[data-campaign-style="'+k+'"]');x.checked=true;x.onchange();const i=card4.querySelector('[data-style-budget="'+k+'"]');i.value=String(b);i.oninput();const t=card4.querySelector('[data-style-duration="'+k+'"]');t.value=String(days);t.oninput();};
  pick('pmax',60,14);pick('responsive_display',30,30);const limit=card4.querySelector('[data-style-limit]');
