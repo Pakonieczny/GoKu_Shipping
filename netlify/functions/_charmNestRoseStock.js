@@ -34,6 +34,58 @@ function sameOutline(a,b){
   const p=bounds(a?.paths),q=bounds(b?.paths);
   return !!(p&&q)&&p.every((v,i)=>Math.abs(v-q[i])<=OUTLINE_TOLERANCE_PT);
 }
+/* Pieces leave a Rose Gold sheet that is not cut yet (a cancelled order's, Paul 29 Sep: "none of them disappears from the
+   sheet after being cancelled"). The guard (the saved green lines, the pieces inside them) gives them up:
+   - a line that still has a piece inside it stays exactly as saved, byte for byte;
+   - a line with nothing left inside it goes, with its part of the lines and its stage (the later lines are numbered again);
+   - the profile (the stock the lines have taken) goes back to what the lines that stay have taken. It is worked out again
+     from the pieces of those lines, with the same function the lines were drawn with, and used only when that draws the
+     lines that stay exactly as they were saved (an allowance nobody kept, or a line from an older version, may not);
+     otherwise it is kept as it is (more stock counted as used: never less than is really gone) and `exact` says false.
+   Only the pieces named leave; nothing new is ever added (only Cut Sheet draws a line). ctx: { wPt, hPt, prior (the
+   stock's profile before this layout), allowanceMm }. Returns { guard (null when no piece is left in one), removed: the
+   lines that went, kept: the lines that stay, exact, changed }. */
+function withoutPieces(guard, gone, ctx = {}) {
+  const off = id => gone.has(id), stages = stagesOf(guard), all = guard.shapes || [];
+  const trimmed = stages.map(s => ({ ...s, ids: (s.ids || []).filter(id => !off(id)) }));
+  const emptied = stages.map((s, i) => ((s.ids || []).length && !trimmed[i].ids.length ? i : -1)).filter(i => i >= 0);
+  const shapes = all.filter(s => !off(s.id)), placements = (guard.placements || []).filter(p => !off(p.id));
+  const hit = (guard.placements || []).length !== placements.length || all.length !== shapes.length || stages.some((s, i) => (s.ids || []).length !== trimmed[i].ids.length);
+  const summary = (i, st) => ({ n: st[i].n, at: st[i].at == null ? null : st[i].at, pieces: (stages[i].ids || []).length, ids: (stages[i].ids || []).slice() });
+  if (!hit) return { guard, removed: [], kept: stages.map((s, i) => summary(i, stages)), exact: true, changed: false };
+  const range = i => stages[i].lines || [0, 0], slice = i => (guard.lines || []).slice(range(i)[0], range(i)[1]);
+  const keepIdx = stages.map((s, i) => i).filter(i => !emptied.includes(i)), removed = emptied.map(i => summary(i, stages));
+  const build = (profile, lines, list) => {
+    const g = { profile, lines, shapes, placements };
+    if (guard.stages) g.stages = list;
+    return placements.length ? g : null;
+  };
+  // no line went: everything but the pieces stays as saved
+  if (!emptied.length) return { guard: build(guard.profile, guard.lines, trimmed), removed, kept: keepIdx.map(i => summary(i, stages)), exact: true, changed: true };
+  // a line went: its lines go and the numbers close up
+  const first = emptied[0], W = +ctx.wPt, H = +ctx.hPt, shapesOf = ids => { const want = new Set(ids); return all.filter(s => want.has(s.id)); };
+  const allowances = [...new Set([+ctx.allowanceMm, .2].filter(a => Number.isFinite(a) && a >= .05 && a <= 2))];
+  let done = null;
+  if (W > 0 && H > 0 && Rose) for (const a of allowances) {
+    try {
+      let profile = ctx.prior || null; const lines = [], list = []; let good = true;
+      for (let i = 0; i < stages.length && good; i++) {
+        if (emptied.includes(i)) continue;
+        // a line before the first to go is drawn again to learn the profile it left, and must come out as it was saved;
+        // a line after it is drawn against the profile that is left (its own pieces, as it was drawn)
+        const p = Rose.plan(shapesOf(stages[i].ids || []).map(Rose.slimShape), W, H, profile, a), was = i < first ? slice(i) : null;
+        if (was && JSON.stringify(p.lines) !== JSON.stringify(was)) { good = false; break; }
+        const own = was || p.lines;
+        list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); profile = p.profile;
+      }
+      if (good) { done = { profile, lines, list }; break; }
+    } catch (_) { /* this allowance does not draw them: the next, then the profile is kept */ }
+  }
+  if (done) return { guard: build(done.profile, done.lines, done.list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: true, changed: true };
+  const lines = [], list = [];
+  for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
+  return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
+}
 module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
@@ -196,10 +248,50 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
       tx.set(ref,{stateJson,updatedAt:FV.serverTimestamp()});return {state};
     });
   }
-  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseDemo};
+  /* Pieces leave a Rose Gold sheet that is not cut yet ({sheetId, ids: the charm ids, by, at, allowanceMm?}): the page calls
+     this before it takes them off its copy of the sheet and saves it (putSheet refuses a save that moves or removes a
+     piece of the guard). Only the sheet's saved green lines change (withoutPieces): a line with a piece left stays as
+     saved, one with nothing left goes. The sheet is not otherwise written: its files still show the pieces until the
+     page writes them again. Idempotent: pieces in no line change nothing, and a repeat finds the lines already gone.
+     A sheet that was cut, or marked completed, is refused (its lines stay for good). */
+  async function roseTakeOff(b){
+    if(!id(b.sheetId))throw new Error('Choose a Rose Gold sheet');
+    const ids=[...new Set((Array.isArray(b.ids)?b.ids:[]).map(x=>String(x||'')).filter(Boolean))].slice(0,400);
+    if(!ids.length)return {ok:true,changed:false};
+    const gone=new Set(ids);
+    const out=await db.runTransaction(async tx=>{
+      const sr=sheets().doc(b.sheetId),sd=await tx.get(sr);
+      if(!sd.exists)return {ok:true,changed:false,missing:true};
+      const sheet=sd.data();
+      if(sheet.metal!=='rose')return {ok:true,changed:false};
+      if(sheet.roseCutAt||+sheet.laserDoneAt>0)throw new Error('This layout was already cut: its green lines stay');
+      const guard=protectedLayout(sheet);
+      if(!guard)return {ok:true,changed:false,protectedJson:null};
+      const stockDoc=id(sheet.roseStockId)?await tx.get(stocks().doc(sheet.roseStockId)):null,stock=stockDoc&&stockDoc.exists?stockDoc.data():null;
+      let prior=null;try{prior=stock?parse(stock.profileJson):null;}catch(_){prior=null;}
+      const r=withoutPieces(guard,gone,{wPt:stock?.wPt,hPt:stock?.hPt,prior,allowanceMm:+b.allowanceMm||+sheet.roseAllowanceMm||.2});
+      if(!r.changed)return {ok:true,changed:false,protectedJson:sheet.roseProtectedJson||null,planned:!!sheet.rosePlanJson};
+      const protectedJson=r.guard?JSON.stringify(r.guard):null;
+      // (what the sheet's charms were: the orders whose timeline says the line went)
+      const orderOf=new Map((sheet.charms||[]).map(c=>[c.id,String(c.order||(/^(\d{1,30})_/.exec(String(c.poolId||''))||[])[1]||'')]));
+      tx.update(sr,{roseProtectedJson:protectedJson,rosePlanJson:null,rosePlanHash:null,roseFingerprint:null,updatedAt:FV.serverTimestamp()});
+      return {ok:true,changed:true,protectedJson,removedLines:r.removed,keptLines:r.kept,exact:r.exact,sheet:{id:sheet.id||b.sheetId,label:sheetLabel?sheetLabel(sheet):String(sheet.fileBase||b.sheetId).slice(0,80),setId:sheet.setId||''},
+        orders:r.removed.map(l=>({n:l.n,at:l.at,orders:[...new Set(l.ids.map(x=>orderOf.get(x)).filter(Boolean))]}))};
+    });
+    // each order that had a piece in a line that went: a note on its timeline, kept for good (charmNestLibrary's stamp never throws)
+    if(out.changed&&stamp&&out.removedLines.length){
+      const when=Number.isFinite(+b.at)&&+b.at>1e12?Math.round(+b.at):Date.now(),by=String(b.by||'System').slice(0,80);
+      await stamp(()=>out.orders.flatMap(l=>l.orders.map(orderId=>({orderId,type:'note',at:when,by,station:'sorter',sheetId:out.sheet.id,sheet:out.sheet.label,setId:out.sheet.setId,
+        text:`Green line ${l.n} taken off ${out.sheet.label}: nothing was left inside it`,data:{roseLineOff:l.n,lineAt:l.at,sheets:[out.sheet.id],cancel:!!b.cancel},id:`roseLineOff-${out.sheet.id}-${l.n}-${l.at||0}`}))),'rose line off');
+    }
+    delete out.orders;
+    return out;
+  }
+  return {roseGet,roseList,roseClaim,roseRelease,rosePlan,roseRecordCut,roseTakeOff,roseDemo};
 };
 module.exports.fingerprint=fingerprint;
 
 module.exports.protectedLayout=protectedLayout;
+module.exports.withoutPieces=withoutPieces;
 module.exports.stagesOf=stagesOf;
 module.exports.assertProtected=assertProtected;
