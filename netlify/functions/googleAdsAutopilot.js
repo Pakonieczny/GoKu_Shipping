@@ -355,6 +355,8 @@ function _gadsErrorLines(data) {
   } catch (e) { return ""; }
 }
 async function mutateAll(mutateOperations, { ctrl, label = "", validateOnly = null, onDispatch = null } = {}) {
+  // The official-logo placeholder of a PMax draft is rendered at publication (_resolveBrandLogo), never sent as is.
+  if ((mutateOperations || []).some(_isBrandLogoPlaceholder)) throw Object.assign(new Error("The Brites logo for this draft was not prepared, so nothing was sent to Google. Publish it again."), { definiteResponse: true });
   ctrl = ctrl || (await control());
   const vo = validateOnly == null ? !!ctrl.dryRun : validateOnly;
   const token = await mintToken();
@@ -4525,6 +4527,12 @@ async function uploadImageAssets(imgs, ctrl) {
 // Performance Max structure helpers (join an existing campaign, negatives, brand exclusions).
 let _pmaxStructureLib = null;
 function _pmaxStructure() { return _pmaxStructureLib || (_pmaxStructureLib = require("./_googleAdsPmaxStructure")); }
+// Brand guidelines are off on our PMax campaigns, so Google requires a LOGO and a BUSINESS_NAME on every asset
+// group; a group without them makes every later edit of it fail. A draft built before its creative review names
+// the official Brites logo with this placeholder; publication renders it (_resolveBrandLogo), never sends it.
+const BRAND_LOGO_DATA = "brites-official-logo";
+function _brandLogoAssetOp(resourceName) { return { assetOperation: { create: { resourceName, name: "Brites logo", imageAsset: { data: BRAND_LOGO_DATA } } } }; }
+function _isBrandLogoPlaceholder(o) { const c = o && o.assetOperation && o.assetOperation.create; return !!(c && c.imageAsset && c.imageAsset.data === BRAND_LOGO_DATA); }
 
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
@@ -4564,7 +4572,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   // Created at the HEAD of the op array \u2014 the exact ordering Google's own PMax samples use
   // (assets first, then budget/campaign/asset groups/links).
   const textCopy = adCopy || _pmaxDeterministicCopy(coll);
-  let textAssets = null;
+  let textAssets = null, brandLogoRes = null;
   let nextFilterId=-50;
   groups.forEach((g,gi)=>{
     const localCopy=groups.length===1?textCopy:_pmaxDeterministicCopy({title:g.label});
@@ -4596,7 +4604,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     // own auto-generated crops against these — we're giving it better raw
     // material, not removing its ability to choose.
     const localImages=groups.length===1?imageAssets:imageAssets&&imageAssets.byProduct&&imageAssets.byProduct[g.productId];
-    if (localImages && localImages.logo) ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: localImages.logo, fieldType: "LOGO" } } });
+    // Every group links its own logo (brand guidelines are off): the supplied one, else the official Brites logo,
+    // created once for the campaign and replaced by the reviewed logo at publication.
+    let logoRes=localImages&&localImages.logo;
+    if(!logoRes){logoRes=brandLogoRes||(brandLogoRes=`customers/${CID}/assets/${_tempIdFloor(ops)}`);if(!ops.some(o=>_isBrandLogoPlaceholder(o)&&o.assetOperation.create.resourceName===logoRes))ops.unshift(_brandLogoAssetOp(logoRes));}
+    ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: logoRes, fieldType: "LOGO" } } });
     (localImages && localImages.square || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "SQUARE_MARKETING_IMAGE" } } }));
     (localImages && localImages.landscape || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "MARKETING_IMAGE" } } }));
     (localImages && localImages.portrait || []).slice(0, 4).forEach(res => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: res, fieldType: "PORTRAIT_MARKETING_IMAGE" } } }));
@@ -4607,9 +4619,11 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: textAssets.ids.businessName, fieldType: "BUSINESS_NAME" } } });
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(id=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
+  // English, the language of the ad copy (the Search builder's criterion). Without it PMax serves every language.
+  ops.push({campaignCriterionOperation:{create:{campaign:cRes,language:{languageConstant:"languageConstants/1000"}}}});
   // Campaign negative keywords (Search and Shopping inventory): the short reviewed default list.
   ops.push(..._pmaxStructure().negativeOps(cRes,_pmaxStructure().PMAX_DEFAULT_NEGATIVES));
-  return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],
+  return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],languages:["English"],
     negatives:_pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n=>n.text),assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null,
     textAssets:{headlines:textCopy.headlines.length,longHeadlines:textCopy.longHeadlines.length,descriptions:textCopy.descriptions.length},campaignAssets:cla.summary};
 }
@@ -4782,10 +4796,14 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
       try {
         const tag="creative-refresh-"+g.id,taken=await fb().db.collection(COL.approvals).where("tag","==",tag).get();
         if(taken.docs.some(d=>["PENDING","APPROVED","APPLYING","APPLY_UNKNOWN"].includes(d.data().status))){results.push({campaign:c.name,skipped:"A creative refresh is already awaiting review."});continue;}
-        const links=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE asset_group.resource_name = '${g.resourceName}'`);
+        // Removed links stay readable in Google; they are neither current assets nor removable again.
+        const links=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE asset_group.resource_name = '${g.resourceName}' AND asset_group_asset.status != 'REMOVED'`);
         // Google omits false booleans. Unreadable setting: a group linking its own business name or logo proves it is off.
         const brand=brandKnown?c.brandGuidelinesEnabled===true:(links.some(x=>["BUSINESS_NAME","LOGO"].includes((x.assetGroupAsset||{}).fieldType))?false:null);
         if(brand===null)throw new Error("Google did not confirm whether this campaign uses brand guidelines, so no refresh was prepared. Try again shortly.");
+        // Without brand guidelines Google requires a logo and a business name on the group before it accepts any other
+        // change. The reviewed creative supplies both; one the group lacks is added first (orderAssetGroupMutations).
+        const addsRequired=brand?[]:["LOGO","BUSINESS_NAME"].filter(f=>!links.some(x=>(x.assetGroupAsset||{}).fieldType===f));
         const themes=await gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
         const filters=await gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
         // Only UNIT_INCLUDED nodes are advertised products; an excluded item ID is not.
@@ -4799,7 +4817,7 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         ops.push({campaignOperation:{update:{resourceName:c.resourceName,assetAutomationSettings:CREATIVE_AUTOMATIONS.map(assetAutomationType=>({assetAutomationType,assetAutomationStatus:"OPTED_OUT"}))},updateMask:"asset_automation_settings"}});
         const copy=field=>links.filter(x=>(x.assetGroupAsset||{}).fieldType===field).map(x=>(x.asset&&x.asset.textAsset||{}).text).filter(Boolean);
         const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds,keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
-        const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),brandGuidelinesEnabled:brand,studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
+        const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),brandGuidelinesEnabled:brand,...(addsRequired.length?{addsRequired}:{}),studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
         results.push({campaign:c.name,assetGroup:g.name,approvalId:id});queued++;
       } catch(e){results.push({campaign:c.name,assetGroup:g.name,error:String(e.message||e).slice(0,300)});}
     }
@@ -10044,7 +10062,30 @@ async function _creativeImageOps(pkg, existingOps=[]) {
   }
   return {ops,groups,searchGroups};
 }
-async function materializeReviewedCreative(it) {
+// Build-time placeholders for the official Brites logo become the same JPEG, under the same name, as a reviewed
+// logo (so Google keeps one copy); one asset serves every group of the request. A placeholder no link uses (the
+// reviewed logo replaced it, or brand guidelines keep the logo on the campaign) is not created.
+let _brandLogoJpeg=null;
+async function _resolveBrandLogo(ops){
+  if(!Array.isArray(ops)||!ops.some(_isBrandLogoPlaceholder))return ops;
+  const others=ops.filter(o=>!_isBrandLogoPlaceholder(o)),used=JSON.stringify(others);
+  const placeholders=ops.filter(_isBrandLogoPlaceholder).map(o=>o.assetOperation.create.resourceName).filter(r=>used.includes(JSON.stringify(r)));
+  if(!placeholders.length)return others;
+  if(!_brandLogoJpeg)_brandLogoJpeg=await require("sharp")(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();
+  const data=_brandLogoJpeg.toString("base64"),same=others.find(o=>o.assetOperation&&o.assetOperation.create&&o.assetOperation.create.imageAsset&&o.assetOperation.create.imageAsset.data===data);
+  const target=same?same.assetOperation.create.resourceName:placeholders[0],seen=new Set(),out=[];
+  for(const o of others){
+    const c=o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create;
+    if(!c||!placeholders.includes(c.asset)){out.push(o);continue;}
+    const link={...c,asset:target},key=JSON.stringify([link.assetGroup,link.asset,link.fieldType]);
+    if(seen.has(key)||others.some(x=>{const y=x.assetGroupAssetOperation&&x.assetGroupAssetOperation.create;return y&&y!==c&&y.assetGroup===link.assetGroup&&y.asset===target&&y.fieldType===link.fieldType;}))continue;
+    seen.add(key);out.push({assetGroupAssetOperation:{create:link}});
+  }
+  if(!same)out.unshift({assetOperation:{create:{resourceName:target,name:"Brites reviewed 1024x1024 "+creativeHash(data).slice(0,20),imageAsset:{data}}}});
+  return out;
+}
+async function materializeReviewedCreative(it) {return _resolveBrandLogo(await _materializeReviewedCreativeOps(it));}
+async function _materializeReviewedCreativeOps(it) {
   assertCreativeReviewed(it);const p=it.payload||{},c=it.creative||{};
   if((_isAdVersionApproval(it)||it.type==='adDesignSubmission')&&p.generatedAssets&&p.generatedAssets.length){
     const ops=[];
