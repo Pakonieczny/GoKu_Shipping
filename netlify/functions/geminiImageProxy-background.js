@@ -6,7 +6,7 @@
 const admin = require("./firebaseAdmin");
 const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, VALIDATION_WAIT_MS } = require("./lib/listingBatchAdmission.cjs");
+  neverStarted, VALIDATION_WAIT_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14173,6 +14173,10 @@ async function _handlerImpl(event) {
     const SWEEP_BUDGET_MS = 11 * 60 * 1000;
     const sweepStart = Date.now();
     const guardRef = db.collection("LG1_Config").doc("batchSweep");
+    // How long a job may have done nothing before this run restarts it: three
+    // hours, unless a person asked for sooner ({ kind: "batch_sweep",
+    // restartStalledAfterMs }), never under 30 minutes. The cron never asks.
+    const stallAfterMs = stallCutoffMs(body?.restartStalledAfterMs);
 
     const inProcess = async (payload) => {
       const res = await module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(payload) });
@@ -14302,8 +14306,8 @@ async function _handlerImpl(event) {
           // OpenAI accepted this job hours ago and has not started it. It
           // still holds a place (cancelling counts as running until OpenAI
           // confirms); its set is queued again below once it is cancelled.
-          if (neverStarted(b, st, Date.now())) {
-            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName });
+          if (neverStarted(b, st, Date.now(), stallAfterMs)) {
+            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs });
             if (stop?.cancelRequested) {
               stalledCancelled++;
               b.stallCancelRequestedAt = true;
@@ -15412,7 +15416,8 @@ async function _handlerImpl(event) {
       if (!saved) return json(404, { error: { message: "Batch record is missing" } });
       const apiKey = batchApiKey(batchName);
       const live = await getGeminiBatchJob(apiKey, batchName);
-      if (!neverStarted(saved, { providerStatus: live?.providerStatus, batchStats: live?.metadata?.batchStats }, Date.now())) {
+      if (!neverStarted(saved, { providerStatus: live?.providerStatus, batchStats: live?.metadata?.batchStats },
+          Date.now(), stallCutoffMs(body?.minAgeMs))) {
         return json(200, { ok: true, skipped: true, state: live?.state || saved.state || null });
       }
       // Recorded before the cancel, so a cancel that lands after this worker
@@ -16061,12 +16066,32 @@ async function _handlerImpl(event) {
       // sets. Default stays at 50 (cheap query for the common small case).
       const limit = clampNumber(body?.limit, 1, 1000, 50);
       const db = getDb();
-      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(limit);
+      // Each restart of a set leaves a queued record behind that only points
+      // at the job sent for it (locallyQueued, retryBatchName set). The
+      // dashboard shows none of them, yet on 2026-09-29 they were a third of
+      // the newest 1000 records and pushed the start of the big submission
+      // out of view: "Earlier history · partial view", no progress. Read up to
+      // half as many again, leave those pointers out, and let a record that
+      // pointed at one point at the job it led to.
+      const fetchLimit = limit >= 200 ? Math.min(Math.ceil(limit * 1.5), 1500) : limit;
+      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(fetchLimit);
       const snap = await q.get();
+      const isPointer = (d) => !!(d.locallyQueued && d.retryBatchName);
+      const pointsTo = new Map();
+      snap.forEach((doc) => {
+        const d = doc.data();
+        if (isPointer(d)) pointsTo.set(d.batchName || doc.id, d.retryBatchName);
+      });
       const out = [];
       snap.forEach((doc) => {
         const d = doc.data();
         if (!includeCollected && d.collected) return;
+        if (isPointer(d)) return;
+        if (d.retryBatchName) {
+          let next = d.retryBatchName;
+          for (let hops = 0; pointsTo.has(next) && hops < 20; hops++) next = pointsTo.get(next);
+          d.retryBatchName = next;
+        }
         out.push({
           docId: doc.id,
           batchName: d.batchName,
@@ -16124,7 +16149,10 @@ async function _handlerImpl(event) {
       // timezone-independent; the browser formats this in the user's zone.
       const minute = Math.floor(Date.now() / 60000);
       const nextSweepAt = (Math.floor((minute - 4) / 10) * 10 + 14) * 60000;
-      return json(200, { ok: true, batches: out, sweep, nextSweepAt,
+      // Older records may exist beyond what was read: only then is the
+      // oldest submission shown as a partial view.
+      const truncated = snap.size >= fetchLimit || out.length > limit;
+      return json(200, { ok: true, batches: out.slice(0, limit), truncated, sweep, nextSweepAt,
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }
 

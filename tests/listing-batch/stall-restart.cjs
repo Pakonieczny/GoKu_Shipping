@@ -285,7 +285,43 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.deepEqual(c.cancels, ["batch_s22"], "a job whose stop did not reach OpenAI is cancelled there");
   assert.equal(c.get("batch_s22").stallRestartBlocked, true);
 
-  // 5. A job stuck in validation: not waited on, then restarted at three hours.
+  // 5. A person asks for the restart sooner than three hours ("please restart",
+  // 2026-09-29): only a job that has made nothing that long, never under half
+  // an hour, never later than the three hours.
+  const MIN = 60 * 1000;
+  const recent = () => world({
+    records: [job("batch_r90", 40, { createdAt: at(START - 90 * MIN) }),
+      job("batch_r90_done", 41, { createdAt: at(START - 90 * MIN) }),
+      job("batch_r40", 42, { createdAt: at(START - 40 * MIN) }),
+      job("batch_r20", 43, { createdAt: at(START - 20 * MIN) }),
+      job("batch_r4h", 44)],
+    jobs: { batch_r90: openai("in_progress"), batch_r90_done: openai("in_progress", 1), batch_r40: openai("in_progress"),
+      batch_r20: openai("in_progress"), batch_r4h: openai("in_progress") },
+  });
+  const sweptWith = async (extra) => { const r = recent(); const res = await r.call({ kind: "batch_sweep", ...extra });
+    assert.equal(res.statusCode, 200, res.error?.message); return r.cancels.slice().sort(); };
+  assert.deepEqual(await sweptWith({}), ["batch_r4h"], "the scheduled run keeps the three hours");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 60 * MIN }), ["batch_r4h", "batch_r90"],
+    "asked for one hour: the jobs with nothing for an hour, not the one with an image done, not the younger ones");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 1 }), ["batch_r40", "batch_r4h", "batch_r90"],
+    "asked for one millisecond: never under half an hour");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 10 * 60 * MIN }), ["batch_r4h"], "cannot be asked to wait longer than three hours");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: "soon" }), ["batch_r4h"], "an unreadable request is the usual three hours");
+  const direct = recent();
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90" })).skipped, true, "asked directly, still three hours");
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90", minAgeMs: 60 * MIN })).cancelRequested, true);
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r20", minAgeMs: 1 })).skipped, true, "the half-hour floor holds here too");
+  // Its set is queued again like any stalled job, once OpenAI confirms the cancel.
+  const asked = recent();
+  await asked.call({ kind: "batch_sweep", restartStalledAfterMs: 60 * MIN });
+  asked.live.get("batch_r90").status = "cancelled";
+  asked.later(2 * MIN);
+  const next = await asked.call({ kind: "batch_sweep" });
+  assert.equal(next.stalledRestarted, 1, "the restarted set goes back in the queue");
+  assert.equal(asked.submits.length, 1);
+  assert.equal(asked.submits[0].sets[0].setN, 40);
+
+  // 6. A job stuck in validation: not waited on, then restarted at three hours.
   const v = world({
     records: [job("batch_val_old", 30, { state: "JOB_STATE_PENDING", providerStatus: "validating" }),
       job("batch_val_new", 31, { state: "JOB_STATE_PENDING", providerStatus: "validating", createdAt: at(START - 20 * 60 * 1000) })],
@@ -303,7 +339,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.equal(v.submits.length, 1);
   assert.equal(v.submits[0].sets[0].setN, 30);
 
-  // 6. The Batch Progress card.
+  // 7. The Batch Progress card.
   const render = cut(page, "    function _renderSessionBlock(session) {", "    async function _cancelSession(sessionId) {");
   const helper = cut(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {");
   const card = (batches) => vm.runInNewContext(`${helper}; ${render}; _renderSessionBlock({ sessionId: "sess_1", batches, earliest: Date.now(), latest: Date.now() })`, {

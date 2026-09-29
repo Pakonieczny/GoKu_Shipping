@@ -28,10 +28,19 @@ const STALL_RESTART_LIMIT = 5;
 // 2026-09-29 one sat in validation for over half an hour and every queued set
 // waited behind it). It is cancelled and sent again at STALL_RESTART_MS.
 const VALIDATION_WAIT_MS = 15 * 60 * 1000;
+// A person can ask the collector to restart stalled jobs sooner than
+// STALL_RESTART_MS (Paul, 2026-09-29: "please restart" on a queue where most
+// jobs had made nothing for over an hour), never sooner than this: a job
+// under half an hour old is normal, and each restart uses one of the five.
+const STALL_RESTART_MIN_MS = 30 * 60 * 1000;
+const stallCutoffMs = (requested) => {
+  const ms = Number(requested);
+  return Number.isFinite(ms) && ms > 0 ? Math.min(STALL_RESTART_MS, Math.max(STALL_RESTART_MIN_MS, ms)) : STALL_RESTART_MS;
+};
 const toMillis = (value) => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
 // A one-set listing job that has done nothing at all since it was sent.
 // `live` is a fresh provider answer: { providerStatus, batchStats }.
-function neverStarted(record, live, now) {
+function neverStarted(record, live, now, minAgeMs = STALL_RESTART_MS) {
   const stats = live?.batchStats || {};
   const sentAt = toMillis(record?.createdAt);
   return String(record?.batchName || '').startsWith('batch_') && !record.locallyQueued && !record.collected &&
@@ -39,7 +48,7 @@ function neverStarted(record, live, now) {
     // OpenAI counts a job's requests only once it has validated the file.
     (live.providerStatus === 'validating' || Number(stats.requestCount || 0) > 0) &&
     !Number(stats.successfulRequestCount || 0) && !Number(stats.failedRequestCount || 0) &&
-    sentAt > 0 && now - sentAt >= STALL_RESTART_MS &&
+    sentAt > 0 && now - sentAt >= minAgeMs &&
     Number(record.stallRestarts || 0) < STALL_RESTART_LIMIT &&
     record.sets?.length === 1 && record.sets[0]?.setKind !== 'charm_maker';
 }
@@ -133,4 +142,4 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, STALL_RESTART_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS };
+  neverStarted, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS, stallCutoffMs };
