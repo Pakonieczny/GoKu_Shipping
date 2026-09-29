@@ -21,6 +21,7 @@ const PRICE = Object.freeze({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const RETRY_STATUS = [429, 500, 502, 503, 504, 529];
 const RETRY_BASE_MS = 1250, RETRY_MAX_MS = 12000;
+const MIN_ATTEMPT_MS = 1000; // a retry or continuation needs at least this long before timeoutMs ends
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
 
@@ -269,7 +270,8 @@ function createClaudeClient(deps) {
           break;
         }
         case 'message_delta':
-          if (message) { Object.assign(message, evt.delta || {}); if (evt.usage) message.usage = { ...message.usage, ...evt.usage }; }
+          // Whole-message totals; a null counter means "not reported", never zero.
+          if (message) { Object.assign(message, evt.delta || {}); for (const [k, v] of Object.entries(evt.usage || {})) if (v != null) message.usage[k] = v; }
           break;
         case 'message_stop': done = true; break;
         case 'error': {
@@ -320,15 +322,18 @@ function createClaudeClient(deps) {
     const headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': API_VERSION };
     const total = zeroUsage(), prior = [];
     let messages = (payload.messages || []).slice(), last = null;
+    // timeoutMs bounds the whole call: its retries and pause_turn continuations share it.
+    const deadline = o.timeoutMs ? Date.now() + Number(o.timeoutMs) : 0;
     for (let turn = 0; turn <= maxContinuations; turn++) {
       let attempt = 0, result = null;
       while (!result) {
         attempt++;
-        const deadline = o.timeoutMs ? Date.now() + Number(o.timeoutMs) : 0;
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
-        const timer = deadline && controller ? setTimeout(() => controller.abort(), Number(o.timeoutMs)) : null;
+        const timer = deadline && controller ? setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now())) : null;
         try {
-          const res = await fetch(API_URL, { method: 'POST', headers, body: JSON.stringify({ ...payload, messages }), ...(controller ? { signal: controller.signal } : {}) });
+          // No response headers within idleMs is a stall too, handled like one mid-stream.
+          const waiting = idleMs && controller ? setTimeout(() => controller.abort(), idleMs) : null;
+          let res; try { res = await fetch(API_URL, { method: 'POST', headers, body: JSON.stringify({ ...payload, messages }), ...(controller ? { signal: controller.signal } : {}) }); } finally { clearTimeout(waiting); }
           if (!res.ok) {
             const raw = await res.text().catch(() => '');
             let data = null; try { data = JSON.parse(raw); } catch (_) { /* keep the raw text */ }
@@ -347,6 +352,7 @@ function createClaudeClient(deps) {
           const retryable = aborted || (error && error.retryable) || (error && error.status == null && isRetryable(null, error.message));
           if (!retryable || attempt > retries) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
           const wait = retryDelayMs(attempt, error && error.retryAfter);
+          if (deadline && Date.now() + wait + MIN_ATTEMPT_MS > deadline) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
           log(`[claude] retry ${attempt}/${retries} after ${error && (error.status || error.code || error.message)}; waiting ${wait}ms`);
           await sleep(wait);
         } finally { if (timer) clearTimeout(timer); }
@@ -354,6 +360,7 @@ function createClaudeClient(deps) {
       addUsage(total, result.usage);
       last = result;
       if (result.stop_reason !== 'pause_turn' || turn === maxContinuations) break;
+      if (deadline && Date.now() + MIN_ATTEMPT_MS > deadline) throw claudeError('Claude did not finish within ' + Math.round(Number(o.timeoutMs) / 1000) + ' seconds.', { code: 'CLAUDE_TIMEOUT', usage: total, costUsd: estimateCostUsd(total) });
       prior.push(...result.content);
       messages = messages.concat([{ role: 'assistant', content: result.content }]);
     }
