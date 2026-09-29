@@ -120,6 +120,10 @@ await test('a plan forecast to lose money names that blocker and never tops Best
   const b=ctx.oppBlock(Object.assign(base(),{eligibility:{ready:false,measuredKeywords:5,expectedSales:2,reason:r}}));assert.deepEqual([b.kind,b.label,b.text],['evidence','Forecast below break-even',r]);
   vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
   assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
+await test('the saved Product ads funnel arrives with the research state, and a run without one clears it',()=>{const funnel={at:1,verdict:'None qualified: the Merchant Center product list could not be read.',stages:[{key:'collections',label:'Collections looked at',count:9,note:''}],skipped:[]};
+  ctx.updateOpportunityState({pmaxList:[],pmaxFunnel:funnel,pmaxAt:1});assert.equal(ctx.PMAXFUNNEL.verdict,funnel.verdict);assert.equal(ctx.PMAXFUNNEL.stages[0].count,9);
+  ctx.updateOpportunityState({pmaxList:[],pmaxAt:1});assert.equal(ctx.PMAXFUNNEL,null,'an older saved run has no funnel');
+  ctx.updateOpportunityState({pmaxList:[],pmaxFunnel:'text'});assert.equal(ctx.PMAXFUNNEL,null,'a malformed funnel is not kept');ctx.OPPS=[];ctx.PMAXOPPS=[];});
 console.log(`${passed} opportunity card checks passed.`);
 require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

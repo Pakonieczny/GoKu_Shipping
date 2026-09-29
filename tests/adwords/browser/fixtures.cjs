@@ -12,6 +12,10 @@
 // answers keep its limits, wording and draft shapes.
 const OPT = require('../../../netlify/functions/_googleAdsCampaignOptions.js');
 
+// Product ads: two saved suggestions (one with research, one saved before it existed), the partial-data banner and the scan funnel.
+const PMAX_SAMPLE = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../fixtures/pmax-research-sample.json'), 'utf8'));
+const pmaxSuggestions = () => JSON.parse(JSON.stringify([PMAX_SAMPLE.opportunity, PMAX_SAMPLE.legacyOpportunity]));
+
 const DAY = 86400000;
 const ACCOUNT_TZ = 'America/Toronto';
 const CID = '5550001111';
@@ -286,10 +290,10 @@ function createFixtures(opts = {}) {
       keyPhrases: ['initial necklace', 'charm necklace gift'], keywordData: [{ text: 'initial necklace', volume: 2900, cpcLow: 0.61, cpcHigh: 1.42, competition: 'MEDIUM' }],
       audience: { buyer: 'Gift buyers', recipient: 'Partner', motivation: 'Personal meaning', searchStyle: 'initial necklace for her' }, acted: null }, over || {});
     const list = [mk(0), mk(1), mk(2, { acted: { status: 'PENDING', approvalId: 'harness-approval-search', at: now - DAY } })];
-    return { opportunities: list, scannedAt: now - 3 * 3600000, scanning: false, progress: null, lastError: null, researchStatus: { search: { ok: true, at: now - 3 * 3600000 }, pmax: { ok: true, at: now - 3 * 3600000 } },
-      pmaxList: [], pmaxError: null, pmaxAt: now - 3 * 3600000, searchLearning: null, pmaxLearning: null, reconciliation: null,
+    return { opportunities: list, scannedAt: now - 3 * 3600000, scanning: false, progress: null, lastError: null, researchStatus: { search: { ok: true, at: now - 3 * 3600000 }, pmax: Object.assign({}, PMAX_SAMPLE.researchStatus.pmax, { checkedAt: now - 3 * 3600000 }) },
+      pmaxList: pmaxSuggestions(), pmaxFunnel: PMAX_SAMPLE.funnel, pmaxError: null, pmaxAt: now - 3 * 3600000, searchLearning: null, pmaxLearning: null, reconciliation: PMAX_SAMPLE.reconciliation,
       scanAudit: { schema: 2, runId: 'opp-harness', status: 'completed', startedAt: now - 3 * 3600000, completedAt: now - 3 * 3600000 + 42000, updatedAt: now - 3 * 3600000 + 42000, summary: { total: 3, ok: 2, warning: 1, failed: 0, skipped: 0, running: 0, queued: 0 },
-        checks: [{ id: 'console_request', category: 'orchestration', label: 'Console scan request', status: 'ok', tookMs: 12, detail: 'Accepted.' }, { id: 'keyword_planner', category: 'research', label: 'Keyword Planner', status: 'warning', tookMs: 5400, detail: 'Harness: two keywords returned no volume.' }, { id: 'catalog', category: 'store', label: 'Catalog read', status: 'ok', tookMs: 800, detail: '5 products.' }] },
+        checks: [{ id: 'console_request', category: 'orchestration', label: 'Console scan request', status: 'ok', tookMs: 12, detail: 'Accepted.' }, { id: 'keyword_planner', category: 'research', label: 'Keyword Planner', status: 'warning', tookMs: 5400, detail: 'Harness: two keywords returned no volume.' }, { id: 'catalog', category: 'store', label: 'Catalog read', status: 'ok', tookMs: 800, detail: '5 products.' }].concat(PMAX_SAMPLE.scanAudit.checks) },
       started: !!(body && body.force), runId: body && body.force ? 'opp-harness-run' : undefined };
   }
 
@@ -505,7 +509,7 @@ function createFixtures(opts = {}) {
     creativeStatus,
     analyzeAdStatus: body => ({ ok: true, analysisId: body && body.analysisId, status: 'complete', phase: 'done', analysis: { summary: 'Harness ad analysis.', score: 71, findings: [] } }),
     adVersionApprovalStatus: body => ({ ok: true, id: body && body.id, status: 'PENDING' }),
-    pmaxRecommendationEvidence: () => ({ ok: true, products: [], evidence: [] }),
+    pmaxRecommendationEvidence: body => ({ ok: true, candidate: pmaxSuggestions().find(x => x.handle === (body && body.handle)) || pmaxSuggestions()[0], removedItemIds: [] }),
     adDesignStatus: adDesignWorkspace,
     adDesignSavedDesigns: () => ({ ok: true, designs: [], nextCursor: null }),
     adDesignProductImages: () => ({ ok: true, images: [] }),
