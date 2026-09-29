@@ -2296,6 +2296,9 @@ async function researchOpportunity(seeds, geoIds) {
   const kp = await keywordResearch(seeds, geoIds);
   const merged = mergeKeywordResearch(seeds, kp);
   merged.error = kp.ok ? null : (kp.error || "unavailable");
+  // Keep each measured series' end month so the planner reads the run month's seasonality, not the 12-month average.
+  const endByText = {}; ((kp && kp.ideas) || []).forEach(i => { if (i && i.monthlyEnd) endByText[String(i.text).toLowerCase()] = i.monthlyEnd; });
+  (merged.keywords || []).forEach(k => { const e = k && k.real && endByText[String(k.text).toLowerCase()]; if (e) k.monthlyEnd = e; });
   return merged;
 }
 

@@ -9,7 +9,7 @@ function engine(fns={}){
  const sandbox={module:{exports:{}},process:{env:{GADS_CURRENCY:'USD',KP_BACKOFF_MS:'0'}},URL,URLSearchParams,Intl,Date:FixedDate,console,Buffer,setTimeout,clearTimeout,AbortController,
   require:name=>name==='node-fetch'?(()=>{throw Error('Unexpected network');}):require('module').createRequire(file)(name),fns};
  vm.createContext(sandbox);
- vm.runInContext(source+'\nmodule.exports.test={rule:_occasionRule,peak:_nextOccasionPeak,monthEnd:_kpMonthEnd,windowSearches:_windowSearches,plan:planCampaign,score:_oppScore,cls:opportunityClass,kwKey:_kwCacheKey};',sandbox);
+ vm.runInContext(source+'\nmodule.exports.test={rule:_occasionRule,peak:_nextOccasionPeak,monthEnd:_kpMonthEnd,windowSearches:_windowSearches,plan:planCampaign,score:_oppScore,cls:opportunityClass,kwKey:_kwCacheKey,research:researchOpportunity};',sandbox);
  vm.runInContext('for(const k of Object.keys(fns))globalThis[k]=fns[k];',sandbox);
  return sandbox.module.exports;
 }
@@ -42,6 +42,9 @@ const J=x=>JSON.stringify(x);
  const oct=t.windowSearches(kw,new Date(Date.UTC(2026,9,1)),new Date(Date.UTC(2026,9,31)));
  assert.equal(oct.monthly,1200);assert.equal(oct.seasonal,1);assert.equal(oct.keywords,1);
  assert.equal(t.windowSearches(kw).monthly,200);
+ // Draft-path research keeps each measured series' end month, so plans read seasonality there too.
+ const ro=await engine({keywordResearch:async()=>({ok:true,ideas:[{text:'Gold Moon Necklace',searches:200,competitionIndex:20,low:0.5,high:1.2,monthly,monthlyEnd:'2026-08'},{text:'moon charm',searches:90,monthly:null,monthlyEnd:null}]})}).test.research(['gold moon necklace'],['2124']);
+ assert.equal(ro.keywords.find(k=>k.text==='Gold Moon Necklace').monthlyEnd,'2026-08');assert.equal(ro.keywords.find(k=>k.text==='moon charm').monthlyEnd,undefined);
  // ---- Cache keys cover every seed, the geography and the language ----
  const seeds=Array.from({length:30},(_,i)=>'moon necklace '+i);
  assert.notEqual(t.kwKey(seeds,'2124'),t.kwKey(seeds.concat('zzz'),'2124'));assert.notEqual(t.kwKey(seeds,'2124'),t.kwKey(seeds,'2840'));assert.notEqual(t.kwKey(seeds,'2124','1000'),t.kwKey(seeds,'2124','1002'));
