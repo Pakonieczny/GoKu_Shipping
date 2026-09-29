@@ -9110,6 +9110,10 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       // (see addLocalSend). They show until Etsy's own copy arrives.
       localSends          : new Map(),
 
+      // What the extension did with each thread's latest send, read from
+      // the thread's draft slot (see noteDraftStatus). Threads by id.
+      sendDelivery        : new Map(),
+
       // v4.1 — Auth state. Populated by bootstrapSession on page load
       // and by handleLoginSubmit. Cleared by handleLogout.
       //   currentUser : { username, displayName, role } | null
@@ -9342,6 +9346,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       return String(s || "")
         .trim()
         .toLowerCase()
+        // Etsy may hand back typographic quotes for the ones we typed.
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
         .replace(/https?:\/\/(www\.)?/g, "")
         .replace(/(^|\s)www\./g, "$1")
         .replace(/\s+/g, " ")
@@ -9404,7 +9411,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           // Real must arrive AT OR AFTER optim (within tolerance for skew).
           // A local send carries extra slack while it still uses the
           // browser's clock (see threadMessagesForRender).
-          if (realMs < optimMs - OPTIM_DEDUP_TOLERANCE_MS - (optim._dedupSlackMs || 0)) continue;
+          const floorMs = optimMs - OPTIM_DEDUP_TOLERANCE_MS - (optim._dedupSlackMs || 0);
+          // A scrape that read no time for a message places it beside its
+          // neighbours (timestampSource "placed"), maybe days before the
+          // send. Its message time says nothing then, but when the copy was
+          // WRITTEN does: one stored after the send is Etsy's copy of it.
+          const wroteMs = real.timestampSource === "placed" ? _optimDedupMsFor({ timestamp: real.createdAt }) : 0;
+          if (realMs < floorMs && wroteMs < floorMs) continue;
           if (!_optimDedupIsContentMatch(optim, real)) continue;
           // Pair found
           if (optim.id) hide.add(optim.id);
@@ -9487,6 +9500,118 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
       const left = localSendsFor(threadId).filter(x => x.id !== id);
       if (left.length) state.localSends.set(threadId, left); else state.localSends.delete(threadId);
     }
+    // ─── What a sent reply's bubble says about its send ─────────────────
+    // A reply's bubble stands in until Etsy's own copy of it is stored. That
+    // copy comes with the next scrape of the conversation, and nothing asks
+    // for one after a send (scrapes are queued by Gmail notices of customer
+    // messages), so it can be hours away. "Etsy's copy is not here yet" says
+    // nothing about the send, so the bubble never reads "syncing…": its tag
+    // follows the send itself, from the thread's draft slot (the extension's
+    // word): "sending…" while it is queued or being typed into Etsy, nothing
+    // once delivered, a plain note when it was not (or not confirmed).
+    // Etsy API cost: none. One Firestore read every 4 s while a send is in
+    // flight on the open thread, one when a thread with a stand-in opens.
+    const SEND_INFLIGHT_MAX_MS = 35 * 60 * 1000;   // a queued send expires after 30 minutes
+    const SEND_SAME_MS = 2 * 60 * 1000;            // draft queued time vs the bubble's time
+    const SEND_READ_FRESH_MS = 3500;
+    const _sendWatch = new Map();                  // threadId -> the running status loop
+    const _sendWatchQuiet = new Map();             // threadId -> no new loop before this time
+
+    /** Keep what the draft slot says about a thread's latest send. */
+    function noteDraftStatus(threadId, d) {
+      if (!threadId) return;
+      const prev = state.sendDelivery.get(threadId);
+      const next = d ? {
+        status  : String(d.status || ""),
+        textKey : _optimDedupNormalize(d.text),
+        queuedMs: tsToMs(d.queuedAt),
+        readAt  : Date.now()
+      } : { status: "none", textKey: "", queuedMs: 0, readAt: Date.now() };
+      state.sendDelivery.set(threadId, next);
+      const changed = !prev || prev.status !== next.status || prev.textKey !== next.textKey || prev.queuedMs !== next.queuedMs;
+      if (changed && state.selectedId === threadId) { try { drawThreadNow(); } catch (_) {} }
+    }
+
+    function _standInAnchorMs(m) {
+      return m._serverMs || m._queuedAtMs || _optimDedupMsFor(m);
+    }
+
+    /** { text, title?, warn? } for a stand-in bubble, or null when it should
+     *  read like any other message. */
+    function sendTagOf(threadId, m) {
+      if (!m || !m.localOptimistic) return null;
+      if (m._state === "sending") return { text: "sending…" };
+      if (m._state === "waiting") return { text: "waiting…", title: "Goes out right after your previous message" };
+      if (m._state === "file")    return { text: "adding the tracking image…" };
+      const e = state.sendDelivery.get(threadId);
+      const anchor = _standInAnchorMs(m);
+      const young = Date.now() - anchor < SEND_INFLIGHT_MAX_MS;
+      const same = !!e && e.status !== "none" && e.textKey === _optimDedupNormalize(m.optimisticTextKey || m.text) &&
+                   Math.abs((e.queuedMs || 0) - anchor) <= SEND_SAME_MS;
+      if (same) {
+        if (e.status === "queued" || e.status === "sending") return young ? { text: "sending…" } : null;
+        if (e.status === "failed") return { text: "not sent", warn: true, title: "The Etsy helper could not send this reply" };
+        if (e.status === "sent_unverified") return { text: "not confirmed by Etsy", warn: true, title: "The reply was probably sent, but Etsy did not confirm it" };
+        if (e.status === "sent_text_only") return { text: "images not sent", warn: true, title: "The words went out, the images could not be attached" };
+        return null;   // delivered
+      }
+      // Just queued from this page and the draft slot not read since: the
+      // extension has it. Anything read after that which is not this send
+      // means the slot moved on, so the send is over.
+      if (m._local && m._state === "queued" && young && !(e && e.readAt > (m._queuedAtMs || 0))) return { text: "sending…" };
+      return null;
+    }
+
+    /** Does the open thread's newest stand-in still need the draft slot read? */
+    function needsSendWatch(threadId, list) {
+      let m = null;
+      for (let i = list.length - 1; i >= 0; i--) if (list[i] && list[i].localOptimistic) { m = list[i]; break; }
+      if (!m) return false;
+      // The send flow moves these on by itself and redraws.
+      if (m._state === "sending" || m._state === "waiting" || m._state === "file") return false;
+      const e = state.sendDelivery.get(threadId);
+      if (!e) return true;
+      const tag = sendTagOf(threadId, m);
+      if (tag && tag.text === "sending…") return true;
+      if (m._local && m._state === "queued" && !(e.readAt > (m._queuedAtMs || 0))) return true;
+      // The slot was read before this stand-in existed (a send from another
+      // device, or the auto-reply): read again, unless it is long settled.
+      return Date.now() - _standInAnchorMs(m) < SEND_INFLIGHT_MAX_MS && e.readAt < _standInAnchorMs(m);
+    }
+
+    /** Follow the open thread's latest send until the extension is done with it. */
+    function ensureSendWatch(threadId, list) {
+      if (!threadId || _sendWatch.has(threadId)) return;
+      if (Date.now() < (_sendWatchQuiet.get(threadId) || 0)) return;
+      if (!needsSendWatch(threadId, list)) return;
+      const w = { failures: 0, timer: null };
+      _sendWatch.set(threadId, w);
+      const stop = (quietMs) => {
+        clearTimeout(w.timer);
+        if (_sendWatch.get(threadId) === w) _sendWatch.delete(threadId);
+        if (quietMs) _sendWatchQuiet.set(threadId, Date.now() + quietMs);
+      };
+      const step = async () => {
+        if (_sendWatch.get(threadId) !== w) return;
+        if (state.selectedId !== threadId) return stop(0);
+        const e = state.sendDelivery.get(threadId);
+        if (!document.hidden && !(e && Date.now() - e.readAt < SEND_READ_FRESH_MS)) {
+          try {
+            const r = await api("etsyMailDraftSend", { query: { op: "status", draftId: "draft_" + threadId } });
+            w.failures = 0;
+            noteDraftStatus(threadId, r && r.draft);
+          } catch (err) {
+            if (err && err.status === 404) { w.failures = 0; noteDraftStatus(threadId, null); }
+            else if (++w.failures >= 3) return stop(60 * 1000);
+          }
+        }
+        if (_sendWatch.get(threadId) !== w) return;
+        if (state.selectedId !== threadId || !needsSendWatch(threadId, threadMessagesForRender(threadId))) return stop(0);
+        w.timer = setTimeout(step, 4000);
+      };
+      w.timer = setTimeout(step, 0);
+    }
+
     /** The open thread's messages as they should be drawn: server docs plus
      *  this page's local sends, each send shown once, oldest first. */
     function threadMessagesForRender(threadId) {
@@ -9526,6 +9651,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         ? list.filter(m => !(m.localOptimistic && m.id && hide.has(m.id)))
         : list.slice();
       out.sort((a, b) => _optimDedupMsFor(a) - _optimDedupMsFor(b));
+      ensureSendWatch(threadId, out);
       return out;
     }
 
@@ -20629,6 +20755,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
           const r = await api("etsyMailDraftSend", { query: { op: "status", draftId } });
           d = r && r.draft;
         } catch (_) {}
+        if (d) noteDraftStatus(threadId, d);
         if (d && String(d.text || "").trim() !== want) return;     // the slot now holds a later reply
         if (d && (d.status === "sent" || d.status === "sent_text_only")) return;
         if (d && d.status === "failed") {
@@ -21142,10 +21269,12 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         return false;
       }
 
-      // Queued. The bubble now reads "syncing…" until Etsy's copy arrives.
+      // Queued. The bubble reads "sending…" until the extension reports it
+      // delivered (noteDraftStatus), then like any message until Etsy's copy
+      // replaces it.
       if (polishedSend && state.polish && state.polish.threadId === threadId) state.polish = null;
       const sentAtts = Array.isArray(resp && resp.attachments) ? resp.attachments : usableAtts;
-      const patch = { _state: "queued", optimisticDraftId: resp && resp.draftId };
+      const patch = { _state: "queued", _queuedAtMs: Date.now(), optimisticDraftId: resp && resp.draftId };
       const media = localSendMedia(sentAtts);
       // The reply had two different tracking numbers: the server kept the
       // real one, so the bubble shows the words and pictures that went.
@@ -21976,12 +22105,13 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         // v0.9.24 — Use fmtBubbleTimestamp (always shows date + time) so
         // every bubble is self-anchored.
         const when = fmtBubbleTimestamp(m.timestamp || m.createdAt);
-        // Subtle state on messages Etsy has not confirmed yet: "sending…"
-        // while the request is out, "waiting…" behind an earlier message
-        // on this thread, then "syncing…" until the scraped copy arrives.
-        const syncTag = m.localOptimistic
-          ? ' <span class="em-msg-sync"' + (m._state === "waiting" ? ' title="Goes out right after your previous message"' : '') + '>· ' +
-            (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : m._state === "file" ? "adding the tracking image…" : "syncing…") + '</span>'
+        // Subtle state on a reply that is still on its way: "sending…" while
+        // the request is out or the extension has it, "waiting…" behind an
+        // earlier message on this thread. Once delivered it reads like any
+        // other message (see sendTagOf).
+        const sendTag = sendTagOf(state.selectedId, m);
+        const syncTag = sendTag
+          ? ' <span class="em-msg-sync' + (sendTag.warn ? ' warn' : '') + '"' + (sendTag.title ? ' title="' + esc(sendTag.title) + '"' : '') + '>· ' + esc(sendTag.text) + '</span>'
           : '';
 
         // Render any message that has imageUrls as inline thumbnails —
@@ -25678,10 +25808,9 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
             m.listingCards.map(renderListingCard).join("") +
             '</div>';
         }
-        // Not yet confirmed by Etsy: the same small state as on desktop.
-        const syncTag = m.localOptimistic
-          ? " · " + (m._state === "sending" ? "sending…" : m._state === "waiting" ? "waiting…" : m._state === "file" ? "adding the tracking image…" : "syncing…")
-          : "";
+        // A reply still on its way: the same small state as on desktop.
+        const _sendTag = sendTagOf(state.selectedId, m);
+        const syncTag = _sendTag ? " · " + _sendTag.text : "";
         return {
           key : String(m.id),
           html: `<div class="m-msg-wrap ${dir}" data-mid="${mEsc(String(m.id))}">` +
@@ -25809,9 +25938,11 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         });
         if (!res || !res.exists || !res.doc) {
           // Draft removed entirely — likely delivered + cleaned up
+          noteDraftStatus(threadId, null);
           if (typeof toast === "function") toast("✓ Delivered (draft removed from queue)");
           return;
         }
+        noteDraftStatus(threadId, res.doc);
         const status = String(res.doc.status || "unknown");
         const claimedBy = res.doc.claimedBy || res.doc.claimingClientId || null;
         const failReason = res.doc.failReason || res.doc.lastError || res.doc.error || null;
@@ -27764,6 +27895,7 @@ const EtsyMailAuth=(()=>{
     .em-thread .em-msg .em-msg-text { white-space: pre-wrap; }
     .em-thread .em-msg .em-msg-text:empty { display: none; }
     .em-msg-sync { font-size: 10px; font-style: italic; opacity: .85; text-transform: none; letter-spacing: 0; }
+    .em-msg-sync.warn { font-style: normal; font-weight: 600; opacity: 1; color: #b3261e; }
   </style>
   <script>
   (function () {
