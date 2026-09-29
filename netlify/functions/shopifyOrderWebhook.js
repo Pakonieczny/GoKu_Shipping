@@ -118,13 +118,29 @@ function attributionFrom(payload) {
   let handle = null;
   try {
     const u = new URL(payload.landing_site || "", "https://x.invalid");
-    source = source || u.searchParams.get("utm_source");
-    medium = medium || u.searchParams.get("utm_medium");
-    campaign = campaign || u.searchParams.get("utm_campaign");
+    // A Shopping feed link carries its own utm_* (product_sync / sag_organic) ahead of
+    // the campaign's final-URL suffix; the suffix, last, names the ad actually clicked.
+    const last = k => u.searchParams.getAll(k).pop() || null;
+    source = source || last("utm_source");
+    medium = medium || last("utm_medium");
+    campaign = campaign || last("utm_campaign");
     const m = (u.pathname || "").match(/\/products\/([^\/?#]+)/);
     if (m) handle = m[1];
   } catch (e) {}
-  return { source: source || null, medium: medium || null, campaign: campaign || null, handle, ...require('./googleAdsCampaignStyles').attribution(payload.landing_site,note) };
+  return { source: source || null, medium: medium || null, campaign: campaign || null, handle, ...require('./googleAdsSalesEvidence').clickAttribution(payload.landing_site,note,require('./googleAdsCampaignStyles').attribution(payload.landing_site,note)) };
+}
+
+// The shopper's Google consent, as the storefront recorded it on the cart
+// (_ad_user_data / _ad_personalization = granted | denied). Never assumed.
+function consentFrom(note) {
+  const read = k => { const v = String(noteAttr(note, "_" + k) || noteAttr(note, k) || "").trim().toUpperCase().replace(/^CONSENT_/, ""); return v === "GRANTED" || v === "DENIED" ? v : null; };
+  const c = { adUserData: read("ad_user_data"), adPersonalization: read("ad_personalization") };
+  return c.adUserData || c.adPersonalization ? c : null;
+}
+// Where the buyer is decides whether Google's EU consent policy applies.
+function buyerCountryFrom(payload) {
+  const a = [payload.billing_address, payload.shipping_address, payload.customer && payload.customer.default_address].find(x => x && x.country_code);
+  return a ? String(a.country_code).toUpperCase() : null;
 }
 
 function lineItemsFrom(payload) {
@@ -148,16 +164,29 @@ function lineItemsFrom(payload) {
   }).filter(it => it.title || it.sku).slice(0, 25);
 }
 
+// In the shop's currency, like the sale it reduces (total_price). Refund transactions
+// are in the currency the buyer paid; line, shipping and adjustment amounts carry
+// both currencies, which gives the rate between them.
 function refundAmount(payload) {
+  let shop = 0, shown = 0, shopCode = "", shownCode = "";
+  const pair = set => { const s = set && set.shop_money, p = set && set.presentment_money; if (!s || !p) return;
+    shopCode = shopCode || String(s.currency_code || "").toUpperCase(); shownCode = shownCode || String(p.currency_code || "").toUpperCase();
+    shop += Math.abs(Number(s.amount) || 0); shown += Math.abs(Number(p.amount) || 0); };
+  const money = (set, raw) => set && set.shop_money ? Number(set.shop_money.amount || 0) : Number(raw || 0);
+  const li = Array.isArray(payload.refund_line_items) ? payload.refund_line_items : [], shipLines = Array.isArray(payload.refund_shipping_lines) ? payload.refund_shipping_lines : [], adjustments = Array.isArray(payload.order_adjustments) ? payload.order_adjustments : [];
+  li.forEach(x => { pair(x.subtotal_set); pair(x.total_tax_set); }); shipLines.forEach(x => pair(x.subtotal_amount_set)); adjustments.forEach(x => { pair(x.amount_set); pair(x.tax_amount_set); });
+  const rate = shopCode && shownCode && shopCode !== shownCode && shown > 0 ? shop / shown : 1;
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
+  // A pending refund transaction is money the merchant has already sent back.
   const fromTxns = txns
-    .filter(t => String(t.kind).toLowerCase() === "refund" && String(t.status || "success").toLowerCase() === "success")
-    .reduce((s, t) => s + Number(t.amount || 0), 0);
-  if (fromTxns > 0) return fromTxns;
-  const li = Array.isArray(payload.refund_line_items) ? payload.refund_line_items : [];
-  const fromLines = li.reduce((s, x) => s + Number(x.subtotal || 0), 0);
-  const ship = (payload.order_adjustments || []).reduce((s, x) => s + Math.abs(Number(x.amount || 0)), 0);
-  return fromLines + ship;
+    .filter(t => String(t.kind).toLowerCase() === "refund" && ["success", "pending"].includes(String(t.status || "success").toLowerCase()))
+    .reduce((s, t) => s + Number(t.amount || 0) * (shopCode && String(t.currency || "").toUpperCase() === shopCode ? 1 : rate), 0);
+  if (fromTxns > 0) return Math.round(fromTxns * 100) / 100;
+  // Tax-inclusive, like the sale's value; a refund discrepancy is not a shipping refund.
+  const fromLines = li.reduce((s, x) => s + money(x.subtotal_set, x.subtotal) + money(x.total_tax_set, x.total_tax), 0);
+  const ship = shipLines.reduce((s, x) => s + Math.abs(money(x.subtotal_amount_set, 0)), 0) +
+    adjustments.filter(x => String(x.kind || "").toLowerCase() === "shipping_refund").reduce((s, x) => s + Math.abs(money(x.amount_set, x.amount)) + Math.abs(money(x.tax_amount_set, x.tax_amount)), 0);
+  return Math.round((fromLines + ship) * 100) / 100;
 }
 function refundItemsFrom(payload) {
   return (Array.isArray(payload.refund_line_items)?payload.refund_line_items:[]).map(x=>{
@@ -200,8 +229,11 @@ exports.handler = async (event) => {
         const land = clickIdsFromLanding(payload.landing_site);
         gclid = land.gclid; gbraid = land.gbraid; wbraid = land.wbraid;
       }
+      // total_price is in the shop's currency (tax, shipping and discounts included);
+      // presentment_currency names the buyer's, a different amount.
       const value = Number(payload.total_price || payload.current_total_price || 0);
-      const currency = payload.currency || payload.presentment_currency || undefined;
+      const currency = payload.currency || (((payload.total_price_set || {}).shop_money || {}).currency_code) || undefined;
+      const placedAt = Date.parse(payload.created_at || "") || undefined;
       const attr = attributionFrom(payload);
       const items = lineItemsFrom(payload);
       // Canonical Top-200 best sellers: ongoing site sales increment counts on the FIXED CSV list
@@ -240,14 +272,20 @@ exports.handler = async (event) => {
         // Organic / non-ad order: never a Google Ads conversion, but we LOG it so the store
         // intelligence layer can learn what's selling and inform future ad campaigns.
         const reason = attr.campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
+          : /^google$/i.test(attr.source || "") && /^(cpc|ppc|paid_search|paid_shopping|paid_pmax)$/i.test(attr.medium || "") ? "Google ad visit — no click id captured, so not uploaded"
           : (attr.source ? `non-ad — ${attr.source}/${attr.medium || "none"}` : "organic / no Google click id");
-        try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+        try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, ts: placedAt, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
         LOG(topic, "order", orderId, "-> 200 SKIPPED (" + reason + ")");
         return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: reason, logged: true }) };
       }
+      // Only a real, paid sale becomes a Google conversion. A test order, a cancelled
+      // one, or orders/create before payment is logged but never uploaded;
+      // orders/paid uploads the sale once it is paid.
+      const notSale = payload.test === true ? "test order" : payload.cancelled_at ? "cancelled order"
+        : topic === "orders/create" && String(payload.financial_status || "").toLowerCase() !== "paid" ? "not paid yet" : null;
       const when = payload.created_at ? E.gAdsTime(new Date(payload.created_at)) : undefined;
-      const r = await E.enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime: when });
-      try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: clickId, captured: true, reason: "captured — Google ad click", items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+      const r = notSale ? { skipped: notSale } : await E.enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime: when, consent: consentFrom(note), buyerCountry: buyerCountryFrom(payload) });
+      try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, ts: placedAt, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: clickId, captured: true, reason: notSale ? "Google ad click — not uploaded (" + notSale + ")" : "captured — Google ad click", items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
       LOG(topic, "order", orderId, "click", clickId, "value", value, currency, "->", JSON.stringify(r));
       return { statusCode: 200, body: JSON.stringify({ ok: true, result: r, logged: true }) };
     }

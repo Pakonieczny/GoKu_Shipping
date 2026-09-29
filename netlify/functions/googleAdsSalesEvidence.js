@@ -86,4 +86,16 @@ function exactProductMatches(offer,row){
   if(productId&&row.productId)return normalize(productId)===normalize(row.productId);
   return false;
 }
-module.exports={aggregateOrderEvidence,compactPeriod,exactProductMatches,classifyTraffic};
+// Google appends gad_campaignid to every ad click, and this app's own final-URL
+// suffixes put the campaign (Studio PMax) or ad group (Search) in utm_content when
+// utm_campaign is not an ID. A Shopping feed link keeps its own utm_* ahead of the
+// suffix, so the suffix's value is the last one. Fills only IDs still empty.
+function clickAttribution(url,attributes,base){
+  let query;try{query=new URL(url||"","https://invalid.example").searchParams;}catch(_){query=new URLSearchParams();}
+  const list=Array.isArray(attributes)?attributes:[],get=k=>text((list.find(a=>a&&text(a.key||a.name).toLowerCase()===k)||{}).value||query.getAll(k).pop());
+  const id=v=>/^\d{5,}$/.test(v)?v:null,google=get("utm_source").toLowerCase()==="google",medium=get("utm_medium").toLowerCase(),content=id(get("utm_content")),out=Object.assign({},base);
+  if(!out.campaignId)out.campaignId=(google?id(get("utm_campaign")):null)||id(get("gad_campaignid"))||(google&&medium==="paid_pmax"?content:null);
+  if(!out.adGroupId)out.adGroupId=google&&medium==="paid_search"?content:null;
+  return out;
+}
+module.exports={aggregateOrderEvidence,compactPeriod,exactProductMatches,classifyTraffic,clickAttribution};

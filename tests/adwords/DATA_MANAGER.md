@@ -46,6 +46,26 @@ gain a new scope merely because the application requests it at refresh time.
   Inspect Google's diagnostics and original order before any operator repair.
 - Refund adjustments remain on Google's supported conversion-adjustment API.
   Their success must be verified independently from ingestion of the purchase.
+- A submission still unconfirmed 24 hours later is past Google's documented
+  diagnostics window. Sales reports it as stuck, with the last status Google
+  returned or why the status request failed.
+
+## What each sale sends
+
+- **Value:** Shopify `total_price`, in the shop's currency: after discounts,
+  including tax and shipping. Google converts it to the account currency.
+- **Refunds:** a refund recorded before the sale is sent is subtracted from it;
+  a sale refunded in full is never sent. Later refunds become one adjustment per
+  order (the latest refund's net value) once Google has recorded the sale. A
+  refund with no money back (a restock or exchange) changes nothing. Refund
+  amounts are converted to the shop's currency when the buyer paid in another.
+- **Not sent:** test orders, cancelled orders, `orders/create` before payment,
+  and any order without a Google click identifier.
+- **Consent:** sent only when the storefront recorded it on the cart as the
+  attributes `_ad_user_data` and `_ad_personalization`, with the value
+  `granted` or `denied` (the shopper's Shopify Customer Privacy choice).
+  Nothing is assumed. Google does not use a sale from the EEA, the UK or
+  Switzerland without `ad_user_data` consent, and Sales counts such sales.
 
 `GADS_CONVERSION_UPLOAD_API=legacy` is a rollback switch only for accounts Google
 already permits to use the legacy endpoint. It does not fix this account's
