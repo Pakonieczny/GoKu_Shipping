@@ -165,6 +165,16 @@ await test('asking Google for the serving check shows the standard spinner, thro
   draw();assert.equal(btn().disabled,false,'nothing is left waiting');v.window.close();
 });
 
+await test('a date range popover stays on screen: presets above the calendar on phones, leftwards at the right edge',()=>{
+  assert.match(html,/@media \(max-width:520px\)\{\s*\.rpPop\{max-height:84vh;overflow-y:auto\}\.rpPop \.rpRow\{flex-direction:column\}/);
+  assert.match(pick('rpDraw'),/<div class="rpRow" style="display:flex"><div>'\+presets\+'<\/div><div class="rpMain" /);assert.match(pick('rpDraw'),/var presets='<div class="rpPresets" /);
+  assert.match(pick('rpToggle'),/p\.style\.display="block";rpFit\(p\);/);
+  const f=new JSDOM('<!doctype html><body><div class="rp"><div class="rpPop" style="position:absolute;left:0"></div></div></body>',{runScripts:'outside-only'}),fw=f.window,fd=fw.document,p=fd.querySelector('.rpPop');
+  Object.defineProperty(fd.documentElement,'clientWidth',{value:1440});fw.eval(pick('rpFit'));let right=1701;p.getBoundingClientRect=()=>({right});
+  fw.rpFit(p);assert.equal(p.style.left,'auto');assert.equal(p.style.right,'0px','past the right edge it opens leftwards');
+  right=893;fw.rpFit(p);assert.equal(p.style.left,'0px');assert.equal(p.style.right,'auto','with room it opens as before');f.window.close();
+});
+
 await test('one indicator per wait, shell top bar, phone channel tabs and a shadow-free closed drawer',()=>{
   assert.match(html,/BritesProgress\.own\(function\(host\)\{var scope=host===document\.body\?document\.querySelector\("\.view:not\(\.hidden\)"\):host;/);
   assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-shell"/);

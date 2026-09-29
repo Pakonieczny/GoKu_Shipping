@@ -329,6 +329,12 @@ svg{display:block}
   .rpPop{position:fixed!important;left:50%!important;top:12vh!important;transform:translateX(-50%);width:min(540px,94vw)!important}
   .sgHead{grid-template-columns:1fr}.sgInvariant{max-width:none}.sgMetrics{grid-template-columns:repeat(3,1fr)}
 }
+/* Phones: the date presets sit above the calendar, so the whole month and Apply stay on screen */
+@media (max-width:520px){
+  .rpPop{max-height:84vh;overflow-y:auto}.rpPop .rpRow{flex-direction:column}
+  .rpPop .rpPresets{flex-direction:row!important;flex-wrap:wrap;min-width:0!important;border-right:0!important;padding:0 0 10px!important;margin-bottom:10px;border-bottom:1px solid var(--line)}
+  .rpPop .rpMain{padding-left:0!important;min-width:0!important}
+}
 
 @media (max-width:760px){
   html{-webkit-text-size-adjust:100%}
@@ -1586,10 +1592,12 @@ function rangePicker(id,value,onApply){RP[id]={value:value||{preset:"30d"},onApp
     '<div class="rpPop" id="rpPop-'+id+'" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:90;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.18);padding:14px;width:540px;max-width:92vw"></div></div>';}
 function rpToggle(id){var p=$("#rpPop-"+id);if(!p)return;var open=p.style.display!=="none";
   Array.prototype.forEach.call(document.querySelectorAll(".rpPop"),function(x){x.style.display="none";});
-  if(!open){RP[id].draft={start:RP[id].value.start||null,end:RP[id].value.end||null};var vw=RP[id].value.end?rpParse(RP[id].value.end):new Date();vw.setDate(1);RP[id].view=vw;rpDraw(id);p.style.display="block";}}
+  if(!open){RP[id].draft={start:RP[id].value.start||null,end:RP[id].value.end||null};var vw=RP[id].value.end?rpParse(RP[id].value.end):new Date();vw.setDate(1);RP[id].view=vw;rpDraw(id);p.style.display="block";rpFit(p);}}
+// Keeps an opened range popover on screen: one that would pass the right edge opens leftwards from its button.
+function rpFit(p){p.style.left="0";p.style.right="auto";if(getComputedStyle(p).position==="fixed")return;if(p.getBoundingClientRect().right>document.documentElement.clientWidth-8){p.style.left="auto";p.style.right="0";}}
 function rpDraw(id){var inst=RP[id];if(!inst)return;var v=inst.value;var p=$("#rpPop-"+id);
-  var presets='<div style="display:flex;flex-direction:column;gap:2px;min-width:128px;border-right:1px solid var(--line);padding-right:11px">'+RP_PRESETS.map(function(pr){var on=v.preset===pr[0];return '<button type="button" class="rpPreset" data-p="'+pr[0]+'" style="text-align:left;padding:6px 9px;border:none;border-radius:8px;font-size:11.5px;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-70)")+';font-weight:'+(on?"600":"500")+'">'+(id==='cmd'&&pr[0]==='all'?'Last 366 days':pr[1])+'</button>';}).join("")+'</div>';
-  p.innerHTML='<div style="display:flex"><div>'+presets+'</div><div style="flex:1;padding-left:13px;min-width:300px"><div id="rpCal-'+id+'"></div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;gap:10px"><div class="muted" style="font-size:11.5px" id="rpDL-'+id+'"></div><div style="display:flex;gap:7px"><button type="button" class="btn ghost sm" data-rpc="'+id+'" style="padding:5px 12px;font-size:12px">Cancel</button><button type="button" class="btn gold sm" data-rpa="'+id+'" style="padding:5px 14px;font-size:12px">Apply</button></div></div></div></div>';
+  var presets='<div class="rpPresets" style="display:flex;flex-direction:column;gap:2px;min-width:128px;border-right:1px solid var(--line);padding-right:11px">'+RP_PRESETS.map(function(pr){var on=v.preset===pr[0];return '<button type="button" class="rpPreset" data-p="'+pr[0]+'" style="text-align:left;padding:6px 9px;border:none;border-radius:8px;font-size:11.5px;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-70)")+';font-weight:'+(on?"600":"500")+'">'+(id==='cmd'&&pr[0]==='all'?'Last 366 days':pr[1])+'</button>';}).join("")+'</div>';
+  p.innerHTML='<div class="rpRow" style="display:flex"><div>'+presets+'</div><div class="rpMain" style="flex:1;padding-left:13px;min-width:300px"><div id="rpCal-'+id+'"></div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;gap:10px"><div class="muted" style="font-size:11.5px" id="rpDL-'+id+'"></div><div style="display:flex;gap:7px"><button type="button" class="btn ghost sm" data-rpc="'+id+'" style="padding:5px 12px;font-size:12px">Cancel</button><button type="button" class="btn gold sm" data-rpa="'+id+'" style="padding:5px 14px;font-size:12px">Apply</button></div></div></div></div>';
   Array.prototype.forEach.call(p.querySelectorAll(".rpPreset"),function(b){b.onclick=function(){var pr=this.getAttribute("data-p");var r=id==='cmd'?performanceRange({preset:pr}):rpRangeFor(pr);inst.value.preset=pr;inst.value.start=r.start;inst.value.end=r.end;p.style.display="none";if(inst.onApply)inst.onApply(rpResolve(inst.value),inst.value);var t=$("#rp-"+id+" .rpLab");if(t)t.textContent=rpLabel(inst.value);};});
   p.querySelector('[data-rpc="'+id+'"]').onclick=function(){p.style.display="none";};
   p.querySelector('[data-rpa="'+id+'"]').onclick=function(){var d=inst.draft||{};if(d.start&&!d.end)d.end=d.start;if(d.start&&d.end){inst.value.preset="custom";inst.value.start=d.start;inst.value.end=d.end;}p.style.display="none";if(inst.onApply)inst.onApply(rpResolve(inst.value),inst.value);var t=$("#rp-"+id+" .rpLab");if(t)t.textContent=rpLabel(inst.value);};
