@@ -13,7 +13,7 @@ const path = require('path'), fs = require('fs'), os = require('os');
 const here = path.join(__dirname, '../..');
 const pwDir = process.env.PW_DIR || path.join(here, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const SHOTS = process.env.SHOTS || '/mnt/project-files/plans/tour', TAG = process.env.NF === '0' ? 'fallback-' : '';
+const SHOTS = process.env.SHOTS || '/mnt/project-files/plans/tour', TAG = process.env.NF === '0' ? 'fallback-' : process.env.STANDIN ? 'standin-' : 'real-';
 const LAYOUT = /^(top|left|right|bottom|width|height|maxHeight|minHeight|maxWidth|minWidth|margin.*|padding.*|border.*Width|inset|flex.*|gap)$/;
 const DG = (...kv) => { let t = ''; for (let i = 0; i < kv.length; i += 2) t += `${kv[i]}\n${kv[i + 1]}\n`; return t; };
 const DXF = w => DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES',
@@ -71,13 +71,21 @@ function standIn() {
     await context.route(u => !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(u.href), r => /fonts\.g/.test(r.request().url()) ? r.fulfill({ status: 200, contentType: 'text/css', body: '' }) : r.abort());
     await context.addInitScript(() => { try { if (!sessionStorage.getItem('__seeded')) { localStorage.setItem('cn.settings', JSON.stringify({ v: 26, dsOrigin: 'http://127.0.0.1:9', runMode: 'manual', sound: 'off', notify: 'off', review: 'on' })); localStorage.setItem('cn.employee', 'Test Operator'); sessionStorage.setItem('__seeded', '1'); } } catch (_) {} window.prompt = () => 'Test Operator'; });
     await context.addInitScript(recorders);
-    // NF=0: without part B's NestFocus, the tour's own fallback (the card spotlit, the middle of its sheet)
+    // the page's own NestFocus (part B), its calls recorded; STANDIN=1: a small stand-in of its contract instead;
+    // NF=0: none, the tour's own fallback (the card spotlit, the middle of its sheet)
     const NF = process.env.NF !== '0';
-    await context.addInitScript(NF ? standIn : () => { window.__NF = []; });
     const page = await context.newPage(), errors = []; page.setDefaultTimeout(20000);
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(`${srv.sorterOrigin}/charm-nest-1.html`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.CN && window.Orders && window.Review && window.CustomSheet && window.SendTour && CN.S.cloud.ok === true, null, { timeout: 60000 });
+    if (!NF) await page.evaluate(() => { window.__NF = []; window.NestFocus = undefined; });
+    else if (process.env.STANDIN) await page.evaluate(standIn);
+    else await page.evaluate(() => {
+      const calls = window.__NF = [], NFo = window.NestFocus; if (!NFo) throw new Error('no NestFocus on the page');
+      const open = NFo.open, waiting = NFo.waiting;
+      NFo.open = function (id, o) { calls.push(['open', id, (o.poolIds || []).slice(), o.caption]); return Promise.resolve(open.apply(this, arguments)).then(f => f && Object.assign({}, f, { land: pid => { calls.push(['land', pid]); return f.land(pid); }, close: () => { calls.push(['close']); return f.close(); } })); };
+      NFo.waiting = function (m) { calls.push(['waiting', m]); return waiting.apply(this, arguments); };
+    });
     await page.evaluate(async orders => {
       await Orders.loadMaps(true);
       for (const order of orders) for (const line of order.lines) { const key = CharmNestOrders.lineKey(order, line); const row = { key, order, line, arrivedAt: Date.now(), spec: null, problems: [], state: 'pulled', reason: null, claimedBy: null, poolIds: [], engrave: null, material: null }; B.orders.rows.push(row); B.orders.byKey.set(key, row); }
@@ -98,8 +106,9 @@ function standIn() {
     const scroll0 = await page.evaluate(() => { const s = document.querySelector('#reviewView .egPane.scroll'); return s ? s.scrollTop : null; });
     await page.evaluate(() => { __start(); window.__t0 = performance.now(); document.querySelector('#cuDlg [data-send]').click(); });
     const shot = async (name, ms) => { await page.waitForTimeout(ms); await page.screenshot({ path: path.join(SHOTS, `a-${TAG}${name}.png`) }); };
-    await page.waitForFunction(() => SendTour.playing(), null, { timeout: 8000 });
-    await shot('1-lift', 900);
+    await page.waitForFunction(() => SendTour.playing(), null, { timeout: 8000, polling: 'raf' });
+    const began = await page.evaluate(() => Math.round(performance.now() - __t0));
+    await shot('1-lift', 700);
     await page.waitForFunction(() => CN.S.mode === 'nest', null, { timeout: 8000 });
     await shot('2-nest', 250);
     await page.waitForFunction(() => document.querySelector('#tourLayer .tourPiece'), null, { timeout: 8000 }).catch(() => {});
@@ -112,11 +121,13 @@ function standIn() {
     console.log(`  1 · home after ${took} ms; modes ${JSON.stringify(r1.modes)}; NestFocus ${JSON.stringify(end1.calls)}`);
     const opened = end1.calls.filter(c => c[0] === 'open'), landed = end1.calls.filter(c => c[0] === 'land').map(c => c[1]);
     check(r1.modes.some(m => m[0] === 'nest') && end1.mode === 'review' && end1.chip && end1.scroll === scroll0, `a real tab switch to Nest and back home to Review · Custom Orders at the same scroll (${JSON.stringify({ mode: end1.mode, chip: end1.chip, scroll: [scroll0, end1.scroll] })})`);
-    if (NF) check(opened.length === 1 && JSON.stringify(opened[0][2]) === JSON.stringify(end1.poolIds) && end1.sheetIds.includes(opened[0][1]) && /Sheet 1/.test(opened[0][3]), `its sheet opened once through NestFocus.open(sheetId, { poolIds, caption }) (${JSON.stringify(opened[0])})`);
+    if (NF) check(opened.length === 1 && JSON.stringify(opened[0][2]) === JSON.stringify(end1.poolIds) && (end1.sheetIds.includes(opened[0][1]) || opened[0][1] === 'gold') && /Sheet 1/.test(opened[0][3]), `its sheet opened once through NestFocus.open(sheetId, { poolIds, caption }) (${JSON.stringify(opened[0])})`);
     if (NF) check(landed.length === end1.poolIds.length && end1.poolIds.every(id => landed.includes(id)) && end1.calls.some(c => c[0] === 'close'), `each piece landed on it (land ${landed.length}/${end1.poolIds.length}) and the sheet eased back (close)`);
     check(end1.state === 'pooled' && end1.gold === 1 && !end1.dlg, `placed first, as before: pooled, 1 piece on Gold, the window closed (${end1.state}, ${end1.gold})`);
     check(r1.coin >= 20, `the coin is seen moving (${r1.coin} positions)`);
-    check(took >= 2800 && took <= 6500, `about 3-5 s for one sheet (${took} ms, the window's way back included)`);
+    // (the tour starts once the window is back in its card: CustomSheet.send passes that as its delay, 480 ms)
+    const tour = took - began - 480;
+    check(tour >= 3000 && tour <= 5200, `about 3-5 s for one sheet: ${tour} ms from the window back in its card to home (${took} ms from the press)`);
     check(!end1.left && !end1.views.some(Boolean), `nothing left over: no tour layer nodes, no view animation (${end1.left}, ${end1.views})`);
     const props = [...new Set(r1.anims.flatMap(a => a.props))], layout = props.filter(p => LAYOUT.test(p)), tourProps = [...new Set(r1.anims.filter(a => /^tour/.test(a.cls) || a.cls === 'mGhost tourCard').flatMap(a => a.props))];
     check(tourProps.every(p => ['transform', 'opacity', 'clipPath'].includes(p)) && !layout.length, `only transform, opacity and clip-path animated (tour: ${tourProps.join(',')}; all: ${props.join(',')})`);

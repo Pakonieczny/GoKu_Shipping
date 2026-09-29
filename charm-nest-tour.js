@@ -222,7 +222,7 @@
       // (skipped before the Nest tab was reached: it is never switched to, only to come straight back)
       if (!t.ff) await toNest(t);
       const there = () => !t.userTab && modeNow() === "nest";
-      for (const leg of legs) { if (!there()) break; await sheetBeat(t, leg, o); }
+      for (const [i, leg] of legs.entries()) { if (!there()) break; await sheetBeat(t, leg, o, i === legs.length - 1 && !waiting.length); }
       for (const w of waiting) { if (!there()) break; await waitBeat(t, w, o); }
       await coinAway(t);
       await goHome(t, home, o, s0);
@@ -256,8 +256,8 @@
     const s = th ? Math.max(.3, Math.min(1, th.height / 72)) : .4, up = at(origin.x, Math.max(90, origin.y - 78), 1.12, -6);
     coin.style.transform = tf(at(origin.x, origin.y, s)); coin.style.opacity = 0;
     const cap = capOf(t, `Order ${o.rid || ""}${n ? ` — ${n} piece${n === 1 ? "" : "s"}` : ""}`, null);
-    const rise = t.anim(coin, path(at(origin.x, origin.y, s), up, { bend: 10, ease: EASE.grow, oa: 0, ob: 1, n: 14 }), { duration: 620, easing: "linear" });
-    sparks(t, at(origin.x, origin.y), up, 620, 10);
+    const rise = t.anim(coin, path(at(origin.x, origin.y, s), up, { bend: 10, ease: EASE.grow, oa: 0, ob: 1, n: 14 }), { duration: 580, easing: "linear" });
+    sparks(t, at(origin.x, origin.y), up, 580, 10);
     placeCap(t, cap, up.x + 46, up.y - 16); t.cap = cap;
     if (s0 && s0.ghost) {
       const r = s0.rect, g = s0.ghost;
@@ -265,7 +265,7 @@
       if (nr) t.anim(g, [{ transform: `translate(${r.left}px,${r.top - 5}px) scale(1.012)`, opacity: 1 }, { transform: `translate(${nr.left}px,${nr.top}px) scale(1)`, opacity: .55, offset: .7 }, { transform: `translate(${nr.left}px,${nr.top}px) scale(1)`, opacity: 0 }], { duration: 680, delay: 120, easing: GROW });
       else t.anim(g, [{ transform: `translate(${r.left}px,${r.top - 5}px) scale(1.012)`, opacity: 1 }, { transform: `translate(${r.left + 26}px,${r.top - 12}px) scale(.985)`, opacity: .9, offset: .35 }, { transform: `translate(${r.left + 110}px,${r.top - 18}px) scale(.94)`, opacity: 0 }], { duration: 640, delay: 200, easing: GROW });
     }
-    await rise; coin._at = up; await t.wait(140);
+    await rise; coin._at = up; await t.wait(90);
   }
   /** 2 · the coin arcs to the Nest tab, which lights; the view crossfades to the Nest tab under it (a real tab switch). */
   async function toNest(t) {
@@ -274,7 +274,9 @@
     const go = t.anim(coin, path(from, dest, { bend: 60, oa: 1, ob: 1 }), { duration: 760, easing: "linear" });
     sparks(t, from, dest, 760, 60);
     fadeOut(t, t.cap, 240); t.cap = null;
-    await t.wait(300);
+    await t.wait(260);
+    // notes still standing under the Review tab's things (an earlier send's) would float over the Nest tab: they go
+    for (const n of doc.querySelectorAll(".mNote")) if (typeof n.close === "function") tryDo(() => n.close());
     if (tab && root.Motion) tryDo(() => root.Motion.arrive(tab, { plus: false }));
     await switchTo(t, "nest");
     await go; coin._at = dest;
@@ -292,18 +294,24 @@
     if (b && !t.ff) b.animate([{ opacity: 0, transform: "translateY(8px) scale(.995)" }, { opacity: 1, transform: "none" }], { duration: 380, easing: GROW, id: "tour" });
   }
   /** 3 · one sheet: opened, each piece flown onto its spot and landed, "+N", eased back. */
-  async function sheetBeat(t, leg, o) {
+  async function sheetBeat(t, leg, o, last) {
     const caption = leg.label || `${leg.metal} · Sheet ${leg.page || 1}`;
     const NF = root.NestFocus;
+    // the coin sets off for the sheet's card as it opens (one continuous move), and is set right once it stands still
+    const overOf = r => at(Math.max(60, Math.min(innerWidth - 60, r.left + r.width / 2)), Math.max(70, r.top - 38), .9, 0);
+    const coin = t.coin, r0 = rectOf(nestCard(leg.metal) && $('[data-r="canvas"]', nestCard(leg.metal)));
+    let from = coin._at || fromTf(coin), going = Promise.resolve();
+    if (r0 && onScreen(r0) && !t.ff) { const o0 = overOf(r0), d = Math.hypot(o0.x - from.x, o0.y - from.y); if (d > 4) { going = t.anim(coin, path(from, o0, { bend: Math.min(70, d * .18) }), { duration: Math.max(380, Math.min(560, 240 + d * .4)), easing: "linear" }); from = o0; } }
     let f = null;
-    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || `${leg.metal}:${leg.page || 1}`, { poolIds: leg.poolIds.slice(), caption, metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
+    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption, metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
     if (!f) f = await openHere(t, leg, caption);
     if (!f) return;
     const card = f.card || nestCard(leg.metal), cr = rectOf(card) || { left: innerWidth / 2 - 100, top: innerHeight / 2 - 60, width: 200, height: 120 };
     const cvr = rectOf(card && $('[data-r="canvas"]', card)) || cr;
-    // the coin comes over the sheet it serves
-    const coin = t.coin, from = coin._at || fromTf(coin), over = at(Math.max(60, Math.min(innerWidth - 60, cvr.left + cvr.width / 2)), Math.max(70, cvr.top - 38), .9, 0);
-    if (!t.ff) { const d = Math.hypot(over.x - from.x, over.y - from.y); if (d > 4) { await t.anim(coin, path(from, over, { bend: Math.min(70, d * .18) }), { duration: Math.max(340, Math.min(540, 220 + d * .4)), easing: "linear" }); } }
+    // the coin over the sheet it serves
+    const over = overOf(cvr);
+    await going;
+    if (!t.ff) { const d = Math.hypot(over.x - from.x, over.y - from.y); if (d > 4) { await t.anim(coin, path(from, over, { bend: Math.min(70, d * .18) }), { duration: Math.max(300, Math.min(540, 200 + d * .4)), easing: "linear" }); } }
     coin._at = over;
     // each piece drawn before it flies, at the size it lands at
     const spots = new Map((f.spots || []).map(s => [s.poolId, s]));
@@ -329,14 +337,16 @@
       if (i === 0 || !t.ff) sparks(t, start, lands, dur, 40);
       await go;
       if (t.coin && many > 1) { const b = $("b", t.coin); if (b) b.textContent = many - i - 1 > 1 ? "×" + (many - i - 1) : ""; }
-      await t.within(tryDo(() => f.land(fl.id)), 900);
+      // it lands: the sheet draws it in, in full colour, as the copy that carried it goes
+      const landing = t.within(tryDo(() => f.land(fl.id)), 900);
       if (f.here || !fl.r) ring(t, fl.r || cvr);
-      // the piece is in the sheet now, drawn in full colour: the copy that carried it goes
-      await t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease" }); box.remove(); t.nodes.delete(box);
+      await t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "ease" }); box.remove(); t.nodes.delete(box);
+      await landing;
     })());
     await Promise.all(beats);
+    if (last) coinAway(t);   // (the last sheet: the coin, empty now, goes as it eases back)
     plus(t, `+${leg.poolIds.length} on ${caption}`, cvr.left + cvr.width / 2, cvr.top + 12);
-    await t.wait(480);
+    await t.wait(400);
     await t.within(tryDo(() => f.close()), 1400);
     await t.wait(120);
   }
@@ -352,8 +362,10 @@
   /** 4 · a metal whose pieces wait (no run open, a sheet still busy, or a line held): the coin settles where they wait. */
   async function waitBeat(t, w, o) {
     const card = nestCard(w.metal);
-    if (card) { const r = rectOf(card); if (!onScreen(r) || r.top < 60 || r.bottom > innerHeight - 20) { card.scrollIntoView({ block: "center", behavior: t.ff ? "auto" : "smooth" }); await t.wait(460); } }
+    // NestFocus glides the card into view itself and says where the place will stand once it has (the coin flies there
+    // meanwhile); without it the card is brought into view first
     const NF = root.NestFocus, got = NF && typeof NF.waiting === "function" ? tryDo(() => NF.waiting(w.metal)) : null;
+    if (!got && card) { const r = rectOf(card); if (!onScreen(r) || r.top < 60 || r.bottom > innerHeight - 20) { card.scrollIntoView({ block: "center", behavior: t.ff ? "auto" : "smooth" }); await t.wait(460); } }
     const r = (got && got.rect && got.rect.width ? got.rect : null) || rectOf(card && ($('[data-r="queue"]', card) && rectOf($('[data-r="queue"]', card)) ? $('[data-r="queue"]', card) : $(".shHead .name", card))) || rectOf(card);
     if (!r) return;
     const coin = t.coin, from = coin._at || fromTf(coin), dest = at(r.left + Math.min(r.width / 2, 60), r.top + r.height / 2, .5, 0);
@@ -366,10 +378,10 @@
     await fadeOut(t, cap, 240); t.cap = null;
   }
   async function coinAway(t) {
-    const c = t.coin; if (!c) return;
+    const c = t.coin; if (!c) return; t.coin = null;
     const p = c._at || fromTf(c);
     await t.anim(c, [{ transform: tf(p), opacity: 1 }, { transform: tf(at(p.x, p.y - 10, p.s * .5, p.r)), opacity: 0 }], { duration: 300, easing: "ease-in" });
-    c.remove(); t.nodes.delete(c); t.coin = null;
+    c.remove(); t.nodes.delete(c);
   }
   /** 5 · home: the Review tab as it was left, and where the card went answers. */
   async function goHome(t, home, o, s0) {
