@@ -6289,9 +6289,13 @@ const CustomPrint = window.CustomPrint = (() => {
   const acting = new Map();     // card key → "print" | "complete": the button pressed shows the work in itself
   const fresh = new Map();      // card motion key → the time of a seal just pressed (it is stamped when next drawn)
   const armed = new Map();      // card key|act → { from, until }: when a cancelled order's second press goes ahead
+  const stamping = new Set();   // card keys whose seal is being stamped / whose held print is running: a second press waits
   const UNDO_MS = 12000;
-  let queue = Promise.resolve(), lastFrame = null;
-  const PRINTER = "QR Printer.html";
+  let queue = Promise.resolve(), lastFrame = null, pressedBtn = null;
+  const PRINTER = "QR Printer.html", PRINTER_V = "20260928-pq-seal";
+  // the Print QR label button pressed last (a press on a seal over it is passed on to it as a click): its seal lands there
+  document.addEventListener("click", e => { const b = e.target && e.target.closest && e.target.closest("[data-cu-print]"); if (b) pressedBtn = b; }, true);
+  const frames2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
   function redraw() {
     try { Review.render(); } catch (_) {}
     try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {}
@@ -6307,8 +6311,9 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   function unask(key) { if (asking.delete(key)) redraw(); }
   const wrote = keys => { const t = Date.now(); for (const k of keys) B.maps.customWrites.set(k, t); };
-  /** Hand one label to QR Printer.html and wait for its word: { ok, error }. */
-  function runPrinter(label, onStarted) {
+  /** Hand one label to QR Printer.html and wait for its word: { ok, error }. gate: a promise the print dialog waits for
+   *  (the label is made meanwhile, and its dialog opens as soon as the gate opens: the seal's stamp, printAs). */
+  function runPrinter(label, onStarted, gate) {
     return new Promise(resolve => {
       const nonce = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
       try { localStorage.removeItem("qrPrintBatch"); localStorage.setItem("qrPrintAll", JSON.stringify(label)); }
@@ -6329,6 +6334,14 @@ const CustomPrint = window.CustomPrint = (() => {
       function onMsg(ev) {
         const d = ev.data; if (ev.origin !== location.origin || !d || d.source !== "qr-printer" || d.nonce !== nonce) return;
         // the label is made and its dialog opens: from here the dialog can stay open as long as a person needs it
+        if (d.phase === "ready") {
+          Promise.resolve(gate).then(() => {
+            if (settled) return;
+            try { frame.contentWindow.postMessage({ source: "charm-nest", nonce, go: true }, location.origin); }
+            catch (e) { finish({ ok: false, error: "the print screen could not be opened (" + e.message + ")" }); }
+          });
+          return;
+        }
         if (d.phase === "started") { wait(10 * 60000, "the print dialog did not close in 10 minutes"); if (onStarted) onStarted(); return; }
         if (d.phase === "done") finish({ ok: !!d.ok, error: d.error || "" });
       }
@@ -6336,7 +6349,7 @@ const CustomPrint = window.CustomPrint = (() => {
       // (until the label is made: a label that cannot be made says so when the printer page does, or here)
       wait(45000, "the QR label was not made in 45 s");
       frame.onerror = () => finish({ ok: false, error: "the QR printer page could not be loaded" });
-      frame.src = encodeURI(PRINTER) + "#notify=" + nonce;
+      frame.src = encodeURI(PRINTER) + "?v=" + PRINTER_V + "#notify=" + nonce + (gate ? "&hold=1" : "");
       document.body.appendChild(frame);
     });
   }
@@ -6363,12 +6376,40 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /** Print the card's sticker; once its print dialog has closed, mark its lines completed (with an Undo on the card). */
   function print(it) {
-    const key = it.key; if (busy.has(key) || asking.has(key)) return;
+    const key = it.key; if (busy.has(key) || asking.has(key) || stamping.has(key)) return;
     const go = anyway(it, "print"); if (go === false) return;
     withName(key, who => printAs(it, who, go));
   }
+  /** The card's Print QR label button on screen: the one just pressed, else the first one showing for this card. */
+  function btnFor(key) {
+    const ok = b => b && b.isConnected && b.dataset.cuKey === key && b.getClientRects().length > 0;
+    return ok(pressedBtn) ? pressedBtn : [...document.querySelectorAll("[data-cu-print]")].find(ok) || null;
+  }
+  /** The seal stamped on the button, where it rests (on the motion layer, so a redraw of the card cannot take it away);
+   *  resolves to that layer once the stamp has lifted and the seal lies still (at once with reduced motion). */
+  function stampHere(btn, st) {
+    if (!btn || !window.Seal || !window.Motion) return Promise.resolve(null);
+    let host = null;
+    try {
+      host = document.createElement("div"); host.className = "cuSealHost"; host.setAttribute("aria-hidden", "true");
+      host.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none";
+      Motion.layer(btn).appendChild(host);
+      const p = Seal.stampOn(host, { btn, stamp: st });
+      const s = host.querySelector(".seal"); if (s) s.style.pointerEvents = "none";   // a press there is the button's
+      // (and its ink has settled: the seal's own drying transition, part of the stamp, has run out)
+      const still = () => { const x = host.querySelector(".seal"); return x ? Promise.all(x.getAnimations().map(a => a.finished.catch(() => {}))) : null; };
+      return Promise.resolve(p).catch(() => {}).then(still).then(() => host);
+    } catch (_) { return Promise.resolve(host); }
+  }
+  const nextPrintN = rec => (window.Seal && rec ? Seal.list(rec).filter(s => s.how !== "button").reduce((m, s) => Math.max(m, s.n || 0), 0) : 0) + 1;
+  /* Paul, 28 Sep 23:56: "when the user presses the print QR label button, then make sure that the stamp animation first
+     plays through its completion. The seal is visible and then show the print screen." The seal is stamped on the button
+     pressed while the label is made; the print screen opens once the stamp has lifted and the seal has been painted
+     resting there (two frames), never sooner. A second press meanwhile does nothing. A print that did not open keeps its
+     seal on the card, says so calmly and offers Retry print, which prints under the same seal (no second one); the
+     order is marked completed once a print dialog has opened and closed, as before. */
   function printAs(it, who, cancelled) {
-    const key = it.key; if (busy.has(key)) return;
+    const key = it.key; if (busy.has(key) || stamping.has(key)) return;
     const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || null;
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
     let label = null;
@@ -6380,16 +6421,24 @@ const CustomPrint = window.CustomPrint = (() => {
     const held = it.done ? [] : rows.map(r => r.key).filter(k => !printing.has(k));
     for (const k of held) printing.add(k);
     const release = () => { for (const k of held) printing.delete(k); };
-    fails.delete(key); acting.set(key, "print"); say(key, "Waiting for the printer…");
+    // the seal first: stamped on the button now (a retry prints under the seal it kept), the label made meanwhile
+    const was = fails.get(key), keptSt = was && was.st || null;
+    if (was) { clearTimeout(was.timer); was.retrying = true; }
+    const st = keptSt || { how: "print", at: Date.now(), by: who, n: nextPrintN(rec) };
+    const btn = keptSt ? null : btnFor(key), stamped = stampHere(btn, st), shown = keptSt || (btn && window.Seal && window.Motion ? st : null);
+    const gate = stamped.then(frames2);                     // the stamp has lifted and the resting seal has been painted
+    const unlay = () => stamped.then(h => { if (h) h.remove(); });
+    stamping.add(key);
     queue = queue.then(async () => {
       if (!label) {
-        say(key, "Reading its label…");
         try { const got = rec.label ? rec : (await api("charmNestLibrary", { op: "customGet", key: rec.key }, { quiet: true })).record; label = got && got.label ? JSON.parse(got.label) : null; } catch (_) { label = null; }
-        if (!label) { failed(key, "its kept label could not be read"); say(key, null); toast("The label kept for that order could not be read — nothing was printed", "bad", 7000); return; }
+        if (!label) { await gate; stamping.delete(key); failed(key, "its kept label could not be read", shown); say(key, null); unlay(); toast("The print didn't open: the label kept for that order could not be read. Its seal stays; press Retry print to try again", "", 8000); return; }
       }
-      say(key, "Making the QR label…");
-      const out = await runPrinter(label, () => say(key, "Print dialog open…"));
-      if (!out.ok) { failed(key, out.error || "the printer failed"); say(key, null); toast(`QR label not printed: ${out.error || "the printer failed"} — nothing was marked completed`, "bad", 8000); return; }
+      const out = await runPrinter(label, null, gate);
+      await gate;                                           // (a label that failed early still lets its seal land first)
+      stamping.delete(key);
+      if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
+      acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
       say(key, "Marking it completed…");
@@ -6398,16 +6447,17 @@ const CustomPrint = window.CustomPrint = (() => {
       const done = Object.keys(saved);
       if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
       release(); busy.delete(key); acting.delete(key);
-      // printed from Open: the seal is pressed on the button and the card flies to Completed, where a note offers Undo
-      // (a dialog closed without printing looks the same here); printed again: a new seal is pressed on the card
-      if (done.length) sealed(it, rows, saved, done, who, "print");
+      const f = fails.get(key); if (f && f.retrying) fails.delete(key);   // printed at last: its kept seal is the record's now
+      // printed from Open: the card, its seal on the button, flies to Completed, where a note offers Undo (a dialog
+      // closed without printing looks the same here); printed again: the new seal shows on the card
+      if (done.length) sealed(it, rows, saved, done, who, "print", shown);
       if (done.length && cancelled) printedAnyway(cancelled, who, "print", done.length);
-      settle(); say(key, null); pressSoon();
+      settle(); say(key, null); unlay(); pressSoon();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${targets[0].receiptId}: sorting-station QR label printed by ${who}${putErr ? ` — not marked completed (${putErr.message})` : cut.size ? ` — ${cut.size} line(s) went on a sheet meanwhile, not marked` : " · Review → Completed"}`);
       if (putErr) toast(`The QR label was printed but ${done.length ? "not every line was" : "the order was not"} marked completed: ${putErr.message} — press Print again to retry`, "bad", 9000);
       else if (cut.size) toast(`${targets[0].receiptId}: ${cut.size === targets.length ? "its line" : cut.size + " of its lines"} went on a sheet while the label printed — cut on the laser, not marked completed`, "bad", 9000);
       else if (it.done) toast(`${targets[0].receiptId} · QR label printed again`, "ok", 3000);
-    }).catch(e => { failed(key, e.message); acting.delete(key); say(key, null); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); });
+    }).catch(e => { stamping.delete(key); failed(key, e.message, shown); acting.delete(key); say(key, null); unlay(); toast("QR label: " + e.message, "bad", 7000); }).finally(() => { release(); acting.delete(key); stamping.delete(key); });
   }
   /** Complete Order (Paul, 27 Sep 19:45): the card's lines completed at once, no label printed, and the card moves to
    *  Completed (with the same "Marked completed · Undo" for a while). The sticker is kept with each record, so it can
@@ -6447,14 +6497,15 @@ const CustomPrint = window.CustomPrint = (() => {
      who and when; from Open the card then flies to Completed, where a note says what arrived and offers Undo ── */
   const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]';
   const mkeyOf = rows => "cu:" + Review.cardKey(rows[0]);
-  function sealed(it, rows, saved, done, who, how) {
+  function sealed(it, rows, saved, done, who, how, shown) {
     const rec = saved[done[0]] || {}, list = window.Seal ? Seal.list(rec) : [], st = list.filter(x => x.how === (how === "button" ? "button" : "print")).pop() || { how, at: Date.now(), by: who };
-    const mk = mkeyOf(rows); fresh.set(mk, +st.at || Date.now());
+    // (shown: the seal already stamped on the button before the print screen; it is carried as it lies, not pressed again)
+    const mk = mkeyOf(rows); if (!shown) fresh.set(mk, +st.at || Date.now());
     if (it.done || !window.Motion) return;                                // printed again: stamped where the card is
     offerUndo(done, rows.filter(r => saved[r.key]), who);
     const rid = rows[0].order.receiptId, inWin = OrderWin.isOpen();
     const what = how === "button" ? `completed by ${who} with no label printed` : `QR label printed by ${who}`;
-    Motion.expect(mk, { to: DONE_SW, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: st, label: how === "button" ? "Complete Order" : "Print QR label" },
+    Motion.expect(mk, { to: DONE_SW, stamp: { btn: how === "button" ? "[data-cu-complete]" : "[data-cu-print]", stamp: shown || st, still: !!shown, label: how === "button" ? "Complete Order" : "Print QR label" },
       note: inWin ? null : { text: `Order ${rid} moved to Completed · ${what}`, ms: UNDO_MS, actions: [{ label: "Undo", title: "take the completion back (a printed label is not undone)", fn: () => undoKeys(done) }, { label: "Show", title: "open Completed at this order", fn: () => Review.showCard(mk, "done") }] } });
   }
   /** The seals just pressed are stamped where they show (the card in Completed, the order window's bar). */
@@ -6527,19 +6578,28 @@ const CustomPrint = window.CustomPrint = (() => {
   const working = it => busy.has(it.key) && acting.has(it.key) ? { act: acting.get(it.key), text: busy.get(it.key) } : null;
   /** A card's own buttons: the pressed one shows its work in itself (a spinner and what is happening), the others wait. */
   function buttonHtml(it, act, cls, label, title, sz, attrs) {
-    const w = working(it), more = attrs ? " " + attrs : "";
-    if (!w && ((armed.get(it.key + "|" + act) || {}).until || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>`;
-    if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>`;
-    return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>`;
+    const w = working(it);
+    let more = (attrs ? " " + attrs : "") + ` data-cu-key="${esc(it.key)}"`, tail = "";
+    // a print that did not open keeps its seal on the button, which now offers Retry print (under the same seal)
+    const f = act === "print" ? fails.get(it.key) : null;
+    if (f && f.st && window.Seal) {
+      tail = Seal.row({ stamps: [f.st], prints: f.st.n || 1 });
+      cls = "sealedPrint"; label = "Retry print"; title = "the print didn't open: open it again (its seal stays; no second seal)";
+      if (!/data-seal-btn/.test(more)) more += " data-seal-btn";
+    }
+    if (!w && ((armed.get(it.key + "|" + act) || {}).until || 0) > Date.now()) return `<button type="button" class="btn danger ${sz}" data-cu-${act}${more} title="Order ${esc(ridOfCard(it))} is cancelled: press again to ${act === "print" ? "print its label" : "complete it"} anyway">Cancelled order: ${act === "print" ? "print" : "complete"} anyway?</button>` + tail;
+    if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>` + tail;
+    return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>` + tail;
   }
   const freshOf = mk => fresh.get(mk) || 0;
   /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
-  function failed(key, why) {
+  function failed(key, why, st) {
     const was = fails.get(key); if (was) clearTimeout(was.timer);
-    const f = { why, timer: setTimeout(() => { if (fails.get(key) === f) { fails.delete(key); redraw(); } }, 10000) };
+    // (one that keeps a seal stays until it is printed: the seal and who pressed are never dropped)
+    const f = { why, st: st || null, timer: st ? 0 : setTimeout(() => { if (fails.get(key) === f) { fails.delete(key); redraw(); } }, 10000) };
     fails.set(key, f);
   }
-  const failNote = it => { const f = fails.get(it.key); return f ? `<span class="cuFail" role="alert" title="${esc(f.why)}">Not printed</span>` : ""; };
+  const failNote = it => { const f = fails.get(it.key); return !f || f.retrying ? "" : f.st ? `<span class="cuFail calm" role="status" title="${esc(f.why)}">Not printed: the print didn't open</span>` : `<span class="cuFail" role="alert" title="${esc(f.why)}">Not printed</span>`; };
   /** The card's Undo and name field; returns the name field when there is one (to focus it). */
   function wire(host, it) {
     const ub = host.querySelector("[data-cu-undo]"); if (ub) ub.onclick = e => { e.stopPropagation(); undo(it); };
@@ -6550,7 +6610,7 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
-  const stamp = it => [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), fails.has(it.key), armed.has(it.key + "|print"), armed.has(it.key + "|complete")].join("|");
+  const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete")].join("|"); };
   return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
 })();
 

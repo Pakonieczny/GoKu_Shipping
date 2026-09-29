@@ -46,6 +46,21 @@ function notifyParent(msg) {
   if (!NOTIFY_NONCE || window.parent === window) return;
   try { window.parent.postMessage(Object.assign({ source: "qr-printer", nonce: NOTIFY_NONCE }, msg), location.origin); } catch (_) {}
 }
+/* #hold=1 beside the nonce (Paul, 28 Sep: the seal is stamped first, then the print screen): the label is made at once,
+   "ready" is posted, and its print dialog opens only when the page that asked says go. Without it nothing waits. */
+const HOLD_PRINT = !!NOTIFY_NONCE && /[#&]hold=1(?:&|$)/.test(location.hash);
+function whenGo() {
+  if (!HOLD_PRINT || window.parent === window) return Promise.resolve();
+  return new Promise(resolve => {
+    const on = ev => {
+      const d = ev.data;
+      if (ev.origin !== location.origin || ev.source !== window.parent || !d || d.source !== "charm-nest" || d.nonce !== NOTIFY_NONCE || d.go !== true) return;
+      window.removeEventListener("message", on); resolve();
+    };
+    window.addEventListener("message", on);
+    notifyParent({ phase: "ready" });
+  });
+}
 
 window.addEventListener("load", async () => {
   try {
@@ -340,13 +355,15 @@ async function buildAndPrintLabel(orderNum, dotCount, dispatchDate, notes) {
     document.body.appendChild(hiddenIframe);
 
     hiddenIframe.onload = function() {
-      try {
-        notifyParent({ phase: "started", orderNum });
-        hiddenIframe.contentWindow.print();
-        // print() returns once the dialog has closed, printed or cancelled (the page cannot tell which)
-        notifyParent({ phase: "done", ok: true, orderNum });
-        resolve();
-      } catch (e) { reject(e); }
+      whenGo().then(() => {
+        try {
+          notifyParent({ phase: "started", orderNum });
+          hiddenIframe.contentWindow.print();
+          // print() returns once the dialog has closed, printed or cancelled (the page cannot tell which)
+          notifyParent({ phase: "done", ok: true, orderNum });
+          resolve();
+        } catch (e) { reject(e); }
+      });
     };
 
     hiddenIframe.src = blobUrl;

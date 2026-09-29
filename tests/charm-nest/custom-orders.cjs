@@ -345,7 +345,7 @@ async function browserChecks() {
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] [data-cu-print]');
     await page.waitForFunction(() => /^Not printed/.test(document.querySelector('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')?.textContent || '') && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 })
       .catch(async e => { throw new Error('the card says it was not printed: ' + await page.textContent('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')); });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing'); assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow[data-rid="4176576272"] .sealRow .seal.seal-print').length), 1, 'its seal stays on the button');
     await page.evaluate(() => { window.__failPrint = false; });
 
     // the order window: everything about the order, its conversations and its notes
@@ -354,7 +354,7 @@ async function browserChecks() {
     const win = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, custom: document.getElementById('owCustom').hidden ? null : document.getElementById('owCustom').textContent,
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), fix: !!document.querySelector('#owFix .rvItem[data-kind=customOrder]'),
       note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')), dialogs: document.querySelectorAll('dialog[open]').length }));
-    assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Print QR label/);
+    assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep)");
     for (const want of ['Order: 4176576272', 'Buyer: Buyer 6272', 'Price: 144', 'Custom order: Rework · SKU RE_5460', 'Title: MODIFICATION REWORK FREE SHIPPING']) assert(win.meta.includes(want), want + ' in ' + JSON.stringify(win.meta));
     assert(win.meta.some(m => /^Purchased: Sep 27, 2026/.test(m)), 'when it was bought: ' + JSON.stringify(win.meta));
     assert(win.fix, 'its decision, answered in the window'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
