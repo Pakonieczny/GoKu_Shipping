@@ -178,6 +178,11 @@
   function expectIn(mkey, spec) { arrivals.set(String(mkey), Object.assign({ until: Date.now() + (spec.ttl || 10000) }, spec)); }
   const take = (m, k) => { const e = m.get(k); if (!e) return null; m.delete(k); return e.until > Date.now() ? e : null; };
   const pending = (k) => { const e = leaves.get(String(k)); return !!(e && e.until > Date.now()); };
+  /* A row another animation is already carrying (the Send to Sheet tour lifts the card itself): its list makes no copy
+     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node. */
+  const carried = new Map();
+  function carry(mkey, ms = 8000) { const k = String(mkey || ""); if (!k) return; if (ms > 0) carried.set(k, Date.now() + ms); else carried.delete(k); }
+  const isCarried = k => { const u = carried.get(String(k)); if (!u) return false; if (u > Date.now()) return true; carried.delete(String(k)); return false; };
 
   /** The one keyed list update: `nodes` in order, in `host`. With opts.animate (the same view as before, drawn already)
    *  what left is seen going (to where its action said, else it fades), what stayed glides into place, and what is new
@@ -185,7 +190,7 @@
   function reconcile(host, nodes, opts = {}) {
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
-    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
+    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving && !isCarried(k)) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
     const keep = new Set(nodes);
     nodes.forEach((node, i) => { if (host.children[i] !== node) host.insertBefore(node, host.children[i] || null); });
     for (const n of [...host.children]) if (!keep.has(n)) n.remove();
@@ -841,6 +846,6 @@
     wait();
   }
 
-  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
+  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);

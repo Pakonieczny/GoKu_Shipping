@@ -7340,8 +7340,8 @@ const CustomSheet = window.CustomSheet = (() => {
     Motion.dialogClose(d, { to: home, arrive: false });
     if (!motionOff()) setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 400);
   }
-  /** The tour plays when the Review tab is in sight and motion is allowed (charm-nest-tour.js). */
-  const tourOk = () => !!window.SendTour && !motionOff() && !document.hidden && S.mode === "review" && !!document.querySelector("#reviewView:not(.hidden)");
+  /** The tour plays when the Review tab is in sight (charm-nest-tour.js); with reduced motion, its gentle version. */
+  const tourOk = () => !!window.SendTour && !!window.Motion && !document.hidden && S.mode === "review" && !!document.querySelector("#reviewView:not(.hidden)");
   /** Where the sent pieces went: each sheet holding any of them, in the sheets' own order (metal, then page), with the
    *  pool ids on it (each piece on one sheet only); then whatever is not on a sheet yet waits, metal by metal, and says
    *  why: its line held, no run open, or its sheet not free yet. It is read line by line: one line of a card held while
@@ -7349,10 +7349,11 @@ const CustomSheet = window.CustomSheet = (() => {
   function tourPlan(rows, e) {
     const ids = new Set(rows.flatMap(r => r.poolIds || [])), legs = [], shown = new Set();
     const thumbOf = m => ((e.files.find(F => F.metal === m && F.thumb) || e.files.find(F => F.thumb)) || {}).thumb || null;
+    const designsOf = m => [...new Set(e.files.filter(F => F.metal === m).map(F => String(F.name || "").replace(/\.[a-z0-9]{1,5}$/i, "")))];   // the tour's captions name them
     for (const sh of allSheets()) {
       const mine = [...new Set((sh.charms || []).filter(c => ids.has(c.poolId) && !shown.has(c.poolId)).map(c => c.poolId))];
       mine.forEach(id => shown.add(id));
-      if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, label: `${labelOf(sh.metal)} · Sheet ${sh.page || 1}`, poolIds: mine, designUrl: thumbOf(sh.metal) });
+      if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, label: `${labelOf(sh.metal)} · Sheet ${sh.page || 1}`, poolIds: mine, designUrl: thumbOf(sh.metal), designs: designsOf(sh.metal) });
     }
     // (" — " parts the tour's caption into its name and its reason: a reason keeps to one part)
     const metalOfPc = pc => ((e.files.find(F => F.id === pc.f) || {}).metal) || null, wait = new Map(), one = t => String(t || "").replace(/\s+—\s+/g, ", ");
@@ -7363,7 +7364,7 @@ const CustomSheet = window.CustomSheet = (() => {
       else if (r.state === "held") for (const pc of pcs) hold(metalOfPc(pc), `held: ${one(r.reason || r.hold || "waiting for a person")}`, true);
       else if (r.state === "pulled") for (const pc of pcs) { const m = metalOfPc(pc); hold(m, r.reason ? `its ${labelOf(m)} pieces wait: ${one(r.reason)}` : `its ${labelOf(m)} pieces go on with the next run`, false); }
     }
-    const waiting = METALS.filter(M => wait.has(M.key)).map(M => Object.assign({ metal: M.key, label: labelOf(M.key), designUrl: thumbOf(M.key) }, wait.get(M.key)));
+    const waiting = METALS.filter(M => wait.has(M.key)).map(M => Object.assign({ metal: M.key, label: labelOf(M.key), designUrl: thumbOf(M.key), designs: designsOf(M.key) }, wait.get(M.key)));
     return { legs, waiting };
   }
   /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what

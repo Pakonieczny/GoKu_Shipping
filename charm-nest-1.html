@@ -165,6 +165,7 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .sheets.nfOn>.sheetCard{transition:opacity .62s cubic-bezier(.3,0,.1,1),transform .62s cubic-bezier(.3,0,.1,1),box-shadow .15s,outline-color .15s}
 .sheets.nfDim>.sheetCard:not(.nfFocus){opacity:.32;transform:scale(.965)}
 .sheetCard.nfFocus{z-index:4}
+.sheets.nfNow>.sheetCard,.sheets.nfNow .nfGlow{transition:none!important}
 .sheetCard>.nfGlow{position:absolute;inset:-5px;border-radius:calc(var(--r) + 5px);box-shadow:0 0 0 2px rgba(184,137,58,.62),0 0 34px 6px rgba(202,168,97,.30),0 22px 50px rgba(60,40,12,.16);pointer-events:none;opacity:0;transition:opacity .62s cubic-bezier(.3,0,.1,1)}
 .sheetCard.nfFocus>.nfGlow{opacity:1}
 .sheetCard>.nfCap{position:absolute;left:50%;top:-15px;z-index:5;transform:translate(-50%,-6px);opacity:0;padding:4px 15px 5px;border-radius:999px;background:#fffefb;border:1px solid rgba(184,137,58,.55);box-shadow:0 6px 18px rgba(60,40,12,.13);font:600 15px/1.15 var(--serif);letter-spacing:.03em;color:var(--ink);white-space:nowrap;pointer-events:none;transition:opacity .42s ease,transform .42s cubic-bezier(.3,0,.1,1)}
@@ -2808,7 +2809,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260929-sf2"></script>
+<script src="charm-nest-motion.js?v=20260929-tp"></script>
 <script src="charm-nest-timeline-ui.js?v=20260929-sf2"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
@@ -5042,9 +5043,10 @@ const NestFocus = window.NestFocus = (() => {
    *  it is laid into the sheet. */
   async function landOne(st, c) {
     const pg = st.pg, F = frameOf(pg), hid = pg._tourHide, p = placeOf(pg, c);
-    if (!p || !F) {   // not on the sheet yet: its thumbnail in the queue answers
+    if (!p || !F) {   // not on the sheet yet: its thumbnail in the queue, held back until now, comes in with the pop
       if (hid) hid.delete(c.id);
-      const q = queueImg(pg, c); if (q && window.Motion) Motion.arrive(q, { plus: false });
+      const q = queueImg(pg, c); if (q && st.qHid && st.qHid.delete(q)) q.style.opacity = "";
+      if (q && !reduced()) q.animate([{ opacity: 0, transform: "scale(.9)" }, { opacity: 1, transform: "scale(1.08)", offset: .4 }, { opacity: 1, transform: "scale(1)" }], { duration: POP_MS, easing: GROW });
       await sleep(reduced() ? 0 : 420); return;
     }
     const piece = cutOut(st, c, F, !reduced());
@@ -5065,6 +5067,7 @@ const NestFocus = window.NestFocus = (() => {
     const pg = st.pg, hid = pg._tourHide; delete pg._tourHide;
     const cv = pg.el && $('[data-r="canvas"]', pg.el);
     for (const piece of st.live) { lay(cv, piece); piece.m.remove(); } st.live.clear();
+    if (st.qHid) { for (const q of st.qHid) q.style.opacity = ""; st.qHid.clear(); }
     if (!hid || !hid.size) return;
     const F = frameOf(pg), left = [...hid].map(id => pg.charms.find(c => c.id === id)).filter(c => c && placeOf(pg, c));
     let ok = !!F;
@@ -5072,7 +5075,8 @@ const NestFocus = window.NestFocus = (() => {
     if (!ok) drawPreview(pg);
   }
   function arm(st) { clearTimeout(st.timer); st.timer = setTimeout(() => close(st), st.safe || SAFE_MS); }   // quiet this long (no land): everything is shown
-  function close(st) {
+  /** handoff: the next sheet takes the light at once (the others stay dimmed: no flash of every card between two). */
+  function close(st, handoff) {
     if (!st) return Promise.resolve();
     if (st.closing) return st.closing;
     st.closed = true; clearTimeout(st.timer); if (cur === st) cur = null;
@@ -5080,13 +5084,17 @@ const NestFocus = window.NestFocus = (() => {
     const host = $("#sheets");
     if (st.card) st.card.classList.remove("nfFocus");
     if (st.cap) st.cap.classList.remove("on");
-    if (host && !cur) host.classList.remove("nfDim");
-    st.closing = sleep(reduced() ? 0 : OPEN_MS).then(() => { if (host && !cur) host.classList.remove("nfOn"); if (st.cap) st.cap.remove(); if (st.glow) st.glow.remove(); });
+    if (host && !cur && !handoff) host.classList.remove("nfDim");
+    // (out of sight, there is nothing to ease back)
+    st.closing = sleep(reduced() || !laidOut(host) ? 0 : OPEN_MS).then(() => { if (host && !cur) host.classList.remove("nfDim", "nfOn"); if (st.cap) st.cap.remove(); if (st.glow) st.glow.remove(); });
     return st.closing;
   }
+  /** opts: poolIds, caption (noCaption: the tour says it in its own caption), ms (the glide), instant (the Nest tab is
+   *  still out of sight: spotlit as it will stand, nothing left to move once it fades in). */
   async function open(sheetId, opts = {}) {
     const ids = (opts.poolIds || []).map(String);
-    if (cur) await close(cur);
+    if (cur) close(cur, true);
+    const quick = reduced() || !!opts.instant, ms = quick ? 0 : +opts.ms || OPEN_MS;
     const pg = pageOf(sheetId, ids);
     const none = { card: null, page: null, spots: [], land: () => Promise.resolve(), close: () => Promise.resolve() };
     if (!pg) return none;
@@ -5101,6 +5109,8 @@ const NestFocus = window.NestFocus = (() => {
       pg._tourHide = new Set(mine.map(x => x.c.id));
       if (pg._drawFrame) { cancelAnimationFrame(pg._drawFrame); pg._drawFrame = 0; }
       try { drawPreviewNow(pg); } catch (_) {}
+      // (one still in the card's queue, a Manual run: its thumbnail there, until it lands)
+      st.qHid = new Set(); for (const x of mine) if (!placeOf(pg, x.c)) { const q = queueImg(pg, x.c); if (q) { q.style.opacity = "0"; st.qHid.add(q); } }
     }
     arm(st);
     // the Nest tab may still be coming in: wait (a few frames at most) for the card to be laid out
@@ -5108,13 +5118,14 @@ const NestFocus = window.NestFocus = (() => {
     if (st.closed) return Object.assign(none, { card, page: pg });
     const host = $("#sheets");
     st.glow = document.createElement("i"); st.glow.className = "nfGlow"; st.glow.setAttribute("aria-hidden", "true"); card.appendChild(st.glow);
-    st.cap = document.createElement("div"); st.cap.className = "nfCap"; st.cap.setAttribute("role", "status");
-    st.cap.textContent = opts.caption || `${labelOf(metal)} · Sheet ${pg.page || 1}`; card.appendChild(st.cap);
-    if (host) { host.classList.add("nfOn"); void host.offsetWidth; host.classList.add("nfDim"); }
+    if (!opts.noCaption) { st.cap = document.createElement("div"); st.cap.className = "nfCap"; st.cap.setAttribute("role", "status");
+      st.cap.textContent = opts.caption || `${labelOf(metal)} · Sheet ${pg.page || 1}`; card.appendChild(st.cap); }
+    if (host) { host.classList.add("nfOn"); if (opts.instant) host.classList.add("nfNow"); void host.offsetWidth; host.classList.add("nfDim"); }
     card.classList.add("nfFocus");
-    const g = glide(card, reduced() ? 0 : OPEN_MS, st); if (g.room < 20) st.cap.classList.add("in");   // (the first row: inside, over its head)
-    setTimeout(() => { if (!st.closed) st.cap.classList.add("on"); }, reduced() ? 0 : 220);
-    await Promise.all([g.done, sleep(reduced() ? 0 : OPEN_MS)]);
+    if (opts.instant && host) { void host.offsetWidth; host.classList.remove("nfNow"); }
+    const g = glide(card, ms, st); if (st.cap && g.room < 20) st.cap.classList.add("in");   // (the first row: inside, over its head)
+    if (st.cap) setTimeout(() => { if (!st.closed) st.cap.classList.add("on"); }, quick ? 0 : 220);
+    await Promise.all([g.done, sleep(ms)]);
     if (!reduced()) { const F = frameOf(pg); if (F) fullOf(st, F); }   // the finished picture is made before any flight, not during one
     const spots = mine.map(x => Object.assign(spotOf(pg, x.c), { poolId: x.id }));
     return {
@@ -5130,10 +5141,10 @@ const NestFocus = window.NestFocus = (() => {
   }
   /** Where a metal's pieces that are not on a sheet yet wait (no run open, or a line held): its card's queue, or its name
    *  when the queue is empty; the card glides into view, and rect is where that place will stand once it has. */
-  function waiting(metal) {
+  function waiting(metal, opts = {}) {
     const prim = S.sheets[metal], card = prim && prim.cardEl; if (!card || !laidOut(card)) return { rect: null, card: card || null };
     const q = $('[data-r="queue"]', card), el = laidOut(q) && q.getBoundingClientRect().height > 8 ? q : $(".shHead .name", card) || card;
-    const g = glide(card, reduced() ? 0 : OPEN_MS), r = el.getBoundingClientRect();
+    const g = glide(card, reduced() || opts.instant ? 0 : +opts.ms || OPEN_MS), r = el.getBoundingClientRect();
     return { rect: { left: r.left, top: r.top - g.d, width: r.width, height: r.height }, card, el, done: g.done };
   }
   /** Each card back on the sheet it showed before the flights switched it (the tour calls it once home, out of sight;
@@ -6409,9 +6420,9 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260929-om"></script>
+<script src="charm-nest-bridge.js?v=20260929-tp"></script>
 <script src="charm-nest-sheetwin.js?v=20260929-om"></script>
-<script src="charm-nest-tour.js?v=20260929-om"></script>
+<script src="charm-nest-tour.js?v=20260929-tp"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-st-b"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
