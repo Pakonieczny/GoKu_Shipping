@@ -20,10 +20,17 @@ function fixedProofs(images){
   return [...found.values()];
 }
 function validatePhoto(asset,shape){
-  const spec={square:[1,300,300],landscape:[1.91,600,314],portrait:[.8,480,600],logo:[1,128,128]}[shape];
+  const spec={square:[1,300,300],landscape:[1.91,600,314],portrait:[.8,480,600],logo:[1,128,128],landscape_logo:[4,512,128]}[shape];
   if(!asset||!spec||Math.abs(asset.width/asset.height-spec[0])>spec[0]*.01||asset.width<spec[1]||asset.height<spec[2]||asset.bytes>5120*1024)throw Error('The '+shape+' photograph does not meet Google requirements. Save the correct crop first.');
 }
-function displayOps({customerId,style,name,dailyBudget,countries,destination,images,copy,logo,videos=[]}){
+// Google's optional 4:1 logo (1200x300 recommended, 512x128 minimum) for wide placements:
+// the official wide wordmark, unaltered, centred on white.
+async function landscapeLogo(){
+  const brand=require('../../brites-brand-assets'),a=brand.get('brites_brand_wide'),sharp=require('sharp');
+  const mark=await sharp(Buffer.from(brand.dataUrl(a.id).split(',')[1],'base64')).flatten({background:'#ffffff'}).extract({left:a.crop.x,top:a.crop.y,width:a.crop.width,height:a.crop.height}).resize({height:260}).toBuffer();
+  return sharp({create:{width:1200,height:300,channels:3,background:'#ffffff'}}).composite([{input:mark,gravity:'center'}]).jpeg({quality:95}).toBuffer();
+}
+function displayOps({customerId,style,name,dailyBudget,countries,destination,images,copy,logo,wideLogo=null,videos=[]}){
   if(!['fixed_display','responsive_display'].includes(style))throw Error('Invalid Display style.');
   const budget=`customers/${customerId}/campaignBudgets/-1`,campaign=`customers/${customerId}/campaigns/-2`,group=`customers/${customerId}/adGroups/-3`;
   const ops=[{campaignBudgetOperation:{create:{resourceName:budget,name:name+' budget',amountMicros:String(Math.round(dailyBudget*1e6)),deliveryMethod:'STANDARD',explicitlyShared:false}}},
@@ -35,7 +42,10 @@ function displayOps({customerId,style,name,dailyBudget,countries,destination,ima
   }else{
     const text=(values,max,label)=>{if(!Array.isArray(values)||!values.length||values.some(t=>!t||[...t].length>max))throw Error('Review the '+label+' before publishing.');return values.slice(0,5).map(text=>({text}));};
     const headlines=text(copy.headlines,30,'headlines'),descriptions=text(copy.descriptions,90,'descriptions'),longHeadline=text(copy.longHeadlines,90,'long headline')[0];
-    ops.push({adGroupAdOperation:{create:{adGroup:group,status:'ENABLED',ad:{name,finalUrls:[destination],responsiveDisplayAd:{headlines,descriptions,longHeadline,businessName:'Brites Jewelry',callToActionText:'Shop now',marketingImages:images.filter(i=>i.shape==='landscape').map(i=>({asset:i.resourceName})),squareMarketingImages:images.filter(i=>i.shape==='square').map(i=>({asset:i.resourceName})),squareLogoImages:[{asset:logo}],mainColor:'#f8eee1',accentColor:'#88452e',allowFlexibleColor:false,controlSpec:{enableAssetEnhancements:false,enableAutogenVideo:false},...(videos.length?{youtubeVideos:videos.map(asset=>({asset}))}:{})}}}}});
+    // Ad.name is supported only for image, upload, video and Demand Gen ads, so the
+    // responsive ad carries none. Brand colours stay the preference, but flexible
+    // colour keeps publisher-styled native placements (the reach this style exists for) eligible.
+    ops.push({adGroupAdOperation:{create:{adGroup:group,status:'ENABLED',ad:{finalUrls:[destination],responsiveDisplayAd:{headlines,descriptions,longHeadline,businessName:'Brites Jewelry',callToActionText:'Shop now',marketingImages:images.filter(i=>i.shape==='landscape').map(i=>({asset:i.resourceName})),squareMarketingImages:images.filter(i=>i.shape==='square').map(i=>({asset:i.resourceName})),squareLogoImages:[{asset:logo}],...(wideLogo?{logoImages:[{asset:wideLogo}]}:{}),mainColor:'#f8eee1',accentColor:'#88452e',allowFlexibleColor:true,controlSpec:{enableAssetEnhancements:false,enableAutogenVideo:false},...(videos.length?{youtubeVideos:videos.map(asset=>({asset}))}:{})}}}}});
   }
   return ops;
 }
@@ -45,4 +55,4 @@ function attribution(url,attributes=[]){
   const id=k=>/^\d+$/.test(get(k))?get(k):null,style=get('bt_pipeline');
   return {campaignId:id('utm_campaign'),adGroupId:id('bt_group'),adId:id('bt_ad'),pipeline:STYLES.includes(style)?style:null,designId:/^[a-f0-9]{8,64}$/.test(get('bt_design'))?get('bt_design'):null};
 }
-module.exports={attribution,STYLES,NAMES,CAMPAIGN_STYLES,FIXED_SIZES,selection,fixedProofs,validatePhoto,displayOps};
+module.exports={attribution,STYLES,NAMES,CAMPAIGN_STYLES,FIXED_SIZES,selection,fixedProofs,validatePhoto,landscapeLogo,displayOps};

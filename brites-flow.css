@@ -1,0 +1,75 @@
+/* Brites flow: connective cues between console tabs. Short, eased out, no bounce;
+   every motion has a still equivalent under prefers-reduced-motion. */
+.bf-vh{position:absolute!important;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
+/* The ghost that carries an item to its destination tab. */
+.bf-ghost{position:fixed;left:0;top:0;z-index:2147482000;pointer-events:none;display:flex;align-items:center;gap:7px;max-width:240px;padding:7px 12px;border:1px solid var(--gold-line,#e3d3a6);border-radius:10px;background:var(--card,#fffefb);color:var(--ink,#1c1a17);font:600 12px/1.3 var(--sans,system-ui,sans-serif);box-shadow:0 10px 30px rgba(28,26,23,.18);will-change:transform,opacity;transform-origin:50% 50%}
+.bf-ghost i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--gold,#a9823f)}
+.bf-ghost span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* The destination acknowledges it. Outline, so an existing shadow (the active tab's gold edge) stays. */
+.bf-pulse{animation:bf-pulse .4s cubic-bezier(.2,.7,.2,1)}
+@keyframes bf-pulse{from{outline:2px solid rgba(202,168,97,.8);outline-offset:0}to{outline:2px solid rgba(202,168,97,0);outline-offset:7px}}
+.bf-tick-up,.bf-tick-down{display:inline-block}
+.bf-tick-up{animation:bf-tick-up .3s cubic-bezier(.2,.7,.2,1)}
+.bf-tick-down{animation:bf-tick-down .3s cubic-bezier(.2,.7,.2,1)}
+@keyframes bf-tick-up{from{transform:translateY(55%);opacity:0}to{transform:none;opacity:1}}
+@keyframes bf-tick-down{from{transform:translateY(-55%);opacity:0}to{transform:none;opacity:1}}
+
+/* Something new is waiting in this tab. */
+#nav button .bf-dot{flex:none;margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--gold-2,#caa861);box-shadow:0 0 0 3px rgba(202,168,97,.18)}
+.navburger.bf-has-dot{position:relative}
+.navburger.bf-has-dot::after{content:'';position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--gold,#a9823f);box-shadow:0 0 0 2px var(--card,#fffefb)}
+
+/* The item where it lands, and where it came from. */
+.bf-arrived,.bf-held{scroll-margin-top:calc(var(--bf-top,64px) + 16px)}
+.bf-arrived{animation:bf-arrive 2.4s cubic-bezier(.2,.7,.2,1)}
+@keyframes bf-arrive{0%{box-shadow:0 0 0 0 rgba(202,168,97,0)}12%{box-shadow:0 0 0 2px rgba(202,168,97,.85),0 10px 30px rgba(169,130,63,.16)}62%{box-shadow:0 0 0 2px rgba(202,168,97,.55),0 10px 30px rgba(169,130,63,.1)}100%{box-shadow:0 0 0 0 rgba(202,168,97,0)}}
+tr.bf-arrived{animation:none}
+tr.bf-arrived>td{animation:bf-arrive-row 2.4s ease-out}
+@keyframes bf-arrive-row{0%,50%{background-color:#f6ecd4}100%{background-color:var(--card,#fffefb)}}
+.bf-from{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;background:var(--gold-soft,#f0e6cd);color:#7a5a1d;font:600 10.5px/1.6 var(--sans,system-ui,sans-serif);letter-spacing:.01em;white-space:nowrap;vertical-align:middle;animation:bf-from-in .3s cubic-bezier(.2,.7,.2,1);transition:opacity .25s ease-out}
+.bf-from.bf-out{opacity:0}
+.bf-from.bf-still{animation:none}
+/* The same mark, still, on an item that a refresh redrew while it was being shown. */
+.bf-held{box-shadow:0 0 0 2px rgba(202,168,97,.55),0 10px 30px rgba(169,130,63,.1)}
+tr.bf-held{box-shadow:none}
+tr.bf-held>td{background-color:#f6ecd4}
+@keyframes bf-from-in{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.bf-leaving{pointer-events:none}
+
+/* Tabs ease in. Opacity only: a transform would re-anchor fixed pop-overs inside the view. */
+.view.bf-enter{animation:bf-enter .18s ease-out}
+@keyframes bf-enter{from{opacity:0}to{opacity:1}}
+
+/* The journey header on Opportunities: each step shows its live state and opens its place. */
+.oppJourney.bf-journey{gap:3px;padding:5px}
+.oppJourney.bf-journey i{width:12px;flex:none}
+.oppJourney.bf-journey button{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;padding:5px 10px 6px;border:0;border-radius:9px;background:transparent;color:var(--ink-70,#5b554c);font:600 11.5px/1.3 var(--sans,system-ui,sans-serif);text-align:left;white-space:nowrap;cursor:pointer;transition:background .15s,color .15s}
+.oppJourney.bf-journey button span{display:block;padding:0;gap:0;color:inherit;font:inherit;white-space:nowrap}
+.oppJourney.bf-journey button:hover{background:var(--paper-2,#ece6da);color:var(--ink,#1c1a17)}
+.oppJourney.bf-journey button[data-here]{color:var(--ink,#1c1a17)}
+.oppJourney.bf-journey button[data-here]>span{box-shadow:0 1.5px 0 var(--gold-2,#caa861)}
+.oppJourney.bf-journey small{display:flex;align-items:center;gap:4px;min-height:14px;font:500 10.5px/1.3 var(--sans,system-ui,sans-serif);color:var(--ink-45,#938c80)}
+.oppJourney.bf-journey small strong{font:700 10.5px/1.3 var(--mono,ui-monospace,monospace);color:var(--ink-70,#5b554c);font-variant-numeric:tabular-nums}
+.oppJourney.bf-journey small strong:empty{display:none}
+.oppJourney.bf-journey small em{font-style:normal}
+.oppJourney.bf-journey button[data-attn] small::before{content:'';flex:none;width:6px;height:6px;border-radius:50%;background:var(--gold,#a9823f)}
+.oppJourney.bf-journey button[data-busy] small::before{content:'';flex:none;width:8px;height:8px;border:1.5px solid var(--gold-line,#e3d3a6);border-top-color:var(--gold,#a9823f);border-radius:50%;animation:bf-spin .9s linear infinite}
+@keyframes bf-spin{to{transform:rotate(360deg)}}
+/* Phones: five steps side by side without scrolling; the spacing replaces the connectors. */
+@media (max-width:480px){
+ .oppJourney.bf-journey{justify-content:space-between;gap:0;padding:4px 3px}
+ .oppJourney.bf-journey i{display:none}
+ .oppJourney.bf-journey button{flex:0 1 auto;padding:5px 4px 6px}
+}
+
+@media (prefers-reduced-motion:reduce){
+ .bf-pulse{animation:none;outline:2px solid rgba(202,168,97,.75);outline-offset:2px}
+ .bf-tick-up,.bf-tick-down,.view.bf-enter,.bf-from{animation:none}
+ .bf-arrived{animation:none;box-shadow:0 0 0 2px rgba(202,168,97,.7)}
+ tr.bf-arrived{box-shadow:none}
+ tr.bf-arrived>td{animation:none;background-color:#f6ecd4}
+ .bf-from{transition:none}
+ .oppJourney.bf-journey button[data-busy] small::before{animation:none;border-top-color:var(--gold-line,#e3d3a6);background:var(--gold,#a9823f)}
+}
