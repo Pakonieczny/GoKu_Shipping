@@ -1634,11 +1634,12 @@ function sanitizeOps(ops, meta) {
   return ops;
 }
 // Required aspect ratio (w/h) per image field type + Google's minimum pixel sizes.
+// Google accepts ±1% of the ratio; a 1–3% image passed here and then failed the whole link mutate.
 const _IMG_FIELD_SPECS = {
-  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.03, minW: 300, minH: 300 },
-  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.03, minW: 600, minH: 314 },
-  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.03, minW: 480, minH: 600 },
-  LOGO:                     { ratio: 1.0,      tol: 0.03, minW: 128, minH: 128 }
+  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.01, minW: 300, minH: 300 },
+  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.01, minW: 600, minH: 314 },
+  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.01, minW: 480, minH: 600 },
+  LOGO:                     { ratio: 1.0,      tol: 0.01, minW: 128, minH: 128 }
 };
 // Drop image attach ops whose ALREADY-UPLOADED asset has a disallowed aspect ratio for
 // its field type (live failure: ASPECT_RATIO_NOT_ALLOWED on two pre-uploaded portraits —
