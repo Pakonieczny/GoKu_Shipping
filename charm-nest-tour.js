@@ -18,14 +18,18 @@
   const reduced = () => { try { return root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const $ = (s, n) => (n || doc).querySelector(s);
   const tryDo = f => { try { return f(); } catch (_) { return null; } };
+  // where the tour is, for tests and a profile (tests/charm-nest/adv-custom-send-flight.cjs): performance.mark "tour:…"
+  const mark = n => { try { performance.mark("tour:" + n); } catch (_) {} };
   const CSS = `
 #tourLayer{position:fixed;inset:0;z-index:150;pointer-events:none;overflow:hidden;contain:strict}
 #tourLayer>*{position:fixed;left:0;top:0;will-change:transform,opacity}
 .tourCard{border-radius:14px}
 .tourLift{position:absolute!important;inset:0;border-radius:14px;box-shadow:0 22px 48px rgba(30,24,16,.24),0 0 0 1.5px rgba(202,168,97,.55);opacity:0}
 .tourCoin{width:72px;height:72px;margin:-36px 0 0 -36px}
-.tourCoin>i{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle at 34% 28%,#fffefa 0,#f6eedc 58%,#eadcbc 100%);border:1.5px solid #caa861;box-shadow:0 14px 30px rgba(60,40,90,.24),0 0 0 6px rgba(125,86,168,.10),inset 0 -3px 8px rgba(169,130,63,.18)}
-.tourCoin>img,.tourCoin>canvas{position:absolute;left:14%;top:14%;width:72%;height:72%;object-fit:contain}
+.tourCoin>.tourFace{left:0;top:0;width:100%;height:100%}
+.tourFace{position:absolute;display:block;border-radius:50%;background:radial-gradient(circle at 50% 50%,#fff 0,#fff 64%,#fbf6ea 80%,#efe2c2 100%);border:1.5px solid #caa861;box-shadow:0 14px 30px rgba(60,40,90,.24),0 0 0 5px rgba(125,86,168,.10),inset 0 -3px 8px rgba(169,130,63,.16)}
+.tourFace>img,.tourFace>canvas{position:absolute;left:17%;top:17%;width:66%;height:66%;object-fit:contain}
+.tourPiece>img,.tourPiece>canvas{display:block}
 .tourCoin>b{position:absolute;right:-5px;top:-5px;font:800 10.5px var(--sans,system-ui);background:#7d56a8;color:#fff;border-radius:999px;padding:2px 7px;box-shadow:0 3px 8px rgba(60,40,90,.3)}
 .tourCap{font:600 15px var(--serif,Georgia,serif);letter-spacing:.01em;color:var(--ink,#221f1b);background:rgba(255,254,250,.96);border:1px solid var(--goldLine,#e3d3a6);border-radius:999px;padding:6px 15px 6px 12px;box-shadow:0 8px 22px rgba(30,24,16,.14);white-space:nowrap;display:flex;align-items:center;gap:8px}
 .tourCap>i{width:9px;height:9px;border-radius:50%;background:#caa861;box-shadow:0 0 0 2px rgba(255,255,255,.9)}
@@ -76,9 +80,10 @@
       return a.finished.catch(() => {}).then(() => { t.anims.delete(a); });
     };
     t.node = (cls, html) => { const n = doc.createElement("div"); n.className = cls; if (html) n.innerHTML = html; layer().appendChild(n); t.nodes.add(n); return n; };
-    t.forward = () => { if (t.ff) return; t.ff = true; for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); };
-    // bounded: a promise from outside (NestFocus) that never settles never holds the tour
-    t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => setTimeout(() => res(null), t.ff ? Math.min(ms, 600) : ms))]);
+    // skipped: the sheet standing open (NestFocus) shows everything at once and eases back; no other sheet is opened
+    t.forward = () => { if (t.ff) return; t.ff = true; for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); tryDo(() => root.NestFocus && root.NestFocus.isOpen() && root.NestFocus.close()); };
+    // bounded: a promise from outside (NestFocus) that never settles never holds the tour, nor one still pending on a skip
+    t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => { if (t.ff) { setTimeout(() => res(null), Math.min(ms, 600)); return; } const w = () => { clearTimeout(h); t.wakes.delete(w); res(null); }, h = setTimeout(w, ms); t.wakes.add(w); })]);
     return t;
   }
   /** A click, a key or Esc anywhere: the rest lands at once and the tour goes home. A tab picked: the tour ends there. */
@@ -163,12 +168,13 @@
     return t.anim(cap, [{ opacity: 0, transform: `translate(${x}px,${y + 8}px) scale(.96)` }, { opacity: 1, transform: `translate(${x}px,${y}px)` }], { duration: 420, easing: GROW });
   }
   const fadeOut = (t, n, ms = 260) => n && n.isConnected ? t.anim(n, [{ opacity: getComputedStyle(n).opacity }, { opacity: 0 }], { duration: ms, easing: "ease" }).then(() => { n.remove(); t.nodes.delete(n); }) : Promise.resolve();
-  /** The landing: the app's ring (#b8893a) opening out from the spot. */
-  function ring(t, r) {
+  /** The landing: the app's ring (#b8893a) opening out from the spot (pill: round a button, its own shape). */
+  function ring(t, r, pill) {
     if (!r || t.ff) return;
-    const d = Math.max(r.width, r.height) + 10, n = t.node("tourRing"), x = r.left + r.width / 2 - d / 2, y = r.top + r.height / 2 - d / 2;
-    Object.assign(n.style, { width: d + "px", height: d + "px" });
-    t.anim(n, [{ transform: `translate(${x}px,${y}px) scale(.6)`, opacity: .95 }, { transform: `translate(${x}px,${y}px) scale(1.08)`, opacity: .8, offset: .45 }, { transform: `translate(${x}px,${y}px) scale(1.5)`, opacity: 0 }], { duration: 640, easing: "ease-out" }).then(() => n.remove());
+    const d = Math.max(r.width, r.height) + 10, w = pill ? r.width + 8 : d, h = pill ? r.height + 8 : d, n = t.node("tourRing"), x = r.left + r.width / 2 - w / 2, y = r.top + r.height / 2 - h / 2;
+    Object.assign(n.style, { width: w + "px", height: h + "px" }); if (pill) n.style.borderRadius = "999px";
+    const s = pill ? [.92, 1.04, 1.22] : [.6, 1.08, 1.5];
+    t.anim(n, [{ transform: `translate(${x}px,${y}px) scale(${s[0]})`, opacity: .95 }, { transform: `translate(${x}px,${y}px) scale(${s[1]})`, opacity: .8, offset: .45 }, { transform: `translate(${x}px,${y}px) scale(${s[2]})`, opacity: 0 }], { duration: pill ? 760 : 640, easing: "ease-out" }).then(() => n.remove());
   }
   function plus(t, text, x, y) {
     if (t.ff) return;
@@ -218,12 +224,14 @@
     const guard = setTimeout(() => t.forward(), 6000 + (o.delay || 0) + legs.length * 3200 + waiting.length * 2400);
     try {
       if (o.delay) await t.wait(o.delay);
+      mark("start");
       await lift(t, o, s0, legs, waiting);
       // (skipped before the Nest tab was reached: it is never switched to, only to come straight back)
       if (!t.ff) await toNest(t);
       const there = () => !t.userTab && modeNow() === "nest";
-      for (const [i, leg] of legs.entries()) { if (!there()) break; await sheetBeat(t, leg, o, i === legs.length - 1 && !waiting.length); }
-      for (const w of waiting) { if (!there()) break; await waitBeat(t, w, o); }
+      // one sheet at a time, then what waits; a skip lands the rest at once (placed already, never held back) and goes home
+      for (const [i, leg] of legs.entries()) { if (!there() || t.ff) break; await sheetBeat(t, leg, o, i === legs.length - 1 && !waiting.length); }
+      for (const w of waiting) { if (!there() || t.ff) break; await waitBeat(t, w, o); }
       await coinAway(t);
       await goHome(t, home, o, s0);
     } catch (e) { tryDo(() => console.warn("send tour", e)); if (!t.userTab && modeNow() !== home.mode) setMode(home.mode); }
@@ -232,7 +240,10 @@
       for (const n of t.nodes) n.remove(); if (s0 && s0.ghost) s0.ghost.remove();
       for (const v of [viewOf("nest"), viewOf("review")]) if (v) for (const a of v.getAnimations()) if (a.id === "tour") a.cancel();
       for (const f of t.off) tryDo(f);
-      if (T === t) T = null; finish();
+      // each Nest card back on the sheet it showed before the tour (it switched them to the sheets it opened); home,
+      // this is out of sight
+      tryDo(() => { const NF = root.NestFocus; if (!NF) return; if (NF.isOpen && NF.isOpen() && NF.close) NF.close(); if (NF.restore) NF.restore(); });
+      if (T === t) T = null; mark("end"); finish();
     }
   }
   /** 1 · the card lifts, its designs rise out of it as a coin, and the card slides out of the list (or, when it stays,
@@ -244,12 +255,12 @@
     const th = s0 ? s0.thumbs : rectOf(card && card.querySelector(".cuDzThumbs")) || rectOf(card);
     const origin = th ? mid(th) : at(innerWidth / 2, innerHeight / 2);
     const coin = t.coin = t.node("tourCoin");
-    coin.innerHTML = "<i></i>";
-    const pics = (s0 && s0.imgs.length ? s0.imgs : []).concat(legs.map(l => l.designUrl).concat(waiting.map(w => w.designUrl))).filter(Boolean);
-    // the design itself on the coin, drawn in the custom plum (its thumbnail when no piece is on a sheet yet)
-    const c0 = legs[0] && charmOf(legs[0].poolIds[0]), pc = c0 && c0.widthPt ? pieceCanvas(c0, 52 / Math.max(c0.widthPt, c0.heightPt)) : null;
-    if (pc) { pc.style.width = pc.style.height = ""; pc.style.objectFit = "contain"; coin.appendChild(pc); }
-    else if (pics[0]) { const im = new Image(); im.alt = ""; im.decoding = "sync"; im.src = pics[0]; coin.appendChild(im); }
+    // the design's own picture on the coin: the one its card (or its window's row) shows, the same image; drawn from
+    // the piece itself only when there is none
+    const pics = legs.map(l => l.designUrl).concat(waiting.map(w => w.designUrl), s0 ? s0.imgs : []).filter(Boolean);
+    t.pic = pics[0] || null;
+    const face = coinFace(t.pic, 72); coin.appendChild(face);
+    if (!t.pic) { const c0 = legs[0] && charmOf(legs[0].poolIds[0]), pc = c0 && c0.widthPt ? pieceCanvas(c0, 46 / Math.max(c0.widthPt, c0.heightPt)) : null; if (pc) { pc.style.width = pc.style.height = ""; face.appendChild(pc); } }
     const n = legs.reduce((k, l) => k + l.poolIds.length, 0) || (o.pieces || 0);
     if (n > 1) { const b = doc.createElement("b"); b.textContent = "×" + n; coin.appendChild(b); }
     t.count = n;
@@ -258,7 +269,7 @@
     const cap = capOf(t, `Order ${o.rid || ""}${n ? ` — ${n} piece${n === 1 ? "" : "s"}` : ""}`, null);
     const rise = t.anim(coin, path(at(origin.x, origin.y, s), up, { bend: 10, ease: EASE.grow, oa: 0, ob: 1, n: 14 }), { duration: 580, easing: "linear" });
     sparks(t, at(origin.x, origin.y), up, 580, 10);
-    placeCap(t, cap, up.x + 46, up.y - 16); t.cap = cap;
+    { const cw = cap.offsetWidth, ch = cap.offsetHeight || 30, p = freeSpot(cap, [at(up.x + 46, up.y - ch / 2), at(up.x - 46 - cw, up.y - ch / 2), at(up.x - cw / 2, up.y - 44 - ch), at(up.x + 46, up.y - 44 - ch), at(up.x - cw / 2, up.y + 44)]); placeCap(t, cap, p.x, p.y); t.cap = cap; }
     if (s0 && s0.ghost) {
       const r = s0.rect, g = s0.ghost;
       const nr = stays ? rectOf(live) : null;
@@ -270,7 +281,9 @@
   /** 2 · the coin arcs to the Nest tab, which lights; the view crossfades to the Nest tab under it (a real tab switch). */
   async function toNest(t) {
     const tab = nestTab(), coin = t.coin, from = coin._at || fromTf(coin);
-    const tr = rectOf(tab), dest = tr ? at(tr.left + tr.width / 2, tr.bottom + 46, .82, 0) : at(innerWidth / 2, 120, .82, 0);
+    // (it dips into the Nest tab itself, which lights, and goes on from there over the sheet: it never stands over the
+    // head of the first sheet card)
+    const tr = rectOf(tab), dest = tr ? at(tr.left + tr.width / 2, tr.top + tr.height / 2 + 4, .5, 0) : at(innerWidth / 2, 40, .5, 0);
     const go = t.anim(coin, path(from, dest, { bend: 60, oa: 1, ob: 1 }), { duration: 760, easing: "linear" });
     sparks(t, from, dest, 760, 60);
     fadeOut(t, t.cap, 240); t.cap = null;
@@ -288,67 +301,134 @@
     const a = viewOf(modeNow());
     if (a && !t.ff) { const x = a.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-in", fill: "forwards", id: "tour" }); t.anims.add(x); await x.finished.catch(() => {}); t.anims.delete(x); }
     if (t.userTab) { if (a) for (const x of a.getAnimations()) if (x.id === "tour") x.cancel(); return; }
-    setMode(mode);
+    mark("switch:" + mode); setMode(mode);
     if (a) for (const x of a.getAnimations()) if (x.id === "tour") x.cancel();
     const b = viewOf(mode);
-    if (b && !t.ff) b.animate([{ opacity: 0, transform: "translateY(8px) scale(.995)" }, { opacity: 1, transform: "none" }], { duration: 380, easing: GROW, id: "tour" });
+    // (opacity alone: a whole view moved or scaled is a whole view drawn again in each frame)
+    if (b && !t.ff) b.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: GROW, id: "tour" });
   }
   /** 3 · one sheet: opened, each piece flown onto its spot and landed, "+N", eased back. */
   async function sheetBeat(t, leg, o, last) {
     const caption = leg.label || `${leg.metal} · Sheet ${leg.page || 1}`;
     const NF = root.NestFocus;
-    // the coin sets off for the sheet's card as it opens (one continuous move), and is set right once it stands still
-    const overOf = r => at(Math.max(60, Math.min(innerWidth - 60, r.left + r.width / 2)), Math.max(70, r.top - 38), .9, 0);
-    const coin = t.coin, r0 = rectOf(nestCard(leg.metal) && $('[data-r="canvas"]', nestCard(leg.metal)));
+    // the coin enters over the sheet itself, never over the card's head (its name and chips); when the order's pieces
+    // wait in the card's queue (a Manual run: "press Nest"), over that queue instead: no piece floats on an empty sheet
+    const queued = queuedLeg(leg), card0 = nestCard(leg.metal), coin = t.coin;
+    const overOf = (cv, q) => q ? at(Math.min(innerWidth - 40, q.left + Math.min(q.width - 24, 96)), q.top + q.height / 2, .6, 0)
+      : at(Math.max(60, Math.min(innerWidth - 60, cv.left + cv.width / 2)), cv.top + Math.min(cv.height * .3, 66), .9, 0);
+    const aimOf = cd => { const cv = rectOf(cd && $('[data-r="canvas"]', cd)), q = queued ? rectOf(cd && $('[data-r="queue"]', cd)) : null; return cv || q ? overOf(cv || q, q) : null; };
+    const o0 = aimOf(card0);
     let from = coin._at || fromTf(coin), going = Promise.resolve();
-    if (r0 && onScreen(r0) && !t.ff) { const o0 = overOf(r0), d = Math.hypot(o0.x - from.x, o0.y - from.y); if (d > 4) { going = t.anim(coin, path(from, o0, { bend: Math.min(70, d * .18) }), { duration: Math.max(380, Math.min(560, 240 + d * .4)), easing: "linear" }); from = o0; } }
+    if (o0 && onScreen({ left: o0.x, right: o0.x + 1, top: o0.y, bottom: o0.y + 1 }) && !t.ff) { const d = Math.hypot(o0.x - from.x, o0.y - from.y); if (d > 4) { going = t.anim(coin, path(from, o0, { bend: Math.min(70, d * .18) }), { duration: Math.max(420, Math.min(620, 260 + d * .45)), easing: "linear" }); from = o0; } }
     let f = null;
     if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption, metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
+    // (skipped while it opened: it is shown whole at once and eases back, with no flight onto it)
+    if (t.ff) { if (f) tryDo(() => f.close()); return; }
     if (!f) f = await openHere(t, leg, caption);
     if (!f) return;
-    const card = f.card || nestCard(leg.metal), cr = rectOf(card) || { left: innerWidth / 2 - 100, top: innerHeight / 2 - 60, width: 200, height: 120 };
-    const cvr = rectOf(card && $('[data-r="canvas"]', card)) || cr;
-    // the coin over the sheet it serves
-    const over = overOf(cvr);
+    const card = f.card || card0, cr = rectOf(card) || { left: innerWidth / 2 - 100, top: innerHeight / 2 - 60, width: 200, height: 120 };
+    const cvr = rectOf(card && $('[data-r="canvas"]', card)) || cr, qr = queued ? rectOf(card && $('[data-r="queue"]', card)) : null;
+    // the coin over the sheet (or the queue) it serves, set right once the card stands still
+    const over = aimOf(card) || overOf(cvr, null);
     await going;
-    if (!t.ff) { const d = Math.hypot(over.x - from.x, over.y - from.y); if (d > 4) { await t.anim(coin, path(from, over, { bend: Math.min(70, d * .18) }), { duration: Math.max(300, Math.min(540, 200 + d * .4)), easing: "linear" }); } }
+    if (!t.ff) { const d = Math.hypot(over.x - from.x, over.y - from.y); if (d > 4) { await t.anim(coin, path(from, over, { bend: Math.min(50, d * .18) }), { duration: Math.max(280, Math.min(460, 180 + d * .4)), easing: "linear" }); } }
     coin._at = over;
-    // each piece drawn before it flies, at the size it lands at
+    // each piece drawn before it flies, at the size it lands at: it leaves as the coin (the design's own picture) and,
+    // as it comes down, becomes the charm itself at its spot's turn and size (queued: its picture in the queue)
     const spots = new Map((f.spots || []).map(s => [s.poolId, s]));
-    const flights = [];
-    leg.poolIds.forEach((id, i) => {
-      const s = spots.get(id), c = charmOf(id), r = s && s.rect && s.rect.width ? s.rect : null;
-      const k = r && c ? pxPerPt(c, s, r) : 0;
+    const flights = leg.poolIds.map((id, i) => {
+      const s = spots.get(id), c = charmOf(id), r0 = s && s.rect && s.rect.width ? s.rect : null;
+      const placed = !!r0 && s.placed !== false && !queued, r = r0 || (queued && qr ? { left: qr.left + 4, top: qr.top + 2, width: Math.min(34, qr.height - 4), height: Math.min(34, qr.height - 4) } : null);
+      const k = placed && c ? pxPerPt(c, s, r) : 0;
       let el = k ? pieceCanvas(c, k) : null;
-      if (!el && (leg.designUrl || o.designUrl)) { el = new Image(); el.src = leg.designUrl || o.designUrl; el.alt = ""; const w = r ? Math.max(r.width, r.height) : 40; el.style.width = el.style.height = w + "px"; el.style.objectFit = "contain"; }
+      if (!el) { const q = queued && card && s && s.charmId != null ? [...card.querySelectorAll('[data-r="queue"] img[data-cid]')].find(im => im.dataset.cid === String(s.charmId)) : null, src = (q && q.src) || leg.designUrl || o.designUrl || t.pic;
+        if (src) { el = new Image(); el.src = src; el.alt = ""; el.decoding = "sync"; const w = r ? Math.max(r.width, r.height) : 40; el.style.width = el.style.height = w + "px"; el.style.objectFit = "contain"; } }
       if (!el) { el = doc.createElement("i"); el.style.cssText = "display:block;width:26px;height:26px;border-radius:50%;background:rgba(125,86,168,.35);border:2px solid #7d56a8"; }
-      flights.push({ id, s, r, el, i });
+      if (el.style) { el.style.position = "absolute"; el.style.left = el.style.top = "0"; }
+      if (placed && s.flipped && el.style) el.style.transform = "scaleX(-1)";
+      return { id, s, r, el, i, placed };
     });
-    const landAt = (fl) => { const r = fl.r || cvr; return at(r.left + r.width / 2, r.top + r.height / 2, 1, +(fl.s && fl.s.rot) || 0); };
-    const many = flights.length, gap = many > 1 ? Math.max(90, Math.min(220, 900 / many)) : 0, dur = many > 6 ? 560 : 760;
+    const landAt = fl => { const r = fl.r || cvr; return at(r.left + r.width / 2, r.top + r.height / 2, 1, fl.placed ? +(fl.s && fl.s.rot) || 0 : 0); };
+    const many = flights.length, gap = many > 1 ? Math.max(90, Math.min(220, 900 / many)) : 0, dur = many > 6 ? 580 : 740;
     const beats = flights.map((fl, i) => (async () => {
       await t.wait(i * gap);
-      const box = t.node("tourPiece"); box.appendChild(fl.el);
-      const w = fl.el.offsetWidth || 30, h = fl.el.offsetHeight || 30; box.style.margin = `${-h / 2}px 0 0 ${-w / 2}px`;
-      const end = landAt(fl), s0 = Math.min(.6, 44 / Math.max(w, h));
-      const start = at(over.x, over.y, s0, end.r - 25);
-      const lands = fl.r ? end : Object.assign({}, end, { s: .35 });
-      const go = t.anim(box, path(start, lands, { bend: 40 + Math.min(60, Math.abs(start.x - lands.x) * .1), ease: EASE.arc, oa: 0, ob: 1, pop: .08, n: 20 }), { duration: dur, easing: "linear" });
-      if (i === 0 || !t.ff) sparks(t, start, lands, dur, 40);
+      const w = parseFloat(fl.el.style.width) || fl.el.offsetWidth || 30, h = parseFloat(fl.el.style.height) || fl.el.offsetHeight || 30;
+      const box = t.node("tourPiece"), D = Math.max(w, h) * 1.3, face = coinFace(t.pic, D);
+      Object.assign(box.style, { width: w + "px", height: h + "px", margin: `${-h / 2}px 0 0 ${-w / 2}px` });
+      Object.assign(face.style, { left: (w - D) / 2 + "px", top: (h - D) / 2 + "px" });
+      box.appendChild(fl.el); box.appendChild(face); fl.el.style.opacity = 0;
+      const end = landAt(fl), s0 = 72 * (over.s || .9) / D;
+      const start = at(over.x, over.y, s0, end.r - 18);
+      // the last piece of the last sheet is the coin itself going down (the coin is not left hovering, empty)
+      if (last && i === many - 1 && t.coin) { t.coin.style.visibility = "hidden"; t.coinSpent = true; }
+      const go = t.anim(box, path(start, end, { bend: 40 + Math.min(60, Math.abs(start.x - end.x) * .1), ease: EASE.arc, oa: 1, ob: 1, pop: .08, n: 22 }), { duration: dur, easing: "linear" });
+      t.anim(face, [{ opacity: 1 }, { opacity: 1, offset: .5 }, { opacity: 0, offset: .88 }, { opacity: 0 }], { duration: dur, easing: "linear" });
+      t.anim(fl.el, [{ opacity: 0 }, { opacity: 0, offset: .42 }, { opacity: 1, offset: .86 }, { opacity: 1 }], { duration: dur, easing: "linear" });
+      if (i === 0 || !t.ff) sparks(t, start, end, dur, 40);
       await go;
-      if (t.coin && many > 1) { const b = $("b", t.coin); if (b) b.textContent = many - i - 1 > 1 ? "×" + (many - i - 1) : ""; }
+      // (the coin counts down what it still carries, over every sheet: it said ×2 on the second of two sheets)
+      if (t.coin) { t.count = Math.max(0, (t.count || 0) - 1); const b = $("b", t.coin); if (b) b.textContent = t.count > 1 ? "×" + t.count : ""; }
       // it lands: the sheet draws it in, in full colour, as the copy that carried it goes
-      const landing = t.within(tryDo(() => f.land(fl.id)), 900);
-      if (f.here || !fl.r) ring(t, fl.r || cvr);
-      await t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: "ease" }); box.remove(); t.nodes.delete(box);
+      mark("land"); const landing = t.within(tryDo(() => f.land(fl.id)), 900);
+      if (f.here || !fl.placed) ring(t, fl.r || cvr);
+      await t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: fl.placed ? 200 : 260, easing: "ease" }); box.remove(); t.nodes.delete(box);
       await landing;
     })());
     await Promise.all(beats);
     if (last) coinAway(t);   // (the last sheet: the coin, empty now, goes as it eases back)
-    plus(t, `+${leg.poolIds.length} on ${caption}`, cvr.left + cvr.width / 2, cvr.top + 12);
-    await t.wait(400);
+    const n = leg.poolIds.length;
+    if (queued) {
+      // queued, not placed: said where it waits and what places it, beside the card's own Nest button, which glows
+      const nb = card && $('[data-r="nest"]', card), br = rectOf(nb);
+      const cap = capOf(t, `Queued on ${caption} — press Nest to place ${n === 1 ? "it" : "them"}`, leg.metal);
+      const cw = cap.offsetWidth, ch = cap.offsetHeight || 30;
+      const spot = freeSpot(cap, [br && at(br.right + 12, br.top + br.height / 2 - ch / 2), qr && at(qr.left + Math.min(qr.width - cw, 60), qr.top + qr.height / 2 - ch / 2), at(cr.left + cr.width / 2 - cw / 2, cr.bottom + 8), at(cr.left + cr.width / 2 - cw / 2, cr.top - ch - 8)].filter(Boolean));
+      placeCap(t, cap, spot.x, spot.y); t.cap = cap;
+      if (br) { ring(t, br, true); t.wait(560).then(() => ring(t, br, true)); }
+      plus(t, `+${n} queued`, qr ? qr.left + 40 : cvr.left + cvr.width / 2, (qr || cvr).top - 4);
+      await t.wait(last ? 520 : 480);
+      fadeOut(t, cap, 300); t.cap = null;   // (it goes as the sheet eases back)
+    } else {
+      plus(t, `+${n} on ${caption}`, cvr.left + cvr.width / 2, cvr.top + 12);
+      await t.wait(last ? 400 : 320);
+    }
+    // another sheet (or a waiting place) follows: this one is let go and is well on its way back before the next is
+    // spotlit (only one sheet ever stands in focus), the coin already setting off for it
+    if (!last) { tryDo(() => f.close()); await t.wait(260); return; }
     await t.within(tryDo(() => f.close()), 1400);
     await t.wait(120);
+  }
+  /** Is this leg only queued on its sheet (in its card's queue, no place on the drawn sheet yet: a Manual run)? */
+  function queuedLeg(leg) {
+    const pg = allSheetsOf().find(p => (p.charms || []).some(c => leg.poolIds.includes(c.poolId))); if (!pg) return false;
+    const ids = new Set((pg.charms || []).filter(c => leg.poolIds.includes(c.poolId)).map(c => c.id));
+    return !(pg.placements || []).some(p => ids.has(p.id)) || !!pg.roseCutAt;
+  }
+  /** The coin's face: the design's own picture on a white disc (the card's thumbnail), d px across. */
+  function coinFace(url, d) {
+    const f = doc.createElement("span"); f.className = "tourFace"; f.style.width = f.style.height = d + "px";
+    if (url) { const im = new Image(); im.alt = ""; im.decoding = "sync"; im.src = url; f.appendChild(im); }
+    return f;
+  }
+  /** Where a caption stands clear of any text on the page: the first of the places offered with no letter under it (hit
+   *  tested once, before it shows; nothing measured while it moves). */
+  function freeSpot(cap, cands) {
+    const w = cap.offsetWidth, h = cap.offsetHeight || 30;
+    const letterAt = (x, y) => {
+      const r = doc.caretRangeFromPoint ? tryDo(() => doc.caretRangeFromPoint(x, y)) : null, n = r && r.startContainer;
+      if (!n || n.nodeType !== 3 || !n.length || !n.textContent.trim()) return false;
+      const i = Math.max(0, Math.min(n.length - 1, r.startOffset - 1)), g = doc.createRange(); g.setStart(n, i); g.setEnd(n, Math.min(n.length, i + 2));
+      for (const b of g.getClientRects()) if (x >= b.left - 3 && x <= b.right + 3 && y >= b.top - 2 && y <= b.bottom + 2) return true;
+      return false;
+    };
+    for (const c of cands) {
+      const x = Math.max(8, Math.min(innerWidth - w - 8, c.x)), y = c.y;
+      if (y < 4 || y + h > innerHeight - 4) continue;
+      let hit = false;
+      for (let i = 0; i <= 6 && !hit; i++) for (const fy of [.3, .7]) if (letterAt(x + 4 + (w - 8) * i / 6, y + h * fy)) { hit = true; break; }
+      if (!hit) return at(x, y);
+    }
+    return cands[0] || at(8, 8);
   }
   // the piece's on-screen scale (px per pt) from its spot: the scale given, else read from the box (turned or not)
   function pxPerPt(c, s, r) {
@@ -369,16 +449,21 @@
     const r = (got && got.rect && got.rect.width ? got.rect : null) || rectOf(card && ($('[data-r="queue"]', card) && rectOf($('[data-r="queue"]', card)) ? $('[data-r="queue"]', card) : $(".shHead .name", card))) || rectOf(card);
     if (!r) return;
     const coin = t.coin, from = coin._at || fromTf(coin), dest = at(r.left + Math.min(r.width / 2, 60), r.top + r.height / 2, .5, 0);
-    // (what it waits for is said here, on the tour's own layer: a note left on the Nest tab would stand alone once home)
-    const cap = capOf(t, `${w.label || w.metal} — ${w.why || "goes on with the next run"}`, w.metal); placeCap(t, cap, dest.x - 40, Math.max(8, dest.y - 64)); t.cap = cap;
     await t.anim(coin, path(from, dest, { bend: 50, oa: 1, ob: 1, pop: .1 }), { duration: 720, easing: "linear" });
     coin._at = dest;
     ring(t, { left: dest.x - 18, top: dest.y - 18, width: 36, height: 36 });
+    // (what it waits for is said here, on the tour's own layer, where no text of the card is under it: beside its Nest
+    // button, else right of its queue, else under or over the card; a note left on the Nest tab would stand alone once home)
+    const cap = capOf(t, `${w.label || w.metal} — ${w.why || "goes on with the next run"}`, w.metal), cw = cap.offsetWidth, ch = cap.offsetHeight || 30;
+    const br = rectOf(card && $('[data-r="nest"]', card)), qr = rectOf(card && $('[data-r="queue"]', card)), cr = rectOf(card) || r;
+    const p = freeSpot(cap, [br && at(br.right + 12, br.top + br.height / 2 - ch / 2), qr && at(qr.left + 60, qr.top + qr.height / 2 - ch / 2), at(cr.left + cr.width / 2 - cw / 2, cr.bottom + 8), at(cr.left + cr.width / 2 - cw / 2, cr.top - ch - 8)].filter(Boolean));
+    placeCap(t, cap, p.x, p.y); t.cap = cap;
     await t.wait(1300);
     await fadeOut(t, cap, 240); t.cap = null;
   }
   async function coinAway(t) {
     const c = t.coin; if (!c) return; t.coin = null;
+    if (t.coinSpent) { c.remove(); t.nodes.delete(c); return; }   // (it went down onto the sheet itself)
     const p = c._at || fromTf(c);
     await t.anim(c, [{ transform: tf(p), opacity: 1 }, { transform: tf(at(p.x, p.y - 10, p.s * .5, p.r)), opacity: 0 }], { duration: 300, easing: "ease-in" });
     c.remove(); t.nodes.delete(c);
