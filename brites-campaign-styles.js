@@ -16,6 +16,7 @@
     fixed_display: '<rect x="2.4" y="4.2" width="15.2" height="11.6" rx="1.4"/><path d="M6.6 8.4h6.8M6.6 11.6h4.2"/>',
     responsive_display: '<rect x="2.4" y="5.4" width="15.2" height="9.2" rx="1.4"/><path d="M5.6 2.8 3 5.4l2.6 2.6M14.4 17.2 17 14.6 14.4 12"/>',
     video: '<rect x="2.2" y="4.4" width="15.6" height="11.2" rx="1.8"/><path d="M8.4 7.9 13 10l-4.6 2.1z"/>',
+    demand_gen: '<rect x="3" y="2.6" width="14" height="6.4" rx="1.2"/><rect x="3" y="11" width="14" height="6.4" rx="1.2"/><path d="M8.8 4.3 11.6 5.8 8.8 7.3z"/>',
     shopping: '<path d="M4.2 6.4h11.6l-1 9.2a1.4 1.4 0 0 1-1.4 1.2H6.6a1.4 1.4 0 0 1-1.4-1.2z"/><path d="M7.4 6.4V5a2.6 2.6 0 0 1 5.2 0v1.4"/>',
     unknown: '<circle cx="10" cy="10" r="7.4"/><path d="M10 6.4v4.2M10 13.4v.2"/>'
   };
@@ -27,43 +28,46 @@
     {
       key: 'pmax', name: 'Performance Max', channel: 'PERFORMANCE_MAX', icon: 'pmax', accent: '#c8922f',
       tagline: 'Sales optimization across Google channels',
-      whenToChoose: 'Google allocates this budget across eligible Search, Shopping, YouTube, Display, Discover, Gmail and Maps inventory. Choose it for broad conversion optimization; you give up exact layout and channel-budget control. Merchant eligibility and video readiness still matter.',
-      // Performance Max learns from conversions, and a budget too small to earn
-      // several a week keeps it learning indefinitely.
-      recommendedDaily: 20, minimumSensibleDaily: 10,
-      budgetNote: 'Performance Max optimizes from conversions. Below about 10 a day it rarely gathers enough to leave its learning period, and results stay unrepresentative.',
+      whenToChoose: 'One campaign across Search, Shopping, YouTube, Display, Discover, Gmail and Maps, optimized for sales. The best default for a product with a Merchant Center listing; you give up per-channel control.',
+      // Google's published guidance: an average daily budget of at least 3× the
+      // cost per conversion, and at least 6 weeks before judging results
+      // (support.google.com/google-ads/answer/15864652, /14104997).
+      recommendedDaily: 20, minimumSensibleDaily: 10, evaluationDays: 42,
+      budgetNote: 'Google advises a daily budget of at least 3× your cost per conversion and 6 weeks before judging results. Smaller budgets still run but learn slowly.',
       autoSettings: [
         'Created paused, so nothing spends before you review it.',
         'Its own budget, never shared with another campaign.',
-        'Brand guidelines off, so this ad’s own logo and business name are the ones that serve.',
-        'Automatically generated creative turned off, so Google serves only the assets you approved.',
-        'Standard delivery, spending evenly rather than front-loading the day.'
+        'Bids for the most conversion value (sales revenue); the plan shows any target ROAS.',
+        'Advertises only this product’s Merchant Center offers, and every click lands on its product page.',
+        'Google’s automatic text, image and video enhancements are off. Shopping ads still use your product feed, and without an attached video Google may make one from your images.'
       ]
     },
     {
       key: 'responsive_display', name: 'Responsive Display', channel: 'DISPLAY', icon: 'responsive_display', accent: '#6f8f6a',
       tagline: 'Flexible reach across websites and apps',
-      whenToChoose: 'Google combines your clean square and landscape photographs with separate text and branding. Choose it for broader Display coverage; the final layout can differ from your preview.',
+      whenToChoose: 'Google fits your photos, text and logo to almost any Display placement, including native formats. More reach than Fixed Display; the final look varies.',
       recommendedDaily: 10, minimumSensibleDaily: 5,
-      budgetNote: 'Display impressions are inexpensive, so a smaller budget still buys meaningful reach. Its job is coverage, not conversion efficiency.',
+      budgetNote: 'Display clicks cost less but convert less often than Search or Shopping clicks. Keep it a small add-on and judge it by sales, not clicks.',
       autoSettings: [
         'Created paused, so nothing spends before you review it.',
         'Its own budget, never shared with another campaign.',
-        'Bidding set to maximize conversions.',
-        'Standard delivery, spending evenly rather than front-loading the day.'
+        'Bids to maximize conversions.',
+        'No audience or placement targeting: Google chooses where it shows across the Display Network.',
+        'Only your approved text and photos; Google’s asset enhancements and auto-generated video are off.'
       ]
     },
     {
       key: 'fixed_display', name: 'Fixed Display', channel: 'DISPLAY', icon: 'fixed_display', accent: '#8a6a9f',
       tagline: 'Your finished design, preserved',
-      whenToChoose: 'Keeps the exact composition in supported banner sizes. Choose it for visual control. It reaches fewer placements and does not rotate text or animate.',
+      whenToChoose: 'Shows your exact banner in each supported size. Full visual control, but fewer placements and no text rotation or animation.',
       recommendedDaily: 10, minimumSensibleDaily: 5,
-      budgetNote: 'Fixed sizes reach fewer placements than responsive ones, so a large budget will not always be spent. Start modestly and raise it only if it delivers in full.',
+      budgetNote: 'Fixed sizes reach fewer placements than responsive ads, so a larger budget may go unspent. Start small and raise it only if it spends in full.',
       autoSettings: [
         'Created paused, so nothing spends before you review it.',
         'Its own budget, never shared with another campaign.',
-        'Bidding set to maximize conversions.',
-        'One ad per supported banner size, from the design you approved.'
+        'Bids to maximize conversions.',
+        'No audience or placement targeting: Google chooses where it shows across the Display Network.',
+        'One image ad per supported banner size, exactly as approved.'
       ]
     }
   ];
@@ -75,7 +79,7 @@
     SEARCH: { name: 'Search · text ads', icon: 'search', accent: '#4a7fb5' },
     DISPLAY: { name: 'Display', icon: 'responsive_display', accent: '#6f8f6a' },
     VIDEO: { name: 'Video', icon: 'video', accent: '#b5654a' },
-    DEMAND_GEN: { name: 'Demand Gen', icon: 'video', accent: '#b5654a' },
+    DEMAND_GEN: { name: 'Demand Gen', icon: 'demand_gen', accent: '#9a5b7c' },
     SHOPPING: { name: 'Shopping', icon: 'shopping', accent: '#5f8f8f' }
   };
 
@@ -122,6 +126,16 @@
       iconSvg(d.icon, opts.size) + (opts.label === false ? '' : '<span>' + escape(opts.text || d.name) + '</span>') + '</span>';
   }
 
-  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg };
+  // The publisher refuses new campaigns whose budgets, added to those of
+  // campaigns already enabled, exceed the total daily budget ceiling in
+  // Controls. Browser and server word it the same way, before anything is approved.
+  function budgetCeilingMessage(totalDaily, enabledDaily, ceiling, currency) {
+    const limit = Number(ceiling), used = Math.max(0, Number(enabledDaily) || 0), want = Number(totalDaily) || 0, free = Math.max(0, limit - used);
+    if (!(limit > 0) || want <= free + 0.001) return null;
+    const c = currency ? currency + ' ' : '';
+    return 'Over your daily ceiling: these budgets total ' + c + want.toFixed(2) + ', but only ' + c + free.toFixed(2) + ' of your ' + c + limit.toFixed(2) + ' ceiling is free (enabled campaigns use ' + c + used.toFixed(2) + '). Lower a budget, or raise the ceiling in Controls.';
+  }
+
+  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg, budgetCeilingMessage };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.BritesCampaignStyles = api;
 })(typeof window === 'object' ? window : globalThis);

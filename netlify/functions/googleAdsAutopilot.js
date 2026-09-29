@@ -9831,6 +9831,8 @@ async function publishAdDesignSubmission(input={}){
   if(prepareOnly){
     if(!input.durations||typeof input.durations!=="object")throw Error("Choose a duration for every selected campaign.");
     const choice=routing.selection(input.styles,input.budgets,input.countries,input.durations),identity=creativeHash({sourceHash:item.sourceHash,choice});
+    // applyApproval refuses budgets above the ceiling; say so now, not after approval.
+    const ctrl=await control();if(Number(ctrl.maxDailyBudgetTotal)>0){const over=routing.CAMPAIGN_STYLES.budgetCeilingMessage(choice.totalDaily,await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);if(over)throw Error(over);}
     if(item.pipelinePlan?.identity===identity)return {ok:true,plan:item.pipelinePlan.summary,planHash:item.pipelinePlan.hash,cached:true};
     const plan=await _prepareCampaignStyles({item,context,choice,identity});
     await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(_adDesignSelectionHash(latest.data())!==item.sourceHash||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash)throw Error('Approval changed while preparing.');tx.update(ref,{pipelinePlan:plan,payload:plan.payload});});
@@ -9867,8 +9869,10 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     if(!asset&&shape==='portrait')continue;
     photos.push(await add(asset,shape));
   }
-  let logo=null;
-  if(photos.length){const bytes=await require('sharp')(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();logo=(await add(await _saveCreativeAsset(workspaceId,bytes,'pipeline_logo',{width:600,height:600,kind:'brand logo'}),'logo')).resourceName;}
+  let logo=null,wideLogo=null;
+  if(photos.length){const bytes=await require('sharp')(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();logo=(await add(await _saveCreativeAsset(workspaceId,bytes,'pipeline_logo',{width:600,height:600,kind:'brand logo'}),'logo')).resourceName;
+    // Google's optional 4:1 logo lets wide Display, Gmail and Discover placements show the brand instead of omitting it.
+    wideLogo=(await add(await _saveCreativeAsset(workspaceId,await routing.landscapeLogo(),'pipeline_logo_wide',{width:1200,height:300,kind:'brand logo'}),'landscape_logo')).resourceName;}
   const videoRefs=[],videoLinks=[];
   if(choice.styles.some(s=>s!=='fixed_display')){
     const rows=await _adDesignWorkspaceRef(workspaceId).collection('motionJobs').get();
@@ -9891,24 +9895,28 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     }
   }
   const report=await _reportContext(),currency=report.budgetCurrency;
-  let itemIds=[];
+  let itemIds=[],audienceSignal=null;
   for(const style of choice.styles){
     const name='Brites · '+product.title.slice(0,60)+' · '+routing.NAMES[style]+' · '+identity.slice(0,8);let lane;
     if(style==='pmax'){
       itemIds=(product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(w.context.itemIds||[]).some(x=>String(x).toLowerCase()===String(id).toLowerCase()));
       if(!itemIds.length)throw Error('Choose the exact Merchant offers for this product before preparing Performance Max.');
-      const built=buildPmaxCampaignOps({handle:w.context.handle||'product',title:product.title},{dailyBudget:choice.budgets[style],merchantId:await merchantCenterId(),feedLabel:w.context.feedLabel,itemIds,countries:choice.countries,combinedCreativeGroup:true,productDestination:product.url,productTitle:product.title,adCopy:r.copy,imageAssets:{logo,square:photos.filter(p=>p.shape==='square').map(p=>p.resourceName),landscape:photos.filter(p=>p.shape==='landscape').map(p=>p.resourceName),portrait:photos.filter(p=>p.shape==='portrait').map(p=>p.resourceName)}});
-      lane=built.ops;const target=lane.find(o=>o.assetGroupOperation).assetGroupOperation.create.resourceName;videoRefs.forEach(asset=>lane.push({assetGroupAssetOperation:{create:{assetGroup:target,asset,fieldType:'YOUTUBE_VIDEO'}}}));lane.find(o=>o.campaignOperation).campaignOperation.create.name=name;
-    }else lane=routing.displayOps({customerId:CID,style,name,dailyBudget:choice.budgets[style],countries:choice.countries,destination:product.url,images:style==='fixed_display'?fixed:photos,copy:r.copy,logo,videos:videoRefs});
+      // Same first-party audience signal as the opportunity route; a signal guides learning and never blocks the plan.
+      let signal={};try{const configured=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||'').trim()||(ENV.GADS_PMAX_AUDIENCE_ID?`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,'')}`:null);signal=(configured&&await validatePmaxAudienceResource(configured))||{};if(!signal.resource)signal=(await discoverPmaxAudienceResource())||{};}catch(_){signal={};}audienceSignal=signal.resource?signal.name||'First-party audience':null;
+      const built=buildPmaxCampaignOps({handle:w.context.handle||'product',title:product.title},{dailyBudget:choice.budgets[style],merchantId:await merchantCenterId(),feedLabel:w.context.feedLabel,itemIds,countries:choice.countries,combinedCreativeGroup:true,productDestination:product.url,productTitle:product.title,adCopy:r.copy,audienceResource:signal.resource||null,imageAssets:{logo,square:photos.filter(p=>p.shape==='square').map(p=>p.resourceName),landscape:photos.filter(p=>p.shape==='landscape').map(p=>p.resourceName),portrait:photos.filter(p=>p.shape==='portrait').map(p=>p.resourceName)}});
+      lane=built.ops;const target=lane.find(o=>o.assetGroupOperation).assetGroupOperation.create.resourceName;videoRefs.forEach(asset=>lane.push({assetGroupAssetOperation:{create:{assetGroup:target,asset,fieldType:'YOUTUBE_VIDEO'}}}));if(wideLogo)lane.push({assetGroupAssetOperation:{create:{assetGroup:target,asset:wideLogo,fieldType:'LANDSCAPE_LOGO'}}});lane.find(o=>o.campaignOperation).campaignOperation.create.name=name;
+    }else lane=routing.displayOps({customerId:CID,style,name,dailyBudget:choice.budgets[style],countries:choice.countries,destination:product.url,images:style==='fixed_display'?fixed:photos,copy:r.copy,logo,wideLogo,videos:videoRefs});
     // Keep temporary IDs disjoint between campaign lanes while sharing image assets.
     const offset=(choice.styles.indexOf(style)+1)*10000;
     lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
     const days=Number(choice.durations?.[style]??w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
     Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate),{finalUrlSuffix:'utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&bt_pipeline='+style+'&bt_design='+identity+(style==='pmax'?'':'&bt_group={adgroupid}&bt_ad={creative}')});
-    ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
+    // The plan states the bidding exactly as sent to Google, including any target ROAS.
+    const bid=lane.find(o=>o.campaignOperation).campaignOperation.create,bidding=bid.maximizeConversionValue?'Maximize conversion value'+(bid.maximizeConversionValue.targetRoas?' · target ROAS '+Math.round(bid.maximizeConversionValue.targetRoas*100)+'%':''):bid.maximizeConversions?'Maximize conversions':'';
+    ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],bidding,...(style==='pmax'?{audienceSignal}:{}),formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
   }
   const payload={mutateOperations:ops,generatedAssets,meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles}},hash=creativeHash(payload);
-  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,videoStatus:videoLinks.length?'Matching reviewed YouTube videos are included.':'No matching completed YouTube upload is available for this design. Video placements are not ready; complete and publish its animation before enabling the campaign.',status:'PAUSED',destination:product.url,note:'Each selected style creates a separate paused campaign with its own budget. Existing campaigns are unchanged. Videos require their own completed upload and attachment review.'}};
+  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,videoStatus:videoLinks.length?'Your reviewed YouTube video is included.':choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. Publish this design’s animation first to use your own.':choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note:'Existing campaigns are unchanged.'}};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
   if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');
