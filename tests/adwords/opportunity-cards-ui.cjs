@@ -92,5 +92,11 @@ await test('a draft being written survives a re-render: its card stays busy and 
   assert.match(toasts.pop(),/Fewer than four/,'the outcome is shown although its card was redrawn');assert(calls.includes('render'),'the card is drawn again with the outcome');
   assert.match(ctx.oppCard(o,0,100),/>Create review draft</,'once the attempt ends the card can be used again');
   delete nodes.oppCards;delete ctx.generateAndWait;});
+await test('a demand-capped plan budget is the budget the draft gets: the slider can hold it',()=>{today='2026-09-29';
+  // Thin demand on cheap keywords: the engine sizes the budget down to 1 a day. A slider floor above it would raise it at launch.
+  const cheap=Object.assign(research(40),{cpc:{low:0.3,high:0.9}});cheap.keywords.forEach(k=>{k.low=0.3;k.high=0.9;});
+  const o=served(cheap);assert.equal(o.recommendedDailyBudget,1,'engine budget');ctx.OPPS=[o];delete ctx.OPP_UI[ctx.oppKey(0)];
+  const m=/<input type="range" class="opBud" data-i="0" min="([\d.]+)" max="([\d.]+)" value="([\d.]+)"/.exec(ctx.oppCard(o,0,100));assert(m,'budget slider');
+  assert(+m[1]<=+m[3]&&+m[3]<=+m[2],'min '+m[1]+' ≤ value '+m[3]+' ≤ max '+m[2]);assert.equal(+m[3],1);});
 console.log(`${passed} opportunity card checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
