@@ -104,6 +104,11 @@ async function runViewport(browser, vp, base, known, canShoot) {
   const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, isMobile: vp.phone, hasTouch: vp.phone, locale: 'en-CA', timezoneId: 'UTC', serviceWorkers: 'block', reducedMotion: 'no-preference' });
   const state = { tab: 'gate', inflight: 0, lastApi: Date.now(), errors: [], lastAction: '(page load)', activeOverlays: new Set(), crawledDialogs: new Set() };
   await context.addInitScript(() => {
+    // CSS animations and transitions as they start, so a short entrance animation that has already
+    // finished by the time a dialog is inspected still counts.
+    window.__hAnims = [];
+    const logAnim = e => { if (e.target && e.target.nodeType === 1) { window.__hAnims.push({ t: performance.now(), el: e.target, type: e.type }); if (window.__hAnims.length > 400) window.__hAnims.splice(0, 200); } };
+    addEventListener('animationstart', logAnim, true); addEventListener('transitionrun', logAnim, true);
     window.__hShifts = [];
     try { new PerformanceObserver(list => { for (const e of list.getEntries()) window.__hShifts.push({ t: e.startTime, v: e.value, src: (e.sources || []).map(s => { const n = s.node; if (!n || n.nodeType !== 1) return n && n.parentElement ? n.parentElement.tagName.toLowerCase() : '?'; return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.classList.length ? '.' + [...n.classList].slice(0, 2).join('.') : ''); }) }); }).observe({ type: 'layout-shift', buffered: true }); } catch (e) {}
   });
@@ -146,8 +151,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
   page.on('pageerror', e => { const top = String(e.stack || '').split('\n').slice(0, 3).join(' | ').replace(new RegExp(base, 'g'), ''); add('page error', vp.name, state.tab, { message: String(e.message).slice(0, 240), stack: top.slice(0, 300), after: state.lastAction }, String(e.message).replace(/\d+/g, '#')); });
   page.on('dialog', async d => { const msg = d.message(); add('native ' + d.type() + '()', vp.name, state.tab, { message: msg.slice(0, 160), after: state.lastAction }, d.type() + '|' + msg.slice(0, 60)); state.nativeDialogs = (state.nativeDialogs || 0) + 1;
     for (const m of msg.matchAll(/(US|CA|C)?\$\s?([\d,]+(?:\.\d+)?)/g)) { const val = Number(m[2].replace(/,/g, '')); if (!m[1] && !/\b(CAD|USD)\b/.test(msg) && fx.cadTracers.some(t => Math.abs(t - val) < 0.006)) add('CAD amount shown with bare $', vp.name, state.tab, { amount: m[0], where: 'native ' + d.type() + '()', text: msg.replace(/\s+/g, ' ').slice(0, 110), after: state.lastAction }, 'native|' + msg.slice(0, 30).replace(/\d/g, '#')); }
-    // A budget prompt gets a CAD tracer amount far enough from the current budget to reach the large-change confirm.
-    const answer = d.type() === 'prompt' ? (/budget/i.test(msg) ? '17.47' : (d.defaultValue() || '12')) : undefined;
+    const answer = d.type() === 'prompt' ? (d.defaultValue() || '12') : undefined;
     try { if (d.type() === 'confirm' && /delete|remove|clear|permanent|discard/i.test(msg)) await d.dismiss(); else await d.accept(answer); } catch (e) {} });
   page.on('requestfailed', r => { const u = r.url(); if (u.startsWith(base) && !/\/\.netlify\//.test(u)) add('request failed', vp.name, state.tab, { url: u.replace(base, ''), error: r.failure() && r.failure().errorText }, u); });
 
@@ -222,7 +226,10 @@ async function runViewport(browser, vp, base, known, canShoot) {
     return page.evaluate(id => {
       document.querySelectorAll('[data-harness-region]').forEach(n => n.removeAttribute('data-harness-region'));
       const el = document.querySelector('[data-harness-id="' + id + '"]'); if (!el) return null;
-      const ctl = el.getAttribute('aria-controls'), reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      const ctl = el.getAttribute('aria-controls');
+      let reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      // Height applies to blocks: an inline region (an inline <details>) is judged by the block holding it.
+      while (reg && reg.parentElement && /^(inline|contents)$/.test(getComputedStyle(reg).display)) reg = reg.parentElement;
       if (!reg) return null; reg.setAttribute('data-harness-region', '1');
       return { h: reg.getBoundingClientRect().height, doc: document.documentElement.scrollHeight };
     }, id).catch(() => null);
@@ -256,7 +263,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       return;
     }
     if (/sign out/i.test(c.text) || c.type === 'file' || c.type === 'password') { C.skipped++; return; }
-    const t0 = await page.evaluate(() => performance.now());
+    const t0 = await page.evaluate(() => performance.now()); state.actionT0 = t0;
     const before = c.chart || c.tag === 'select' || c.tag === 'input' || c.inPopover ? null : await markRegion(c.id);
     try {
       if (c.tag === 'select') {
@@ -299,6 +306,20 @@ async function runViewport(browser, vp, base, known, canShoot) {
     else if (motion.jumped) add('expands/collapses with no transition (jumps)', vp.name, tab, { control: c.text, tag: c.tag, heightChange: motion.delta, pageHeightChange: motion.docDelta, shift: Math.round(motion.shift * 1000) / 1000 }, c.family);
     else if (motion.shift > 0.05 && !motion.animated.length) add('content below shifts with no transition', vp.name, tab, { control: c.text, tag: c.tag, shift: Math.round(motion.shift * 1000) / 1000, moved: motion.sources }, c.family);
     await afterAction(tab, scopes, c, depth);
+    if (await page.locator('.cmdEdit[data-kind="budget"] #cmdEditIn').count().catch(() => 0)) await budgetEdit(tab, scopes, c, depth);
+  }
+
+  // A campaign's budget editor, once open, gets a CAD tracer far enough from the budget to reach its
+  // large-change confirmation; it is saved and the change applied before another control replaces it.
+  async function budgetEdit(tab, scopes, c, depth) {
+    const box = page.locator('.cmdEdit[data-kind="budget"]'), press = l => vp.phone ? l.tap({ timeout: 3000 }) : l.click({ timeout: 3000 });
+    try {
+      state.lastAction = 'budget editor: 17.47, Save';
+      await box.locator('#cmdEditIn').fill('17.47', { timeout: 2500 }); await press(box.locator('[data-k="save"]'));
+      await afterAction(tab, scopes, c, depth);
+      const apply = box.locator('[data-k="apply"]');
+      if (await apply.count()) { state.lastAction = 'budget editor: Apply anyway'; await press(apply); await afterAction(tab, scopes, c, depth); }
+    } catch (e) { add('control could not be operated', vp.name, tab, { control: 'budget editor', why: String(e.message || e).split('\n')[0].slice(0, 200) }, 'budget editor'); }
   }
 
   async function probeChartMark(tab, loc, c) {
@@ -348,7 +369,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
       const label = ov.kind + ' ' + ov.id + ' "' + ov.label + '"';
       const ovSel = ov.kind === 'dialog' ? ov.sel : ov.sel;
       // Entrance motion: does the overlay animate in, or pop?
-      const anim = await page.evaluate(s => { const el = document.querySelector(s); if (!el) return null; return el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length; }, ovSel).catch(() => null);
+      const anim = await page.evaluate(([s, t]) => {
+        const el = document.querySelector(s); if (!el) return null;
+        const live = el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length;
+        // Animations that started with this action (anywhere inside), or transitions on the overlay or its panel.
+        const started = (window.__hAnims || []).filter(x => x.t >= t - 5 && (x.type === 'animationstart' ? el.contains(x.el) : x.el === el || x.el.parentElement === el)).length;
+        return live + started;
+      }, [ovSel, state.actionT0 || 0]).catch(() => null);
       if (anim === 0 && ov.kind !== 'popover') add('dialog appears without transition', vp.name, tab, { overlay: label, opener: state.lastAction }, label);
       // Focus must move into a dialog when it opens (checked before the crawl moves it).
       const focus = await page.evaluate(s => { const el = document.querySelector(s); return !!(el && el.contains(document.activeElement)); }, ovSel).catch(() => false);
