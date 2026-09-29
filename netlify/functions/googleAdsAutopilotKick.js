@@ -137,7 +137,7 @@ async function handleAction(body) {
   const f = fb();
   const a = body.action;
   const ctrl = await E.control();
-  if (a === "dashboard") return await E.dashboard();
+  if (a === "dashboard") return await E.dashboard(body); // body.activity pages the activity feed by its dates
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
   if (["adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignSubmission", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }

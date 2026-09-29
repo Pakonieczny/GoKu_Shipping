@@ -3219,6 +3219,14 @@ async function _reportRates(rows, nativeCurrency) {
   // in the account currency when any daily conversion rate is unavailable.
   return { rates, fxIncomplete, currency: fxIncomplete ? nativeCurrency : "USD", rate: d => { if (fxIncomplete || nativeCurrency === "USD") return 1; const rate = rates.get(d); if (!Number.isFinite(rate) || rate <= 0) throw new Error("Missing exchange rate for a reporting date."); return rate; } };
 }
+// A breakdown row on the campaign rows' terms (the group index uses the same shape): spend, clicks and
+// impressions are the same on both bases; conversions and value follow the ad-click or conversion date.
+// conversion is null when Google gave no conversion-date figures, never filled from the ad-click date.
+function _emptyReport(currency, cd) { const zero = () => ({ impressions: 0, clicks: 0, spend: 0, conversions: 0, value: 0 }); return { currency, click: zero(), conversion: cd ? zero() : null }; }
+function _addReport(report, m, rate) {
+  for (const [t, conv, value] of [[report.click, m.conversions, m.conversionsValue], [report.conversion, m.conversionsByConversionDate, m.conversionsValueByConversionDate]]) if (t) {
+    t.impressions += Number(m.impressions || 0); t.clicks += Number(m.clicks || 0); t.spend += fromMicros(m.costMicros) * rate; t.conversions += Number(conv || 0); t.value += Number(value || 0) * rate; }
+}
 function _campaignOpportunityLane(c) {
   if (Object.values(DESIGN_STUDIO_TAGS).some(t => c.name === "BA · " + t)) return "studio";
   return c.channel === "SEARCH" ? "search" : c.channel === "PERFORMANCE_MAX" ? "product" : null;
@@ -7270,8 +7278,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
     catch (e) { coverage[name] = { ok: false, error: String(e.message || e).slice(0, 250) }; warnings.push(name + " could not be loaded."); return []; } };
 
   const productIdentityFields = "campaign.id, campaign.name, segments.product_title, segments.product_item_id, segments.product_merchant_id, segments.product_feed_label, segments.product_language, segments.product_channel, segments.product_country";
+  // Daily product rows (one query, no extra request) let each listing use the campaign rows' daily rates.
   const productQuery = async (name, purchaseOnly) => {
-    try { const data = await _gaqlBothBases(extra => `SELECT ${productIdentityFields}, metrics.conversions, metrics.conversions_value${extra}${purchaseOnly ? ", segments.conversion_action_category" : ", metrics.impressions, metrics.clicks, metrics.cost_micros"} FROM shopping_performance_view WHERE ${RANGE}${purchaseOnly ? " AND segments.conversion_action_category = 'PURCHASE'" : ""}`);
+    try { const data = await _gaqlBothBases(extra => `SELECT ${productIdentityFields}${purchaseOnly ? "" : ", segments.date"}, metrics.conversions, metrics.conversions_value${extra}${purchaseOnly ? ", segments.conversion_action_category" : ", metrics.impressions, metrics.clicks, metrics.cost_micros"} FROM shopping_performance_view WHERE ${RANGE}${purchaseOnly ? " AND segments.conversion_action_category = 'PURCHASE'" : ""}`);
       coverage[name] = { ok: true, rows: data.rows.length, cdAvailable: data.cd }; return data;
     } catch (e) { coverage[name] = { ok: false, error: String(e.message || e).slice(0, 250) }; warnings.push(name === "productPurchases" ? "Product purchase conversions could not be loaded; broader conversions are not labelled as purchases." : "Product performance could not be loaded."); return { rows: [], cd: false }; }
   };
@@ -7326,7 +7335,8 @@ async function dailyStats({ start, end, campaignId } = {}) {
 
   const byCamp = {};
   const totalsByDay = {}; days.forEach(d => totalsByDay[d] = zero());
-  const dailyRows = daily.rows || [], fx = await _reportRates(dailyRows, context.budgetCurrency), fxIncomplete = fx.fxIncomplete;
+  // One set of daily rates for the charts and the listing figures, so they are never on mixed currencies.
+  const dailyRows = daily.rows || [], fx = await _reportRates([...dailyRows, ...productData.rows], context.budgetCurrency), fxIncomplete = fx.fxIncomplete;
   if (fxIncomplete) warnings.push("All campaign monetary metrics use " + context.budgetCurrency + " because a daily exchange rate is unavailable.");
   if (!cdAvailable) warnings.push("Conversion-date metrics are unavailable. Click-date metrics remain available.");
   if (campaignId != null) byCamp[String(campaignId)] = { id: String(campaignId), series: {}, totals: zero() };
@@ -7381,6 +7391,8 @@ async function dailyStats({ start, end, campaignId } = {}) {
   }).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   const productPurchaseAvailable = !!coverage.productPurchases.ok, productCdAvailable = !!productData.cd;
+  // report: each listing on the campaign rows' terms (daily rates, both date bases), beside its native figures.
+  let productFx = coverage.products.ok && productData.rows.every(r => _dateOnly((r.segments || {}).date)) ? fx : null;
   const productMap = new Map();
   const ensureProduct = r => {
     const sg = r.segments || {}, cid = String((r.campaign || {}).id || ""), itemId = String(sg.productItemId || "");
@@ -7399,12 +7411,15 @@ async function dailyStats({ start, end, campaignId } = {}) {
       purchaseConversions: productPurchaseAvailable ? 0 : null, purchaseValue: productPurchaseAvailable ? 0 : null,
       purchaseConversionsCd: productPurchaseData.cd ? 0 : null, purchaseValueCd: productPurchaseData.cd ? 0 : null,
       currency: context.budgetCurrency, basis: "click", cdAvailable: productCdAvailable, purchaseCdAvailable: !!productPurchaseData.cd,
-      purchaseAvailable: productPurchaseAvailable, purchaseOnly: false, imageUrl: null, productUrl: null });
+      purchaseAvailable: productPurchaseAvailable, purchaseOnly: false, imageUrl: null, productUrl: null,
+      report: productFx ? _emptyReport(productFx.currency, productCdAvailable) : null });
     return productMap.get(key);
   };
   productData.rows.forEach(r => { const x = ensureProduct(r), m = r.metrics || {}, cv = _rowConv(m);
     x.impr += Number(m.impressions || 0); x.clicks += Number(m.clicks || 0); x.cost += fromMicros(m.costMicros); x.conv += cv.conv; x.value += cv.value;
     if (productCdAvailable) { x.convCd += cv.convCd; x.valueCd += cv.valueCd; } });
+  if (productFx) try { productData.rows.forEach(r => _addReport(ensureProduct(r).report, r.metrics || {}, productFx.rate(_dateOnly(r.segments.date)))); }
+    catch (e) { productFx = null; productMap.forEach(x => { x.report = null; }); warnings.push("Product figures could not be converted: " + e.message); }
   // Successful purchase attribution may exist without an impression/click in this
   // window (conversion delay). Such rows must survive the product table filter.
   if (coverage.products.ok) productPurchaseData.rows.forEach(r => { const x = ensureProduct(r), cv = _rowConv(r.metrics || {});
@@ -9261,8 +9276,28 @@ async function dismissGoogleRecommendation(resourceName, { ctrl } = {}) {
   return { ok: true, dismissed: resourceName };
 }
 
-async function dashboard() {
-  const f = fb(); const ctrl = await control();
+// The activity log for the dates the viewer chose, newest first, one page at a time. from/to are the
+// viewer's own day bounds in epoch milliseconds (null = open-ended); before is the last entry shown.
+const ACTIVITY_PAGE = 50;
+async function _activityPage(f, { from, to, before } = {}) {
+  const ms = v => v == null || v === "" ? null : Number(v), lo = ms(from), hi = ms(to);
+  if ([lo, hi].some(v => v != null && !(Number.isFinite(v) && v >= 0 && v < 8.64e15)) || (lo != null && hi != null && lo > hi)) throw new Error("Choose valid activity dates.");
+  if (before != null && !/^[A-Za-z0-9_-]{1,128}$/.test(String(before))) throw new Error("Invalid activity page.");
+  const col = f.db.collection(COL.ledger); let q = col;
+  if (lo != null) q = q.where("at", ">=", new Date(lo));
+  if (hi != null) q = q.where("at", "<=", new Date(hi));
+  q = q.orderBy("at", "desc");
+  if (before != null) { const last = await col.doc(String(before)).get(); if (!last.exists) throw new Error("The activity log changed. Reload it to see the latest entries."); q = q.startAfter(last); }
+  const docs = []; (await q.limit(ACTIVITY_PAGE + 1).get()).forEach(d => docs.push(d));
+  const page = docs.slice(0, ACTIVITY_PAGE);
+  return { from: lo, to: hi, pageSize: ACTIVITY_PAGE, next: docs.length > ACTIVITY_PAGE ? page[page.length - 1].id : null,
+    entries: page.map(d => { const x = d.data(); return { ...x, id: d.id, at: x.at && x.at.toMillis ? x.at.toMillis() : null }; }) };
+}
+async function dashboard(input = {}) {
+  const f = fb(), activity = input && input.activity && typeof input.activity === "object" ? input.activity : null;
+  // "Show more" and a new feed range read only the log, not the whole dashboard.
+  if (input && input.activityOnly) return { ok: true, activity: f ? await _activityPage(f, activity || {}) : { from: null, to: null, next: null, entries: [] } };
+  const ctrl = await control();
   const out = {
     control: ctrl, currency: CURRENCY, budgetCurrency:ctrl.budgetCurrency,
     collections: COLLECTIONS, occasions: OCCASIONS, terms: BRAND.termExclusions,
@@ -9284,7 +9319,9 @@ async function dashboard() {
     const st = await f.db.collection(COL.approvals).where("status", "in", ["APPROVED","APPLYING","APPLY_UNKNOWN"]).limit(25).get();
     st.forEach(d => { const x = d.data(); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, status:x.status,lastError:x.lastError||null,creative:x.creative||null,vetted: x.vetted, payload: x.payload }); });
   } catch (e) {}
-  try {
+  // The console's feed asks for its dates; without them (the plain Kick console) the latest 20 entries.
+  if (activity) { try { out.activity = await _activityPage(f, activity); } catch (e) { out.activity = { error: String(e.message || e) }; } }
+  else try {
     const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(20).get();
     lg.forEach(d => { const x = d.data(); out.recentLedger.push({ ...x, at: x.at && x.at.toMillis ? x.at.toMillis() : null }); });
   } catch (e) {}
