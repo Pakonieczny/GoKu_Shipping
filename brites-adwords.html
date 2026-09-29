@@ -2065,9 +2065,13 @@ function pbComparisonHtml(comparisons){if(!comparisons.length)return '';return '
 /* ---- Fix History: applied remedies, verification & before/after ---- */
 var REMHIST=[];
 function remKey(cid,rm){return String(cid)+"|"+String((rm&&rm.issue)||"").slice(0,80);}
-function histFor(cid,rm){var k=remKey(cid,rm);for(var i=0;i<REMHIST.length;i++){var h=REMHIST[i];if(remKey(h.campaignId,{issue:h.issue})===k)return h;}return null;}
+// A dry run changed nothing, so its fix stays on offer; an ad rewrite already waiting in Approvals is not offered twice.
+function histFor(cid,rm){var k=remKey(cid,rm),ex=(rm&&rm.executable)||{},ad=ex.kind==="rewriteAds"&&ex.adId?String(ex.adId):"";
+  for(var i=0;i<REMHIST.length;i++){var h=REMHIST[i];if(h.dryRun)continue;if(remKey(h.campaignId,{issue:h.issue})===k)return h;
+    if(ad&&h.queued&&String(h.campaignId)===String(cid)&&String(h.adId||"")===ad&&["APPLIED","REJECTED","MISSING"].indexOf(h.approvalState)<0)return h;}
+  return null;}
 var _reviewTimer=null;
-function pendingReviewAds(){return REMHIST.filter(function(h){return h.kind==="rewriteAds"&&!h.dryRun&&!h.approvedAt&&h.approvalStatus!=="DISAPPROVED"&&h.adId&&h.at&&(Date.now()-h.at)<48*3600*1000;}).map(function(h){return h.adId;});}
+function pendingReviewAds(){return REMHIST.filter(function(h){return h.kind==="rewriteAds"&&!h.dryRun&&!h.queued&&!h.approvedAt&&h.approvalStatus!=="DISAPPROVED"&&h.adId&&h.at&&(Date.now()-h.at)<48*3600*1000;}).map(function(h){return h.adId;});}
 function ensureReviewLoop(){var ids=Array.from(new Set(pendingReviewAds()));
   if(!ids.length){if(_reviewTimer){clearInterval(_reviewTimer);_reviewTimer=null;}return;}
   if(_reviewTimer)return;
@@ -2079,36 +2083,42 @@ var _remHash="";
 function loadRemedyHistory(cb){api("remedyHistory",{limit:120}).then(function(r){REMHIST=(r&&r.items)||[];
   // only touch the DOM when something the UI shows actually changed —
   // the 60s review poller must not cause any visual churn otherwise
-  var h="";REMHIST.forEach(function(x){h+=(x.id||"")+(x.reviewStatus||"")+(x.approvalStatus||"")+(x.approvedAt||"")+(x.verified===true?"1":x.verified===false?"0":"-");});
+  var h="";REMHIST.forEach(function(x){h+=(x.id||"")+(x.reviewStatus||"")+(x.approvalStatus||"")+(x.approvalState||"")+(x.approvedAt||"")+(x.verified===true?"1":x.verified===false?"0":"-");});
   var changed=h!==_remHash;_remHash=h;
   if(cb)cb();
   if(DIAG&&changed)renderDiag();
   ensureReviewLoop();}).catch(function(){if(cb)cb();});}
-function reviewPill(h){if(!h||h.kind!=="rewriteAds"||h.dryRun)return "";
+function reviewPill(h){if(!h||h.kind!=="rewriteAds"||h.dryRun||h.queued)return "";
   if(h.approvedAt)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 APPROVED &amp; SERVING \u00b7 '+timeago(h.approvedAt)+' ago</span>';
   if(h.approvalStatus==="DISAPPROVED")return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u2715 DISAPPROVED IN POLICY REVIEW</span>';
   return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">\u23f3 IN POLICY REVIEW \u00b7 auto-checking</span>';}
-function verifyBadge(h){if(h.dryRun)return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">DRY-RUN</span>';
+function verifyBadge(h){if(h.queued)return "";if(h.dryRun)return '<span style="font-size:10px;font-weight:700;color:#b26a00;border:1px solid #b26a00;border-radius:8px;padding:1px 7px">DRY-RUN</span>';
   if(h.verified===true)return '<span style="font-size:10px;font-weight:700;color:#2e7d32;border:1px solid #2e7d32;border-radius:8px;padding:1px 7px">\u2713 VERIFIED IN GOOGLE ADS</span>';
   if(h.verified===false)return '<span style="font-size:10px;font-weight:700;color:#b3402a;border:1px solid #b3402a;border-radius:8px;padding:1px 7px">\u26a0 NOT CONFIRMED</span>';
   return '<span class="muted" style="font-size:10px">verification pending</span>';}
 
 /* ---- Ad Doctor: Google Ads diagnostics + AI specialist verdicts ---- */
-var DIAG=null,_diagBusy=false,diagOpen={},_diagOpenInit=false;
-function diagStale(d){return !d||!d.generatedAt||(Date.now()-d.generatedAt)>3*3600*1000;}
-function loadDiagnostics(){renderDiag();loadRemedyHistory(function(){renderDiag();});api("diagnostics").then(function(d){
+var DIAG=null,_diagBusy=false,diagOpen={},_diagOpenInit=false,DIAG_ONE={},DIAG_FAIL="",_diagResumed=false;
+// A check older than a week, or taken before the campaign's status changed, is kept for reference only.
+var DIAG_MAX_AGE=7*86400000;
+function diagCheckedAt(c,D){return ((c&&c.observationWindows)||{}).capturedAt||(D&&(D.generatedAt||D.updatedAt))||0;}
+function diagLive(id){if(!DASH||!(DASH.campaignInventory||{}).ok)return null;return (DASH.lastMetrics||[]).filter(function(m){return String(m.id)===String(id);})[0]||null;}
+function diagMoney(n){return money(n)+(DASH&&DASH.budgetCurrency?" "+DASH.budgetCurrency:"");}
+// The worker keeps running through a page reload, so the page resumes watching the same run.
+function diagSaveRuns(){try{sessionStorage.setItem("baDiagRuns",JSON.stringify({all:window.__diagRun||null,one:DIAG_ONE}));}catch(e){}}
+function diagResumeRuns(){if(_diagResumed)return;_diagResumed=true;var s=null;try{s=JSON.parse(sessionStorage.getItem("baDiagRuns")||"null");}catch(e){}
+  var fresh=function(r){return r&&r.runId&&Date.now()-r.t0<900000;};if(!s)return;
+  if(fresh(s.all))runDiag(true,null,s.all);
+  Object.keys(s.one||{}).forEach(function(id){if(fresh(s.one[id]))runDiagOne(id,s.one[id]);});}
+function loadDiagnostics(){diagResumeRuns();renderDiag();loadRemedyHistory(function(){renderDiag();});api("diagnostics").then(function(d){
   if(d&&!d.empty){DIAG=d;}
   renderDiag();
   // Diagnosis runs ONLY when a Diagnose button is pressed — never automatically.
 }).catch(function(){renderDiag();});}
 // User-initiated runs poll the per-run STATUS doc the worker writes, so a
 // server-side failure surfaces its real error instead of a blind timeout.
-function diagFailBanner(msg){var db=document.getElementById("diagBody");if(!db)return;
-  var old=db.querySelector(".diagErr");if(old)old.remove();
-  var d=document.createElement("div");d.className="diagErr";
-  d.style.cssText="padding:10px 12px;border:1px solid #f0c8bc;border-radius:10px;background:#fdeee9;color:#b3402a;font-size:12.5px;margin-bottom:12px";
-  d.innerHTML='<b>Last diagnosis failed:</b> '+esc(msg)+' <span style="opacity:.75">\u00b7 fix the cause and hit Diagnose again</span>';
-  db.insertBefore(d,db.firstChild);}
+// The failure stays on the card until the next run starts.
+function diagFailBanner(msg){DIAG_FAIL=String(msg||"unknown failure");renderDiag();}
 function pollDiagRun(runId,onDone,onFail,onTick){var t0=Date.now();var lastSeen=null;
   (function tick(){
     if(Date.now()-t0>900000){
@@ -2134,189 +2144,257 @@ function pollDiagnostics(prevGen,onDone,onFail){var t0=Date.now();
       else setTimeout(tick,3000);
     }).catch(function(){setTimeout(tick,4000);});
   })();}
-var _diagTick=null;
-function runDiag(silent,campaignId){if(_diagBusy)return;_diagBusy=true;
-  var prev=(DIAG&&DIAG.generatedAt)||0;var _t0=Date.now();
+var _diagTick=null,_oneTick=null;
+function diagRunText(){var r=window.__diagRun;return "Reading every campaign from Google Ads, then the AI review · "+(window.__diagProg||"")+(r?Math.round((Date.now()-r.t0)/1000)+"s":"");}
+function runDiag(silent,campaignId,resume){if(_diagBusy)return;_diagBusy=true;DIAG_FAIL="";
+  var _t0=resume?resume.t0:Date.now(),runId=resume?resume.runId:String(Date.now());
+  window.__diagRun={runId:runId,t0:_t0};window.__diagProg="";diagSaveRuns();
   var b=document.getElementById("diagRun");
-  if(b&&!campaignId){b.disabled=true;b.textContent="Diagnosing\u2026";
-    if(_diagTick)clearInterval(_diagTick);
-    _diagTick=setInterval(function(){var bb=document.getElementById("diagRun");
-      if(bb&&bb.disabled)bb.textContent="Diagnosing\u2026 "+(window.__diagProg||"")+Math.round((Date.now()-_t0)/1000)+"s";},1000);}
-  window.__diagProg="";
-  if(!silent&&!DIAG){var db0=document.getElementById("diagBody");if(db0)db0.innerHTML='<div class="empty" style="height:90px"><span class="spin lg gold"></span><div style="font-size:12.5px">Pulling diagnostics from Google Ads + AI review\u2026 30\u201390s</div></div>';}
-  var finish=function(){_diagBusy=false;if(_diagTick){clearInterval(_diagTick);_diagTick=null;}var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose all";}};
-  var runId=String(Date.now());
+  if(b){b.disabled=true;b.textContent="Diagnosing…";}
+  if(_diagTick)clearInterval(_diagTick);
+  _diagTick=setInterval(function(){var bb=document.getElementById("diagRun"),tx=document.getElementById("diagRunText");
+    if(bb&&bb.disabled)bb.textContent="Diagnosing… "+(window.__diagProg||"")+Math.round((Date.now()-_t0)/1000)+"s";
+    if(tx)tx.textContent=diagRunText();},1000);
+  var finish=function(){_diagBusy=false;window.__diagRun=null;diagSaveRuns();if(_diagTick){clearInterval(_diagTick);_diagTick=null;}var b2=document.getElementById("diagRun");if(b2){b2.disabled=false;b2.textContent="Diagnose all";}renderDiag();};
+  var fail=function(msg){finish();diagFailBanner(msg);toast("Diagnosis failed — details in the Ad Doctor card");};
+  var track=function(){pollDiagRun(runId,finish,fail,function(s){if(s.done!=null)window.__diagProg=s.done+"/"+s.total+" campaigns · ";});};
+  renderDiag();
+  if(resume){track();return;}
   api("runDiagnostics",campaignId?{campaignId:campaignId,runId:runId}:{runId:runId}).then(function(d){
-    if(d&&d.queued){pollDiagRun(runId,finish,function(msg){finish();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");},function(s){if(s.done!=null)window.__diagProg=s.done+"/"+s.total+" \u00b7 ";});}
-    else if(d&&!d.error&&d.campaigns){DIAG=d;renderDiag();finish();}
-    else{finish();var db=document.getElementById("diagBody");if(db&&d&&d.error)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">Diagnostics failed: '+esc(d.error)+'</div></div>';}
-  }).catch(function(e){finish();var db=document.getElementById("diagBody");if(db)db.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px;color:var(--clay)">'+esc(e.message||e)+'</div></div>';});}
+    if(d&&d.queued)track();
+    else if(d&&!d.error&&d.campaigns){DIAG=d;finish();}
+    else fail((d&&d.error)||"The diagnosis could not start.");
+  }).catch(function(e){fail(e.message||String(e));});}
+// One campaign at a time: the button keeps its running state across re-renders and page reloads.
+function dgOneBtn(id){var r=DIAG_ONE[id];
+  if(r)return '<button class="btn ghost sm dg-one is-busy" data-id="'+esc(id)+'" disabled style="padding:3px 10px;font-size:11px"><span class="spin bspin"></span>Diagnosing… '+Math.round((Date.now()-r.t0)/1000)+'s</button>';
+  return '<button class="btn ghost sm dg-one" data-id="'+esc(id)+'"'+(_diagBusy?' disabled title="Diagnose all is running"':'')+' style="padding:3px 10px;font-size:11px">Diagnose</button>';}
+function diagTickOne(){if(_oneTick)return;_oneTick=setInterval(function(){var ids=Object.keys(DIAG_ONE);if(!ids.length){clearInterval(_oneTick);_oneTick=null;return;}
+  ids.forEach(function(id){var b=document.querySelector('.dg-one[data-id="'+id+'"]');if(b)b.innerHTML='<span class="spin bspin"></span>Diagnosing… '+Math.round((Date.now()-DIAG_ONE[id].t0)/1000)+'s';});},1000);}
+function runDiagOne(id,resume){if(DIAG_ONE[id]||_diagBusy)return;DIAG_FAIL="";
+  var run=resume||{runId:String(Date.now())+"-"+id,t0:Date.now()};DIAG_ONE[id]=run;diagSaveRuns();diagOpen[id]=true;renderDiag();diagTickOne();
+  var done=function(){delete DIAG_ONE[id];diagSaveRuns();renderDiag();};
+  var fail=function(msg){delete DIAG_ONE[id];diagSaveRuns();diagFailBanner(msg);toast("Diagnosis failed — details in the Ad Doctor card");};
+  if(resume){pollDiagRun(run.runId,done,fail);return;}
+  api("runDiagnostics",{campaignId:id,runId:run.runId}).then(function(d){
+    if(d&&d.queued)pollDiagRun(run.runId,done,fail);
+    else if(d&&!d.error&&d.campaigns){DIAG=d;done();}
+    else fail((d&&d.error)||"The diagnosis could not start.");
+  }).catch(function(e){fail(e.message||String(e));});}
 function sevInfo(sv){return sv==="critical"?["#b3402a","CRITICAL"]:sv==="attention"?["#b26a00","ATTENTION"]:["#2e7d32","HEALTHY"];}
-function verdictTag(v){var m={agree:["Agrees with Google","#2e7d32"],partial:["Partially agrees","#b26a00"],disagree:["Disagrees with Google","#b3402a"]};var x=m[v]||["\u2014","var(--ink-45)"];return '<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:'+x[1]+';border:1px solid '+x[1]+';border-radius:9px;padding:1px 8px">'+x[0]+'</span>';}
+function verdictTag(v){var m={agree:["Agrees with Google","#2e7d32"],partial:["Partially agrees","#b26a00"],disagree:["Disagrees with Google","#b3402a"]};var x=m[v];if(!x)return "";return '<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:'+x[1]+';border:1px solid '+x[1]+';border-radius:9px;padding:1px 8px">'+x[0]+'</span>';}
 function diagChip(label,val,warn){if(val==null||val==="")return "";return '<span style="font-size:11px;padding:2px 9px;border-radius:10px;background:'+(warn?"#fdeee9":"var(--paper-2)")+';color:'+(warn?"#b3402a":"var(--ink-70)")+';border:1px solid '+(warn?"#f0c8bc":"var(--line)")+'">'+esc(label)+" "+esc(String(val))+"</span>";}
 function worstStrength(m){var order=["POOR","AVERAGE","GOOD","EXCELLENT"];for(var i=0;i<order.length;i++){if(m&&m[order[i]])return order[i].toLowerCase()+" ("+m[order[i]]+")";}return null;}
+var DIAG_STATUS={ELIGIBLE:"Eligible",LEARNING:"Learning",LIMITED:"Limited",MISCONFIGURED:"Misconfigured",NOT_ELIGIBLE:"Not eligible",PAUSED:"Paused",PENDING:"Pending",ENDED:"Ended",REMOVED:"Removed"};
+var DIAG_REC={CAMPAIGN_BUDGET:"Raise budget",FORECASTING_CAMPAIGN_BUDGET:"Raise budget before forecast demand",MARGINAL_ROI_CAMPAIGN_BUDGET:"Raise budget for predicted return",MOVE_UNUSED_BUDGET:"Move unused budget",
+  KEYWORD:"Add keywords",KEYWORD_MATCH_TYPE:"Broaden keyword match types",USE_BROAD_MATCH_KEYWORD:"Add broad match keywords",RESPONSIVE_SEARCH_AD:"Add a responsive search ad",RESPONSIVE_SEARCH_AD_ASSET:"Add headlines or descriptions",
+  RESPONSIVE_SEARCH_AD_IMPROVE_AD_STRENGTH:"Improve ad strength",IMPROVE_PERFORMANCE_MAX_AD_STRENGTH:"Improve asset group strength",SITELINK_ASSET:"Add sitelinks",CALLOUT_ASSET:"Add callouts",CALL_ASSET:"Add a call asset",
+  MAXIMIZE_CONVERSIONS_OPT_IN:"Switch to Maximize conversions",MAXIMIZE_CONVERSION_VALUE_OPT_IN:"Switch to Maximize conversion value",MAXIMIZE_CLICKS_OPT_IN:"Switch to Maximize clicks",TARGET_ROAS_OPT_IN:"Bid to a target ROAS",
+  TARGET_CPA_OPT_IN:"Bid to a target CPA",SET_TARGET_ROAS:"Set a target ROAS",FORECASTING_SET_TARGET_ROAS:"Set a target ROAS",SET_TARGET_CPA:"Set a target CPA",FORECASTING_SET_TARGET_CPA:"Set a target CPA",LOWER_TARGET_ROAS:"Lower target ROAS",
+  RAISE_TARGET_CPA:"Raise target CPA",RAISE_TARGET_CPA_BID_TOO_LOW:"Raise target CPA",SEARCH_PARTNERS_OPT_IN:"Show ads on search partners",DISPLAY_EXPANSION_OPT_IN:"Turn on Display expansion",PERFORMANCE_MAX_OPT_IN:"Try Performance Max",
+  PERFORMANCE_MAX_FINAL_URL_OPT_IN:"Turn on Final URL expansion",DYNAMIC_IMAGE_EXTENSION_OPT_IN:"Turn on dynamic images",IMPROVE_GOOGLE_TAG_COVERAGE:"Add the Google tag to more pages",OPTIMIZE_AD_ROTATION:"Optimize ad rotation"};
+function diagRecName(t){t=String(t||"");if(!t||t==="UNKNOWN"||t==="UNSPECIFIED")return "";return DIAG_REC[t]||t.charAt(0)+t.slice(1).toLowerCase().replace(/_/g," ");}
+function diagServing(c){var st=DIAG_STATUS[c.primaryStatus]||"",why=(c.reasonsText||[]).filter(function(r){return r&&!/^(unknown|unspecified)$/i.test(r)&&String(r).toLowerCase()!==st.toLowerCase();});
+  if(!st&&!why.length)return "";return '<div style="font-size:12px;color:var(--ink-70);margin-top:6px"><b>Google status:</b> '+esc(st||"Not reported")+(why.length?" · "+esc(why.join(", ")):"")+'</div>';}
+// A queued ad rewrite changes nothing until its Approvals draft is published.
+function queuedTag(h){var s=h.approvalState||"PENDING";
+  if(s==="APPLIED")return ["PUBLISHED","#2e7d32","Approved and published from Approvals."];
+  if(s==="REJECTED"||s==="MISSING")return ["NOT APPLIED","var(--ink-45)","The Approvals draft was "+(s==="REJECTED"?"rejected":"removed")+"; the ad was not changed."];
+  return ["IN APPROVALS","#b26a00","Waiting in Approvals. The live ad changes only after you approve the draft there."];}
+function remedyParams(h){if(!h)return "";var ex=h.executable||{};
+  if(ex.kind==="addNegatives")return "Added "+(ex.keywords||[]).length+" negative keywords: "+(ex.keywords||[]).join(", ");
+  if(ex.kind==="pauseKeywords")return "Paused: "+((ex.keywords||[]).map(function(k){return k.text||k;}).join(", "));
+  if(ex.kind==="addKeywords")return "Added keywords: "+((ex.keywords||[]).map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "));
+  if(ex.kind==="rewriteAds"){var p=h&&h.prunedLow;var pr=(p&&((p.headlines||[]).length+(p.descriptions||[]).length))?" · pruned LOW-rated: "+((p.headlines||[]).concat(p.descriptions||[]).join(" | ")):"";
+    return (h.queued?"New copy for this ad — headlines: ":"Appended to RSA — headlines: ")+((ex.headlines||[]).join(" | "))+((ex.descriptions||[]).length?" · descriptions: "+(ex.descriptions||[]).join(" | "):"")+pr;}
+  if(ex.kind==="setBudget")return "Budget set to "+diagMoney(ex.budget)+"/day";
+  return "";}
+function pastLine(tag,tagColor,title,h,when,what,why){
+  return '<div style="padding:9px 2px;border-top:1px dashed var(--line)">'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.09em;color:'+tagColor+'">'+esc(tag)+'</span><b style="font-size:12.5px">'+esc(title)+'</b>'+(h?verifyBadge(h):"")+(h?reviewPill(h):"")+'<span class="muted" style="font-size:11px">'+esc(when||"")+'</span></div>'+
+    (what?'<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">'+esc(what)+'</div>':"")+
+    (why?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+esc(why)+'</div>':"")+'</div>';}
+function diagDropRec(rn){if(!DIAG)return;var keep=function(r){return !r||r.resourceName!==rn;};
+  (DIAG.campaigns||[]).forEach(function(c){if(c.recommendations)c.recommendations=c.recommendations.filter(keep);});
+  if(DIAG.accountRecommendations)DIAG.accountRecommendations=DIAG.accountRecommendations.filter(keep);}
 function renderDiag(){var body=document.getElementById("diagBody");if(!body)return;
   var D=DIAG||{generatedAt:0,campaigns:[],ai:{campaigns:[]}};
   var __snap=uiSnapshot();
+  var inv=!!(DASH&&(DASH.campaignInventory||{}).ok);
   // Every campaign that is live in Google Ads shows here immediately — a
   // fresh launch appears as NOT DIAGNOSED with its own Diagnose button,
   // without needing a full "Diagnose all" run first.
   var known={};(D.campaigns||[]).forEach(function(c){known[String(c.id)]=1;});
   var extras=((DASH&&DASH.lastMetrics)||[]).filter(function(m){
     return m&&m.id&&!known[String(m.id)]&&String(m.status||"")!=="REMOVED";})
-    .map(function(m){return {id:m.id,name:m.name||("Campaign "+m.id),__undiag:true,__channel:m.channel||null,
-      __status:m.status,__spend:m.cost!=null?m.cost:(m.spend!=null?m.spend:null),__clicks:m.clicks};});
+    .map(function(m){return {id:m.id,name:m.name||("Campaign "+m.id),__undiag:true,__channel:m.channel||null,__status:m.status};});
+  // A campaign removed from Google Ads since the check is not shown.
+  var diagCamps=(D.campaigns||[]).filter(function(c){return !inv||diagLive(c.id);});
   var sub=document.getElementById("diagSub");
-  if(sub)sub.textContent=(DIAG?("checked "+timeago(D.generatedAt)+" ago \u00b7 "):"not yet run \u00b7 ")+(((D.campaigns||[]).length)+extras.length)+" campaigns";
+  if(sub)sub.textContent=(DIAG?(D.generatedAt?"full check "+timeago(D.generatedAt)+" ago":"no full check yet")+" · ":"not yet run · ")+(diagCamps.length+extras.length)+" campaigns";
   var aiBy={};(((D.ai||{}).campaigns)||[]).forEach(function(v){aiBy[String(v.id)]=v;});
+  var outBy={};diagCamps.forEach(function(c){var live=diagLive(c.id),at=diagCheckedAt(c,D),moved=!!(live&&c.status&&live.status!==c.status);
+    outBy[c.id]=(!at||Date.now()-at>DIAG_MAX_AGE||moved)?{at:at,live:live,moved:moved}:null;});
   var html="";
-  if((D.ai||{}).accountSummary)html+='<div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2);font-size:12.5px;margin-bottom:12px"><b>Account read:</b> '+esc(DIAG.ai.accountSummary)+'</div>';
-  if(D.aiError&&_diagBusy)html+='<div style="font-size:12px;color:#8c8476;margin-bottom:10px">AI review from the previous run failed \u2014 re-running now\u2026</div>';
-  else if(D.aiError)html+='<div style="font-size:11.5px;color:var(--clay);margin-bottom:10px">AI review failed ('+esc(DIAG.aiError)+') \u2014 raw Google diagnostics below.</div>';
-  if(!_diagOpenInit){(D.campaigns||[]).forEach(function(c){var v=(aiBy[String(c.id)]||{}).severity;if(v==="critical")diagOpen[c.id]=true;});_diagOpenInit=true;}
-  var camps=(D.campaigns||[]).slice().sort(function(a,b){var r={critical:0,attention:1,healthy:2};var av=(aiBy[a.id]||{}).severity||"healthy",bv=(aiBy[b.id]||{}).severity||"healthy";return (r[av]||2)-(r[bv]||2);});
+  if(_diagBusy)html+='<div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--ink-70);margin-bottom:10px"><span class="spin gold"></span><span id="diagRunText">'+esc(diagRunText())+'</span></div>';
+  if(DIAG_FAIL)html+='<div class="diagErr" style="padding:10px 12px;border:1px solid #f0c8bc;border-radius:10px;background:#fdeee9;color:#b3402a;font-size:12.5px;margin-bottom:12px"><b>Last diagnosis failed:</b> '+esc(DIAG_FAIL)+' <span style="opacity:.75">· fix the cause and hit Diagnose again</span></div>';
+  if((D.ai||{}).accountSummary)html+='<div style="padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2);font-size:12.5px;margin-bottom:12px"><b>Account read'+(D.generatedAt?' · '+timeago(D.generatedAt)+' ago':'')+':</b> '+esc(D.ai.accountSummary)+'</div>';
+  var errs=/^partial — /.test(String(D.aiError||""))?String(D.aiError).replace(/^partial — /,"").split(" | ").filter(Boolean):null;
+  if(D.aiError&&_diagBusy)html+='<div style="font-size:12px;color:#8c8476;margin-bottom:10px">AI review from the previous run failed — re-running now…</div>';
+  else if(errs)html+='<details class="xd" style="font-size:11.5px;color:var(--clay);margin-bottom:10px"><summary>The AI review failed for '+errs.length+' campaign'+(errs.length===1?"":"s")+'; their Google data is shown without a verdict</summary><div style="margin-top:4px">'+errs.map(esc).join("<br>")+'</div></details>';
+  else if(D.aiError)html+='<div style="font-size:11.5px;color:var(--clay);margin-bottom:10px">The AI review failed ('+esc(D.aiError)+'). Google’s data is shown without verdicts.</div>';
+  if(!_diagOpenInit&&DIAG){diagCamps.forEach(function(c){if((aiBy[String(c.id)]||{}).severity==="critical"&&!outBy[c.id])diagOpen[c.id]=true;});_diagOpenInit=true;}
+  var rank=function(c){if(outBy[c.id])return 3;var r={critical:0,attention:1,healthy:2}[(aiBy[c.id]||{}).severity];return r==null?2:r;};
+  var camps=diagCamps.slice().sort(function(a,b){return rank(a)-rank(b);});
   // undiagnosed live campaigns slot between attention and healthy
-  var firstHealthy=camps.findIndex(function(c){return ((aiBy[c.id]||{}).severity||"healthy")==="healthy";});
+  var firstHealthy=camps.findIndex(function(c){return rank(c)>=2;});
   if(firstHealthy<0)firstHealthy=camps.length;
   camps=camps.slice(0,firstHealthy).concat(extras).concat(camps.slice(firstHealthy));
-  if(!camps.length){body.innerHTML='<div class="empty" style="height:70px"><div style="font-size:12.5px">No live campaigns yet \u2014 launch one from Approvals and it appears here automatically.</div></div>';return;}
+  if(!camps.length){body.innerHTML=html+(_diagBusy?"":'<div class="empty" style="height:70px"><div style="font-size:12.5px">No live campaigns yet — launch one from Approvals and it appears here automatically.</div></div>');uiRestore(__snap);return;}
+  var pmaxTag=' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px">PMAX · FEED</span>';
   camps.forEach(function(c){
     if(c.__undiag){
-      var q2=[];if(c.__status)q2.push(String(c.__status).toLowerCase());if(c.__spend!=null)q2.push(money(c.__spend)+" spend");if(c.__clicks!=null)q2.push(c.__clicks+" clicks");
       html+='<div style="border-top:1px solid var(--line)" data-camp="'+c.id+'">'+
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 4px">'+
         '<span style="font-size:11px;color:var(--ink-45);width:12px"></span>'+
-        '<span style="width:9px;height:9px;border-radius:50%;background:#9a9284;display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.__channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px">PMAX \u00b7 FEED</span>':'')+
+        '<span style="width:9px;height:9px;border-radius:50%;background:#9a9284;display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.__channel==="PERFORMANCE_MAX"?pmaxTag:'')+
         '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:#9a9284">NOT DIAGNOSED</span>'+
-        '<span class="muted" style="font-size:11px">'+esc(q2.join(" \u00b7 "))+'</span>'+
-        '<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn ghost sm dg-one" data-id="'+c.id+'" style="padding:3px 10px;font-size:11px">Diagnose</button></span>'+
+        '<span class="muted" style="font-size:11px">'+esc(c.__status?String(c.__status).toLowerCase():"")+'</span>'+
+        '<span style="margin-left:auto;display:inline-flex;gap:6px">'+dgOneBtn(c.id)+'</span>'+
         '</div></div>';
       return;
     }
-    var ai=aiBy[c.id]||{};var sv=sevInfo(ai.severity||(((c.reasonsText||[]).length&&c.primaryStatus!=="ELIGIBLE")?"attention":"healthy"));
+    var ai=aiBy[c.id]||{},od=outBy[c.id],live=diagLive(c.id);
+    var sv=od?["#9a9284","OUTDATED"]:ai.severity?sevInfo(ai.severity):["#9a9284","NO AI VERDICT"];
     var budgetRec=(c.recommendations||[]).filter(function(r){return /BUDGET/.test(r.type||"");})[0];
     var chips=diagChip("Lost to budget",c.lostISBudget!=null?c.lostISBudget+"%":null,c.lostISBudget>=10)
              +diagChip("Lost to rank",c.lostISRank!=null?c.lostISRank+"%":null,c.lostISRank>=25)
              +diagChip("Impr. share",c.impressionShare!=null?c.impressionShare+"%":null,false)
              +diagChip("QS avg",c.avgQualityScore,c.avgQualityScore!=null&&c.avgQualityScore<5)
              +diagChip("Ad strength",worstStrength(c.adStrength),(c.adStrength||{}).POOR>0)
-             +diagChip("Disapproved ads",c.disapprovedAds||null,c.disapprovedAds>0);
+             +diagChip("Disapproved ads",c.disapprovedAds||null,c.disapprovedAds>0)
+             +diagChip("Limited by policy",c.limitedAds||null,c.limitedAds>0)
+             +diagChip("In policy review",c.underReviewAds||null,false);
+    var sign=function(n){return (Number(n)>=0?"+":"−");};
     var goog="";
     if(budgetRec&&budgetRec.options&&budgetRec.options.length){
-      goog='<div style="margin-top:8px;font-size:12px"><b>Google recommends:</b> raise budget '+money(budgetRec.currentBudget||c.budget)+' \u2192 <b>'+money(budgetRec.recommendedBudget)+'</b>/day<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:6px">'+
-        budgetRec.options.map(function(o){return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)">'+money(o.budget)+'/d \u00b7 +'+o.weeklyClicksDelta+' clicks/wk \u00b7 +'+money(o.weeklyCostDelta)+'/wk</span>';}).join("")+'</div></div>';
+      goog='<div style="margin-top:8px;font-size:12px"><b>Google recommends:</b> budget '+esc(diagMoney(budgetRec.currentBudget||c.budget))+' → <b>'+esc(diagMoney(budgetRec.recommendedBudget))+'</b>/day<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:6px">'+
+        budgetRec.options.map(function(o){return '<span style="font-size:11px;border:1px solid var(--line);border-radius:8px;padding:3px 9px;background:var(--paper)">'+esc(diagMoney(o.budget))+'/day · '+sign(o.weeklyClicksDelta)+esc(Math.abs(Number(o.weeklyClicksDelta)||0))+' clicks/wk · '+sign(o.weeklyCostDelta)+esc(diagMoney(Math.abs(Number(o.weeklyCostDelta)||0)))+'/wk</span>';}).join("")+'</div></div>';
     } else if(ai.googleSays&&ai.googleSays!=="none"){goog='<div style="margin-top:8px;font-size:12px"><b>Google:</b> '+esc(ai.googleSays)+'</div>';}
     var aiBox="";
-    if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist:</b> '+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+((ai.findings||[]).length?'<ul style="margin:7px 0 0 16px;padding:0;font-size:11.5px;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul>":"")+'</div>';}
-    function bestHist(cid,fr){var words=String((fr&&fr.applied)||"").toLowerCase().split(/\W+/).filter(function(w){return w.length>3;});
-      var best=null,bs=0;REMHIST.forEach(function(h){if(String(h.campaignId)!==String(cid))return;
-        var hay=((h.issue||"")+" "+(h.fix||"")+" "+(h.kind||"")).toLowerCase();
-        var sc=words.reduce(function(acc,w){return acc+(hay.indexOf(w)>=0?1:0);},0);
-        if(sc>bs){bs=sc;best=h;}});
-      return bs>0?best:null;}
-    var pendingRems=[],appliedRems=[];
-    (ai.remedies||[]).forEach(function(rm,ri){rm.__ri=ri;var h=histFor(c.id,rm);if(h){rm.__hist=h;appliedRems.push(rm);}else pendingRems.push(rm);});
-    var pastCount=(ai.fixReview||[]).length+appliedRems.length;
-    if(pastCount){
-      // Uniform past-fix entry: STATUS tag + title + verification + when,
-      // then WHAT was changed (params), then the why/result read.
-      var wc={working:"#2e7d32","too early":"#b26a00","not working":"#b3402a",applied:"var(--gold)"};
-      function remedyParams(h){if(!h)return "";var ex=h.executable||{};
-        if(ex.kind==="addNegatives")return "Added "+(ex.keywords||[]).length+" negative keywords: "+(ex.keywords||[]).join(", ");
-        if(ex.kind==="pauseKeywords")return "Paused: "+((ex.keywords||[]).map(function(k){return k.text||k;}).join(", "));
-        if(ex.kind==="addKeywords")return "Added keywords: "+((ex.keywords||[]).map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "));
-        if(ex.kind==="rewriteAds"){var p=h&&h.prunedLow;var pr=(p&&((p.headlines||[]).length+(p.descriptions||[]).length))?" \u00b7 pruned LOW-rated: "+((p.headlines||[]).concat(p.descriptions||[]).join(" | ")):"";
-          return "Appended to RSA \u2014 headlines: "+((ex.headlines||[]).join(" | "))+((ex.descriptions||[]).length?" \u00b7 descriptions: "+(ex.descriptions||[]).join(" | "):"")+pr;}
-        if(ex.kind==="setBudget")return "Budget set to "+money(ex.budget)+"/day";
-        return "";}
-      function pastLine(tag,tagColor,title,h,when,what,why){
-        return '<div style="padding:9px 2px;border-top:1px dashed var(--line)">'+
-          '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.09em;color:'+tagColor+'">'+esc(tag)+'</span><b style="font-size:12.5px">'+esc(title)+'</b>'+(h?verifyBadge(h):"")+(h?reviewPill(h):"")+'<span class="muted" style="font-size:11px">'+esc(when||"")+'</span></div>'+
-          (what?'<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">'+esc(what)+'</div>':"")+
-          (why?'<div class="muted" style="font-size:11.5px;margin-top:2px">'+esc(why)+'</div>':"")+'</div>';}
-      aiBox+='<details class="xd" style="margin-top:10px;font-size:12px"><summary>Past fixes <span class="xd-n">'+pastCount+'</span></summary><div style="margin-top:2px">'+
-      appliedRems.map(function(rm){var h=rm.__hist;
-        return pastLine("APPLIED",wc.applied,rm.issue||"",h,timeago(h.at)+" ago",remedyParams(h),(rm.fix?rm.fix+" \u2014 ":"")+"Awaiting the next diagnosis for a working / not-working read.");}).join("")+
-      (ai.fixReview||[]).map(function(fr){var h=bestHist(c.id,fr);
-        return pastLine(String(fr.working||"").toUpperCase(),wc[fr.working]||"var(--ink-45)",fr.applied||"",h,(fr.daysAgo!=null?fr.daysAgo+"d ago":""),remedyParams(h),fr.note||"");}).join("")+
+    if(ai.aiSays){aiBox='<div style="margin-top:8px;padding:9px 11px;border-left:3px solid '+sv[0]+';background:var(--paper-2);border-radius:0 8px 8px 0;font-size:12.5px"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px"><b>AI specialist</b>'+verdictTag(ai.verdict)+'</div>'+esc(ai.aiSays)+
+      ((ai.findings||[]).length?'<details class="xd" style="margin-top:6px;font-size:11.5px"><summary>Evidence <span class="xd-n">'+ai.findings.length+'</span></summary><ul style="margin:6px 0 0 16px;padding:0;color:var(--ink-70)">'+ai.findings.map(function(f){return "<li>"+esc(f)+"</li>";}).join("")+"</ul></details>":"")+'</div>';}
+    // Past fixes come from the fix log; results are measured by the console, 14 days either side of each change.
+    var outs={};(((D.fixOutcomes||{})[c.id])||[]).forEach(function(o){if(o&&o.historyId)outs[o.historyId]=o;});
+    var hist=REMHIST.filter(function(h){return String(h.campaignId)===String(c.id)&&!h.dryRun;}).slice(0,10);
+    var past="";
+    if(hist.length){
+      var wc={working:"#2e7d32","not working":"#b3402a","too early":"#b26a00"};
+      past='<details class="xd" style="margin-top:10px;font-size:12px"><summary>Past fixes <span class="xd-n">'+hist.length+'</span></summary><div style="margin-top:2px">'+
+      hist.map(function(h){var o=h.id&&outs[h.id],q=h.queued?queuedTag(h):null;
+        var tag=o?String(o.working||"").toUpperCase():q?q[0]:"APPLIED",color=o?(wc[o.working]||"var(--ink-45)"):q?q[1]:"var(--gold)";
+        var why=o?o.note:q?q[2]:D.fixOutcomes?"Its result is measured at a diagnosis 17 or more days after the change: 14 days of results plus 3 reporting days.":"Diagnose again to measure its result.";
+        return pastLine(tag,color,h.issue||h.fix||"",h,h.at?timeago(h.appliedAt||h.at)+" ago":"",remedyParams(h),why);}).join("")+
       '</div></details>';}
     // remedies: one implementable fix per issue, with Apply where mutation-safe
+    var pendingRems=[];
+    (ai.remedies||[]).forEach(function(rm,ri){rm.__ri=ri;if(!histFor(c.id,rm))pendingRems.push(rm);});
     var remHtml="";
     if(pendingRems.length){
       var impC={high:"#b3402a",medium:"#b26a00",low:"var(--ink-45)"};
-      remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan \u00b7 '+pendingRems.length+' open remed'+(pendingRems.length===1?"y":"ies")+'</b>'+pendingRems.map(function(rm){var ri=rm.__ri;
-        var ex=rm.executable||{};var canRun=ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords"||ex.kind==="rewriteAds";
+      remHtml='<div style="margin-top:8px"><b style="font-size:12px">Fix plan · '+pendingRems.length+' open remed'+(pendingRems.length===1?"y":"ies")+'</b>'+pendingRems.map(function(rm){var ri=rm.__ri;
+        var ex=rm.executable||{};var canRun=!od&&(ex.kind==="addNegatives"||ex.kind==="pauseKeywords"||ex.kind==="setBudget"||ex.kind==="addKeywords"||ex.kind==="rewriteAds");
         var detail="";
         if(ex.kind==="addNegatives"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">negatives: '+esc(ex.keywords.join(", "))+'</div>';
+        if((ex.skipped||[]).length)detail+='<div class="muted" style="font-size:11px;margin-top:2px">Left out because they would block converting searches or active keywords: '+esc(ex.skipped.join(", "))+'</div>';
         if(ex.kind==="pauseKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">pause: '+esc(ex.keywords.map(function(k){return k.text||k;}).join(", "))+'</div>';
         if(ex.kind==="addKeywords"&&(ex.keywords||[]).length)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">add: '+esc(ex.keywords.map(function(k){return (k.text||k)+(k.matchType?" ["+String(k.matchType).toLowerCase()+"]":"");}).join(", "))+'</div>';
-        if(ex.kind==="rewriteAds")detail='<details class="xd" style="margin-top:6px"><summary>New copy \u00b7 appended to the live ad on Apply</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
-        if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">\u2192 <span class="mono">'+esc(ex.url)+'</span></div>';
-        var applyUi=canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:4px 13px;font-size:11.5px;white-space:nowrap">Apply fix</button>':"";
+        if(ex.kind==="setBudget"&&ex.budget)detail='<div class="mono" style="font-size:11px;color:var(--ink-70);margin-top:3px">budget: '+esc(diagMoney(ex.budget))+'/day</div>';
+        if(ex.kind==="rewriteAds")detail='<details class="xd" style="margin-top:6px"><summary>New copy · added to this ad after you approve it in Approvals</summary><div style="font-size:11.5px;margin-top:4px">'+((ex.headlines||[]).length?'<b>Headlines:</b><br>'+ex.headlines.map(esc).join("<br>"):"")+((ex.descriptions||[]).length?'<br><b>Descriptions:</b><br>'+ex.descriptions.map(esc).join("<br>"):"")+'</div></details>';
+        if(ex.kind==="landingPage"&&ex.url)detail='<div style="font-size:11px;margin-top:3px">→ <span class="mono">'+esc(ex.url)+'</span></div>';
+        var applyUi=canRun?'<button class="btn gold sm dg-remedy" data-id="'+c.id+'" data-r="'+ri+'" style="padding:4px 13px;font-size:11.5px;white-space:nowrap">'+(ex.kind==="rewriteAds"?"Send to review":"Apply fix")+'</button>':"";
         return '<div style="padding:7px 0;border-top:1px dashed var(--line);font-size:12px"><div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap"><span style="font-size:9.5px;font-weight:800;letter-spacing:.08em;color:'+(impC[rm.impact]||impC.low)+';padding-top:2px">'+esc(String(rm.impact||"").toUpperCase())+'</span><div style="flex:1;min-width:220px"><b>'+esc(rm.issue||"")+'</b><div style="color:var(--ink-70);margin-top:2px">'+esc(rm.fix||"")+'</div>'+detail+'</div>'+applyUi+'</div></div>';
       }).join("")+'</div>';}
-    aiBox+=remHtml;
     var act=ai.action||{};var btns=[];
-    if((act.kind==="raiseBudget"||act.kind==="lowerBudget")&&act.budget)btns.push('<button class="btn gold sm dg-aibudget" data-id="'+c.id+'" data-b="'+act.budget+'" style="padding:4px 11px;font-size:11.5px">Apply AI budget '+money(act.budget)+'/d'+(act.urgency?" \u00b7 "+esc(act.urgency):"")+'</button>');
-    if(budgetRec&&budgetRec.recommendedBudget&&(!act.budget||Math.abs(act.budget-budgetRec.recommendedBudget)>0.5))btns.push('<button class="btn ghost sm dg-gbudget" data-id="'+c.id+'" data-b="'+budgetRec.recommendedBudget+'" style="padding:4px 11px;font-size:11.5px">Apply Google '+money(budgetRec.recommendedBudget)+'/d</button>');
-    if(budgetRec&&budgetRec.resourceName)btns.push('<button class="btn ghost sm dg-dismiss" data-rn="'+esc(budgetRec.resourceName)+'" style="padding:4px 11px;font-size:11.5px">Dismiss rec</button>');
-    var otherRecs=(c.recommendations||[]).filter(function(r){return r!==budgetRec;});
-    var extra=otherRecs.length?'<div class="muted" style="font-size:11px;margin-top:6px">Other Google recs: '+esc(otherRecs.map(function(r){return String(r.type||"").toLowerCase().replace(/_/g," ");}).join(", "))+'</div>':"";
+    var liveBud=live&&live.budget!=null?live.budget:null,same=function(v){return liveBud!=null&&Math.abs(Number(v)-liveBud)<0.01;};
+    if(!od){
+      if((act.kind==="raiseBudget"||act.kind==="lowerBudget")&&act.budget&&!same(act.budget))btns.push('<button class="btn gold sm dg-aibudget" data-id="'+c.id+'" data-b="'+act.budget+'" style="padding:4px 11px;font-size:11.5px">Apply AI budget '+esc(diagMoney(act.budget))+'/day'+(act.urgency?" · "+esc(act.urgency):"")+'</button>');
+      if(budgetRec&&budgetRec.recommendedBudget&&!same(budgetRec.recommendedBudget)&&(!act.budget||Math.abs(act.budget-budgetRec.recommendedBudget)>0.5))btns.push('<button class="btn ghost sm dg-gbudget" data-id="'+c.id+'" data-b="'+budgetRec.recommendedBudget+'" style="padding:4px 11px;font-size:11.5px">Apply Google '+esc(diagMoney(budgetRec.recommendedBudget))+'/day</button>');
+      if(budgetRec&&budgetRec.resourceName)btns.push('<button class="btn ghost sm dg-dismiss" data-rn="'+esc(budgetRec.resourceName)+'" style="padding:4px 11px;font-size:11.5px">Dismiss Google rec</button>');
+    }
+    var otherRecs=Array.from(new Set((c.recommendations||[]).filter(function(r){return r!==budgetRec;}).map(function(r){return diagRecName(r.type);}).filter(Boolean)));
+    var extra=otherRecs.length?'<div class="muted" style="font-size:11px;margin-top:6px">Other Google recommendations: '+esc(otherRecs.join(" · "))+'</div>':"";
+    var budNow=liveBud!=null&&c.budget!=null&&!same(c.budget)?'<div style="font-size:11.5px;color:var(--ink-70);margin-top:4px">Budget is now '+esc(diagMoney(liveBud))+'/day; it was '+esc(diagMoney(c.budget))+'/day at this check.</div>':"";
     var open=!!diagOpen[c.id];
-    var quick=[];if(c.lostISBudget!=null)quick.push("budget-lost "+c.lostISBudget+"%");if(c.lostISRank!=null)quick.push("rank-lost "+c.lostISRank+"%");
-    var remCount=(ai.remedies||[]).length;
+    var quick=[];
+    if(od){quick.push(od.at?"checked "+timeago(od.at)+" ago":"check date unknown");if(od.moved)quick.push("now "+String(od.live.status).toLowerCase());}
+    else{if(c.lostISBudget!=null)quick.push("budget-lost "+c.lostISBudget+"%");if(c.lostISRank!=null)quick.push("rank-lost "+c.lostISRank+"%");if(pendingRems.length)quick.push(pendingRems.length+" open remed"+(pendingRems.length===1?"y":"ies"));}
+    var checkBody=(ai.headline?'<div style="font-size:12.5px">'+esc(ai.headline)+'</div>':"")+diagServing(c)+budNow+
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+aiBox+remHtml+
+      (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+
+      (goog?'<details class="xd" style="margin-top:10px"><summary>Google’s recommendation</summary>'+goog+'</details>':"")+extra;
+    // An outdated check is reference only: its fixes cannot be applied until the campaign is diagnosed again.
+    var inner=od?'<div style="font-size:12px;color:#7a5a1d;background:#fbf6e9;border:1px solid #eadfbf;border-radius:8px;padding:8px 10px">'+
+        esc((od.at?"Checked "+timeago(od.at)+" ago":"The check date is unknown")+(od.moved?", when the campaign was "+String(c.status).toLowerCase()+". It is now "+String(od.live.status).toLowerCase()+".":".")+" Diagnose it again before acting on these findings.")+'</div>'+
+        '<details class="xd" style="margin-top:8px"><summary>Previous check</summary><div style="margin-top:4px">'+checkBody+'</div></details>'
+      :checkBody;
     html+='<div style="border-top:1px solid var(--line)" data-camp="'+c.id+'">'+
       '<div class="diagHead" data-open="'+c.id+'" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:11px 4px;cursor:pointer">'+
-        '<span style="font-size:11px;color:var(--ink-45);width:12px">'+(open?"\u25be":"\u25b8")+'</span>'+
-        '<span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.channel==="PERFORMANCE_MAX"?' <span style="font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);border:1px solid var(--gold);border-radius:5px;padding:1px 5px">PMAX \u00b7 FEED</span>':'')+
+        '<span style="font-size:11px;color:var(--ink-45);width:12px">'+(open?"▾":"▸")+'</span>'+
+        '<span style="width:9px;height:9px;border-radius:50%;background:'+sv[0]+';display:inline-block"></span><b>'+esc(c.name)+'</b>'+(c.channel==="PERFORMANCE_MAX"?pmaxTag:'')+
         '<span style="font-size:10px;font-weight:700;letter-spacing:.1em;color:'+sv[0]+'">'+sv[1]+'</span>'+
-        '<span class="muted" style="font-size:11px">'+esc(quick.join(" \u00b7 "))+(remCount?" \u00b7 "+remCount+" remedies":"")+'</span>'+
-        '<span style="margin-left:auto;display:inline-flex;gap:6px"><button class="btn ghost sm dg-one" data-id="'+c.id+'" style="padding:3px 10px;font-size:11px">Diagnose</button></span>'+
+        '<span class="muted" style="font-size:11px">'+esc(quick.join(" · "))+'</span>'+
+        '<span style="margin-left:auto;display:inline-flex;gap:6px">'+dgOneBtn(c.id)+'</span>'+
       '</div>'+
-      '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+
-      (ai.headline?'<div style="font-size:12.5px">'+esc(ai.headline)+'</div>':"")+
-      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px">'+chips+'</div>'+
-      (goog?'<details class="xd" style="margin-top:10px"><summary>Google\u2019s recommendation</summary>'+goog+'</details>':"")+
-      aiBox+extra+
-      (btns.length?'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'+btns.join("")+'</div>':"")+'</div></div>';});
+      '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+inner+past+'</div></div>';});
   body.innerHTML=html;
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b");if(!confirm("Set daily budget to "+money(bud)+" for this campaign?"))return;api("setBudget",{id:id,budget:bud}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation?"))return;api("dismissRec",{resourceName:rn}).then(function(){runDiag(true);}).catch(function(e){alert(e.message||e);});};});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b"),google=this.classList.contains("dg-gbudget");
+    if(!confirm("Set this campaign’s daily budget to "+diagMoney(bud)+"?"))return;
+    var done=btnBusy(this,"Setting…");
+    // Logged as a fix, so its result is measured like any other.
+    api("applyRemedy",{campaignId:id,remedy:{issue:(google?"Google":"AI")+" budget recommendation",fix:"Set the daily budget to "+diagMoney(bud),impact:"medium",executable:{kind:"setBudget",budget:bud}}}).then(function(r){
+      if(!r||!r.ok){done();toast((r&&r.error)||"The budget was not changed.");return;}
+      if(r.dryRun){done("Dry run ✓");toast("Dry run: validated only. Nothing changed in Google Ads.",true);return;}
+      var lm=diagLive(id);if(lm)lm.budget=bud;
+      toast("Daily budget set to "+diagMoney(bud)+(r.verified?" and confirmed in Google Ads.":r.verified===false?", but Google Ads has not confirmed it yet.":"."),r.verified!==false);
+      loadRemedyHistory();renderDiag();
+    }).catch(function(e){done();toast(e.message||String(e));});};});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation in Google Ads?"))return;
+    var done=btnBusy(this,"Dismissing…");
+    api("dismissRec",{resourceName:rn}).then(function(r){
+      if(!r||!r.ok){done();toast((r&&r.error)||"The recommendation was not dismissed.");return;}
+      if(r.dryRun){done();toast("Dry run is on, so the recommendation was not dismissed in Google Ads.");return;}
+      diagDropRec(rn);toast("Recommendation dismissed in Google Ads.",true);renderDiag();
+    }).catch(function(e){done();toast(e.message||String(e));});};});
   Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=function(){
     var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
     var aiBy2={};((((DIAG||{}).ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
     var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
-    var ex=rm.executable||{};var what=ex.kind==="addNegatives"?("Add "+(ex.keywords||[]).length+" negative keyword(s)"):ex.kind==="pauseKeywords"?("Pause "+(ex.keywords||[]).length+" keyword(s)"):ex.kind==="addKeywords"?("Add "+(ex.keywords||[]).length+" new keyword(s)"):ex.kind==="rewriteAds"?("Append "+(ex.headlines||[]).length+" headline(s) + "+(ex.descriptions||[]).length+" description(s) to the live ad (it will briefly re-enter policy review)"):ex.kind==="setBudget"?("Set budget to "+money(ex.budget)+"/day"):"Apply";
-    if(!confirm(what+" on this campaign?"))return;
-    var btn=this;btn.disabled=true;btn.textContent="Applying\u2026";
+    var ex=rm.executable||{},n=function(a){return (a||[]).length;};
+    var what=ex.kind==="addNegatives"?("Add "+n(ex.keywords)+" negative keyword(s) to this campaign?"):ex.kind==="pauseKeywords"?("Pause "+n(ex.keywords)+" keyword(s) in this campaign?"):ex.kind==="addKeywords"?("Add "+n(ex.keywords)+" keyword(s) to this campaign?"):ex.kind==="rewriteAds"?("Send "+n(ex.headlines)+" new headline(s) and "+n(ex.descriptions)+" description(s) for this ad to Approvals? Nothing changes in Google Ads until you approve the draft there."):ex.kind==="setBudget"?("Set this campaign’s daily budget to "+diagMoney(ex.budget)+"?"):"Apply this fix?";
+    if(!confirm(what))return;
+    var done=btnBusy(this,ex.kind==="rewriteAds"?"Sending…":"Applying…");
     api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
-      if(r&&r.ok){
-        var vtxt=r.dryRun?"Dry-run \u2713":(r.verified===false?"Applied \u26a0 unverified":r.verified?"Applied \u2713 verified":"Applied \u2713");
-        btn.textContent=vtxt;btn.classList.remove("gold");
-        REMHIST.unshift({campaignId:cid,campaignName:"",issue:rm.issue,fix:rm.fix,kind:(rm.executable||{}).kind,executable:rm.executable,dryRun:!!r.dryRun,verified:(r.verified==null?null:r.verified),verification:r.verification||null,at:Date.now(),baseline:null});
-        renderDiag(); // the remedy relocates from Fix plan -> Past fixes immediately
-        setTimeout(function(){loadRemedyHistory();},1500);
-      }
-      else{btn.disabled=false;btn.textContent="Apply fix";alert((r&&r.error)||"failed");}
-    }).catch(function(e){btn.disabled=false;btn.textContent="Apply fix";alert(e.message||e);});};});
+      if(!r||!r.ok){done();toast((r&&r.error)||"The fix was not applied.");return;}
+      if(r.queued){toast(r.note||"Sent to Approvals for review.",true);
+        REMHIST.unshift({id:r.logId||null,campaignId:cid,issue:rm.issue,fix:rm.fix,kind:ex.kind,executable:ex,adId:ex.adId||null,queued:true,approvalId:r.approvalId,approvalState:"PENDING",at:Date.now()});
+        renderDiag();setTimeout(function(){loadRemedyHistory();},1500);return;}
+      if((r.added&&!r.added.length)||(r.paused&&!r.paused.length)){done("Already in place");toast("Already in place in Google Ads. Nothing changed.",true);return;}
+      if(r.dryRun){done("Dry run ✓");toast("Dry run: validated only. Nothing changed in Google Ads.",true);return;}
+      toast(r.verified===false?"Applied, but Google Ads has not confirmed every change yet.":r.verified?"Applied and confirmed in Google Ads.":"Applied.",r.verified!==false);
+      REMHIST.unshift({id:r.logId||null,campaignId:cid,campaignName:"",issue:rm.issue,fix:rm.fix,kind:ex.kind,executable:ex,dryRun:false,verified:(r.verified==null?null:r.verified),verification:r.verification||null,at:Date.now(),baseline:null});
+      renderDiag(); // the remedy relocates from Fix plan -> Past fixes immediately
+      setTimeout(function(){loadRemedyHistory();},1500);
+    }).catch(function(e){done();toast(e.message||String(e));});};});
   Array.prototype.forEach.call(body.querySelectorAll(".diagHead"),function(h){h.onclick=function(e){
     if(e.target&&e.target.closest&&e.target.closest("button"))return;
     var id=this.getAttribute("data-open");diagOpen[id]=!diagOpen[id];renderDiag();};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-one"),function(b){b.onclick=function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id");var btn=this;btn.disabled=true;var _t1=Date.now();
-    var _tk=setInterval(function(){if(btn&&btn.disabled)btn.textContent="Diagnosing\u2026 "+Math.round((Date.now()-_t1)/1000)+"s";},1000);
-    btn.textContent="Diagnosing\u2026";
-    var _done=function(){clearInterval(_tk);if(btn){btn.disabled=false;btn.textContent="Diagnose";}};
-    var prev=(DIAG&&DIAG.generatedAt)||0;var runId1=String(Date.now())+"-"+id;
-    api("runDiagnostics",{campaignId:id,runId:runId1}).then(function(d){
-      if(d&&d.queued){diagOpen[id]=true;pollDiagRun(runId1,_done,function(msg){_done();diagFailBanner(msg);toast("Diagnosis failed \u2014 details in the Ad Doctor card");});}
-      else if(d&&!d.error&&d.campaigns){DIAG=d;diagOpen[id]=true;renderDiag();}
-      else alert((d&&d.error)||"failed");
-    }).catch(function(e){alert(e.message||e);btn.disabled=false;btn.textContent="Diagnose";});};});
-  var ta=document.getElementById("diagToggleAll");if(ta){var anyClosed=(D.campaigns||[]).some(function(c){return !diagOpen[c.id];});
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-one"),function(b){b.onclick=function(ev){ev.stopPropagation();runDiagOne(this.getAttribute("data-id"));};});
+  var ta=document.getElementById("diagToggleAll");if(ta){var anyClosed=diagCamps.some(function(c){return !diagOpen[c.id];});
     ta.textContent=anyClosed?"Expand all":"Collapse all";
     if(!ta._w){ta._w=true;ta.onclick=function(){var DD=DIAG||{campaigns:[]};var ac=(DD.campaigns||[]).some(function(c){return !diagOpen[c.id];});(DD.campaigns||[]).forEach(function(c){diagOpen[c.id]=ac;});renderDiag();};}}
   var rb=document.getElementById("diagRun");if(rb&&!rb._wired){rb._wired=true;rb.onclick=function(){runDiag(false);};}
+  if(rb&&_diagBusy&&!rb.disabled){rb.disabled=true;rb.textContent="Diagnosing…";}
   uiRestore(__snap);
 }
 // full schedule line + Start-now button for the expanded campaign detail

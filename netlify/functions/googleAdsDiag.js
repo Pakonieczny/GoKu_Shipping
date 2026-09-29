@@ -1,7 +1,7 @@
 // netlify/functions/googleAdsDiag.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only ground-truth diagnostic. Open in a browser:
-//   https://goldenspike.app/.netlify/functions/googleAdsDiag
+//   https://goldenspike.app/.netlify/functions/googleAdsDiag?key=<EDIT_PASSCODE>
 // Shows, independent of the console/snapshot:
 //   1) EVERY campaign that actually exists in your Google Ads account (live read,
 //      no date segment — paused/zero-impression campaigns included)
@@ -46,14 +46,14 @@ async function liveCampaigns() {
       "login-customer-id": LOGIN, "Content-Type": "application/json"
     },
     body: JSON.stringify({ query:
-      `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros
+      `SELECT campaign.id, campaign.name, campaign.status, campaign_budget.amount_micros, customer.currency_code
        FROM campaign WHERE campaign.status != 'REMOVED' ORDER BY campaign.id` })
   });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("GAQL " + res.status + " — " + JSON.stringify(d).slice(0, 300));
   return ((d.results) || []).map(r => ({
     id: r.campaign.id, name: r.campaign.name, status: r.campaign.status,
-    budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros)
+    budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros), currency: (r.customer && r.customer.currencyCode) || null
   }));
 }
 
@@ -82,6 +82,10 @@ function tdiff(ms) { if (!ms) return ""; const s = Math.floor((Date.now() - ms) 
 const esc = s => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 exports.handler = async (event) => {
+  // Account data: locked with the console passcode whenever one is set.
+  const gate = (ENV.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, "");
+  if (gate && String(((event && event.queryStringParameters) || {}).key || "").trim() !== gate)
+    return { statusCode: 401, headers: { "Content-Type": "text/plain" }, body: "Add ?key=<EDIT_PASSCODE> to open the Ad Autopilot diagnostic." };
   const r = await run();
   const wantsHtml = (event.headers && /text\/html/.test(event.headers.accept || ""));
   if (!wantsHtml) return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(r, null, 2) };
@@ -93,7 +97,7 @@ exports.handler = async (event) => {
         <td style="font-family:monospace;font-size:11px">${esc(c.id)}</td>
         <td style="font-weight:600">${esc(c.name)}</td>
         <td>${esc(c.status)}</td>
-        <td style="text-align:right;font-family:monospace">${c.budget == null ? "—" : "$" + c.budget}</td></tr>`).join("") || `<tr><td colspan="4">No campaigns in account.</td></tr>`;
+        <td style="text-align:right;font-family:monospace">${c.budget == null ? "—" : esc(c.budget + (c.currency ? " " + c.currency : ""))}</td></tr>`).join("") || `<tr><td colspan="4">No campaigns in account.</td></tr>`;
 
   const apRows = (r.approvals || []).map(a => a.error ? `<tr><td colspan="4" style="color:#b3402f">${esc(a.error)}</td></tr>` : `<tr>
       <td>${esc(a.type)}</td>
