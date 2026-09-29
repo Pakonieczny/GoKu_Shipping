@@ -10336,12 +10336,18 @@ function _motionEngine(){
 }
 async function startAdDesignMotion(input){return _motionEngine().start(input);}
 async function adDesignMotionStatus(input){
-  const out=await _motionEngine().status(input);
+  let out=await _motionEngine().status(input);
+  // A new campaign's own group shows the films made where its publication was confirmed (their own
+  // workspace and scope), instead of offering a second paid set.
+  if(out?.ok&&!out.jobId&&new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(input.groupRef||''))){
+    const link=await _motionFilmLink(input.productId,input.groupRef);
+    if(link&&link.workspaceId!==input.workspaceId){const linked=await _motionEngine().status({workspaceId:link.workspaceId,productId:input.productId,groupRef:link.groupRef}).catch(()=>null);if(linked?.ok&&linked.jobId)out={...linked,workspaceId:linked.workspaceId||link.workspaceId,jobGroupRef:link.groupRef,fromEarlierVersion:true};}
+  }
   // Before an upload exists, say where the films will attach: the paused campaign a publication
   // created from this ad, or nowhere yet for a new ad (it has no Google group until published).
   if(!out?.ok||!out.jobId||out.publication)return out;
-  const t=await _motionFilmBinding(out.workspaceId||input.workspaceId,input.productId,input.groupRef);
-  if(!t&&new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(input.groupRef||'')))return out;
+  const home=out.jobGroupRef||input.groupRef,t=await _motionFilmBinding(out.workspaceId||input.workspaceId,input.productId,home);
+  if(!t&&new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(home||'')))return out;
   return {...out,attachTarget:t?{campaignId:String(t.campaignId),groupRef:t.assetGroupRef}:null,attachNote:t?'These films attach to paused campaign '+t.campaignId+', created when this ad was published. Approve their upload to attach them; the campaign stays paused.':'Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.'};
 }
 async function runAdDesignMotion(input){return _motionEngine().run(input);}
@@ -10395,7 +10401,7 @@ function _motionPublication(){
   return g;
  };
  const upload=require('./googleAdsVideoUpload').createVideoUpload({fetch,headers:async()=>adsHeaders(await mintToken()),customerId:CID,version:V,beforeRequest:_assertGadsReadAllowed,onResponse:async(data,res)=>{const retryAt=_gadsQuotaDeadline(data,res);if(retryAt){await _saveGadsReadState({retryAt,quotaObservedAt:Date.now()});throw _gadsQuotaError(retryAt);}}});
- _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,target:_motionFilmTarget,...upload,
+ _motionPublicationEngine=require('./googleAdsMotionPublication').createPublicationService({fb,context,assertTarget,target:_motionFilmTarget,...upload,dryRun:async()=>!!(await control()).dryRun,
   prepareMerchant:async(job,videos)=>{
    const {w,product}=await _adDesignPublicationContext(job.workspaceId);
    if(String(product.id)!==String(job.productId)||product.url!==job.destination)throw Error('The video product destination changed.');
@@ -10407,6 +10413,10 @@ function _motionPublication(){
   loadVideo:async a=>{if(!/^Brites_GAds_Motion\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+\.mp4$/.test(a.path||''))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The reviewed video changed.');return bytes;},
   uploadState:async resourceName=>{if(!new RegExp('^customers/'+CID+'/youTubeVideoUploads/\\d+$').test(resourceName))throw Error('Invalid Google upload receipt.');const rows=await gaql(`SELECT you_tube_video_upload.resource_name, you_tube_video_upload.video_id, you_tube_video_upload.state FROM you_tube_video_upload WHERE you_tube_video_upload.resource_name = ${_gaqlString(resourceName)}`);return rows[0]?.youTubeVideoUpload;},
   attach:async(job,videos,target=null)=>{
+   // Nothing is attached until the final mutate is dispatched: an earlier failure, including Google
+   // rejecting the validate-only request, is marked so the publication can be reset for free.
+   let sent=false;
+   try{
    await assertTarget(job,target);
    const groupRef=target?target.groupRef:job.groupRef;
    const existing=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.status, asset_group_asset.field_type, asset.youtube_video_asset.youtube_video_id FROM asset_group_asset WHERE asset_group_asset.asset_group = ${_gaqlString(groupRef)} AND asset_group_asset.field_type = 'YOUTUBE_VIDEO' AND asset_group_asset.status != 'REMOVED'`);
@@ -10419,7 +10429,8 @@ function _motionPublication(){
    // Dry run follows every other mutate: Google validates the exact attachment and nothing is attached.
    if(ctrl.dryRun)return {dryRun:true,validatedAt:Date.now()};
    await assertTarget(job,target);
-   return mutateAll(ordered,{ctrl,label:'Attach reviewed product videos '+job.id});
+   return await mutateAll(ordered,{ctrl,label:'Attach reviewed product videos '+job.id,onDispatch:()=>{sent=true;}});
+   }catch(e){if(!sent&&e&&typeof e==='object')e.nothingAttached=true;throw e;}
   },
   verify:async(job,videos,target=null)=>{
    const ref=_gaqlString(target?target.groupRef:job.groupRef),[rows,groups,metrics]=await Promise.all([
@@ -10445,7 +10456,13 @@ async function _motionFilmTarget(job){
   if(new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(job.groupRef||'')))return null;
   throw Error('Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.');
 }
-async function _latestMotionJob(ref,productId,groupRef){const rows=await ref.collection('motionJobs').get();return rows.docs.map(d=>d.data()).filter(j=>String(j.productId)===String(productId)&&j.groupRef===groupRef&&!j.resetAt).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt))[0]||null;}
+// The reverse of a binding: from the new paused asset group back to the workspace scope that owns its
+// product's films, so the new campaign's own group finds them and nobody pays for a second set.
+function _motionFilmLinkRef(productId,assetGroupRef){return fb().db.collection(COL.state).doc('adDesign').collection('motionFilmLinks').doc('link_'+creativeHash({productId:String(productId||'').match(/(\d+)$/)?.[1]||String(productId||''),assetGroupRef:String(assetGroupRef||'')}).slice(0,40));}
+async function _motionFilmLink(productId,assetGroupRef){const s=await _motionFilmLinkRef(productId,assetGroupRef).get(),l=s.exists?s.data():null;return l&&l.assetGroupRef===assetGroupRef&&/^[a-zA-Z0-9_-]{1,100}$/.test(String(l.workspaceId||''))&&l.groupRef?l:null;}
+async function _latestMotionJob(ref,productId,groupRef,depth=0){const rows=await ref.collection('motionJobs').get(),own=rows.docs.map(d=>d.data()).filter(j=>String(j.productId)===String(productId)&&j.groupRef===groupRef&&!j.resetAt).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt))[0]||null;
+  if(own||depth>2||!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(groupRef||'')))return own;
+  const link=await _motionFilmLink(productId,groupRef);return link&&link.workspaceId!==ref.id?_latestMotionJob(_adDesignWorkspaceRef(link.workspaceId),productId,link.groupRef,depth+1):null;}
 function _motionFilmsReady(job){try{return !!job&&job.phase==='ready'&&job.letteringBlocked!==true&&job.quality?.footageLettering!==true&&require('./googleAdsAdMotion').qualityPass(job.quality)&&!!require('./googleAdsMotionPublication').reviewHash(job);}catch(e){return false;}}
 // Mirrors the native-copy check that guards the attachment itself.
 function _motionFilmCopyMatches(job,copy){const set=a=>JSON.stringify([...new Set(a||[])].sort());return (job.pipelineVersion||1)<2||['headlines','longHeadlines','descriptions'].every(k=>Array.isArray(job.plan?.nativeCopy?.[k])&&job.plan.nativeCopy[k].length>0&&set(job.plan.nativeCopy[k])===set(copy?.[k]));}
@@ -10465,12 +10482,15 @@ async function _attachPublishedFilms({workspaceId,product,groupRef,campaignIds,a
     const ids=[...new Set((campaignIds||[]).map(String).filter(id=>/^\d+$/.test(id)))];
     const groups=(ids.length?await gaql(`SELECT campaign.id, asset_group.resource_name, asset_group.final_urls FROM asset_group WHERE campaign.id IN (${ids.join(',')}) AND asset_group.status != 'REMOVED'`):[]).filter(r=>(r.assetGroup?.finalUrls||[]).length===1&&r.assetGroup.finalUrls[0]===product.url);
     if(groups.length!==1)return {message:'The films were not linked: the new campaign has no single asset group for this product.'};
-    await _motionFilmBindingRef(workspaceId,product.id,groupRef).set({productId:String(product.id),groupRef,campaignId:String(groups[0].campaign.id),assetGroupRef:groups[0].assetGroup.resourceName,destination:product.url,source,boundAt:Date.now()});
-    const job=await _latestMotionJob(_adDesignWorkspaceRef(workspaceId),product.id,groupRef),note=_motionFilmNote(job,copy);if(note)return {message:note};
+    // Films stay with the workspace scope that made them (a new campaign's own group may reuse them).
+    const job=await _latestMotionJob(_adDesignWorkspaceRef(workspaceId),product.id,groupRef),home=job?{workspaceId:job.workspaceId||workspaceId,groupRef:job.groupRef}:{workspaceId,groupRef},campaignId=String(groups[0].campaign.id),assetGroupRef=groups[0].assetGroup.resourceName;
+    await _motionFilmBindingRef(home.workspaceId,product.id,home.groupRef).set({productId:String(product.id),groupRef:home.groupRef,campaignId,assetGroupRef,destination:product.url,source,boundAt:Date.now()});
+    await _motionFilmLinkRef(product.id,assetGroupRef).set({productId:String(product.id),assetGroupRef,campaignId,workspaceId:home.workspaceId,groupRef:home.groupRef,boundAt:Date.now()});
+    const note=_motionFilmNote(job,copy);if(note)return {message:note};
     const hash=require('./googleAdsMotionPublication').reviewHash(job);
     if(approved?.jobId!==job.id||approved?.reviewHash!==hash)return {message:'The finished films were not part of this confirmation. Approve their upload in Animated ads to attach them to the paused campaign.'};
-    const out=await _motionPublication().start({workspaceId,productId:job.productId,groupRef,jobId:job.id,reviewHash:hash});
-    return {message:'The three reviewed films are uploading to YouTube as unlisted videos and will then attach to the paused campaign. Follow their progress in Animated ads.',publication:out.queued?{queued:true,workspaceId,jobId:job.id,productId:job.productId,groupRef}:null};
+    const out=await _motionPublication().start({workspaceId:home.workspaceId,productId:job.productId,groupRef:home.groupRef,jobId:job.id,reviewHash:hash});
+    return {message:'The three reviewed films are uploading to YouTube as unlisted videos and will then attach to the paused campaign. Follow their progress in Animated ads.',publication:out.queued?{queued:true,workspaceId:home.workspaceId,jobId:job.id,productId:job.productId,groupRef:home.groupRef}:null};
   }catch(e){return {message:'The films were not attached: '+String(e.message||e).slice(0,300)+' Approve their upload in Animated ads to retry.'};}
 }
 
