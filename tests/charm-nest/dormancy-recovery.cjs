@@ -64,6 +64,7 @@ async function vmChecks() {
       const RunCtl = { renderBanner() {}, save: async () => {}, poke() {}, stop() {}, start: async () => {}, clearRunState() {} };
       const O = { lineKey: (o, l) => o.receiptId + '/' + l.transactionId }, Sandbox = { on: () => false, streaming: () => false };
       const toast = () => {}, notifyPerson = () => {}, refreshAllCards = () => {}, agent = () => {}, setMode = () => {};
+      const TL = { pulled() {}, line() {} };   // (the order timeline: each order that comes in is stamped "pulled")
       let snapshots = 0, failCloud = false, failStation = null;
       const DesignLink = { ensure: async () => { if (failStation) throw new Error(failStation); }, etsyBudgetOk: () => true, meter() {},
         call: async () => { snapshots++; return { total: 1, hydrated: 1, openIds: ['1'], orders: [{ receiptId: '1', hydrated: true, updateTs: 1, lines: [{ transactionId: 't' }] }] }; } };

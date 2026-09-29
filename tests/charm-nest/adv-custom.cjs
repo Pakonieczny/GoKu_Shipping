@@ -1,7 +1,8 @@
 // Adversarial (28 Sep, wave 3, area 12): Custom Orders.
-// 1 · A custom order's decision picked in the order view is kept per order, as the staff note is: Previous / Next to
-//     another line (a regular one, or another custom order) and back shows what was picked, and never lends it to the
-//     other order. It was thrown away on the first step.
+// 1 · No decision box in the order view (Paul, 29 Sep 01:01: the red "This line is waiting on a decision" box removed
+//     from the UI, the Review tab and every pop-up): Previous / Next through every line (a regular one, or a custom
+//     order) and back, and a close and reopen, never shows a question; a custom order keeps its own line (its label and
+//     buttons). (Until then its decision picked there was checked to be kept per order.)
 // 2 · The motion is seen and smooth in a real Chromium: the drag hover hands over from one card to the next (one card
 //     marked at a time, its veil fading in), and a .dxf dropped on a card flies into its window (the chip moves on
 //     screen over a visible time, on transform and opacity only, with no frame over 34 ms and no long task over 50 ms).
@@ -50,36 +51,37 @@ async function main() {
       Orders.interpretAll(); Review.syncOrderItems(); CN.setMode('orders'); Orders.render();
     }, ORDERS);
 
-    /* ── 1 · the decision picked is kept per order across Previous / Next ── */
+    /* ── 1 · no decision box on any line, across Previous / Next and a reopen ── */
     const A = '4174476673_41744766731', R = '4176576272_41765762721';
     const seq = await page.evaluate(() => Orders.visibleRows().map(r => r.key));
     assert(seq.includes(A) && seq.includes(R), 'both custom lines listed: ' + seq.join(','));
-    await page.evaluate(k => OrderWin.open(k), A);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'));
-    await page.selectOption('#owFix .cuStep [data-f=mat]', 'silver');
     const at = k => page.waitForFunction(k => OrderWin.key() === k && !document.querySelector('#orderWin').classList.contains('owLoading'), k);
-    const matOn = () => page.evaluate(() => { const f = document.querySelector('#owFix .cuStep [data-f=mat]'); return f ? f.value : null; });
+    // what the window asks: the #owFix box (a custom line's is empty: no engraving waits), its question's controls, its words
+    const asked = () => page.evaluate(() => ({ fix: document.getElementById('owFix').innerHTML, controls: document.querySelectorAll('#orderWin .cuStep, #orderWin .owFixCard, #orderWin .rvItem, #orderWin [data-f=mat]').length,
+      words: /waiting on a decision|decide below/i.test(document.getElementById('orderWin').textContent), custom: !document.getElementById('owCustom').hidden }));
+    const none = { fix: '', controls: 0, words: false }, bare = ({ custom, ...got }) => got;
+    await page.evaluate(k => OrderWin.open(k), A);
+    await at(A); await page.waitForTimeout(300);
+    const steps = [[A, await asked()]];
     // walk the whole list forward and back to A: every other line passes through the view, custom or regular
-    const i = seq.indexOf(A), steps = [];
-    for (let j = i + 1; j < seq.length; j++) { await page.click('#owNext'); await at(seq[j]); steps.push([seq[j], await matOn()]); }
-    for (let j = seq.length - 2; j >= 0; j--) { await page.click('#owPrev'); await at(seq[j]); if (seq[j] !== A) steps.push([seq[j], await matOn()]); else break; }
-    if (i === seq.length - 1) { await page.click('#owPrev'); await at(seq[i - 1]); steps.push([seq[i - 1], await matOn()]); await page.click('#owNext'); await at(A); }
-    const other = steps.find(s => s[0] === R);
-    assert(other, 'the other custom order was shown on the way: ' + JSON.stringify(steps));
-    assert.notEqual(other[1], 'silver', 'the metal picked for one order is never lent to another: ' + JSON.stringify(steps));
-    assert.equal(await matOn(), 'silver', 'back on the order, the metal picked there is still picked: ' + JSON.stringify(steps));
-    assert.equal(await page.evaluate(() => document.querySelector('#owFix .cuStep [data-a=mat]').disabled), false, 'and its Use it can be pressed');
-    // closed and opened again on it: still there (the window keeps it as it keeps the staff note)
+    const i = seq.indexOf(A);
+    for (let j = i + 1; j < seq.length; j++) { await page.click('#owNext'); await at(seq[j]); steps.push([seq[j], await asked()]); }
+    for (let j = seq.length - 2; j >= 0; j--) { await page.click('#owPrev'); await at(seq[j]); steps.push([seq[j], await asked()]); if (seq[j] === A) break; }
+    if (i === seq.length - 1) { await page.click('#owPrev'); await at(seq[i - 1]); steps.push([seq[i - 1], await asked()]); await page.click('#owNext'); await at(A); steps.push([A, await asked()]); }
+    assert(steps.some(s => s[0] === R), 'the other custom order was shown on the way: ' + JSON.stringify(steps.map(s => s[0])));
+    for (const [k, got] of steps) { assert.deepEqual(bare(got), none, 'no decision box on ' + k); if (k === A || k === R) assert(got.custom, 'a custom order keeps its own line: ' + k); }
+    // closed and opened again: still nothing asked
     await page.click('#owClose');
     await page.waitForFunction(() => !OrderWin.isOpen());
     await page.evaluate(k => OrderWin.open(k), R);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'));
+    await at(R); await page.waitForTimeout(300);
+    const onR = await asked(); assert.deepEqual(bare(onR), none, 'the other custom order, opened on its own: no decision box'); assert(onR.custom, 'and its own line');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.evaluate(k => OrderWin.open(k), A);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'));
-    assert.equal(await matOn(), 'silver', 'opened again later: the metal picked is still picked');
+    await at(A); await page.waitForTimeout(300);
+    const onA = await asked(); assert.deepEqual(bare(onA), none, 'opened again later: no decision box'); assert(onA.custom, 'and its own line');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen() && !document.querySelector('dialog[open]'));
-    console.log('  ✓ a custom decision picked in the order view is kept per order across Previous / Next and a reopen');
+    console.log('  ✓ no decision box in the order view on any line, across Previous / Next and a reopen; a custom order keeps its own line');
 
     /* ── 2 · drag hover hands over between cards; a design flies into its window, seen and smooth ── */
     await page.evaluate(() => { CN.setMode('review'); Review.render(); });
