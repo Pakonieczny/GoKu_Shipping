@@ -9,19 +9,21 @@
 // the hard safety check (kill switch ⇒ no-op).
 //
 // POST body: { tasks: ["conversions","measure","mine","prune","budgets","events","anomaly"], token }
-//   token must equal EDIT_PASSCODE (defence-in-depth; the kicker passes it).
+//   token must be the server-only worker token (the kicker passes it) or the console passcode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const E = require("./googleAdsAutopilot");
 const fetch = require("node-fetch");
+const EP = require("./_editPasscode");
 
-// Same credential rules as googleAdsAutopilotKick.js (passcode(), sameSecret(), workerToken()):
-// EDIT_PASSCODE when set; otherwise a server-only token derived from the Google Ads secrets, so the
-// scheduled kick keeps working while no browser can drive this worker. Keep the two in step.
-function passcode(){return String(process.env.EDIT_PASSCODE||"").trim().replace(/^["']|["']$/g,"");}
-function sameSecret(a,b){a=String(a==null?"":a).trim();b=String(b==null?"":b);if(!a||!b)return false;const h=x=>require("crypto").createHash("sha256").update(x).digest();return require("crypto").timingSafeEqual(h(a),h(b));}
+// Same credential rules as googleAdsAutopilotKick.js (internalToken(), workerToken()): a server-only
+// token derived from the Google Ads secrets, so the scheduled kick keeps working while no browser can
+// drive this worker; EDIT_PASSCODE from the environment only when those secrets are absent. The
+// console passcode (_editPasscode.js: EDIT_PASSCODE, else Firestore config/editPasscode) is accepted
+// too. Keep the two files in step.
+const sameSecret=EP.sameSecret;
 function internalToken(){const key=[process.env.GADS_REFRESH_TOKEN,process.env.GADS_CLIENT_SECRET,process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|");return key?"internal-"+require("crypto").createHmac("sha256",key).update("brites-gads-background-worker/v1").digest("hex"):undefined;}
-function workerToken(){return passcode()||internalToken();}
+function workerToken(){return internalToken()||EP.envPasscode()||undefined;}
 
 async function continueMotion(next,task='adDesignMotion'){
  const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
@@ -63,15 +65,19 @@ exports.handler = async (event) => {
   const t0 = startedAt();
   const over = () => Date.now() - t0 > DEADLINE_MS;
 
-  // auth (defence-in-depth). Fails closed: with EDIT_PASSCODE unset only the server-side token
-  // (sent by the scheduled kick and the API) is accepted — never an anonymous request.
+  // auth (defence-in-depth). Fails closed: with no passcode configured only the server-side token
+  // (sent by the scheduled kick and the API) is accepted — never an anonymous request. The server
+  // token is checked first, so the scheduled path needs no Firestore read.
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
-  const pass = passcode(), internal = internalToken();
-  if (!((pass && sameSecret(body.token, pass)) || (internal && sameSecret(body.token, internal)))) {
-    if (pass) return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
-    return { statusCode: 403, headers: CORS, body: JSON.stringify({ ok: false, error: "Set EDIT_PASSCODE in Netlify to enable changes", code: "EDIT_PASSCODE_NOT_SET" }) };
+  const internal = internalToken();
+  if (!(internal && sameSecret(body.token, internal))) {
+    const pass = (await EP.resolve()).value;
+    if (!(pass && sameSecret(body.token, pass))) {
+      if (pass) return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ ok: false, error: "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)", code: "EDIT_PASSCODE_NOT_SET" }) };
+    }
   }
 
   const ctrl = await E.control();

@@ -6,7 +6,8 @@
 //      tasks once daily; budget reallocation weekly.
 //   2) GET  → serve the operator console (approval queue + kill switch + toggles).
 //   3) POST → console actions (approve/reject/apply, kill/resume, dry-run, run-now),
-//      guarded by EDIT_PASSCODE (same passcode the rest of the tooling uses).
+//      guarded by the console passcode: EDIT_PASSCODE when set in Netlify, otherwise
+//      Firestore config/editPasscode (see _editPasscode.js).
 //
 // Only THIS function is scheduled (one netlify.toml entry). The worker and console
 // are triggered, not scheduled — so the whole system adds exactly one cron line.
@@ -38,6 +39,7 @@
 
 const fetch = require("node-fetch");
 const E = require("./googleAdsAutopilot");
+const EP = require("./_editPasscode");
 
 let _fb = null;
 function fb() {
@@ -54,22 +56,24 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 function ok(o) { return { statusCode: 200, headers: HEADERS, body: JSON.stringify(o) }; }
-// EDIT_PASSCODE, trimmed and unquoted exactly like the other Google check endpoints (a pasted
-// trailing space must not lock the owner out). Compared in constant time.
-function passcode() { return String(process.env.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, ""); }
-function sameSecret(a, b) { a = String(a == null ? "" : a).trim(); b = String(b == null ? "" : b); if (!a || !b) return false; const h = x => require("crypto").createHash("sha256").update(x).digest(); return require("crypto").timingSafeEqual(h(a), h(b)); }
-// Server-to-server credential for the background worker. With EDIT_PASSCODE set it IS the
-// passcode; unset, it is derived from the Google Ads OAuth secrets only this site holds, so the
-// scheduled kick keeps running while no browser can call the worker. Must match the worker.
-function workerToken() { const pass = passcode(); if (pass) return pass; const key = [process.env.GADS_REFRESH_TOKEN, process.env.GADS_CLIENT_SECRET, process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|"); return key ? "internal-" + require("crypto").createHmac("sha256", key).update("brites-gads-background-worker/v1").digest("hex") : undefined; }
-const PASSCODE_UNSET = "Set EDIT_PASSCODE in Netlify to enable changes";
+// The console passcode comes from _editPasscode.js: EDIT_PASSCODE when set in Netlify (trimmed and
+// unquoted, so a pasted trailing space cannot lock the owner out), otherwise Firestore
+// config/editPasscode. Compared in constant time; never logged or returned.
+const sameSecret = EP.sameSecret;
+function internalToken() { const key = [process.env.GADS_REFRESH_TOKEN, process.env.GADS_CLIENT_SECRET, process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|"); return key ? "internal-" + require("crypto").createHmac("sha256", key).update("brites-gads-background-worker/v1").digest("hex") : undefined; }
+// Server-to-server credential for the background worker: derived from the Google Ads OAuth secrets
+// only this site holds, so no browser can produce it and it never depends on a passcode that may
+// change in Firestore at any time. Only when those secrets are absent does it fall back to
+// EDIT_PASSCODE from the environment. Synchronous on purpose. Must match the worker.
+function workerToken() { return internalToken() || EP.envPasscode() || undefined; }
+const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)";
 // Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
 // change. Every other action — including any action not listed here — is treated as a change.
 const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
-// true = allowed · "unset" = a change was requested while EDIT_PASSCODE is not configured · false = wrong passcode
-function authed(event, body) {
-  const pass = passcode();
+// true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
+async function authed(event, body, resolved) {
+  const pass = (resolved || await EP.resolve()).value;
   if (!pass) return isReadAction(body && body.action, body) ? true : "unset"; // fail closed: reads only
   const h = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
   return sameSecret(h, pass) || !!(body && sameSecret(body.passcode, pass));
@@ -536,10 +540,11 @@ async function httpHandler(event) {
   // POST → actions (auth required)
   let body = {}; try { body = JSON.parse(event.body || "{}"); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
-  const gate = authed(event, body);
+  const pc = await EP.resolve(); // one resolution per request: the gate and editPasscodeSet agree
+  const gate = await authed(event, body, pc);
   if (gate === "unset") return { statusCode: 403, headers: HEADERS, body: JSON.stringify({ ok: false, error: PASSCODE_UNSET, code: "EDIT_PASSCODE_NOT_SET" }) };
   if (!gate) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
-  try { const out = await handleAction(body); if (body.action === "dashboard" && out && typeof out === "object") out.editPasscodeSet = !!passcode(); return ok(out); }
+  try { const out = await handleAction(body); if (body.action === "dashboard" && out && typeof out === "object") out.editPasscodeSet = !!pc.value; return ok(out); }
   catch (e) { return { statusCode: e.statusCode || 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
 }
 
