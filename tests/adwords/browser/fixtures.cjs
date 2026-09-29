@@ -578,7 +578,15 @@ function createFixtures(opts = {}) {
     saveAdDesign: body => Object.assign(adDesignWorkspace(body), { savedAt: Date.now() }),
     uploadAdDesignReference: () => ({ ok: true, reference: null }),
     startAdDesign: () => ({ ok: true, queued: true, jobId: 'harness-job' }),
-    cropAdDesignImage: () => ({ ok: true }),
+    // crop in googleAdsAdDesign.js answers with the workspace's status: the chosen image, cropped, now placed in its format.
+    cropAdDesignImage: body => {
+      const w = adDesignWorkspace(body), f = body && body.format || 'square', src = body && body.source || {};
+      if (body && body.remove) return w;
+      const p = w.products.find(x => x.images.some(i => i.id === src.imageId)) || w.products[0], im = p.images.find(i => i.id === src.imageId) || p.images[0], id = 'harness-crop-' + f;
+      w.imageLibrary = [{ id, kind: 'crop', groupRef: w.settings.groupRef, format: f, productIds: [p.id], url: im.url + '&crop=' + f, originalUrl: im.url, asset: { width: 2048, height: 2048 }, rootSource: src }];
+      w.placements = ['desktop', 'mobile'].map(device => ({ groupRef: w.settings.groupRef, productId: p.id, device, format: f, imageId: id }));
+      return w;
+    },
     deleteAdDesignSavedDesign: () => ({ ok: true }),
     deleteAdDesignGeneratedImage: () => ({ ok: true }),
     openAdDesignSavedDesign: () => ({ ok: true }),
