@@ -148,7 +148,7 @@ const cancelReads = () => calls.filter(c => c.op === "cancelList").length;
     const p = page({ held: ["4000000002"] }); const { AutoCancel } = p;
     AutoCancel.start();
     const first = cancelReads(); await AutoCancel.poll();
-    assert.equal(cancelReads() - first, 1, "the first read: the newest records, as before");
+    assert.equal(cancelReads() - first, 2, "the first read: the newest records, as before, and the list of cancelled orders the sheets are checked against (Cancelled.load, once)");
     cost.docsRead = 0; const q = await AutoCancel.poll();
     assert(cost.docsRead <= 3, `with nothing new, a read costs next to nothing (read ${cost.docsRead})`);
     assert(q.includes("3000000079"), "a record whose job had to wait is taken up again at the next read");
