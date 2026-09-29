@@ -5473,8 +5473,10 @@ async function _mtdSpend() {
   const nativeMicros = (r[0] && r[0].metrics && r[0].metrics.costMicros) || 0;
   let rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
   // Rate service unreachable: use the newest rate saved in the last 31 days rather than leaving the
-  // monthly stop unable to compare (and so switched off) until the service returns.
-  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = f ? ((await f.db.collection(COL.state).doc("fxRates").get()).data() || {}) : {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+  // monthly stop unable to compare (and so switched off) until the service returns. _fxRateToUsd
+  // saves final daily rates in fxRatesFinal; the retired fxRates document still holds older ones.
+  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+    if (f) for (const doc of ["fxRates", "fxRatesFinal"]) { try { Object.assign(saved, (await f.db.collection(COL.state).doc(doc).get()).data() || {}); } catch (e) {} }
     const k = Object.keys(saved).filter(k => k >= min && k <= acct + ":" + end && Number(saved[k]) > 0).sort().pop(); if (k) rate = Number(saved[k]); } catch (e) {} }
   const mtd = rate != null ? fromMicros(nativeMicros) * rate : fromMicros(nativeMicros);
   return { mtd, mtdNative: fromMicros(nativeMicros), fxIncomplete: rate == null, start, end };
