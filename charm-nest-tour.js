@@ -492,7 +492,8 @@
       await t.wait(200);
     }
     if (modeNow() !== home.mode) return;
-    if (t.held) return backHome(t, o);
+    // a window held: it grows back out of its card first (and, when the press was its own, says there what went where)
+    if (t.held && await backHome(t, o)) return;
     const M = root.Motion; if (!M) return;
     const live = liveOf(s0);
     const show = { label: "Show", title: "open the sheets", fn: () => setMode("nest") }, held = (o.waiting || []).find(w => w.held);
@@ -559,15 +560,18 @@
     over(false);
     const f = k.focus; if (f && f !== doc.body && f.isConnected && d.contains(f) && f.getClientRects().length && doc.activeElement !== f) tryDo(() => f.focus({ preventScroll: true }));
   }
-  /** 5 · home, into the window: it is back as it was, and says, where the button stood, what went where. */
+  /** 5 · home, into the window: it is back as it was, and says, where the button stood, what went where. True when it
+   *  said it there; false when the press was not its own (a card's, under it), so home is said on the card as ever. */
   async function backHome(t, o) {
     const k = t.held; await back(t, t.ff);
-    const d = k && k.d, M = root.Motion; if (!d || !d.open || !M || !o.words || !k.inside) return;
+    const d = k && k.d, M = root.Motion; if (!k || !k.inside) return false;
+    if (!d || !d.open || !M || !o.words) return true;
     const held = (o.waiting || []).find(w => w.held), words = o.words + (held ? ` · ${held.why}` : ""), ms = held ? 9000 : 7000, R = k.R;
     const at = doc.createElement("i"); at.setAttribute("aria-hidden", "true");
     Object.assign(at.style, { position: "fixed", left: R.left + "px", top: R.top + "px", width: R.width + "px", height: R.height + "px", pointerEvents: "none", visibility: "hidden" });
     d.appendChild(at); setTimeout(() => at.remove(), ms + 2000);
     const n = tryDo(() => M.note(at, { text: words, ms, tone: held ? "bad" : "" })); if (n && d.open) d.appendChild(n);
+    return true;
   }
   /** Where the design starts, from a card: one still in its list is lifted from where it stands now, its copy (made
    *  before the list was drawn again) only fading where it was: it slid over the card drawn anew under it, two cards seen
