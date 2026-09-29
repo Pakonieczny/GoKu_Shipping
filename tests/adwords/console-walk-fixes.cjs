@@ -91,6 +91,16 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.equal(q.anims.length, 1); assert.equal(q.anims[0].el, $q('body')); assert.equal(q.anims[0].frames[0].height, '80px'); assert.equal(q.anims[0].frames[1].height, '331px');
     $q('meta').textContent = 'Tested again'; await settle();
     assert.equal(q.anims.length, 1); assert(!q.anims[0].cancelled, 'the ease keeps running');
+    // A panel its own button hides, or a question box its Cancel removes: the block that held it eases shut.
+    const r = page('<div class="card" id="c3"><div id="tool"><div id="row"><button id="kw2">Test</button></div><div id="panel"><p>Results</p><button id="dis">Dismiss</button></div>' +
+      '<div id="ask"><button id="no">Cancel</button></div></div></div>');
+    r.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const $r = id => r.document.getElementById(id);
+    r.H.set($r('panel'), 251); r.H.set($r('tool'), 400); r.H.set($r('c3'), 700); $r('dis').click();
+    $r('panel').style.display = 'none'; r.H.set($r('panel'), 0); r.H.set($r('tool'), 149); r.H.set($r('c3'), 449); await settle();
+    assert.equal(r.anims.length, 1); assert.equal(r.anims[0].el, $r('tool')); assert.equal(r.anims[0].frames[0].height, '400px'); assert.equal(r.anims[0].frames[1].height, '149px');
+    r.anims[0].finish(); r.H.set($r('ask'), 90); $r('no').click(); $r('ask').remove(); r.H.set($r('tool'), 59); r.H.set($r('c3'), 359); await settle();
+    assert.equal(r.anims.length, 2); assert.equal(r.anims[1].el, $r('tool')); assert.equal(r.anims[1].frames[0].height, '149px'); assert.equal(r.anims[1].frames[1].height, '59px');
   });
 
   await test('a dialog drawn again under the control that asked eases its content, so a centred dialog glides; the design studio is left alone', async () => {

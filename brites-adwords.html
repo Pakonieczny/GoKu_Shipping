@@ -2096,18 +2096,19 @@ function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|
 function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
 // Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
 // The smallest block whose height changed eases, so a change elsewhere that moves nothing (a status line) does
-// not widen it. A change during a running ease continues from where the block stands.
-function easeWatch(els,row){var top=els[els.length-1],H=new Map(),mark=function(){els.forEach(function(x){H.set(x,x._ease?x._ease.to:x.getBoundingClientRect().height);});};
+// not widen it; blocks a redraw removed or hid are passed over, so what held them eases. A change during a
+// running ease continues from where the block stands.
+function easeWatch(els,row){var top=els[els.length-1],H=new Map(),live=function(x){return x.isConnected&&x.getClientRects().length>0;},mark=function(){els.forEach(function(x){H.set(x,x._ease?x._ease.to:x.getBoundingClientRect().height);});};
   if(top._easeMo)top._easeMo.disconnect();mark();
   var mo=top._easeMo=new MutationObserver(function(recs){
     if(row){if(!top.getClientRects().length)return;mo.disconnect();Array.prototype.forEach.call(top.querySelectorAll(':scope>td>*'),function(c){easeHeight(c,0);easeWatch([c]);});return;}
     var i,j,el,from,run=null;
-    for(i=0;i<els.length;i++){el=els[i];if(!el.isConnected)continue;
+    for(i=0;i<els.length;i++){el=els[i];if(!live(el))continue;
       if(el._ease){run=el;if(recs.some(function(r){return el.contains(r.target);}))break;continue;}
       if(Math.abs(el.getBoundingClientRect().height+(run?run._ease.to-easeNow(run._ease):0)-H.get(el))>=8)break;}
     if(i===els.length){if(!run)mark();return;}
-    for(j=i+1;j<els.length;j++)if(els[j]._ease)i=j;el=els[i];
-    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&els[j].isConnected)from-=els[j]._ease.to-easeNow(els[j]._ease);
+    for(j=i+1;j<els.length;j++)if(els[j]._ease&&live(els[j]))i=j;el=els[i];
+    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&live(els[j]))from-=els[j]._ease.to-easeNow(els[j]._ease);
     els.forEach(function(x){if(x._ease)x._ease.cancel();});mark();easeHeight(el,from);});
   mo.observe(top,row?{attributes:true}:{attributes:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
 function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;

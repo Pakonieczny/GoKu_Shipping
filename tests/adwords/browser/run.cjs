@@ -109,6 +109,9 @@ async function runViewport(browser, vp, base, known, canShoot) {
     window.__hAnims = [];
     const logAnim = e => { if (e.target && e.target.nodeType === 1) { window.__hAnims.push({ t: performance.now(), el: e.target, type: e.type }); if (window.__hAnims.length > 400) window.__hAnims.splice(0, 200); } };
     addEventListener('animationstart', logAnim, true); addEventListener('transitionrun', logAnim, true);
+    // Scripted height eases too (they fire no events), so a block revealed by an easing parent is not a jump.
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (frames) { try { if (Array.isArray(frames) && frames.some(f => f && 'height' in f)) logAnim({ target: this, type: 'height' }); } catch (e) {} return animate.apply(this, arguments); };
     window.__hShifts = [];
     try { new PerformanceObserver(list => { for (const e of list.getEntries()) window.__hShifts.push({ t: e.startTime, v: e.value, src: (e.sources || []).map(s => { const n = s.node; if (!n || n.nodeType !== 1) return n && n.parentElement ? n.parentElement.tagName.toLowerCase() : '?'; return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.classList.length ? '.' + [...n.classList].slice(0, 2).join('.') : ''); }) }); }).observe({ type: 'layout-shift', buffered: true }); } catch (e) {}
   });
@@ -160,6 +163,8 @@ async function runViewport(browser, vp, base, known, canShoot) {
     while (Date.now() - t0 < max) { if (state.inflight === 0 && Date.now() - state.lastApi > 300) break; await page.waitForTimeout(80); }
   };
   const audit = async (tab, scopes, full, label) => {
+    // Layout is judged once height eases have finished, as a person would see it.
+    await page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && a.effect && a.effect.getKeyframes().some(k => 'height' in k)), null, { timeout: 1200, polling: 50 }).catch(() => {});
     let res; try { res = await page.evaluate(pageAudit, { scopes, minTap: vp.phone && full ? 32 : 0, cadTracers: fx.cadTracers }); } catch (e) { notes.push('audit failed on ' + tab + ': ' + e.message); return; }
     const ctx = label || state.lastAction;
     if (res.docOverflow) { const f = add('page wider than viewport', vp.name, tab, Object.assign({ after: ctx }, res.docOverflow), (res.docOverflow.culprits[0] || {}).sel || 'doc'); await shoot(f, (res.docOverflow.culprits[0] || {}).sel, tab); }
@@ -244,7 +249,10 @@ async function runViewport(browser, vp, base, known, canShoot) {
     if (before && s1 && s3) {
       const delta = s3.h - before.h, docDelta = s3.doc - before.doc;
       out.delta = Math.round(delta); out.docDelta = Math.round(docDelta);
-      out.jumped = Math.abs(delta) > 24 && Math.abs(s1.h - s3.h) <= 2 && (!s2 || Math.abs(s2.h - s3.h) <= 2);
+      // A height ease on the region, around it or inside it since the click moved it smoothly, even if a slow
+      // host took the first sample after the ease had ended.
+      const eased = await page.evaluate(t => { const r = document.querySelector('[data-harness-region]'); return !!r && (window.__hAnims || []).some(x => x.type === 'height' && x.t >= t - 5 && x.el.isConnected && (x.el === r || x.el.contains(r) || r.contains(x.el))); }, t0).catch(() => false);
+      out.jumped = !eased && Math.abs(delta) > 24 && Math.abs(s1.h - s3.h) <= 2 && (!s2 || Math.abs(s2.h - s3.h) <= 2);
     }
     return out;
   }
@@ -380,7 +388,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
         const el = document.querySelector(s); if (!el) return null;
         const live = el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length;
         // Animations that started with this action (anywhere inside), or transitions on the overlay or its panel.
-        const started = (window.__hAnims || []).filter(x => x.t >= t - 5 && (x.type === 'animationstart' ? el.contains(x.el) : x.el === el || x.el.parentElement === el)).length;
+        const started = (window.__hAnims || []).filter(x => x.t >= t - 5 && x.type !== 'height' && (x.type === 'animationstart' ? el.contains(x.el) : x.el === el || x.el.parentElement === el)).length;
         return live + started;
       }, [ovSel, state.actionT0 || 0]).catch(() => null);
       if (anim === 0 && ov.kind !== 'popover') add('dialog appears without transition', vp.name, tab, { overlay: label, opener: state.lastAction }, label);
