@@ -292,6 +292,9 @@ exports.handler = async (event) => {
       }
       else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
+      // Read-only: Google's serving check of ENABLED campaigns for the Overview badge. At most three
+      // minutes, and never the last three the tasks after it need.
+      else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }

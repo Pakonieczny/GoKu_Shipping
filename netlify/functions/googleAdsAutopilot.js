@@ -58,7 +58,8 @@ const COL = {
   convAdj:   "Brites_GAds_ConvAdjQueue", // conversion adjustments (refunds/retractions) waiting for upload (auto-id)
   orderLog:  "Brites_GAds_OrderLog",     // EVERY Shopify order outcome (captured/skipped) + attribution, for the log + organic intelligence (auto-id)
   refunds:   "Brites_GAds_Refunds",      // deterministic Shopify refund receipts (idempotency + audit)
-  kwCache:   "Brites_GAds_KwCache"       // cached Keyword Planner results keyed by seed-set+geo (TTL), to spare API quota
+  kwCache:   "Brites_GAds_KwCache",      // cached Keyword Planner results keyed by seed-set+geo (TTL), to spare API quota
+  serving:   "Brites_GAds_Serving"       // latest Google serving check per campaign (doc per campaign id): verdict, counts, top findings
 };
 
 /* ============================ Config / control ============================ */
@@ -628,7 +629,9 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
   for (const [id, changes] of byCampaign) {
     const categories = [...new Set(changes.flatMap(c => c.categories))], created = ops.some(x => /campaignOperation|^campaigns$/.test(x.type) && x.op.create && resolve(x.op.create.resourceName).includes(id));
     let observed = null;
-    try { observed = await _observeCampaignCreative(id); } catch (error) { /* The confirmed publication still gets exactly one revision; missing state is visible. */ }
+    // Google's review and serving state is read beside the observation and kept for the Overview
+    // badge. A new campaign's products, or a changed product filter, are not listed yet: settling.
+    try { observed = await _observeCampaignCreative(id, { servingSource: "publication", settling: created || categories.includes("Product choices") }); } catch (error) { /* The confirmed publication still gets exactly one revision; missing state is visible. */ }
     const relevantOps = ops.filter(({ op }) => {
       const row = op.create || op.update || {}; return [row.campaign, row.adGroup, row.assetGroup, row.resourceName, op.remove].filter(Boolean).some(ref => resolve(ref).includes(id));
     });
@@ -645,7 +648,7 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
       snapshotWarnings: observed ? observed.warnings : ["The publication was accepted, but current editable settings could not be read. Open version history to reconcile them."] }, eventId ? String(eventId) : require("crypto").randomUUID());
   }
 }
-async function _observeCampaignCreative(id) {
+async function _observeCampaignCreative(id, { servingSource = null, settling = false } = {}) {
   const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
   if (!rows.length) throw new Error("Campaign was not found in this account.");
   const row = rows[0], channel = row.campaign.advertisingChannelType, values = { "Campaign settings": rows.map(r => r.campaign), Budget: rows.map(r => r.campaignBudget) }, warnings = [];
@@ -673,6 +676,9 @@ async function _observeCampaignCreative(id) {
   if (channel === "SEARCH") jobs.push(read("Ad group images and extensions", `SELECT campaign.id, ad_group_asset.resource_name, ad_group_asset.field_type FROM ad_group_asset WHERE ${filter} AND ad_group_asset.status != 'REMOVED'`));
   let snapshot = null;
   jobs.push(_captureCampaignEditableSnapshot(id).then(value => { snapshot = value; warnings.push(...value.warnings); }).catch(error => { warnings.push("Editable settings could not be saved: " + String(error.message || error).slice(0, 200)); }));
+  // Read-only and never fatal: its result is stored for the Overview badge, not in the version. A
+  // further publication within five minutes only marks that verdict as older than the campaign.
+  if (servingSource) jobs.push((_servingDue(id) ? _servingCheck(id, { source: servingSource, settling }) : _servingChanged(id)).catch(() => null));
   await Promise.all(jobs);
   const fingerprints = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, _versionHash(v)]));
   return { fingerprints, snapshot, warnings, categories: Object.keys(values), name: row.campaign.name };
@@ -1135,11 +1141,11 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 5) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 6) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
     actions: [], actionsChecked: false, recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], schemaVersion: 5, at: Date.now() };
+    healthy: false, validated: false, reasons: [], schemaVersion: 6, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
@@ -1207,6 +1213,37 @@ async function conversionHealth({ force } = {}) {
       if (dmx.consentMissing) out.reasons.push(dmx.consentMissing + " queued sale(s) from the EEA, UK or Switzerland carry no ad_user_data consent, so Google will not use them. The storefront must pass the shopper's consent with the order.");
       if (out.dataManager.unknown) out.reasons.push(out.dataManager.unknown + " upload outcome(s) need reconciliation before retrying.");
     } catch (error) { out.healthy = false; out.validated = false; out.reasons.push("Data Manager status: " + error.message); }
+  }
+  // Google's own import diagnostics for the configured action (Google Ads: Goals → Conversions → the
+  // action → Diagnostics): events received, recorded and still pending on the most recent full day
+  // of imports, each day of the last 7, and the error behind any refusal. A receipt that stays
+  // "processing" is then either Google still working (pending), refused (an alert names why),
+  // recorded by Google while our status check never saw the answer, or never received at all.
+  // https://developers.google.com/google-ads/api/docs/conversions/upload-summaries
+  if (/^\d+$/.test(configuredId)) {
+    try {
+      const S = "offline_conversion_upload_conversion_action_summary", num = v => Number(v) || 0;
+      const rows = await gaql(`SELECT ${S}.client, ${S}.status, ${S}.total_event_count, ${S}.successful_event_count, ${S}.pending_event_count, ${S}.last_upload_date_time, ${S}.daily_summaries, ${S}.alerts FROM offline_conversion_upload_conversion_action_summary WHERE ${S}.conversion_action_id = ${configuredId}`);
+      // An alert's error is a one-key union ({conversionUploadError: "CLICK_NOT_FOUND"}); its code is what Google names.
+      const code = e => { const k = e && Object.keys(e)[0]; return k ? String(e[k]) : null; };
+      const clients = rows.map(r => r.offlineConversionUploadConversionActionSummary).filter(Boolean).map(s => ({ client: s.client || "UNKNOWN", status: s.status || null,
+        received: num(s.totalEventCount), recorded: num(s.successfulEventCount), pending: num(s.pendingEventCount), lastImportAt: s.lastUploadDateTime || null,
+        week: (s.dailySummaries || []).reduce((a, d) => ({ recorded: a.recorded + num(d.successfulCount), failed: a.failed + num(d.failedCount), pending: a.pending + num(d.pendingCount) }), { recorded: 0, failed: 0, pending: 0 }),
+        alerts: (s.alerts || []).map(a => ({ error: code(a.error), share: a.errorPercentage != null ? Number(a.errorPercentage) : null })).filter(a => a.error).slice(0, 5) }));
+      const sum = k => clients.reduce((a, c) => a + c[k], 0), week = k => clients.reduce((a, c) => a + c.week[k], 0);
+      const g = out.googleUploads = { clients, received: sum("received"), recorded: sum("recorded"), pending: sum("pending"),
+        weekRecorded: week("recorded"), weekFailed: week("failed"), weekPending: week("pending"),
+        lastImportAt: clients.map(c => c.lastImportAt).filter(Boolean).sort().pop() || null, alerts: clients.flatMap(c => c.alerts),
+        status: [...new Set(clients.map(c => c.status).filter(Boolean))].join(", ") || null };
+      // Said when submissions are stuck (past Google's 24 hours); a fresh one is simply pending.
+      const stuck = out.dataManager ? Number(out.dataManager.staleProcessing) || 0 : 0, day = g.lastImportAt ? " (" + String(g.lastImportAt).slice(0, 10) + ")" : "";
+      const pct = x => x == null ? "" : " (" + Math.round(x * 100) + "%)", named = "Google Ads' import diagnostics for the configured action" + (g.status ? " (" + g.status + ")" : "");
+      if (g.alerts.length) out.reasons.push("Google Ads reports import errors for the configured action on its latest import day" + day + ": " + g.alerts.map(a => a.error + pct(a.share)).join(", ") + ". Those conversions are refused, not processing.");
+      if (stuck) out.reasons.push(!(g.received || g.weekRecorded || g.weekFailed || g.weekPending)
+        ? named + " show no recent imports, so Google has no record of the " + stuck + " stuck submission(s) in this action. Check Goals → Conversions → the action → Diagnostics in Google Ads; if it shows no imports either, Google has not received them into this action."
+        : named + ": latest import day" + day + " " + g.received + " received, " + g.recorded + " recorded, " + g.pending + " pending; last 7 days " + g.weekRecorded + " recorded, " + g.weekFailed + " failed, " + g.weekPending + " pending."
+          + (g.recorded || g.weekRecorded ? " Google records imports into this action. If this console is its only import source, the stuck submissions were probably recorded, and it is our status check that has not seen Google's answer." : ""));
+    } catch (e) { out.googleUploads = { error: String(e && e.message || e).slice(0, 160) }; }
   }
   const ca = out.configuredAction;
   if (ca) {
@@ -9637,17 +9674,78 @@ async function dashboard() {
   out.pending=out.pending.filter(x=>!x.archivedAt&&!x.deletedAt);
   try { out.conversionHealth = await conversionHealth(); } catch (e) { out.conversionHealth = null; }
   try { out.recentOrders = await recentOrders({ limit: 200 }); } catch (e) { out.recentOrders = []; }
+  // The last Google serving check per campaign (stored; no Google read here) for the Overview badge.
+  try { out.servingChecks = await _servingSummaries(f); } catch (e) { out.servingChecks = {}; }
   return out;
 }
 
-// Read-only "what Google has now" check shown under the timeline (_googleAdsServing.js): policy
-// review with Google's reasons, primary status reasons, dates, locations, goals, products. It
-// never throws; a read Google rejects becomes a warning inside the result.
-async function _servingCheck(id) {
+// Read-only "what Google has now" check (_googleAdsServing.js): policy review with Google's
+// reasons, primary status reasons, dates, locations, goals, products. It never throws; a read
+// Google rejects becomes a warning inside the result. With a source, its verdict is kept for
+// the Overview badge: "publication" (right after Google accepted a change), "daily" (the
+// scheduled pass over ENABLED campaigns) or "console" (Paul asked).
+async function _servingCheck(id, { source = null, settling = false } = {}) {
+  let result;
   try {
-    return await require("./_googleAdsServing").auditCampaign({ gaql, customerId: CID, campaignId: id, apiVersion: V, deadlineMs: 7000,
+    result = await require("./_googleAdsServing").auditCampaign({ gaql, customerId: CID, campaignId: id, apiVersion: V, deadlineMs: 7000, settling,
       isQuotaError: _isGadsQuotaError, shippingCountries: control().then(c => c.defaultCountries, () => null) });
-  } catch (e) { return { ok: false, error: "The serving check could not run: " + String(e && e.message || e).slice(0, 200) }; }
+  } catch (e) { result = { ok: false, error: "The serving check could not run: " + String(e && e.message || e).slice(0, 200) }; }
+  if (source) await _storeServing(id, result, source);
+  return result;
+}
+// Firestore only (never Google). A check that could not read the campaign keeps the last verdict
+// and records the attempt, and only for a campaign already on record: an unknown ID creates nothing.
+async function _storeServing(id, result, source) {
+  try {
+    const f = fb(); id = String(id || ""); if (!f || !/^\d+$/.test(id)) return;
+    const ref = f.db.collection(COL.serving).doc(id), summary = require("./_googleAdsServing").summaryOf(result, source);
+    if (summary) await ref.set({ ...summary, campaignId: id, lastAttempt: null });
+    else await ref.update({ lastAttempt: { at: new Date().toISOString(), source: String(source), error: String((result && (result.error || result.headline)) || "Google did not answer.").slice(0, 200) } });
+  } catch (e) { /* the badge keeps its last verdict */ }
+}
+// A publication the five-minute limit below did not check: the kept verdict predates the campaign's
+// current state (Firestore only; nothing is created for a campaign never checked).
+async function _servingChanged(id) {
+  try { const f = fb(); id = String(id || ""); if (f && /^\d+$/.test(id)) await f.db.collection(COL.serving).doc(id).update({ changedAt: new Date().toISOString() }); } catch (e) {}
+}
+const _servingOutdated = s => !!(s && s.changedAt && Date.parse(s.changedAt) > Date.parse(s.checkedAt || ""));
+async function _servingSummaries(f) {
+  const out = {}, snap = await f.db.collection(COL.serving).limit(300).get();
+  snap.forEach(d => { const x = d.data() || {}; out[d.id] = { verdict: x.verdict || null, headline: x.headline || "", counts: x.counts || null, top: Array.isArray(x.top) ? x.top : [],
+    source: x.source || null, settling: !!x.settling, partial: !!x.partial, checkedAt: x.checkedAt || null, changedAt: x.changedAt || null, lastAttempt: x.lastAttempt || null }; });
+  return out;
+}
+// After a publication, one check per campaign per five minutes: a publication that sends several
+// writes for one campaign is read once, not once per write (the later writes mark it changed).
+const _servingRecent = new Map();
+function _servingDue(id) {
+  const last = _servingRecent.get(String(id)) || 0;
+  if (Date.now() - last < 5 * 60000) return false;
+  _servingRecent.set(String(id), Date.now()); return true;
+}
+// The scheduled pass (googleAdsAutopilotKick's daily tasks → background task "serving"): the
+// serving check for every ENABLED campaign, one at a time, kept for the Overview badge. Read-only:
+// one campaign list, then about 14 searches per campaign. A campaign checked in the last six hours
+// (unless Google was still settling a publication, or the campaign changed since) is not read
+// again; the pass stops at Google's request quota, at 25 campaigns and at its time budget (three
+// minutes, less when the worker has less left), and the rest wait for the next day.
+async function servingSweep({ limit = 25, budgetMs = 180000, freshMs = 6 * 3600000 } = {}) {
+  const started = Date.now(), f = fb();
+  if (!(budgetMs > 0)) return { skipped: "No time left in this run; the next daily pass checks the campaigns." };
+  const rows = await gaql(`SELECT campaign.id FROM campaign WHERE campaign.status = 'ENABLED'`);
+  const ids = [...new Set(rows.map(r => String((r.campaign || {}).id || "")).filter(id => /^\d+$/.test(id)))];
+  let recent = {};
+  if (f) { try { recent = await _servingSummaries(f); } catch (e) {} }
+  const out = { enabled: ids.length, checked: 0, fresh: 0, blocked: 0, attention: 0, ready: 0, unknown: 0, deferred: 0, quotaExhausted: false };
+  for (const id of ids) {
+    const prior = recent[id], at = prior && !prior.settling && !_servingOutdated(prior) ? Date.parse(prior.checkedAt || "") : NaN;
+    if (Number.isFinite(at) && Date.now() - at < freshMs) { out.fresh++; continue; }
+    if (out.quotaExhausted || out.checked >= limit || Date.now() - started > budgetMs) { out.deferred++; continue; }
+    const r = await _servingCheck(id, { source: "daily" });
+    out.checked++; out[["blocked", "attention", "ready"].includes(r.verdict) ? r.verdict : "unknown"]++;
+    if (r.quotaExhausted) out.quotaExhausted = true;
+  }
+  return out;
 }
 
 // Real-time campaign timeline for the console: mirrors Google's "Performance diagnostics"
@@ -9657,7 +9755,7 @@ async function _servingCheck(id) {
 async function campaignTimeline({ id } = {}) {
   if (!id) return { error: "id required" };
   const cid = String(id).replace(/\D/g, "");
-  const servingP = _servingCheck(cid);   // started first so its reads overlap the timeline's own
+  const servingP = _servingCheck(cid, { source: "console" });   // started first so its reads overlap the timeline's own
   const [cRows, dayRes] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
                  campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type
@@ -10885,7 +10983,7 @@ module.exports = {
   getCollections, suggestOccasions, recordOccasionUse,
   deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
-  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,

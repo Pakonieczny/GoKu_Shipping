@@ -291,5 +291,126 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   let scripts = 0; for (const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) { if (/\bsrc\s*=/.test(m[1])) continue; new vm.Script(m[2]); scripts++; }
   check(scripts >= 1, 'every inline console script still compiles');
 
+  // ── 8. What the Overview badge keeps, and a new campaign's products while Google lists them ──
+  const kept = S.summaryOf({ ok: true, verdict: 'blocked', headline: 'h'.repeat(300), counts: { block: 1, risk: 3, note: 5 }, partial: true, settling: true, channel: 'SEARCH', checkedAt: '2026-09-29T12:00:00Z',
+    findings: [{ level: 'block', area: 'Dates', text: 'Ended' }, { level: 'note', area: 'Ads', text: 'Under review' }, { level: 'risk', area: 'Locations', text: 'y'.repeat(300) }, { level: 'risk', area: 'Networks', text: 'Display on' }, { level: 'risk', area: 'Goals', text: 'Two goals' }] }, 'daily');
+  check(kept.verdict === 'blocked' && kept.source === 'daily' && kept.counts.block === 1 && kept.counts.risk === 3 && kept.counts.note === 5 && kept.partial && kept.settling && kept.checkedAt === '2026-09-29T12:00:00Z', 'the badge keeps the verdict, its counts, its source and when');
+  check(kept.top.length === 3 && kept.top.every(f => f.level !== 'note') && kept.top[0].area === 'Dates' && kept.top[1].text.length === 200 && kept.headline.length === 240, 'it keeps the first three findings that decide it, clipped, and no notes');
+  check(S.summaryOf({ ok: false, verdict: 'unknown' }, 'daily') === null && S.summaryOf({ ok: false, error: 'x' }) === null && S.summaryOf(null) === null, 'a check that could not read the campaign keeps nothing');
+  const unlisted = JSON.parse(JSON.stringify(pmax)); unlisted.shopping_product = [];
+  r = await S.auditCampaign({ gaql: fakeGoogle(unlisted).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29' });
+  check(has(r, 'block', /Google finds no products/) && has(r, 'block', /2 of 2 products in the product filter/) && r.settling === false, 'later, a campaign with no products listed is blocked');
+  r = await S.auditCampaign({ gaql: fakeGoogle(unlisted).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
+  check(r.settling === true && !r.findings.some(f => f.level === 'block' && f.area === 'Products') && has(r, 'note', /Google has not listed products for this campaign yet \(Merchant Center 555, feed US\)/) && has(r, 'note', /2 of 2 products in the product filter are not listed for this campaign yet/), 'right after a publication, products Google has not listed yet are a note');
+  r = await S.auditCampaign({ gaql: fakeGoogle(pmax).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
+  check(has(r, 'note', /1 of 2 products in the product filter are not listed for this campaign yet: shopify_us_3_4/) && !has(r, 'risk', /products in the product filter/) && has(r, 'risk', /1 of 4 products cannot show/), 'a changed product filter Google has not applied yet is a note; product issues Google reports still count');
+  r = await S.auditCampaign({ gaql: q429.gaql, customerId: '123', campaignId: '5', isQuotaError: e => e.code === 'GADS_QUOTA_EXHAUSTED' });
+  check(r.quotaExhausted === true && (await S.auditCampaign({ gaql: fakeGoogle(search).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH', today: '2026-09-29' })).quotaExhausted === false, 'the result says when Google\'s request quota stopped it');
+
+  // ── 9. The engine keeps each verdict: after a publication, once per five minutes ─────────
+  function fakeStore() {
+    const docs = new Map(), writes = [];
+    const docRef = (col, id) => { const key = col + '/' + id; return { id,
+      get: async () => ({ exists: docs.has(key), id, data: () => docs.has(key) ? JSON.parse(JSON.stringify(docs.get(key))) : undefined }),
+      set: async (v, o) => { writes.push('set ' + key); docs.set(key, o && o.merge ? { ...(docs.get(key) || {}), ...v } : v); },
+      update: async v => { writes.push('update ' + key); if (!docs.has(key)) throw Object.assign(new Error('5 NOT_FOUND: no document to update'), { code: 5 }); docs.set(key, { ...docs.get(key), ...v }); },
+      create: async v => { writes.push('create ' + key); docs.set(key, v); }, collection: sub => colRef(key + '/' + sub) }; };
+    const colRef = col => { const q = { doc: id => docRef(col, id), where: () => q, orderBy: () => q, limit: () => q, select: () => q, startAfter: () => q,
+      get: async () => { const rows = [...docs.entries()].filter(([k]) => k.startsWith(col + '/') && !k.slice(col.length + 1).includes('/')).map(([k, v]) => ({ id: k.slice(col.length + 1), exists: true, data: () => JSON.parse(JSON.stringify(v)) }));
+        return { docs: rows, size: rows.length, empty: !rows.length, forEach: fn => rows.forEach(fn) }; } }; return q; };
+    const db = { collection: colRef, runTransaction: async fn => fn({ get: ref => ref.get(), set: (ref, v, o) => ref.set(v, o), update: (ref, v) => ref.update(v), create: (ref, v) => ref.create(v) }),
+      batch: () => { const ops = []; return { set: (ref, v, o) => ops.push(() => ref.set(v, o)), update: (ref, v) => ops.push(() => ref.update(v)), delete: () => {}, commit: async () => { for (const op of ops) await op(); } }; } };
+    return { f: { db, FV: { serverTimestamp: () => new Date().toISOString(), increment: n => n, arrayUnion: (...a) => a, delete: () => null } }, docs, writes, serving: id => docs.get('Brites_GAds_Serving/' + id) };
+  }
+  const servingReads = qs => qs.filter(q => /FROM campaign_conversion_goal\b/.test(q)).length;   // read by the serving check, never by the version observation
+  let store = fakeStore(), pubQueries = [];
+  const published = JSON.parse(JSON.stringify(unlisted)); published.campaign[0].campaign.endDateTime = '2037-12-30 23:59:59';   // the engine judges against today's date
+  const pubGoogle = fakeGoogle(published).gaql;
+  E.__t.set({ fb: store.f, gaql: async q => { pubQueries.push(q); return pubGoogle(q); } });
+  vm.runInContext('_servingRecent.clear()', cx);
+  await cx._recordMutationVersions(null, [{ campaignOperation: { create: { resourceName: 'customers/123/campaigns/-1', name: 'Fixture' } } }],
+    { mutateOperationResponses: [{ campaignResult: { resourceName: 'customers/123/campaigns/77' } }] }, 'fixture create', 'ledger-1');
+  let doc = store.serving('77');
+  check(doc && doc.source === 'publication' && doc.settling === true && doc.campaignId === '77' && doc.verdict === 'attention' && doc.counts.block === 0 && doc.lastAttempt === null, 'a publication Google accepted stores its serving verdict; a new campaign\'s unlisted products do not block it');
+  check(servingReads(pubQueries) === 1 && pubQueries.every(q => /^\s*SELECT\s/.test(q)), 'the publication check reads once and only reads');
+  let before = pubQueries.length;
+  await cx._recordMutationVersions('campaigns', [{ update: { resourceName: 'customers/123/campaigns/77', name: 'Fixture 2' }, updateMask: 'name' }],
+    { results: [{ resourceName: 'customers/123/campaigns/77' }] }, 'fixture rename', 'ledger-2');
+  doc = store.serving('77');
+  check(servingReads(pubQueries.slice(before)) === 0 && doc.checkedAt && Date.parse(doc.changedAt) >= Date.parse(doc.checkedAt), 'a second publication within five minutes reads nothing more and marks the verdict as older than the campaign');
+  const summaries = await cx._servingSummaries(store.f);
+  check(summaries['77'] && summaries['77'].verdict === 'attention' && summaries['77'].changedAt === doc.changedAt && summaries['77'].source === 'publication', 'the dashboard reads the kept verdicts from Firestore, with no Google read');
+  check(/out\.servingChecks = await _servingSummaries\(f\)/.test(fs.readFileSync(enginePath, 'utf8')), 'the dashboard returns them as servingChecks');
+  vm.runInContext('_servingRecent.clear()', cx);
+  await cx._recordMutationVersions('campaigns', [{ update: { resourceName: 'customers/123/campaigns/77', name: 'Fixture 3' }, updateMask: 'name' }],
+    { results: [{ resourceName: 'customers/123/campaigns/77' }] }, 'fixture rename later', 'ledger-3');
+  doc = store.serving('77');
+  check(doc.settling === false && !doc.changedAt && doc.verdict === 'blocked' && doc.top[0].area === 'Products', 'the next publication after five minutes reads again: an edit is not settling, so products Google still does not list now block it');
+  // A check that cannot read the campaign keeps the last verdict and says so; an unknown campaign gets no record.
+  E.__t.set({ gaql: async () => { throw new Error('[gads] search failed: queryError=INTERNAL'); } });
+  const unread = await cx._servingCheck('77', { source: 'console' });
+  doc = store.serving('77');
+  check(unread.verdict === 'unknown' && doc.verdict === 'blocked' && doc.lastAttempt && doc.lastAttempt.source === 'console' && /could not be read/.test(doc.lastAttempt.error), 'an unreadable check keeps the last verdict and records the attempt');
+  await cx._servingCheck('88', { source: 'daily' }); await cx._storeServing('abc', { verdict: 'ready', counts: {} }, 'daily'); await cx._servingChanged('99');
+  check(!store.serving('88') && !store.serving('abc') && !store.serving('99'), 'nothing is created for a campaign never checked or an invalid ID');
+
+  // ── 10. The daily pass over ENABLED campaigns ─────────────────────────────────────────
+  const hours = h => new Date(Date.now() - h * 3600000).toISOString();
+  store = fakeStore();
+  store.docs.set('Brites_GAds_Serving/201', { verdict: 'ready', counts: {}, top: [], source: 'daily', checkedAt: hours(1) });                                 // checked an hour ago
+  store.docs.set('Brites_GAds_Serving/202', { verdict: 'attention', counts: {}, top: [], source: 'publication', settling: true, checkedAt: hours(1) });      // Google was still listing products
+  store.docs.set('Brites_GAds_Serving/203', { verdict: 'ready', counts: {}, top: [], source: 'daily', checkedAt: hours(2), changedAt: hours(1) });           // published since
+  store.docs.set('Brites_GAds_Serving/204', { verdict: 'ready', counts: {}, top: [], source: 'daily', checkedAt: hours(7) });                                // older than six hours
+  let sweepQueries = [];
+  const listed = ['201', '202', '203', '204', '205'], sweepGoogle = fakeGoogle(engineData).gaql;
+  const sweepGaql = (fail = null) => async q => { sweepQueries.push(q);
+    if (/^SELECT campaign\.id FROM campaign WHERE campaign\.status = 'ENABLED'$/.test(q.trim())) return listed.map(id => ({ campaign: { id } }));
+    if (fail) throw fail; return sweepGoogle(q); };
+  E.__t.set({ fb: store.f, gaql: sweepGaql() });
+  let sweep = await cx.servingSweep();
+  check(sweep.enabled === 5 && sweep.fresh === 1 && sweep.checked === 4 && sweep.blocked === 4 && sweep.deferred === 0 && sweep.quotaExhausted === false, 'the daily pass checks every ENABLED campaign except one checked in the last six hours (' + JSON.stringify(sweep) + ')');
+  check(['202', '203', '204', '205'].every(id => store.serving(id).source === 'daily' && store.serving(id).verdict === 'blocked' && !store.serving(id).changedAt) && store.serving('201').checkedAt === store.docs.get('Brites_GAds_Serving/201').checkedAt && store.serving('201').verdict === 'ready', 'a settling, changed or old verdict is replaced; a fresh one is left alone');
+  check(sweepQueries.every(q => /^\s*SELECT\s/.test(q)) && (sweepQueries.length - 1) / 4 <= 16, 'the pass only reads, about 14 searches per campaign (' + ((sweepQueries.length - 1) / 4) + ')');
+  store = fakeStore(); sweepQueries = []; E.__t.set({ fb: store.f, gaql: sweepGaql() });
+  sweep = await cx.servingSweep({ limit: 2 });
+  check(sweep.checked === 2 && sweep.deferred === 3 && store.docs.size === 2, 'at most the campaign limit is checked; the rest wait for the next day');
+  store = fakeStore(); store.docs.set('Brites_GAds_Serving/201', { verdict: 'blocked', counts: { block: 1 }, top: [], source: 'daily', checkedAt: hours(8) });
+  sweepQueries = []; E.__t.set({ fb: store.f, gaql: sweepGaql(quota) });
+  sweep = await cx.servingSweep();
+  check(sweep.quotaExhausted === true && sweep.checked === 1 && sweep.unknown === 1 && sweep.deferred === 4 && store.serving('201').verdict === 'blocked' && /quota/.test(store.serving('201').lastAttempt.error + ' ' + JSON.stringify(sweep)), 'Google\'s request quota stops the pass at once, and the kept verdict stays');
+  sweepQueries = [];
+  sweep = await cx.servingSweep({ budgetMs: -1 });
+  check(sweep.skipped && sweepQueries.length === 0, 'with no time left in the run it reads nothing');
+
+  // ── 11. Scheduled once a day, after the other daily and weekly work, within the worker's time ──
+  const fixedDate = iso => { const at = typeof iso === 'function' ? iso : () => Date.parse(iso); return class extends Date { constructor(...a) { super(...(a.length ? a : [at()])); } static now() { return at(); } }; };
+  const stub = n => n === './_editPasscode' ? { sameSecret: (a, b) => typeof a === 'string' && a === b, envPasscode: () => null, resolve: async () => ({ value: null }) } : null;
+  const kicked = async iso => {
+    const sent = [], mod = { exports: {} }, admin = { firestore: () => ({ collection: () => ({ doc: () => ({ get: async () => ({ exists: false }), set: async () => {} }) }) }) }; admin.firestore.FieldValue = { serverTimestamp: () => 0 };
+    const fakeE = { COL: { state: 'state' }, control: async () => ({ enabled: true }) };
+    const kx = { process: { env: { URL: 'https://example.invalid', GADS_DAILY_HOUR: '8', GADS_WEEKLY_DOW: '1', EDIT_PASSCODE: 'fixture-pass' } }, console, Date: fixedDate(iso), Set, JSON, module: mod, exports: mod.exports,
+      require: n => n === 'node-fetch' ? async (url, o) => { sent.push(JSON.parse(o.body)); return { ok: true, status: 202 }; } : n === './googleAdsAutopilot' ? fakeE : n === './firebaseAdmin' ? admin : stub(n) || require(n) };
+    vm.createContext(kx); vm.runInContext(fs.readFileSync(path.join(FN, 'googleAdsAutopilotKick.js'), 'utf8'), kx);
+    await mod.exports.kick(); return sent[0].tasks;
+  };
+  let tasks = await kicked('2026-09-28T08:45:00Z');   // a Monday at the daily hour
+  check(tasks.includes('serving') && tasks.indexOf('serving') > Math.max(tasks.indexOf('measure'), tasks.indexOf('designStudioLearn'), tasks.indexOf('budgets')) && tasks.indexOf('serving') < tasks.indexOf('bestSellers'), 'the daily kick asks for the serving pass after the daily and weekly tasks (' + tasks.join(',') + ')');
+  check(!(await kicked('2026-09-28T09:45:00Z')).includes('serving'), 'an ordinary hourly kick does not');
+  let clock = Date.parse('2026-09-28T08:45:00Z'), spent = 0;
+  const worked = async () => {
+    const calls = [], mod = { exports: {} }, env = { GADS_REFRESH_TOKEN: 'r', GADS_CLIENT_SECRET: 's', GADS_DEVELOPER_TOKEN: 'd' };
+    const fakeE = { control: async () => { clock += spent; return { enabled: true }; }, servingSweep: async o => { calls.push(o); return { checked: 0 }; } };
+    const wx = { process: { env }, console, Date: fixedDate(() => clock), Set, JSON, Math, module: mod, exports: mod.exports, setTimeout, clearTimeout,
+      require: n => n === 'node-fetch' ? async () => ({ ok: true, status: 202 }) : n === './googleAdsAutopilot' ? fakeE : stub(n) || require(n) };
+    vm.createContext(wx); vm.runInContext(fs.readFileSync(path.join(FN, 'googleAdsAutopilot-background.js'), 'utf8'), wx);
+    const token = 'internal-' + require('crypto').createHmac('sha256', 'r|s|d').update('brites-gads-background-worker/v1').digest('hex');
+    const res = await mod.exports.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify({ tasks: ['serving'], token }) });
+    return { calls, out: JSON.parse(res.body) };
+  };
+  let w = await worked();
+  check(w.out.status === 'ran' && w.calls.length === 1 && w.calls[0].budgetMs === 180000, 'the worker runs the serving pass with three minutes');
+  spent = 11 * 60000; w = await worked();
+  check(w.calls.length === 1 && w.calls[0].budgetMs <= 0, 'late in a run it leaves the worker\'s last three minutes to the tasks after it');
+
   console.log(`google-serving-audit: ${passed} checks passed`);
 })().catch(e => { console.error(e); process.exit(1); });

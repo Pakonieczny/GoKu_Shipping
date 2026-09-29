@@ -104,6 +104,9 @@ async function decideTasks() {
     ["measure", "mine", "prune", "events", "designStudioLearn"].forEach(t => tasks.add(t));
     if (now.getUTCDay() === weeklyDow) tasks.add("budgets");
   }
+  // Read-only and after the daily and weekly work: Google's serving check of every ENABLED campaign
+  // for the Overview badge, in the time the others leave.
+  if (tasks.has("measure")) tasks.add("serving");
   return { tasks: [...tasks], ranDaily, ranWeekly };
 }
 
