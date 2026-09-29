@@ -239,25 +239,33 @@ function createMotionService(D){
   if(input.rerunOf)return repair({...input,repairOf:input.rerunOf,explicitRerun:true});
   if(input.repairOf)return repair(input);
   const {ref,w,products}=await D.context(input.workspaceId);if(!input.fromEditorWorker)scope(w,input);
-  // Use this ad's own finished AI design. The workspace's editorAI pointer follows whichever design ran last,
-  // so after switching products it can name another product's design; that one is never borrowed.
-  const bare=id=>String(id||'').split('/').pop(),forThisAd=j=>!!j&&!!j.scope&&bare(j.scope.productId)===bare(input.productId)&&j.scope.groupRef===input.groupRef;
-  let editorId=input.editorJobId||null;
+  // Use this product's own finished AI design: this ad group's first, then an earlier version of the same ad, then the
+  // same product under another group. The workspace's editorAI pointer names whichever design ran last, so it can name
+  // another product's design after a product switch; that one is never borrowed.
+  const bare=id=>String(id||'').split('/').pop(),sameProduct=j=>!!j&&!!j.scope&&bare(j.scope.productId)===bare(input.productId);
+  let editorId=input.editorJobId||null,home=ref,waiting=null;
   if(!editorId&&input.fromEditorWorker)editorId=w.editorAI?.id||null;
   if(!editorId){
-   const own=(await ref.collection('editorAIJobs').get()).docs.map(d=>({...d.data(),id:d.data().id||d.id})).filter(j=>j.phase==='ready'&&!j.resetAt&&forThisAd(j)).sort((a,b)=>b.createdAt-a.createdAt);
-   if(w.editorAI?.id){const at=own.findIndex(j=>j.id===w.editorAI.id);if(at>0)own.unshift(...own.splice(at,1));}
-   for(const j of own.slice(0,8)){const row=await ref.collection('editorAIJobs').doc(j.id).collection('data').doc('result').get();if(row.exists&&row.data().responsive){editorId=j.id;break;}}
+   const places=[{ref,own:true}];
+   if(D.relatedContexts&&w.context?.campaignId)try{for(const prior of await D.relatedContexts(w,input.workspaceId))if(prior.ref&&!prior.w?.archivedAt)places.push({ref:prior.ref,own:false});}catch{}
+   const found=[];
+   for(const place of places)for(const row of (await place.ref.collection('editorAIJobs').get()).docs){const j={...row.data(),id:row.data().id||row.id};if(sameProduct(j)&&!j.resetAt&&j.phase!=='dismissed')found.push({place,j,exact:j.scope.groupRef===input.groupRef});}
+   const best=(a,b)=>(b.exact-a.exact)||(b.place.own-a.place.own)||((b.j.nativeAppliedAt||0)>0)-((a.j.nativeAppliedAt||0)>0)||(b.j.createdAt||0)-(a.j.createdAt||0);
+   const ready=found.filter(f=>f.j.phase==='ready').sort(best);
+   for(const f of ready.slice(0,8)){const row=await f.place.ref.collection('editorAIJobs').doc(f.j.id).collection('data').doc('result').get();if(row.exists&&row.data().responsive){editorId=f.j.id;home=f.place.ref;break;}}
+   if(!editorId)waiting=found.filter(f=>f.j.phase!=='ready').sort(best)[0]?.j||null;
   }
-  if(!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error('Run AI Design to prepare a product scene for this ad before animating it.');
-  const editor=ref.collection('editorAIJobs').doc(editorId),[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
+  if(!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error(waiting?'The AI design for this ad is not finished yet ('+String(waiting.phase||'in progress').replace(/_/g,' ')+'). Finish or apply it in the Static ads tab, then generate animated ads.':'Run AI Design (with a generated scene) for this ad in the Static ads tab first, then generate animated ads.');
+  const editor=home.collection('editorAIJobs').doc(editorId),[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
   if(!record.exists||record.data().phase!=='ready'||!saved.exists||!saved.data().responsive||!request.exists)throw new Error('The product scene is still being designed. Its animation will follow when ready.');
-  const editorScope=record.data().scope;if(!input.fromEditorWorker)scope(w,editorScope);if(w.archivedAt)throw Error('This ad was deleted.');const product=products.find(p=>String(p.id)===String(editorScope.productId)),group=(w.context.groups||[]).find(g=>g.ref===editorScope.groupRef);if(!product||!group)throw Error('The saved animation product or group is no longer available.');const priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>j.editorJobId===editorId&&j.resetAt&&String(j.productId)===String(editorScope.productId)&&j.groupRef===editorScope.groupRef).sort((a,b)=>b.resetAt-a.resetAt)[0];
-  const refreshed=await identityFor(input.workspaceId,editorId);
-  const result=saved.data(),evidenceRow=await editor.collection('data').doc('evidence').get(),id='motion_'+hash(editorId+':v'+PIPELINE+(lastDiscard?':after:'+lastDiscard.id:'')).slice(0,40),target=jobs(ref).doc(id);
+  const editorScope=record.data().scope;if(!input.fromEditorWorker&&!sameProduct(record.data()))throw new Error('This animated ad belongs to another product or group.');if(w.archivedAt)throw Error('This ad was deleted.');
+  const groupRef=input.fromEditorWorker?editorScope.groupRef:input.groupRef,product=products.find(p=>bare(p.id)===bare(editorScope.productId)),group=(w.context.groups||[]).find(g=>g.ref===groupRef);if(!product||!group)throw Error('The saved animation product or group is no longer available.');
+  const editorWorkspaceId=home===ref?input.workspaceId:home.id,crossGroup=group.ref!==editorScope.groupRef,priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>j.editorJobId===editorId&&j.resetAt&&String(j.productId)===String(product.id)&&j.groupRef===group.ref).sort((a,b)=>b.resetAt-a.resetAt)[0];
+  const refreshed=await identityFor(editorWorkspaceId,editorId);
+  const result=saved.data(),evidenceRow=await editor.collection('data').doc('evidence').get(),id='motion_'+hash(editorId+(crossGroup?':for:'+group.ref:'')+':v'+PIPELINE+(lastDiscard?':after:'+lastDiscard.id:'')).slice(0,40),target=jobs(ref).doc(id);
   await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),existing=await tx.get(target);if(current.data().archivedAt)throw Error('This ad was deleted.');if(!input.fromEditorWorker)scope(current.data(),input);if(existing.exists)return;
    captionCopy({...result.responsive.plan,renderVersion:10});
-   tx.set(target,{id,pipelineVersion:PIPELINE,renderVersion:10,research:evidenceRow.exists?evidenceRow.data():null,productFacts:{title:product.title,description:String(product.description||'').slice(0,6000),url:product.url},editorJobId:editorId,workspaceId:input.workspaceId,productId:product.id,groupRef:group.ref,title:product.title,destination:product.url,phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),leaseUntil:0,owner:null,progress:{pct:0,label:'Preparing product research and brand direction'},plan:result.responsive.plan,sourceImages:result.sources,originalSources:refreshed||request.data().identitySources||request.data().sources,masters:{},variants:[],estimatedUsd:2*SECONDS*OUTPUT_USD_PER_SECOND,costEstimated:true,provider:MODEL,seconds:SECONDS,inFlight:null,error:null});
+   tx.set(target,{id,pipelineVersion:PIPELINE,renderVersion:10,research:evidenceRow.exists?evidenceRow.data():null,productFacts:{title:product.title,description:String(product.description||'').slice(0,6000),url:product.url},editorJobId:editorId,...(home!==ref?{editorWorkspaceId}:{}),workspaceId:input.workspaceId,productId:product.id,groupRef:group.ref,title:product.title,destination:product.url,phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),leaseUntil:0,owner:null,progress:{pct:0,label:'Preparing product research and brand direction'},plan:result.responsive.plan,sourceImages:result.sources,originalSources:refreshed||request.data().identitySources||request.data().sources,masters:{},variants:[],estimatedUsd:2*SECONDS*OUTPUT_USD_PER_SECOND,costEstimated:true,provider:MODEL,seconds:SECONDS,inFlight:null,error:null});
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
  }
  // One reviewed deduction, one bounded correction. Films, captions and
@@ -284,7 +292,7 @@ function createMotionService(D){
  }
  async function repair(input){
   const {ref,w}=await D.context(input.workspaceId);scope(w,input);if(!/^motion_[a-f0-9]{40}$/.test(input.repairOf||''))throw Error('Choose the saved animation to repair.');
-  const source=await jobs(ref).doc(input.repairOf).get(),refreshed=source.exists&&source.data().editorJobId?await identityFor(input.workspaceId,source.data().editorJobId):null;
+  const source=await jobs(ref).doc(input.repairOf).get(),refreshed=source.exists&&source.data().editorJobId?await identityFor(source.data().editorWorkspaceId||input.workspaceId,source.data().editorJobId):null;
   const parentRef=jobs(ref).doc(input.repairOf),id='motion_'+hash((input.explicitRerun?'rerun:':'repair:')+'v'+PIPELINE+':'+input.repairOf).slice(0,40),target=jobs(ref).doc(id);
   await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),source=await tx.get(parentRef),existing=await tx.get(target);scope(current.data(),input);if(!source.exists)throw Error('The original animation was not found.');const parent=source.data();scope(current.data(),parent);
    if(parent.resetAt||(!input.explicitRerun&&((parent.repairOf&&parent.pipelineVersion>=PIPELINE)||qualityPass(parent.quality)))||!['needs_attention','ready'].includes(parent.phase)||(!input.explicitRerun&&!parent.quality)||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Only a completed, failed quality review can receive this bounded repair.');

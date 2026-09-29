@@ -220,6 +220,25 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  const bunnyStart=await bunny.service.start({workspaceId:'design_test',...bunnyScope}),bunnyJob=(await bunny.ref.collection('motionJobs').doc(bunnyStart.jobId).get()).data();
  ok(bunnyJob.editorJobId===bunnyId&&bunnyJob.productId==='b'&&bunnyJob.title==='Bunny','the product\'s own finished design is animated even though the workspace pointer names another product\'s');
 
+ // The Bunny's finished design may sit in an earlier version of the same ad, under another group of the same product, or still be awaiting review.
+ const design=async(ref,id,scope,extra={})=>{const doc=ref.collection('editorAIJobs').doc(id);await doc.set({id,scope,phase:'ready',createdAt:7,...extra});await doc.collection('data').doc('request').set({sources:[{asset:{path:'photo'}}]});await doc.collection('data').doc('result').set({responsive:{plan:{nativeCopy:{headlines:['Bunny','A little luck']},layouts:[]}},sources:[{asset:{path:'photo'},width:100,height:100}]});};
+ const products=[{id:'p',title:'Pendant',url:'https://example.test/p'},{id:'b',title:'Bunny',url:'https://example.test/b'}];
+ const earlier=await setup(),earlierRef=earlier.D.fb().db.collection('Workspace').doc('design_earlier'),earlierId='eai_'+'c'.repeat(40);
+ await earlier.ref.set({settings:bunnyScope,context:{campaignId:'c1',groups:[{ref:'g'}]}},{merge:true});await earlierRef.set({settings:bunnyScope,context:{campaignId:'c1',groups:[{ref:'g'}]}});await design(earlierRef,earlierId,bunnyScope,{nativeAppliedAt:9});
+ earlier.D.context=async()=>({ref:earlier.ref,w:(await earlier.ref.get()).data(),products});earlier.D.relatedContexts=async()=>[{ref:earlierRef,w:(await earlierRef.get()).data()}];
+ const earlierStart=await earlier.service.start({workspaceId:'design_test',...bunnyScope}),earlierJob=(await earlier.ref.collection('motionJobs').doc(earlierStart.jobId).get()).data();
+ ok(earlierJob.editorJobId===earlierId&&earlierJob.editorWorkspaceId==='design_earlier'&&earlierJob.groupRef==='g','a finished design in an earlier version of the same ad is used, and the film stays in this workspace');
+ const other=await setup();
+ await other.ref.set({settings:bunnyScope,context:{groups:[{ref:'g'},{ref:'g2'}]}},{merge:true});other.D.context=async()=>({ref:other.ref,w:(await other.ref.get()).data(),products});
+ await design(other.ref,'eai_'+'d'.repeat(40),{productId:'b',groupRef:'g2'});
+ const otherStart=await other.service.start({workspaceId:'design_test',...bunnyScope}),otherJob=(await other.ref.collection('motionJobs').doc(otherStart.jobId).get()).data();
+ ok(otherJob.editorJobId==='eai_'+'d'.repeat(40)&&otherJob.productId==='b'&&otherJob.groupRef==='g','the same product\'s design under another ad group is used for this group, never the other product\'s');
+ const waiting=await setup();
+ await waiting.ref.set({settings:bunnyScope},{merge:true});waiting.D.context=async()=>({ref:waiting.ref,w:(await waiting.ref.get()).data(),products});
+ await waiting.ref.collection('editorAIJobs').doc('eai_'+'e'.repeat(40)).set({id:'eai_'+'e'.repeat(40),scope:bunnyScope,phase:'awaiting_review',createdAt:8});
+ let notDone='';try{await waiting.service.start({workspaceId:'design_test',...bunnyScope});}catch(e){notDone=e.message;}
+ ok(/not finished yet \(awaiting review\)/.test(notDone),'a design still awaiting review is named as unfinished ('+notDone+')');
+
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
