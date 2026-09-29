@@ -5454,6 +5454,9 @@ const Sets = window.Sets = (() => {
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
+        // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
+        // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
+        S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
