@@ -415,7 +415,7 @@ async function _captureCampaignEditableSnapshot(id) {
       return { resourceName: ad.resourceName, adGroupAdResourceName: r.resourceName, adGroup: (row.adGroup || {}).resourceName, adGroupName:(row.adGroup||{}).name||null, status: r.status,
         finalUrls: ad.finalUrls || [], finalMobileUrls: ad.finalMobileUrls || [], responsiveSearchAd: { headlines: text(rsa.headlines), descriptions: text(rsa.descriptions), path1: rsa.path1 || "", path2: rsa.path2 || "" } };
     }));
-    jobs.push(read("searchImageLinks", `SELECT ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels FROM ad_group_asset WHERE ${filter} AND asset.type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.widthPixels?{width:Number(image.widthPixels),height:Number(image.heightPixels)}:{}),...(image.url?{imageUrl:image.url}:{})};}));
+    jobs.push(read("searchImageLinks", `SELECT campaign.id, ad_group_asset.resource_name, ad_group_asset.ad_group, ad_group_asset.asset, ad_group_asset.field_type, ad_group_asset.status, asset.image_asset.full_size.url, asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels FROM ad_group_asset WHERE ${filter} AND asset.type = 'IMAGE' AND ad_group_asset.status != 'REMOVED'`, row => {const r=row.adGroupAsset||{},image=((row.asset||{}).imageAsset||{}).fullSize||{};return {resourceName:r.resourceName,adGroup:r.adGroup,asset:r.asset,fieldType:r.fieldType,status:r.status||"ENABLED",...(image.widthPixels?{width:Number(image.widthPixels),height:Number(image.heightPixels)}:{}),...(image.url?{imageUrl:image.url}:{})};}));
     jobs.push(read("keywords", `SELECT ad_group_criterion.resource_name, ad_group_criterion.ad_group, ad_group_criterion.status, ad_group_criterion.negative, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion WHERE ${filter} AND ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.status != 'REMOVED'`, row => {
       const r = row.adGroupCriterion || {}; return { resourceName: r.resourceName, adGroup: r.adGroup, status: r.status, negative: !!r.negative, keyword: r.keyword };
     }));
@@ -670,7 +670,7 @@ async function _observeCampaignCreative(id) {
   ];
   jobs.push(read("Campaign negatives", `SELECT campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE ${filter} AND campaign_criterion.negative = TRUE AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.status != 'REMOVED'`));
   jobs.push(read("Campaign images and extensions", `SELECT campaign.id, campaign_asset.resource_name, campaign_asset.field_type, campaign_asset.status, asset.text_asset.text, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2, asset.callout_asset.callout_text FROM campaign_asset WHERE ${filter} AND campaign_asset.status != 'REMOVED'`));
-  if (channel === "SEARCH") jobs.push(read("Ad group images and extensions", `SELECT ad_group_asset.resource_name, ad_group_asset.field_type FROM ad_group_asset WHERE ${filter} AND ad_group_asset.status != 'REMOVED'`));
+  if (channel === "SEARCH") jobs.push(read("Ad group images and extensions", `SELECT campaign.id, ad_group_asset.resource_name, ad_group_asset.field_type FROM ad_group_asset WHERE ${filter} AND ad_group_asset.status != 'REMOVED'`));
   let snapshot = null;
   jobs.push(_captureCampaignEditableSnapshot(id).then(value => { snapshot = value; warnings.push(...value.warnings); }).catch(error => { warnings.push("Editable settings could not be saved: " + String(error.message || error).slice(0, 200)); }));
   await Promise.all(jobs);
@@ -9640,13 +9640,24 @@ async function dashboard() {
   return out;
 }
 
+// Read-only "what Google has now" check shown under the timeline (_googleAdsServing.js): policy
+// review with Google's reasons, primary status reasons, dates, locations, goals, products. It
+// never throws; a read Google rejects becomes a warning inside the result.
+async function _servingCheck(id) {
+  try {
+    return await require("./_googleAdsServing").auditCampaign({ gaql, customerId: CID, campaignId: id, apiVersion: V, deadlineMs: 7000,
+      isQuotaError: _isGadsQuotaError, shippingCountries: control().then(c => c.defaultCountries, () => null) });
+  } catch (e) { return { ok: false, error: "The serving check could not run: " + String(e && e.message || e).slice(0, 200) }; }
+}
+
 // Real-time campaign timeline for the console: mirrors Google's "Performance diagnostics"
 // strip (Published → Impressions → Learning → Conversions → Eligibility) from live API
 // data — campaign primary status + reasons, per-asset-group ad strength (PMax), and a
-// 14-day serving sparkline. Read-only; three GAQL calls.
+// 14-day serving sparkline. Read-only; three GAQL calls plus the serving check above.
 async function campaignTimeline({ id } = {}) {
   if (!id) return { error: "id required" };
   const cid = String(id).replace(/\D/g, "");
+  const servingP = _servingCheck(cid);   // started first so its reads overlap the timeline's own
   const [cRows, dayRes] = await Promise.all([
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
                  campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type
@@ -9715,7 +9726,7 @@ async function campaignTimeline({ id } = {}) {
       detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
   ];
   return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
-    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString() };
+    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString(), serving: await servingP };
 }
 /* ====================== Reviewed creative production ======================
  * Drafts are immutable at approval: the review hashes the payload and every
