@@ -87,6 +87,10 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const buyers = plain(e.get('_diagSanitize')(freebie, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
     check(buyers.keywords.join() === 'free charm patterns,earrings' && buyers.skipped.join() === 'free,free earrings,engraved locket' && /buying searches such as “nickel free earrings”/.test(buyers.skippedWhy) && /converting searches or active keywords/.test(buyers.skippedWhy),
       'a negative that would block a buying search ("free" vs "nickel free earrings") is left out; freebie phrases and product words are still offered');
+    const wish = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['wish', 'bulk', 'wish app'] } }] }] };
+    const gifts = plain(e.get('_diagSanitize')(wish, { ...diag, negativeGuard: { '42': { converting: [], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(gifts.keywords.join() === 'wish app' && gifts.skipped.join() === 'wish,bulk' && gifts.skippedWhy === 'they would block buying searches such as “wish bracelet”',
+      'a lone "wish" or "bulk" (gift and group orders) is left out with its own example; "wish app" is still offered');
   }
 
   // ── A Google total budget is carried as its total and never offered as a daily amount ──

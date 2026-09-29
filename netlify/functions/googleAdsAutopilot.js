@@ -1985,7 +1985,10 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
         if(!(after<=Number(ctrl.maxDailyBudgetTotal)+0.001))throw new Error(`Budget conditions changed: these moves would take the daily budgets that can spend to ${money(after)}, over your daily ceiling of ${money(ctrl.maxDailyBudgetTotal)}. Nothing was changed.`);
       }
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
-      publicationResult=await mutate(p.service,(p.meta||{}).kind==="pmaxNegatives"?await _pmaxNegativesToSend(p):p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
+      // Exclusion drafts send only what Google Ads does not already hold: an exclusion added since is left out, and
+      // a removal goes only while the exclusion is still there as reviewed.
+      const kind=(p.meta||{}).kind,send=kind==="pmaxNegatives"?await _pmaxNegativesToSend(p):kind==="searchNegativeRemoval"?await _searchNegativeRemovalsToSend(p):p.operations;
+      publicationResult=await mutate(p.service,send,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
     else if(p.campaignOption&&(p.seasonalityAdjustment||p.lifecycleGoal))publicationResult=await _publishCampaignOption(it,ctrl,{id,onDispatch:()=>{dispatched=true;}});
     else throw new Error("The draft contains no publishable operations.");
     const learningPublication=ctrl.dryRun?null:_learningPublication(it,publicationResult,ops);
@@ -3211,18 +3214,21 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
 // (its words in any order), { text, matchType: "PHRASE" } excludes only that phrase. Negatives never match
 // close variants, so plurals are listed where needed. Deliberately absent, as in Performance Max: a lone
 // "free" ("nickel free earrings" and "free shipping" are buying searches; the phrases keep freebie hunters
-// out) and "bulk" (team and wedding-party gifts are real orders; "wholesale" still excludes resellers).
+// out), "bulk" (team and wedding-party gifts are real orders; "wholesale" still excludes resellers) and a
+// lone "wish" ("wish bracelet" is a gift; "wish app" and "wish com" keep the Wish marketplace out).
 const DEFAULT_NEGATIVES = ["diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
   "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
-  "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png",
+  "replica", "knockoff", "amazon", "temu", "shein", "meaning", "definition", "clipart", "svg", "png",
   "printable", "template", "tattoo", "drawing", "coloring", "crochet", "knitting", "beads only",
   "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora",
-  ...["free pattern", "free patterns", "free download", "free downloads", "free printable", "free printables", "free svg", "for free"].map(text => ({ text, matchType: "PHRASE" }))];
+  ...["free pattern", "free patterns", "free download", "free downloads", "free printable", "free printables", "free svg", "for free",
+    "wish app", "wish com"].map(text => ({ text, matchType: "PHRASE" }))];
 // Buying searches no negative may block through their buying words, whatever its source (these defaults, a
 // scanned idea's theme-conflict terms, an Ad Doctor fix): in jewelry searches "free" is usually a material or
-// delivery promise. A product word alone ("earrings" in a necklace campaign) can still be excluded.
-const _BUYING_SEARCHES = ["nickel free earrings", "tarnish free necklace", "lead free", "hypoallergenic nickel free", "free shipping"];
-const _BUYING_WORDS = new Set(["free", "nickel", "tarnish", "lead", "hypoallergenic", "shipping"]);
+// delivery promise, "wish" a gift and "bulk" a group order. A product word alone ("earrings" in a necklace
+// campaign) can still be excluded.
+const _BUYING_SEARCHES = ["nickel free earrings", "tarnish free necklace", "lead free", "hypoallergenic nickel free", "free shipping", "wish bracelet", "bulk bracelets"];
+const _BUYING_WORDS = new Set(["free", "nickel", "tarnish", "lead", "hypoallergenic", "shipping", "wish", "bulk"]);
 // Whether a negative keyword stops a search: broad needs all its words in any order, phrase its words
 // together and in order, exact the whole search.
 function _negativeBlocks(neg, search) {
@@ -5812,6 +5818,100 @@ async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8, wasteClicks =
     summary: `${addNeg.length} zero-conversion terms (${wasteClicks}+ clicks each, 90 days) → add as exact negatives`,
     payload: { service: "campaignCriteria", operations: addNeg.map(create => ({ create })) } }); queued++; }
   return { keywords: addKw.length, negatives: addNeg.length, queued };
+}
+
+// Stop excluding. Search campaigns drafted before "free", "bulk" and "wish" left the defaults (or given them by
+// hand) still exclude them broadly, which stops buying searches. "Mine search terms" drafts their removal in
+// Approvals, where nothing reaches Google Ads until Paul approves; publication checks each change again. A
+// one-word phrase exclusion stops the same searches, so it counts too; an exact one stops only the bare word.
+// Each removal adds back the Search defaults' phrases holding its word ("free pattern", "for free", "wish app"),
+// so no campaign is less protected than before; "bulk" adds none ("wholesale" and "supplier" keep resellers out).
+const _RETIRED_SEARCH_NEGATIVES = new Map([
+  ["free", "Blocks buyers searching “nickel free earrings” or “free shipping”"],
+  ["bulk", "Blocks group orders such as bridesmaid and team gifts"],
+  ["wish", "Blocks buyers searching “wish bracelet”"]]);
+function _retiredWordPhrases(word) {
+  return DEFAULT_NEGATIVES.filter(x => x && typeof x === "object" && x.matchType === "PHRASE" && _kwWords(x.text).includes(word)).map(x => x.text);
+}
+const _negText = t => String(t || "").trim().toLowerCase().replace(/\s+/g, " ");
+// Per campaign, the texts it already excludes as a phrase or broad (a broad one of the same words covers the phrase;
+// an exact one does not).
+function _phrasesHeld(rows) {
+  const held = new Map(), of = id => held.get(id) || held.set(id, new Set()).get(id);
+  (rows || []).forEach(row => { const k = ((row.campaignCriterion || {}).keyword) || {};
+    if (["PHRASE", "BROAD"].includes(String(k.matchType || "").toUpperCase())) of(String((row.campaign || {}).id || "")).add(_negText(k.text)); });
+  return of;
+}
+// One removal as drafted: the campaign's own criterion in this account, for a retired word, broad or phrase, with
+// only that word's phrases to add.
+function _retiredSearchNegative(r) {
+  const m = String((r && r.criterion) || "").match(/^customers\/(\d+)\/campaignCriteria\/(\d+)~\d+$/);
+  return !!m && m[1] === CID && m[2] === String(r.campaignId) && r.campaign === `customers/${CID}/campaigns/${r.campaignId}` && _RETIRED_SEARCH_NEGATIVES.has(r.text)
+    && ["BROAD", "PHRASE"].includes(r.matchType) && (r.adds === undefined || Array.isArray(r.adds) && r.adds.every(t => _retiredWordPhrases(r.text).includes(t)));
+}
+// Live Search campaigns' exclusions of a retired word, in the order of the words above, then by campaign.
+function _retiredSearchNegatives(rows, deleted) {
+  const words = [..._RETIRED_SEARCH_NEGATIVES.keys()], seen = new Set(), out = [];
+  (rows || []).forEach(row => {
+    const c = row.campaign || {}, cc = row.campaignCriterion || {}, k = cc.keyword || {}, text = _negText(k.text), campaignId = String(c.id || "");
+    const r = { criterion: String(cc.resourceName || ""), campaign: `customers/${CID}/campaigns/${campaignId}`, campaignId, campaignName: String(c.name || ""), text,
+      matchType: String(k.matchType || "").toUpperCase(), reason: _RETIRED_SEARCH_NEGATIVES.get(text) };
+    if (c.status === "REMOVED" || c.servingStatus === "ENDED" || (deleted && deleted.has(campaignId)) || !_retiredSearchNegative(r) || seen.has(r.criterion)) return;
+    seen.add(r.criterion); out.push(r);
+  });
+  return out.sort((a, b) => words.indexOf(a.text) - words.indexOf(b.text) || a.campaignName.localeCompare(b.campaignName));
+}
+// The draft's operations: each removal, then the phrases it adds to the same campaign.
+function _searchRemovalOps(removals) {
+  return removals.flatMap(r => [{ remove: r.criterion }, ...(r.adds || []).map(text => ({ create: { campaign: r.campaign, negative: true, keyword: { text, matchType: "PHRASE" } } }))]);
+}
+// Exclusions that a waiting draft already removes, or whose removal was deleted from Approvals in the last 30
+// days, are not drafted again.
+async function _searchRemovalDraftState() {
+  const f = fb(), held = new Set(); if (!f) return held;
+  const add = a => { const p = a.payload || {}, keep = r => { if (typeof r === "string") held.add(r); };
+    (p.operations || []).forEach(o => keep(o && o.remove));
+    (p.mutateOperations || []).forEach(o => keep(o && o.campaignCriterionOperation && o.campaignCriterionOperation.remove)); };
+  (await f.db.collection(COL.approvals).where("status", "in", ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"]).get()).forEach(d => { const a = d.data(); if (!a.archivedAt && !a.deletedAt) add(a); });
+  const since = Date.now() - 30 * 86400000;
+  (await f.db.collection(COL.approvals).where("status", "==", "REJECTED").limit(500).get()).forEach(d => { const a = d.data();
+    if (((a.payload || {}).meta || {}).kind === "searchNegativeRemoval" && Number(a.deletedAt) >= since) add(a); });
+  return held;
+}
+// One draft for every live Search campaign: each exclusion with its campaign, why, and the phrases it adds (those
+// the campaign lacks, once per campaign). Reads only; no paid AI.
+async function draftSearchNegativeRemovals() {
+  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status, campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE campaign.advertising_channel_type = 'SEARCH' AND campaign.status != 'REMOVED' AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = TRUE AND campaign_criterion.status != 'REMOVED'`);
+  const found = _retiredSearchNegatives(rows, await _deletedCampaignIds()), held = found.length ? await _searchRemovalDraftState() : new Set(), has = _phrasesHeld(rows);
+  const removals = found.filter(r => !held.has(r.criterion)).map(r => { const s = has(r.campaignId), adds = _retiredWordPhrases(r.text).filter(t => !s.has(t)); adds.forEach(t => s.add(t)); return { ...r, adds }; });
+  if (!removals.length) return { found: found.length, queued: 0 };
+  const words = [...new Set(removals.map(r => r.text))], campaigns = new Set(removals.map(r => r.campaignId)).size, adds = removals.reduce((sum, r) => sum + r.adds.length, 0);
+  const approvalId = await enqueueApproval({ type: "negatives", vetted: false,
+    summary: `Stop excluding ${words.map(w => "“" + w + "”").join(", ")} in ${campaigns} Search campaign${campaigns === 1 ? "" : "s"} · remove ${removals.length}${adds ? `, add ${adds} phrase${adds === 1 ? "" : "s"}` : ""}`,
+    payload: { service: "campaignCriteria", operations: _searchRemovalOps(removals), meta: { kind: "searchNegativeRemoval", removals } } });
+  return { found: found.length, queued: approvalId ? 1 : 0, removals: removals.length, adds, approvalId: approvalId || null };
+}
+// Publication sends only what is still due: a reviewed exclusion Google Ads still holds as reviewed (same campaign,
+// word and match), and a reviewed phrase the campaign still lacks; nothing for a campaign removed since.
+async function _searchNegativeRemovalsToSend(p) {
+  const list = ((p && p.meta) || {}).removals || [], ops = (p && p.operations) || [], per = new Map();
+  let twice = false;
+  list.forEach(r => { const id = r && r.campaignId, s = per.get(id) || new Set(); ((r && r.adds) || []).forEach(t => { if (s.has(t)) twice = true; s.add(t); }); per.set(id, s); });
+  if (p.service !== "campaignCriteria" || !list.length || twice || new Set(list.map(r => r && r.criterion)).size !== list.length || !list.every(r => _retiredSearchNegative(r))
+    || JSON.stringify(_stable(ops)) !== JSON.stringify(_stable(_searchRemovalOps(list))))
+    throw new Error("This draft contains an unexpected change. Nothing was changed. Delete it; the next search terms check drafts it again.");
+  const ids = [...new Set(list.map(r => r.campaignId))].join(", ");
+  const [campaigns, rows] = await Promise.all([
+    gaql(`SELECT campaign.id, campaign.status FROM campaign WHERE campaign.id IN (${ids})`),
+    gaql(`SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion WHERE campaign.id IN (${ids}) AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = TRUE AND campaign_criterion.status != 'REMOVED'`)]);
+  const live = new Set(campaigns.map(r => r.campaign || {}).filter(c => c.status && c.status !== "REMOVED").map(c => String(c.id)));
+  const now = new Map(rows.map(r => [(r.campaignCriterion || {}).resourceName, ((r.campaignCriterion || {}).keyword) || {}])), has = _phrasesHeld(rows), out = [];
+  list.forEach(r => { if (!live.has(r.campaignId)) return;
+    const k = now.get(r.criterion), s = has(r.campaignId);
+    if (k && _negText(k.text) === r.text && String(k.matchType || "").toUpperCase() === r.matchType) out.push({ remove: r.criterion });
+    (r.adds || []).forEach(text => { if (s.has(text)) return; s.add(text); out.push({ create: { campaign: r.campaign, negative: true, keyword: { text, matchType: "PHRASE" } } }); }); });
+  if (!out.length) throw new Error("Google Ads already has every change in this draft. Nothing was changed. Delete this draft.");
+  return out;
 }
 
 /* ===================== Performance Max structure ===================== */
@@ -9660,9 +9760,11 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
         const buyer = k => _blocksBuyingSearch({ text: k, matchType: "PHRASE" });
         const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); if (w.trim() === "") return pmax;
           return buyer(k) || converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
-        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks), forBuyers = skipped.some(buyer);
+        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks), forBuyers = skipped.find(buyer);
         // The card reads "Left out because <why>: …"; without a why it says they would block converting searches or active keywords.
-        const why = [forBuyers && "they would block buying searches such as “nickel free earrings”", pmax ? "no search category that never converted contains them, or one that converted does" : forBuyers && skipped.some(k => !buyer(k)) && "they would block converting searches or active keywords"].filter(Boolean).join(", or ");
+        // The example is a buying search the first such keyword would block ("nickel free earrings" for "free", "wish bracelet" for "wish").
+        const example = forBuyers && _BUYING_SEARCHES.find(q => _negativeBlocks({ text: forBuyers, matchType: "PHRASE" }, q));
+        const why = [forBuyers && "they would block buying searches such as “" + example + "”", pmax ? "no search category that never converted contains them, or one that converted does" : forBuyers && skipped.some(k => !buyer(k)) && "they would block converting searches or active keywords"].filter(Boolean).join(", or ");
         return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(why ? { skippedWhy: why } : {}) } : {}) };
       }
       if (ex.kind === "addKeywords") {
@@ -11901,7 +12003,7 @@ module.exports = {
   generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
-  measure, pruneAssets, mineSearchTerms, minePmaxSearchTerms, pmaxCampaignTargets, reallocateBudgets, anomalyCheck,
+  measure, pruneAssets, mineSearchTerms, minePmaxSearchTerms, draftSearchNegativeRemovals, pmaxCampaignTargets, reallocateBudgets, anomalyCheck,
   enforceBudgetCeiling, monthlySpendGuard,
   dashboard, campaignVersions, campaignVersionDetail, createCampaignRestoreDraft, campaignImprovement, createImprovementDraft, beginAnalyzeAd, analyzeAdStatus, runAnalyzeAd,
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
