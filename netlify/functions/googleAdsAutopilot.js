@@ -1858,6 +1858,17 @@ function _learningPublication(item, result, operations) {
   return { schema:1, at:Date.now(), campaignIds:[...campaignIds], campaignChannels,
     meaning:"Reviewed creative containing this guidance was sent to Google; this does not confirm serving or improvement." };
 }
+// An Ad Doctor target ROAS draft publishes only its one reviewed change, and only while the campaign still
+// bids Maximize conversion value with no target.
+async function _guardTargetRoasDraft(p) {
+  const ops = p.operations || [], u = ops.length === 1 && ops[0] && ops[0].update, m = u && String(u.resourceName || "").match(/^customers\/\d+\/campaigns\/(\d+)$/);
+  const target = u && u.maximizeConversionValue && Number(u.maximizeConversionValue.targetRoas);
+  if (!m || ops[0].updateMask !== "maximize_conversion_value.target_roas" || Object.keys(u).sort().join(",") !== "maximizeConversionValue,resourceName" || Object.keys(u.maximizeConversionValue).join(",") !== "targetRoas" || !(target > 0) || Math.abs(target - Number((p.meta || {}).targetRoas)) > 1e-9)
+    throw new Error("This bidding draft contains an unexpected change. Nothing was changed.");
+  const cc = ((await gaql(`SELECT campaign.id, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${Number(m[1])}`))[0] || {}).campaign || {};
+  if (cc.biddingStrategyType !== "MAXIMIZE_CONVERSION_VALUE" || Number((cc.maximizeConversionValue || {}).targetRoas) > 0)
+    throw new Error("The campaign's bidding changed after this draft was made, so it no longer applies. Nothing was changed.");
+}
 async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
   const f=fb();if(!f)throw new Error("No Firestore connection.");
   const ref=f.db.collection(COL.approvals).doc(String(id)),attempt=require("crypto").randomUUID(),lock=f.db.collection(COL.state).doc("publicationLease");let it;
@@ -1904,7 +1915,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
       if(p.groupActivationGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-switch:"+id});await _guardProductGroupActivation(it);}
       if(p.groupSplitGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-split:"+id});await _guardProductGroupSplit(it);}
       publicationResult=await mutateAll(ops,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});
-    } else if(p.service&&p.operations){if(p.service==="campaignBudgets"){
+    } else if(p.service&&p.operations){if(p.service==="campaigns"&&(p.meta||{}).targetRoasGuard)await _guardTargetRoasDraft(p);if(p.service==="campaignBudgets"){
         // Each reviewed move reads "from X to Y". A budget that no longer reads X was edited since,
         // so the reviewed change no longer describes what would happen: refuse, never re-base it.
         const res=p.operations.map(o=>o&&o.update&&o.update.resourceName);if(!res.length||res.some(r=>!/^customers\/\d+\/campaignBudgets\/\d+$/.test(String(r||""))))throw new Error("This budget proposal contains an unexpected operation. Nothing was changed.");
@@ -1927,6 +1938,14 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
       const c=ops[index]&&ops[index].campaignOperation&&ops[index].campaignOperation.create,campaign=(response.campaignResult||{}).resourceName;
       if(c&&campaign&&Number(plannedDays[c.resourceName])>0)try{await _flightRef(campaign.split('/').pop()).set({days:Number(plannedDays[c.resourceName]),approvalId:String(id),endDate:_dateOnly(c.endDateTime),publishedAt:Date.now()});}
       catch(e){await ref.update({flightWarning:"The planned run length could not be saved. Check the end date after enabling."}).catch(()=>{});}
+    }
+    // The target ROAS kept for later (meta.targetRoasLater): Ad Doctor offers it as a reviewed draft once the
+    // campaign has served about 42 days with 30 conversions in 30 days, never on its own.
+    const laterRoas=Number((p.meta||{}).targetRoasLater);
+    if(!ctrl.dryRun&&laterRoas>0)for(const [index,response] of (publicationResult&&publicationResult.mutateOperationResponses||[]).entries()){
+      const c=ops&&ops[index]&&ops[index].campaignOperation&&ops[index].campaignOperation.create,campaign=(response.campaignResult||{}).resourceName;
+      if(c&&campaign&&c.maximizeConversionValue&&!(Number(c.maximizeConversionValue.targetRoas)>0))try{await f.db.collection(COL.state).doc(TARGET_ROAS_LATER_DOC).set({[campaign.split('/').pop()]:{targetRoas:laterRoas,approvalId:String(id),publishedAt:Date.now()}},{merge:true});}
+      catch(e){await ref.update({targetRoasWarning:"The target ROAS kept for later could not be saved."}).catch(()=>{});}
     }
     if(!ctrl.dryRun&&groupReceipts.length)try{await _designEngine().linkPublishedDesignScopes({campaignId:p.groupSplitGuard.campaignId,sourceGroupRef:p.groupSplitGuard.sourceGroupRef,groups:groupReceipts});}catch(e){await ref.update({designLinkWarning:String(e.message||e).slice(0,250)}).catch(()=>{});}
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
@@ -3283,7 +3302,9 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   // Google accepts money only in whole cents (CAD minimum unit); 7.555 or 1.237 fails the whole create.
   const capCpc = Number(maxCpc) > 0 ? Math.max(0.01, Math.round(Number(maxCpc) * 100) / 100) : 0.80;
   const useSmart = (smartBidding != null) ? !!smartBidding : !!ENV.GADS_TARGET_ROAS;
-  const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
+  // No GADS_TARGET_ROAS fallback: a new campaign has no results of its own, so it launches without a target
+  // (TARGET_ROAS_LATER); the account target is kept as meta.targetRoasLater and Ad Doctor offers it later.
+  const tRoas = Number(targetRoas || 0);
   const bidding = useSmart ? { maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {} } : { manualCpc: { enhancedCpcEnabled: false } };
   const ops = [
     { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(Math.round(Number(dailyBudget)*100)/100),deliveryMethod:"STANDARD",explicitlyShared:false}}},
@@ -4548,6 +4569,8 @@ async function uploadImageAssets(imgs, ctrl) {
 // days); before that it only throttles learning. New campaigns therefore launch on Maximize
 // conversion value without one, and their plans say so in these words.
 const TARGET_ROAS_LATER = "no target ROAS until it has about 6 weeks and 30 conversions in 30 days";
+// The target kept for later, per published campaign: { [campaignId]: { targetRoas, approvalId, publishedAt } }.
+const TARGET_ROAS_LATER_DOC = "targetRoasLater";
 
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
@@ -5553,11 +5576,14 @@ async function refreshDesignStudioLearning({ days = 30, withAI = true } = {}) {
   performance.assetGroups.filter(x => /poor|average/i.test(x.adStrength) && x.impressions >= 500).forEach(x => recs.push(_studioRecommendation("medium", "PMax assets", `${x.name} has ${x.adStrength.toLowerCase()} asset strength after meaningful delivery.`, "Replace the weakest asset type with Studio-specific proof; do not change the intent theme at the same time.", `${Math.round(x.impressions)} impressions · ${x.conversions.toFixed(1)} conversions`)));
   if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · ${performance.currency || "USD"} ${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
   let ai = null;
-  if (!withAI) { const store = fb(); if (store) { try { const s = await store.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).get(); ai = (s.exists && ((s.data() || {}).learning || {}).synthesis) || null; } catch (e) {} } }
+  // The synthesis keeps its own time (at), so a later scheduled refresh does not make an old read look new.
+  if (!withAI) { const store = fb(); if (store) { try { const s = await store.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).get(), saved = (s.exists && (s.data() || {}).learning) || {};
+    ai = saved.synthesis || null; if (ai && typeof ai === "object" && !ai.at && saved.generatedAt) ai = { ...ai, at: saved.generatedAt }; } catch (e) {} } }
   else if (claudeAI.available() && hasCampaigns && minData) {
     try {
       ai = await openaiJSON(`You are auditing a separate paid-acquisition engine for Brites Charm Studio. The fixed landing page is ${DESIGN_STUDIO_URL}. Interpret this compact evidence without inventing facts: ${JSON.stringify({ overall: m, purchase, funnel: f, rates: r, assets: performance.assetGroups, searchInsights: performance.searchInsights.slice(0, 15), currentRecommendations: recs })}
 Return ONLY JSON: {"summary":"<=180 chars","nextTest":{"lane":"pmax|search|landing|measurement","hypothesis":"<=180 chars","change":"one controlled change <=180 chars","successMetric":"one named metric and threshold","holdDays":14},"warnings":["0-3 concise warnings"]}. Never recommend optimizing to page views, removing the fixed landing URL, simultaneous major changes, or automatic application.`, { maxTokens: 1600, effort: "medium" });
+      if (ai && typeof ai === "object") ai.at = Date.now();
     } catch (e) { ai = { error: String(e.message || e).slice(0, 180) }; }
   }
   const learning = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, generatedAt: Date.now(), window: { start: performance.start, end: performance.end, days: performance.days },
@@ -6409,7 +6435,7 @@ function _flightRef(id) { const f = fb(); return f ? f.db.collection(COL.state).
 function _runEndDate(from, days) { return _ymd(new Date(Date.parse(from + "T12:00:00Z") + (Math.ceil(Number(days)) - 1) * 86400000)); }
 async function _plannedFlight(id) {
   try { const ref = _flightRef(id), s = ref && await ref.get(), d = s && s.exists ? s.data() : null;
-        return d && Number(d.days) > 0 && !d.startedAt && !d.settledAt ? { ref, days: Number(d.days) } : null; } catch (e) { return null; }
+        return d && Number(d.days) > 0 && !d.startedAt && !d.settledAt ? { ref, days: Number(d.days), publishedAt: Number(d.publishedAt) || null } : null; } catch (e) { return null; }
 }
 
 // Flip a single campaign ENABLED/PAUSED. Same update+updateMask shape as the
@@ -6426,12 +6452,18 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   const resourceName = `customers/${CID}/campaigns/${id}`;
   // First enable of a campaign published with a planned run: the same update sets the end date so the
   // run starts today (or at its later scheduled start) and lasts the reviewed number of days.
+  // A campaign that already served since publication (enabled in Google Ads, then paused) has started its
+  // run: it is marked started and its end date stays. When that cannot be read, the date also stays.
   const flight = status === "ENABLED" ? await _plannedFlight(id) : null;
-  let endDate = null;
+  let endDate = null, served = null;
   if (flight) {
-    const today = _acctDateYmd(await _accountTz(), 0); let from = today;
-    try { const r = await gaql(`SELECT campaign.id, campaign.start_date_time FROM campaign WHERE campaign.id = ${id}`), s = _dateOnly(((r[0] || {}).campaign || {}).startDateTime); if (s && s > today) from = s; } catch (e) {}
-    endDate = _runEndDate(from, flight.days);
+    const tz = await _accountTz(), today = _acctDateYmd(tz, 0), since = (flight.publishedAt > 0 && _learningDateAt(flight.publishedAt, tz)) || _learningShiftDate(today, -364);
+    try { served = (await gaql(`SELECT campaign.id, metrics.impressions FROM campaign WHERE campaign.id = ${id} AND segments.date BETWEEN '${since}' AND '${today}'`)).some(r => Number((r.metrics || {}).impressions) > 0); } catch (e) { served = null; }
+    if (served === false) {
+      let from = today;
+      try { const r = await gaql(`SELECT campaign.id, campaign.start_date_time FROM campaign WHERE campaign.id = ${id}`), s = _dateOnly(((r[0] || {}).campaign || {}).startDateTime); if (s && s > today) from = s; } catch (e) {}
+      endDate = _runEndDate(from, flight.days);
+    }
   }
   // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
   // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
@@ -6447,8 +6479,8 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected ${status} for campaign ${id}: ${msg}`);
   }
-  if (flight && !ctrl.dryRun) try { await flight.ref.update({ startedAt: Date.now(), endDate }); } catch (e) {}
-  return { ok: true, id, status, dryRun: !!ctrl.dryRun, ...(endDate ? { endDate, plannedDays: flight.days } : {}) };
+  if (flight && !ctrl.dryRun && served !== null) try { await flight.ref.update(endDate ? { startedAt: Date.now(), endDate } : { startedAt: Date.now(), servedBeforeEnable: true }); } catch (e) {}
+  return { ok: true, id, status, dryRun: !!ctrl.dryRun, ...(endDate ? { endDate, plannedDays: flight.days } : {}), ...(flight && served ? { alreadyServed: true } : {}) };
 }
 
 // "Start now": move a scheduled (PENDING) campaign's start date to today in the ACCOUNT'S
@@ -7481,9 +7513,24 @@ function _bestSearchLandingUrl(profile, group, collectionHandle){
 }
 
 // auto = a calendar draft (no one chose its budget): it takes the budget room that is left instead of being refused.
+// Occasions whose ad copy failed brand safety, keyed by oppTag (COL.state/eventsCopyRejected).
+const COPY_REJECTED_DOC = "eventsCopyRejected";
+async function _copyRejectedMark(key) {
+  const f = fb(); if (!f) return null;
+  try { const s = await f.db.collection(COL.state).doc(COPY_REJECTED_DOC).get(), m = s.exists ? (s.data() || {})[key] : null; return m && m.at ? m : null; } catch (e) { return null; }
+}
+async function _setCopyRejectedMark(key, mark) {
+  const f = fb(); if (!f) return;
+  try { if (mark || await _copyRejectedMark(key)) await f.db.collection(COL.state).doc(COPY_REJECTED_DOC).set({ [key]: mark || null }, { merge: true }); } catch (e) {}
+}
 async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate, smartBidding, auto } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
+  // An occasion whose copy failed brand safety is not paid for again by the daily events run: it waits
+  // until someone builds it by hand (a build by hand whose copy passes clears the mark). The mark holds
+  // for that occasion's date only, so next year's occasion is drafted again.
+  const copyKey = oppTag(handle, eventLabel);
+  if (auto) { const mark = await _copyRejectedMark(copyKey); if (mark && !(peakDate && mark.peak && mark.peak !== peakDate)) return { ok: false, skipped: true, reason: `The ad copy for ${eventLabel || "Evergreen gifting"} failed brand safety on ${mark.date || "an earlier run"}, so the daily run skips it until you build it by hand.` }; }
   // Google rejects a past end date or an end before the start; stop before any paid copy is written.
   { const today = _acctDateYmd(await _accountTz(), 0), sd = _dateOnly(startDate), ed = _dateOnly(endDate);
     if (ed && (ed < today || (sd && ed < sd))) return { ok: false, reason: `The end date ${ed} is ${ed < today ? "in the past" : "before the start date " + sd}. Choose a later end date and generate again.` }; }
@@ -7583,7 +7630,9 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   // Paid copy is written only once the keyword plan and the budget have passed, so a build stopped above
   // (the daily events run retries due occasions) costs nothing.
   const assets = await generateRSAAssets(coll, event, rsaContext);
-  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
+  if (!assets) { await _setCopyRejectedMark(copyKey, { at: Date.now(), date: todayYmd, peak: peakYmd || null, handle, occasion: eventLabel || "Evergreen gifting", auto: !!auto });
+    return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" }; }
+  if (!auto) await _setCopyRejectedMark(copyKey, null);
   const groupAssets=await Promise.all(grounded.groups.map(async(g,i)=>{
     try{return (await generateRSAAssets(coll,event,Object.assign({},rsaContext,{intentGroup:{label:g.label,keywords:g.keywords.map(k=>k.text)}})))||assets;}catch(e){return assets;}
   }));
@@ -7594,20 +7643,20 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   if (opp && Array.isArray(opp.negatives) && opp.negatives.length) launchNegs = launchNegs.concat(opp.negatives);
   try { launchNegs = launchNegs.concat(await accountWasteNegatives({})); } catch (e) {}
   launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
-  const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:Number(ctrl.targetRoas||0),assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
+  const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:0,assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   // The run exactly as Google receives it (inclusive days); with no start time it serves from the day it is enabled.
   const _cc = ops.find(o => o.campaignOperation).campaignOperation.create, _s = _dateOnly(_cc.startDateTime), _e = _dateOnly(_cc.endDateTime);
   const _days = _e ? _daysBetween(_parseYmd(_s || _acctDateYmd(await _accountTz(), 0)), _parseYmd(_e)) + 1 : 0;
   const win = _e ? (_s ? ` (${_s} → ${_e}, ${_days}d)` : ` (starts when enabled, ends ${_e}, up to ${_days}d)`) : (_s ? ` (from ${_s})` : "");
-  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""}${capCpc.toFixed(2)}/click`; // the cap is in the account currency
+  const bidTxt = smart ? `Smart Bidding (no CPC cap, ${TARGET_ROAS_LATER})` : `Manual CPC ≤ ${ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""}${capCpc.toFixed(2)}/click`; // the cap is in the account currency
   const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts${assetSummary.structuredSnippets ? " + a structured snippet" : ""}` : "";
   const kwTxt = keywordSummary ? `, ${keywordSummary.count} keywords (${keywordSummary.measured} with measured Google demand${keywordSummary.exact ? `, ${keywordSummary.exact} exact` : ""})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
     // Ad copy is written and checked per ad group in creative review, so the summary states no headline count.
     summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${adGroupSummary.length} ad group${adGroupSummary.length === 1 ? "" : "s"} (copy set in creative review)${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
-    payload:{meta:{buyer:rsaContext.audience,angle:rsaContext.angle,handle:coll.handle},mutateOperations:ops,finalCollection:coll.handle,event:event?event.label:null,startDate:sDate||null,endDate:eDate||null,countries:cty,maxCpc:capCpc,smartBidding:smart,negatives,assetSummary,keywordSummary,adGroupSummary,keywordValidation:{confidence:grounded.confidence,evidence:grounded.evidence,rejected:grounded.rejected.slice(0,12)},plan},
+    payload:{meta:{buyer:rsaContext.audience,angle:rsaContext.angle,handle:coll.handle,...(smart?{biddingMode:"MAXIMIZE_CONVERSION_VALUE_LEARNING",targetRoasLater:Number(ctrl.targetRoas)>0?Number(ctrl.targetRoas):null}:{})},mutateOperations:ops,finalCollection:coll.handle,event:event?event.label:null,startDate:sDate||null,endDate:eDate||null,countries:cty,maxCpc:capCpc,smartBidding:smart,negatives,assetSummary,keywordSummary,adGroupSummary,keywordValidation:{confidence:grounded.confidence,evidence:grounded.evidence,rejected:grounded.rejected.slice(0,12)},plan},
     experimentId: tag
   });
   return { ok: true, approvalId: id, tag, title: coll.title, event: event ? event.label : null,
@@ -8645,7 +8694,8 @@ async function distillLessons({onProgress = null, refreshEvidence = false, auto 
           : h.kind === "pauseKeywords" ? ((h.executable || {}).keywords || []).map(k => k.text || k)
           : h.kind === "addKeywords" ? ((h.executable || {}).keywords || []).map(k => (k.text || k) + "[" + (k.matchType || "") + "]")
           : h.kind === "rewriteAds" ? { added: (h.executable || {}).headlines, prunedLow: h.prunedLow }
-          : h.kind === "setBudget" ? (h.executable || {}).budget : null,
+          : h.kind === "setBudget" ? (h.executable || {}).budget
+          : h.kind === "setTargetRoas" ? { targetRoas: (h.executable || {}).targetRoas } : null,
     verified: h.verified, baseline90d: h.baseline, ...(outcomeBy.has(h.id) ? { outcome: outcomeBy.get(h.id) } : {})
   }));
 
@@ -8873,8 +8923,38 @@ async function fetchDiagnostics(campaignId) {
     conv.forEach(r => add((r.campaign || {}).id, "converting", (r.searchTermView || {}).searchTerm));
     kwAll.forEach(r => add((r.campaign || {}).id, "keywords", (((r.adGroupCriterion || {}).keyword) || {}).text));
     for (const g of Object.values(guard)) { g.converting = [...g.converting]; g.keywords = [...g.keywords]; }
+    // Performance Max reports searches only as categories, one campaign per read: a year of each category's
+    // conversions. Without this read no PMax negative is offered.
+    const pmaxIds = Object.values(by).filter(d => d.channel === "PERFORMANCE_MAX").map(d => d.id).slice(0, 8);
+    await Promise.all(pmaxIds.map(async id => { try {
+      const rows = await gaql(`SELECT campaign_search_term_insight.category_label, metrics.conversions FROM campaign_search_term_insight
+            WHERE segments.date BETWEEN '${_learningShiftDate(today, -364)}' AND '${today}' AND campaign_search_term_insight.campaign_id = ${Number(id)}`), cats = new Map();
+      rows.forEach(r => { const l = String(((r.campaignSearchTermInsight || {}).categoryLabel) || "").trim(); if (l) cats.set(l, (cats.get(l) || 0) + (Number((r.metrics || {}).conversions) || 0)); });
+      guard[id].categories = [...cats].map(([label, conv]) => ({ label, conv }));
+    } catch (e) {} }));
     return guard;
   })().catch(() => null);
+
+  // Target ROAS readiness: a campaign launched without its target (kept in TARGET_ROAS_LATER_DOC) is offered
+  // it once it has served about 42 days with 30 conversions in the last 30 days, while it still bids
+  // Maximize conversion value with no target. Ad Doctor's own remedy, sent to Approvals as a draft.
+  const targetRead = (async () => {
+    const f = fb(); if (!f) return {};
+    const snap = await f.db.collection(COL.state).doc(TARGET_ROAS_LATER_DOC).get(), saved = (snap.exists && snap.data()) || {}, out = {};
+    for (const d of Object.values(by)) {
+      const t = saved[d.id]; if (!t || !(Number(t.targetRoas) > 0) || d.status !== "ENABLED" || !(Number((d.d30 || {}).conv) >= 30)) continue;
+      try {
+        const since = (Number(t.publishedAt) > 0 && _learningDateAt(t.publishedAt, timeZone)) || _learningShiftDate(today, -364);
+        const [bid, first] = await Promise.all([
+          gaql(`SELECT campaign.id, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${Number(d.id)}`),
+          gaql(`SELECT campaign.id, segments.date, metrics.impressions FROM campaign WHERE campaign.id = ${Number(d.id)} AND metrics.impressions > 0 AND segments.date BETWEEN '${since}' AND '${today}' ORDER BY segments.date LIMIT 1`)]);
+        const cc = (bid[0] || {}).campaign || {}, from = _dateOnly(((first[0] || {}).segments || {}).date), days = from ? _daysBetween(_parseYmd(from), _parseYmd(today)) : 0;
+        if (cc.biddingStrategyType !== "MAXIMIZE_CONVERSION_VALUE" || Number((cc.maximizeConversionValue || {}).targetRoas) > 0 || days < 42) continue;
+        out[d.id] = { targetRoas: Number(t.targetRoas), conversions30: _r2(d.d30.conv), roas30: d.d30.cost > 0 ? _r2(d.d30.value / d.d30.cost) : null, servingSince: from, servingDays: days };
+      } catch (e) {}
+    }
+    return out;
+  })().catch(() => ({}));
 
   // ---- Deep evidence for the remedy engine (enabled campaigns only) ----
   // Per-keyword QS COMPONENTS (which of expected CTR / ad relevance / landing
@@ -9062,7 +9142,8 @@ async function fetchDiagnostics(campaignId) {
     d.lowQualityKeywords = d.qualityScores.filter(q => q <= 4).length;
     delete d.qualityScores;
   }
-  const negativeGuard = await guardRead;
+  const negativeGuard = await guardRead, targetReady = await targetRead;
+  for (const [id, t] of Object.entries(targetReady || {})) if (by[id]) by[id].targetRoasReady = t;
   return { campaigns: Object.values(by), account, ...(negativeGuard ? { negativeGuard } : {}) };
 }
 
@@ -9190,6 +9271,14 @@ Rules: never recommend raising total enabled budgets past the ceiling; a campaig
 
 // A button is offered only for an executable that does exactly what it says, using
 // ids from this campaign's evidence. Everything else stays visible as advice (kind "none").
+// Ad Doctor's own remedy for a campaign ready for its launch target (fetchDiagnostics: targetRoasReady).
+// The issue stays the same between checks; the figures go in the fix.
+function _targetRoasRemedy(t) {
+  const pct = x => Math.round(Number(x) * 100) + "%", below = t.roas30 != null && t.roas30 < t.targetRoas;
+  return { issue: `Ready for its target ROAS of ${pct(t.targetRoas)}`, impact: "medium",
+    fix: `Set target ROAS ${pct(t.targetRoas)}, the target kept when it launched. Serving ${t.servingDays} days; last 30 days: ${Math.round(t.conversions30)} conversions${t.roas30 != null ? `, ROAS ${pct(t.roas30)}` : ""}${below ? " (below this target, so expect fewer conversions)" : ""}.`,
+    executable: { kind: "setTargetRoas", targetRoas: Number(t.targetRoas) } };
+}
 function _diagSanitize(ai, diag, ctrl, enabledTotal) {
   if (!ai || !Array.isArray(ai.campaigns)) return ai;
   const byId = new Map((diag.campaigns || []).map(c => [String(c.id), c])), seen = new Set(), campaigns = [], list = x => Array.isArray(x) ? x : [];
@@ -9217,9 +9306,16 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
       if (ex.kind === "addNegatives") {
         // A phrase negative blocks every query containing it: never one that would block a converting term or an active keyword.
         if (!guard) return none;
-        const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); return w.trim() !== "" && (converting.some(t => t.includes(w)) || active.some(t => t.includes(w))); };
+        // Performance Max reports searches only as categories: a negative is offered there only when a category
+        // that never converted in the last year contains it (or it that category) and no converting one does.
+        const pmax = c.channel === "PERFORMANCE_MAX", cats = pmax ? guard.categories : null;
+        if (pmax && !Array.isArray(cats)) return none;
+        const near = (t, w) => t.includes(w) || w.includes(t), label = conv => (cats || []).filter(x => (Number(x.conv) > 0) === conv).map(x => words(x.label)).filter(t => t.trim());
+        const sold = label(true), quiet = label(false);
+        const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); if (w.trim() === "") return pmax;
+          return converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
         const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks);
-        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped } : {}) };
+        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(pmax ? { skippedWhy: "no search category that never converted contains them, or one that converted does" } : {}) } : {}) };
       }
       if (ex.kind === "addKeywords") {
         const adGroupId = text(ex.adGroupId).replace(/\D/g, ""); if (!groups.has(adGroupId)) return none;
@@ -9314,6 +9410,16 @@ async function runDiagnostics({ campaignId, onProgress } = {}) {
     const total = enabledTotal != null ? enabledTotal : campaignId ? null : (diag.campaigns || []).filter(c => c.status === "ENABLED").reduce((a, c) => a + (c.budget || 0), 0);
     try { ai = _diagSanitize(ai, diag, ctrl, total); } catch (e) { ai = null; aiError = "The AI verdict could not be validated: " + String(e.message || e).slice(0, 200); }
   }
+  // Not from the model: the launch target ROAS, once its campaign is ready for it (sent to Approvals as a draft).
+  const readyForTarget = (diag.campaigns || []).filter(c => c.targetRoasReady);
+  if (readyForTarget.length) {
+    ai = ai || { campaigns: [] }; ai.campaigns = ai.campaigns || [];
+    for (const c of readyForTarget) {
+      let v = ai.campaigns.find(x => String(x.id) === String(c.id));
+      if (!v) { v = { id: String(c.id), remedies: [] }; ai.campaigns.push(v); }
+      v.remedies = (v.remedies || []).filter(r => ((r || {}).executable || {}).kind !== "setTargetRoas").concat([_targetRoasRemedy(c.targetRoasReady)]);
+    }
+  }
 
   if (campaignId && f) {
     // MERGE into the stored doc: replace only this campaign's diagnostics +
@@ -9376,6 +9482,7 @@ async function _currentDiagnosis(campaignId, ex) {
   const budgets = [(v.action || {}).budget].concat((c.recommendations || []).map(r => r && r.recommendedBudget)).filter(b => b != null);
   if (!(v.remedies || []).some(r => r && same(r.executable, ex)) && !(ex.kind === "setBudget" && budgets.some(b => Math.abs(Number(b) - Number(ex.budget)) < 0.01)))
     throw new Error("This fix is not part of the campaign's current diagnosis. Diagnose it again.");
+  return c;
 }
 
 async function _logRemedy(entry) {
@@ -9393,7 +9500,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
   campaignId = String(campaignId || "").replace(/\D/g, "");
   if (!campaignId) throw new Error("A valid campaign is required.");
   const ex = (remedy || {}).executable || {};
-  await _currentDiagnosis(campaignId, ex);
+  const diagnosed = await _currentDiagnosis(campaignId, ex);
   let result;
   const baseline=await _campaignBaseline(campaignId);
 
@@ -9540,6 +9647,25 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
     // Logged as queued: it counts as a live fix only once its Approvals draft is published.
     const logId=await _logRemedy({campaignId:String(campaignId),campaignName:(baseline||{}).name||null,issue:(remedy||{}).issue||null,fix:(remedy||{}).fix||null,impact:(remedy||{}).impact||null,kind:ex.kind,executable:{...ex,adId},adId,queued:true,approvalId,dryRun:false,verified:null,verification:null,baseline});
     return {ok:true,queued:true,approvalId,logId,kind:ex.kind,note:"Sent to Approvals for review. No live ad was changed."};
+  } else if (ex.kind === "setTargetRoas") {
+    // Never applied from here: the target goes to Approvals as a reviewed draft and changes bidding only
+    // when Paul approves it there (applyApproval re-checks the bidding first).
+    const target = _r2(ex.targetRoas);
+    if (!(target > 0) || !isFinite(target)) throw new Error("no target ROAS supplied");
+    const cc = ((await gaql(`SELECT campaign.id, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas FROM campaign WHERE campaign.id = ${Number(campaignId)}`))[0] || {}).campaign || {};
+    if (cc.biddingStrategyType !== "MAXIMIZE_CONVERSION_VALUE" || Number((cc.maximizeConversionValue || {}).targetRoas) > 0) throw new Error("This campaign's bidding changed since it was diagnosed. Diagnose it again.");
+    const remedyKey = String(campaignId) + ":targetRoas", f = fb(); let reuse = null;
+    if (f) try { (await f.db.collection(COL.approvals).where("payload.meta.remedyKey", "==", remedyKey).limit(10).get()).forEach(d => { if (!reuse && ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"].includes(d.data().status)) reuse = d.id; }); } catch (e) {}
+    if (reuse) return { ok: true, queued: true, reused: true, approvalId: reuse, kind: ex.kind, note: "A target ROAS for this campaign is already waiting in Approvals. Bidding was not changed." };
+    const ready = (diagnosed && diagnosed.targetRoasReady) || null, name = (baseline || {}).name || (diagnosed || {}).name || "Campaign " + campaignId;
+    const approvalId = await enqueueApproval({ type: "bidding", vetted: false, summary: `Target ROAS ${Math.round(target * 100)}% · ${name}`,
+      payload: { service: "campaigns", operations: [{ update: { resourceName: `customers/${CID}/campaigns/${campaignId}`, maximizeConversionValue: { targetRoas: target } }, updateMask: "maximize_conversion_value.target_roas" }],
+        meta: { existingCampaignId: String(campaignId), remedyKey, targetRoas: target, targetRoasGuard: true, ...(ready ? { evidence: { conversions30: ready.conversions30, roas30: ready.roas30, servingDays: ready.servingDays, servingSince: ready.servingSince } } : {}) } } });
+    if (!approvalId) throw new Error("Approvals are unavailable, so the target ROAS was not sent for review.");
+    // Logged as queued: it counts as a live fix only once its Approvals draft is published.
+    const logId = await _logRemedy({ campaignId: String(campaignId), campaignName: (baseline || {}).name || null, issue: (remedy || {}).issue || null, fix: (remedy || {}).fix || null, impact: (remedy || {}).impact || null,
+      kind: ex.kind, executable: { kind: ex.kind, targetRoas: target }, queued: true, approvalId, dryRun: false, verified: null, verification: null, baseline });
+    return { ok: true, queued: true, approvalId, logId, kind: ex.kind, note: "Sent to Approvals for review. Bidding changes only after you approve it there." };
   } else if (ex.kind === "setBudget") {
     const budget = Math.round(Number(ex.budget) * 100) / 100;
     if (!(budget > 0) || !isFinite(budget)) throw new Error("no budget supplied");
