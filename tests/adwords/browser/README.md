@@ -26,9 +26,9 @@ install anything.
   get a local placeholder SVG.
 - Mutating actions (budgets, status, approvals, deletes) change only the
   fixture's in-memory state. Native `confirm()` dialogs that delete or discard
-  are dismissed; others are accepted so the follow-up UI is exercised. A budget
-  `prompt()` is answered with 17.47 (a CAD tracer) to reach the large-change
-  confirmation.
+  are dismissed; others are accepted so the follow-up UI is exercised. When a
+  campaign's in-place budget editor (`#cmdEditIn`) opens, the walk types 17.47
+  (a CAD tracer), saves, and applies its large-change confirmation.
 - An action the server does not route (parsed from
   `netlify/functions/googleAdsAutopilotKick.js` `handleAction`) is reported as
   an unknown API action.
@@ -39,7 +39,8 @@ Console errors and page errors, unknown API actions, blocked requests, pages or
 elements wider than their container, overlapping or hard-clipped text,
 ellipsis without a tooltip, phone tap targets under 32 px, dialogs that do not
 take or trap focus or ignore Escape, dialogs and expanders that appear with no
-transition, chart marks without a tooltip or click detail, charts that do not
+transition (a short entrance animation that has already finished when a dialog
+is inspected still counts), chart marks without a tooltip or click detail, charts that do not
 redraw for their width, placeholder leaks (`undefined`, `NaN`, `null`,
 `[object Object]`, raw enum codes, literal `\uXXXX` escapes), native
 `prompt()`/`confirm()` use, and CAD amounts printed with a bare `$` in the page
