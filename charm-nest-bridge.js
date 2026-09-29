@@ -836,27 +836,33 @@ const Orders = window.Orders = (() => {
   }
   let mapsSig = "", mapsRead = [], mapsCut = "", customListAt = 0;
   if (!B.maps.customDone) B.maps.customDone = {};
+  // the records of lines reopened (state "open"): not completed, but their seals are kept and shown on their buttons for
+  // good (Paul, 29 Sep 00:35: "the seal must always remain and follow that order forever")
+  if (!B.maps.customKept) B.maps.customKept = {};
   if (!B.maps.customWrites) B.maps.customWrites = new Map();   // line key → when this page last wrote its record (CustomPrint)
   /** The pulled lines a Custom Orders record may be kept for: special ones, and those read as completed by hand. */
   function customKeys() {
     const out = new Set();
-    for (const r of rowsOf()) if (r.state !== "gone" && ((r.spec && (r.spec.special || r.spec.customDone)) || B.maps.customDone[r.key])) out.add(r.key);
+    for (const r of rowsOf()) if (r.state !== "gone" && ((r.spec && (r.spec.special || r.spec.customDone)) || B.maps.customDone[r.key] || B.maps.customKept[r.key])) out.add(r.key);
     return [...out].slice(0, 1000);
   }
   /** What was read joins what the page holds: a line read by its key is as the cloud says (no record: not completed, or
    *  reopened elsewhere); a whole list drops the records it no longer holds but those of lines pulled, and a list cut short
    *  (truncated) only adds. Nothing read before this page wrote a record overrides that record. */
   function mergeCustom(list, keyed, keys, began) {
-    const next = Object.assign({}, B.maps.customDone), mine = k => (B.maps.customWrites.get(k) || 0) >= began;
+    const next = Object.assign({}, B.maps.customDone), kept = Object.assign({}, B.maps.customKept), mine = k => (B.maps.customWrites.get(k) || 0) >= began;
+    // a record reopened (state "open") is kept with its seals, not read as completed
+    const put = (k, v) => { if (v && v.state === "open") { kept[k] = v; delete next[k]; } else if (v) { next[k] = v; delete kept[k]; } else { delete next[k]; delete kept[k]; } };
     if (list && list.records && typeof list.records === "object") {
       customListAt = Date.now();
-      if (!list.truncated) for (const k of Object.keys(next)) if (!(k in list.records) && !B.orders.byKey.has(k) && !mine(k)) delete next[k];
-      for (const [k, v] of Object.entries(list.records)) if (!mine(k)) next[k] = v;
+      if (!list.truncated) for (const m of [next, kept]) for (const k of Object.keys(m)) if (!(k in list.records) && !B.orders.byKey.has(k) && !mine(k)) delete m[k];
+      for (const [k, v] of Object.entries(list.records)) if (!mine(k)) put(k, v);
     }
-    if (keyed && keyed.records && typeof keyed.records === "object") for (const k of keys.slice(0, keyed.keys == null ? keys.length : +keyed.keys)) if (!mine(k)) { if (keyed.records[k]) next[k] = keyed.records[k]; else delete next[k]; }
+    if (keyed && keyed.records && typeof keyed.records === "object") for (const k of keys.slice(0, keyed.keys == null ? keys.length : +keyed.keys)) if (!mine(k)) put(k, keyed.records[k] || null);
     for (const [k, t] of B.maps.customWrites) if (Date.now() - t > 30 * 60000) B.maps.customWrites.delete(k);
     // (a new object only when it reads differently: a new one is what makes interpretAll read every line again)
     if (JSON.stringify(next) !== JSON.stringify(B.maps.customDone)) B.maps.customDone = next;
+    if (JSON.stringify(kept) !== JSON.stringify(B.maps.customKept)) B.maps.customKept = kept;
   }
   const mapsSame = () => mapsRead[0] === B.maps.optionMaps && mapsRead[1] === B.maps.aliases && mapsRead[2] === B.maps.noDesign;
   const ctx = () => ({ optionMaps: B.maps.optionMaps, aliases: B.maps.aliases, noDesign: B.maps.noDesign, customDone: B.maps.customDone, customRead: B.maps.customRead, customDecided: B.maps.customDecided, masterEntry: sku => Master.entryFor(sku) });
@@ -6371,6 +6377,27 @@ const CustomPrint = window.CustomPrint = (() => {
     });
   }
   const linesOf = it => (it.rows && it.rows.length ? it.rows : it.row ? [it.row] : []).filter(r => r && r.state !== "gone");
+  /** An open card's kept record: its lines were completed once and reopened, and the record keeps every seal for good
+   *  (Paul, 29 Sep 00:35). null for a completed card (its own record says) or one never completed. */
+  function keptOf(it) {
+    if (!it || it.done) return null;
+    if (it.record && it.record.state === "open") return it.record;
+    const m = B.maps.customKept || {}; for (const r of linesOf(it)) if (m[r.key]) return m[r.key];
+    return null;
+  }
+  /** The kept seals of one kind ("print" | "button") of an open card, as they were, on the button that made them: the
+   *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
+  function keptSeals(it, how, size) {
+    const rec = keptOf(it); if (!rec || !window.Seal) return "";
+    const st = Seal.list(rec).filter(x => (x.how === "button") === (how === "button"));
+    return st.length ? Seal.row({ stamps: st, prints: +rec.prints || 0 }, size ? { size } : {}) : "";
+  }
+  /** Records just written: a completed one is read as completed, and no longer as reopened. */
+  function keepDone(saved) {
+    const keys = Object.keys(saved); if (!keys.length) return;
+    B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+    if (keys.some(k => B.maps.customKept[k])) { const kept = Object.assign({}, B.maps.customKept); for (const k of keys) delete kept[k]; B.maps.customKept = kept; }
+  }
   /** What the cloud record of one line says about it. */
   const targetOf = (r, rec, it) => ({ key: r.key, receiptId: String(r.order.receiptId), transactionId: String(r.line.transactionId || ""), sku: (r.spec && r.spec.designSku) || r.line.sku || "", title: r.line.title || "", category: (r.spec && r.spec.special && r.spec.special.label) || (rec && rec.category) || (it && it.category) || "Custom order", kind: (r.spec && r.spec.special && r.spec.special.kind) || (rec && rec.kind) || "" });
   function settle() { Orders.interpretAll(); Orders.render(); try { renderRail(); updateTopSub(); } catch (_) {} try { if (OrderWin.isOpen()) OrderWin.paint(); } catch (_) {} RunCtl.poke(); }
@@ -6438,7 +6465,7 @@ const CustomPrint = window.CustomPrint = (() => {
      order is marked completed once a print dialog has opened and closed, as before. */
   function printAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key) || stamping.has(key)) return;
-    const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || null;
+    const rows = linesOf(it).filter(r => it.done || !(r.poolIds || []).length), rec = it.record || keptOf(it);
     // from the order as it is now; an order that has left the pull prints the sticker its record kept
     let label = null;
     try { label = rows.length ? O.sortingLabel(rows[0].order, rows[0].line) : null; } catch (_) { label = null; }
@@ -6474,7 +6501,7 @@ const CustomPrint = window.CustomPrint = (() => {
       const saved = {}; let putErr = null;
       for (const t of targets) { if (cut.has(t.key)) continue; try { const r = await api("charmNestLibrary", Object.assign({ op: "customPut", by: who, label }, t), { quiet: true }); if (r && r.record) { saved[t.key] = r.record; wrote([t.key]); } } catch (e) { putErr = e; } }
       const done = Object.keys(saved);
-      if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+      keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
       const f = fails.get(key); if (f && f.retrying) fails.delete(key);   // printed at last: its kept seal is the record's now
       // printed from Open: the card, its seal on the button, flies to Completed, where a note offers Undo (a dialog
@@ -6513,7 +6540,7 @@ const CustomPrint = window.CustomPrint = (() => {
         try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
       }
       const done = Object.keys(saved), rid = rows[0].order.receiptId;
-      if (done.length) B.maps.customDone = Object.assign({}, B.maps.customDone, saved);
+      keepDone(saved);
       release(); busy.delete(key); acting.delete(key);
       if (done.length) sealed(it, rows, saved, done, who, "button");
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
@@ -6562,7 +6589,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack(it.key, u.rows, u.who, "undo");
+    takeBack(it.key, u.rows, employeeName() || u.who, "undo");
   }
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
@@ -6570,27 +6597,34 @@ const CustomPrint = window.CustomPrint = (() => {
     if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, u.who, "undo");
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo");
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
     withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
   }
-  /** Each line's record deleted, the page following each as it goes (a failure part way leaves it saying what the cloud
-   *  holds), then the lines put back for cutting; a failure of either is said as what it is. */
+  /** Each line's record reopened, never deleted: its seals stay on it for good and show on the Open card's buttons (Paul,
+   *  29 Sep 00:35); only its state changes, with who and when in its history and on the order's timeline. The page
+   *  follows each as it goes (a failure part way leaves it saying what the cloud holds), then the lines are put back for
+   *  cutting; a failure of either is said as what it is. */
   async function takeBack(key, rows, who, how) {
     const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
     say(key, how === "undo" ? "Undoing…" : "Reopening…");
     let gone = 0;
     for (const r of rows) {
-      try { await api("charmNestLibrary", { op: "customDelete", key: r.key }, { quiet: true }); }
+      let back = null;
+      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how }, { quiet: true }); }
       catch (e) {
         busy.delete(key); settle(); say(key, null);
         toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
         return;
       }
-      const next = Object.assign({}, B.maps.customDone); delete next[r.key]; B.maps.customDone = next; wrote([r.key]); gone++;
+      // (its seals, as the cloud keeps them: what it answered, else the record this page held, now open)
+      const was = B.maps.customDone[r.key] || (r.spec && r.spec.customDone) || null, kept = (back && back.record) || (was ? Object.assign({}, was, { state: "open" }) : null);
+      const next = Object.assign({}, B.maps.customDone); delete next[r.key]; B.maps.customDone = next;
+      if (kept) B.maps.customKept = Object.assign({}, B.maps.customKept, { [r.key]: kept });
+      wrote([r.key]); gone++;
     }
     busy.delete(key);
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
@@ -6625,6 +6659,12 @@ const CustomPrint = window.CustomPrint = (() => {
     if (w && w.act === act) return `<button type="button" class="btn ${cls} ${sz} working" data-cu-${act}${more} disabled aria-busy="true"><span class="spin"></span>${esc(w.text)}</button>` + tail;
     return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>` + tail;
   }
+  /** An open card's button with the seals it made before a reopen resting on it, as they were (the button takes their
+   *  colour, as a seal pressed there leaves it); a card with none gets the button as it is. size: the order window's. */
+  function keptButtonHtml(it, act, cls, label, title, sz, size) {
+    const k = keptSeals(it, act === "complete" ? "button" : "print", size);
+    return buttonHtml(it, act, k ? (act === "complete" ? "sealedDone" : "sealedPrint") : cls, label, title, sz, k ? "data-seal-btn" : "") + k;
+  }
   const freshOf = mk => fresh.get(mk) || 0;
   /** A label that was not printed says so on its card for a while, beside its buttons (the toast says why). */
   function failed(key, why, st) {
@@ -6644,8 +6684,9 @@ const CustomPrint = window.CustomPrint = (() => {
     box.onkeydown = e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); go(); } else if (e.key === "Escape") { e.preventDefault(); unask(it.key); } };
     return box;
   }
-  const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete")].join("|"); };
-  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
+  const keptSig = it => { const k = keptOf(it); return k ? (Array.isArray(k.stamps) ? k.stamps.map(x => x.how[0] + x.at).join() : "l") + ":" + (+k.prints || 0) : ""; };
+  const stamp = it => { const f = fails.get(it.key); return [busy.get(it.key) || "", acting.get(it.key) || "", asking.has(it.key), !!undoOf(it), f ? (f.st ? "held:" + f.st.at : "") + (f.retrying ? ":r" : "") || "fail" : "", armed.has(it.key + "|print"), armed.has(it.key + "|complete"), keptSig(it)].join("|"); };
+  return { print, complete, reopen, undo, statusHtml, buttonHtml, working, freshOf, failNote, wire, stamp, keptOf, keptSeals, keptButtonHtml, busy: key => busy.get(key) || "", printing: key => printing.has(key), undoing: rows => rows.some(r => undos.has(r.key)) };
 })();
 
 /* ═══ 23a · Custom Orders — the order's own designs, dropped on its card and sent to the sheets ═══════════════════
@@ -8059,18 +8100,18 @@ const Review = window.Review = (() => {
     const seals=cu&&it.done&&rec&&window.Seal?Seal.row(rec,{pending:CustomPrint.freshOf(mk)}):'';
     const printBtn=cu&&printable(it)&&!cs?.busy?(it.done
         ?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn')
-        :CustomPrint.buttonHtml(it,'print',sendFirst?'ghost':'gold','Print QR label',"print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed",'sm')):'';
+        :CustomPrint.keptButtonHtml(it,'print',sendFirst?'ghost':'gold','Print QR label',"print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed",'sm')):'';
     // (another tab's card: "Review & resolve" first, the primary unless its own designs are ready to send, then the custom
     // card's buttons in the custom card's order and sizes; no drop box, so it is no taller than it has to be: the card
     // itself takes a drop, and Send to Sheet with no design yet opens its designs window)
     const reviewBtn=decide?`<button class="btn ${sendFirst?'ghost':'gold'} sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'';
     const acts=busy?busy
       :ax?CustomPrint.failNote(ax)+reviewBtn
-        +(printable(ax)&&!cs?.busy?CustomPrint.buttonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its line is then completed by hand and moves to Completed`,'sm'):'')
-        +(printable(ax)&&!cs?.busy?CustomPrint.buttonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s line completed now, made by hand, without printing its label; it moves to Completed`,'sm'):'')
+        +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its line is then completed by hand and moves to Completed`,'sm'):'')
+        +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s line completed now, made by hand, without printing its label; it moves to Completed`,'sm'):'')
         +(cs?CustomSheet.buttonsHtml(ax,true,false):'')
       :(cu?CustomPrint.failNote(it):'')+printBtn+seals
-      +(cu&&!it.done&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm'):'')
+      +(cu&&!it.done&&printable(it)&&!cs?.busy?CustomPrint.keptButtonHtml(it,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm'):'')
       +(cs?CustomSheet.buttonsHtml(it,true):'')
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'')
       +reviewBtn;
@@ -8110,7 +8151,7 @@ const Review = window.Review = (() => {
     node=el('div','doneRow workRow reviewListRow rvSettled'+(ax?' rvCu':''));node.dataset.rid=String(d.orders?.[0] || '');node.dataset.mkey='settled:'+d.key+':'+d.t;node.dataset.row=row?.key || '';node._stamp=stamp;
     const cs=ax?CustomSheet.cardOf(ax):null,busy=ax?CustomPrint.statusHtml(ax,'sm'):'';
     const acts=busy||`<span class="ost ok">Resolved</span><span class="by">${esc(d.by)}${d.t?' · '+whenOf(d.t):''}</span>`+(ax?CustomPrint.failNote(ax)
-      +(printable(ax)&&!cs?.busy?CustomPrint.buttonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its line is then completed by hand`,'sm')+CustomPrint.buttonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s line completed now, made by hand, without printing its label`,'sm'):'')
+      +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its line is then completed by hand`,'sm')+CustomPrint.keptButtonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s line completed now, made by hand, without printing its label`,'sm'):'')
       +(cs?CustomSheet.buttonsHtml(ax,true,false):''):'');
     node.innerHTML=(d.row?ListMedia.pair(d.row):'<div class="compareUnavailable">Decision recorded</div>')+`<div class="engravingIdentity"><span class="queueLabel">Review · resolved</span><div class="engravingOrder"><b class="mono">${esc((d.orders || []).slice(0,2).join(' · '))}</b></div><span class="purchaseLabel">${esc(KIND_WORDS[d.kind] || d.kind)}</span><span class="rowExcerpt" title="${esc(d.why)}">${esc(d.why)}</span>${d.lines>1?`<span class="groupScope">${d.lines} lines</span>`:''}</div><div class="purchaseSummary">${d.row?purchaseMarkup(d.row):''}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(ax):''}`;
     if(ax||row)wireAct(node,ax||{key:'rvs:'+d.key,rows:[]},cs,row);
@@ -8215,6 +8256,9 @@ const Review = window.Review = (() => {
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
     }
   }
+  /** What another tab's card's custom buttons act on for a line (actOf), or null: the order window shows them, with their
+   *  kept seals, for a line completed by hand and reopened. */
+  function actFor(rowKey) { const it = items().find(x => x.kind !== "customOrder" && rowsOf(x).some(r => r.key === rowKey)); return it ? actOf(it) : null; }
   /** The Custom Orders card a line belongs to (a decision, a card that asks nothing, or a completed one), or null. */
   function customItemFor(rowKey) {
     const dec = items().find(it => it.kind === "customOrder" && rowsOf(it).some(r => r.key === rowKey));
@@ -8223,7 +8267,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, actFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -9170,10 +9214,11 @@ const OrderWin = window.OrderWin = (() => {
     const fix = byId("owFix"); if (!fix || !fix.parentNode) return;
     let bar = byId("owCustom");
     if (!bar) { bar = el("div", "owCustom"); bar.id = "owCustom"; bar.setAttribute("aria-live", "polite"); fix.parentNode.insertBefore(bar, fix); }
-    const it = r.spec && (r.spec.special || r.spec.customDone) ? Review.customItemFor(r.key) : null;
+    // (a line completed by hand and reopened keeps its seals here too, on its Review card's buttons)
+    const it = r.spec && (r.spec.special || r.spec.customDone) ? Review.customItemFor(r.key) : r.spec && B.maps.customKept && B.maps.customKept[r.key] ? Review.actFor(r.key) : null;
     if (!it) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; return; }
     const busy = CustomPrint.statusHtml(it, "xs"), can = Review.printable(it);
-    const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || "Custom order";
+    const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || it.category || "Custom order";
     const why = it.info || it.done ? it.why : can ? "decide below, or print its label once made by hand" : "a decision waits below";
     const rec = it.record || null, printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
     const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can, rec && (rec.stamps || []).length, rec && rec.prints]);
@@ -9187,8 +9232,8 @@ const OrderWin = window.OrderWin = (() => {
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (busy && !busy.includes("cuUndo") ? busy
         : CustomPrint.failNote(it) + (can ? (it.done ? CustomPrint.buttonHtml(it, "print", printed ? "sealedPrint" : "ghost", printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${printed ? " again" : ""}`, "xs", "data-seal-btn")
-            : CustomPrint.buttonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs")) : "") + seals +
-          (can && !it.done ? CustomPrint.buttonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs") : "") +
+            : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs", 34)) : "") + seals +
+          (can && !it.done ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", 34) : "") +
           (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>` : "") + (busy && busy.includes("cuUndo") ? busy : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
@@ -10088,7 +10133,7 @@ const OrderWin = window.OrderWin = (() => {
     for (const row of rows) { specOf(row); row._pools = pools; if (!(row.poolIds || []).length) row.poolIds = pools.filter(p => p.lineKey === row.key).map(p => p.poolId); }
     // a custom order finished by hand keeps its own record
     say("Reading its custom-order record…");
-    await Promise.all(rows.map(async row => { try { const c = await api("charmNestLibrary", { op: "customGet", key: row.key }, { quiet: true }); if (c && c.record && !row.spec.customDone) row.spec.customDone = c.record; } catch (_) {} }));
+    await Promise.all(rows.map(async row => { try { const c = await api("charmNestLibrary", { op: "customGet", key: row.key }, { quiet: true }); if (c && c.record && c.record.state === "open") B.maps.customKept = Object.assign({}, B.maps.customKept, { [row.key]: c.record }); else if (c && c.record && !row.spec.customDone) row.spec.customDone = c.record; } catch (_) {} }));
     return rows;
   }
   /** The look-up's spinner line put away, and whatever look-up is still running told to leave it so. */
