@@ -733,5 +733,8 @@
   const liveOf = s0 => !s0 ? null : (s0.mkey && $(`#rvList [data-mkey="${CSS_ESC(s0.mkey)}"]`)) || (s0.rid && $(`#rvList .reviewListRow[data-rid="${CSS_ESC(s0.rid)}"]`)) || null;
   const CSS_ESC = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
 
+  // its styles are in from the start: put in on the first send, they were a sheet new to the page in the middle of it
+  // (every style worked out again, and the designs window's closing copy built all the page's styles anew)
+  tryDo(() => { if (doc && doc.head) sheet(); });
   root.SendTour = { play, snap, playing: () => !!T, skip: () => { if (T) T.forward(); }, TIME, GENTLE };
 })(typeof window !== "undefined" ? window : globalThis);

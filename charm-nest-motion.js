@@ -754,21 +754,28 @@
   }
   /* the copy a closed window leaves behind: drawn from the page's own styles inside a closed shadow root, so nothing
      that looks for the window's contents (or counts open dialogs) ever finds it */
-  let sheetKey = "", sheetObj = null;
+  /* Each of the page's style sheets is copied once, as its own sheet, and kept while it is unchanged (by its rule
+     count): a sheet the page adds later (a tour's, a window's own, put in on first use) costs only its own few rules at
+     the next close, never the whole page's again (that rebuild, 45-60 ms of copying and compiling every rule of the
+     page, stood at the start of the designs window's way back when the Send to Sheet tour had just put its styles in). */
+  const copies = new WeakMap();
+  let sheetKey = "", sheetList = null;
+  function copyOf(s) {
+    let n; try { if (s.disabled) return null; n = s.cssRules.length; } catch (_) { return null; }
+    const had = copies.get(s); if (had && had.n === n) return had.sheet;
+    try {
+      const body = [...s.cssRules].map(r => r.cssText).filter(t => !/^@(import|charset)/i.test(t)).join("\n"), m = s.media && s.media.mediaText;
+      const sh = new CSSStyleSheet(); sh.replaceSync(m && m !== "all" ? `@media ${m}{${body}}` : body);
+      copies.set(s, { n, sheet: sh }); return sh;
+    } catch (_) { return null; }
+  }
   function pageSheet() {
     try {
       if (!("adoptedStyleSheets" in doc) || !root.CSSStyleSheet) return null;
-      const list = [...doc.styleSheets]; let key = String(list.length), text = "";
-      for (const s of list) { try { key += "," + s.cssRules.length; } catch (_) { key += ",x"; } }
-      if (sheetObj && key === sheetKey) return sheetObj;
-      for (const s of list) {
-        try {
-          if (s.disabled) continue;
-          const body = [...s.cssRules].map(r => r.cssText).filter(t => !/^@(import|charset)/i.test(t)).join("\n"), m = s.media && s.media.mediaText;
-          text += m && m !== "all" ? `@media ${m}{${body}}\n` : body + "\n";
-        } catch (_) {}
-      }
-      const sh = new CSSStyleSheet(); sh.replaceSync(text); sheetObj = sh; sheetKey = key; return sh;
+      const list = [...doc.styleSheets]; let key = String(list.length);
+      for (const s of list) { try { key += "," + (s.disabled ? "d" : s.cssRules.length); } catch (_) { key += ",x"; } }
+      if (sheetList && key === sheetKey) return sheetList;
+      sheetList = list.map(copyOf).filter(Boolean); sheetKey = key; return sheetList;
     } catch (_) { return null; }
   }
   /** The page's styles for the closing copy, made ready when the page is idle once a window has opened (building them,
@@ -781,7 +788,7 @@
       try {
         const sh = pageSheet(); if (!sh || sh === warmed) return; warmed = sh;
         const host = doc.createElement("div"); host.setAttribute("aria-hidden", "true"); host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none";
-        const sr = host.attachShadow({ mode: "closed" }); sr.adoptedStyleSheets = [sh]; sr.innerHTML = '<div class="dlg"><div class="dlgHead"></div></div>';
+        const sr = host.attachShadow({ mode: "closed" }); sr.adoptedStyleSheets = sh; sr.innerHTML = '<div class="dlg"><div class="dlgHead"></div></div>';
         doc.body.appendChild(host); getComputedStyle(sr.firstElementChild).color; host.remove();
       } catch (_) {}
     };
@@ -826,7 +833,7 @@
       let shade = null;
       if (snap.back && !/rgba\(0, 0, 0, 0\)|transparent/.test(snap.back)) { shade = doc.createElement("div"); shade.className = "mdGhostBack"; shade.setAttribute("aria-hidden", "true"); shade.style.background = snap.back; L.appendChild(shade); }
       L.appendChild(host);
-      const sr = host.attachShadow({ mode: "closed" }), sheet = snap.copy ? pageSheet() : null; if (sheet) sr.adoptedStyleSheets = [sheet];
+      const sr = host.attachShadow({ mode: "closed" }), list = snap.copy ? pageSheet() : null, sheet = list && list.length ? list : null; if (sheet) sr.adoptedStyleSheets = sheet;
       const box = (bg, more) => { const x = doc.createElement("div"); Object.assign(x.style, { position: "absolute", inset: "0", borderRadius: snap.radius, background: bg }, more || {}); return x; };
       sr.appendChild(box(snap.bg, { backgroundImage: snap.bgi, boxShadow: snap.shadow }));
       const c = sheet ? snap.copy : null;
