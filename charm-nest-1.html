@@ -2185,9 +2185,11 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .libTabs button.on .cnt{background:rgba(255,255,255,.2);color:var(--paper)}
 .libTabs .cnt.pulse{animation:ldPulse .62s cubic-bezier(.2,.8,.2,1)}
 @keyframes ldPulse{0%{transform:none}30%{transform:scale(1.4);background:var(--sage);color:#fff}100%{transform:none}}
-@container workspace (max-width:1100px){.libBar .fchip .lng{display:none}}
-@container workspace (max-width:900px){.libBar{gap:6px}.libTabs button{padding:3px 8px}.libBar .libFilterGroup{gap:4px;padding-left:8px}.libBar .fchip{padding:4px 7px;gap:4px}.libBar #libKind{padding-left:8px}.libBar .seg button{padding:4px 8px}.libBar input[type=search]{min-width:110px;flex-basis:130px}}
-@container workspace (max-width:760px){.libTabs button{padding:3px 7px}.libBar .libFilterGroup{gap:3px}.libBar .fchip .sw{display:none}.libBar input[type=search]{min-width:100px}}
+/* (each step starts sooner since the bar also holds the Front | Back · engraving switch, ~175 px: without it the bar
+   overflowed at 1500 and 1280, the switch cut off and the bar scrolling; now one line, nothing cut off) */
+@container workspace (max-width:1260px){.libBar .fchip .lng{display:none}}
+@container workspace (max-width:1075px){.libBar{gap:6px}.libTabs button{padding:3px 8px}.libBar .libFilterGroup{gap:4px;padding-left:8px}.libBar .fchip{padding:4px 7px;gap:4px}.libBar #libKind{padding-left:8px}.libBar .seg button{padding:4px 8px}.libBar input[type=search]{min-width:110px;flex-basis:130px}}
+@container workspace (max-width:940px){.libTabs button{padding:3px 7px}.libBar .libFilterGroup{gap:3px}.libBar .fchip .sw{display:none}.libBar input[type=search]{min-width:100px}}
 /* a search waiting for its answer turns in the field, beside the field's own × */
 .libBar input[type=search].searching{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='none' stroke='%23c4bdb0' stroke-width='2'/%3E%3Cpath d='M8 2a6 6 0 0 1 6 6' fill='none' stroke='%235b554c' stroke-width='2' stroke-linecap='round'%3E%3CanimateTransform attributeName='transform' type='rotate' from='0 8 8' to='360 8 8' dur='.7s' repeatCount='indefinite'/%3E%3C/path%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 26px center;background-size:12px 12px;padding-right:44px}
 #libBody[hidden],#libDone[hidden]{display:none}

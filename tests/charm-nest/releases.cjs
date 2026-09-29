@@ -31,7 +31,8 @@ for (const material of ['gold10k','gold14k']) {
 for (const seq of [1,2,3,4,5,6]) assert.equal(O.sheetRelease({...base,material:'rose'},{seq}).include,seq%2===0);
 const code=fs.readFileSync(require('node:path').join(__dirname,'../../charm-nest-bridge.js'),'utf8');
 const part=(name,end)=>code.slice(code.indexOf(`const ${name} = window.${name} =`),code.indexOf(end,code.indexOf(`const ${name} = window.${name} =`)));
-const c=vm.createContext({assert,O,console});
+// (the Carry slice also holds SheetEvents, which names its store by the side of the sandbox)
+const c=vm.createContext({assert,O,console,WORKSPACE_SANDBOX:false});
 vm.runInContext(`
 const window={CharmNestOrders:O}, S={cloud:{ok:true},settings:{}}, METALS=['gold','silver','rose','gold10k','gold14k'].map(key=>({key}));
 const B={run:{runId:'run-test',releasePolicy:2,solidIncluded:{}},sets:new Map(),engrave:{items:new Map()},pool:{rows:new Map()},orders:{rows:[],byKey:new Map()}};
@@ -138,10 +139,12 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  const rows=[{state:'committed',poolIds:['p1'],order:{receiptId:'1'}},{state:'committed',poolIds:['p2'],order:{receiptId:'2'}}];
  const Orders={rows:()=>rows,render(){}},DesignLink={ensure:async()=>{},call:async(cmd,a)=>{calls.push([cmd,a.receiptIds]);return {};}};
  const save=async s=>saved.push(s.setId),Pool={update:async(ids,p)=>updates.push([ids,p.state])},RunCtl={save:async()=>{},renderBanner(){}},agent=()=>{};
+ const notes=[],window={SheetEvents:{undone:(set,ids)=>notes.push([set.setId,ids])}};
  `+code.slice(code.indexOf('  async function undo(set)'),code.indexOf('  /** The Library\'s Sets view')),undo);
  await vm.runInContext(`(async()=>{
  await undo({setId:'s1',runId:'r',name:'Set 1',committed:['1'],committedAt:1});
  assert.deepEqual(calls,[['complete.undo',['1']]],'the station is asked to reopen the orders of this set, by name');
+ assert.deepEqual(notes,[['s1',['1']]],'each reopened order gets its note on the timeline');
  assert.deepEqual(rows.map(r=>r.state),['written','committed'],'only the order of this set reopens; the other set stays committed');
  assert.deepEqual(updates,[[['p1'],'written']]);
  await undo({setId:'s2',runId:'r',name:'Set 2',committed:[],committedAt:1});
@@ -153,6 +156,7 @@ vm.runInContext(part('Gate','/* ═══ 21'),c);
  vm.runInContext(`
  const window={},order=[],B={pool:{rows:new Map([['p1',{orderId:'1'}]])}},rows=[{state:'written',poolIds:['p1'],order:{receiptId:'1'}}];
  const Orders={rows:()=>rows},Review={add(){}},Pool={update:async()=>{}},agent=()=>{},today=()=>'2026-09-23',employeeName=()=>'Tester';
+ const stampWho=()=>({by:employeeName(),device:'charm-nest-1'});
  const validateRelease=()=>{},evaluate=()=>({committable:['1'],held:{},gone:[]});
  const DesignLink={ensure:async()=>{},call:async(cmd,a)=>{order.push(cmd);return cmd==='ui.select'?{selected:a.receiptIds,refused:[]}:cmd==='complete.preview'?{jobs:[]}:{completed:a.receiptIds,refused:[]};}};
  const RunCtl={save:async()=>{order.push('run saved');}},save=async s=>{order.push('set saved '+s.status);};
