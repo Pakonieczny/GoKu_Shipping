@@ -130,8 +130,11 @@ const DEFAULT_CONTROL = {
   smartBidding: Number(ENV.GADS_TARGET_ROAS || 0) > 0,  // false = Manual CPC (capped) · true = Smart Bidding (Max Conversion Value, no CPC cap)
   minConvForTargetTune: 30,       // Smart Bidding volume floor before nudging targets
   learningCooldownDays: 7,        // don't restructure a campaign changed within N days
-  anomalySpendMultiple: 2.5       // yesterday spend > N× trailing avg ⇒ trip breaker
+  anomalySpendMultiple: 2.5,      // yesterday spend > N× trailing avg ⇒ trip breaker
+  orderCutoffDays: 7              // last order that still arrives: dated campaigns end N days before the gift date
 };
+// Order cutoff from Controls: whole days 0-30; a missing or invalid value is the default, never 0.
+function _orderCutoffDays(c) { const v = c && c.orderCutoffDays, n = v == null || v === "" || typeof v === "boolean" ? NaN : Number(v); return isFinite(n) && n >= 0 ? Math.min(30, Math.round(n)) : DEFAULT_CONTROL.orderCutoffDays; }
 
 async function control() {
   const f = fb();
@@ -146,7 +149,7 @@ async function control() {
   // invalid stored value falls back to the default ceiling; it never reads as "no ceiling".
   const envCeil = Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL), storedCeil = Number(c.maxDailyBudgetTotal), envOk = isFinite(envCeil) && envCeil > 0;
   c.maxDailyBudgetTotal = Math.min(isFinite(storedCeil) && storedCeil > 0 ? storedCeil : (envOk ? envCeil : 100), envOk ? envCeil : Infinity);
-  c.autoApproveVettedTemplates=false;
+  c.autoApproveVettedTemplates=false; c.orderCutoffDays=_orderCutoffDays(c);
   try {c.budgetCurrency=await _accountCurrency();c.budgetCurrencyVerified=true;}catch(e){c.budgetCurrency=null;c.budgetCurrencyVerified=false;}
   return c;
 }
@@ -2029,9 +2032,9 @@ async function loadCalendar() {
 // their real date for the year (Mother's Day is not always 05-11), and a peak whose tag already
 // holds a draft or campaign is skipped: the daily task would otherwise prepare a duplicate draft
 // on every day of the window, and Google rejects a second campaign with the same name.
-async function dueEvents(now = new Date()) {
-  const cal = await loadCalendar();
-  const due = [], today = _parseYmd(now) || _todayUtc();
+async function dueEvents(now) {
+  const cal = await loadCalendar(), tz = await _accountTz(); // the account's date, not the server's UTC date
+  const due = [], today = _parseYmd(typeof now === "string" ? now : _acctDateYmd(tz, now == null ? 0 : new Date(now).getTime() - Date.now())) || _acctToday();
   Object.entries(cal).forEach(([key, coll]) => {
     (coll.peaks || []).forEach(pk => {
       const rule = _occasionRule(pk.label, _ymd(today));
@@ -2061,8 +2064,11 @@ function _parseYmd(s) {
   if (typeof s === "number" && isFinite(s)) { const n = new Date(s); return isNaN(n.getTime()) ? null : new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate())); }
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || "").trim()); if (!m) return null; const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])); return isNaN(d.getTime()) ? null : d; }
 function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())); }
+// Today in the AD ACCOUNT's time zone (the day Google Ads schedules by), as a UTC-midnight Date. Every
+// opportunity, plan and draft date counts from it: the server's UTC date runs a day ahead each evening.
+function _acctToday() { return _parseYmd(_acctDateYmd(_tzCache || "America/Toronto")); }
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
-function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _todayUtc(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
+function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _acctToday(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
 // Campaign schedule fields for a builder. Accepts Date, epoch ms, or YYYY[-]MM[-]DD.
 // startDateTime is emitted ONLY for a genuinely FUTURE start: Google rejects a
@@ -2075,7 +2081,7 @@ function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if
 function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
-  if (s && s > _todayUtc()) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  if (s && s > _acctToday()) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00"; // future in the account's time zone
   const e = _parseYmd(endDate);
   if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
   return out;
@@ -2214,14 +2220,16 @@ function aiKeywordResearch(aiKeywords) {
 }
 // Merge AI keyword research with real Keyword Planner ideas. Real data wins per keyword text.
 // Always returns a usable research object so the planner is NEVER stuck on a generic tier guess.
-function mergeKeywordResearch(aiKeywords, kpResult) {
+// seedsOnly keeps only the asked-for keywords (the ones a campaign will buy), never related ideas.
+function mergeKeywordResearch(aiKeywords, kpResult, { seedsOnly = false } = {}) {
   const out = aiKeywordResearch(aiKeywords);
   const byText = {}; out.forEach(k => byText[k.text.toLowerCase()] = k);
+  const asked = new Set(Object.keys(byText));
   let realCount = 0;
   if (kpResult && kpResult.ok && Array.isArray(kpResult.ideas)) {
     kpResult.ideas.forEach(idea => {
       const key = String(idea.text || "").toLowerCase(); if (!key) return;
-      const ex = byText[key];
+      const ex = byText[key]; if (seedsOnly && !ex) return;
       const rec = { text: idea.text, searches: idea.searches, competition: idea.competition || _compLabel(idea.competitionIndex),
         competitionIndex: idea.competitionIndex, low: _r2(idea.low) || null, high: _r2(idea.high) || null,
         tail: ex ? ex.tail : _tailOf(idea.text), intent: ex ? ex.intent : null, real: true,
@@ -2242,9 +2250,10 @@ function mergeKeywordResearch(aiKeywords, kpResult) {
   out.sort((a, b) => (b.real ? 1 : 0) - (a.real ? 1 : 0) || (b.searches || 0) - (a.searches || 0));
   // MEASURED demand direction: sum the real ideas\u2019 12-month series (aligned from the most
   // recent month) and compare the last 3 months to the prior 3. This replaces the model\u2019s
-  // demand guess with Google\u2019s own seasonality data whenever it\u2019s available.
+  // demand guess with Google\u2019s own seasonality data whenever it\u2019s available. Only the asked-for
+  // keywords count: related ideas Keyword Planner adds are not what the campaign buys.
   let demandMeasured = null, demandSlopePct = null;
-  const series = out.filter(k => k.real && Array.isArray(k.monthly) && k.monthly.length >= 6).map(k => k.monthly);
+  const series = out.filter(k => k.real && asked.has(String(k.text).toLowerCase()) && Array.isArray(k.monthly) && k.monthly.length >= 6).map(k => k.monthly);
   if (series.length) {
     const L = Math.min(...series.map(s => s.length));
     const tot = Array.from({ length: L }, (_, i) => series.reduce((a, s) => a + (s[s.length - L + i] || 0), 0));
@@ -2305,9 +2314,9 @@ async function keywordDiag({ keyword, geo } = {}) {
     request: { endpoint: `customers/${CID}:generateKeywordIdeas`, customerId: CID, loginCustomerId: LOGIN_CID || null, version: V, seed: kw } };
 }
 // Back-compat wrapper: a real-only research object (used by custom builds, which have no AI seeds).
-async function researchOpportunity(seeds, geoIds) {
+async function researchOpportunity(seeds, geoIds, opts) {
   const kp = await keywordResearch(seeds, geoIds);
-  const merged = mergeKeywordResearch(seeds, kp);
+  const merged = mergeKeywordResearch(seeds, kp, opts);
   merged.error = kp.ok ? null : (kp.error || "unavailable");
   // Keep each measured series' end month so the planner reads the run month's seasonality, not the 12-month average.
   const endByText = {}; ((kp && kp.ideas) || []).forEach(i => { if (i && i.monthlyEnd) endByText[String(i.text).toLowerCase()] = i.monthlyEnd; });
@@ -2683,7 +2692,7 @@ const _OCCASION_RULES = [
   { re: /\bback[ -]to[ -]school\b/, at: y => _D(y, 8, 1), approx: true }
 ];
 function _occasionRule(label, from) {
-  const s = String(label || "").toLowerCase().replace(/[‘’`]/g, "'"), base = from ? _parseYmd(from) : _todayUtc();
+  const s = String(label || "").toLowerCase().replace(/[‘’`]/g, "'"), base = from ? _parseYmd(from) : _acctToday();
   if (!base) return null;
   let best = null;
   _OCCASION_RULES.forEach(r => { if (!r.re.test(s)) return; let d = r.at(base.getUTCFullYear()); if (d < base) d = r.at(base.getUTCFullYear() + 1);
@@ -2697,6 +2706,9 @@ const _GEO_ISO = { "2036": "AU", "2124": "CA", "2826": "GB", "2840": "US" };
 // A dated occasion is proposed only when it is at least this many days away: a shorter run, after
 // Google's ad review, leaves too little time to ramp and for an order to arrive before the gift date.
 const _OPP_MIN_LEAD_DAYS = 7;
+// Keyword Planner pools per scan, one per distinct country set: bounds requests while measuring each
+// occasion only where it is observed.
+const _KP_MAX_GEO_SETS = 4;
 // "YYYY-MM" of the last entry of Keyword Planner's monthly series when its last 12 entries are
 // consecutive months, oldest first (the order `monthly` is kept in); else null, never a guess.
 const _KP_MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
@@ -2711,6 +2723,27 @@ function _kpMonthEnd(vols) {
 // well below 100% for a new advertiser × a top-of-page CTR of ~5-8%, with some phrase-match reach
 // beyond the exact keywords. An ad can only be clicked when someone searches; budget cannot buy more.
 const _SEARCH_CLICK_SHARE = 0.05;
+// The same share measured on this account once it has enough Search history: clicks ÷ eligible
+// impressions (impressions ÷ search impression share) = impression share × CTR, over 90 days,
+// read-only. Clamped, since one account's history is a guide for a new campaign, not a promise;
+// with too little history the 5% planning assumption is used and labelled as an assumption.
+const _CLICK_SHARE_MIN = { clicks: 150, impressions: 3000 }, _CLICK_SHARE_RANGE = [0.005, 0.15];
+let _clickShareMem = null;
+async function searchClickShare() {
+  if (_clickShareMem && (Date.now() - _clickShareMem.at) < 5 * 60 * 1000) return _clickShareMem;
+  let out = { share: _SEARCH_CLICK_SHARE, source: "assumption", detail: `${_SEARCH_CLICK_SHARE * 100}% planning assumption: Search impression share could not be read` };
+  try {
+    const rows = await gaql(`SELECT metrics.impressions, metrics.clicks, metrics.search_impression_share FROM campaign WHERE campaign.advertising_channel_type = 'SEARCH' AND ${await _last90Clause()}`);
+    let impr = 0, clicks = 0, eligible = 0;
+    (rows || []).forEach(r => { const m = r.metrics || {}, i = Number(m.impressions) || 0, is = Number(m.searchImpressionShare); if (i > 0 && is > 0 && is <= 1) { impr += i; clicks += Number(m.clicks) || 0; eligible += i / is; } });
+    if (clicks >= _CLICK_SHARE_MIN.clicks && impr >= _CLICK_SHARE_MIN.impressions) {
+      const raw = Math.round(clicks / eligible * 10000) / 10000, share = Math.max(_CLICK_SHARE_RANGE[0], Math.min(_CLICK_SHARE_RANGE[1], raw));
+      out = { share, source: "measured", clicks, impressions: impr, impressionShare: _r2(impr / eligible), ctr: Math.round(clicks / impr * 10000) / 10000,
+        detail: `your Search campaigns over 90 days: impression share ${Math.round(impr / eligible * 100)}% × CTR ${_r2(clicks / impr * 100)}% (${clicks} clicks)${share !== raw ? `, clamped to ${_CLICK_SHARE_RANGE[0] * 100}–${_CLICK_SHARE_RANGE[1] * 100}%` : ""}` };
+    } else out.detail = `${_SEARCH_CLICK_SHARE * 100}% planning assumption: ${clicks} Search clicks with a measured impression share in 90 days (${_CLICK_SHARE_MIN.clicks} clicks and ${_CLICK_SHARE_MIN.impressions} impressions needed to measure it)`;
+  } catch (e) {}
+  out.at = Date.now(); _clickShareMem = out; return out;
+}
 // Measured monthly searches during a run window: each keyword's same calendar month(s) in Keyword
 // Planner's dated 12-month series (seasonality), else its 12-month average. Close variants that
 // Keyword Planner reports together (plurals, word order) are counted once.
@@ -2732,7 +2765,8 @@ function _windowSearches(keywords, start, end) {
 }
 // The whole research output for one campaign: CPC cap, daily budget, run window, expected
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
-function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market, economics, confidence, currency, nativeToUsd } = {}) {
+// today = the account's date (YYYY-MM-DD); startDate/endDate/dailyBudget/maxCpc = values chosen for a draft.
+function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market, economics, confidence, currency, nativeToUsd, today: todayYmd, orderCutoffDays, clickShare, startDate: winStart, endDate: winEnd, dailyBudget, maxCpc } = {}) {
   const ccy = currency || CURRENCY;
   if(ccy!=="USD")aov=Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
@@ -2760,7 +2794,8 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   //     skewed price data) — never above the cap on Manual CPC. Projecting off the low bid (old
   //     behavior) overstated clicks; the UI projecting off the cap understated them. This is the fix.
   const eCpcMarket = _r2(Math.sqrt(Math.max(0.05, cpc.low) * Math.max(cpc.low, cpc.max)));
-  const eCpc = _r2(smart ? eCpcMarket : Math.min(eCpcMarket, cpc.max));
+  const cap = Number(maxCpc) > 0 ? _r2(Number(maxCpc)) : cpc.max; // a draft's chosen cap; Google's band is unchanged
+  const eCpc = _r2(smart ? eCpcMarket : Math.min(eCpcMarket, cap));
   // (2) Conversion rate — computed, not assumed: account history shrunk toward the benchmark
   //     (see accountCvr), then tilted by the bounded AI market read for THIS collection × occasion.
   const cvrBase = (cvrInfo && cvrInfo.cvr) || PLAN_CVR;
@@ -4887,7 +4922,7 @@ Rules: warm, sophisticated, direct, emotionally specific; foreground 1,200+ edit
     await progress(56, "Measuring demand", "Google Keyword Planner and account conversion goals");
     const allKeywords = _studioList(blueprint.search.groups.flatMap(g => g.keywords), 20);
     const [research, readiness, enabledSpend] = await Promise.all([
-      researchOpportunity(allKeywords, countries).catch(e => ({ ok: false, source: "fallback", error: String(e.message || e).slice(0, 180), cpc: { low: 0.75, high: 1.75 }, keywords: [] })),
+      researchOpportunity(allKeywords, countries, { seedsOnly: true }).catch(e => ({ ok: false, source: "fallback", error: String(e.message || e).slice(0, 180), cpc: { low: 0.75, high: 1.75 }, keywords: [] })), // the Studio's own keywords only
       designStudioConversionReadiness(),
       _enabledBudgetTotal()
     ]);
