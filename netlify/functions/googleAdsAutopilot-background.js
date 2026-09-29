@@ -208,7 +208,8 @@ exports.handler = async (event) => {
         try {
           const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
             itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
-            feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[] });
+            feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
+            existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0 });
           result.pmax = out;
           try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
         } catch (e) {
@@ -326,7 +327,9 @@ exports.handler = async (event) => {
       // Read-only: Google's serving check of ENABLED campaigns for the Overview badge. At most three
       // minutes, and never the last three the tasks after it need.
       else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
-      else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
+      else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl });
+        // Performance Max has its own search terms report; its drafts wait in Approvals like the Search ones.
+        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } } }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
       else if (task === "ceiling")  { result.ceiling = await E.enforceBudgetCeiling({ ctrl }); }
