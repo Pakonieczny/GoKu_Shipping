@@ -10087,7 +10087,75 @@ async function getGenStatus(genId) {
   // for retry scheduling before presenting a stopped Learning job as retryable.
   if(state&&state.kind==="learning"&&state.phase!=="done"&&Number(state.at)>0&&Date.now()-Number(state.at)>20*60000)
     return {...state,phase:"done",ok:false,expired:true,retryable:true,error:"The learning update stopped before completion. Saved guidance is retained; you can start a new update."};
+  // A Performance Max run the worker never took, or one past Netlify's 15 minutes, has ended: the poll says so
+  // instead of waiting (the same limits claimPmaxGeneration uses).
+  if(state&&state.kind==="pmax"&&state.runId&&(state.phase==="queued"||state.phase==="running")){
+    const age=Date.now()-Number(state.at||0);
+    if(state.phase==="queued"&&age>=PMAX_GEN_QUEUED_MS)return {...state,phase:"done",ok:false,expired:true,error:"The draft generation did not start, so nothing was paid for. Create the draft again."};
+    if(state.phase==="running"&&age>=PMAX_GEN_RUNNING_MS)return {...state,phase:"done",ok:false,expired:true,error:"The draft generation stopped before it finished. Check Approvals before creating it again."};
+  }
   return state;
+}
+
+// ── Performance Max from the console: one paid generation per request ──────────────────────────
+// A generation pays for its ad copy and leaves one draft in Approvals. The same request (product, feed, destination
+// and offers; the budget is a setting of that draft, not a new request) always has the same genId, and gen_<genId>
+// records who runs it:
+//   queued   claimed by the console, which dispatched the worker with this runId; taken within 2 minutes or never
+//   running  the worker holding that runId writes the copy and the draft; Netlify ends a background worker by 15 minutes
+//   done     ok with its approvalId, or the error
+// A second tab, or a retry after a network blip, joins a queued or running generation, or gets back one that
+// finished in the last 10 minutes while its draft is still in Approvals. A failure, force, a different request,
+// a deleted draft or an older result starts a new run.
+const PMAX_GEN_QUEUED_MS = 2 * 60000, PMAX_GEN_RUNNING_MS = 15 * 60000, PMAX_GEN_REUSE_MS = 10 * 60000;
+function _pmaxGenerationKey({ handle, feedLabel, existingCampaignId, itemIds } = {}) {
+  return { handle: String(handle || "").trim(), feedLabel: String(feedLabel || "").trim().toUpperCase(),
+    destination: /^\d{1,20}$/.test(String(existingCampaignId || "")) ? String(existingCampaignId) : "new",
+    itemIds: [...new Set((Array.isArray(itemIds) ? itemIds : []).map(x => String(x).trim().toLowerCase()).filter(Boolean))].sort() };
+}
+function pmaxGenerationId(request) {
+  return "pmax-" + require("crypto").createHash("sha256").update(JSON.stringify(_pmaxGenerationKey(request))).digest("hex").slice(0, 32);
+}
+function _pmaxGenerationRef(genId) {
+  const f = fb(); if (!f) throw new Error("Draft generation is unavailable: its progress cannot be saved. Nothing was started.");
+  return { f, ref: f.db.collection(COL.state).doc("gen_" + String(genId)) };
+}
+// { genId, runId } of a new run the caller must dispatch, or of the run to follow (joined; finished once it is done).
+async function claimPmaxGeneration(genId, { request = {}, force = false } = {}) {
+  const { f, ref } = _pmaxGenerationRef(genId), runId = require("crypto").randomUUID();
+  return await f.db.runTransaction(async tx => {
+    const snap = await tx.get(ref), cur = snap.exists ? snap.data() : null, now = Date.now(), age = cur ? now - Number(cur.at || 0) : Infinity;
+    if (!force && cur && cur.kind === "pmax" && cur.runId) {
+      if ((cur.phase === "queued" && age < PMAX_GEN_QUEUED_MS) || (cur.phase === "running" && age < PMAX_GEN_RUNNING_MS)) return { genId, runId: cur.runId, joined: true };
+      if (cur.phase === "done" && cur.ok === true && cur.approvalId && age < PMAX_GEN_REUSE_MS) {
+        const draft = await tx.get(f.db.collection(COL.approvals).doc(String(cur.approvalId)));
+        if (draft.exists && draft.data().status !== "REJECTED") return { genId, runId: cur.runId, joined: true, finished: true };
+      }
+    }
+    tx.set(ref, { phase: "queued", kind: "pmax", runId, request: _pmaxGenerationKey(request), startedAt: now, at: now });
+    return { genId, runId, joined: false };
+  });
+}
+// The worker takes the run it was dispatched for, once: a repeated, superseded or late dispatch pays nothing.
+async function takePmaxGeneration(genId, runId) {
+  const { f, ref } = _pmaxGenerationRef(genId);
+  return await f.db.runTransaction(async tx => {
+    const snap = await tx.get(ref), cur = snap.exists ? snap.data() : null, now = Date.now();
+    if (!cur || cur.kind !== "pmax" || !runId || cur.runId !== String(runId) || cur.phase !== "queued" || now - Number(cur.at || 0) >= PMAX_GEN_QUEUED_MS) return false;
+    tx.set(ref, { ...cur, phase: "running", takenAt: now, at: now });
+    return true;
+  });
+}
+// How the run ended, unless it already has or a newer run (force) owns the status; notTaken closes it only while no
+// worker has taken it. Undefined fields are dropped for Firestore.
+async function finishPmaxGeneration(genId, runId, out, { notTaken = false } = {}) {
+  const { f, ref } = _pmaxGenerationRef(genId);
+  return await f.db.runTransaction(async tx => {
+    const snap = await tx.get(ref), cur = snap.exists ? snap.data() : null;
+    if (!cur || cur.kind !== "pmax" || cur.runId !== String(runId) || cur.phase === "done" || (notTaken && cur.phase !== "queued")) return false;
+    tx.set(ref, { ...JSON.parse(JSON.stringify(out || {})), phase: "done", kind: "pmax", runId: cur.runId, request: cur.request || null, startedAt: cur.startedAt || null, at: Date.now() });
+    return true;
+  });
 }
 
 // A queued fix (an ad rewrite) is live only once its Approvals draft is published:
@@ -11839,5 +11907,6 @@ module.exports = {
   fetchDiagnostics, runDiagnostics, getDiagnostics, applyGoogleRecommendation, dismissGoogleRecommendation,
   dailyStats, applyRemedy, remedyHistory, adReviewStatus,
   getPlaybook, learningOverview, playbookSlice, distillLessons, playbookVersions, restorePlaybook, setGenStatus, getGenStatus,
+  pmaxGenerationId, claimPmaxGeneration, takePmaxGeneration, finishPmaxGeneration,
   _util: { validatedReportRange:_validatedReportRange, versionCategories:_versionCategories, micros, fromMicros, clampHeadline, clampDescription, gAdsTime, daysUntil, merchantLookupPlan:_merchantLookupPlan,pmaxTag:_pmaxTag,groundKeywordPlan,collectionEconomics,opportunityClass,resolveOpportunityConflicts,paidAttribution:_paidAttribution,paidChannel:_paidChannel,merchantOrganic:_merchantOrganic,bestSearchLandingUrl:_bestSearchLandingUrl,selectListingShots,visionSelectShots:_visionSelectShots,collectionShotRows:_collectionShotRows,shotForShape:_shotForShape,productIdFromItemId:_productIdFromItemId,productShotsByIds:_productShotsByIds,pmaxDeterministicCopy:_pmaxDeterministicCopy,pmaxAdCopy:_pmaxAdCopy,buildPmaxTextAssetOps:_buildPmaxTextAssetOps,opsFingerprint:_opsFingerprint,gadsErrorLines:_gadsErrorLines,imageDims:_imageDims,dropBadRatioImageAttaches:_dropBadRatioImageAttaches,imgFieldSpecs:_IMG_FIELD_SPECS,tempIdFloor:_tempIdFloor,accountCurrency:_accountCurrency,fxRateToUsd:_fxRateToUsd,designStudioBaseBlueprint:_designStudioBaseBlueprint,designStudioCopy:_studioCopy,designStudioStageForConversion:_studioStageForConversion }
 };

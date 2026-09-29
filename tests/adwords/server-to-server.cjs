@@ -171,4 +171,5 @@ function workerCallsCarryToken(file) {
   }
   check(!/EDIT_PASSCODE|_editPasscode/.test(fs.readFileSync(dir + 'shopifyOrderWebhook.js', 'utf8')), 'the webhook never depends on the console passcode');
   console.log('PASS ' + passed + ' server-to-server checks (scheduled kick, console-queued work, worker continuations, Shopify webhook; no passcode, EDIT_PASSCODE, passcode in Firebase)');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

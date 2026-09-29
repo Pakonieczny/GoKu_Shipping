@@ -66,6 +66,7 @@ const post=(body,headers={})=>({httpMethod:'POST',headers,body:JSON.stringify(bo
  /* ---------- engine: spend limits against a fake account (CAD, ceiling 100) ---------- */
  await engineChecks();
  console.log('PASS '+passed+' money-safety checks (passcode fail-closed, worker token, daily ceiling, monthly stop, approvals, automatic changes)');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 function memory(){const docs=new Map();let n=0;

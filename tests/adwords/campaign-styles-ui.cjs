@@ -34,4 +34,4 @@ const bare={...c,BritesCampaignStyles:undefined};vm.createContext(bare);vm.runIn
  assert.equal(card4.querySelector('[data-style-total]').textContent,'2 campaigns · $90 CAD/day combined');assert(!limit.hidden);assert.match(limit.textContent,/CAD 72\.00/);
  assert.match(card4.querySelector('[data-style-duration-hint="pmax"]').textContent,/at least 42 days/);assert.doesNotMatch(card4.querySelector('[data-style-duration-hint="responsive_display"]').textContent,/42/);
  const p4=card4.querySelector('[data-style-budget="pmax"]');p4.value='40';p4.oninput();assert(limit.hidden);const t4=card4.querySelector('[data-style-duration="pmax"]');t4.value='0';t4.oninput();assert.doesNotMatch(card4.querySelector('[data-style-duration-hint="pmax"]').textContent,/42/);
- console.log('PASS one plan area after its button with bidding and signal, choices and plan kept across re-render, currency labels, ceiling warning and PMax evaluation advice');})();
+ console.log('PASS one plan area after its button with bidding and signal, choices and plan kept across re-render, currency labels, ceiling warning and PMax evaluation advice');require('./suite-guard.cjs').done();})();

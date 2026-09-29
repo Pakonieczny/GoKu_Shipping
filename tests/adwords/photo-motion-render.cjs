@@ -17,4 +17,5 @@ const {renderVariants}=require('../../netlify/functions/googleAdsAdMotion');
   }
  }}
  console.log('PASS '+checks+' actual photograph video renders and edge preservation checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

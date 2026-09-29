@@ -45,4 +45,5 @@ test('one item in two feed labels stays one complete market candidate',()=>{cons
   const result=await api.pmaxRecommendationEvidence({handle:'pets',feedLabel:'US'});assert.equal(result.candidate.itemIds.length,1);assert.equal(result.removedItemIds[0],ids[1]);assert.equal(result.candidate.demandEvidence[0].orders,3);assert.equal(result.candidate.budgetCurrency,'CAD');assert.equal(result.candidate.budgetToEvidenceFx,.75);assert.equal(result.candidate.productTitles[0],'Corgi necklace');assert.doesNotMatch(result.candidate.rationale,/Wrong|Fox/);assert.equal(paidCalls,1);assert.equal(aiCalls,0);checks++;
   await assert.rejects(()=>api.pmaxRecommendationEvidence({handle:'untrusted',feedLabel:'US'}),/no longer available/);assert.equal(paidCalls,1);checks++;
   console.log('PMax recommendations: '+checks+' focused checks passed');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

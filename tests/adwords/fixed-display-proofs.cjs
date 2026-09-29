@@ -54,4 +54,5 @@ async function texture(width,height){const raw=Buffer.alloc(width*height*3);let 
   for(const key of LARGE){const b=responsive.boards.find(x=>x.key===key),a=fixed.find(a=>a.width===b.width&&a.height===b.height),m=a&&await sharp(f.files.get(a.path)).metadata();ok(a&&a.bytes<=150*1024&&m.width===b.width&&m.height===b.height,(legacy?'older ':'')+key+' publishes at '+b.width+'×'+b.height+' within 150 KB');}
  }
  console.log('PASS '+checks+' exact-size Display proof rendering, review storage and fixed publication checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

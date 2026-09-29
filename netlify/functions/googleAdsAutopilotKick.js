@@ -334,20 +334,24 @@ async function handleAction(body) {
     } catch (e) { return { error: e.message }; }
   }
   if (a === "generatePmax") {
-    // Merchant-catalog validation + multi-operation PMax build run in the background;
-    // the console polls gen_<genId> via genStatus, same as Search generation.
+    // Merchant-catalog validation, the paid ad copy and the PMax draft run in the background; the console polls
+    // gen_<genId> via genStatus. The genId comes from the request itself (product, feed, destination, offers), so a
+    // second tab or a retry after a network blip joins that generation, or gets its finished draft back, instead of
+    // paying for another; force starts a new one (E.claimPmaxGeneration).
     try {
-      const genId = String(body.genId || Date.now());
-      const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: ["pmaxGenerate"], genId, handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
-          itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
-          feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
-          // Joining an existing Performance Max campaign as one more product group; addBudget is added to its daily budget.
-          existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0,
-          token:workerToken() })
-      });
-      if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status };
+      const data = { handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
+        itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
+        feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
+        // Joining an existing Performance Max campaign as one more product group; addBudget is added to its daily budget.
+        existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0 };
+      const genId = E.pmaxGenerationId(data), run = await E.claimPmaxGeneration(genId, { request: data, force: !!body.force });
+      if (run.joined) return { queued: true, genId, joined: true, ...(run.finished ? { finished: true } : {}) };
+      try { await dispatchTask("pmaxGenerate", { ...data, genId, runId: run.runId }); }
+      catch (e) {
+        // Closed unless the worker already took the run: then the dispatch arrived after all, and a failure shown now
+        // would invite a retry that pays again. The console follows the run instead.
+        if (await E.finishPmaxGeneration(genId, run.runId, { ok: false, error: e.message }, { notTaken: true }).catch(() => true)) throw e;
+      }
       return { queued: true, genId };
     } catch (e) { return { error: e.message }; }
   }

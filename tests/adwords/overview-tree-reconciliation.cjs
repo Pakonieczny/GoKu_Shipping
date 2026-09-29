@@ -188,6 +188,7 @@ const sum=list=>list.reduce((a,f)=>({spend:a.spend+f.spend,value:a.value+(f.valu
     assert.equal(document.querySelectorAll('#feed .feed__i').length,50);assert.equal(document.querySelector('#feedSub').textContent,'latest 50 in these dates');});
 
   console.log(passed+' Overview tree and activity feed checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 // A small in-memory Firestore: equality, in and range filters, one orderBy, startAfter a document, limit.

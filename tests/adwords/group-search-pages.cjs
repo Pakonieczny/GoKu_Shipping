@@ -72,4 +72,5 @@ const service=createGroupsService({CID:'123',reportContext:async()=>({budgetCurr
     check(view.querySelector('.bg-note-flat').textContent==='Listing figures count ads that lead only to that page. The group total also includes its other ads.','the group page explains the listing figures the same way');
   }
   console.log('PASS '+count+' Search and Display listing page figure checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -117,4 +117,5 @@ const build=(e,extra={})=>e.E.buildPmaxCampaignOps(coll,{dailyBudget:10,merchant
   const rows=ui.apAddsFirst({addsRequired:['LOGO','BUSINESS_NAME']});
   check(rows.length===1&&rows[0][0]==='Adds first'&&/Brites logo and business name this group is missing\. Google requires both before it accepts any other change\./.test(rows[0][1])&&!ui.apAddsFirst({}).length,'the refresh card names what is added first and why');
   console.log('PASS '+n+' PMax language, logo and business-name checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -26,4 +26,5 @@ let checks=0;const ok=(v,m)=>{assert(v,m);checks++;};
  const evidence=await research.collect({campaignId:'42',group:{channel:'pmax',key:'g',ref:'customers/1/assetGroups/2',url:'https://britesjewelry.com/products/peach',keywords:['peach pendant']},selectedProducts:[{...input.product,url:'https://britesjewelry.com/products/peach',images:[{id:'p',url:'https://cdn.shopify.com/peach.jpg'}]}],settings:{sourceImageId:'p'}});
  ok(evidence.sources.some(s=>s.id==='keywordDemand'&&s.status==='available'&&s.data.ideas[0].searches===90),'demand reaches citation-bound AI evidence');
  console.log('PASS '+checks+' product keyword scope, demand, cache and unavailable-source checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1});
