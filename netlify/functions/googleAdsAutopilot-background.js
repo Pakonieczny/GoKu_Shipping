@@ -324,6 +324,9 @@ exports.handler = async (event) => {
       }
       else if (task === "adjustments") { result.adjustments = await E.uploadConversionAdjustments({ ctrl }); }
       else if (task === "measure") { result.measure = { campaigns: (await E.measure()).length }; }
+      // Read-only: Google's serving check of ENABLED campaigns for the Overview badge. At most three
+      // minutes, and never the last three the tasks after it need.
+      else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl });
         // Performance Max has its own search terms report; its drafts wait in Approvals like the Search ones.
         if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } } }

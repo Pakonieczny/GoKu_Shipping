@@ -39,7 +39,7 @@ const search=(id,name,o={})=>({id,name,channel:'SEARCH',status:'ENABLED',serving
 // The account as Google reports it. Spendable now: 101, 104, 105, 107, 108 and the shared Search budget once = 53.
 // 103 has ended (50 not counted), 102 is paused (15 not counted).
 function account(){
-  const W={merchant:'555',brandUnreadable:false,queries:[],mtd:0,terms:[],negatives:[],themes:[],lists:[],brandExclusions:[],suggestCalls:0,
+  const W={merchant:'555',brandUnreadable:false,queries:[],mtd:0,terms:[],negatives:[],themes:[],lists:[],brandExclusions:[],goals:[],suggestCalls:0,
     brands:[{id:'b-777',name:'Brites',urls:['https://britesjewelry.com'],state:'APPROVED'},{id:'b-900',name:'Brites Paint Co',urls:['https://britespaint.example'],state:'APPROVED'}],
     campaigns:[
       pmax('101','BA · Necklaces PMax',{budgetRes:B(901),budget:20,groups:['AG · Corgi necklace','AG · Charms'],items:['shopify_US_99_999']}),
@@ -67,15 +67,17 @@ function account(){
     if(q.includes('FROM asset_group_listing_group_filter'))return scope(W.campaigns).flatMap(c=>[{assetGroupListingGroupFilter:{type:'SUBDIVISION'}},...c.items.map(v=>({assetGroupListingGroupFilter:{type:'UNIT_INCLUDED',caseValue:{productItemId:{value:v}}}})),{assetGroupListingGroupFilter:{type:'UNIT_EXCLUDED',caseValue:{productItemId:{value:'shopify_US_11_101-excluded'}}}}]);
     if(q.startsWith('SELECT campaign.id, asset_group.id FROM asset_group WHERE campaign.id IN'))return scope(W.campaigns).flatMap(c=>c.groups.map((g,i)=>({campaign:{id:c.id},assetGroup:{id:String(i+1)}})));
     if(q.includes("campaign_criterion.type = 'LOCATION'"))return scope(W.campaigns).flatMap(c=>c.geo.map((g,i)=>({campaign:{id:c.id},campaignCriterion:{criterionId:String(i+1),location:{geoTargetConstant:'geoTargetConstants/'+g}}})));
-    if(q.startsWith("SELECT campaign.id, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'"))
+    if(/^SELECT campaign\.id, campaign\.serving_status, .*campaign_budget\.amount_micros.* FROM campaign WHERE campaign\.status = 'ENABLED'$/.test(q))
       return W.campaigns.filter(c=>c.status==='ENABLED').map(c=>({campaign:{id:c.id,servingStatus:c.servingStatus},campaignBudget:c.budgetRes?{resourceName:c.budgetRes,amountMicros:money(c.budget)}:{}}));
-    if(q.startsWith('SELECT campaign.id, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.id ='))return scope(W.campaigns).map(c=>({campaign:{id:c.id},campaignBudget:{resourceName:c.budgetRes,amountMicros:money(c.budget)}}));
+    if(/^SELECT campaign\.id, .*campaign_budget\.amount_micros.* FROM campaign WHERE campaign\.id = \d+$/.test(q))return scope(W.campaigns).map(c=>({campaign:{id:c.id},campaignBudget:{resourceName:c.budgetRes,amountMicros:money(c.budget)}}));
     if(q.includes('FROM campaign_search_term_view'))return byId(W.terms).map(t=>({campaign:{id:t.campaignId},campaignSearchTermView:{searchTerm:t.term},metrics:{clicks:String(t.clicks),costMicros:money(t.cost),conversions:t.conversions}}));
     if(q.includes("campaign_criterion.type = 'KEYWORD'"))return byId(W.negatives).map(x=>({campaign:{id:x.campaignId},campaignCriterion:{keyword:{text:x.text,matchType:x.matchType}}}));
     if(q.includes('FROM asset_group_signal'))return byId(W.themes).map(x=>({campaign:{id:x.campaignId},assetGroupSignal:{searchTheme:{text:x.text}}}));
     if(q.includes('FROM shared_set WHERE'))return W.lists.map(l=>({sharedSet:{resourceName:l.resourceName,name:l.name}}));
     if(q.includes('FROM shared_criterion'))return W.lists.flatMap(l=>l.brands.map(e=>({sharedSet:{resourceName:l.resourceName},sharedCriterion:{brand:{entityId:e}}})));
     if(q.includes("campaign_criterion.type = 'BRAND_LIST'"))return byId(W.brandExclusions).map(x=>({campaign:{id:x.campaignId},campaignCriterion:{brandList:{sharedSet:x.list}}}));
+    if(q.startsWith('SELECT campaign.name FROM campaign WHERE'))return W.campaigns.filter(c=>c.status!=='REMOVED').map(c=>({campaign:{name:c.name}}));
+    if(q.includes('FROM customer_conversion_goal'))return W.goals.map(g=>({customerConversionGoal:g}));
     if(q.includes("campaign.advertising_channel_type = 'SEARCH'"))return W.campaigns.filter(c=>c.channel==='SEARCH'&&c.status!=='REMOVED').map(c=>({campaign:{id:c.id,name:c.name,status:c.status}}));
     throw Error('Unexpected query '+q);};
   return W;
@@ -315,6 +317,13 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
   check((await M.e.E.applyApproval(d101.id,{...M.ctrl,dryRun:true})).status==='VALIDATED','the exclusions validate in dry run');
   let mm=mutations(M.e.sent).slice(ms);
   check(mm.length===1&&/\/customers\/123\/campaignCriteria:mutate$/.test(mm[0].url)&&mm[0].body.validateOnly===true&&JSON.stringify(mm[0].body.operations)===JSON.stringify(d101.payload.operations),'dry run sends exactly the reviewed negative keywords, validate-only');
+  // No exclusion goes twice: one added to the campaign since the draft was prepared is left out.
+  M.W.negatives.push({campaignId:'101',text:'JOBS',matchType:'BROAD'});M.approval(d101.id).status='APPROVED';ms=mutations(M.e.sent).length;
+  check((await M.e.E.applyApproval(d101.id,{...M.ctrl,dryRun:true})).status==='VALIDATED','the exclusions still validate when one is already on the campaign');mm=mutations(M.e.sent).slice(ms);
+  check(mm.length===1&&JSON.stringify(mm[0].body.operations)===JSON.stringify(d101.payload.operations.filter(o=>o.create.keyword.text!=='jobs')),'the search excluded since is left out; the others go as reviewed');
+  M.W.negatives.push(...d101.payload.operations.map(o=>({campaignId:'101',text:o.create.keyword.text,matchType:o.create.keyword.matchType})));M.approval(d101.id).status='APPROVED';ms=mutations(M.e.sent).length;
+  await assert.rejects(()=>M.e.E.applyApproval(d101.id,{...M.ctrl,dryRun:true}),/Every search in this draft is already excluded from “BA · Necklaces PMax”\. Nothing was changed\. Delete this draft\./);
+  check(mutations(M.e.sent).length===ms,'when every search is already excluded, nothing is sent');M.W.negatives=M.W.negatives.slice(0,2);
 
   // ===== 7. Brand exclusion =====
   const bx=M.approvals().find(a=>a.payload.meta&&a.payload.meta.kind==='pmaxBrandExclusion'),bm=bx.payload.meta,suggest=M.e.sent.filter(s=>/:suggestBrands$/.test(s.url));
@@ -326,6 +335,30 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
   M.approval(bx.id).status='APPROVED';ms=mutations(M.e.sent).length;
   check((await M.e.E.applyApproval(bx.id,{...M.ctrl,dryRun:true})).status==='VALIDATED','the brand exclusion validates in dry run');mm=mutations(M.e.sent).slice(ms);
   check(mm.length===1&&/googleAds:mutate$/.test(mm[0].url)&&mm[0].body.validateOnly===true&&JSON.stringify(mm[0].body.mutateOperations)===JSON.stringify(bx.payload.mutateOperations),'dry run sends exactly the reviewed list and exclusions, validate-only');
+  M.W.lists=[{resourceName:'customers/123/sharedSets/501',name:'My brand',brands:['b-777']}];M.W.brandExclusions=[{campaignId:'101',list:'customers/123/sharedSets/501'}];M.approval(bx.id).status='APPROVED';ms=mutations(M.e.sent).length;
+  check((await M.e.E.applyApproval(bx.id,{...M.ctrl,dryRun:true})).status==='VALIDATED','the brand exclusion still validates when one campaign already excludes Brites');mm=mutations(M.e.sent).slice(ms);
+  check(mm.length===1&&JSON.stringify(mm[0].body.mutateOperations)===JSON.stringify(bx.payload.mutateOperations.filter(o=>!(o.campaignCriterionOperation&&o.campaignCriterionOperation.create.campaign===C(101)))),'a campaign that excludes Brites since the draft was prepared is left out; the other gets the list');
+  M.W.brandExclusions.push({campaignId:'102',list:'customers/123/sharedSets/501'});M.approval(bx.id).status='APPROVED';ms=mutations(M.e.sent).length;
+  await assert.rejects(()=>M.e.E.applyApproval(bx.id,{...M.ctrl,dryRun:true}),/Every campaign in this draft already excludes searches for Brites\. Nothing was changed\. Delete this draft\./);
+  check(mutations(M.e.sent).length===ms,'when every campaign already excludes Brites, nothing is sent (not even the list)');M.W.lists=[];M.W.brandExclusions=[];
+  {const T=setup(),{e,W}=T;W.lists=[{resourceName:'customers/123/sharedSets/503',name:'Brites · brand exclusions',brands:[]}];
+   const r=await e.get('_draftPmaxBrandExclusion')({campaigns:[{id:'101',name:'BA · Necklaces PMax',status:'ENABLED'}],terms:[],state:{waiting:new Set(),brandWaiting:false,brandDeclined:false,brandSearchDraft:false},currency:'CAD'});
+   check(T.approval(r.approvalId).payload.mutateOperations.length===2,'the console\'s empty list is to be filled, then excluded');
+   W.lists[0].brands=['b-777'];T.approval(r.approvalId).status='APPROVED';const before=mutations(e.sent).length;
+   check((await e.E.applyApproval(r.approvalId,{...T.ctrl,dryRun:true})).status==='VALIDATED'&&JSON.stringify(mutations(e.sent).slice(before)[0].body.mutateOperations)===JSON.stringify([{campaignCriterionOperation:{create:{campaign:C(101),negative:true,brandList:{sharedSet:'customers/123/sharedSets/503'}}}}]),'a list that holds the brand by publication is not filled again');}
+  // A new Performance Max campaign copies the account's brand lists as it is created (the campaign options' step),
+  // with its own purchase goals; the builder adds no brand exclusion of its own, and its standard exclusions go once.
+  {const T=setup(),{e,W}=T;W.lists=[{resourceName:'customers/123/sharedSets/501',name:'Brites · brand exclusions',brands:['b-777']}];W.brandExclusions=[{campaignId:'101',list:'customers/123/sharedSets/501'}];
+   W.goals=[{category:'PURCHASE',origin:'WEBSITE',biddable:true},{category:'ADD_TO_CART',origin:'WEBSITE',biddable:true}];
+   const fresh=await e.E.generatePmaxApproval({handle:'animal-necklaces',dailyBudget:5,itemIds:['shopify_US_11_101'],productTitles:['Corgi necklace'],feedLabel:'US'}),built=T.approval(fresh.approvalId).payload.mutateOperations;
+   check(!creates(built,'campaignCriterionOperation').some(c=>c.brandList),'the new campaign draft carries no brand exclusion of its own');
+   const resolveLogo=e.get('_resolveBrandLogo');e.bind({assertCreativeReviewed:()=>{},materializeReviewedCreative:async it=>resolveLogo(clone(it.payload.mutateOperations))});
+   T.approval(fresh.approvalId).status='APPROVED';const before=mutations(e.sent).length;
+   check((await e.E.applyApproval(fresh.approvalId,{...T.ctrl,dryRun:true})).status==='VALIDATED','a new Performance Max draft validates with the goal and brand list reads answered');
+   const sentOps=mutations(e.sent).slice(before)[0].body.mutateOperations,cc=creates(sentOps,'campaignCriterionOperation'),lists=cc.filter(c=>c.brandList);
+   check(lists.length===1&&lists[0].campaign===C(-2)&&lists[0].negative===true&&lists[0].brandList.sharedSet==='customers/123/sharedSets/501','it excludes the account\'s Brites list once, copied as it is created');
+   check(cc.filter(c=>c.negative&&c.keyword).length===16&&new Set(cc.filter(c=>c.keyword).map(c=>c.keyword.text)).size===16&&cc.filter(c=>c.language).length===1,'its 16 standard exclusions and English go once');
+   check(sentOps.filter(o=>o.campaignConversionGoalOperation).map(o=>o.campaignConversionGoalOperation.update.biddable).join()==='true,false','its own goals: purchase stays biddable, add to cart is off');}
   {const T=setup(),{e,W,mem}=T,campaigns=[{id:'101',name:'BA · Necklaces PMax',status:'ENABLED'},{id:'102',name:'BA · Rings PMax',status:'PAUSED'}],fresh={waiting:new Set(),brandWaiting:false,brandDeclined:false,brandSearchDraft:false};
    const draftBrand=async(state={})=>{const r=await e.get('_draftPmaxBrandExclusion')({campaigns,terms:[],state:{...fresh,...state},currency:'CAD'});return r.approvalId?{...r,a:T.approval(r.approvalId)}:r;};
    const L=(id,name,brands)=>({resourceName:'customers/123/sharedSets/'+id,name,brands});
@@ -355,7 +388,7 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
    check(!!(await N.e.get('_draftPmaxBrandExclusion')({campaigns,terms:[],state:fresh,currency:'CAD'})).approvalId&&N.W.suggestCalls===2,'after 7 days Google is asked again');
    // What is waiting or declined, read from Approvals.
    const P=setup(),put=(id,v)=>P.mem.docs.set('Brites_GAds_Approvals/'+id,v),state=()=>P.e.get('_pmaxDraftState')();
-   put('bs',{type:'brandSearch',status:'PENDING',payload:{}});check((await state()).brandSearchDraft===true,'a brand Search draft is found by type');
+   put('bs',{type:'brand',status:'PENDING',payload:{meta:{kind:'brand'}}});check((await state()).brandSearchDraft===true,'the campaign options\' brand Search draft is found by its type');
    P.mem.docs.delete('Brites_GAds_Approvals/bs');put('bt',{type:'search',tag:'brand-search',status:'APPROVED',payload:{}});check((await state()).brandSearchDraft===true,'or by its tag');
    put('bx',{type:'negatives',status:'REJECTED',deletedAt:Date.now()-40*DAY,payload:{meta:{kind:'pmaxBrandExclusion'}}});check((await state()).brandDeclined===false,'a brand exclusion deleted more than 30 days ago can be proposed again');
    put('bx',{type:'negatives',status:'REJECTED',deletedAt:Date.now()-DAY,payload:{meta:{kind:'pmaxBrandExclusion'}}});put('by',{type:'negatives',status:'PENDING',payload:{meta:{kind:'pmaxBrandExclusion'}}});
