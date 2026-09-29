@@ -1,7 +1,8 @@
-// The one-off cleanup of RG 14/20 · Set 1 · Sheet 1 (charmNestLibrary rgCleanup0929; Paul, 29 Sep 03:58 UTC, "Clean it
-// up"): the later lion copy and green line 2 come off, line 1 and everything else stay. Runs against the fake cloud
-// (bridge-server.cjs, no network), seeded with the records as they were read from the live sandbox workspace at
-// 2026-09-29T04:19:03.982Z (the backup folder; its download links carry token=REDACTED). Delete with the op.
+// The one-off cleanup of RG 14/20 · Set 1 · Sheet 1 (charmNestLibrary rgCleanup0929, Paul, 29 Sep): green line 2 (no
+// Cut Sheet made it) comes off, line 1 and everything else stay; mode "one" also takes the later lion copy off, mode
+// "both" keeps both copies. Runs against the fake cloud (bridge-server.cjs, no network), seeded with the records as they
+// were read from the live sandbox workspace at 2026-09-29T04:19:03.982Z (the backup folder; its download links carry
+// token=REDACTED), once for each mode. Delete with the op (the page's side: rg-cleanup-0929-page.cjs).
 //   node tests/charm-nest/rg-cleanup-0929.cjs [backup dir]   (default /mnt/project-files/backups/rg-cleanup-2026-09-29)
 const path = require('path'), fs = require('fs'), assert = require('assert/strict');
 const B = process.argv[2] || process.env.RG_BACKUP || '/mnt/project-files/backups/rg-cleanup-2026-09-29';
@@ -39,7 +40,9 @@ function seed(st) {
 }
 const snapshot = st => JSON.stringify([...st.docs.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
 
-async function main() {
+const listed = async (call, id) => ((await call({ op: 'listSheets', cursor: { sheets: [id] } })).body.sheets || [])[0];
+
+async function modeOne() {
   const srv = await start();
   const { st } = srv, lib = st.handlers.charmNestLibrary;
   const call = body => fetch(`${srv.sorterOrigin}/.netlify/functions/charmNestLibrary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ sandbox: true }, body)) }).then(async r => ({ status: r.status, body: await r.json() }));
@@ -84,6 +87,8 @@ async function main() {
     r = await call({ op: 'rgCleanup0929', sheetId: 'rose-other-sheet' }); assert.equal(r.status, 400); assert.match(r.body.error, /works only on sheet/);
     r = await call({ op: 'rgCleanup0929', dryRun: false }); assert.equal(r.status, 400); assert.match(r.body.error, /confirm/);
     r = await call({ op: 'rgCleanup0929', dryRun: false, confirm: 'yes' }); assert.equal(r.status, 400);
+    r = await call({ op: 'rgCleanup0929', dryRun: false, confirm: ID }); assert.equal(r.status, 400); assert.match(r.body.error, /say which, mode:"one".*mode:"both"/);
+    for (const mode of ['two', 'One', '']) { r = await call({ op: 'rgCleanup0929', mode, dryRun: false, confirm: ID }); assert.equal(r.status, 400, mode); assert.match(r.body.error, /mode is "one"/); }
     assert.equal(snapshot(st), before);
     // a record that changed since the backup: a page saved the sheet, the set moved on, the stock was cut, a pool row changed
     const changes = [
@@ -95,7 +100,7 @@ async function main() {
     ];
     for (const [what, change, undo] of changes) {
       change(); const was = snapshot(st);
-      for (const body of [{ op: 'rgCleanup0929' }, { op: 'rgCleanup0929', dryRun: false, confirm: ID }]) {
+      for (const body of [{ op: 'rgCleanup0929' }, { op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'one' }, { op: 'rgCleanup0929', mode: 'both' }]) {
         r = await call(body); assert.equal(r.status, 409, what); assert.deepEqual(r.body.changed, [what]); assert.match(r.body.error, /^Nothing was changed/);
       }
       assert.equal(snapshot(st), was, `nothing is written when the ${what} changed`); undo();
@@ -103,8 +108,8 @@ async function main() {
     assert.equal(snapshot(st), before);
 
     // 4. the change, once
-    r = await call({ op: 'rgCleanup0929', dryRun: false, confirm: ID, by: 'test' });
-    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 400)); assert.equal(r.body.done, true);
+    r = await call({ op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'one', by: 'test' });
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 400)); assert.equal(r.body.done, true); assert.equal(r.body.mode, 'one');
     const sheet = st.doc(S('Charm_Nest_Sheets'), SHEET);
     assert.equal(sheet.roseProtectedJson, original.roseProtectedJson, 'line 1 byte for byte');
     assert.deepEqual(sheet.placements, original.placements.filter(p => p.id !== DROP_C));
@@ -140,10 +145,13 @@ async function main() {
     // read back as the page reads it: 8 pieces, not ready until Cut Sheet
     const back = (await call({ op: 'getSheet', id: SHEET })).body.sheet;
     assert.equal(back.laser.total, 8); assert.equal(back.laser.stages.layout, false);
+    // the sheet's list entry carries the cleanup, for a page whose own copy is older (Cleanups, charm-nest-bridge.js)
+    const entry = await listed(call, SHEET);
+    assert.deepEqual(entry.cleanup, { id: ID, mode: 'one', at: sheet.cleanup.at, removedPoolIds: [DROP], removedCharmIds: [DROP_C], lineRemoved: 2, lineKept: 1 });
 
     // 5. a second run, dry or not, is refused and writes nothing
     before = snapshot(st);
-    for (const body of [{ op: 'rgCleanup0929', dryRun: false, confirm: ID }, { op: 'rgCleanup0929' }]) { r = await call(body); assert.equal(r.status, 409); assert.equal(r.body.done, true); assert.match(r.body.error, /already ran/); }
+    for (const body of [{ op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'one' }, { op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'both' }, { op: 'rgCleanup0929' }]) { r = await call(body); assert.equal(r.status, 409); assert.equal(r.body.done, true); assert.match(r.body.error, /already ran.*mode "one"/); }
     assert.equal(snapshot(st), before);
 
     // 6. a page that still shows the old sheet cannot put the lion back, or move line 1
@@ -182,7 +190,90 @@ async function main() {
     r = await call({ op: 'roseRecordCut', sheetId: SHEET, stockId: STOCK, revision: 0, planHash: r.body.planHash, by: 'test' });
     assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300)); assert.equal(r.body.stock.revision, 1);
     assert(st.doc(S('Charm_Nest_Sheets'), SHEET).roseCutAt > 0);
-    console.log('rg-cleanup-0929: ok (dry run, refusals, the change once, stale page, re-nest, Cut Sheet)');
+    console.log('rg-cleanup-0929: mode "one" ok (dry run, refusals, the change once, stale page, re-nest, Cut Sheet)');
   } finally { srv.close(); }
 }
+// mode "both" (Paul's "Keep both lions"): only line 2 comes off; both pieces, their pool rows and the set stay
+async function modeBoth() {
+  const srv = await start();
+  const { st } = srv;
+  const call = body => fetch(`${srv.sorterOrigin}/.netlify/functions/charmNestLibrary`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ sandbox: true }, body)) }).then(async r => ({ status: r.status, body: await r.json() }));
+  try {
+    seed(st);
+    const original = copy(st.doc(S('Charm_Nest_Sheets'), SHEET)), origSet = copy(st.doc(S('Charm_Nest_Sets'), SET)), origStock = copy(st.doc(S('Charm_Nest_Rose_Stock'), STOCK));
+    const origPools = Object.fromEntries([KEEP, DROP].map(id => [id, copy(st.doc(S('Charm_Pool'), id))]));
+
+    // 1. its dry run: line 2's three fields and the cleanup mark, nothing else; nothing written
+    let before = snapshot(st);
+    let r = await call({ op: 'rgCleanup0929', mode: 'both' });
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 400));
+    const dry = r.body;
+    assert.equal(snapshot(st), before, 'a dry run writes nothing');
+    assert.equal(dry.dryRun, true); assert.equal(dry.mode, 'both'); assert.equal(dry.matchesBackup, true);
+    assert.deepEqual(Object.keys(dry.after), ['sheet'], 'only the sheet is written');
+    assert.deepEqual(Object.keys(dry.after.sheet).sort(), ['cleanup', 'roseFingerprint', 'rosePlanHash', 'rosePlanJson']);
+    assert.equal(dry.after.sheet.rosePlanJson, null); assert.equal(dry.after.sheet.rosePlanHash, null); assert.equal(dry.after.sheet.roseFingerprint, null);
+    assert.equal(dry.before.sheet.rosePlanJson, backup.sheet.rosePlanJson);
+    assert.deepEqual(dry.after.sheet.cleanup.removedPoolIds, []); assert.deepEqual(dry.after.sheet.cleanup.removedCharmIds, []);
+    assert.deepEqual(dry.after.sheet.cleanup.keptPoolIds, [KEEP, DROP]); assert.equal(dry.after.sheet.cleanup.mode, 'both');
+    assert.equal(dry.writes.length, 3); assert(dry.writes.every(w => !/Charm_Pool|Charm_Nest_Sets/.test(w)), dry.writes.join());
+    assert.equal(dry.note.type, 'note'); assert.equal(dry.note.text, 'Line 2 removed from RG 14/20 Sheet 1 (it was added without Cut Sheet)');
+    assert.deepEqual(dry.note.data.removedPoolIds, []);
+
+    // 2. the same exact-state check: a changed record refuses it, dry or not
+    const stored = st.doc(S('Charm_Nest_Sheets'), SHEET);
+    stored.updatedAt = Timestamp.fromMillis(1790650000000); before = snapshot(st);
+    for (const body of [{ op: 'rgCleanup0929', mode: 'both' }, { op: 'rgCleanup0929', mode: 'both', dryRun: false, confirm: ID }]) { r = await call(body); assert.equal(r.status, 409); assert.deepEqual(r.body.changed, ['sheet']); }
+    assert.equal(snapshot(st), before); stored.updatedAt = copy(original.updatedAt);
+    r = await call({ op: 'rgCleanup0929', mode: 'both', dryRun: false }); assert.equal(r.status, 400); assert.match(r.body.error, /confirm/);
+
+    // 3. the change, once: line 2's fields go, line 1 byte for byte, both lions and everything else as it was
+    r = await call({ op: 'rgCleanup0929', mode: 'both', dryRun: false, confirm: ID, by: 'test' });
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 400)); assert.equal(r.body.done, true); assert.equal(r.body.mode, 'both');
+    const sheet = st.doc(S('Charm_Nest_Sheets'), SHEET);
+    assert.equal(sheet.roseProtectedJson, original.roseProtectedJson, 'line 1 byte for byte');
+    assert.equal(sheet.rosePlanJson, null); assert.equal(sheet.rosePlanHash, null); assert.equal(sheet.roseFingerprint, null);
+    assert.equal(sheet.cleanup.id, ID); assert.equal(sheet.cleanup.mode, 'both'); assert.deepEqual(sheet.cleanup.removedPoolIds, []); assert.deepEqual(sheet.cleanup.removedCharmIds, []);
+    for (const [k, v] of Object.entries(original)) if (!['rosePlanJson', 'rosePlanHash', 'roseFingerprint', 'updatedAt'].includes(k)) assert.deepEqual(sheet[k], v, `sheet ${k} is kept`);
+    assert.equal(sheet.placements.length, 9); assert.equal(sheet.dirty, original.dirty, 'not marked dirty: its files still show what is on it');
+    for (const id of [KEEP, DROP]) assert.deepEqual(st.doc(S('Charm_Pool'), id), origPools[id], `pool row ${id} is not written`);
+    assert.deepEqual(st.doc(S('Charm_Nest_Sets'), SET), origSet, 'the set is not written');
+    assert.deepEqual(st.doc(S('Charm_Nest_Rose_Stock'), STOCK), origStock, 'the physical sheet is not written');
+    const kept = st.doc(S('Charm_Nest_Cleanup_Backups'), ID);
+    assert(kept && kept.mode === 'both' && kept.by === 'test'); assert.equal(JSON.parse(kept.before.sheet).rosePlanJson, original.rosePlanJson);
+    assert(!/token=(?!REDACTED)/.test(JSON.stringify(kept)), 'no download token in the backup');
+    const note = st.doc(S('Order_Timeline'), `${ORDER}~note~${ID}`);
+    assert.equal(note.type, 'note'); assert.equal(note.text, 'Line 2 removed from RG 14/20 Sheet 1 (it was added without Cut Sheet)');
+    const tl = (await call({ op: 'timelineGet', orderId: ORDER })).body;
+    assert(tl.events.some(e => e.id === `${ORDER}~roseLine~${SHEET}-L2-1790645103734`), 'line 2 stays in the history');
+    // its list entry names the cleanup, and no piece taken off
+    assert.deepEqual((await listed(call, SHEET)).cleanup, { id: ID, mode: 'both', at: sheet.cleanup.at, removedPoolIds: [], removedCharmIds: [], lineRemoved: 2, lineKept: 1 });
+
+    // 4. a second run, in either mode, is refused and writes nothing
+    before = snapshot(st);
+    for (const body of [{ op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'one' }, { op: 'rgCleanup0929', dryRun: false, confirm: ID, mode: 'both' }, { op: 'rgCleanup0929', mode: 'both' }]) { r = await call(body); assert.equal(r.status, 409); assert.match(r.body.error, /already ran.*mode "both"/); }
+    assert.equal(snapshot(st), before);
+
+    // 5. a page that still shows line 2 may save the sheet (nothing was taken off), but cannot make a line of its own
+    const page = () => { const d = clone(st.doc(S('Charm_Nest_Sheets'), SHEET)); for (const k of ['rosePlanJson', 'rosePlanHash', 'roseFingerprint', 'roseProtectedJson', 'roseStockId', 'roseRevision', 'cleanup', 'updatedAt', 'createdAt']) delete d[k]; return d; };
+    r = await call({ op: 'putSheet', sheet: page() }); assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(st.doc(S('Charm_Nest_Sheets'), SHEET).rosePlanJson, null, 'a save does not bring line 2 back');
+    const plan0 = JSON.parse(original.rosePlanJson), guard = JSON.parse(original.roseProtectedJson), now = st.doc(S('Charm_Nest_Sheets'), SHEET);
+    const shapesJson = JSON.stringify([...guard.shapes, ...plan0.shapes.filter(s => s.id === KEEP_C || s.id === DROP_C)]);
+    const args = { op: 'rosePlan', sheetId: SHEET, stockId: STOCK, revision: 0, fingerprint: RoseStock.fingerprint(now), shapesJson, allowanceMm: plan0.allowanceMm };
+    r = await call(args); assert.equal(r.status, 500); assert.match(r.body.error, /Only Cut Sheet adds a green line/);
+
+    // 6. Cut Sheet: one new line, around both lions; line 1 as it was
+    r = await call(Object.assign({}, args, { cut: true })); assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    const plan = JSON.parse(r.body.planJson);
+    assert.equal(plan.stages.length, 2);
+    assert.deepEqual(plan.stages[0], guard.stages[0], 'line 1 keeps its date and charms'); assert.deepEqual(plan.lines[0], guard.lines[0], 'line 1 byte for byte');
+    assert.deepEqual([...plan.stages[1].ids].sort(), [KEEP_C, DROP_C].sort()); assert(plan.stages[1].at > plan0.stages[1].at, 'a new line 2, dated at the press');
+    assert.equal(st.doc(S('Charm_Nest_Sheets'), SHEET).roseProtectedJson, original.roseProtectedJson);
+    r = await call({ op: 'roseRecordCut', sheetId: SHEET, stockId: STOCK, revision: 0, planHash: r.body.planHash, by: 'test' });
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300)); assert.equal(r.body.stock.revision, 1);
+    console.log('rg-cleanup-0929: mode "both" ok (dry run, refusals, the change once, stale page, Cut Sheet)');
+  } finally { srv.close(); }
+}
+async function main() { await modeOne(); await modeBoth(); console.log('rg-cleanup-0929: ok'); }
 main().catch(e => { console.error(e); process.exit(1); });
