@@ -54,11 +54,25 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 function ok(o) { return { statusCode: 200, headers: HEADERS, body: JSON.stringify(o) }; }
+// EDIT_PASSCODE, trimmed and unquoted exactly like the other Google check endpoints (a pasted
+// trailing space must not lock the owner out). Compared in constant time.
+function passcode() { return String(process.env.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, ""); }
+function sameSecret(a, b) { a = String(a == null ? "" : a).trim(); b = String(b == null ? "" : b); if (!a || !b) return false; const h = x => require("crypto").createHash("sha256").update(x).digest(); return require("crypto").timingSafeEqual(h(a), h(b)); }
+// Server-to-server credential for the background worker. With EDIT_PASSCODE set it IS the
+// passcode; unset, it is derived from the Google Ads OAuth secrets only this site holds, so the
+// scheduled kick keeps running while no browser can call the worker. Must match the worker.
+function workerToken() { const pass = passcode(); if (pass) return pass; const key = [process.env.GADS_REFRESH_TOKEN, process.env.GADS_CLIENT_SECRET, process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|"); return key ? "internal-" + require("crypto").createHmac("sha256", key).update("brites-gads-background-worker/v1").digest("hex") : undefined; }
+const PASSCODE_UNSET = "Set EDIT_PASSCODE in Netlify to enable changes";
+// Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
+// change. Every other action — including any action not listed here — is treated as a change.
+const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
+function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
+// true = allowed · "unset" = a change was requested while EDIT_PASSCODE is not configured · false = wrong passcode
 function authed(event, body) {
-  const pass = process.env.EDIT_PASSCODE || "";
-  if (!pass) return true; // if unset, console is open (set EDIT_PASSCODE to lock)
+  const pass = passcode();
+  if (!pass) return isReadAction(body && body.action, body) ? true : "unset"; // fail closed: reads only
   const h = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
-  return h === pass || (body && body.passcode === pass);
+  return sameSecret(h, pass) || !!(body && sameSecret(body.passcode, pass));
 }
 
 /* ----------------------------- scheduled kick ----------------------------- */
@@ -91,7 +105,16 @@ async function decideTasks() {
 
 async function kick() {
   const ctrl = await E.control();
-  if (!ctrl.enabled) return { status: "dormant (kill switch off)" };
+  if (!ctrl.enabled) {
+    // Automation off (by hand or by the anomaly breaker) stops every optimisation, but not Paul's
+    // monthly stop: that keeps checking hourly and can only pause campaigns once it is reached.
+    if (!(Number(ctrl.maxMonthlySpend) > 0)) return { status: "dormant (kill switch off)" };
+    const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tasks: ["monthly"], token: workerToken() })
+    });
+    return { status: "dormant (kill switch off); monthly stop checked", tasks: ["monthly"], upstream: res.status };
+  }
   const { tasks, ranDaily } = await decideTasks();
   // Once a day: reconcile the Best Sellers collection with the canonical Top-200 list. It runs as
   // a background-worker task (the sync makes a few hundred Shopify calls and would time out a
@@ -99,14 +122,14 @@ async function kick() {
   if (ranDaily) tasks.push("bestSellers");
   const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tasks, token: process.env.EDIT_PASSCODE || undefined })
+    body: JSON.stringify({ tasks, token: workerToken() })
   });
   return { status: "kicked", tasks, upstream: res.status };
 }
 
 /* ------------------------------- POST actions ------------------------------ */
 async function dispatchTask(task, data) {
-  const r=await fetch(baseUrl()+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:[task],...data,token:process.env.EDIT_PASSCODE||undefined})});
+  const r=await fetch(baseUrl()+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:[task],...data,token:workerToken()})});
   if(!r.ok)throw new Error("Background dispatch failed: HTTP "+r.status);
   return {queued:true,...data};
 }
@@ -174,6 +197,17 @@ async function handleAction(body) {
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
                    "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
+    // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
+    // then read as "no ceiling", silently switching the spend checks off.
+    const limits = { maxDailyBudgetTotal: [1, 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
+      targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
+      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"] };
+    for (const [k, [min, max, label]] of Object.entries(limits)) {
+      if (patch[k] === undefined) continue;
+      const n = typeof patch[k] === "string" && !patch[k].trim() ? NaN : Number(patch[k]);
+      if (patch[k] === null || typeof patch[k] === "boolean" || !isFinite(n) || n < min || n > max) throw Object.assign(new Error(label + " must be a number from " + min + " to " + max + ". Nothing was saved."), { statusCode: 400 });
+      patch[k] = n;
+    }
     if (patch.autoApproveVettedTemplates !== undefined) patch.autoApproveVettedTemplates = false;
     if (patch.creativeBudgetUsd !== undefined) patch.creativeBudgetUsd = Math.max(1,Math.min(30,Number(patch.creativeBudgetUsd)||8));
     if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
@@ -226,7 +260,7 @@ async function handleAction(body) {
       const runId = String(body.runId || Date.now());
       const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tasks: ["diagnostics"], campaignId: body.campaignId || null, runId, token: process.env.EDIT_PASSCODE || undefined })
+        body: JSON.stringify({ tasks: ["diagnostics"], campaignId: body.campaignId || null, runId, token: workerToken() })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
       return { queued: true, runId, upstream: res.status };
@@ -247,7 +281,7 @@ async function handleAction(body) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tasks: ["pmaxBackfillImages"], genId,
           campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
-          token: process.env.EDIT_PASSCODE || undefined })
+          token: workerToken() })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
       if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
@@ -265,7 +299,7 @@ async function handleAction(body) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tasks: ["pmaxUpgradeAdStrength"], genId,
           campaignIds: Array.isArray(body.campaignIds) ? body.campaignIds.slice(0, 50) : [],
-          token: process.env.EDIT_PASSCODE || undefined })
+          token: workerToken() })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status + " — is googleAdsAutopilot-background deployed?" };
       if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
@@ -282,7 +316,7 @@ async function handleAction(body) {
         body: JSON.stringify({ tasks: ["pmaxGenerate"], genId, handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
           itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
           feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
-          token:process.env.EDIT_PASSCODE||undefined })
+          token:workerToken() })
       });
       if (res.status >= 400) return { error: "background dispatch failed: HTTP " + res.status };
       return { queued: true, genId };
@@ -370,7 +404,7 @@ async function handleAction(body) {
           pmaxDaily: body.pmaxDaily, searchDaily: body.searchDaily,
           countries: Array.isArray(body.countries) ? body.countries.slice(0, 20) : [],
           maxCpc: body.maxCpc, days: Math.max(1, Math.min(180, Number(body.days) || 30)),
-          token: process.env.EDIT_PASSCODE || undefined })
+          token: workerToken() })
       });
       if (res.status >= 400) return { ok: false, error: "background dispatch failed: HTTP " + res.status };
       return { ok: true, queued: true, genId, upstream: res.status };
@@ -399,7 +433,7 @@ async function handleAction(body) {
         try {
           const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ tasks: ["scanOpportunities"], scanRunId: runId, token: process.env.EDIT_PASSCODE || undefined })
+            body: JSON.stringify({ tasks: ["scanOpportunities"], scanRunId: runId, token: workerToken() })
           });
           bgStatus = res.status;
           if (res.status >= 400) bgError = "background dispatch HTTP " + res.status;
@@ -443,7 +477,7 @@ async function handleAction(body) {
           coll: body.coll, event: body.event, budget: body.budget,
           startDate: body.startDate, endDate: body.endDate, countries: body.countries,
           maxCpc: body.maxCpc, peakDate: body.peakDate, smartBidding: body.smartBidding,
-          token: process.env.EDIT_PASSCODE || undefined })
+          token: workerToken() })
       });
       if (!res.ok) throw new Error("Background dispatch failed: HTTP "+res.status);
       return { queued: true, genId, upstream: res.status };
@@ -462,7 +496,7 @@ async function handleAction(body) {
       : ["anomaly","conversions","measure","mine","prune","budgets","events"];
     const res = await fetch(baseUrl() + "/.netlify/functions/googleAdsAutopilot-background", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tasks, token: process.env.EDIT_PASSCODE || undefined }) });
+      body: JSON.stringify({ tasks, token: workerToken() }) });
     return { status: "kicked", tasks, upstream: res.status };
   }
   return { error: "unknown action" };
@@ -496,9 +530,12 @@ async function httpHandler(event) {
 
   // POST → actions (auth required)
   let body = {}; try { body = JSON.parse(event.body || "{}"); } catch {}
-  if (!authed(event, body)) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
-  try { return ok(await handleAction(body)); }
-  catch (e) { return { statusCode: 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
+  if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+  const gate = authed(event, body);
+  if (gate === "unset") return { statusCode: 403, headers: HEADERS, body: JSON.stringify({ ok: false, error: PASSCODE_UNSET, code: "EDIT_PASSCODE_NOT_SET" }) };
+  if (!gate) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
+  try { const out = await handleAction(body); if (body.action === "dashboard" && out && typeof out === "object") out.editPasscodeSet = !!passcode(); return ok(out); }
+  catch (e) { return { statusCode: e.statusCode || 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
 }
 
 // Reused by googleAdsAutopilotApi.js — one implementation, two entry points.

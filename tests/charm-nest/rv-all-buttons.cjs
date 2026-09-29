@@ -1,11 +1,15 @@
-// Every Review card has the Custom Orders card's buttons (Paul, 28 Sep 23:55: "all of the tabs in the review tap need to
-// have the same options buttons and abilities as the Custom Orders tab"). An Unknown SKU or Options card keeps "Review &
-// resolve" first and gets Print QR label, Complete Order and Send to Sheet (with the designs window and the .ai / .dxf
-// drop) for the order it shows, run by the same code as a custom card's; a click on the card opens the order window. A
-// line leaving Review this way has its question answered on the order timeline with who, and a completed one is under
-// Completed with its seal. Runs the sorter in headless Chromium against the local fake site (bridge-server.cjs): every
-// request that is not to the loopback is aborted and the label printer is a stub, so nothing is printed or written live.
-//   node tests/charm-nest/rv-all-buttons.cjs [playwright-core dir]   (CN_SHOT=file saves an Unknown SKU card)
+// Every Review card has the Custom Orders card's action column (Paul, 28 Sep 23:55; 29 Sep 00:38: "Remove the review
+// and resolve button and make all the buttons look the same as in the other tabs … Including the drop zone purple menu").
+// An Unknown SKU or Options card has no "Review & resolve": Print QR label (the primary until its designs are ready),
+// Complete Order, Send to Sheet (greyed and disabled until a design is dropped and read, the primary then) and the dashed
+// drop zone, the markup, classes and sizes of a custom card's, run by the same code. No question is asked anywhere (Paul,
+// 29 Sep 01:01: the decision box removed "from the UI and the review tab, from all pop-up modals"): a click on any card,
+// a custom one's included, opens its order window, which shows no decision box, and the card unfolds nothing. A line
+// leaving Review by its buttons has its question answered on the order timeline with who, and a completed one is under
+// Completed with its seal. Runs the sorter in headless Chromium against the local
+// fake site (bridge-server.cjs): every request that is not to the loopback is aborted and the label printer is a stub, so
+// nothing is printed or written live.
+//   node tests/charm-nest/rv-all-buttons.cjs [playwright-core dir]   (CN_SHOT=file saves an Unknown SKU and a custom card)
 const fs = require('fs'), path = require('path'), assert = require('assert/strict');
 const root = path.join(__dirname, '../..');
 const { start } = require('./bridge-server.cjs');
@@ -18,13 +22,17 @@ const ORDERS = [
   order(4177368830, [line(41773688301, 'SURFER_4264', 'Surfer Wave Studs', [['Metal', 'Sterling Silver']], 'silver')]),                 // Unknown SKU, two orders
   order(4177368831, [line(41773688311, 'SURFER_4264', 'Surfer Wave Studs', [['Metal', 'Sterling Silver']], 'silver')]),
   order(4178100001, [line(41781000011, 'ROSE_77', 'Rose Charm', [['Metal', 'Sterling Silver']], 'silver')]),                             // Unknown SKU, sent with its own design
-  order(4178100002, [line(41781000021, 'BLOOMING_20239', 'Blooming Flower Charm Necklace', [['Metal', '14k Gold Filled'], ['Style', 'Wavy']], 'gold')])   // Options
+  order(4178100002, [line(41781000021, 'BLOOMING_20239', 'Blooming Flower Charm Necklace', [['Metal', '14k Gold Filled'], ['Style', 'Wavy']], 'gold')]),   // Options
+  order(4174476673, [line(41744766731, 'CUSTOM_6673', 'CUSTOM CHARM', [['Price', '28']])])                                               // Custom Orders
 ];
+const CUSTOM = '4174476673';
 const DG = (...kv) => { let t = ''; for (let i = 0; i < kv.length; i += 2) t += `${kv[i]}\n${kv[i + 1]}\n`; return t; };
 const DESIGN_DXF = DG(0, 'SECTION', 2, 'HEADER', 9, '$INSUNITS', 70, 4, 0, 'ENDSEC', 0, 'SECTION', 2, 'ENTITIES',
   0, 'LWPOLYLINE', 8, 'CUT', 90, 4, 70, 1, 10, 0, 20, 0, 10, 18, 20, 0, 42, 0.4, 10, 18, 20, 20, 10, 0, 20, 20,
   0, 'CIRCLE', 8, 'CUT', 10, 9, 20, 16, 40, 1.2, 0, 'ENDSEC', 0, 'EOF');
-const WANT = ['Review & resolve', 'Print QR label', 'Complete Order', 'Send to Sheet'];
+const WANT = ['Print QR label', 'Complete Order', 'Send to Sheet', 'Drop .ai / .dxf designs here'];
+// a card's action column, as drawn: each control's classes, disabled state, primary and size
+const COLUMN = sel => { const n = document.querySelector(sel); return [...n.querySelectorAll('.rowActions > *')].map(b => { const r = b.getBoundingClientRect(); return { t: b.textContent.trim(), cls: b.className, dis: b.getAttribute('aria-disabled'), w: Math.round(r.width), h: Math.round(r.height) }; }); };
 
 (async () => {
   const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
@@ -62,27 +70,58 @@ const WANT = ['Review & resolve', 'Print QR label', 'Complete Order', 'Send to S
     const card = rid => `#rvList .reviewListRow[data-rid="${rid}"]`;
     const buttons = () => page.evaluate(() => [...document.querySelectorAll('#rvList .reviewListRow')].map(n => ({ rid: n.dataset.rid, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()), h: Math.round(n.getBoundingClientRect().height) })));
 
-    // 1 · Unknown SKU: every card, the custom card's buttons after "Review & resolve", in the custom card's order and size
+    // 1 · Unknown SKU: every card, no "Review & resolve", the custom card's column: its buttons in its order, classes and
+    //     sizes, Send to Sheet greyed and disabled (no design yet) and the dashed drop zone under them
     await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
     let list = await buttons();
     assert.deepEqual(list.map(x => x.rid).sort(), ['4175892473', '4177368830', '4178100001'].sort(), JSON.stringify(list));
     for (const x of list) assert.deepEqual(x.b, WANT, x.rid + ': ' + x.b.join(' | '));
-    const sizes = await page.evaluate(sel => { const n = document.querySelector(sel); const hs = [...n.querySelectorAll('.rowActions .btn')].map(b => Math.round(b.getBoundingClientRect().height)); const act = n.querySelector('.rowActions').getBoundingClientRect(), side = n.querySelector('.engravingIdentity').getBoundingClientRect(); return { hs, act: Math.round(act.height), card: Math.round(n.getBoundingClientRect().height), drop: !!n.querySelector('.cuHint'), dropOk: n.classList.contains('cuDropOk'), side: Math.round(side.height) }; }, card('4175892473'));
+    assert.equal(await page.$('#rvList [data-review-open]'), null, 'no Review & resolve');
+    const sizes = await page.evaluate(sel => { const n = document.querySelector(sel); const hs = [...n.querySelectorAll('.rowActions .btn')].map(b => Math.round(b.getBoundingClientRect().height)); const act = n.querySelector('.rowActions').getBoundingClientRect(), side = n.querySelector('.engravingIdentity').getBoundingClientRect(); return { hs, act: Math.round(act.height), card: Math.round(n.getBoundingClientRect().height), dropOk: n.classList.contains('cuDropOk'), side: Math.round(side.height) }; }, card('4175892473'));
     assert(sizes.hs.every(h => h === sizes.hs[0]), 'the buttons are one size: ' + sizes.hs);
-    assert.equal(sizes.drop, false, 'no drop box of its own (the card stays short)'); assert(sizes.dropOk, 'the card itself takes a drop');
+    assert(sizes.dropOk, 'the card itself takes a drop too');
     // (in the wide list the buttons are the right-hand column, as a custom card's: the card is as tall as they are)
     assert(sizes.card <= Math.max(sizes.act, sizes.side, 138) + 40, 'no taller than it needs: ' + JSON.stringify(sizes));
-    const shot = process.env.CN_SHOT || '/mnt/project-files/plans/review-buttons.png';
-    try { fs.mkdirSync(path.dirname(shot), { recursive: true }); await page.locator(card('4175892473')).screenshot({ path: shot }); console.log('  · screenshot: ' + shot); } catch (e) { console.log('  – screenshot not saved: ' + e.message); }
+    const skuCol = await page.evaluate(COLUMN, card('4175892473'));
+    assert.match(skuCol[0].cls, /\bgold\b/, 'Print QR label is the primary while no design is ready');
+    assert.equal(skuCol[2].dis, 'true', 'Send to Sheet is disabled with no design'); assert.match(skuCol[2].cls, /\bghost\b/);
+    assert.match(await page.getAttribute(card('4175892473') + ' [data-cu-send]', 'title'), /Drop the order's \.ai or \.dxf designs/, 'and says why');
+    assert.equal(skuCol[3].cls, 'cuHint', 'the dashed drop zone');
+    // the Custom Orders card: the same column, control for control (classes, disabled state, width and height)
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
+    const cuCol = await page.evaluate(COLUMN, card(CUSTOM));
+    const same = c => c.map(({ t, cls, dis, w, h }) => ({ t, cls: cls.replace(/\s*\bworking\b/, ''), dis, w, h }));
+    assert.deepEqual(same(skuCol), same(cuCol), 'Unknown SKU and Custom Orders: one column\n' + JSON.stringify(skuCol) + '\n' + JSON.stringify(cuCol));
+    const shot = process.env.CN_SHOT || '/mnt/project-files/plans/review-buttons-2.png';
+    try {
+      const cuPng = await page.locator(card(CUSTOM)).screenshot();
+      await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
+      const skuPng = await page.locator(card('4175892473')).screenshot();
+      const side2 = await context.newPage();
+      await side2.setContent(`<body style="margin:0;padding:16px;background:#efe9dd;display:flex;gap:16px;align-items:flex-start;font:600 13px system-ui">${[['Unknown SKU', skuPng], ['Custom Orders', cuPng]].map(([t, b]) => `<figure style="margin:0;flex:1"><figcaption style="margin:0 0 6px">${t}</figcaption><img style="width:100%" src="data:image/png;base64,${b.toString('base64')}"></figure>`).join('')}</body>`);
+      await side2.setViewportSize({ width: 3400, height: 400 });
+      fs.mkdirSync(path.dirname(shot), { recursive: true }); await side2.screenshot({ path: shot, fullPage: true }); await side2.close();
+      console.log('  · screenshot: ' + shot);
+    } catch (e) { console.log('  – screenshot not saved: ' + e.message); await page.click('#reviewView .egTab[data-k="unmatchedSku"]').catch(() => {}); }
 
-    // 2 · a click on the card opens the order; "Review & resolve" still opens its question, and its click opens nothing else
+    // 2 · a click on an Unknown SKU card, or on a custom one, opens its order; nothing asks its question: no panel on the
+    //     card, no decision box in the window (what is under it stands where it stood)
+    const asked = () => page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, fix: document.getElementById('owFix').innerHTML, controls: [...document.querySelectorAll('#orderWin :is([data-a=alias], [data-a=nodesign], [data-a=hold], [data-a=mat], [data-a=skip], [data-pick], [data-ai])')].map(b => b.textContent.trim()), words: /waiting on a decision/i.test(document.getElementById('orderWin').textContent), panel: document.querySelectorAll('#rvList .reviewDetails, #rvList .rvItem').length }));
+    const none = { dialogs: 1, fix: '', controls: [], words: false, panel: 0 };
     await page.click(card('4175892473') + ' .purchaseSummary');
-    await page.waitForFunction(() => OrderWin.isOpen());
-    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one window');
+    await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4175892473_41758924731', null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Unknown SKU: its order, and no question box');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
-    await page.click(card('4175892473') + ' [data-review-open]');
-    assert.deepEqual(await page.evaluate(sel => { const n = document.querySelector(sel); return [!n.querySelector('.reviewDetails').hidden, !!n.querySelector('.reviewDetails [data-a=alias]'), OrderWin.isOpen()]; }, card('4175892473')), [true, true, false]);
-    await page.click(card('4175892473') + ' [data-review-open]');
+    assert.equal(await page.evaluate(sel => document.querySelector(sel).querySelectorAll('.reviewDetails, .rvItem').length, card('4175892473')), 0, 'nothing unfolded on the card');
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
+    await page.click(card(CUSTOM) + ' .purchaseSummary');
+    await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4174476673_41744766731', null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Custom Orders: its order, and no question box either');
+    assert.match(await page.evaluate(() => document.getElementById('owCustom').textContent), /Custom Orders/, 'its custom line (label and buttons) stays');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
 
     // 3 · Complete Order on an Unknown SKU line: completed by hand (how "button", by who), its question answered with who,
     //     the card leaves for Completed with its seal, under the Unknown SKU chip there
@@ -120,11 +159,11 @@ const WANT = ['Review & resolve', 'Print QR label', 'Complete Order', 'Send to S
     // 5 · Send to Sheet: a design dropped on an Unknown SKU card, its metal in the designs window, sent; the line leaves
     //     Review for the sheets, answered with who (the timeline and Completed)
     const eKey = '4178100001_41781000011';
-    // with no design yet, Send to Sheet opens the designs window (to drop in), alone
-    await page.click(card('4178100001') + ' [data-cu-send]');
-    await page.waitForFunction(() => document.querySelector('#cuDlg[open] .cuEmpty'));
-    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1);
-    await page.click('#cuDlg [data-x]'); await page.waitForFunction(() => !document.querySelector('dialog[open]'));
+    // with no design yet, Send to Sheet is greyed and disabled: pressed, it sends nothing and opens nothing (its drop
+    // zone lights up)
+    await page.click(card('4178100001') + ' [data-cu-send]', { force: true });   // (Playwright itself takes it for disabled)
+    await page.waitForTimeout(300);
+    assert.deepEqual(await page.evaluate(({ sel, k }) => ({ open: document.querySelectorAll('dialog[open]').length, sent: !!CustomSheet.sentOf(B.orders.byKey.get(k)), lit: document.querySelector(sel + ' .cuHint').classList.contains('cuNudge'), op: getComputedStyle(document.querySelector(sel + ' [data-cu-send]')).opacity }), { sel: card('4178100001'), k: '4178100001_41781000011' }), { open: 0, sent: false, lit: true, op: '0.45' });
     await page.evaluate(({ sel, text }) => {
       const dt = new DataTransfer(); dt.items.add(new File([text], 'rose.dxf'));
       const n = document.querySelector(sel);
@@ -136,9 +175,10 @@ const WANT = ['Review & resolve', 'Print QR label', 'Complete Order', 'Send to S
     await page.click('#cuDlg .cuFile .cuM[data-m="gold"]');
     await page.click('#cuDlg [data-x]');
     await page.waitForFunction(sel => document.querySelector(sel + ' .cuDesigns.ready') && !document.querySelector('dialog[open]'), card('4178100001'));
-    const eCard = await page.evaluate(sel => { const n = document.querySelector(sel); return { strip: n.querySelector('.cuDesigns').textContent, send: n.querySelector('[data-cu-send]').className, review: n.querySelector('[data-review-open]').className, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()) }; }, card('4178100001'));
-    assert.match(eCard.strip, /Custom designs.*1 design · 1 piece.*Ready to send.*Edit designs/); assert.match(eCard.send, /gold/, 'Send to Sheet is the next step'); assert.match(eCard.review, /ghost/);
-    assert.deepEqual(eCard.b.filter(b => WANT.includes(b)), WANT, 'the same buttons with its designs strip');
+    const eCard = await page.evaluate(sel => { const n = document.querySelector(sel); return { strip: n.querySelector('.cuDesigns').textContent, send: n.querySelector('[data-cu-send]').className, dis: n.querySelector('[data-cu-send]').getAttribute('aria-disabled'), print: n.querySelector('[data-cu-print]').className, b: [...n.querySelectorAll('.rowActions button')].map(b => b.textContent.trim()) }; }, card('4178100001'));
+    assert.match(eCard.strip, /Custom designs.*1 design · 1 piece.*Ready to send.*Edit designs/); assert.match(eCard.send, /gold/, 'Send to Sheet is the next step'); assert.equal(eCard.dis, null, 'and enabled');
+    assert.match(eCard.print, /ghost/, 'Print QR label is plain then');
+    assert.deepEqual(eCard.b, ['Print QR label', 'Complete Order', 'Send to Sheet'], 'the same buttons with its designs strip (no drop zone once it has designs)');
     await page.click(card('4178100001') + ' [data-cu-send]');
     await page.waitForFunction(k => CustomSheet.sentOf(B.orders.byKey.get(k)) && !document.querySelector('#rvList .reviewListRow[data-rid="4178100001"]'), eKey, { timeout: 30000 });
     const eRow = await page.evaluate(k => { const r = B.orders.byKey.get(k); return { st: r.state, problems: r.problems.length, metal: CustomSheet.metalOf(r) }; }, eKey);
@@ -153,17 +193,24 @@ const WANT = ['Review & resolve', 'Print QR label', 'Complete Order', 'Send to S
     await page.waitForFunction(() => OrderWin.isOpen()); await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
-    // 6 · Options: the same buttons after "Review & resolve"
+    // 6 · Options: the same column; a click opens its order, which asks nothing
     await page.click('#reviewView .egTab[data-k="needsMapping"]');
     list = await buttons();
     assert.deepEqual(list.map(x => [x.rid, x.b]), [['4178100002', WANT]], JSON.stringify(list));
+    assert.deepEqual(same(await page.evaluate(COLUMN, card('4178100002'))), same(cuCol), 'Options and Custom Orders: one column');
+    await page.click(card('4178100002') + ' .engravingIdentity');
+    await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Options: no question box');
+    assert.equal(await page.$('#orderWin [data-pick]'), null, 'no option to map there');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .egTab[data-k="needsMapping"]');   // (the filter let go: Open, everything)
     list = await buttons();
     for (const x of list) assert.deepEqual(x.b, WANT, 'Open: ' + x.rid + ' ' + x.b.join(' | '));
 
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ every Review card: Review & resolve, Print QR label, Complete Order, Send to Sheet, designs, order window (Chromium)');
+    console.log('  ✓ every Review card: the custom card\'s column (Print QR label, Complete Order, Send to Sheet greyed until ready, drop zone), designs, a click opens its order, no question box anywhere (Chromium)');
     console.log('Review buttons OK');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });
