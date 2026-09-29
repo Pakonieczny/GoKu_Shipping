@@ -375,7 +375,8 @@ async function engineChecks(){
   of=await perDay(base);check(of(base[0])===20&&Math.abs(of(base[1])-24)<1e-9,'a total budget shows what is left per remaining day (24), as the ceiling counts it');
   W.fail=[/campaign\.start_date_time/];of=await perDay(base);W.fail=[];check(of(base[1])===300,'its dates unreadable: its whole total, never less');
   const src=fs.readFileSync(dir+'googleAdsAutopilot.js','utf8');
-  check((src.match(/campaign_budget\.amount_micros, campaign_budget\.period, campaign_budget\.total_amount_micros FROM campaign(`| WHERE campaign\.status != 'REMOVED'`)/g)||[]).length===2&&(src.match(/budget: budgetOf\(r\)/g)||[]).length===2,'the dashboard and the report read total budgets and show them per day');}
+  check((src.match(/campaign_budget\.amount_micros, campaign_budget\.period, campaign_budget\.total_amount_micros FROM campaign(`| WHERE campaign\.status != 'REMOVED'`)/g)||[]).length===2&&/campaign_budget\.amount_micros,\s+campaign_budget\.period, campaign_budget\.total_amount_micros,\s+campaign_budget\.recommended_budget_amount_micros/.test(src)
+   &&(src.match(/budget: budgetOf\(r\)/g)||[]).length===3,'the dashboard, the report and Ad Doctor read total budgets and show them per day');}
  await rejects(E.setCampaignBudget('201',50,{ctrl:C()}),/total budget for its fixed dates/,'a total budget is never rewritten as a daily one');check(!sent.length,'nothing sent');
  W.camps[201].status='PAUSED';W.ctrl={maxDailyBudgetTotal:80};
  await rejects(E.setCampaignStatus('201','ENABLED',{ctrl:C()}),/CAD 84\.00, over your daily ceiling of CAD 80\.00/,'enabling counts the total per remaining day');

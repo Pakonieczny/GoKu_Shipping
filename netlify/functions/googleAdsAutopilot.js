@@ -8891,6 +8891,7 @@ async function fetchDiagnostics(campaignId) {
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status,
                  campaign.primary_status_reasons, campaign.advertising_channel_type,
                  campaign_budget.resource_name, campaign_budget.amount_micros,
+                 campaign_budget.period, campaign_budget.total_amount_micros,
                  campaign_budget.recommended_budget_amount_micros, campaign_budget.has_recommended_budget,
                  metrics.search_impression_share, metrics.search_budget_lost_impression_share,
                  metrics.search_rank_lost_impression_share,
@@ -8923,7 +8924,7 @@ async function fetchDiagnostics(campaignId) {
           FROM keyword_view WHERE ad_group_criterion.status = 'ENABLED'${CF}`).catch(() => [])
   ]);
 
-  const by = {};
+  const by = {}, budgetOf = await _campaignBudgetDaily(c7); // a total budget: what is left per remaining day
   for (const r of c7) {
     const c = r.campaign || {}, b = r.campaignBudget || {}, m = r.metrics || {};
     by[c.id] = {
@@ -8932,7 +8933,7 @@ async function fetchDiagnostics(campaignId) {
       reasonsText: _diagReasonsText(c.primaryStatusReasons),
       channel: c.advertisingChannelType || null,
       startDate: null, endDate: null, // filled by the version-tolerant fetch below
-      budget: fromMicros(b.amountMicros), budgetRes: b.resourceName,
+      budget: budgetOf(r), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
