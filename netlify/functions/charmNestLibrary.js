@@ -833,12 +833,16 @@ function poolEvents(ids, p, before, b) {
     if (!groups.has(orderId)) groups.set(orderId, []);
     groups.get(orderId).push({ id, prev: prev || {} });
   }
-  const by = str(b.by || (kind === "removed" ? p.removedBy : kind === "moved" ? p.movedBy : kind === "setCommitted" ? p.committedBy : "") || (kind === "placed" ? "System" : ""), 80);
+  // (station tracking, 28 Sep: the sorter says who is on duty, b.by, or that nobody is, b.signedIn false: then the stamp
+  //  names no one, by "" with data.signedIn false, and its seal says "not signed in", never "System". A page that says
+  //  neither, an older one, keeps the old default)
+  const nobody = b.signedIn === false;
+  const by = nobody ? "" : str(b.by || (kind === "removed" ? p.removedBy : kind === "moved" ? p.movedBy : kind === "setCommitted" ? p.committedBy : "") || (kind === "placed" ? "System" : ""), 80);
   const out = [];
   for (const [orderId, rows] of groups) {
     const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
     const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
-    const e = { orderId, type: kind, by, station: "sorter", lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: { copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) } };
+    const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
     if (kind === "removed") Object.assign(e, { at, sheetId: was[0] || "", sheet: wasNames.join(", "), setId: rows[0].prev.setId || "", text: [wasNames.join(", "), p.removedReason].filter(Boolean).join(" · "), id: String(at) }, { data: Object.assign(e.data, { reason: str(p.removedReason, 300), sheets: was }) });
     else if (kind === "moved") {
       const from = wasNames.length ? wasNames : String(p.movedFrom || "").split(",").filter(Boolean), to = sheetLabel(null, p.sheetName) || str(p.movedTo, 100);

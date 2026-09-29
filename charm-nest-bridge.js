@@ -289,6 +289,11 @@ function askEmployee() {
   return employeeName();
 }
 window.CNEmployee = { name: employeeName, ask: askEmployee };   // (the Library's Completed marks record who, charm-nest-library.js)
+/* Who the server's Nested stamps name (placed, setCommitted: poolUpdate), Paul, 28 Sep (station tracking E). The sorter
+   has no person login of its own (its passcode is shared): the person on duty is the name its sign-in keeps (cn.employee,
+   asked at the first approval, decision or label), the one every other sorter event carries. Nobody named: by "" with
+   signedIn false, and the seal says "not signed in", never a guess. Read as the step completes, never cached. */
+const stampWho = () => { const n = String(employeeName() || "").trim().slice(0, 80); return n ? { by: n, device: "charm-nest-1" } : { by: "", signedIn: false, device: "charm-nest-1" }; };
 /* The order timeline (order-timeline.js, loaded just before this file): the sorter writes as itself, with its sandbox,
    the passcode api() sends and the employee on duty. B.employee is watched, so a name set anywhere (Review, the sheet
    window, the station's hello) is the one the next event carries, whoever records it. An emit here never waits and
@@ -2248,7 +2253,8 @@ const Pool = window.Pool = (() => {
     if (rows.length) agent({ pool: true }, "POOL", `Pool: ${pooled} line(s) queued on the cards · ${rows.filter(r => r.state === "waiting").length} waiting · ${rows.filter(r => !["pooled", "noDesign", "waiting", "pulled"].includes(r.state)).length} held${again ? ` · ${again} tried again shortly` : ""}`);
     return pooled;
   }
-  async function update(poolIds, patch) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch }); }
+  // (who: { by, signedIn, device } for the order timeline's stamp, stampWho; sent beside the patch, not stored on the rows)
+  async function update(poolIds, patch, who) { for (const id of poolIds) { const p = B.pool.rows.get(id); if (p) Object.assign(p, patch); } if (S.cloud.ok) for (let i = 0; i < poolIds.length; i += 400) await api("charmNestLibrary", Object.assign({}, who, { op: "poolUpdate", poolIds: poolIds.slice(i, i + 400), patch })); }
   /* charmOf and sheetOf walked every charm of every sheet at each call (sheetOf every placement against every charm), and
      a classify pass or a restore asks once a line, so an update took longer the more sheets the table held. One index
      answers both, first match first as the walks did; it is made again when a page comes or goes or a sheet's charms or
@@ -5197,7 +5203,7 @@ const Sets = window.Sets = (() => {
     if (S.cloud.ok && sh.sheetId) await api("charmNestLibrary", { op: "putSheet", sheet: Object.assign({ id: sh.sheetId, label: sh.label, setId: set.setId, setSeq: set.seq, sheetIndex: sh.sheetIndex, orders: ids, runId: sh.runId, poolIds: placed.map(c => c.poolId).filter(Boolean) }, listings ? { listings } : {}) });
     // pool rows and order lines
     const poolIds = placed.map(c => c.poolId).filter(Boolean);
-    if (!labelsOnly && poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase });
+    if (!labelsOnly && poolIds.length) await Pool.update(poolIds, { sheetId: sh.sheetId, setId: set.setId, state: "written", sheetName: sh.fileBase }, stampWho());   // (Nested: the person on duty)
     for (const row of labelsOnly ? [] : Orders.rows()) { if (!row.poolIds.length) continue; const allPlaced = row.poolIds.every(pid => { const p = B.pool.rows.get(pid); return p && p.sheetId; }); if (allPlaced && row.state === "pooled") row.state = "written"; }
     // the set record
     if (!set.sheetIds.includes(sh.sheetId)) set.sheetIds.push(sh.sheetId);
@@ -5323,7 +5329,7 @@ const Sets = window.Sets = (() => {
     const r = await DesignLink.call("complete.commit", { receiptIds: ids, labels, runId: run.runId, setId: set.setId, sheetIds: set.sheetIds, backCount: set.backCount || 0, completedBy: `Charm Sorter (${employeeName() || "operator"})` }, { timeoutMs: 180000 });
     set.committed = r.completed; set.refused = refused.concat(r.refused || []); set.committedAt = Date.now(); set.completedAt = set.committedAt; set.completionDay = today(); set.status = set.refused.length || Object.keys(ev.held).length ? "complete-with-holds" : "complete";
     for (const row of Orders.rows()) if (r.completed.includes(row.order.receiptId) && (row.state === "written" || row.state === "labelled" || row.state === "noDesign")) row.state = "committed";
-    await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() });
+    await Pool.update([...B.pool.rows.keys()].filter(id => r.completed.includes(B.pool.rows.get(id).orderId)), { state: "committed", committedAt: Date.now() }, stampWho());   // (the set committed: who)
     await save(set);
     for (const id of set.sheetIds || []) window.Session?.dropBest?.(id);
     agent({ run: run.runId }, "DS", `${set.name} committed: ${r.completed.length} order(s) marked design-complete and sent DESIGNED :) internally · ${set.refused.length} refused · ${Object.keys(ev.held).length} held`);
