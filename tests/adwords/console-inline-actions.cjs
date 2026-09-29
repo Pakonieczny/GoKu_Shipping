@@ -17,6 +17,13 @@ await test('no browser pop-ups for campaign edits, the activity log, deleting a 
   for(const name of ['wireCampRows','cmdEditOpen','cmdEditPaint','cmdEditBudget','cmdEditSchedule','cmdEditStatus','deleteCampaignCard','releaseOpp','bindControlsOnce','askInline'])
     assert.doesNotMatch(pick(name),/\b(?:prompt|confirm|alert)\(/,name+' asks in the page');
   assert.doesNotMatch(html,/function renderTimeline\(|function loadBlock\(|querySelectorAll\(["']\.ctl["']\)/,'unreachable timeline, .ctl handler and loadBlock are gone');
+  assert.doesNotMatch(html,/function (?:renderPerf|rowHtml|detailHtml|analysisHtml|actIcon|optDot|fieldVal|wirePerf|doAnalyze|analysisWait|setBudget|campStatus|campStartNow|campSetCountries|schedHtml|schedHint)\(|#ptable|var P=\{sortKey|tr\.prow|tr\.pdetail|renderPerf\(\)/,
+    'the unreachable old performance view (its slider, confirm pop-ups, emoji action icons, state and styles) is gone; Overview edits campaigns in place');
+  assert.doesNotMatch(html,/function (?:campaignSpendHtml|amountWithCurrency)\(/,'the uncalled campaign spend table is gone');
+  assert.doesNotMatch(html.match(/var API_MUTATING=new Set\(\[[^\]]*\]\)/)[0],/"(?:setCountries|startNow)"/,'API_MUTATING lists only changes the page can still ask for');
+  const retired=/\banalyzeCampaign\b/;
+  for(const f of ['brites-adwords.html','netlify/functions/googleAdsAutopilot.js','netlify/functions/googleAdsAutopilotKick.js','netlify/functions/googleAdsAutopilot-background.js'])
+    assert.doesNotMatch(read(f),retired,f+' has no campaign analysis action: Ad Doctor diagnoses campaigns');
 });
 
 await test('plain words: current tab names, no decorative emoji in working UI, readable date mismatch',()=>{
@@ -184,4 +191,5 @@ await test('one indicator per wait, shell top bar, phone channel tabs and a shad
   assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
   assert.match(html,/\.ieRow input\{flex:1 1 110px;max-width:170px;min-width:0;/,'on a phone the amount, Save and Cancel share one row');});
 console.log(passed+' console inline action checks passed.');
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

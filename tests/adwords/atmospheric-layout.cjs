@@ -45,4 +45,5 @@ let n=0;const ok=(v,m)=>{assert(v,m);n++};
  ok(r.selectImage(plan,[{id:'generic'},{id:'tall',forFamilies:['skyscraper']},{id:'slim',forBoards:['display_120x600']}],r.boards.find(b=>b.key==='display_120x600')).id==='slim','dedicated narrow scene wins over generic family');
  if(tiles.length){let y=0,inputs=[];for(let i=0;i<tiles.length;i+=4){let h=Math.max(...tiles.slice(i,i+4).map(t=>t.height))+35;for(let j=i;j<Math.min(i+4,tiles.length);j++){const t=tiles[j],x=(j-i)*420;inputs.push({input:t.input,left:x,top:y});inputs.push({input:Buffer.from('<svg width="410" height="30"><text x="0" y="20" font-size="13">'+t.label+'</text></svg>'),left:x,top:y+t.height});}y+=h;}await sharp({create:{width:1680,height:y,channels:3,background:'#ffffff'}}).composite(inputs).png().toFile(process.env.SCENE_TEST_OUTPUT);}
  console.log('PASS '+n+' atmospheric coverage, preserved layout, product isolation and fitted typography checks');e.dirty=false;await e.close();dom.window.close();
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

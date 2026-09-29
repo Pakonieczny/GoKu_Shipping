@@ -48,4 +48,5 @@ const store = data => ({ db: { doc: p => ({ get: async () => { if (data instance
   check(reads === 1, 'concurrent callers share a single Firestore read');
 
   console.log(passed + ' Google API key store checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

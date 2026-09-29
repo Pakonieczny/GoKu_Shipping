@@ -98,6 +98,13 @@ function orderAssetGroupMutations(operations){
   const groupOf=operation=>{const a=operation.assetGroupAssetOperation;if(!a)return null;if(a.create)return a.create.assetGroup;const match=/^(customers\/\d+)\/assetGroupAssets\/(\d+)~/.exec(a.remove||a.update?.resourceName||'');return match?match[1]+'/assetGroups/'+match[2]:null;};
   const added=new Set(operations.filter(o=>o.assetGroupAssetOperation?.create).map(groupOf)),groups=new Map(),other=[];
   for(const operation of operations){const group=groupOf(operation);if(group&&added.has(group)){if(!groups.has(group))groups.set(group,[]);groups.get(group).push(operation);}else other.push(operation);}
+  // A logo or business name the group lacks (none of that field is removed beside it) goes first: without brand
+  // guidelines Google requires both on every asset group, so the group is complete before anything else changes.
+  for(const [group,list] of groups){
+    const removed=new Set(list.filter(o=>o.assetGroupAssetOperation.remove).map(o=>String(o.assetGroupAssetOperation.remove).split('~').pop()));
+    const first=list.filter(o=>['BUSINESS_NAME','LOGO'].includes(o.assetGroupAssetOperation.create?.fieldType)&&!removed.has(o.assetGroupAssetOperation.create.fieldType));
+    if(first.length)groups.set(group,first.concat(list.filter(o=>!first.includes(o))));
+  }
   // Keep removals and additions for each replacement together, after asset
   // creation. Splitting them lets Google validate an incomplete temporary set.
   return other.concat(...groups.values());

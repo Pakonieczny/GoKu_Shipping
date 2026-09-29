@@ -19,4 +19,5 @@ async function setup(){const e=engine(),f=memory(),id='review1',p=proposal();f.d
  e=await setup();hash=e.E.creativeHash(e.p.payload);await e.E.reviewAdVersion({id:e.id,hash});await e.E.markApprovalApproved(e.id);e.f.docs.set('Brites_GAds_State/adArchive/campaigns/42',{status:'REMOVED'});await assert.rejects(()=>e.E.applyApproval(e.id,{dryRun:false}),/campaign was deleted/);check(e.state().writes===0,'deleted campaign cannot publish a stale queued proposal');
  const bad=proposal().payload;bad.versionChange.changes[0].lessonIds=['invented'];bad.versionChange.changes[0].evidenceIds=['missing'];check(e.get('_adAnalysisApplications')(bad).applications.length===0,'unknown sources cannot appear as applied learning');bad.versionChange.changes[0].before=bad.versionChange.changes[0].after;bad.versionChange.changes[0].evidenceIds=['pages'];check(e.get('_adAnalysisApplications')(bad).applications.length===0,'unchanged copy not counted as applied learning');
  console.log('PASS '+passed+' approval, publication, unknown-write, exact-review and learning-correlation checks');
+ require('./suite-guard.cjs').done();
 })().catch(err=>{console.error(err);process.exit(1)});

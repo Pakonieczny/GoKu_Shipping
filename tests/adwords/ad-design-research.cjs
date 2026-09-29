@@ -106,4 +106,5 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
  const observations=clone(directed);e.sources.push({id:'history',status:'available',data:{paid:0,organic:1,merchantOrganic:1,directOrUnknown:0,verifiedPurchaseOrders:1}});observations.factClaims.push({claim:'"paid":0,"organic":1,"merchantOrganic":1,"directOrUnknown":0,"verifiedPurchaseOrders":1',quote:'"paid":0,"organic":1,"merchantOrganic":1,"directOrUnknown":0,"verifiedPurchaseOrders":1',sourceId:'history',productId:'10'});eq(f.api.validateResult({output:observations,evidence:e,channel:'search',group}).factClaims.length,1,'verified operational metrics inform research without becoming advertising claims');
  directed.factClaims.at(-1).claim='Waterproof for life';directed.copy.descriptions[0]='A waterproof monogram necklace for your next gift.';assert.throws(()=>f.api.validateResult({output:directed,evidence:e,channel:'search',group}),/unverified/);checks++;
  console.log('Ad Design research checks passed: '+checks);
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});

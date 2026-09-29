@@ -21,6 +21,7 @@ const compact=d=>d.replace(/-/g,'');
  await routerChecks();
  await uiChecks();
  console.log('PASS '+passed+' campaign-options checks (brand Search, sale-day adjustments, new-customer goal, total budgets, purchase-only goals, brand exclusions on new Performance Max)');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 /* ---------------- the rules (pure) ---------------- */
@@ -94,6 +95,23 @@ function moduleChecks(){
  check(/not supported/.test(el({channel:'DEMAND_GEN',bidding:'TARGET_CPA',status:'ENABLED'}).reason),'other campaign types: left out');
  check(!el({channel:'SEARCH',bidding:'TARGET_ROAS',status:'ENABLED',servingStatus:'ENDED'}).ok&&!el({channel:'SEARCH',bidding:'TARGET_ROAS',status:'ENABLED',endDate:'2026-11-20'}).ok&&!el({channel:'SEARCH',bidding:'TARGET_ROAS',status:'REMOVED'}).ok&&!el(undefined).ok,'ended, ending first, removed or unknown campaigns: left out');
  check(!O.seasonalityOverlaps({start:'2026-11-27 00:00:00',endExclusive:'2026-12-01 00:00:00'},{start:'2026-12-01 00:00:00',endExclusive:'2026-12-03 00:00:00'})&&O.seasonalityOverlaps({start:'2026-11-27 00:00:00',endExclusive:'2026-12-01 00:00:00'},{start:'2026-11-30 00:00:00',endExclusive:'2026-12-02 00:00:00'}),'back-to-back windows do not overlap; shared days do');
+
+ // Date-times have one layout, "yyyy-MM-dd HH:mm:ss": the v24 reference for Campaign and for BiddingSeasonalityAdjustment, the "Create
+ // campaigns" guide and DateError all give it, and GAQL returns it. Some of Google's client samples send "yyyyMMdd HH:mm:ss" and it works, so
+ // drafts saved earlier may hold it: it is read, and written back only in the documented layout.
+ {const g=O.gadsDateTime,FULL='2026-11-06 23:59:59';
+  eq([g('2026-11-06','23:59:59'),g('20261106','23:59:59'),g('20261106 23:59:59'),g(FULL),g('2026-11-06T23:59:59'),g(FULL,'00:00:00')],[FULL,FULL,FULL,FULL,FULL,FULL],'a date or a date-time, in either layout, is written as "yyyy-MM-dd HH:mm:ss"; a time already given is kept');
+  check(g('2026-11-06')==='2026-11-06 00:00:00'&&g(' 20261106 ','07:30:00')==='2026-11-06 07:30:00'&&g('2026-11-06 9:05')==='2026-11-06 09:05:00'&&g('2026-11-06 09:05')==='2026-11-06 09:05:00','a date alone takes the time it is given (midnight by default); a short time is completed');
+  check(g(g('20261106 23:59:59'))===FULL&&g(g('20261106','23:59:59'),'00:00:00')===FULL,'writing what was written changes nothing');
+  check([null,undefined,'','nope','2026-13','2026-11-06 25','2026-11-06 23:59:59+00:00'].every(v=>g(v)===null),'anything else, a time zone offset included, is not a date-time');
+  const win=O.seasonalityWindow('2026-11-27','2026-11-30');
+  eq(win,{start:'2026-11-27 00:00:00',endExclusive:'2026-12-01 00:00:00'},'a sale\'s days: the first midnight to the (exclusive) midnight after the last day');
+  eq([s.operation.create.startDateTime,s.operation.create.endDateTime],[win.start,win.endExclusive],'the strings the operation sends are the strings the overlap checks use');
+  // A window read from Google, one saved in a draft and one built now overlap the same way in every layout they can arrive in.
+  const compactDay=w=>({start:w.start.replace(/^(\d{4})-(\d{2})-(\d{2})/,'$1$2$3'),endExclusive:w.endExclusive.replace(/^(\d{4})-(\d{2})-(\d{2})/,'$1$2$3')}),dayOnly=w=>({start:w.start.slice(0,10),endExclusive:w.endExclusive.slice(0,10)});
+  const layouts=w=>[w,compactDay(w),dayOnly(w)],shares={start:'2026-11-30 00:00:00',endExclusive:'2026-12-02 00:00:00'},later={start:'2026-12-01 00:00:00',endExclusive:'2026-12-03 00:00:00'};
+  check(layouts(win).every(a=>layouts(shares).every(b=>O.seasonalityOverlaps(a,b)&&O.seasonalityOverlaps(b,a))&&layouts(later).every(b=>!O.seasonalityOverlaps(a,b)&&!O.seasonalityOverlaps(b,a))),'windows overlap the same way whether dashed, compact or a date alone: shared days overlap, back-to-back windows do not');
+  check(['2026-11-06 23:59:59','20261106 23:59:59','2026-11-06','20261106','2026-11-06T23:59:59'].every(v=>O._dates.dateOnly(v)==='2026-11-06')&&O._dates.dateOnly('')===null,'the date part reads the same from every layout');}
 
  // The expected change is an estimate from the account's own history, or the occasion's starting estimate, said so.
  const hist=(ls,le,from,to,conv=10)=>{const rows=[];for(let d=from;d<=to;d=addDays(d,1))rows.push({date:d,clicks:200,conversions:d>=ls&&d<=le?conv:6});return rows;};
@@ -398,6 +416,7 @@ async function engineChecks(){
  await rejects(E.applyApproval('big',C()),/these budgets total CAD 50\.00, but only CAD 40\.00 of your CAD 100\.00 ceiling is free/,'500 over 10 days counts 50 a day: over the ceiling');check(!sent.length,'nothing sent');
  put('fits',{type:'keywords',status:'APPROVED',payload:{mutateOperations:flight(300)}});res=await E.applyApproval('fits',C());
  check(res.status==='APPLIED'&&sent[1].ops[0].campaignBudgetOperation.create.totalAmountMicros===300e6&&sent[1].ops.some(o=>o.campaignConversionGoalOperation),'30 a day fits: published with its total budget and purchase-only goals');
+ check(sent[1].ops.find(o=>o.campaignOperation).campaignOperation.create.endDateTime===compact(day(10))+' 23:59:59','a draft saved in the older layout goes out exactly as reviewed (Google still accepts it): nothing is rewritten after approval');
  // A planned run moves the end date at publication: the total counts over the planned days from today.
  {const stale=flight(300),sc=stale[1].campaignOperation.create;sc.startDateTime=compact(day(-4))+' 00:00:00';sc.endDateTime=compact(day(5))+' 23:59:59';
   put('run',{type:'keywords',status:'APPROVED',payload:{mutateOperations:stale,meta:{plannedDays:{[Cp(-2)]:10}}}});sent.length=0;res=await E.applyApproval('run',C());
@@ -426,6 +445,47 @@ async function engineChecks(){
  put('lg',{type:'creative',status:'PENDING',payload:{mutateOperations:dated(12,{end:day(100)})}});await rejects(E.setApprovalTotalBudget({id:'lg',on:true}),/up to 90 days/,'Google\'s 90-day limit');
  await rejects(E.setApprovalTotalBudget({id:'../x',on:true}),/Choose a draft/,'draft id checked');
  check(!sent.length&&!net.length,'switching the budget type sends nothing to Google');
+
+ // Date-times reach Google in one layout, "yyyy-MM-dd HH:mm:ss", whichever way a date arrived or was saved (drafts saved before this hold
+ // "yyyyMMdd HH:mm:ss"). Every reader takes both layouts, and every comparison is between values in one layout.
+ reset();
+ {const RX=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/,W8=get('_toGAdsDateTime'),FULL=day(3)+' 23:59:59';
+  eq([W8(day(3),'23:59:59'),W8(compact(day(3)),'23:59:59'),W8(compact(day(3))+' 23:59:59','00:00:00'),W8(FULL,'00:00:00'),W8(' '+day(3)+' ','23:59:59')],[FULL,FULL,FULL,FULL,FULL],'the campaign schedule writer takes a date or a date-time in either layout and writes "yyyy-MM-dd HH:mm:ss"');
+  check(W8(null,'23:59:59')===null&&W8('','23:59:59')===null&&W8('soon','23:59:59')===null&&W8(FULL+'+00:00')===FULL+'+00:00','no date, no value; a time in a layout it does not know passes through unchanged');
+  const clock=get('_accountDateTime')(tz,0);
+  check(RX.test(clock)&&W8(clock)===clock&&get('_acctDateYmd')(tz,0)>=clock.slice(0,10)&&clock.slice(0,10)>=today,'the account clock is in the same layout, so writing it changes nothing, and its date is the account\'s today');
+  eq(get('_campaignScheduleFields')(day(3),day(10)),{startDateTime:day(3)+' 00:00:00',endDateTime:day(10)+' 23:59:59'},'a built campaign\'s schedule');
+  check(['2026-11-06 23:59:59','20261106 23:59:59','2026-11-06','20261106'].every(v=>get('_dateOnly')(v)==='2026-11-06'&&O._dates.dateOnly(v)==='2026-11-06'),'the engine and the options module read the same date from every layout');
+
+  // "Start now", "Run longer" and a draft's flight dates each send a date-time of their own.
+  const started=await E.startCampaignNow('101',{ctrl:C()}),su=sent[0].ops[0];
+  check(sent.length===1&&sent[0].service==='campaigns'&&su.updateMask==='start_date_time'&&RX.test(su.update.startDateTime),'"Start now" sends the account clock as "yyyy-MM-dd HH:mm:ss"');
+  check(started.startDateTime===su.update.startDateTime&&started.startDate===su.update.startDateTime.slice(0,10)&&started.startDate>=today,'and reports that instant and its date');
+  sent.length=0;await E.setCampaignEndDate('101',{endDate:day(30),ctrl:C()});
+  const eu=sent[0].ops[0];
+  check(sent.length===1&&eu.updateMask==='end_date_time'&&eu.update.endDateTime===day(30)+' 23:59:59','"Run longer" sends the end as the last second of its day, in the same layout');
+  put('sd',{type:'creative',status:'PENDING',payload:{mutateOperations:dated(12)}}); // its flight is saved in the older layout
+  await E.setApprovalDates('sd',day(2),day(12));
+  const dc=ap('sd').payload.mutateOperations.find(o=>o.campaignOperation).campaignOperation.create;
+  eq([dc.startDateTime,dc.endDateTime],[day(2)+' 00:00:00',day(12)+' 23:59:59'],'editing a draft\'s dates rewrites its flight as "yyyy-MM-dd HH:mm:ss"');
+  check(!net.length,'none of them reached a live service');}
+
+ // A sale-day adjustment whose (exclusive) end is midnight today is over: dates are compared with dates and date-times with date-times.
+ reset();W.history=history;
+ {const adj=(name,from,to,x={})=>({name,scope:'CAMPAIGN',campaigns:[Cp(101)],startDateTime:from+' 00:00:00',endDateTime:to+' 00:00:00',conversionRateModifier:1.2,...x});
+  W.adjustments=[adj('Ended at midnight',day(-3),today),adj('Covers today',day(-2),day(1)),adj('Ahead',day(5),day(8))];
+  const open=await get('_seasonalityAdjustments')(today);
+  eq(open.map(a=>[a.name,a.start,a.endExclusive]),[['Covers today',day(-2)+' 00:00:00',day(1)+' 00:00:00'],['Ahead',day(5)+' 00:00:00',day(8)+' 00:00:00']],'one that ended at midnight today is over; one that covers today and one ahead are not');
+  const panel=await E.campaignOptionsStatus();
+  eq(panel.sale.upcoming.map(a=>[a.name,a.start,a.end]),[['Covers today',day(-2),today],['Ahead',day(5),day(7)]],'the panel shows each by its first and last day, and leaves out the one that ended');
+  // The same windows read in the older layout come out the same, and still clash with a new draft.
+  const older=a=>({...a,startDateTime:compact(a.startDateTime.slice(0,10))+a.startDateTime.slice(10),endDateTime:compact(a.endDateTime.slice(0,10))+a.endDateTime.slice(10)});
+  W.adjustments=W.adjustments.map(older);
+  eq(await get('_seasonalityAdjustments')(today),open,'windows read in the older layout come out the same');
+  W.adjustments=[older(adj('Google Black Friday',sw.start,addDays(sw.start,2),{campaigns:[Cp(103)]}))];
+  await rejects(sale({campaignIds:['101','103']}),/already has the sale-day adjustment “Google Black Friday”/,'an adjustment read in the older layout still clashes with the dates it covers');
+  W.adjustments=[adj('Right before',addDays(sw.start,-3),sw.start,{campaigns:[Cp(103)]})];
+  check((await sale({campaignIds:['101','103']})).ok,'and one that ends the moment the sale starts does not');}
 }
 
 /* ---------------- the router ---------------- */

@@ -115,6 +115,7 @@ async function test(name, fn) { try { await fn(); passed++; } catch (error) { co
     assert.equal(summarizeDiagnostics(incomplete, target).state, 'processing');
   });
   console.log('PASS ' + passed + ' Data Manager conversion mapping, durable receipt and recovery checks');
+  require('./suite-guard.cjs').done();
 })().catch(error => { console.error(error); process.exitCode = 1; });
 
 // ── Sales parked on account access must drain by themselves ─────────────────

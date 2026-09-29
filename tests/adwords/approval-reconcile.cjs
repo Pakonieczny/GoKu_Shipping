@@ -86,4 +86,5 @@ const MIN=60000;let count=0;async function test(name,fn){await fn();count++;cons
     vm.runInContext(handler[0],ctx);await b.onclick({stopPropagation(){}});
     assert.deepEqual([b.disabled,b.innerHTML,b.className],[false,'Delete','btn ghost sm']);assert.match(toasts.pop(),/publishing/);});
   console.log(count+' approval reconciliation and state checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -92,4 +92,5 @@ const run = o => shopifyAttribution({ request: store(o), expectedHost: 'goldensp
   await assert.rejects(() => shopifyAttribution({}), /request function is required/); passed++;
   console.log('PASS the checker refuses to run without a Shopify request function');
   console.log(passed + ' Shopify attribution checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

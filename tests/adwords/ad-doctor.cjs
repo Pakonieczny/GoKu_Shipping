@@ -60,7 +60,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
         { issue: 'valid budget', fix: 'x', impact: 'high', executable: { kind: 'setBudget', budget: 12 } },
         { issue: 'unknown keyword', fix: 'x', executable: { kind: 'pauseKeywords', keywords: [{ adGroupId: '7', criterionId: '1' }] } },
         { issue: 'known keyword', fix: 'x', executable: { kind: 'pauseKeywords', keywords: [{ adGroupId: '7', criterionId: '99', text: 'model text' }] } },
-        { issue: 'negatives', fix: 'x', executable: { kind: 'addNegatives', keywords: ['free', 'charm necklace', 'Personalized'] } },
+        { issue: 'negatives', fix: 'x', executable: { kind: 'addNegatives', keywords: ['jobs', 'charm necklace', 'Personalized'] } },
         { issue: 'existing keyword', fix: 'x', executable: { kind: 'addKeywords', adGroupId: '7', keywords: [{ text: 'charm necklace', matchType: 'PHRASE' }, { text: 'mom gift', matchType: 'EXACT' }] } },
         { issue: 'invented kind', fix: 'x', executable: { kind: 'deleteCampaign' } }] }] };
     const sanitize = (x, total) => plain(e.get('_diagSanitize')(x, diag, { maxDailyBudgetTotal: 30 }, total)).campaigns[0];
@@ -74,14 +74,31 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(ex[0].kind === 'none' && ex[1].kind === 'none', 'budgets equal to the current one or over the ceiling are advice only');
     check(ex[2].kind === 'setBudget' && ex[2].budget === 12, 'a valid budget change keeps its button');
     check(ex[3].kind === 'none' && ex[4].kind === 'pauseKeywords' && ex[4].keywords[0].text === 'charm necklace', 'only evidence keywords can be paused, named as the evidence names them');
-    check(ex[5].kind === 'addNegatives' && ex[5].keywords.join() === 'free' && ex[5].skipped.includes('charm necklace') && ex[5].skipped.includes('personalized'), 'negatives that would block converting searches or active keywords are left out');
+    check(ex[5].kind === 'addNegatives' && ex[5].keywords.join() === 'jobs' && ex[5].skipped.includes('charm necklace') && ex[5].skipped.includes('personalized') && !ex[5].skippedWhy, 'negatives that would block converting searches or active keywords are left out');
     check(other[0].kind === 'none' && ex[6].keywords.length === 1 && ex[6].keywords[0].text === 'mom gift', 'keywords go only to evidence ad groups and are not re-added');
     check(other[1].kind === 'none' && ex[7].kind === 'none', 'unknown ads and invented actions are advice only');
-    const neg = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['free', 'engraved locket'] } }] }] };
+    const neg = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['jobs', 'engraved locket'] } }] }] };
     const unguarded = plain(e.get('_diagSanitize')(neg, { campaigns: diag.campaigns }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
     check(unguarded.kind === 'none', 'without the full converting-terms read, a proposed negative is advice only');
     const wide = plain(e.get('_diagSanitize')(neg, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
-    check(wide.kind === 'addNegatives' && wide.keywords.join() === 'free' && wide.skipped.includes('engraved locket'), 'a converting search outside the top terms still blocks the negative that would stop it');
+    check(wide.kind === 'addNegatives' && wide.keywords.join() === 'jobs' && wide.skipped.includes('engraved locket'), 'a converting search outside the top terms still blocks the negative that would stop it');
+    // "free" as a root would also stop "nickel free earrings" and "free shipping": left out, with the reason the card shows.
+    const freebie = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['Free', 'free earrings', 'free charm patterns', 'earrings', 'engraved locket'] } }] }] };
+    const buyers = plain(e.get('_diagSanitize')(freebie, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(buyers.keywords.join() === 'free charm patterns,earrings' && buyers.skipped.join() === 'free,free earrings,engraved locket' && /buying searches such as “nickel free earrings”/.test(buyers.skippedWhy) && /converting searches or active keywords/.test(buyers.skippedWhy),
+      'a negative that would block a buying search ("free" vs "nickel free earrings") is left out; freebie phrases and product words are still offered');
+  }
+
+  // ── A Google total budget is carried as its total and never offered as a daily amount ──
+  {
+    const e = engine();
+    e.bind({ gaql: async q => /campaign\.primary_status_reasons/.test(q) ? [{ campaign: { id: '43', name: 'Holiday', status: 'ENABLED', primaryStatus: 'ELIGIBLE', primaryStatusReasons: [], advertisingChannelType: 'SEARCH' },
+      campaignBudget: { resourceName: 'customers/123/campaignBudgets/9', period: 'CUSTOM_PERIOD', totalAmountMicros: '150000000' }, metrics: {} }] : [] });
+    const row = plain(await e.get('fetchDiagnostics')(null)).campaigns[0];
+    check(row.budgetPeriod === 'CUSTOM_PERIOD' && row.budgetTotal === 150, 'a diagnosed campaign carries its budget period and total');
+    const ai = { campaigns: [{ id: '43', action: { kind: 'raiseBudget', budget: 8 }, remedies: [{ issue: 'More budget', fix: 'Raise it', executable: { kind: 'setBudget', budget: 8 } }] }] };
+    const v = plain(e.get('_diagSanitize')(ai, { campaigns: [{ id: '43', status: 'ENABLED', budget: 5, budgetPeriod: 'CUSTOM_PERIOD', budgetTotal: 150 }] }, { maxDailyBudgetTotal: 30 }, 5)).campaigns[0];
+    check(v.action.budget === null && v.remedies[0].executable.kind === 'none', 'a daily budget for a total-budget campaign stays advice, with no button');
   }
 
   // ── Applied fixes are measured by the console, 14 days either side ──────
@@ -203,30 +220,13 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(out.unchanged && /Insufficient/.test(out.reason), 'a verified fix without a measured result is not lesson evidence, and no AI request is made');
   }
 
-  // ── A campaign analysis keeps budget and spend currencies apart ─────────
-  {
-    const e = engine(), f = memory(); let prompt = '', reply = null;
-    await f.db.collection('Brites_GAds_Metrics').add({ at: 1, snapshot: [{ id: '42', name: 'Camp A', status: 'ENABLED', channel: 'PERFORMANCE_MAX', budget: 20, cost: 45.5, value: 120, conv: 3, clicks: 40, impr: 900, currency: 'USD' }] });
-    e.bind({ fb: () => f, control: async () => ({ targetRoas: 0, maxDailyBudgetTotal: 60, budgetCurrency: 'CAD' }), conversionHealth: async () => ({ validated: true }),
-      openaiJSON: async p => { prompt = p; if (!reply) throw Error('model unavailable'); return reply; } });
-    reply = { score: 60, status: 'healthy', summary: 's', actions: [{ type: 'budget', title: 'Raise', detail: 'd', suggestedBudget: 25 }, { type: 'budget', title: 'Same', detail: 'd', suggestedBudget: 20 }] };
-    let an = plain(await e.get('analyzeCampaign')('42', { force: true }));
-    check(/dailyBudget=20 CAD/.test(prompt) && /spend14d=USD45\.5/.test(prompt) && /daily budget in CAD/.test(prompt), 'the analysis labels the budget in the account currency and spend in the reporting currency');
-    check(/Performance Max campaign/.test(prompt) && /not set by the owner/.test(prompt), 'the analysis names the campaign type and never invents a target ROAS');
-    check(an.actions[0].suggestedBudget === 25 && an.actions[1].suggestedBudget === null && an.budgetCurrency === 'CAD', 'a suggested budget equal to the current one gets no button');
-    reply = null; an = plain(await e.get('analyzeCampaign')('42', { force: true }));
-    check(an.status === 'insufficient data', 'without the AI and without a target ROAS, no health grade is claimed');
-    const html = fs.readFileSync(path.join(repo, 'brites-adwords.html'), 'utf8');
-    const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
-    const ui = vm.createContext({ DASH: { budgetCurrency: 'CAD' } });
-    for (const name of ['money', 'esc', 'optDot', 'actIcon', 'analysisHtml']) vm.runInContext(pick(name), ui);
-    check(/Set \$25 CAD\/day/.test(ui.analysisHtml({ id: '42', name: 'Camp A', status: 'ENABLED' }, { score: 60, status: 'healthy', summary: 's', budgetCurrency: 'CAD', actions: [{ type: 'budget', title: 'Raise', detail: 'd', suggestedBudget: 25 }] })), 'the Set budget button says the currency it will set');
-  }
-
   // ── The diagnostic page is locked with the console passcode ────────────
   {
     const reply = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
-    const stubFetch = async url => /oauth2/.test(url) ? reply(200, { access_token: 't' }) : reply(200, { results: [{ campaign: { id: '1', name: 'A', status: 'PAUSED' }, campaignBudget: { amountMicros: '5000000' }, customer: { currencyCode: 'CAD' } }] });
+    let asked = '';
+    const stubFetch = async (url, o) => { if (/oauth2/.test(url)) return reply(200, { access_token: 't' }); asked = String(o && o.body || '');
+      return reply(200, { results: [{ campaign: { id: '1', name: 'A', status: 'PAUSED' }, campaignBudget: { amountMicros: '5000000', period: 'DAILY' }, customer: { currencyCode: 'CAD' } },
+        { campaign: { id: '2', name: 'B', status: 'ENABLED' }, campaignBudget: { period: 'CUSTOM_PERIOD', totalAmountMicros: '150000000' }, customer: { currencyCode: 'CAD' } }] }); };
     const empty = { where() { return this; }, limit() { return this; }, orderBy() { return this; }, doc() { return this; }, get: async () => ({ exists: false, forEach() {}, data: () => ({}) }) };
     const admin = { firestore: () => ({ collection: () => empty }) };
     const realResolve = Module._resolveFilename;
@@ -251,6 +251,9 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check((await diag.handler({ queryStringParameters: { key: 'wrong' }, headers: {} })).statusCode === 401, 'the diagnostic page refuses a wrong passcode');
     const ok = await diag.handler({ queryStringParameters: { key: 'secret' }, headers: { accept: 'text/html' } });
     check(ok.statusCode === 200 && /5 CAD/.test(ok.body) && !/\$5/.test(ok.body), 'with the passcode it opens, showing budgets in the account currency');
+    const raw = JSON.parse((await diag.handler({ queryStringParameters: { key: 'secret' }, headers: {} })).body).campaigns[1];
+    check(/Total 150 CAD/.test(ok.body) && raw.budget === null && raw.budgetTotal === 150 && raw.budgetPeriod === 'CUSTOM_PERIOD' && /campaign_budget\.period/.test(asked) && /campaign_budget\.total_amount_micros/.test(asked),
+      'a total budget is read with its period and reported as a total, never as a daily amount');
     Module._resolveFilename = realResolve; delete process.env.EDIT_PASSCODE;
     for (const [file, prev] of swapped) { if (prev) require.cache[file] = prev; else delete require.cache[file]; }
   }
@@ -265,8 +268,9 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     // Each fix asks in place (askInline); here every question is answered yes and its words are kept.
     w.eval('var DASH=null,__calls=[],__replies={},__toasts=[],__asked=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
       'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function askInline(b,o){__asked.push(o.q+(o.note?" "+o.note:""));return Promise.resolve(b);}');
-    for (const name of ['money', 'esc', 'btnBusy', 'timeago']) w.eval(pick(name));
-    w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('// full schedule line + Start-now button')));
+    for (const name of ['money', 'esc', 'btnBusy', 'timeago', 'reportNumber', 'fmtMon', 'totalBudgetLine']) w.eval(pick(name));
+    w.eval(html.match(/var _MON=\[[^\]]*\];/)[0]);
+    w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('var feedRange=')));
     const now = Date.now(), body = () => w.document.getElementById('diagBody');
     const camp = (over = {}) => ({ id: '42', name: 'Camp A', status: 'ENABLED', budget: 10, primaryStatus: 'LIMITED', reasonsText: ['Limited by budget', 'unknown'],
       lostISBudget: 20, recommendations: [{ resourceName: 'customers/123/recommendations/b1', type: 'CAMPAIGN_BUDGET', currentBudget: 10, recommendedBudget: 15, options: [{ budget: 15, weeklyClicksDelta: 12, weeklyCostDelta: 30 }] }, { type: 'SITELINK_ASSET' }],
@@ -285,6 +289,15 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(/Apply AI budget \$14 CAD\/day/.test(text) && /Apply Google \$15 CAD\/day/.test(text) && /\$10 CAD/.test(text), 'budgets are labelled in the account currency');
     check(body().querySelector('details summary') && /Evidence/.test(t) && /Send to review/.test(text) && /Apply fix/.test(text), 'the verdict leads; evidence sits behind an expander; a rewrite is sent to review, not applied');
     check(/Other Google recommendations: Add sitelinks/.test(text), 'Google recommendation types read as plain actions');
+
+    const total = { budgetPeriod: 'CUSTOM_PERIOD', budgetTotal: 150, startDate: '2026-11-01', endDate: '2026-11-30' };
+    const withBudgetFix = { ...verdict, remedies: verdict.remedies.concat([{ issue: 'More budget', fix: 'Raise it', impact: 'medium', executable: { kind: 'setBudget', budget: 14 } }]) };
+    set({ generatedAt: now - 3600000, campaigns: [camp()], ai: { campaigns: [withBudgetFix] } }, dash('ENABLED'));
+    const dailyFixes = body().querySelectorAll('.dg-remedy').length;
+    set({ generatedAt: now - 3600000, campaigns: [camp(total)], ai: { campaigns: [withBudgetFix] } }, dash('ENABLED', total));
+    text = body().textContent;
+    check(/Total \$150 CAD for 30 days to Nov 30/.test(text) && !body().querySelector('.dg-aibudget,.dg-gbudget') && body().querySelector('.dg-dismiss') && dailyFixes === 3 && body().querySelectorAll('.dg-remedy').length === 2,
+      'a total-budget campaign shows its total and offers no daily budget button; other fixes and dismissing stay');
 
     set({ generatedAt: now - 75 * DAY, campaigns: [camp({ observationWindows: null })], ai: { campaigns: [verdict] } }, dash('PAUSED'));
     text = body().textContent;
@@ -323,4 +336,5 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.close();
   }
   console.log(passed + ' Ad Doctor checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

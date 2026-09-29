@@ -48,4 +48,5 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  await assert.rejects(()=>ask(90),/Over your daily ceiling.*CAD 90\.00.*CAD 72\.00/);assert.equal(prepared,0);
  assert.equal((await ask(40)).planHash,'plan');assert.equal(prepared,1);
  console.log('PASS campaign selection, budgets, all three routed builders, fixed-size filtering, disjoint references, frozen approval, image materialization, supported ad fields, the 4:1 brand logo, disclosed bidding and the ceiling checked at preparation');
+ require('./suite-guard.cjs').done();
 })();

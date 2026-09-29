@@ -113,4 +113,5 @@ const within = (promise, ms) => { let timer; return Promise.race([promise.then((
   }
 
   console.log('claude-client-guards: spend survives null counters; silent servers and slow retries stay inside their limits.');
+  require('./suite-guard.cjs').done();
 })().catch(error => { console.error(error); process.exit(1); });

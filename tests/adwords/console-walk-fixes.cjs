@@ -172,4 +172,5 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   });
 
   console.log(passed + ' console walk checks passed');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

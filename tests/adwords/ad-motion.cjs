@@ -207,5 +207,6 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok((await safe.ref.collection('motionJobs').doc(safeJob.jobId).get()).data().originalSources[0].asset.path==='pinned-original','an unavailable resolver falls back to the pinned reference rather than stopping the film');
 
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
 

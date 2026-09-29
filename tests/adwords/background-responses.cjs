@@ -55,4 +55,5 @@ const stream=(text,{stop='end_turn',cut=false}={})=>({ok:true,status:200,headers
  assert.equal(calls.filter(c=>c.options.method==='POST').length,sent(),'only Sonnet requests were ever posted');
  assert.equal(await a.retrieveResponse('unknown'),null);
  console.log('PASS durable Sonnet receipts: marker before sending, reuse without paying again, bounded unconfirmed window, no automatic replay, saved Astra answers still open');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

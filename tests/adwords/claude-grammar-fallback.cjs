@@ -144,4 +144,5 @@ const good = { pass: true, productFaithful: true, mobileReadable: true, issues: 
   check(names.length >= 9, `coverage: all ${names.length} named Adwords schemas (${names.join(', ')}) take the one retry through the Ad Design adapter, then skip the refused attempt`);
 
   console.log(`${passed} grammar fallback checks passed.`);
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

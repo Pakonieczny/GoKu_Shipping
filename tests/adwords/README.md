@@ -6,6 +6,8 @@ Run from the repository root after installing its existing dependencies:
 node tests/adwords/run.cjs
 ```
 
+The runner preloads `suite-guard.cjs` into each suite. An async suite ends each of its top-level async functions with `require('./suite-guard.cjs').done();`, so a step that awaits something that never settles fails the suite instead of letting Node exit early with status 0. To run one suite the same way: `node -r ./tests/adwords/suite-guard.cjs tests/adwords/<suite>.cjs`.
+
 The fixtures use recorded examples, in-memory persistence, and mocked providers. They do not generate paid images, publish ads, or access a live store.
 
 Coverage includes reporting dates and currency, exact product attribution, historical sales, approval scope and publication receipts, saved-version restoration, design job ownership and recovery, provider image formats and metadata, and UI/API contracts. UI fixtures check behavior and rendered markup; they do not replace browser layout testing.

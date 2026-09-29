@@ -99,4 +99,5 @@ function merchant(titlePages, failTitles) {
   check(!/â/.test(single) && single.includes('Dainty Monogram Necklace – Monogram Necklace – Custom Block Monogram Initials'), 'a single-product draft\'s long headline uses the repaired title');
 
   console.log(checks + ' feed title checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

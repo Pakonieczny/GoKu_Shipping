@@ -22,4 +22,5 @@ const preview=context.module.exports.adDesignGooglePreview,input={workspaceId:'w
  response={result:{previews:[{assetGroup:groupRef,uiPreviewResult:{shareablePreviewUrl:'https://google.com.example.test/unsafe'}}]}};await assert.rejects(()=>preview(input),/no usable preview/);checks++;
  ok=false;response={error:{message:'Preview unavailable',status:'FAILED_PRECONDITION'}};await assert.rejects(()=>preview(input),/Google could not generate/);checks++;
  console.log('PASS '+checks+' official Google preview request, account/group isolation and error checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

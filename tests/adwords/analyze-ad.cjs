@@ -113,4 +113,5 @@ function archivedJob(f,id){const job=f.docs.get('state/adAnalysis-'+id),manifest
  sent.length=0;f=fixture({onFetch:async(url,opts)=>{sent.push(JSON.parse(opts.body));}});job=await f.api.beginAnalyzeAd({campaignId:'42'});await f.api.runAnalyzeAd({analysisId:job.analysisId});eq((await f.api.analyzeAdStatus({analysisId:job.analysisId})).status,'ready');eq(f.paid(),1,'the warm lambda skips the refused attempt next time');ok(!sent[0].output_config.format&&/matches this JSON schema/.test(sent[0].system),'the remembered schema goes straight into the instructions');
  require(root+'/netlify/functions/_googleAdsClaude')._test.grammarLimited.clear();
  console.log('Analyze Ad lifecycle and exact operation checks passed: '+checks);
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});

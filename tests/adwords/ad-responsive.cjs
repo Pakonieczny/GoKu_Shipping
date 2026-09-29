@@ -122,4 +122,5 @@ if(require.main===module)(async()=>{
  const dense=await e.renderAIProofs(previewCandidate,{preview:true}),denseMeta=await sharp(Buffer.from(dense[0].dataBase64,'base64')).metadata();ok(denseMeta.width===900&&denseMeta.height===150&&denseMeta.format==='png','small banners get fresh three-times-resolution lossless previews');ok(dense[0].width===300&&dense[0].height===50,'preview density does not change the actual Google ad dimensions');
  const exact=await e.renderAIProofs(previewCandidate),exactMeta=await sharp(Buffer.from(exact[0].dataBase64,'base64')).metadata();ok(exactMeta.width===300&&exactMeta.height===50&&exactMeta.format==='jpeg','exact review pixels remain distinct from high-density previews');
  await e.dispose();dom.window.close();console.log('PASS '+checks+' responsive photo, mobile layout, typography and product scope checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

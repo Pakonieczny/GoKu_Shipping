@@ -90,7 +90,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "analyzeCampaign", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn", "suggestOccasions"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn", "suggestOccasions"]); // publishApproval independently enforces exact operator approval
   // The monthly stop is Paul's hard spending limit, not optimisation: it keeps checking with automation
   // off (e.g. after the anomaly breaker trips) and can only pause campaigns once his threshold is reached.
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t) || t === "monthly");
@@ -203,18 +203,27 @@ exports.handler = async (event) => {
         }
       }
       else if (task === "pmaxGenerate") {
-        const gId = String(body.genId || Date.now());
-        try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}
-        try {
-          const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
-            itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
-            feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[] });
-          result.pmax = out;
-          try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
-        } catch (e) {
-          const msg = String(e.message || e).slice(0, 400);
-          result.pmax = { error: msg };
-          try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
+        // The console claims each generation (E.claimPmaxGeneration) and dispatches it with its runId. Only the worker
+        // that takes that claim writes the paid copy and the draft, so a repeated, superseded or late dispatch pays nothing.
+        const gId = String(body.genId || ""), runId = String(body.runId || "");
+        let mine = false;
+        try { mine = !!(gId && runId) && await E.takePmaxGeneration(gId, runId); }
+        catch (e) { const msg = String(e.message || e).slice(0, 200); log.push("pmaxGenerate: not started: " + msg);
+          try { await E.finishPmaxGeneration(gId, runId, { ok: false, error: "The draft generation could not start (" + msg + "). Nothing was paid for; create the draft again." }); } catch (e2) {} }
+        if (!mine) result.pmax = { skipped: true, genId: gId || null };
+        else {
+          try {
+            const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
+              itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
+              feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
+              existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0 });
+            result.pmax = out;
+            try { await E.finishPmaxGeneration(gId, runId, { ok: true, ...out }); } catch (e) {}
+          } catch (e) {
+            const msg = String(e.message || e).slice(0, 400);
+            result.pmax = { error: msg };
+            try { await E.finishPmaxGeneration(gId, runId, { ok: false, error: msg }); } catch (e2) {}
+          }
         }
       }
       else if (task === "pmaxBackfillImages") {
@@ -293,21 +302,6 @@ exports.handler = async (event) => {
         try {result.distill=await E.distillLessons({refreshEvidence:true,onProgress:progress=>E.setGenStatus(genId,{phase:"running",kind:"learning",...progress})});await E.setGenStatus(genId,{phase:"done",kind:"learning",ok:!result.distill.error,pct:100,label:result.distill.unchanged?"Existing guidance retained":"Learning updated",result:result.distill});}
         catch(e){await E.setGenStatus(genId,{phase:"done",ok:false,error:e.message});throw e;}
       }
-      else if (task === "analyzeCampaign") {
-        // A campaign's paid AI analysis, moved off the ~26 s console gateway so an answer is never cut off;
-        // analyzeCampaign saves it as the campaign's cached analysis, and the console polls gen_<genId>.
-        const gId = String(body.genId || "analysis-" + String(body.campaignId || "").replace(/\D/g, "")), meta = { kind: "campaign-analysis", campaignId: body.campaignId || null };
-        try { await E.setGenStatus(gId, { ...meta, phase: "running", startedAt: Date.now() }); } catch (e) {}
-        try {
-          const an = await E.analyzeCampaign(body.campaignId, { force: !!body.force });
-          result.analyzeCampaign = { campaignId: body.campaignId || null, ok: true, status: (an && an.status) || null };
-          try { await E.setGenStatus(gId, { ...meta, phase: "done", ok: true, analysis: JSON.parse(JSON.stringify(an || {})) }); } catch (e) {}
-        } catch (e) {
-          const msg = String(e.message || e).slice(0, 300);
-          result.analyzeCampaign = { error: msg };
-          try { await E.setGenStatus(gId, { ...meta, phase: "done", ok: false, error: msg }); } catch (e2) {}
-        }
-      }
       else if (task === "generate") {
         // Campaign generation (keyword research + high-effort copy) outruns the
         // 26s gateway, so it runs here; the console polls the status doc.
@@ -326,7 +320,9 @@ exports.handler = async (event) => {
       // Read-only: Google's serving check of ENABLED campaigns for the Overview badge. At most three
       // minutes, and never the last three the tasks after it need.
       else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
-      else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl }); }
+      else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl });
+        // Performance Max has its own search terms report; its drafts wait in Approvals like the Search ones.
+        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } } }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
       else if (task === "ceiling")  { result.ceiling = await E.enforceBudgetCeiling({ ctrl }); }
