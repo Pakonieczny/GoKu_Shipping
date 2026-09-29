@@ -135,7 +135,11 @@ async function cancelCheck(db, ids, opts = {}) {
   if (!list.length) return { cancelled: {} };
   const refs = list.map(id => db.collection((opts.prefix || "") + CANCELLED).doc(id));
   const docs = await db.getAll(...refs), cancelled = {};
-  for (const d of docs) if (d.exists) { const x = d.data(); cancelled[d.id] = { at: n(x.at), by: s(x.by, 80), why: s(x.why, 400), source: s(x.source || (x.by === "Etsy" ? "etsy" : "sorter"), 20), sheets: Array.isArray(x.sheets) ? x.sheets.slice(0, 30) : [] }; }
+  for (const d of docs) if (d.exists) {
+    const x = d.data(); cancelled[d.id] = { at: n(x.at), by: s(x.by, 80), why: s(x.why, 400), source: s(x.source || (x.by === "Etsy" ? "etsy" : "sorter"), 20), sheets: Array.isArray(x.sheets) ? x.sheets.slice(0, 30) : [] };
+    // full (the sorter's library door only; a station's door never asks): the whole record, its lines, fates and removals
+    if (opts.full) { const w = Object.assign({}, x); delete w.createdAt; cancelled[d.id] = Object.assign(w, cancelled[d.id]); }
+  }
   return { cancelled, now: Date.now() };
 }
 

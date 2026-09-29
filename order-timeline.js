@@ -77,11 +77,16 @@
      keeps what another page queued (only what this page delivered leaves), and a page sends only its own kind of event:
      a station's door keeps station types alone, so a sorter event sent through it was dropped and forgotten. */
   const keyOf = e => `${e && e.orderId}~${e && e.type}~${e && e.id}`, sent = new Set();
+  /* A cancelled order's steps are kept for good (29 Sep): when the outbox is past its bound, the oldest other events make
+     room first. A cancel, its removals ("removed", a take-off whose reason says cancelled), a set-aside or a station's
+     "Understood" (the cancel group) never leave the outbox unsent; they are few, so the bound still holds in practice. */
+  const kept = e => !!e && ((TYPES[e.type] && TYPES[e.type].group === "cancel") || e.type === "removed" || /cancel/i.test(String((e.data && (e.data.reason || e.data.why)) || "")));
+  const bound = (list, max) => { let drop = list.length - max; return drop <= 0 ? list : list.filter(e => !(drop > 0 && !kept(e) && drop--)); };
   const disk = () => { try { const j = JSON.parse(localStorage.getItem(OUTBOX) || "[]"); return Array.isArray(j) ? j.filter(e => e && typeof e === "object") : []; } catch (_) { return []; } };
   box = disk();
   const mine = ev => (ev.mode ? ev.mode === cfg.mode : cfg.mode !== "station" || STATION_TYPES.has(ev.type));
   // (another page's events stay on the disk alone, for that page: this one neither sends them nor writes them back)
-  const save = () => { try { box = box.filter(mine); const have = new Set(box.map(keyOf)); localStorage.setItem(OUTBOX, JSON.stringify(disk().filter(e => !sent.has(keyOf(e)) && !have.has(keyOf(e))).concat(box).slice(-500))); } catch (_) {} };
+  const save = () => { try { box = box.filter(mine); const have = new Set(box.map(keyOf)); localStorage.setItem(OUTBOX, JSON.stringify(bound(disk().filter(e => !sent.has(keyOf(e)) && !have.has(keyOf(e))).concat(box), 500))); } catch (_) {} };
   const digits = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
   const base = () => (location.protocol === "file:" ? "https://goldenspike.app" : "") + "/.netlify/functions/";
   async function post(fn, body, sandbox = cfg.sandbox) {
@@ -130,7 +135,7 @@
       ev.id = String(e.id || `${at}-${Math.random().toString(36).slice(2, 8)}`);
       // kept as plain JSON: details that are not (a circular object) are left out here, where they stopped the outbox for good
       try { ev = JSON.parse(JSON.stringify(ev)); } catch (_) { ev.data = null; ev = JSON.parse(JSON.stringify(ev)); }
-      box.push(ev); if (box.length > KEEP) box.splice(0, box.length - KEEP);   // (a server refusing for days: memory stays bounded)
+      box.push(ev); if (box.length > KEEP) box = bound(box, KEEP);   // (a server refusing for days: memory stays bounded)
       // (a send already due sooner is not put off: events a scanner records less than a second apart were never sent
       //  while it kept on, and past KEEP the oldest were dropped)
       save(); if (!timer || due > Date.now() + 900) schedule(900);
