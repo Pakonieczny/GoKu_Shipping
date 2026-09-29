@@ -6,6 +6,15 @@ const {renderVariants,captionLayers,captionCopy,motionPrompt,qualityPass}=requir
  const still=await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280"><rect width="720" height="1280" fill="#dfb585"/><circle cx="360" cy="400" r="95" fill="#bd8627"/><circle cx="360" cy="292" r="26" stroke="#aa7222" fill="none" stroke-width="9"/></svg>')).jpeg().toBuffer();
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'motion-proof-')),input=path.join(dir,'source.jpg'),output=path.join(dir,'source.mp4');await fs.writeFile(input,still);await require('node:util').promisify(require('node:child_process').execFile)(require('@ffmpeg-installer/ffmpeg').path,['-y','-loop','1','-i',input,'-t','10','-r','24','-pix_fmt','yuv420p',output]);const source=await fs.readFile(output);await fs.rm(dir,{recursive:true,force:true});
  for(const format of [{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}]){for(const layer of await captionLayers(plan,format)){const {data,info}=await sharp(layer.bytes).raw().toBuffer({resolveWithObject:true});let alpha=0;for(let y=0;y<Math.floor(format.height*.70/2)*2;y++)for(let x=0;x<info.width;x++)alpha+=data[(y*info.width+x)*4+3];assert.equal(alpha,0,'captions and fade never touch the product area');}}
+ // Standard fade (renderVersion 11): the same soft, film-coloured fade in every format, holding all copy inside it.
+ {const {FADE_STOPS,FADE_SIZE}=require('../../netlify/functions/googleAdsMotionComposition');
+  for(const format of [{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}]){
+   const layers=await captionLayers({...plan,renderVersion:11,pipelineVersion:2,fadeColor:'#2f7d4a',composition:{x:.3,y:.46,w:.4,h:.3},sourceOrientation:'portrait'},format),base=layers.find(l=>l.persistent);
+   assert(base&&layers.length>=4,'v11 keeps the persistent layer and one caption per message');
+   const fade=base.fades[0],{data,info}=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true}),column=Math.round(format.width/2),alpha=y=>data[(y*info.width+column)*4+3];
+   assert.equal(base.fades.length,1);assert(Math.abs(fade.h-FADE_SIZE.top[format.key]*format.height)<=.5,format.key+' fade height is the standard fraction');
+   assert(alpha(0)<=.6*255&&alpha(0)>=FADE_STOPS[0][1]*255-3,format.key+' fade is mostly transparent at its outer edge');assert.equal(alpha(Math.round(fade.h)),0,'the fade is gone by its inner edge');
+   for(const l of layers.filter(x=>!x.persistent)){const b=l.textBox;assert(b.x>=fade.x&&b.y>=fade.y&&b.x+b.w<=fade.x+fade.w&&b.y+b.h<=fade.y+fade.h,format.key+' copy sits inside the fade');}}}
  let count=0;for(const orientation of ['portrait','landscape']){
   const rows=await renderVariants(source,orientation,plan);assert.equal(rows.length,orientation==='portrait'?2:1);
   for(const row of rows){assert(row.bytes.length>1000);assert.equal(row.frames.length,6);const same=Buffer.compare(row.frames[0],row.frames[4])===0;assert(!same,'opening and CTA frames have different captions');count++;

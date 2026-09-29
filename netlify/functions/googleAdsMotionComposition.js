@@ -1,5 +1,5 @@
 // Full-canvas video compositions. Never trade product visibility for a crop or tiny copy.
-const fs=require('fs/promises'),path=require('path'),{Resvg}=require('@resvg/resvg-js');
+const fs=require('fs/promises'),path=require('path'),{Resvg}=require('@resvg/resvg-js'),sharp=require('sharp');
 const VERSION=10,TIMES=[.05,.8,1.6,2.4,3.2,4,4.8,5.6,6.4,7.2,8.6,9.9];
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v)),xml=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function layoutRequest(job,frames,reference,orientations=['portrait','landscape']){
@@ -24,6 +24,32 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  return {bounds,notes};
 }
 const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148;
+// Standard fade (renderVersion 11 and later): one ramp and one size per format for
+// every film, independent of the copy. Opacity runs from FADE_STOPS[0] at the outer
+// screen edge, easing to 0 at the inner edge. Side fades are FADE_SIZE.side of the
+// frame width; top fades are FADE_SIZE.top[format] of the frame height.
+const FADE_STOPS=[[0,.5],[.2,.448],[.4,.324],[.6,.176],[.8,.052],[1,0]],FADE_SIZE={side:.335,top:{square:.22,landscape:.22,portrait:.20}};
+const luminance=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2];};
+const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+// Brand ink stays when it reads well on the fade colour; otherwise the clearer of brand ink and a light ink.
+function inkFor(fade,ink){if(contrast(fade,ink)>=4.5)return ink;const light='#fffaf0';return contrast(fade,light)>contrast(fade,ink)?light:ink;}
+// The film's own primary colour as '#rrggbb', from a small downscaled sample of a frame.
+// With a region ({x,y,w,h} as fractions) the default is that region's average colour; without
+// one, the dominant colour of the frame. Either is softened slightly toward the region's
+// brightness so the fade blends with the scene.
+async function primaryColour(jpeg,{region,mode}={}){
+ const {data,info}=await sharp(jpeg).resize({width:64,height:64,fit:'inside'}).removeAlpha().toColourspace('srgb').raw().toBuffer({resolveWithObject:true});
+ const w=info.width,h=info.height,r=region&&['x','y','w','h'].every(k=>Number.isFinite(region[k]))?region:{x:0,y:0,w:1,h:1},how=mode||(region?'average':'dominant');
+ const x0=clamp(Math.floor(r.x*w),0,w-1),x1=clamp(Math.ceil((r.x+r.w)*w),x0+1,w),y0=clamp(Math.floor(r.y*h),0,h-1),y1=clamp(Math.ceil((r.y+r.h)*h),y0+1,h);
+ const sum=[0,0,0],buckets=new Map();let n=0,luma=0;
+ for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const i=(y*w+x)*3,c=[data[i],data[i+1],data[i+2]],hi=Math.max(...c),lo=Math.min(...c);n++;luma+=.2126*c[0]+.7152*c[1]+.0722*c[2];
+  for(let k=0;k<3;k++)sum[k]+=c[k];
+  const key=(c[0]>>4)*256+(c[1]>>4)*16+(c[2]>>4),weight=1+2*(hi?(hi-lo)/hi:0),b=buckets.get(key)||{weight:0,sum:[0,0,0]};b.weight+=weight;for(let k=0;k<3;k++)b.sum[k]+=c[k]*weight;buckets.set(key,b);}
+ let base=sum.map(v=>v/n);
+ if(how==='dominant'){const top=[...buckets.values()].sort((a,b)=>b.weight-a.weight)[0];base=top.sum.map(v=>v/top.weight);}
+ const grey=luma/n,out=base.map(v=>Math.round(clamp(v*.88+grey*.12,0,255)));
+ return '#'+out.map(v=>v.toString(16).padStart(2,'0')).join('');
+}
 // Close the crop in until the piece fills a good share of the film, so a source
 // photo shot with a lot of empty room around it does not become a distant view.
 // It only ever tightens, and never past the margin that keeps the piece whole.
@@ -112,13 +138,25 @@ async function captions(plan,format,beats){
  }
  throw last;
 }
-async function composeTier(plan,format,beats,tier,hints){
- const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
+async function composeTier(plan,format,beats,tier,hints,only){
+ const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=plan.renderVersion>=11?inkFor(color(plan.fadeColor,color(style.background,'#fff7ee')),color(style.ink,'#30291f')):color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),wc=plan.renderVersion>=11?color(plan.fadeColor,bg):bg,gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
+ const std=plan.renderVersion>=11;
+ // Standard fade: the whole film uses one fade edge. Each candidate edge (from where the
+ // jewelry leaves room) is tried in turn and the first that holds all the copy wins.
+ if(std&&only===undefined){const names=[...new Set(g.zones.map(z=>z.name))],area=n=>Math.max(...g.zones.filter(z=>z.name===n).map(z=>z.w*z.h));if(tier.forced)names.sort((a,b)=>area(b)-area(a));let last;for(const name of names){try{return await composeTier(plan,format,beats,tier,hints,name);}catch(e){if(e.fatal)throw e;last=e;}}throw last;}
+ if(std)g.zones=g.zones.filter(z=>z.name===only);
+ const fadePad=Math.max(24,Math.round(Math.min(W,H)*.035));
+ const fadeRect=name=>{const band=g.seam?g.seam.at:0;
+  if(name==='top'||name==='header'){const h=H*FADE_SIZE.top[format.key],ext=g.seam?.edge==='top'?band:0;return {name:'top',x:0,y:0,w:W,h:h+ext,hold:ext?ext/(h+ext):0};}
+  const w=W*FADE_SIZE.side,ext=name==='left'&&g.seam?.edge==='left'?band:0;
+  return name==='left'?{name:'left',x:0,y:0,w:w+ext,h:H,hold:ext?ext/(w+ext):0}:{name:'right',x:W-w,y:0,w,h:H,hold:0};};
+ const ff=std?fadeRect(only):null,inFade=b=>b.x>=ff.x-.5&&b.y>=ff.y-.5&&b.x+b.w<=ff.x+ff.w+.5&&b.y+b.h<=ff.y+ff.h+.5;
  const persistent=plan.renderVersion>=9,logoBox={x:W*.055,y:H*.05,w:LOGO,h:LOGO/1.788},strong=hints.wash==='strong',notes=[];
  // The field fades out across its whole depth rather than stopping abruptly, so
  // it reads as light falling away instead of as a drawn edge.
  const stops=strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']];
  const gradientStops=hold=>{
+  if(std){const list=hold>0&&hold<1?[[0,1],[hold,1],...FADE_STOPS.map(([o,a])=>[hold+(1-hold)*o,a])]:FADE_STOPS;return list.map(([o,a])=>`<stop offset="${Math.round(o*1000)/1000}" stop-color="${wc}" stop-opacity="${a}"/>`).join('');}
   // Below a solid band the field must start at full strength exactly where the
   // band ends, otherwise the join reads as a cut.
   const list=hold>0&&hold<1?[[0,'1'],[hold,'1'],...stops.slice(1).map(([o,a])=>[hold+(1-hold)*o,a])]:stops;
@@ -132,9 +170,11 @@ async function composeTier(plan,format,beats,tier,hints){
   // The wordmark belongs top-left. When the jewelry reaches that corner, move it to
   // the clearest corner instead of stopping the film, and say so.
   if(g.zones.crowded||g.zones[0]?.crowded)notes.push('The jewelry fills this format, so its message sits over part of the piece; a reframed film would give the message clear space.');
+  // The wordmark sits inside the fade: mirrored to the right edge for a right fade.
+  if(std&&only==='right')logoBox.x=W-W*.055-logoBox.w;
   if(hits(logoBox)){
    const margin={x:W*.055,y:H*.05},corners=[{x:W-margin.x-logoBox.w,y:logoBox.y,at:'top right'},{x:logoBox.x,y:H-margin.y-logoBox.h,at:'bottom left'},{x:W-margin.x-logoBox.w,y:H-margin.y-logoBox.h,at:'bottom right'}];
-   const clear=corners.find(c=>!hits({...c,w:logoBox.w,h:logoBox.h}));
+   const clear=corners.find(c=>!hits({...c,w:logoBox.w,h:logoBox.h})&&(!std||inFade({...c,w:logoBox.w,h:logoBox.h})));
    if(clear){logoBox.x=clear.x;logoBox.y=clear.y;notes.push('The jewelry reaches the top-left corner, so the wordmark sits '+clear.at+' in this format.');}
    else notes.push('The jewelry fills the frame, so the wordmark overlaps it in this format; a reframed film would correct that.');
   }
@@ -145,6 +185,9 @@ async function composeTier(plan,format,beats,tier,hints){
   const clear=!(beside.x<p.x+p.w&&beside.x+beside.w>p.x&&beside.y<p.y+p.h&&beside.y+beside.h>p.y);
   const below=logoBox.y+logoBox.h+36;
   g.zones=[...(clear&&beside.w>=W*.30?[beside]:[]),...g.zones.map(z=>{const y=Math.max(z.y,below);return {...z,y,h:Math.max(0,z.y+z.h-y)};})];
+  // Copy lives entirely inside the fade, clear of its padded inner edge.
+  if(std){g.zones=g.zones.map(z=>{const l=Math.max(z.x,ff.x+fadePad),r=Math.min(z.x+z.w,ff.x+ff.w-fadePad),t=Math.max(z.y,ff.y+fadePad),b=Math.min(z.y+z.h,ff.y+ff.h-fadePad);return {...z,x:l,y:t,w:Math.max(0,r-l),h:Math.max(0,b-t)};}).filter(z=>z.w>0&&z.h>0);
+   if(!g.zones.length&&tier.forced){const l=only==='top'?Math.max(ff.x+fadePad,logoBox.x+logoBox.w+gap):ff.x+fadePad,t=ff.y+fadePad;g.zones=[{name:only==='top'?'header':only,x:l,y:t,w:Math.max(1,ff.x+ff.w-fadePad-l),h:Math.max(1,ff.y+ff.h-fadePad-t)}];}}
  }
  const widths=new Map();function measure(s,size,family){const key=[s,size,family].join('|');if(!widths.has(key)){const r=new Resvg(`<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="300"><text x="5" y="150" font-family="${family}" font-size="${size}" font-weight="600">${xml(s)}</text></svg>`,options),b=r.getBBox();if(!b?.width)throw Object.assign(Error('Caption font produced no visible text.'),{fatal:true});widths.set(key,b.width+4);}return widths.get(key);}
  function wrap(s,size,family,width,forced){const lines=[];for(const word of String(s||'').split(/\s+/).filter(Boolean)){if(measure(word,size,family)>width){if(!forced)return null;let piece='';for(const ch of word){if(measure(piece+ch,size,family)>width&&piece){lines.push(piece);piece=ch;}else piece+=ch;}if(piece)lines.push(piece);continue;}const prev=lines[lines.length-1];if(prev&&measure(prev+' '+word,size,family)<=width)lines[lines.length-1]+=' '+word;else lines.push(word);}return lines;}
@@ -174,24 +217,25 @@ async function composeTier(plan,format,beats,tier,hints){
   if(!panels.length)throw Error('The '+format.key+' scene needs more clear space for readable messaging.');
   const duration=(beat.end-beat.start)/panels.length;for(let i=0;i<panels.length;i++){panels[i].beat.start=beat.start+i*duration;panels[i].beat.end=beat.start+(i+1)*duration;prepared.push(panels[i]);}
  }
- const layers=[],washes=new Map();layers.geometry=g;layers.notes=notes;layers.truncated=prepared.some(p=>p.selected.truncated);for(const {beat,selected}of prepared){
+ const layers=[],washes=new Map();layers.geometry=g;layers.notes=notes;if(std){layers.fadeColor=wc;layers.ink=ink;}layers.truncated=prepared.some(p=>p.selected.truncated);for(const {beat,selected}of prepared){
   const {zone,size,title,support,height,brand,labelHeight}=selected,x=zone.x,y=zone.name==='header'?zone.y+Math.max(0,(logoBox.h-height)/2):zone.name==='top'?zone.y:zone.y+(zone.h-height)/2,baseline=y+labelHeight+size*.8;
-  const rect=header(zone.name)?{x:0,y:0,w:W,h:y+height+18}:{x:zone.name==='left'?0:x-24,y:0,w:zone.w+zone.x*(zone.name==='left'?1:0)+24,h:H};
+  const fr=std?fadeRect(zone.name):null,rect=std?fr:header(zone.name)?{x:0,y:0,w:W,h:y+height+18}:{x:zone.name==='left'?0:x-24,y:0,w:zone.w+zone.x*(zone.name==='left'?1:0)+24,h:H};
   // Wash is local to copy; its last transparent edge ends before protected jewelry.
-  const gradient=header(zone.name)?vertical:zone.name==='left'?'x1="0" y1="0" x2="1" y2="0"':'x1="1" y1="0" x2="0" y2="0"';
+  const gradient=std?(fr.name==='top'?vertical:fr.name==='left'?'x1="0" y1="0" x2="1" y2="0"':'x1="1" y1="0" x2="0" y2="0"'):header(zone.name)?vertical:zone.name==='left'?'x1="0" y1="0" x2="1" y2="0"':'x1="1" y1="0" x2="0" y2="0"';
   let text=persistent?'':branded&&brand?`<svg x="${x}" y="${y}" width="${Math.min(220,zone.w)}" height="${labelHeight-16}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg>`:brand?`<text x="${x}" y="${y+labelSize}" font-family="Open Sans" font-size="${labelSize}" letter-spacing="3" fill="${ink}">BRITES JEWELRY</text>`:'';
   text+=title.map((t,i)=>`<text x="${x}" y="${baseline+i*size*1.02}" font-family="${font}" font-weight="600" font-size="${size}" fill="${ink}">${xml(t)}</text>`).join('');
   const sy=baseline+(title.length-1)*size*1.02+size*.23+24;
   text+=support.map((t,i)=>`<text x="${x}" y="${sy+supportSize+i*supportSize*1.2}" font-family="Open Sans" font-size="${supportSize}" fill="${ink}">${xml(t)}</text>`).join('');
   text+=`<path d="M ${x} ${y+height} h ${Math.min(86,zone.w*.18)}" fill="none" stroke="${gold}" stroke-width="3"/>`;
-  if(persistent){const prior=washes.get(zone.name);if(!prior||rect.w*rect.h>prior.rect.w*prior.rect.h)washes.set(zone.name,{rect,gradient});}
+  if(persistent){const key=std?fr.name:zone.name,prior=washes.get(key);if(!prior||rect.w*rect.h>prior.rect.w*prior.rect.h)washes.set(key,{rect,gradient,...(std?{hold:fr.hold}:{})});}
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><defs><linearGradient id="wash" ${gradient}>${ramp}</linearGradient></defs>${persistent?'':`<rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#wash)"/>`}${text}</svg>`;
-  layers.push({...beat,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),fontSize:size,zone,product:g.product});
+  layers.push({...beat,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),fontSize:size,zone,product:g.product,...(std?{fade:fr,textBox:{x,y,w:zone.w,h:height}}:{})});
  }
  if(persistent){
   // A band join is absorbed into the field that already covers that edge, so the
   // film never shows two fading areas or a line between them.
-  if(g.seam){
+  if(g.seam&&std){const k=g.seam.edge==='top'?'top':'left',fr=fadeRect(k);washes.set(k,{rect:fr,gradient:k==='top'?vertical:'x1="0" y1="0" x2="1" y2="0"',hold:fr.hold});}
+  if(g.seam&&!std){
    const reach=g.seam.at+Math.round((g.seam.edge==='top'?H:W)*.14),vertically=g.seam.edge==='top';
    const covering=[...washes.entries()].filter(([name])=>vertically?header(name):name==='left');
    if(covering.length)for(const [,field]of covering){const span=Math.max(vertically?field.rect.h:field.rect.w,reach);field.rect=vertically?{x:0,y:0,w:W,h:span}:{x:0,y:0,w:span,h:H};field.hold=g.seam.at/span;}
@@ -199,8 +243,8 @@ async function composeTier(plan,format,beats,tier,hints){
   }
   const wash=[...washes.values()].map(({rect,gradient,hold},i)=>`<defs><linearGradient id="base${i}" ${gradient}>${gradientStops(hold||0)}</linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
   const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
-  layers.unshift({start:0,end:10,persistent:true,logoBox,bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
+  layers.unshift({start:0,end:10,persistent:true,logoBox,...(std?{fades:[...washes.values()].map(w=>({...w.rect}))}:{}),bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
  }
  return layers;
 }
-module.exports={VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};
+module.exports={FADE_STOPS,FADE_SIZE,primaryColour,inkFor,VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};

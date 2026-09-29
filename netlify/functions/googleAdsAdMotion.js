@@ -10,6 +10,8 @@ function cropFilter(width,height,zoom=1){const z=Math.max(1,Math.min(1.08,Number
 async function renderVariants(bytes,orientation,plan={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brites-motion-'));try{
   const photoMotion=String(plan.motionMode||'').startsWith('photograph'),closeFrame=plan.motionMode==='photograph-close',input=path.join(dir,photoMotion?'source.jpg':'source.mp4');await fs.writeFile(input,bytes);const out=[];
+  // Standard fade (renderVersion 11+): one primary colour per master, shared by every format cut from it.
+  if(plan.renderVersion>=11&&!photoMotion&&!/^#[a-f0-9]{6}$/i.test(plan.fadeColor||'')){const shot=path.join(dir,'fade_sample.jpg');await ffmpeg(['-y','-ss','3','-i',input,'-frames:v','1','-vf','scale=160:160:force_original_aspect_ratio=decrease',shot]);plan={...plan,fadeColor:await composition.primaryColour(await fs.readFile(shot),{mode:'dominant',...(orientation==='square'?{region:{x:.21875,y:0,w:.5625,h:1}}:{})})};}
   for(const device of ['mobile','desktop'])for(const format of policy.video.formats){
    if(plan.pipelineVersion>=2&&device!==(format.key==='landscape'?'desktop':'mobile'))continue;
    if((format.key==='portrait'?'portrait':format.key==='landscape'?'landscape':plan.squareMaster||(device==='mobile'?'portrait':'landscape'))!==orientation)continue;
@@ -23,7 +25,7 @@ async function renderVariants(bytes,orientation,plan={}){
    const fullCanvas=plan.renderVersion>=5&&!photoMotion;
    // Captions are planned before the base clip so the crop, band and text share one geometry.
    const planned=fullCanvas&&plan.pipelineVersion>=2?await captionLayers({...plan,sourceOrientation:orientation},format):null,geo=fullCanvas?(planned?.geometry||composition.geometry(format,plan.composition,orientation)):null;
-   const bgColor='0x'+(/^#[a-f0-9]{6}$/i.test(plan.style?.background||'')?plan.style.background.slice(1):'f7f2ea');
+   const bandSource=plan.renderVersion>=11&&plan.fadeColor?plan.fadeColor:plan.style?.background,bgColor='0x'+(/^#[a-f0-9]{6}$/i.test(bandSource||'')?bandSource.slice(1):'f7f2ea');
    const fullFilter=geo?(geo.mode==='band'?`crop=trunc(iw*${geo.crop.w}/2)*2:trunc(ih*${geo.crop.h}/2)*2:trunc(iw*${geo.crop.x}/2)*2:trunc(ih*${geo.crop.y}/2)*2,scale=${geo.hero.w}:${geo.hero.h},pad=${format.width}:${format.height}:${geo.hero.x}:${geo.hero.y}:color=${bgColor},setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`:`crop=trunc(iw*${geo.crop.w}/2)*2:trunc(ih*${geo.crop.h}/2)*2:trunc(iw*${geo.crop.x}/2)*2:trunc(ih*${geo.crop.y}/2)*2,scale=${format.width}:${format.height},setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`):null;
    const safeFilter=!fullCanvas&&plan.renderVersion>=3&&!photoMotion?`[0:v]split=2[bg][hero];[bg]scale=16:16,boxblur=4:3,scale=${format.width}:${format.height}[back];[hero]scale=${format.width}:${Math.floor(format.height*.70/2)*2}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(${Math.floor(format.height*.70/2)*2}-h)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`:null;
    await ffmpeg(['-y','-i',input,...(safeFilter?['-filter_complex',safeFilter]:['-vf',fullFilter||filter]),'-t',String(SECONDS),'-an','-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart','-metadata','comment='+(photoMotion?'Photograph motion':'AI-generated product video')+'; Brites Jewelry',file]);
