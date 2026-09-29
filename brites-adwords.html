@@ -1065,6 +1065,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
           <div class="field"><label for="cStep">Max budget move per cycle</label><div class="range"><input type="range" id="cStep" min="5" max="20" step="5"><span class="rngval" id="cStepV"></span></div><p class="fhint">Each budget move waits for you in Approvals.</p></div>
           <div class="field"><label for="cRoas">Target ROAS</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div><p class="fhint">Used by Smart Bidding and budget moves. Auto maximises conversion value without a target.</p></div>
           <div class="field"><label for="creativeBudget">Image allowance per draft · USD</label><div class="frow"><input type="number" id="creativeBudget" min="1" max="30" step="1"><button type="button" class="btn ghost sm" id="creativeBudgetSave">Save</button></div><p class="fhint">Estimated image cost. Copy and quality reviews are billed separately.</p></div>
+          <div class="field"><label for="cCutoff">Order cutoff before a gift date · days</label><div class="frow"><input type="number" id="cCutoff" min="0" max="30" step="1"><button type="button" class="btn ghost sm" id="cCutoffSave">Save</button></div><p class="fhint">Dated campaigns end this many days before the occasion: the last day an order can still arrive in time. Used by new research and drafts.</p></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
           <div class="card__h"><h3>Run now</h3><span class="sub" id="runNote"></span></div>
@@ -3351,7 +3352,8 @@ function researchCheckChannel(x){if(['search','pmax','shared'].includes(x.channe
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
-  return function(a,b){return ((b.o.rank||b.o.score||0)-(a.o.rank||a.o.score||0));};
+  // Launchable ideas first, as the engine ranks them: one that cannot launch (a forecast loss, too little evidence) never tops Best match.
+  return function(a,b){var ra=a.o.eligibility&&a.o.eligibility.ready?1:0,rb=b.o.eligibility&&b.o.eligibility.ready?1:0;return (rb-ra)||((b.o.rank||b.o.score||0)-(a.o.rank||a.o.score||0));};
 }
 var oppOverride={}; // per-opportunity {maxCpc, smart} overrides of the global defaults, keyed by tag so a re-sort or delete never moves an edit to another card
 function oppKey(i){ var o=OPPS[i]; return o&&o.tag?String(o.tag):'#'+i; }
@@ -3373,7 +3375,7 @@ function oppBlock(o){ var x=oppExpiry(o),el=o.eligibility||{},n=Number(el.measur
   if(!el.ready&&!stale)gap=('expectedSales' in el)&&why?why:(n<4?('Only '+n+' of the 4 required keywords have measured Google search volume, so this is not ready for a paid test.'):'The account budget ceiling, or its budget currency check, leaves no room for this test yet.');
   // Stale research blocks every card; the lane header already says so, so a card only adds its own evidence gap.
   if(stale||researchNeedsRefresh('search'))return {kind:'refresh',label:'Refresh research first',text:gap,toast:'Refresh Search research before creating a draft.'};
-  if(!el.ready)return {kind:'evidence',label:/measured Google search/i.test(gap)?'Needs more evidence':/expected sale/i.test(gap)?'Too few expected sales':/headroom|ceiling/i.test(gap)?'Needs budget room':/currency/i.test(gap)?'Currency unverified':'Not ready yet',text:gap||'The research does not support a paid test yet.'};
+  if(!el.ready)return {kind:'evidence',label:/measured Google search/i.test(gap)?'Needs more evidence':/expected sale/i.test(gap)?'Too few expected sales':/headroom|ceiling/i.test(gap)?'Needs budget room':/currency/i.test(gap)?'Currency unverified':/break-even/i.test(gap)?'Forecast below break-even':'Not ready yet',text:gap||'The research does not support a paid test yet.'};
   return null; }
 function oppCpd(n){ n=Number(n)||0; return n<10?String(Math.round(n*10)/10):Math.round(n).toLocaleString(); }
 function oppCpdLine(pr){ return '≈'+oppCpd(pr.cpd)+' clicks/day '+(pr.limited?'(the most measured searches supply)':'at the expected CPC'); }
@@ -4095,6 +4097,7 @@ function renderControls(){var c=DASH.control||{};$("#growthCurrency").textConten
   $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">None set</span>';
   var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());
   ctrlField($("#cMonthly"),(c.maxMonthlySpend&&+c.maxMonthlySpend>0)?(+c.maxMonthlySpend):"");
+  ctrlField($("#cCutoff"),c.orderCutoffDays!=null?c.orderCutoffDays:7);
   // The background worker skips these tasks while scheduled automation is off.
   var rn=$("#runNote");if(rn)rn.textContent=c.enabled?"Runs in the background; drafts wait in Approvals":"Greyed-out tasks need scheduled automation on";
   $$("#v-controls .runTask").forEach(function(b){if(!b.classList.contains("is-busy"))b.disabled=!c.enabled;});
@@ -4127,6 +4130,8 @@ function bindControlsOnce(){
     return {patch:{maxMonthlySpend:n},shown:n>0?String(n):"",verb:"Saving monthly stop threshold",ok:n>0?"Monthly stop threshold set to USD "+n:"Monthly stop threshold off",fail:"Monthly stop threshold not saved"};});
   numSave("creativeBudget",function(raw){var n=Number(raw);if(raw===""||!(n>0))return {error:"Enter an image allowance from 1 to 30."};n=Math.min(30,Math.max(1,n));
     return {patch:{creativeBudgetUsd:n},shown:String(n),verb:"Saving image allowance",ok:"Image allowance set to USD "+n+" per draft",fail:"Image allowance not saved"};});
+  numSave("cCutoff",function(raw){var n=Number(raw);if(raw===""||!(n>=0&&n<=30))return {error:"Enter a whole number of days from 0 to 30."};n=Math.round(n);
+    return {patch:{orderCutoffDays:n},shown:String(n),verb:"Saving order cutoff",ok:"Order cutoff set to "+n+" day"+(n===1?"":"s")+" before a gift date",fail:"Order cutoff not saved"};});
   var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),requireOne:true,title:"Default countries",subtitle:"Every new draft starts with these. You can still change them per draft or campaign.",onSave:async function(ids,done,fail){
     try{var r=await saving("setControl",{verb:"Saving default countries"},function(){return api("setControl",{patch:{defaultCountries:ids}});});if(r&&r.error)throw new Error(r.error);
       if(DASH&&DASH.control)DASH.control.defaultCountries=ids.slice();var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(ids);done();toast("Default countries saved",true);reload();}
