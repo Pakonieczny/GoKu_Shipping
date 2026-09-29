@@ -8150,10 +8150,16 @@ const Review = window.Review = (() => {
      Options, a decision answered under Completed…) acts for the order it shows, its first item: Print QR label and
      Complete Order (CustomPrint), the order's own .ai / .dxf designs and Send to Sheet (CustomSheet), the very code a
      custom card runs. Its question is never skipped in silence: the line leaves Review as a custom one does, and the
-     answer is recorded with who gave it (the order timeline; a send also under Completed). Since 29 Sep 00:38 it has no
+     answer is recorded with who gave it (the order timeline; a send is never listed under Completed). Since 29 Sep 00:38 it has no
      "Review & resolve": the SKU is fixed (its question answered) in the order window a click on the card opens. ── */
   const actItems = new Map();
   const HOW_WORDS = { print: "QR label printed · completed by hand", button: "completed by hand (Complete Order)", sheet: "sent to the sheets with the order's own designs" };
+  /** A record of a line sent to the sheets from a Review card (Send to Sheet). Paul, 29 Sep: "None of the orders that are
+   *  Send to Sheet from the review tab should appear under the completed tab": Completed holds what was finished by hand
+   *  (Complete Order, a QR label printed) and the decisions answered, never a send. None is written now; the ones already
+   *  kept in the workspace (the older wording carries no flag) stay there, whole, and are only left out of the list, so a
+   *  reload shows Completed without them and nothing is deleted. */
+  const sentToSheet = d => !!d && (d.how === "sheet" || d.why === HOW_WORDS.sheet);
   /** The item a card's custom buttons act on (src: a decision, or { row, kind } for one answered), or null. */
   function actOf(src, answeredAs) {
     const row0 = src && (src.row || rowsOf(src)[0]); if (!row0 || !row0.order || !row0.spec || src.kind === "customOrder") return null;
@@ -8169,8 +8175,7 @@ const Review = window.Review = (() => {
       onDone: answeredAs ? null : (who, how) => {
         // every question these lines still ask is answered by it, each recorded with who (tlSettle, once it has left them)
         for (const r of rows) for (const k of new Set([kind, ...(r.problems || []).map(p => p.kind)])) answered({ kind: k, rows: [r] }, "decided", HOW_WORDS[how] || how, { how, completed: how !== "sheet" }, who);
-        // sent: nothing of it shows under Completed otherwise (a completion has its own card there, with its seal)
-        if (how === "sheet") { settled.unshift({ key: String(src.key) + ":" + rid, row: rows[0], kind, why: HOW_WORDS.sheet, lines: rows.length, orders: [rid], by: who, t: Date.now() }); if (settled.length > 200) settled.length = 200; }
+        // (a send leaves nothing under Completed: it goes to the sheets, and its answer stays on the order's timeline above)
       } });
     return x;
   }
@@ -8361,7 +8366,7 @@ const Review = window.Review = (() => {
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
     const doneAt = it => it.settled ? it.settled.t || 0 : (it.record && Math.max(+it.record.lastPrintedAt || 0, +it.record.completedAt || 0, +it.record.printedAt || 0)) || 0;
-    const finished = cl.done.concat(settled.filter(d => !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
+    const finished = cl.done.concat(settled.filter(d => !sentToSheet(d) && !(d.kind === "customOrder" && openCustom.has(String(d.key).slice(4)))).map(d => ({ key: "settled:" + d.key + ":" + d.t, kind: d.kind, settled: d }))).sort((a, b) => doneAt(b) - doneAt(a));
     const alive=new Set(all.concat(cl.open, cl.done).map(it=>it.key));for(const key of reviewRows.keys())if(!alive.has(key))reviewRows.delete(key);
     // the kinds present are the filter: one chip each, so a long mixed list becomes the one kind being worked through
     const byKind = new Map(); for (const it of all) byKind.set(tabOf(it), (byKind.get(tabOf(it)) || 0) + 1);
