@@ -9226,10 +9226,10 @@ async function materializeReviewedCreative(it) {
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
   const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
-  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&o.adGroupAssetOperation.create.fieldType==="IMAGE"));
+  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&["AD_IMAGE","IMAGE"].includes(o.adGroupAssetOperation.create.fieldType)));
   clean.unshift(...imageBuild.ops);
   for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
-  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"IMAGE"}}}));
+  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"AD_IMAGE"}}}));
   return clean;
 }
 
