@@ -73,7 +73,7 @@ async function sweep(jobs, retryAnswers) {
     throw new Error(`unexpected ${payload.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${sweepBranch} })()`, {
-    ...lib, kind: "batch_sweep", getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
+    ...lib, kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" }, FieldValue: { serverTimestamp: () => 1 } } },
     module: { exports: { handler } }, json: (statusCode, body) => ({ statusCode, ...body }),
