@@ -9256,8 +9256,9 @@ function _putCreativeCopy(payload, groups) {
   }
 }
 // Google’s LOGO slot shows the official Brites square logo, never redrawn lettering (brites-brand-assets).
-// White canvas keeps the black script visible on dark placements; 600x600 matches every caller’s saved size.
-function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="600" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#ffffff"/><image width="1024" height="1024" xlink:href="'+require('../../brites-brand-assets').dataUrl('brites_brand_square')+'"/></svg>';}
+// White canvas keeps the black script visible on dark placements; 1024x1024 is the official artwork's own
+// size (sharp, never enlarged) and matches every caller’s saved size. Older 600x600 logos keep publishing.
+function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#ffffff"/><image width="1024" height="1024" xlink:href="'+require('../../brites-brand-assets').dataUrl('brites_brand_square')+'"/></svg>';}
 async function _saveCreativeAsset(id, bytes, kind, info={}) {
   const f=fb();if(!f)throw new Error("Creative storage is unavailable.");
   const bucket=f.admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);
@@ -9392,7 +9393,7 @@ Lead with the physical jewellery and its meaning. Premium, inviting, specific, c
     if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo) {
       const sharp=require("sharp");
       const svg=_brandWordmarkSvg();
-      pkg.logo=await _saveCreativeAsset(id,await sharp(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_wordmark",{width:600,height:600,kind:"Brites wordmark"});
+      pkg.logo=await _saveCreativeAsset(id,await sharp(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_wordmark",{width:1024,height:1024,kind:"Brites wordmark"});
     }
     payload.meta=payload.meta||{};if(pkg.groups.some(g=>g.channel==="pmax")){payload.meta.assetMode="reviewed-custom";payload.meta.images=pkg.groups.filter(g=>g.channel==="pmax").length*3;}
     pkg.payloadHash=creativeHash(payload);pkg.sourceHash=pkg.payloadHash;pkg.phase="ready";pkg.progress={pct:100,label:"Ready for your visual review"};pkg.error=null;pkg.inFlight=null;
@@ -9581,7 +9582,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
   if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
     const svg=_brandWordmarkSvg();
-    pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:600,height:600,kind:"brand logo"});
+    pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:1024,height:1024,kind:"brand logo"});
   }}
   if(pkg.logo)result.logo=pkg.logo;
   payload.meta={...(payload.meta||{}),adDesignWorkspaceId:workspaceId};pkg={...pkg,schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,phase:ready?"ready":"paused",progress:{pct:ready?100:Math.round(pkg.groups.length/allGroups.length*90),label:ready?"Every ad group is ready for your exact review":"Design the remaining ad groups to complete this proposal"},sourceHash:creativeHash(payload),payloadHash:ready?creativeHash(payload):null,review:null,designJobs:[...new Set([...(pkg.designJobs||[]),jobId])],designWorkspaceId:workspaceId};
@@ -9630,9 +9631,11 @@ function _motionEngine(){
 async function startAdDesignMotion(input){return _motionEngine().start(input);}
 async function adDesignMotionStatus(input){
   const out=await _motionEngine().status(input);
-  // New-ad films have no Google group until the ad is published; say where they will attach.
-  if(!out?.ok||!out.jobId||out.publication?.target||new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(input.groupRef||'')))return out;
+  // Before an upload exists, say where the films will attach: the paused campaign a publication
+  // created from this ad, or nowhere yet for a new ad (it has no Google group until published).
+  if(!out?.ok||!out.jobId||out.publication)return out;
   const t=await _motionFilmBinding(out.workspaceId||input.workspaceId,input.productId,input.groupRef);
+  if(!t&&new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(input.groupRef||'')))return out;
   return {...out,attachTarget:t?{campaignId:String(t.campaignId),groupRef:t.assetGroupRef}:null,attachNote:t?'These films attach to paused campaign '+t.campaignId+', created when this ad was published. Approve their upload to attach them; the campaign stays paused.':'Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.'};
 }
 async function runAdDesignMotion(input){return _motionEngine().run(input);}
@@ -9726,15 +9729,15 @@ function _motionPublication(){
 async function startAdMotionPublication(input){if(input.target==='merchant')return input.merchantReviewHash?_motionPublication().publishMerchant(input):_motionPublication().prepareMerchant(input);return _motionPublication().start(input);}
 async function runAdMotionPublication(input){return _motionPublication().run(input);}
 async function verifyAdMotionPublication(input){return _motionPublication().verify(input);}
-// A new-ad workspace has no Google group until its ad is published. Publication binds the
-// product's films to the paused asset group it created (one binding per product scope).
+// A campaign-creating publication binds the product's films to the paused asset group it created
+// (one binding per product scope, the latest wins). A new-ad workspace has no other Google group.
 function _motionFilmBindingRef(workspaceId,productId,groupRef){return _adDesignWorkspaceRef(workspaceId).collection('motionTargets').doc('target_'+creativeHash({productId:String(productId||'').match(/(\d+)$/)?.[1]||String(productId||''),groupRef:String(groupRef||'')}).slice(0,40));}
 async function _motionFilmBinding(workspaceId,productId,groupRef){const s=await _motionFilmBindingRef(workspaceId,productId,groupRef).get(),t=s.exists?s.data():null;return t&&t.groupRef===groupRef&&new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(t.assetGroupRef||''))&&/^\d+$/.test(String(t.campaignId||''))?t:null;}
 async function _motionFilmTarget(job){
-  if(new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(job.groupRef||'')))return null;
   const t=await _motionFilmBinding(job.workspaceId,job.productId,job.groupRef);
-  if(!t)throw Error('Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.');
-  return {campaignId:String(t.campaignId),groupRef:t.assetGroupRef};
+  if(t)return {campaignId:String(t.campaignId),groupRef:t.assetGroupRef};
+  if(new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(job.groupRef||'')))return null;
+  throw Error('Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.');
 }
 async function _latestMotionJob(ref,productId,groupRef){const rows=await ref.collection('motionJobs').get();return rows.docs.map(d=>d.data()).filter(j=>String(j.productId)===String(productId)&&j.groupRef===groupRef&&!j.resetAt).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt))[0]||null;}
 function _motionFilmsReady(job){try{return !!job&&job.phase==='ready'&&job.letteringBlocked!==true&&job.quality?.footageLettering!==true&&require('./googleAdsAdMotion').qualityPass(job.quality)&&!!require('./googleAdsMotionPublication').reviewHash(job);}catch(e){return false;}}
@@ -9743,7 +9746,7 @@ function _motionFilmCopyMatches(job,copy){const set=a=>JSON.stringify([...new Se
 function _motionFilmNote(job,copy){
   if(!job)return 'This product has no animated films yet. Google may show its own video in the paused campaign; generate films in Animated ads and approve their upload before enabling it.';
   if(!_motionFilmsReady(job))return ['queued','running'].includes(job.phase)?'This product’s animated films are still being made. When they pass review, approve their upload in Animated ads to attach them to the paused campaign before enabling it.':'This product’s animated films have not passed review yet. Fix them in Animated ads, then approve their upload to attach them to the paused campaign.';
-  if(job.publication)return 'This product’s films already have a Google upload. Open Animated ads to see where they are attached.';
+  if(job.publication)return 'This product’s films already have their own Google upload, so they are not added to this new campaign. Open Animated ads to see where they are attached.';
   if(!_motionFilmCopyMatches(job,copy))return 'This product’s films were made with different messaging, so they are not attached. Re-run the animation with this messaging to add films.';
   return '';
 }
@@ -9752,7 +9755,6 @@ async function _motionFilmPlan(ref,product,groupRef,copy){const job=await _lates
 // asset group and queue the same reviewed upload -> validate -> attach flow. Only films whose exact
 // review was part of the confirmed publication start automatically; nothing is ever enabled.
 async function _attachPublishedFilms({workspaceId,product,groupRef,campaignIds,approved,copy,source}){
-  if(new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(groupRef||'')))return {message:''};
   try{
     const ids=[...new Set((campaignIds||[]).map(String).filter(id=>/^\d+$/.test(id)))];
     const groups=(ids.length?await gaql(`SELECT campaign.id, asset_group.resource_name, asset_group.final_urls FROM asset_group WHERE campaign.id IN (${ids.join(',')}) AND asset_group.status != 'REMOVED'`):[]).filter(r=>(r.assetGroup?.finalUrls||[]).length===1&&r.assetGroup.finalUrls[0]===product.url);
@@ -10036,16 +10038,17 @@ async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result
   if(!_copyValid(result.copy,true))throw new Error('Complete the headlines and descriptions before publication.');
   const ref=_adDesignWorkspaceRef(workspaceId),approvalId='design-'+id,ap=fb().db.collection(COL.approvals).doc(approvalId);
   const guard=async tx=>{const row=await tx.get(ref);if(!row.exists||_adDesignSelectionHash(row.data())!==sourceHash||row.data().job?.inFlight||row.data().job?.leaseUntil>Date.now())throw new Error('The design changed during publication preparation. Review it again.');return row.data();};
-  const prior=await ap.get();if(prior.exists&&prior.data().creative?.publicationSourceHash===sourceHash&&prior.data().creative?.logoRenderer==='paths-v1')return approvalId;
+  // A prepared approval keeps its reviewed logo: older 600 px 'paths-v1' ones are reused, never re-prepared.
+  const prior=await ap.get();if(prior.exists&&prior.data().creative?.publicationSourceHash===sourceHash&&['paths-v1','square-1024-v1'].includes(prior.data().creative?.logoRenderer))return approvalId;
   const itemIds=(product.offerIds||[product.itemId]).filter(id=>(w.context.itemIds||[]).some(i=>String(i).toLowerCase()===String(id).toLowerCase()));
   if(!itemIds.length)throw new Error('This product has no verified Merchant offer in the selected opportunity.');
   await generatePmaxApproval({...w.context,itemIds,productTitles:[product.title],searchThemes:[product.title.toLowerCase()]},{combinedCreativeGroup:true,productDestination:product.url,productTitle:product.title,reviewedAdCopy:result.copy,approvalId,designId:id,guard});
   const saved=await ap.get(),item=saved.data(),groups=_creativeGroups(item);
   if(groups.length!==1)throw new Error('This publication must contain exactly one product group.');
   const svg=_brandWordmarkSvg();
-  const logo=await _saveCreativeAsset(workspaceId,await require('sharp')(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),'brand_logo',{width:600,height:600,kind:'brand logo'});
+  const logo=await _saveCreativeAsset(workspaceId,await require('sharp')(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),'brand_logo',{width:1024,height:1024,kind:'brand logo'});
   const payload={...item.payload,meta:{...item.payload.meta,adDesignWorkspaceId:workspaceId}},payloadHash=creativeHash(payload);
-  const creative={schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,phase:'ready',sourceHash:payloadHash,payloadHash,publicationSourceHash:sourceHash,logoRenderer:'paths-v1',designWorkspaceId:workspaceId,designJobs:[id],logo,review:null,groups:[{...groups[0],copy:result.copy,assets:result.assets,placementAssets:result.placementAssets,productIds:[product.id],sourceTitle:product.title,sourceUrl:product.url,brief:result.brief,review:{pass:false,operatorReviewRequired:true,method:'Exact images, copy and destination require operator review'},copyReview:{pass:true,provider:'saved messaging',researchHash:w.messaging?.evidenceHash||null}}]};
+  const creative={schema:CREATIVE_SCHEMA,engineBuild:ENGINE_BUILD,phase:'ready',sourceHash:payloadHash,payloadHash,publicationSourceHash:sourceHash,logoRenderer:'square-1024-v1',designWorkspaceId:workspaceId,designJobs:[id],logo,review:null,groups:[{...groups[0],copy:result.copy,assets:result.assets,placementAssets:result.placementAssets,productIds:[product.id],sourceTitle:product.title,sourceUrl:product.url,brief:result.brief,review:{pass:false,operatorReviewRequired:true,method:'Exact images, copy and destination require operator review'},copyReview:{pass:true,provider:'saved messaging',researchHash:w.messaging?.evidenceHash||null}}]};
   await fb().db.runTransaction(async tx=>{await guard(tx);const current=await tx.get(ap);if(current.data().status!=='PENDING'||creativeHash(current.data().payload)!==creativeHash(item.payload))throw new Error('The proposal changed during preparation.');tx.update(ap,{payload,creative,vetted:false});});return approvalId;
 }
 async function prepareAdDesignPublication({workspaceId,target='ads',formats=[],includeCopy=false,includeProductDestination=false,offerId=null,merchantIdentity=null,queueOnly=false}={}){
@@ -10155,7 +10158,7 @@ async function publishAdDesignSubmission(input={}){
   await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||_adDesignSelectionHash(workspace.data())!==item.sourceHash)throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
   const result=await applyApproval(id,await control());
   // The new paused Performance Max group receives the product's reviewed films; never throws after creation.
-  const films=result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length?await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:(await ref.get()).data()?.publishedCampaignIds||[],approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}}):null;
+  const films=result.status==='APPLIED'&&plan.summary.styles.includes('pmax')&&!(plan.summary.videoLinks||[]).length?await _attachPublishedFilms({workspaceId:r.workspaceId,product,groupRef:r.groupRef,campaignIds:await ref.get().then(s=>s.data()?.publishedCampaignIds||[],()=>[]),approved:plan.payload.meta?.motion||null,copy:r.copy,source:{kind:'campaign_styles',id}}):null;
   return {...result,message:(result.status==='APPLIED'?'Selected campaigns were created paused. Google policy review and serving are checked separately.':'Google validated the selected campaigns; dry-run mode kept them unpublished.')+(films&&films.message?' '+films.message:''),motionPublication:films&&films.publication||null};
 }
 async function _prepareCampaignStyles({item,context,choice,identity}){
@@ -10171,7 +10174,7 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     photos.push(await add(asset,shape));
   }
   let logo=null;
-  if(photos.length){const bytes=await require('sharp')(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();logo=(await add(await _saveCreativeAsset(workspaceId,bytes,'pipeline_logo',{width:600,height:600,kind:'brand logo'}),'logo')).resourceName;}
+  if(photos.length){const bytes=await require('sharp')(Buffer.from(_brandWordmarkSvg())).jpeg({quality:95}).toBuffer();logo=(await add(await _saveCreativeAsset(workspaceId,bytes,'pipeline_logo',{width:1024,height:1024,kind:'brand logo'}),'logo')).resourceName;}
   const videoRefs=[],videoLinks=[];let films=null;
   if(choice.styles.some(s=>s!=='fixed_display')){
     const job=await _latestMotionJob(_adDesignWorkspaceRef(workspaceId),product.id,r.groupRef);
@@ -10179,7 +10182,7 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
       for(const v of job.publication.videos||[]){if(v.state!=='PROCESSED'||!/^[a-zA-Z0-9_-]{11}$/.test(v.videoId||''))continue;const resourceName=`customers/${CID}/assets/${next--}`;ops.push({assetOperation:{create:{resourceName,name:product.title.slice(0,60)+' '+v.key,youtubeVideoAsset:{youtubeVideoId:v.videoId}}}});videoRefs.push(resourceName);videoLinks.push('https://www.youtube.com/watch?v='+v.videoId);}
     }
     // Films not yet on YouTube attach to the new paused Performance Max group once Google creates it.
-    if(!videoLinks.length&&choice.styles.includes('pmax')&&!new RegExp('^customers/'+CID+'/assetGroups/\\d+$').test(String(r.groupRef)))films=await _motionFilmPlan(_adDesignWorkspaceRef(workspaceId),product,r.groupRef,r.copy);
+    if(!videoLinks.length&&choice.styles.includes('pmax'))films=await _motionFilmPlan(_adDesignWorkspaceRef(workspaceId),product,r.groupRef,r.copy);
   }
   const fixed=[];
   if(choice.styles.includes('fixed_display')){
