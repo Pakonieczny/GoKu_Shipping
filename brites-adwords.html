@@ -248,7 +248,7 @@ input[type=range]{flex:1;accent-color:var(--gold)}
 .rngval{font-family:var(--mono);font-size:14px;font-weight:600;width:74px;text-align:right}
 
 /* toast */
-.toasts{position:fixed;bottom:22px;right:22px;z-index:100;display:flex;flex-direction:column;gap:9px}
+.toasts{position:fixed;bottom:22px;right:22px;z-index:100;display:flex;flex-direction:column;gap:9px;pointer-events:none}
 .toast{background:var(--velvet);color:#f4ecdc;padding:12px 16px;border-radius:11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);display:flex;align-items:center;gap:10px;animation:tin .25s ease;max-width:330px;border:1px solid var(--velvet-line)}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold-2);flex:0 0 8px}
 .toast.ok .d{background:var(--sage)}
@@ -412,7 +412,7 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 
 .gatewrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:24px}
 /* Visually hidden but present for assistive tech and password managers. */
-.vh{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.vh{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0!important}
 
 .signin{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);width:min(100%,980px);
   background:var(--card);border:1px solid var(--line);border-radius:22px;overflow:hidden;
@@ -640,8 +640,8 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .oppDefaults{display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:13px}.oppDefault{display:flex;align-items:center;gap:11px;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.oppDefault>span:first-child{font-size:11px;font-weight:700;color:var(--ink-70);white-space:nowrap}.oppDefault:last-child{justify-content:flex-end}.oppPlaybook{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--card)}.oppPlaybookHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}.oppPlaybookHead h4{margin:0;font-size:12.5px}.oppPlaybookHead .sub{margin-left:auto;font-size:10.5px;color:var(--ink-45)}
 .oppResultsStage{display:flex;flex-direction:column}.oppChannel{margin-bottom:16px;border:1px solid var(--line);border-radius:15px;background:var(--card);overflow:hidden;box-shadow:var(--sh)}.oppChannelHead{display:flex;align-items:center;gap:12px;padding:15px 16px;border-bottom:1px solid var(--line-2)}.oppChannelIcon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--gold-soft);color:#7a5a1d;font-weight:800;flex:0 0 34px}.oppChannelHeadText{min-width:0;flex:1}.oppChannelHeadText .eyebrow{font-size:9px}.oppChannelHead h3{font-size:14px;margin:1px 0 0}.oppChannelHead p{font-size:11.5px;color:var(--ink-45);margin:2px 0 0}.oppChannelCount{padding:4px 9px;border-radius:999px;background:var(--paper-2);color:var(--ink-70);font:700 10px var(--mono);white-space:nowrap}.oppChannelEmpty{padding:17px 18px;color:var(--ink-70);font-size:12.5px;line-height:1.55}
 .oppResultsBar{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line-2);background:var(--card-2)}.oppTabs{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}.oppTab{border:0;border-radius:7px;padding:7px 11px;background:transparent;color:var(--ink-70);font-size:12px;font-weight:650;cursor:pointer}.oppTab span{font:700 10px var(--mono);opacity:.65;margin-left:4px}.oppTab.active{background:var(--ink);color:#fff;box-shadow:var(--sh)}.oppSortField{margin-left:auto;display:flex;align-items:center;gap:7px;color:var(--ink-45);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppSortField select{width:auto;min-width:145px;padding:7px 28px 7px 9px;font-size:12px!important;text-transform:none;letter-spacing:0;color:var(--ink);background-color:var(--card)}
-.oppCardList{display:grid;gap:11px;padding:12px;background:var(--paper)}.oppCard{position:relative;padding:16px 17px!important;border-left-width:3px!important;box-shadow:none}.oppCard:hover{border-color:var(--ink-25);box-shadow:0 8px 22px rgba(30,26,20,.055)}.oppCardHeader{display:flex;align-items:flex-start;gap:11px}.oppCardPriority{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:0 0 9px}.oppCardTitle{min-width:0;flex:1}.oppCardTitle h4{font-size:15px;line-height:1.3;margin:0}.oppCardMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;color:var(--ink-45);font:10.5px var(--mono)}.oppCardMeta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-25)}.oppCardBadges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.oppCardWhy{margin:11px 0 12px;padding-left:20px;color:var(--ink-70);font-size:12.5px;line-height:1.5;max-width:920px}.oppCardMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--line-2)}.oppCardMetric{padding:9px 11px;background:var(--card-2);min-width:0}.oppCardMetric b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font:700 14px var(--mono)}.oppCardMetric span{display:block;margin-top:1px;color:var(--ink-45);font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppCardActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}.oppCardActions .opDx{margin:0!important}.oppCardActions .opMsg{min-width:120px}.oppCard .opDx>summary{margin:0!important;background:transparent}.oppDetailsBody{margin-top:12px;padding:14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2)}.oppDetailsIntro{margin:0 0 12px;color:var(--ink-70);font-size:12.5px;line-height:1.55}.oppCard .xd:not([open])>summary{margin-bottom:0}.oppCard .xd>summary{background:var(--card)}
-.oppCardActions .opDx[open]{flex:1 1 100%;order:3}.oppCardActions .opMsg{order:2}
+.oppCardList{display:grid;grid-template-columns:minmax(0,1fr);gap:11px;padding:12px;background:var(--paper)}.oppCard{position:relative;padding:16px 17px!important;border-left-width:3px!important;box-shadow:none}.oppCard:hover{border-color:var(--ink-25);box-shadow:0 8px 22px rgba(30,26,20,.055)}.oppCardHeader{display:flex;align-items:flex-start;gap:11px}.oppCardPriority{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:0 0 9px}.oppCardTitle{min-width:0;flex:1}.oppCardTitle h4{font-size:15px;line-height:1.3;margin:0}.oppCardMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;color:var(--ink-45);font:10.5px var(--mono)}.oppCardMeta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-25)}.oppCardBadges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.oppCardWhy{margin:11px 0 12px;padding-left:20px;color:var(--ink-70);font-size:12.5px;line-height:1.5;max-width:920px}.oppCardMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--line-2)}.oppCardMetric{padding:9px 11px;background:var(--card-2);min-width:0}.oppCardMetric b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font:700 14px var(--mono)}.oppCardMetric span{display:block;margin-top:1px;color:var(--ink-45);font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppCardActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}.oppCardActions .opDx{margin:0!important}.oppCardActions .opMsg{min-width:120px}.oppCard .opDx>summary{margin:0!important;background:transparent}.oppDetailsBody{margin-top:12px;padding:14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2)}.oppDetailsIntro{margin:0 0 12px;color:var(--ink-70);font-size:12.5px;line-height:1.55}.oppCard .xd:not([open])>summary{margin-bottom:0}.oppCard .xd>summary{background:var(--card)}
+.oppCardActions .opDx[open]{flex:1 1 100%;order:3;min-width:0}.oppCardActions .opMsg{order:2}
 .oppInUse{padding:15px 16px!important}.oppInUseHead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.oppInUseHead h4{margin:0;font-size:14px}.oppInUseLoc{margin-left:auto;color:var(--ink-45);font:10.5px var(--mono)}
 .pmxList{display:grid}.pmxOpportunity{display:grid;grid-template-columns:minmax(0,1fr) auto!important;gap:13px!important;align-items:center!important;padding:15px 16px!important;border-top:1px solid var(--line-2)!important}.pmxOpportunity:first-child{border-top:0!important}.pmxMain{min-width:0}.pmxTitle{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.pmxTitle b{font-size:14px}.pmxRationale{margin-top:5px;color:var(--ink-70);font-size:12px;line-height:1.5}.pmxMetrics{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.pmxMetric{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card-2);color:var(--ink-70);font-size:10px}.pmxMetric b{color:var(--ink);font-family:var(--mono)}.pmxActions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.pmxBudget{display:inline-flex;align-items:center;gap:3px;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:var(--card-2);font-size:11px;white-space:nowrap}.pmxBudget input{width:50px!important;border:0!important;background:transparent!important;padding:0!important;font:700 12px var(--mono)}.pmxEvidence{grid-column:1/-1}.pmxEvidence>summary{list-style:none;display:inline-flex;align-items:center;gap:6px;color:var(--gold);font-size:11px;font-weight:700;cursor:pointer}.pmxEvidence>summary::-webkit-details-marker{display:none}.pmxEvidence>summary:before{content:"+"}.pmxEvidence[open]>summary:before{content:"−"}.pmxEvidenceBody{margin-top:8px;padding:10px 12px;border-radius:9px;background:var(--card-2);color:var(--ink-70);font-size:11px;line-height:1.65}
 #customWrap.oppCustom{margin-top:16px;padding:0;overflow:hidden;box-shadow:none}#customWrap.oppCustom>summary{display:flex;width:100%;align-items:center;border:0;border-radius:0;padding:14px 15px!important;background:var(--card);margin:0!important}#customWrap.oppCustom>summary:before{content:"+";display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--paper-2);font-size:17px}#customWrap.oppCustom[open]>summary:before{content:"−"}#customWrap.oppCustom>summary>span:first-of-type{display:flex;flex-direction:column;align-items:flex-start}#customWrap.oppCustom>summary b{font-size:12.5px}#customWrap.oppCustom>summary small{font-size:10.5px;color:var(--ink-45);font-weight:400}#customWrap.oppCustom>.bench{margin:0!important;padding:16px;border-top:1px solid var(--line-2);background:var(--card-2)}
@@ -747,7 +747,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 #creativeBody .cr-facts{display:flex;flex-wrap:wrap;gap:4px 18px;margin:2px 0 16px;font-size:12.5px;color:var(--ink-70)}
 #creativeBody .cr-facts b{color:var(--ink);font-weight:600}
 #creativeBody .apError{margin:12px 0 0}
-#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open]{animation:dlgIn .2s ease-out}
+#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],#adDesignDialog[open],dialog.bg-split[open],.ovsheet>div{animation:dlgIn .2s ease-out}
 @keyframes dlgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 #performanceDialog .cr-head h2,#adAnalysisDialog .cr-head h2,#adVersionDialog .cr-head h2,#creativeDialog .cr-head h2{min-width:0;overflow-wrap:break-word}
 #performanceBody>.perfFacts{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:0 0 6px}
@@ -762,7 +762,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 #performanceBody .gpBreak td small{display:block;margin-top:2px;max-width:440px;font-size:11.5px;line-height:1.45;color:var(--ink-70)}
 #performanceBody .gpBreak td.r,#performanceBody .gpBreak th.r{white-space:nowrap;font-variant-numeric:tabular-nums}
 .creative-dialog [role="status"]>.spin.sm,.draft .spin.sm{margin-right:2px}
-@media (prefers-reduced-motion:reduce){#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],.draft.is-arrived{animation:none}}
+@media (prefers-reduced-motion:reduce){#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],#adDesignDialog[open],dialog.bg-split[open],.ovsheet>div,.draft.is-arrived{animation:none}}
 @media(max-width:700px){.apFacts{grid-template-columns:1fr;gap:1px;padding:12px 13px}.apFacts dd{margin-bottom:9px}.apFacts dd:last-child{margin-bottom:0}.apTable{font-size:12px}#performanceDialog,#adAnalysisDialog,#adVersionDialog,#creativeDialog{width:100%;max-width:100%;height:100%;max-height:100%;margin:0;border:0;border-radius:0}#performanceDialog .cr-head,#adAnalysisDialog .cr-head,#adVersionDialog .cr-head,#creativeDialog .cr-head{padding:12px 16px;align-items:center;gap:12px}#performanceDialog .cr-head h2,#adAnalysisDialog .cr-head h2,#adVersionDialog .cr-head h2,#creativeDialog .cr-head h2{font-size:18px;line-height:1.3}#performanceBody,#adAnalysisBody,#adVersionBody,#creativeBody{padding:16px 16px calc(28px + env(safe-area-inset-bottom))}}
 
 /* Ad design workspace: compact sources, one clear canvas, reviewable creative. */
@@ -855,6 +855,18 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 .reportGap{display:flex;align-items:center;gap:16px;padding:16px 4px 16px 28px;border-bottom:1px solid var(--line)}.reportGap>span{flex:1;min-width:100px}.reportGap small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}@media(max-width:700px){.reportGap{flex-wrap:wrap;padding-left:4px}}
 @media(min-width:701px){.campaignTreeHost .reportListing+.reportListing .reportMetrics small{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
 @media(max-width:700px){#srChips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}#srChips>.srchip{flex:none}#snapshot table.campaignTree{min-width:0}.campaignTree>thead{display:none}.campaignTree,.campaignTree>tbody,.campaignTree tr.cdet,.campaignTree .idleToggle tr{display:block}.campaignTree>tbody[hidden]{display:none}.campaignTree tr.crow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;padding:13px 4px;border-bottom:1px solid var(--line)}.campaignTree tr.crow>td{display:block;padding:0;border:0;min-width:0}#snapshot .campaignTree .crow>td:first-child{grid-column:1/3;display:flex;align-items:flex-start;min-width:0;position:static;background:none}.campaignTree .crow>td:first-child>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere}.campaignTree .crow .treeChevron{margin-right:10px;font-size:20px;line-height:1.1}.campaignTree .crow>td.cstat{grid-column:3;text-align:right}.campaignTree .crow>td[data-label]{text-align:left;font-size:12.5px}.campaignTree .crow>td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--sans);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)}.campaignTree tr.cdet>td{display:block;padding:12px 8px}.campaignTree .idleToggle td{display:block;border:0}.statusWhy{max-width:none}.legend .lcHint{margin-left:0;flex-basis:100%}}
+/* Phones: date pickers stack their presets above the calendar so Apply stays on screen, and controls are
+   at least 32 px tall so a thumb lands on them (links inside a line of text excepted). */
+@media(max-width:760px){
+  .rpPop{max-height:calc(100dvh - 12vh - 12px);overflow-y:auto}.rpBody{flex-direction:column}.rpMain{min-width:0!important;padding-left:0!important}
+  .rpPresets{flex-direction:row!important;flex-wrap:wrap;min-width:0!important;border-right:0!important;padding-right:0!important;padding-bottom:9px;margin-bottom:9px;border-bottom:1px solid var(--line)}
+  .rpPreset,.rpNav,.salesLeg,.salesSeg .segF,.bidSeg,#bCollRefresh,#bOccRefresh,.dmConnection input,input[type=range],.adDesignSelectActions button,.adDesignBack,.adDesignUpload input[type=file],.adDesignLinked,#v-groups .bg-link,#groupContext .bg-back{min-height:32px}
+  .rpNav,.adDesignGroupNav button{min-width:32px;min-height:32px}#adDesignDialog .adDesignInspect{width:32px;height:32px}
+  .signin__details summary,.reportCoverage>summary,[data-dm-reconnect]>summary,.researchTechnical>summary,.gpDetail>summary,#adDesignDialog summary,#v-groups .bg-more>summary{min-height:32px;align-content:center}
+  .draft .apEdit>summary,.draft .apLink{display:inline-block;min-width:32px;min-height:32px;align-content:center}
+  .reportListing a,.reportListings>a,.bg-products a{display:inline-block;min-height:32px;align-content:center}
+  .sw{width:52px;height:33px;flex-basis:52px;border:4px solid transparent;background-clip:padding-box}
+}
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
@@ -942,7 +954,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
         <span class="signin__dotsep">·</span>
         <span>Internal tool</span>
         <span class="signin__dotsep">·</span>
-        <a href="https://britesjewelry.com" rel="noopener">britesjewelry.com</a>
+        <a href="https://britesjewelry.com" target="_blank" rel="noopener">britesjewelry.com</a>
       </footer>
     </main>
 
@@ -1082,7 +1094,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
           <div class="runmsg" aria-live="polite"><span id="runMsg"></span><span id="pmxBackfillMsg"></span><span id="pmxUpgradeMsg"></span></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
-          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">Read-only · set by GADS_TERM_EXCLUSIONS in Netlify</span></div>
+          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">Read-only · set in Netlify’s environment variables</span></div>
           <div class="chips" id="termChips"></div>
         </div>
       </div>
@@ -1168,7 +1180,10 @@ function openCountryEditor(o){
     '<div class="ctylist" style="flex:1;overflow:auto;padding:2px 18px 6px;min-height:120px"><div class="lrow" style="padding:18px 0"><span class="spin"></span> <span class="muted">Loading countries\u2026</span></div></div>'+
     '<div style="padding:13px 18px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="ctycount muted" style="font-size:12px;flex:1"></span><button class="btn ghost sm ctycancel">Cancel</button><button class="btn gold sm ctysave">'+esc(o.saveLabel||"Save")+'</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
-  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close();}}
+  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close();return;}
+    // Tab stays inside the sheet: past the last control it wraps to the first, and back.
+    if(e.key!=="Tab")return;var f=Array.prototype.filter.call(box.querySelectorAll("button,input"),function(x){return !x.disabled&&x.getClientRects().length;});if(!f.length)return;
+    var i=f.indexOf(document.activeElement);if(e.shiftKey?i<=0:(i<0||i===f.length-1)){e.preventDefault();f[e.shiftKey?f.length-1:0].focus();}}
   function close(){document.removeEventListener("keydown",onKey,true);ov.remove();try{if(opener&&opener.isConnected)opener.focus();}catch(e){}}
   document.addEventListener("keydown",onKey,true);
   ov.onclick=function(e){if(e.target===ov)close();};
@@ -1580,10 +1595,12 @@ function rangePicker(id,value,onApply){RP[id]={value:value||{preset:"30d"},onApp
     '<div class="rpPop" id="rpPop-'+id+'" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:90;background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.18);padding:14px;width:540px;max-width:92vw"></div></div>';}
 function rpToggle(id){var p=$("#rpPop-"+id);if(!p)return;var open=p.style.display!=="none";
   Array.prototype.forEach.call(document.querySelectorAll(".rpPop"),function(x){x.style.display="none";});
-  if(!open){RP[id].draft={start:RP[id].value.start||null,end:RP[id].value.end||null};var vw=RP[id].value.end?rpParse(RP[id].value.end):new Date();vw.setDate(1);RP[id].view=vw;rpDraw(id);p.style.display="block";}}
+  if(!open){RP[id].draft={start:RP[id].value.start||null,end:RP[id].value.end||null};var vw=RP[id].value.end?rpParse(RP[id].value.end):new Date();vw.setDate(1);RP[id].view=vw;rpDraw(id);p.style.left="0";p.style.right="auto";p.style.display="block";
+    // A picker near the right edge opens leftward instead of past the screen.
+    if(getComputedStyle(p).position==="absolute"&&p.getBoundingClientRect().right>document.documentElement.clientWidth-8){p.style.left="auto";p.style.right="0";}}}
 function rpDraw(id){var inst=RP[id];if(!inst)return;var v=inst.value;var p=$("#rpPop-"+id);
-  var presets='<div style="display:flex;flex-direction:column;gap:2px;min-width:128px;border-right:1px solid var(--line);padding-right:11px">'+RP_PRESETS.map(function(pr){var on=v.preset===pr[0];return '<button type="button" class="rpPreset" data-p="'+pr[0]+'" style="text-align:left;padding:6px 9px;border:none;border-radius:8px;font-size:11.5px;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-70)")+';font-weight:'+(on?"600":"500")+'">'+(id==='cmd'&&pr[0]==='all'?'Last 366 days':pr[1])+'</button>';}).join("")+'</div>';
-  p.innerHTML='<div style="display:flex"><div>'+presets+'</div><div style="flex:1;padding-left:13px;min-width:300px"><div id="rpCal-'+id+'"></div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;gap:10px"><div class="muted" style="font-size:11.5px" id="rpDL-'+id+'"></div><div style="display:flex;gap:7px"><button type="button" class="btn ghost sm" data-rpc="'+id+'" style="padding:5px 12px;font-size:12px">Cancel</button><button type="button" class="btn gold sm" data-rpa="'+id+'" style="padding:5px 14px;font-size:12px">Apply</button></div></div></div></div>';
+  var presets='<div class="rpPresets" style="display:flex;flex-direction:column;gap:2px;min-width:128px;border-right:1px solid var(--line);padding-right:11px">'+RP_PRESETS.map(function(pr){var on=v.preset===pr[0];return '<button type="button" class="rpPreset" data-p="'+pr[0]+'" style="text-align:left;padding:6px 9px;border:none;border-radius:8px;font-size:11.5px;cursor:pointer;background:'+(on?"var(--gold-soft)":"transparent")+';color:'+(on?"var(--ink)":"var(--ink-70)")+';font-weight:'+(on?"600":"500")+'">'+(id==='cmd'&&pr[0]==='all'?'Last 366 days':pr[1])+'</button>';}).join("")+'</div>';
+  p.innerHTML='<div class="rpBody" style="display:flex"><div>'+presets+'</div><div class="rpMain" style="flex:1;padding-left:13px;min-width:300px"><div id="rpCal-'+id+'"></div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:11px;gap:10px"><div class="muted" style="font-size:11.5px" id="rpDL-'+id+'"></div><div style="display:flex;gap:7px"><button type="button" class="btn ghost sm" data-rpc="'+id+'" style="padding:5px 12px;font-size:12px">Cancel</button><button type="button" class="btn gold sm" data-rpa="'+id+'" style="padding:5px 14px;font-size:12px">Apply</button></div></div></div></div>';
   Array.prototype.forEach.call(p.querySelectorAll(".rpPreset"),function(b){b.onclick=function(){var pr=this.getAttribute("data-p");var r=id==='cmd'?performanceRange({preset:pr}):rpRangeFor(pr);inst.value.preset=pr;inst.value.start=r.start;inst.value.end=r.end;p.style.display="none";if(inst.onApply)inst.onApply(rpResolve(inst.value),inst.value);var t=$("#rp-"+id+" .rpLab");if(t)t.textContent=rpLabel(inst.value);};});
   p.querySelector('[data-rpc="'+id+'"]').onclick=function(){p.style.display="none";};
   p.querySelector('[data-rpa="'+id+'"]').onclick=function(){var d=inst.draft||{};if(d.start&&!d.end)d.end=d.start;if(d.start&&d.end){inst.value.preset="custom";inst.value.start=d.start;inst.value.end=d.end;}p.style.display="none";if(inst.onApply)inst.onApply(rpResolve(inst.value),inst.value);var t=$("#rp-"+id+" .rpLab");if(t)t.textContent=rpLabel(inst.value);};
@@ -1624,7 +1641,9 @@ function bigChart(id,points,o){o=o||{};var W=Math.max(280,Math.round(o.w||940)),
   return '<div class="bigchart" id="bc-'+id+'" data-w="'+W+'" data-h="'+H+'" style="position:relative"><svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">'+grid+bars+xl+bands+'</svg><div class="bcTip" role="status" style="position:absolute;display:none;pointer-events:none;background:var(--ink);color:var(--paper);font-size:11.5px;line-height:1.5;padding:7px 10px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.25);white-space:nowrap;transform:translate(-50%,calc(-100% - 8px));z-index:5"></div></div>';}
 // Mouse: hover shows the detail, click lists the orders. Touch: the first tap shows the detail, a second tap lists them.
 function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;var tip=box.querySelector(".bcTip"),W=+box.getAttribute("data-w")||940,H=+box.getAttribute("data-h")||280,shown=-1,touch=false,down=false;
-  function place(b){var cw=box.clientWidth,s=Math.min(1,cw/W)||1,half=tip.offsetWidth/2,left=Math.max(0,cw-W*s)/2+(+b.getAttribute("data-cx"))*s;tip.style.left=(cw?Math.max(half,Math.min(cw-half,left)):left)+"px";tip.style.top=((H-H*s)/2+(+b.getAttribute("data-top"))*s)+"px";}
+  function place(b){var cw=box.clientWidth,s=Math.min(1,cw/W)||1,half=tip.offsetWidth/2,left=Math.max(0,cw-W*s)/2+(+b.getAttribute("data-cx"))*s;tip.style.left=(cw?Math.max(half,Math.min(cw-half,left)):left)+"px";tip.style.top=((H-H*s)/2+(+b.getAttribute("data-top"))*s)+"px";
+    // Above the bar by default; flipped below its top when that would leave the screen (as the line chart's tip does).
+    tip.style.transform="translate(-50%,calc(-100% - 8px))";if(tip.getBoundingClientRect().top<8)tip.style.transform="translate(-50%,8px)";}
   function show(i,tap){var p=points[i],b=box.querySelector('.bcBand[data-i="'+i+'"]');if(!p||!b||!tip)return;shown=i;
     Array.prototype.forEach.call(box.querySelectorAll(".bcBar"),function(r){r.classList.toggle("hover",+r.getAttribute("data-i")===i);});
     tip.innerHTML=o.tipHtml?o.tipHtml(p,tap):'<b>'+esc(p.x)+'</b><br>'+money(p.y);tip.style.display="block";place(b);}
@@ -2068,6 +2087,31 @@ var REPORT_TREE_CACHE=new Map(),REPORT_TREE_OPEN=new Set(),REPORT_CAMPAIGN_OPEN=
 function reportCached(action,input){var key=action+'|'+JSON.stringify(input),cached=REPORT_TREE_CACHE.get(key);if(cached&&Date.now()-cached.at<600000)return cached.promise;var pending=api(action,input).then(function(r){if(!r||r.error||r.ok===false)throw Error(r&&r.error||'Reporting details are unavailable.');return r;});REPORT_TREE_CACHE.set(key,{at:Date.now(),promise:pending});pending.catch(function(){var now=REPORT_TREE_CACHE.get(key);if(now&&now.promise===pending)REPORT_TREE_CACHE.delete(key);});if(REPORT_TREE_CACHE.size>30)REPORT_TREE_CACHE.delete(REPORT_TREE_CACHE.keys().next().value);return pending;}
 // A panel the user opens eases in once; re-renders that restore an open panel do not animate.
 function cmdOpening(el){if(!el||!el.classList)return;el.classList.remove('opening');void el.offsetWidth;el.classList.add('opening');var done=function(){el.classList.remove('opening');el.removeEventListener('animationend',done);};el.addEventListener('animationend',done);}
+// Expanders, cards and lanes ease to their new height (150–400 ms) when a click opens, closes, swaps or loads
+// what they hold: the smallest block around the control that holds every change resizes smoothly, so what
+// follows glides instead of jumping; a table row opening under its control grows from nothing. Restored
+// re-renders and reduced motion do not animate.
+function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|scroll/.test(getComputedStyle(el).overflowY))return;var to=el.getBoundingClientRect().height,a;if(!(Math.abs(to-from)>=8))return;
+  a=el._ease=el.animate([{height:from+'px',overflow:'clip'},{height:to+'px',overflow:'clip'}],{duration:Math.round(Math.min(400,Math.max(150,Math.abs(to-from)/4))),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a)el._ease=null;};}
+function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
+// Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
+// A change during a running ease continues from where the block stands.
+function easeWatch(els,row){var top=els[els.length-1],H=new Map(),mark=function(){els.forEach(function(x){H.set(x,x._ease?x._ease.to:x.getBoundingClientRect().height);});};
+  if(top._easeMo)top._easeMo.disconnect();mark();
+  var mo=top._easeMo=new MutationObserver(function(recs){
+    if(row){if(!top.getClientRects().length)return;mo.disconnect();Array.prototype.forEach.call(top.querySelectorAll(':scope>td>*'),function(c){easeHeight(c,0);easeWatch([c]);});return;}
+    var i=els.findIndex(function(x){return recs.every(function(r){return x.contains(r.target);});}),j,el,from;if(i<0)i=els.length-1;
+    for(j=i+1;j<els.length;j++)if(els[j]._ease)i=j;el=els[i];
+    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease)from-=els[j]._ease.to-easeNow(els[j]._ease);
+    els.forEach(function(x){if(x._ease)x._ease.cancel();});mark();easeHeight(el,from);});
+  mo.observe(top,row?{attributes:true}:{attributes:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
+function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;
+  row=document.getElementById(t.getAttribute('aria-controls')||'');if(row&&row.tagName==='TR'&&!row.getClientRects().length)return easeWatch([row],true);
+  top=t.closest('.draft,.card,.view')||(t.tagName==='SUMMARY'?t.parentNode:t.closest('details'));if(!top)return;
+  // Height applies to blocks only: inline boxes, table parts and scrolling boxes are passed over.
+  for(n=t.parentNode;n&&n!==top&&top.contains(n);n=n.parentNode){cs=getComputedStyle(n);if(/^(block|flex|grid|flow-root|list-item)$/.test(cs.display)&&!/auto|scroll/.test(cs.overflowY))els.push(n);}
+  els.push(top);easeWatch(els);}
+document.addEventListener('click',easeClick,true);
 function cmdCampaign(cid,range){var list=typeof cmdMetrics!=='undefined'&&cmdMetrics||[],rg=cmdReport&&cmdReport.range;if(!rg||rg.start!==range.start||rg.end!==range.end)return null;return list.find(function(x){return String(x.id)===String(cid);})||null;}
 // A group's figures on its campaign row's terms: the same currency and daily rates and, where Google
 // supplies it, the same basis. Without them the group shows Google's native report, labelled as such.
@@ -4327,13 +4371,13 @@ async function pmaxBackfillImages(){
     var t1=Date.now(),st=null;
     while(Date.now()-t1<1200000){
       st=await api("genStatus",{genId:genId}).catch(function(){return null;});
-      if(st&&st.phase==="running"&&st.assetGroup)msg.textContent=" scanning "+st.campaign+" · "+st.assetGroup+" ("+(st.groupsSeen||0)+" groups so far)…";
+      if(st&&st.phase==="running"&&st.assetGroup)msg.textContent=" scanning "+st.campaign+" · "+st.assetGroup+" ("+(st.done||0)+" groups so far)…";
       if(st&&(st.ok===true||st.ok===false))break;
       await new Promise(function(res){setTimeout(res,3000);});
     }
     if(st&&st.ok===true){
       done();
-      var summary=st.queued+" asset group"+(st.queued===1?"":"s")+" queued to Approvals across "+st.campaigns+" campaign"+(st.campaigns===1?"":"s")+" ("+st.assetGroups+" scanned)";
+      var summary=st.queued+" asset group"+(st.queued===1?"":"s")+" queued to Approvals across "+st.campaigns+" campaign"+(st.campaigns===1?"":"s")+" ("+(st.results||[]).length+" scanned)";
       msg.textContent=" ✓ "+summary;
       toast("PMax re-image backfill done — "+summary,true);
       try{await reload();}catch(_e){}
@@ -5160,7 +5204,7 @@ setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);
 
 </script>
-<script src="/brites-groups.js?v=20260929-pages"></script>
+<script src="/brites-groups.js?v=20260929-image-alt"></script>
 <script>
 BritesGroups.init({api:api,dashboard:function(){return DASH;},basis:function(){return convBasis;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>

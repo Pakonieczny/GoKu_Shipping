@@ -104,6 +104,11 @@ async function runViewport(browser, vp, base, known, canShoot) {
   const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, isMobile: vp.phone, hasTouch: vp.phone, locale: 'en-CA', timezoneId: 'UTC', serviceWorkers: 'block', reducedMotion: 'no-preference' });
   const state = { tab: 'gate', inflight: 0, lastApi: Date.now(), errors: [], lastAction: '(page load)', activeOverlays: new Set(), crawledDialogs: new Set() };
   await context.addInitScript(() => {
+    // CSS animations and transitions as they start, so a short entrance animation that has already
+    // finished by the time a dialog is inspected still counts.
+    window.__hAnims = [];
+    const logAnim = e => { if (e.target && e.target.nodeType === 1) { window.__hAnims.push({ t: performance.now(), el: e.target, type: e.type }); if (window.__hAnims.length > 400) window.__hAnims.splice(0, 200); } };
+    addEventListener('animationstart', logAnim, true); addEventListener('transitionrun', logAnim, true);
     window.__hShifts = [];
     try { new PerformanceObserver(list => { for (const e of list.getEntries()) window.__hShifts.push({ t: e.startTime, v: e.value, src: (e.sources || []).map(s => { const n = s.node; if (!n || n.nodeType !== 1) return n && n.parentElement ? n.parentElement.tagName.toLowerCase() : '?'; return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.classList.length ? '.' + [...n.classList].slice(0, 2).join('.') : ''); }) }); }).observe({ type: 'layout-shift', buffered: true }); } catch (e) {}
   });
@@ -222,7 +227,10 @@ async function runViewport(browser, vp, base, known, canShoot) {
     return page.evaluate(id => {
       document.querySelectorAll('[data-harness-region]').forEach(n => n.removeAttribute('data-harness-region'));
       const el = document.querySelector('[data-harness-id="' + id + '"]'); if (!el) return null;
-      const ctl = el.getAttribute('aria-controls'), reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      const ctl = el.getAttribute('aria-controls');
+      let reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      // Height applies to blocks: an inline region (an inline <details>) is judged by the block holding it.
+      while (reg && reg.parentElement && /^(inline|contents)$/.test(getComputedStyle(reg).display)) reg = reg.parentElement;
       if (!reg) return null; reg.setAttribute('data-harness-region', '1');
       return { h: reg.getBoundingClientRect().height, doc: document.documentElement.scrollHeight };
     }, id).catch(() => null);
@@ -256,7 +264,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       return;
     }
     if (/sign out/i.test(c.text) || c.type === 'file' || c.type === 'password') { C.skipped++; return; }
-    const t0 = await page.evaluate(() => performance.now());
+    const t0 = await page.evaluate(() => performance.now()); state.actionT0 = t0;
     const before = c.chart || c.tag === 'select' || c.tag === 'input' || c.inPopover ? null : await markRegion(c.id);
     try {
       if (c.tag === 'select') {
@@ -348,7 +356,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
       const label = ov.kind + ' ' + ov.id + ' "' + ov.label + '"';
       const ovSel = ov.kind === 'dialog' ? ov.sel : ov.sel;
       // Entrance motion: does the overlay animate in, or pop?
-      const anim = await page.evaluate(s => { const el = document.querySelector(s); if (!el) return null; return el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length; }, ovSel).catch(() => null);
+      const anim = await page.evaluate(([s, t]) => {
+        const el = document.querySelector(s); if (!el) return null;
+        const live = el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length;
+        // Animations that started with this action (anywhere inside), or transitions on the overlay or its panel.
+        const started = (window.__hAnims || []).filter(x => x.t >= t - 5 && (x.type === 'animationstart' ? el.contains(x.el) : x.el === el || x.el.parentElement === el)).length;
+        return live + started;
+      }, [ovSel, state.actionT0 || 0]).catch(() => null);
       if (anim === 0 && ov.kind !== 'popover') add('dialog appears without transition', vp.name, tab, { overlay: label, opener: state.lastAction }, label);
       // Focus must move into a dialog when it opens (checked before the crawl moves it).
       const focus = await page.evaluate(s => { const el = document.querySelector(s); return !!(el && el.contains(document.activeElement)); }, ovSel).catch(() => false);

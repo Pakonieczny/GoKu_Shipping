@@ -39,7 +39,8 @@ Console errors and page errors, unknown API actions, blocked requests, pages or
 elements wider than their container, overlapping or hard-clipped text,
 ellipsis without a tooltip, phone tap targets under 32 px, dialogs that do not
 take or trap focus or ignore Escape, dialogs and expanders that appear with no
-transition, chart marks without a tooltip or click detail, charts that do not
+transition (a short entrance animation that has already finished when a dialog
+is inspected still counts), chart marks without a tooltip or click detail, charts that do not
 redraw for their width, placeholder leaks (`undefined`, `NaN`, `null`,
 `[object Object]`, raw enum codes, literal `\uXXXX` escapes), native
 `prompt()`/`confirm()` use, and CAD amounts printed with a bare `$` in the page
