@@ -3932,8 +3932,8 @@ function _merchantOrganicDiscoveryIds(merchant,report30,report90){
   return [...rows.values()].sort((a,b)=>(b.recent*3+Math.max(0,b.longer-b.recent))-(a.recent*3+Math.max(0,a.longer-a.recent))||a.id.localeCompare(b.id)).slice(0,40).map(x=>x.id);
 }
 
-async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, onAudit = null } = {}) {
-  const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } };
+async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, currency = null, onAudit = null } = {}) {
+  const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } }, bc = currency || "account-currency"; // budgets and the ceiling are in the Google Ads account currency
   // Pull recent Shopify orders before ranking. Existing title-only rows are enriched
   // in place with product/variant IDs, while new webhook orders already contain them.
   // This makes the very first scan useful instead of waiting for future purchases.
@@ -4033,7 +4033,7 @@ These are PMax product/creative observations; never treat search themes as exact
 ${JSON.stringify({days30:selectorPeriod(sig30),days90:selectorPeriod(sig90)})}
 Eligible candidates are pre-ranked deterministically from exact Shopify order titles matched to live Merchant Center offer IDs:
 ${JSON.stringify(promptData)}
-Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
+Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: ${bc} 6-15/day, respecting total ceiling ${bc} ${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
       { maxTokens: 5000, effort: "medium" });
     selected = (Array.isArray(j && j.pmax) ? j.pmax : []).map(x => {
       const c = pool.find(y => y.handle === x.handle && String(y.feedLabel||"") === String(x.feedLabel||"")); if (!c) return null;
@@ -4665,7 +4665,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
   const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
-  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · ${ctrl.budgetCurrency?ctrl.budgetCurrency+" ":""}${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
@@ -5082,9 +5082,9 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (!scan.blueprint) throw new Error(scan.error || "Design Studio scan has not produced a campaign blueprint");
   const blueprint = scan.blueprint, readiness = (blueprint.measurement || {}).readiness || {};
   if (!readiness.apiOk || !readiness.purchaseReady) throw new Error("No enabled primary purchase conversion is available. Verify the purchase goal before creating the goal-based Studio campaign.");
-  const ctrl = await control(), enabledDaily = await _enabledBudgetTotal();
+  const ctrl = await control(), enabledDaily = await _enabledBudgetTotal(), cc = ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""; // budgets are in the account currency
   const ceiling = Number(ctrl.maxDailyBudgetTotal || 0), headroom = ceiling > 0 ? Math.max(0, ceiling - Number(enabledDaily || 0)) : Infinity;
-  if (isFinite(headroom) && headroom < 4) throw new Error(`The daily budget ceiling has only ${CURRENCY}${headroom.toFixed(2)} of headroom. Free at least ${CURRENCY}4.00 before building both Studio lanes.`);
+  if (isFinite(headroom) && headroom < 4) throw new Error(`The daily budget ceiling has only ${cc}${headroom.toFixed(2)} of headroom. Free at least ${cc}4.00 before building both Studio lanes.`);
   const hasPmax = pmaxDaily !== undefined && pmaxDaily !== null && String(pmaxDaily).trim() !== "";
   const hasSearch = searchDaily !== undefined && searchDaily !== null && String(searchDaily).trim() !== "";
   if (hasPmax !== hasSearch) throw new Error("Set both the Search and PMax daily budgets, or leave both blank to use the recommended 60/40 launch split.");
@@ -5092,10 +5092,10 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (hasPmax && hasSearch) {
     pmaxBudget = Math.round(Number(pmaxDaily) * 100) / 100;
     searchBudget = Math.round(Number(searchDaily) * 100) / 100;
-    if (!isFinite(pmaxBudget) || !isFinite(searchBudget) || pmaxBudget < 1 || searchBudget < 1) throw new Error(`Each Design Studio campaign needs a daily budget of at least ${CURRENCY}1.00.`);
+    if (!isFinite(pmaxBudget) || !isFinite(searchBudget) || pmaxBudget < 1 || searchBudget < 1) throw new Error(`Each Design Studio campaign needs a daily budget of at least ${cc}1.00.`);
     total = Math.round((pmaxBudget + searchBudget) * 100) / 100;
-    if (total < 4) throw new Error(`The combined Design Studio budget must be at least ${CURRENCY}4.00/day.`);
-    if (isFinite(headroom) && total > headroom + 0.001) throw new Error(`The selected Studio budgets total ${CURRENCY}${total.toFixed(2)}/day, but only ${CURRENCY}${headroom.toFixed(2)}/day remains under the account ceiling.`);
+    if (total < 4) throw new Error(`The combined Design Studio budget must be at least ${cc}4.00/day.`);
+    if (isFinite(headroom) && total > headroom + 0.001) throw new Error(`The selected Studio budgets total ${cc}${total.toFixed(2)}/day, but only ${cc}${headroom.toFixed(2)}/day remains under the account ceiling.`);
   } else {
     total = Math.max(4, Number(dailyBudget) || Number((blueprint.budget || {}).recommendedDaily) || 10);
     if (isFinite(headroom)) total = Math.min(total, headroom);
@@ -5114,7 +5114,7 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
     const spec = { schema: 1, kind: "designStudioPmax", landingUrl: DESIGN_STUDIO_URL, dailyBudget: pmaxBudget, startDate, endDate, countries: ctys,
       groups: blueprint.pmax.groups, images: blueprint.images || _STUDIO_FALLBACK_IMAGES, audienceResource };
     approvalIds.pmax = await enqueueApproval({ type: "studio", vetted: false, tag: DESIGN_STUDIO_TAGS.pmax, programId,
-      summary: `DESIGN STUDIO · PMax discovery · $${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
+      summary: `DESIGN STUDIO · PMax discovery · ${cc}${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
       payload: { designStudioSpec: spec, countries: ctys, meta: { kind: "designStudioPmax", programId, tag: DESIGN_STUDIO_TAGS.pmax, landingUrl: DESIGN_STUDIO_URL,
         dailyBudget: pmaxBudget, startDate, endDate, countries: ctys, biddingMode: "MAXIMIZE_CONVERSIONS", finalUrlExpansion: false,
         audienceSignal: audienceResource, groups: blueprint.pmax.groups.map(g => ({ name: g.name, angle: g.angle, searchThemes: g.searchThemes })),
@@ -5123,7 +5123,7 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (!active(DESIGN_STUDIO_TAGS.search)) {
     const search = buildDesignStudioSearchCampaignOps(blueprint, { dailyBudget: searchBudget, startDate, endDate, countries: ctys, maxCpc: Math.max(0.25, Number(maxCpc) || Number(blueprint.search.maxCpc) || 1) });
     approvalIds.search = await enqueueApproval({ type: "studio", vetted: false, tag: DESIGN_STUDIO_TAGS.search, programId,
-      summary: `DESIGN STUDIO · high-intent Search · $${searchBudget.toFixed(2)}/day · ${search.keywordSummary.count} exact/phrase keywords · every ad to /pages/custom-studio · starts PAUSED`,
+      summary: `DESIGN STUDIO · high-intent Search · ${cc}${searchBudget.toFixed(2)}/day · ${search.keywordSummary.count} exact/phrase keywords · every ad to /pages/custom-studio · starts PAUSED`,
       payload: { mutateOperations: search.ops, countries: ctys, adGroupSummary: search.adGroupSummary,
         keywordValidation: { confidence: 94, evidence: { accepted: search.keywordSummary.count, rejected: 0 }, source: (blueprint.search.research || {}).source || "Studio page + intent contract" },
         meta: { kind: "designStudioSearch", programId, tag: DESIGN_STUDIO_TAGS.search, landingUrl: DESIGN_STUDIO_URL, dailyBudget: searchBudget, maxCpc: Math.max(0.25, Number(maxCpc) || Number(blueprint.search.maxCpc) || 1), startDate, endDate, countries: ctys, finalUrlInvariant: true } } });
@@ -5241,7 +5241,7 @@ async function designStudioPerformance({ days = 30 } = {}) {
     cpa: funnel.apiOk && funnel.purchase ? overall.cost / funnel.purchase : null,
     roas: funnel.apiOk && overall.cost ? funnel.value / overall.cost : null,
     fxIncomplete: !!funnel.fxIncomplete };
-  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: CURRENCY,
+  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: await _accountCurrency().catch(() => null),
     start, end, days, campaigns, overall, purchase, readiness, daily, funnel, rates, assetGroups, channelMix, searchInsights, fetchedAt: Date.now() };
   const f = fb(); if (f) { try { await f.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).set({ performance: result }, { merge: true }); } catch (e) {} }
   return result;
@@ -5270,7 +5270,7 @@ async function refreshDesignStudioLearning({ days = 30 } = {}) {
   if (minData && purchase.roas != null && targetRoas > 0 && purchase.roas < targetRoas * 0.7) recs.push(_studioRecommendation("high", "Economics", "Purchase efficiency is below the account target.", "Hold budget, isolate the weakest lane and evaluate purchase quality after conversion delay.", `${purchase.roas.toFixed(2)}x purchase ROAS vs ${targetRoas.toFixed(2)}x target`, "Do not scale on assist events alone"));
   if (minData && purchase.roas != null && targetRoas > 0 && purchase.roas >= targetRoas && purchase.conversions >= 5) recs.push(_studioRecommendation("opportunity", "Scale", "The Studio engine is meeting the account return target with purchase evidence.", "Consider one controlled budget step within the global ceiling, then hold through the next learning window.", `${purchase.roas.toFixed(2)}x purchase ROAS · ${purchase.conversions.toFixed(1)} purchases`, `Maximum ${Number(ctrl.maxBudgetStepPct || 15)}% step; approval required`));
   performance.assetGroups.filter(x => /poor|average/i.test(x.adStrength) && x.impressions >= 500).forEach(x => recs.push(_studioRecommendation("medium", "PMax assets", `${x.name} has ${x.adStrength.toLowerCase()} asset strength after meaningful delivery.`, "Replace the weakest asset type with Studio-specific proof; do not change the intent theme at the same time.", `${Math.round(x.impressions)} impressions · ${x.conversions.toFixed(1)} conversions`)));
-  if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · $${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
+  if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · ${performance.currency || "USD"} ${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
   let ai = null;
   if (ENV.OPENAI_API_KEY && hasCampaigns && minData) {
     try {
@@ -6635,7 +6635,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   // scanning:true and stale opportunities on screen forever with no signal as to the cause.
   audit = await _auditBegin(runId);
   await _auditEvent(audit,{id:"control_config",category:"Configuration",label:"Autopilot controls and guardrails",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
-    detail:`Daily ceiling ${ctrl.budgetCurrency||CURRENCY} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
+    detail:`Daily ceiling ${ctrl.budgetCurrency||"UNVERIFIED"} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
   try {
   await _scanProg(3, "Reading catalog & memory");
   const collections = await _auditCall(audit,{id:"shopify_collections",category:"Shopify",label:"Shopify collections",detail:"Loading the live collection catalogue or its bounded cache.",source:"Shopify Admin GraphQL / Firestore cache",result:v=>({detail:`${(v||[]).length} collections available to the strategist.`,meta:{collections:(v||[]).length}})},()=>getCollections({}));
@@ -6680,7 +6680,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   // failure must never hide or discard viable Merchant Center opportunities.
   await _scanProg(35, "Merchant Center opportunity scan", "matching recent organic sales to live GMC offers");
   let pmaxCrashed = false;
-  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
+  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, currency:ctrl.budgetCurrency, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
   pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now(); pmaxResearchVersion = _OPPORTUNITY_RESEARCH_SCHEMA; pmaxLearning = pmaxPack.learning || null;
   await _auditEvent(audit,{id:"pmax_pipeline",category:"PMax",label:"PMax opportunity pipeline",status:pmaxCrashed?"failed":(pmaxError?"warning":"ok"),startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:`${pmaxList.length} PMax opportunity/opportunities produced.`,error:pmaxError,meta:{opportunities:pmaxList.length,merchantProducts:pmaxPack.merchantProducts||0,merchantReportsConfigured:!!pmaxPack.merchantReportsConfigured}});
   // Commit the feed result NOW, before the much slower Search reasoning pass. If
@@ -7220,7 +7220,7 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:Number(ctrl.targetRoas||0),assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
-  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
+  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""}${capCpc.toFixed(2)}/click`; // the cap is in the account currency
   const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
   const kwTxt = keywordSummary ? `, ${keywordSummary.count} ${keywordSummary.researched ? "researched" : "themed"} keywords${keywordSummary.exact ? ` (${keywordSummary.exact} exact)` : ""}` : "";
   const id = await enqueueApproval({
@@ -8729,7 +8729,7 @@ async function _analyzeCampaignSet(diag, ctrl, history, { single, enabledTotal }
   const prompt = `${single ? "SINGLE-CAMPAIGN DEEP DIVE: only the campaign(s) below are in scope; go deeper than usual.\n" : ""}You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
 CHANNEL NOTE — PERFORMANCE_MAX: these run on the Merchant Center product feed with NO keywords/search-terms/RSAs — but they are NOT exempt from deep analysis. Their evidence is different, and you have it: assetGroups (each with its own adStrength — EXCELLENT/GOOD/AVERAGE/POOR — status and 30d metrics; an AVERAGE/POOR group is the PMax equivalent of a weak ad), products (per-product cost/clicks/conv from the feed — spot products burning spend with zero conversions, and top sellers being under-served), channelBreakdown (real Search/YouTube/Display/Discover/Gmail/Maps/Search Partners split of ALL spend/clicks/conversions, API v23+ — this is what the majority of clicks that products can't attribute actually did; if one channel burns cost with zero conversions while another converts, SAY SO by channel name — that is a genuine, named finding, not a guess), searchInsights (the search categories Google matched this campaign to — flag categories that don't fit charm jewelry), and pmaxAssetPerformance (Google's own LOW/GOOD/BEST grades per text asset — name the LOW ones). PMax findings must reference this evidence specifically, never generic "it's learning" filler. PMax executables: setBudget when earned; for weak asset groups prescribe the console's "Upgrade copy + sitelinks" / "Re-image (AI)" actions by asset-group NAME as the fix text (executable kind:"none" — they're one-click actions the owner runs); for wrong-fit search categories, wasteful products, or a lopsided channel mix, advisory with the exact category/product/channel named.
-ACCOUNT GUARDRAILS: target ROAS ${Number(ctrl.targetRoas) > 0 ? ctrl.targetRoas : "NOT SET by the owner — do not assume or invent one; judge conversion value against cost and conversion volume"}; account daily budget ceiling ${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total ${Math.round(totalBudget * 100) / 100}); monthly hard cap ${ctrl.maxMonthlySpend || "none"}. CURRENCIES: every Google Ads figure (budgets, ceiling, cost, conversion value) is in ${adsCcy}; store sales below are in ${CURRENCY}. Name the currency with every amount and never add or directly compare amounts in different currencies.
+ACCOUNT GUARDRAILS: target ROAS ${Number(ctrl.targetRoas) > 0 ? ctrl.targetRoas : "NOT SET by the owner — do not assume or invent one; judge conversion value against cost and conversion volume"}; account daily budget ceiling ${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total ${Math.round(totalBudget * 100) / 100}); monthly hard cap ${ctrl.maxMonthlySpend ? "USD " + ctrl.maxMonthlySpend + " (month-to-date spend converted to USD)" : "none"}. CURRENCIES: every Google Ads figure (budgets, ceiling, cost, conversion value) is in ${adsCcy}; store sales below are in ${CURRENCY}. Name the currency with every amount and never add or directly compare amounts in different currencies.
 ${salesCtx}
 CAMPAIGNS (Google Ads diagnostics + our measured performance):
 ${JSON.stringify(compact)}
