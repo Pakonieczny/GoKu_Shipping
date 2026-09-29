@@ -9365,7 +9365,8 @@ const OrderWin = window.OrderWin = (() => {
     card.hidden = false; card.className = "owNowCard" + (n.tone === "bad" ? " bad" : "") + (st && st.seal ? " sealed" : "");
     // the blocker is the card's own line then, so it is never said twice
     const head = bl && String(bl.text || "").trim() ? { k: bl.label, t: bl.text, row: "" } : { k: n.k, t: n.t || "", row: recent };
-    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
+    // (with a seal, no "who · time" line beside it: the seal says who and when, Paul 29 Sep 00:19, "the Seal is what matters")
+    const html = `${st ? st.seal : ""}<div><div class="k">${esc(head.k)}</div><div class="t">${esc(head.t)}</div>${st && st.seal ? "" : who}<div class="row">${head.row}<button type="button" class="btn ghost xs" data-go="timeline">Open timeline</button>${(SV.list && SV.list.length) || !SV.rid ? "" : ""}<button type="button" class="btn ghost xs" data-go="sheet">Sheet</button></div></div><div class="shs">${sheets}</div>`;
     if (card._html === html) return; card._html = html; card.innerHTML = html;
     card.querySelectorAll("[data-go]").forEach(b => b.onclick = () => setView(b.dataset.go));
     card.querySelectorAll("[data-sh]").forEach(b => b.onclick = () => { SV.at = +b.dataset.sh; setView("sheet"); sheetDraw(); });
