@@ -208,7 +208,9 @@ async function handleAction(body) {
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
     // then read as "no ceiling", silently switching the spend checks off.
-    const limits = { maxDailyBudgetTotal: [1, 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
+    // The daily ceiling cannot pass the site limit (GADS_MAX_DAILY_BUDGET_TOTAL): control() would clamp it
+    // anyway, so a higher value is refused here instead of being saved and silently not applied.
+    const limits = { maxDailyBudgetTotal: [1, Number(ctrl.maxDailyBudgetLimit) > 0 ? Number(ctrl.maxDailyBudgetLimit) : 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
       targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
       maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"], orderCutoffDays: [0, 30, "Order cutoff days"] };
     for (const [k, [min, max, label]] of Object.entries(limits)) {
@@ -474,8 +476,13 @@ async function handleAction(body) {
     catch (e) { return { collections: [], error: e.message }; }
   }
   if (a === "occasions") {
-    try { return { occasions: await E.suggestOccasions(body.coll, { force: !!body.force }) }; }
-    catch (e) { return { occasions: [], error: e.message }; }
+    // cacheOnly (opening the builder, changing collection, the Sales link) and any request without force
+    // return the saved list, or the standard one, and never reach the model. Only Suggest (force) asks the
+    // AI, in the background worker past the 26s gateway; the console polls genStatus with a spinner.
+    try {
+      if (body.force && !body.cacheOnly) return await dispatchTask("suggestOccasions", { genId: "occasions-" + Date.now() + Math.random().toString(36).slice(2, 6), coll: body.coll || null });
+      return { occasions: await E.suggestOccasions(body.coll, { force: false }) };
+    } catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "releaseOpportunity") {
     try { return await E.releaseOpportunity({ tag: body.tag }); }
