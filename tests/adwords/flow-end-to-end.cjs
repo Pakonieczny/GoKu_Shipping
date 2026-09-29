@@ -35,7 +35,10 @@ for (const [mod, keys] of [['http', ['request', 'get']], ['https', ['request', '
 globalThis.fetch = async () => { throw new Error('flow-end-to-end: live network is forbidden (global fetch)'); };
 
 /* ---------------------------------------------------------------- adjustable clock (serving days and the learning window) */
-const RealDate = Date; let clockShift = 0;
+// FLOW_NOW=2026-09-29T01:30:00Z starts the flow at that instant (e.g. either side of UTC midnight,
+// when the account's Toronto date is a day behind the server's UTC date).
+const RealDate = Date; let clockShift = process.env.FLOW_NOW ? RealDate.parse(process.env.FLOW_NOW) - RealDate.now() : 0;
+if (process.env.FLOW_NOW && !isFinite(clockShift)) throw new Error('FLOW_NOW must be an ISO date-time');
 globalThis.Date = class extends RealDate { constructor(...a) { if (a.length) super(...a); else super(RealDate.now() + clockShift); } static now() { return RealDate.now() + clockShift; } };
 const advanceDays = n => { clockShift += n * 86400000; };
 
@@ -429,6 +432,13 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   check(created('adGroupOperation').every(g => Number(g.cpcBidMicros) === Math.round(card.maxCpc * 1e6)), 'every ad group bid cap equals the card CPC cap');
   check(String(campaignCreate.endDateTime).startsWith(card.endDate.replace(/-/g, '')) && (card.startDate > TODAY ? String(campaignCreate.startDateTime).startsWith(card.startDate.replace(/-/g, '')) : !campaignCreate.startDateTime),
     'draft schedule equals the card run window');
+  check(opp.startDate === TODAY, 'an undated card starts on the account date (' + TODAY + ' in ' + tz + '), not the server UTC date');
+  const dplan = pending.payload.plan || {};
+  check(dplan.duration && dplan.duration.startDate === opp.startDate && dplan.duration.endDate === opp.endDate && dplan.duration.days === opp.durationDays && dplan.budget.daily === card.budget && dplan.cpc.max === card.maxCpc,
+    'the draft forecast covers the card window, budget and CPC cap');
+  check(JSON.stringify(dplan.expected) === JSON.stringify(opp.plan.expected), 'the draft forecast totals equal the card totals');
+  check(pending.summary.includes('(' + opp.startDate + ' → ' + opp.endDate + ', ' + opp.durationDays + 'd)') && pending.summary.includes('Manual CPC ≤ CAD '),
+    'the Approvals summary shows the card window with both end dates counted and the cap in the account currency');
   check(JSON.stringify(created('campaignCriterionOperation').filter(c => c.location).map(c => c.location.geoTargetConstant.split('/').pop())) === JSON.stringify(card.countries), 'draft targets exactly the card countries');
   const draftKeywords = created('adGroupCriterionOperation').map(k => k.keyword.text), grounded = new Set(opp.keywordData.map(k => k.text));
   check(measured.every(k => draftKeywords.includes(k.text)) && draftKeywords.every(k => grounded.has(k)), 'draft keywords are the grounded research keywords, including every measured one');

@@ -35,9 +35,12 @@ const startedAt = () => Date.now();
 async function runEvents(ctrl, log) {
   const due = await E.dueEvents();
   if (!due.length) { log.push("events: none due"); return; }
+  // Budget: the planner's demand-sized budget unless GADS_NEW_CAMPAIGN_BUDGET is set; either way the engine
+  // keeps it inside the room left under the daily ceiling (auto), and the draft still waits for approval.
+  const envBudget = Number(process.env.GADS_NEW_CAMPAIGN_BUDGET);
   for (const d of due) {
     try {
-      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl,peakDate:d.event.peakDate});
+      const out=await E.generateForCollection(d.coll.handle,d.event.label,envBudget>0?envBudget:0,{ctrl,peakDate:d.event.peakDate,auto:true});
       log.push(`events: ${d.coll.handle} — ${out.ok ? "review draft prepared" : (out.reason||"no validated opportunity")}`);
     } catch (e) { log.push(`events: ${d.coll.handle} ERROR ${e.message}`); }
   }
