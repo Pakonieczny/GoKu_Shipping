@@ -143,6 +143,10 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
+  // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
+  if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {
+    try {const out=await E[a](body),m=out&&out.motionPublication;if(m&&m.queued)try{await dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef});}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}return out;} catch(e) { return {ok:false,error:e.message}; }
+  }
   if (["adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignSubmission", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
@@ -200,13 +204,13 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd"];
+                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd","orderCutoffDays"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
     // then read as "no ceiling", silently switching the spend checks off.
     const limits = { maxDailyBudgetTotal: [1, 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
       targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
-      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"] };
+      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"], orderCutoffDays: [0, 30, "Order cutoff days"] };
     for (const [k, [min, max, label]] of Object.entries(limits)) {
       if (patch[k] === undefined) continue;
       const n = typeof patch[k] === "string" && !patch[k].trim() ? NaN : Number(patch[k]);
@@ -216,6 +220,7 @@ async function handleAction(body) {
     if (patch.autoApproveVettedTemplates !== undefined) patch.autoApproveVettedTemplates = false;
     if (patch.creativeBudgetUsd !== undefined) patch.creativeBudgetUsd = Math.max(1,Math.min(30,Number(patch.creativeBudgetUsd)||8));
     if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
+    if (patch.orderCutoffDays !== undefined) patch.orderCutoffDays = Math.round(patch.orderCutoffDays); // whole days
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
         .map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
@@ -244,12 +249,13 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
     return await dispatchTask("publishApproval", { id:String(body.id) });
   }
-  if (a === "retryStuck") {
-    try { return await E.retryStuckApprovals(ctrl); }
-    catch (e) { return { error: e.message }; }
-  }
+  // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
+  // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
+  // limit and re-sent every approved draft at once. Each draft is published from its own card.)
+  if (a === "reconcileApproval") return await E.reconcileApproval({ id: body.id, outcome: body.outcome });
   if (a === "setBudget") {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }
@@ -431,7 +437,7 @@ async function handleAction(body) {
             { id:"background_worker",category:"orchestration",label:"Background worker dispatch",status:"queued",startedAt:dispatchAt,detail:"Dispatching the read-only scan to the Netlify background function." }
           ] };
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
+          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, lastError: null, lastErrorAt: null, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
           f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
         ]); } catch (e) {}
         let bgStatus = null, bgError = null;
@@ -448,9 +454,13 @@ async function handleAction(body) {
         bg.detail = bgError ? "The background worker did not accept the scan." : "Background worker accepted the scan; execution is now asynchronous."; bg.error = bgError;
         baseAudit.summary = { total:2, ok:bgError?1:2, warning:0, failed:bgError?1:0, skipped:0, running:0, queued:0 };
         if (bgError) baseAudit.completedAt = Date.now();
+        // Netlify may run the worker before this line: it then owns the scanning flag and the audit, so an
+        // accepted dispatch writes neither back (a finished scan never returns to "scanning"), and the
+        // audit is only updated while it is still this run's queued record.
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning:!bgError, lastError:bgError||null, lastErrorAt:bgError?Date.now():null }, { merge:true }),
-          f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
+          bgError ? f.db.collection(E.COL.state).doc("opportunities").set({ scanning:false, lastError:bgError, lastErrorAt:Date.now() }, { merge:true }) : null,
+          f.db.runTransaction(async tx => { const ref = f.db.collection(E.COL.state).doc("opportunityScanAudit"), snap = await tx.get(ref), cur = snap.exists ? (snap.data() || {}).scanAudit : null;
+            if (!cur || (cur.runId === runId && cur.status === "queued")) tx.set(ref, { scanAudit:baseAudit }, { merge:true }); })
         ]); } catch (e) {}
         const cur = await E.opportunitiesWithStatus({ cacheOnly: true });
         return Object.assign({}, cur, { scanning: !bgError, started: !bgError, runId, dispatchStatus:bgStatus, dispatchError:bgError });

@@ -13,7 +13,7 @@ async function setup(){
 }
 (async()=>{
  const engine=fs.readFileSync(path.join(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),'utf8');
- const start=engine.indexOf(' const assertTarget=async job=>{',engine.indexOf('function _motionPublication()'));
+ const start=engine.indexOf(' const assertTarget=async(job,target=null)=>{',engine.indexOf('function _motionPublication()'));
  let liveProduct='gid://shopify/Product/123',liveStatus='PAUSED',liveOffer='shopify_us_123_456';
  const liveJob={workspaceId:'design_test',productId:liveProduct,groupRef:'customers/1/assetGroups/2',destination:'https://example.test/peach'};
  const liveCheck=vm.runInNewContext(engine.slice(start,engine.indexOf('\n const upload=',start))+';assertTarget',{CID:'1',_gaqlString:x=>JSON.stringify(x),_adDesignPublicationContext:async()=>({w:{context:{campaignId:'42'}},product:{id:liveProduct,url:liveJob.destination},group:{ref:liveJob.groupRef}}),gaql:async q=>q.includes('FROM asset_group_listing_group_filter')?[

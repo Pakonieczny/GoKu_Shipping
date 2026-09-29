@@ -433,7 +433,8 @@
             if(subject.left<-.5||subject.top<-.5||subject.left+subject.width>b.width+.5||subject.top+subject.height>b.height+.5)throw Error('The complete jewelry must remain inside '+b.key+'. Saved images are retained.');
             for(const o of out.getObjects().filter(o=>['headline','description','brand','button'].includes(o.editorRole))){const r=o.getBoundingRect();if(Math.min(r.left+r.width,subject.left+subject.width)-Math.max(r.left,subject.left)>.5&&Math.min(r.top+r.height,subject.top+subject.height)-Math.max(r.top,subject.top)>.5)throw Error('Messaging overlaps the protected jewelry in '+b.key+'. Reframe this scene without shrinking the text.');}
           }
-          out.renderAll();const multiplier=preview?previewRasterScale(b):Math.min(1,960/Math.max(b.width,b.height)),raster=out.toCanvasElement(multiplier),pixels=raster.getContext('2d').getImageData(0,0,raster.width,raster.height).data;
+          // Fixed-size Display ads publish these reviewed pixels, so they keep their exact upload size.
+          out.renderAll();const multiplier=preview?previewRasterScale(b):(engine.boards||[]).some(d=>/^display_/.test(d.key)&&d.width===b.width&&d.height===b.height)?1:Math.min(1,960/Math.max(b.width,b.height)),raster=out.toCanvasElement(multiplier),pixels=raster.getContext('2d').getImageData(0,0,raster.width,raster.height).data;
           const visibility=photos.map(o=>o.visible);let background;
           try{photos.forEach(o=>o.set('visible',false));out.renderAll();const blank=out.toCanvasElement(multiplier);background=blank.getContext('2d').getImageData(0,0,blank.width,blank.height).data;}finally{photos.forEach((o,i)=>o.set('visible',visibility[i]));out.renderAll();}
           let visibleSamples=0,totalSamples=0;for(let i=0;i<pixels.length;i+=16){totalSamples++;if(Math.abs(pixels[i]-background[i])+Math.abs(pixels[i+1]-background[i+1])+Math.abs(pixels[i+2]-background[i+2])>24)visibleSamples++;}

@@ -159,6 +159,7 @@
     }
     if(stockId&&!sh._roseLoaded&&!sh._roseLoading){observed.set(host,sh);if(observer)observer.observe(host);}
     if(ready&&included&&!busy&&!sh._roseError&&sh.rosePlanKey!==fingerprint(sh))queueMicrotask(()=>plan(sh).catch(()=>{}));
+    const wait=waiting(sh);if(wait!==(sh._roseWait||0)){sh._roseWait=wait;window.RunCtl?.renderBanner?.();}   // the run's pill names it
   }
   // Lines saved before dates were kept show as one undated line, as the server reads them.
   const stagesOf=plan=>plan?.stages||(plan?.lines?.length?[{n:1,at:null,ids:(plan.shapes||plan.placements||[]).map(s=>s.id),lines:[0,plan.lines.length]}]:[]);
@@ -187,9 +188,23 @@
     return sh._roseFull;
   }
   // Whether a contour made now would add a green line: a charm outside every line the sheet has, and room left past it.
-  function addsLine(sh){
+  function addsLine(sh){return unlined(sh).length>0&&!sheetFull(sh);}
+  function unlined(sh){
     const lined=new Set([...(sh.roseProtected?.placements||[]).map(p=>p.id),...(sh.rosePlan&&!sh.dirty?sh.rosePlan.shapes||[]:[]).map(s=>s.id)]);
-    return (sh.placements||[]).some(p=>!lined.has(p.id))&&!sheetFull(sh);
+    return (sh.placements||[]).filter(p=>!lined.has(p.id));
+  }
+  // A sheet in the set whose charms past its last line wait for Cut Sheet: its set waits with it (no contour saved, as
+  // CharmNestReadiness reads it), and says so by name; it read only "…layout checks…". How many charms wait; 0 while it
+  // nests, or when it is full and plans by itself.
+  function waiting(sh){
+    if(sh.metal!=='rose'||!inSet(sh)||sh.roseCutAt||sh.recalled||!sh.roseStock?.id||sh.rosePlanHash||!sh.persistedDone||!sh.verification?.ok||sh.dirty||['nesting','finishing','queued'].includes(sh.status)||!addsLine(sh))return 0;
+    return unlined(sh).length;
+  }
+  const waitWords=sh=>{const n=waiting(sh);return n?`Rose Gold Sheet ${sh.page||1} has ${n} charm${n===1?'':'s'} not cut yet: press Cut Sheet`:'';};
+  // The words lead to the button: the sheet on its card, the card rung, Cut Sheet focused.
+  function showCut(sh){
+    C.setMode('nest');const i=C.pagesOf('rose').indexOf(sh);if(i>=0&&!sh.el)C.showPage('rose',i);
+    requestAnimationFrame(()=>{const card=sh.el;if(!card)return;card.scrollIntoView({block:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});window.ringCard?.(card);card.querySelector('[data-rose="cut"]')?.focus({preventScroll:true});});
   }
   const length=path=>path.slice(1).reduce((n,p,i)=>n+Math.hypot(p[0]-path[i][0],p[1]-path[i][1]),0);
   function midpoint(path){let left=length(path)/2;for(let i=1;i<path.length;i++){const a=path[i-1],b=path[i],d=Math.hypot(b[0]-a[0],b[1]-a[1]);if(d>0&&d>=left)return [a[0]+(b[0]-a[0])*left/d,a[1]+(b[1]-a[1])*left/d];left-=d;}return path[0];}
@@ -256,7 +271,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock={protect,prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record};
+  window.RoseStock={protect,prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut};
   C.allSheets().forEach(render);
 })();
 

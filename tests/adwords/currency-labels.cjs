@@ -135,7 +135,7 @@ async function consoleChecks(){
  check(/Launch settings · budgets in CAD/.test(sg)&&/US\$80\.50<\/div><div class="l">Spend/.test(sg)&&/US\$40\.25<\/div><div class="l">Purchase CPA/.test(sg),'Studio launch budgets name CAD; converted spend and purchase CPA read US$');
 
  // Performance dialog chart: its axis names the report currency; a negative value keeps its sign in front.
- const fm=html.match(/chart=lineChart\(series,\{w:900,h:230,fmt:(function\(v\)\{.*?\}),labels:/);assert(fm,'performance chart formatter found');
+ const fm=html.match(/chartOpts=\{[^;]*?fmt:(function\(v\)\{.*?\}),labels:/);assert(fm,'performance chart formatter found');
  vm.runInContext('var d={currency:"USD"};var perfFmt='+fm[1],cx);
  check(cx.perfFmt(250)==='US$250'&&cx.perfFmt(-50)==='\u2212US$50','performance chart axis reads US$');
 
@@ -166,5 +166,5 @@ async function consoleChecks(){
  // AI costs are billed in US dollars, and the edited scripts are re-fetched (new ?v= tags).
  const editor=fs.readFileSync(root+'/brites-ad-editor.js','utf8'),motion=fs.readFileSync(root+'/brites-ad-motion.js','utf8');
  check(/'AI cost'\)\+' · US\$'\+Number\(cost\.estimatedUsd\)/.test(editor)&&/about US\$2\.03/.test(motion)&&/Estimated cost US\$'\+Number/.test(motion)&&/video cost: US\$2\.03/.test(motion)&&!/[^S]\$(?:\d|'\+)/.test(editor+motion),'editor and motion AI costs read US$');
- check(!/brites-ad-editor\.js\?v=20260929-studio|brites-ad-motion\.js\?v=20260929-studio|pmax-recommendation\.js\?v=20260929-concise/.test(html),'edited scripts carry new version tags');
+ check(!/brites-ad-editor\.js\?v=20260929-studio(?:-proofs)?'|brites-ad-motion\.js\?v=20260929-studio(?:-films)?"|pmax-recommendation\.js\?v=20260929-concise"/.test(html),'edited scripts carry new version tags');
 }
