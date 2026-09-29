@@ -23,8 +23,9 @@
 //
 // Safety model (see SPEC): global kill switch + hard spend ceiling + anomaly
 // circuit-breaker + approval queue + dry-run/validateOnly. Mutations only ever
-// leave this module through mutate()/mutateAll()/uploadConversions(), which all
-// honour control().dryRun and the spend ceiling.
+// leave this module through mutate()/mutateAll()/uploadConversions() (and, for an
+// approved new-customer goal, _configureLifecycleGoal()), which all honour
+// control().dryRun and the spend ceiling.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
@@ -1917,7 +1918,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     if(it.status!=="APPROVED")throw new Error(it.status==="APPLIED"?"This draft was already published.":"Draft is not available for publication; another attempt may be running.");
     assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
   });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update({lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
-  let dispatched=false, publicationResult=null;
+  let dispatched=false, publicationResult=null, purchaseGoals=null, brandExclusions=null;
   try {
     const p=it.payload||{};
     if(it.archivedAt||it.deletedAt)throw new Error('This proposed ad was deleted.');
@@ -1932,21 +1933,27 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     if(newNames.length){const live=await gaql("SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'");if(live.some(r=>newNames.includes((r.campaign||{}).name)))throw new Error("A campaign with this draft's name already exists. Review the existing campaign instead of creating a duplicate.");}
     // Campaigns are only ever enabled from Overview, where the ceiling and monthly stop are checked.
     if([...(ops||[]).map(o=>o.campaignOperation&&(o.campaignOperation.create||o.campaignOperation.update)),...(p.service==="campaigns"?(p.operations||[]).map(o=>o&&(o.create||o.update)):[])].some(c=>c&&c.status==="ENABLED"))throw new Error("Drafts publish campaigns paused. Enable the campaign in Overview, where the daily ceiling and monthly stop are checked.");
-    const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
-    if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
-      const want=budgetOps.reduce((n,o)=>n+fromMicros(o.campaignBudgetOperation.create.amountMicros),0);
-      // Same figures and wording as the plan and the browser: what this draft adds, what is free, what enabled campaigns use.
-      const over=require('./googleAdsCampaignStyles').CAMPAIGN_STYLES.budgetCeilingMessage(want,await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);
-      if(over)throw new Error(over+" Nothing was published; approved budgets are never changed silently.");
-    }
     // A planned run length counts from publication (and again from enabling, in setCampaignStatus), never
     // from the day the draft was prepared: only the end date moves, to keep the reviewed number of days.
     const plannedDays=(p.meta||{}).plannedDays||{},runStart=ops&&Object.keys(plannedDays).length?_acctDateYmd(await _accountTz(),0):null;
     if(runStart)ops.forEach(o=>{const c=o.campaignOperation&&o.campaignOperation.create,start=c&&_dateOnly(c.startDateTime);if(c&&Number(plannedDays[c.resourceName])>0)c.endDateTime=_toGAdsDateTime(_runEndDate(start&&start>runStart?start:runStart,plannedDays[c.resourceName]),"23:59:59");});
+    const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
+    if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
+      // A campaign total budget counts its total over the days it can run, with the end date it publishes
+      // with (after the planned-run move above), and must still fit Google's dates.
+      const want=_campaignOptions().draftBudgetDaily(ops,{today:_acctDateYmd(await _accountTz(),0)});
+      // Same figures and wording as the plan and the browser: what this draft adds, what is free, what enabled campaigns use.
+      const over=require('./googleAdsCampaignStyles').CAMPAIGN_STYLES.budgetCeilingMessage(want,await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);
+      if(over)throw new Error(over+" Nothing was published; approved budgets are never changed silently.");
+    }
     // Preserve every approved byte and group. No late generic-copy injection,
     // auto-crop substitution or silent image dropping after the visual review.
     if(ops){
       ops=require('./googleAdsAdDesign').orderAssetGroupMutations(ops);
+      // New Search/Performance Max campaigns bid for purchases only (their own goals, set after them in this request),
+      // and new Performance Max campaigns keep the account's Performance Max brand exclusions.
+      purchaseGoals=await _purchaseGoalOps(ops);if(purchaseGoals.ops.length)ops=ops.concat(purchaseGoals.ops);
+      brandExclusions=await _pmaxBrandExclusionOps(ops);if(brandExclusions.ops.length)ops=ops.concat(brandExclusions.ops);
       if(newNames.length&&!ctrl.dryRun)await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-new-campaign:"+id});
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       if(p.groupActivationGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-switch:"+id});await _guardProductGroupActivation(it);}
@@ -1965,12 +1972,13 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
       }
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
+    else if(p.campaignOption&&(p.seasonalityAdjustment||p.lifecycleGoal))publicationResult=await _publishCampaignOption(it,ctrl,{id,onDispatch:()=>{dispatched=true;}});
     else throw new Error("The draft contains no publishable operations.");
     const learningPublication=ctrl.dryRun?null:_learningPublication(it,publicationResult,ops);
     const assetReceipts=[],publishedCampaignIds=[],groupReceipts=[];
     if(!ctrl.dryRun)(publicationResult&&publicationResult.mutateOperationResponses||[]).forEach((response,index)=>{const createdGroup=ops&&ops[index]&&(ops[index].assetGroupOperation?.create||ops[index].adGroupOperation?.create),publishedGroup=(response.assetGroupResult||response.adGroupResult||{}).resourceName;if(createdGroup&&publishedGroup&&p.groupSplitGuard){const planned=(p.meta.assetGroups||[]).find(g=>g.ref===createdGroup.resourceName);if(planned)groupReceipts.push({ref:publishedGroup,temporaryRef:planned.ref,productId:planned.productId});}const campaign=(response.campaignResult||{}).resourceName;if(campaign)publishedCampaignIds.push(campaign.split('/').pop());const asset=(response.assetResult||{}).resourceName,created=ops&&ops[index]&&ops[index].assetOperation&&ops[index].assetOperation.create,entry=created&&(p.generatedAssets||[]).find(e=>e.tempResourceName===created.resourceName);if(asset&&created&&created.imageAsset&&created.imageAsset.data)assetReceipts.push({resourceName:asset,hash:entry?entry.asset.hash:creativeHash(created.imageAsset.data),...(entry?{path:entry.asset.path}:{})});});
     await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(assetReceipts.length?{assetReceipts}:{}),...(groupReceipts.length?{groupSplitPublication:{groups:groupReceipts,at:Date.now()}}:{}),...(publishedCampaignIds.length?{publishedCampaignIds}:{}),...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
-    // Remember each new campaign's planned days, so its first enable from Campaigns starts the full run.
+    // Remember each new campaign's planned days, so its first enable from Overview starts the full run.
     if(!ctrl.dryRun&&runStart)for(const [index,response] of (publicationResult&&publicationResult.mutateOperationResponses||[]).entries()){
       const c=ops[index]&&ops[index].campaignOperation&&ops[index].campaignOperation.create,campaign=(response.campaignResult||{}).resourceName;
       if(c&&campaign&&Number(plannedDays[c.resourceName])>0)try{await _flightRef(campaign.split('/').pop()).set({days:Number(plannedDays[c.resourceName]),approvalId:String(id),endDate:_dateOnly(c.endDateTime),publishedAt:Date.now()});}
@@ -1985,6 +1993,8 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
       catch(e){await ref.update({targetRoasWarning:"The target ROAS kept for later could not be saved."}).catch(()=>{});}
     }
     if(!ctrl.dryRun&&groupReceipts.length)try{await _designEngine().linkPublishedDesignScopes({campaignId:p.groupSplitGuard.campaignId,sourceGroupRef:p.groupSplitGuard.sourceGroupRef,groups:groupReceipts});}catch(e){await ref.update({designLinkWarning:String(e.message||e).slice(0,250)}).catch(()=>{});}
+    if(!ctrl.dryRun&&purchaseGoals&&purchaseGoals.campaigns)await ref.update({purchaseGoals:{campaigns:purchaseGoals.campaigns,off:purchaseGoals.off,kept:purchaseGoals.kept,note:purchaseGoals.note,at:Date.now()},
+      ...(brandExclusions&&brandExclusions.campaigns?{brandExclusions:{campaigns:brandExclusions.campaigns,lists:brandExclusions.lists,at:Date.now()}}:{})}).catch(()=>{});
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
     return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
   } catch(e) {
@@ -3559,15 +3569,15 @@ async function metricsRange({ start, end } = {}) {
   const context = await _reportContext(), range = _validatedReportRange({ start, end }, context.accountToday, 14);
   const { start: s, end: e } = range;
   const [base, report] = await Promise.all([
-    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign`),
+    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign`),
     _gaqlBothBases(extra => `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.conversions, metrics.conversions_value, metrics.clicks, metrics.impressions${extra} FROM campaign WHERE segments.date BETWEEN '${s}' AND '${e}'`)
   ]);
-  const fx = await _reportRates(report.rows, context.budgetCurrency), byId = {}, warnings = [];
+  const fx = await _reportRates(report.rows, context.budgetCurrency), byId = {}, warnings = [], budgetOf = await _campaignBudgetDaily(base);
   if (fx.fxIncomplete) warnings.push("One or more daily exchange rates are unavailable. All campaign totals use " + context.budgetCurrency + ".");
   if (!report.cd) warnings.push("Google did not provide conversion-date metrics. Select click date to see reported conversions.");
   base.forEach(r => { const c = r.campaign || {}; byId[c.id] = {
     id: String(c.id), name: c.name, status: c.status, primaryStatus: c.primaryStatus || null, primaryStatusReasons: c.primaryStatusReasons || [],
-    channel: c.advertisingChannelType || null, budget: fromMicros((r.campaignBudget || {}).amountMicros), budgetRes: (r.campaignBudget || {}).resourceName || null,
+    channel: c.advertisingChannelType || null, budget: budgetOf(r), budgetRes: (r.campaignBudget || {}).resourceName || null,
     cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, convCd: report.cd ? 0 : null, valueCd: report.cd ? 0 : null,
     costNative: 0, valueNative: 0, valueCdNative: report.cd ? 0 : null, cdUnavailable: !report.cd, fxIncomplete: fx.fxIncomplete, currency: fx.currency,
     metricsUnavailable: false, historicalOnly: c.status === "REMOVED", metricsRange: range }; });
@@ -5759,19 +5769,23 @@ async function anomalyCheck({ ctrl } = {}) {
 // Daily budgets that can actually spend right now: ENABLED campaigns that have not ENDED, each
 // (shared) budget counted once. total is in the account currency. Every spend check uses this.
 async function _enabledBudgets() {
-  const rows=await gaql("SELECT campaign.id, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
-  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if((r.campaign||{}).servingStatus==="ENDED")return;if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,fromMicros(b.amountMicros));});
+  const rows=await gaql("SELECT campaign.id, campaign.serving_status, campaign.start_date_time, campaign.end_date_time, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
+  const dailyOf=await _budgetDailyOf(rows); // a campaign total budget counts what is left of it per remaining day
+  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if((r.campaign||{}).servingStatus==="ENDED")return;if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,dailyOf(r));});
   return {total:[...budgets.values()].reduce((a,b)=>a+b,0),budgets};
 }
 async function _enabledBudgetTotal() { return (await _enabledBudgets()).total; }
 // Refuses a change that would push the spendable daily budgets over the ceiling, or add spend once
 // month-to-date spend has reached the monthly stop. enabling: the campaign will be able to spend
-// after the change; amount: its new daily budget. Runs in dry-run too. Returns the budget resource.
-async function _assertSpendLimits(campaignId, { ctrl, amount = null, enabling = false } = {}) {
-  const id=String(campaignId).replace(/\D/g,""),row=id&&(await gaql(`SELECT campaign.id, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`))[0],b=(row&&row.campaignBudget)||{};
+// after the change; amount: its new daily budget; endDate: its new end date (a campaign total budget
+// spreads what is left over the days to that date). Runs in dry-run too. Returns the budget resource.
+async function _assertSpendLimits(campaignId, { ctrl, amount = null, enabling = false, endDate = null } = {}) {
+  const id=String(campaignId).replace(/\D/g,""),row=id&&(await gaql(`SELECT campaign.id, campaign.start_date_time, campaign.end_date_time, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.id = ${id}`))[0],b=(row&&row.campaignBudget)||{};
   if(!b.resourceName)throw new Error("This campaign's budget could not be verified in Google Ads, so nothing was changed.");
+  if(amount!=null&&_campaignOptions().isTotalBudget(b))throw new Error("This campaign has a total budget for its fixed dates, which Google doesn't turn into a daily budget. Nothing was changed. Change its total in Google Ads.");
   const live=await _enabledBudgets(),counted=live.budgets.has(b.resourceName);if(!counted&&!enabling)return b.resourceName; // cannot spend yet; enabling it is checked then
-  const after=live.total-(counted?live.budgets.get(b.resourceName):0)+(amount==null?fromMicros(b.amountMicros):Number(amount)),ceiling=Number(ctrl.maxDailyBudgetTotal)||0,money=v=>(ctrl.budgetCurrency?ctrl.budgetCurrency+" ":"")+Number(v).toFixed(2);
+  const next=endDate&&_campaignOptions().isTotalBudget(b)?{...row,campaign:{...(row.campaign||{}),endDateTime:_dateOnly(endDate)+" 23:59:59"}}:row;
+  const after=live.total-(counted?live.budgets.get(b.resourceName):0)+(amount==null?(await _budgetDailyOf([next]))(next):Number(amount)),ceiling=Number(ctrl.maxDailyBudgetTotal)||0,money=v=>(ctrl.budgetCurrency?ctrl.budgetCurrency+" ":"")+Number(v).toFixed(2);
   if(after<=live.total+0.001)return b.resourceName; // no added spend
   if(ceiling>0&&after>ceiling+0.001)throw new Error(`This would raise the daily budgets that can spend to ${money(after)}, over your daily ceiling of ${money(ceiling)}. Nothing was changed. Lower or pause another campaign first, or raise the ceiling in Controls.`);
   const limit=Number(ctrl.maxMonthlySpend)||0;
@@ -5789,18 +5803,20 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   // Same spendable set as every other check: ENDED campaigns cannot spend, and a shared budget is
   // one daily amount (and one update) however many enabled campaigns use it.
   const rows = await gaql(
-    `SELECT campaign.id, campaign.name, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.serving_status, campaign.start_date_time, campaign.end_date_time, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros
      FROM campaign WHERE campaign.status = 'ENABLED'`);
-  const byRes = new Map();
+  // A campaign total budget counts what is left of it per remaining day, and is never trimmed here:
+  // Google keeps its amount a total for the campaign's fixed dates.
+  const byRes = new Map(), dailyOf = await _budgetDailyOf(rows);
   rows.forEach(r => { const res = r.campaignBudget && r.campaignBudget.resourceName; if (!res || (r.campaign || {}).servingStatus === "ENDED") return;
     const x = byRes.get(res); if (x) { x.name += " + " + r.campaign.name; return; }
-    byRes.set(res, { id: r.campaign.id, name: r.campaign.name, res, budget: fromMicros(r.campaignBudget.amountMicros) }); });
+    byRes.set(res, { id: r.campaign.id, name: r.campaign.name, res, budget: dailyOf(r), fixed: _campaignOptions().isTotalBudget(r.campaignBudget) }); });
   const items = [...byRes.values()].filter(x => x.budget > 0);
   const total = items.reduce((a, b) => a + b.budget, 0);
   if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
   // A trim never raises a budget: those at or under the 1-a-day floor stay as they are, and the
   // larger budgets are scaled into the room that leaves.
-  const floor = 1, low = items.filter(x => x.budget <= floor), high = items.filter(x => x.budget > floor);
+  const floor = 1, low = items.filter(x => x.fixed || x.budget <= floor), high = items.filter(x => !x.fixed && x.budget > floor);
   const highTotal = high.reduce((a, b) => a + b.budget, 0), factor = highTotal > 0 ? Math.max(0, ceiling - low.reduce((a, b) => a + b.budget, 0)) / highTotal : 0;
   const ops = [], moves = [];
   let after = total;
@@ -6477,7 +6493,7 @@ async function deleteProposedAd({id}={}){
   });return {ok:true,id,status:'REJECTED',historyPreserved:true};
 }
 // A reviewed run length (days) belongs to the campaign, not to the day its draft was prepared.
-// applyApproval records it per published campaign; the first enable from Campaigns moves the end
+// applyApproval records it per published campaign; the first enable from Overview moves the end
 // date so the full run starts that day. An explicit end date change settles it instead.
 function _flightRef(id) { const f = fb(); return f ? f.db.collection(COL.state).doc("plannedFlight_" + String(id).replace(/\D/g, "")) : null; }
 function _runEndDate(from, days) { return _ymd(new Date(Date.parse(from + "T12:00:00Z") + (Math.ceil(Number(days)) - 1) * 86400000)); }
@@ -6496,7 +6512,6 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
-  if (status === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true }); // daily ceiling + monthly stop
   const resourceName = `customers/${CID}/campaigns/${id}`;
   // First enable of a campaign published with a planned run: the same update sets the end date so the
   // run starts today (or at its later scheduled start) and lasts the reviewed number of days.
@@ -6513,6 +6528,8 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
       endDate = _runEndDate(from, flight.days);
     }
   }
+  // Daily ceiling + monthly stop, with the end date this enable sets (a total budget spreads over its days).
+  if (status === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true, endDate });
   // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
   // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
   // are valid status updates.
@@ -6611,7 +6628,8 @@ async function setCampaignEndDate(campaignId, { endDate, addDays, ctrl } = {}) {
   }
   // An ENABLED campaign that has ENDED starts spending again the moment its end date moves out:
   // the same daily ceiling and monthly stop checks as enabling it. (A serving one adds nothing.)
-  if (String(cur.status).toUpperCase() === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true });
+  // A total budget spread over fewer days spends more a day: counted with the new end date.
+  if (String(cur.status).toUpperCase() === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true, endDate: target });
 
   // Write it. Same field-name fallback as the reads above.
   let applied = null, lastErr = null;
@@ -6725,7 +6743,10 @@ async function saveDraftPayload(ref,original,payload) {
   const f=fb();await f.db.runTransaction(async tx=>{const now=await tx.get(ref);if(!now.exists)throw new Error("Draft not found.");const it=now.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("Only an idle pending draft can be edited.");
     if(creativeHash(it.payload||{})!==creativeHash(original))throw new Error("Another edit changed this draft. Reload before saving.");
-    tx.update(ref,{payload,...(it.creative?{"creative.review":null}: {})});
+    // Dates, countries and the budget type change no copy or image: a creative made for this exact
+    // draft stays valid for the edited one (no new paid production), and only its approval is cleared.
+    const c=it.creative,before=creativeHash(original),after=creativeHash(payload);
+    tx.update(ref,{payload,...(c?{"creative.review":null,...(c.payloadHash===before?{"creative.payloadHash":after}:{}),...(c.sourceHash===before?{"creative.sourceHash":after}:{})}:{})});
   });
 }
 async function setApprovalDates(approvalId, startDate, endDate) {
@@ -8870,6 +8891,7 @@ async function fetchDiagnostics(campaignId) {
     gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status,
                  campaign.primary_status_reasons, campaign.advertising_channel_type,
                  campaign_budget.resource_name, campaign_budget.amount_micros,
+                 campaign_budget.period, campaign_budget.total_amount_micros,
                  campaign_budget.recommended_budget_amount_micros, campaign_budget.has_recommended_budget,
                  metrics.search_impression_share, metrics.search_budget_lost_impression_share,
                  metrics.search_rank_lost_impression_share,
@@ -8902,7 +8924,7 @@ async function fetchDiagnostics(campaignId) {
           FROM keyword_view WHERE ad_group_criterion.status = 'ENABLED'${CF}`).catch(() => [])
   ]);
 
-  const by = {};
+  const by = {}, budgetOf = await _campaignBudgetDaily(c7); // a total budget: what is left per remaining day
   for (const r of c7) {
     const c = r.campaign || {}, b = r.campaignBudget || {}, m = r.metrics || {};
     by[c.id] = {
@@ -8911,7 +8933,7 @@ async function fetchDiagnostics(campaignId) {
       reasonsText: _diagReasonsText(c.primaryStatusReasons),
       channel: c.advertisingChannelType || null,
       startDate: null, endDate: null, // filled by the version-tolerant fetch below
-      budget: fromMicros(b.amountMicros), budgetRes: b.resourceName,
+      budget: budgetOf(r), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
@@ -9917,13 +9939,13 @@ async function dashboard(input = {}) {
   // Old metric snapshots did not store channel. Reconcile live configuration so
   // existing PMax campaigns remain visible independently of research and ad spend.
   try {
-    const current = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status != 'REMOVED'`);
-    const prior = new Map((out.lastMetrics || []).map(c => [String(c.id), c]));
+    const current = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.primary_status, campaign.primary_status_reasons, campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.status != 'REMOVED'`);
+    const prior = new Map((out.lastMetrics || []).map(c => [String(c.id), c])), budgetOf = await _campaignBudgetDaily(current);
     out.lastMetrics = current.map(r => {
       const c = r.campaign || {}, old = prior.get(String(c.id));
       return Object.assign({}, old || { metricsUnavailable: true }, { id: c.id, name: c.name, status: c.status,
         channel: c.advertisingChannelType || null, primaryStatus: c.primaryStatus || null,
-        primaryStatusReasons: c.primaryStatusReasons || [], budget: fromMicros((r.campaignBudget || {}).amountMicros),
+        primaryStatusReasons: c.primaryStatusReasons || [], budget: budgetOf(r),
         budgetRes: (r.campaignBudget || {}).resourceName || null });
     });
     out.lastMetrics.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); c.metricsRange = out.lastMetricsRange || null; });
@@ -10103,6 +10125,8 @@ function _stable(v) {
 function creativeHash(v) { return require("crypto").createHash("sha256").update(JSON.stringify(_stable(v))).digest("hex"); }
 function needsCreativeReview(item) {
   if(_isAdVersionApproval(item))return false;
+  // An unmodified brand Search draft carries only fixed, vetted brand copy: nothing to write or review.
+  if(_campaignOptions().isBrandSearchDraft(item,CID))return false;
   const p=(item||{}).payload||{};
   return !!(p.designStudioSpec || ["creative","pmax","studio"].includes((item||{}).type) || (p.mutateOperations||[]).some(o=>o.assetGroupOperation||o.adGroupAdOperation||o.adOperation));
 }
@@ -11254,7 +11278,289 @@ async function beginAnalyzeAd(input) { return _analysisEngine().beginAnalyzeAd(i
 async function analyzeAdStatus(input) { return _analysisEngine().analyzeAdStatus(input); }
 async function runAnalyzeAd(input) { return _analysisEngine().runAnalyzeAd(input); }
 
+/* ============ Campaign options: brand Search, sale days, new customers, total budgets ============ */
+// Small options drafted from Opportunities. Each becomes a draft in Approvals and reaches Google only
+// when Paul approves it there. The rules, and the Google Ads API v24 facts they rely on, live in
+// _googleAdsCampaignOptions.js. Reads here are GAQL searches; the only writes are the reviewed drafts.
+let _campaignOptionsLib = null;
+function _campaignOptions() { return _campaignOptionsLib || (_campaignOptionsLib = require("./_googleAdsCampaignOptions")); }
+const _OPTION_DRAFT_TYPES = ["brand", "seasonality", "acquisition"];
+const _OPEN_DRAFT_STATUSES = ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"];
+function _defaultCountries(ctrl) {
+  const list = Array.isArray(ctrl && ctrl.defaultCountries) && ctrl.defaultCountries.length ? ctrl.defaultCountries : ["2124"];
+  return [...new Set(list.map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+}
+
+// New Search and Performance Max campaigns bid for purchases only. Every campaign otherwise inherits
+// the account's goals, where Add to cart and Begin checkout are biddable beside the purchase actions.
+// The same atomic request that creates a campaign sets its own goals, addressed by the campaign's
+// temporary ID, so no existing campaign can ever be touched. Google's goals are read fresh at publish.
+async function _purchaseGoalOps(ops) {
+  const created = (ops || []).map(o => o && o.campaignOperation && o.campaignOperation.create)
+    .filter(c => c && ["SEARCH", "PERFORMANCE_MAX"].includes(c.advertisingChannelType) && /^customers\/\d+\/campaigns\/-\d+$/.test(String(c.resourceName || "")));
+  if (!created.length) return { ops: [], off: [], kept: [], note: null, campaigns: 0 };
+  let rows;
+  try { rows = await gaql("SELECT customer_conversion_goal.category, customer_conversion_goal.origin, customer_conversion_goal.biddable FROM customer_conversion_goal"); }
+  catch (e) { throw new Error("Google's conversion goals could not be read, so the new campaign was not sent. Nothing was changed. Try again shortly."); }
+  const out = _campaignOptions().purchaseOnlyGoalOps({ campaigns: created.map(c => c.resourceName), goals: rows.map(r => r.customerConversionGoal || {}) });
+  return { ...out, campaigns: created.length };
+}
+// New Performance Max campaigns exclude the same brand lists (shared sets of type BRANDS) as the
+// account's other Performance Max campaigns, in the same request, so once Paul has approved the Brites
+// brand exclusion a new campaign cannot bid on searches for the brand either. Nothing excluded in the
+// account: nothing is added. A campaign the builder already gave a brand exclusion is left as built.
+async function _pmaxBrandExclusionOps(ops) {
+  const created = (ops || []).map(o => o && o.campaignOperation && o.campaignOperation.create)
+    .filter(c => c && c.advertisingChannelType === "PERFORMANCE_MAX" && /^customers\/\d+\/campaigns\/-\d+$/.test(String(c.resourceName || "")));
+  const built = new Set((ops || []).map(o => { const c = o && o.campaignCriterionOperation && o.campaignCriterionOperation.create; return c && c.negative === true && c.brandList ? c.campaign : null; }).filter(Boolean));
+  const todo = created.filter(c => !built.has(c.resourceName));
+  if (!todo.length) return { ops: [], lists: [], campaigns: 0 };
+  let used, enabled;
+  try { [used, enabled] = await Promise.all([
+    gaql("SELECT campaign.id, campaign_criterion.brand_list.shared_set FROM campaign_criterion WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED' AND campaign_criterion.type = 'BRAND_LIST' AND campaign_criterion.negative = TRUE AND campaign_criterion.status != 'REMOVED'"),
+    gaql("SELECT shared_set.resource_name FROM shared_set WHERE shared_set.type = 'BRANDS' AND shared_set.status = 'ENABLED'")]); }
+  catch (e) { throw new Error("Google's brand exclusions could not be read, so the new campaign was not sent. Nothing was changed. Try again shortly."); }
+  const live = new Set(enabled.map(r => (r.sharedSet || {}).resourceName)), ownList = new RegExp(`^customers/${CID}/sharedSets/\\d+$`);
+  const lists = [...new Set(used.map(r => ((r.campaignCriterion || {}).brandList || {}).sharedSet))].filter(s => s && ownList.test(s) && live.has(s));
+  return { ops: todo.flatMap(c => lists.map(s => ({ campaignCriterionOperation: { create: { campaign: c.resourceName, negative: true, brandList: { sharedSet: s } } } }))), lists, campaigns: todo.length };
+}
+
+// What each budget row can spend a day, as every ceiling check counts it: a daily budget's amount; a
+// campaign total budget (fixed dates) what is left of it over its remaining days. Rows carry
+// campaign.id, campaign.start_date_time/end_date_time and campaign_budget.period/total_amount_micros.
+// Spend so far is read only when a total budget is present.
+async function _budgetDailyOf(rows) {
+  const O = _campaignOptions(), totals = (rows || []).filter(r => O.isTotalBudget(r && r.campaignBudget)), daily = new Map();
+  if (totals.length) {
+    const today = _acctDateYmd(await _accountTz(), 0), ids = [...new Set(totals.map(r => String((r.campaign || {}).id)).filter(x => /^\d+$/.test(x)))];
+    const starts = totals.map(r => _dateOnly((r.campaign || {}).startDateTime)).filter(d => d && d <= today).sort();
+    const from = starts[0] || O._dates.addDays(today, -O.TOTAL_BUDGET_MAX_DAYS), spent = new Map();
+    // Unreadable spend counts the whole total over the days left: never less than Google could spend.
+    if (ids.length) try { (await gaql(`SELECT campaign.id, metrics.cost_micros FROM campaign WHERE campaign.id IN (${ids.join(", ")}) AND segments.date BETWEEN '${from}' AND '${today}'`))
+      .forEach(r => { const id = String((r.campaign || {}).id); spent.set(id, (spent.get(id) || 0) + fromMicros((r.metrics || {}).costMicros)); }); } catch (e) { spent.clear(); }
+    totals.forEach(r => { const c = r.campaign || {}; daily.set(String(c.id), O.budgetDailyEquivalent(r.campaignBudget, { start: _dateOnly(c.startDateTime), end: _dateOnly(c.endDateTime), today, spent: spent.get(String(c.id)) || 0 })); });
+  }
+  return r => { const b = (r && r.campaignBudget) || {}; return O.isTotalBudget(b) ? (daily.get(String((r.campaign || {}).id)) || 0) : fromMicros(b.amountMicros); };
+}
+// The same per-day budget for rows read without campaign dates (dashboard, reports). The dates of a
+// campaign with a total budget are read only when one exists; if they can't be read, its whole
+// total is shown (never less than it could spend in a day).
+async function _campaignBudgetDaily(rows) {
+  const O = _campaignOptions(), plain = r => { const b = (r && r.campaignBudget) || {}; return fromMicros(O.isTotalBudget(b) ? b.totalAmountMicros : b.amountMicros); };
+  const ids = [...new Set((rows || []).filter(r => O.isTotalBudget(r && r.campaignBudget)).map(r => String((r.campaign || {}).id)).filter(x => /^\d+$/.test(x)))];
+  if (!ids.length) return plain;
+  try {
+    const dated = new Map((await gaql(`SELECT campaign.id, campaign.start_date_time, campaign.end_date_time, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.id IN (${ids.join(", ")})`))
+      .map(r => [String((r.campaign || {}).id), r])), row = r => dated.get(String(((r && r.campaign) || {}).id)) || r;
+    const dailyOf = await _budgetDailyOf((rows || []).map(row));
+    return r => dailyOf(row(r));
+  } catch (e) { return plain; }
+}
+
+async function _campaignFacts() {
+  const rows = await gaql("SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas, campaign.maximize_conversions.target_cpa_micros, campaign.end_date_time FROM campaign WHERE campaign.status != 'REMOVED'");
+  const deleted = await _deletedCampaignIds().catch(() => new Set());
+  return rows.map(r => { const c = r.campaign || {}; return { id: String(c.id || ""), name: c.name || "Campaign " + c.id, status: c.status, servingStatus: c.servingStatus || null,
+    channel: c.advertisingChannelType || null, bidding: c.biddingStrategyType || null, targetRoas: Number((c.maximizeConversionValue || {}).targetRoas) || 0,
+    targetCpaMicros: Number((c.maximizeConversions || {}).targetCpaMicros) || 0, endDate: _dateOnly(c.endDateTime) }; }).filter(c => /^\d+$/.test(c.id) && !deleted.has(c.id));
+}
+// Campaign id -> its new-customer goal { mode, value, highLifetimeValue }.
+async function _lifecycleGoals() {
+  const rows = await gaql("SELECT campaign_lifecycle_goal.campaign, campaign_lifecycle_goal.customer_acquisition_goal_settings.optimization_mode, campaign_lifecycle_goal.customer_acquisition_goal_settings.value_settings.value, campaign_lifecycle_goal.customer_acquisition_goal_settings.value_settings.high_lifetime_value FROM campaign_lifecycle_goal");
+  const out = new Map();
+  rows.forEach(r => { const g = r.campaignLifecycleGoal || {}, s = g.customerAcquisitionGoalSettings || {}, v = s.valueSettings || {}, id = String(g.campaign || "").split("/").pop();
+    if (/^\d+$/.test(id)) out.set(id, { mode: s.optimizationMode || "TARGET_ALL_EQUALLY", value: v.value != null ? Number(v.value) : null, highLifetimeValue: v.highLifetimeValue != null ? Number(v.highLifetimeValue) : null }); });
+  return out;
+}
+// Campaign id -> whether it bids toward a purchase goal (Google omits a false biddable).
+async function _purchaseGoalCampaigns() {
+  const rows = await gaql("SELECT campaign.id, campaign_conversion_goal.category, campaign_conversion_goal.biddable FROM campaign_conversion_goal WHERE campaign_conversion_goal.category = 'PURCHASE'");
+  const out = new Map();
+  rows.forEach(r => { const id = String((r.campaign || {}).id || ""); if (/^\d+$/.test(id)) out.set(id, out.get(id) === true || (r.campaignConversionGoal || {}).biddable === true); });
+  return out;
+}
+// Google's sale-day adjustments that have not ended.
+async function _seasonalityAdjustments(today) {
+  const rows = await gaql("SELECT bidding_seasonality_adjustment.resource_name, bidding_seasonality_adjustment.name, bidding_seasonality_adjustment.scope, bidding_seasonality_adjustment.campaigns, bidding_seasonality_adjustment.start_date_time, bidding_seasonality_adjustment.end_date_time, bidding_seasonality_adjustment.conversion_rate_modifier FROM bidding_seasonality_adjustment WHERE bidding_seasonality_adjustment.status = 'ENABLED'");
+  return rows.map(r => r.biddingSeasonalityAdjustment || {}).filter(a => String(a.endDateTime || "") > today).map(a => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
+    campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start: String(a.startDateTime || ""), endExclusive: String(a.endDateTime || ""), modifier: Number(a.conversionRateModifier) || null }));
+}
+// Option drafts not yet published or deleted.
+async function _openOptionDrafts() {
+  const f = fb(); if (!f) throw new Error("Approval storage is unavailable.");
+  const snaps = await Promise.all(_OPTION_DRAFT_TYPES.map(t => f.db.collection(COL.approvals).where("type", "==", t).limit(200).get()));
+  const out = [];
+  snaps.forEach(s => s.forEach(d => { const x = d.data() || {}; if (_OPEN_DRAFT_STATUSES.includes(x.status) && !x.archivedAt && !x.deletedAt) out.push({ id: d.id, type: x.type, status: x.status, payload: x.payload || {} }); }));
+  return out;
+}
+// Daily clicks and conversions for the whole account (last year's sale dates).
+async function _dailyAccountHistory(from, to) {
+  const rows = await gaql(`SELECT segments.date, metrics.clicks, metrics.conversions FROM customer WHERE segments.date BETWEEN '${from}' AND '${to}'`);
+  return rows.map(r => ({ date: (r.segments || {}).date, clicks: Number((r.metrics || {}).clicks) || 0, conversions: Number((r.metrics || {}).conversions) || 0 }));
+}
+function _saleEstimate(w, history) {
+  const shift = w.lastPeak ? _daysBetween(_parseYmd(w.lastPeak), _parseYmd(w.peak)) : 0;
+  return _campaignOptions().conversionRateEstimate(history, { start: w.start, end: w.end, shiftDays: shift, defaultPct: w.defaultPct });
+}
+
+// Everything the Campaign options panel shows. Read-only.
+async function campaignOptionsStatus() {
+  const O = _campaignOptions(), ctrl = await control(), warnings = [];
+  const today = _acctDateYmd(await _accountTz(), 0), currency = await _accountCurrency().catch(() => ctrl.budgetCurrency || null);
+  const soft = async (label, fn, fallback) => { try { return await fn(); } catch (e) { warnings.push(label + " could not be read."); return fallback; } };
+  const [campaigns, goals, purchase, adjustments, drafts] = await Promise.all([_campaignFacts(), soft("New-customer settings", _lifecycleGoals, new Map()),
+    soft("Purchase goals", _purchaseGoalCampaigns, new Map()), soft("Sale-day adjustments", () => _seasonalityAdjustments(today), []), _openOptionDrafts()]);
+  const windows = O.SALE_OCCASIONS.map(o => { try { return O.saleWindow(o.key, { today, peakOf: _nextOccasionPeak }); } catch (e) { warnings.push(e.message); return null; } }).filter(Boolean);
+  // One read covers last year's dates of every occasion and the four weeks before each.
+  const spans = windows.filter(w => w.lastPeak).map(w => { const shift = _daysBetween(_parseYmd(w.lastPeak), _parseYmd(w.peak)); return [O._dates.addDays(w.start, -shift - 28), O._dates.addDays(w.end, -shift)]; });
+  const history = spans.length ? await soft("Last year's results", () => _dailyAccountHistory(spans.map(s => s[0]).sort()[0], spans.map(s => s[1]).sort().pop()), null) : null;
+  const brandCampaign = campaigns.find(c => c.name === O.BRAND_SEARCH.campaignName) || null, brandDraft = drafts.find(d => d.type === "brand") || null;
+  return { ok: true, today, currency, warnings,
+    brand: { campaign: brandCampaign && { id: brandCampaign.id, name: brandCampaign.name, status: brandCampaign.status }, draft: brandDraft && { id: brandDraft.id, status: brandDraft.status },
+      defaults: O.BRAND_SEARCH.defaults, limits: O.BRAND_SEARCH.limits, countries: _defaultCountries(ctrl), pairing: O.BRAND_SEARCH.pairing,
+      keywords: O.BRAND_SEARCH.keywords.map(k => (k.matchType === "EXACT" ? `[${k.text}]` : `"${k.text}"`)), ceiling: Number(ctrl.maxDailyBudgetTotal) || 0 },
+    sale: { limits: O.SEASONALITY_LIMITS, occasions: windows.map(w => ({ key: w.key, label: w.label, start: w.start, end: w.end, days: w.days, peak: w.peak, estimate: _saleEstimate(w, history),
+        campaigns: campaigns.filter(c => O.seasonalityEligible(c, w.start).ok).map(c => ({ id: c.id, name: c.name, status: c.status })) })),
+      upcoming: adjustments.map(a => ({ name: a.name, start: a.start.slice(0, 10), end: O._dates.addDays(a.endExclusive.slice(0, 10), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
+      drafts: drafts.filter(d => d.type === "seasonality").map(d => ({ id: d.id, status: d.status, label: (d.payload.campaignOption || {}).label || null, start: (d.payload.campaignOption || {}).start || null, end: (d.payload.campaignOption || {}).end || null })) },
+    customers: { modes: O.ACQUISITION_MODES, tradeoff: O.ACQUISITION_TRADEOFF, prerequisite: O.ACQUISITION_PREREQUISITE,
+      campaigns: campaigns.filter(c => O.ACQUISITION_CHANNELS.includes(c.channel)).map(c => { const cur = goals.get(c.id) || null, pg = purchase.has(c.id) ? purchase.get(c.id) : null;
+        return { id: c.id, name: c.name, status: c.status, channel: c.channel, mode: cur ? cur.mode : "TARGET_ALL_EQUALLY", value: cur ? cur.value : null,
+          allowed: Object.fromEntries(Object.keys(O.ACQUISITION_MODES).map(m => { const e = O.acquisitionEligibility(c, m, { current: cur, purchaseGoal: pg }); return [m, e.ok ? true : e.reason]; })) }; }),
+      drafts: drafts.filter(d => d.type === "acquisition").map(d => ({ id: d.id, status: d.status, campaignId: (d.payload.lifecycleGoal || {}).campaignId || null })) } };
+}
+
+// A small brand Search campaign: the brand terms, exact and phrase, bought at Search brand prices.
+async function draftBrandSearch({ dailyBudget, maxCpc } = {}) {
+  const O = _campaignOptions(), B = O.BRAND_SEARCH, ctrl = await control(), currency = await _accountCurrency();
+  const [live, drafts] = await Promise.all([gaql("SELECT campaign.id, campaign.name, campaign.status FROM campaign WHERE campaign.status != 'REMOVED'"), _openOptionDrafts()]);
+  if (live.some(r => (r.campaign || {}).name === B.campaignName)) throw new Error("A brand Search campaign already exists. Manage it from Overview.");
+  if (drafts.some(d => d.type === "brand")) throw new Error("A brand Search draft is already waiting in Approvals.");
+  // Sitelinks reuse the Search builder's extensions: real store collections only, never invented pages.
+  let related = [];
+  try { const colls = (await getCollections({})) || [], skip = new Set(["best-sellers", B.sitelinkPage.handle]);
+    related = B.relatedHandles.map(h => colls.find(c => c && c.handle === h)).filter(Boolean).concat(colls.filter(c => c && c.handle && !skip.has(c.handle) && !B.relatedHandles.includes(c.handle))).slice(0, 2)
+      .map(c => ({ title: c.title, handle: c.handle })); } catch (e) {}
+  const built = O.buildBrandSearchOps({ cid: CID, dailyBudget: dailyBudget == null ? B.defaults.dailyBudget : dailyBudget, maxCpc: maxCpc == null ? B.defaults.maxCpc : maxCpc,
+    countries: _defaultCountries(ctrl), stamp: Date.now(), extensionOps: cRes => buildCampaignAssets({ title: B.sitelinkPage.title, handle: B.sitelinkPage.handle }, B.sitelinkPage.url, cRes, { relatedCollections: related }) });
+  const ceiling = Number(ctrl.maxDailyBudgetTotal) || 0, money = v => `${currency} ${Number(v).toFixed(2)}`;
+  if (ceiling > 0) { const used = await _enabledBudgetTotal();
+    if (used + built.dailyBudget > ceiling + 0.001) throw new Error(`A ${money(built.dailyBudget)}/day budget doesn't fit: enabled campaigns already use ${money(used)} of the ${money(ceiling)}/day ceiling. Lower it or raise the ceiling in Controls. No draft was created.`); }
+  const summary = `NEW brand Search campaign “${B.tag}” — ${built.adGroupSummary[0].keywords.join(", ")}; manual CPC up to ${money(built.maxCpc)} a click; ${money(built.dailyBudget)}/day; people in the target countries only; starts PAUSED. ${B.pairing}`;
+  const id = await enqueueApproval({ type: "brand", vetted: false, summary, payload: { meta: { kind: "brand", handle: "brand", budgetCurrency: currency }, mutateOperations: built.ops,
+    countries: built.countries, maxCpc: built.maxCpc, smartBidding: false, negatives: built.negatives, assetSummary: built.assetSummary, keywordSummary: built.keywordSummary,
+    adGroupSummary: built.adGroupSummary, campaignOption: { kind: "brand", pairing: B.pairing } } });
+  if (!id) throw new Error("Approval storage is unavailable, so no draft was created.");
+  return { ok: true, approvalId: id, dailyBudget: built.dailyBudget, maxCpc: built.maxCpc, countries: built.countries, currency };
+}
+
+// A bidding seasonality adjustment for a short sale: smart-bidding campaigns only, stated as an estimate.
+async function draftSeasonalityAdjustment({ occasion, startDate, endDate, changePct, campaignIds } = {}) {
+  const O = _campaignOptions(), o = O.saleOccasion(occasion), today = _acctDateYmd(await _accountTz(), 0);
+  const start = _dateOnly(startDate), end = _dateOnly(endDate);
+  O.checkSaleDates(start, end, today);
+  const ids = [...new Set((Array.isArray(campaignIds) ? campaignIds : []).map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
+  if (!ids.length) throw new Error("Choose at least one campaign.");
+  const facts = new Map((await _campaignFacts()).map(c => [c.id, c]));
+  const bad = ids.map(id => [id, facts.get(id)]).map(([id, c]) => [id, c, O.seasonalityEligible(c, start)]).filter(x => !x[2].ok);
+  if (bad.length) throw new Error(bad.map(([id, c, e]) => `${c ? "“" + c.name + "”" : "Campaign " + id}: ${e.reason}`).join("; ") + ". Sale-day adjustments apply only to smart-bidding campaigns. No draft was created.");
+  const win = { start: `${start} 00:00:00`, endExclusive: `${O._dates.addDays(end, 1)} 00:00:00` };
+  const [existing, drafts] = await Promise.all([_seasonalityAdjustments(today), _openOptionDrafts()]);
+  const clash = existing.find(a => (a.scope !== "CAMPAIGN" || a.campaignIds.some(id => ids.includes(id))) && O.seasonalityOverlaps(win, a));
+  if (clash) throw new Error(`Google already has the sale-day adjustment “${clash.name}” on these dates for these campaigns. No draft was created.`);
+  const waiting = drafts.find(d => { const c = ((d.payload.seasonalityAdjustment || {}).operation || {}).create || {}; return d.type === "seasonality" && (c.campaigns || []).some(r => ids.includes(String(r).split("/").pop())) && O.seasonalityOverlaps(win, { start: c.startDateTime, endExclusive: c.endDateTime }); });
+  if (waiting) throw new Error("A sale-day draft for these dates and campaigns is already waiting in Approvals. No draft was created.");
+  let estimate;
+  try { const w = { ...O.saleWindow(o.key, { today, peakOf: _nextOccasionPeak }), start, end }, shift = w.lastPeak ? _daysBetween(_parseYmd(w.lastPeak), _parseYmd(w.peak)) : 0;
+    estimate = _saleEstimate(w, shift ? await _dailyAccountHistory(O._dates.addDays(start, -shift - 28), O._dates.addDays(end, -shift)).catch(() => null) : []);
+  } catch (e) { estimate = { pct: o.defaultPct, measured: false, basis: "Starting estimate: last year's dates for this occasion are unknown." }; }
+  const pct = changePct == null || String(changePct).trim() === "" ? estimate.pct : Number(changePct);
+  const sign = v => (v > 0 ? "+" : "") + v + "%";
+  const description = `Brites console · ${o.label} · expected conversion rate ${sign(pct)} (estimate). ${estimate.basis}`;
+  const built = O.seasonalityOperation({ cid: CID, label: o.label, start, end, today, campaignIds: ids, changePct: pct, description });
+  const names = ids.map(id => ({ id, name: facts.get(id).name }));
+  const id = await enqueueApproval({ type: "seasonality", vetted: false,
+    summary: `Sale-day bid adjustment · ${o.label} · ${start} to ${end} — expected conversion rate ${sign(pct)} (estimate) for ${ids.length} smart-bidding campaign${ids.length === 1 ? "" : "s"}; bidding returns to normal after`,
+    payload: { seasonalityAdjustment: { operation: built.operation }, campaignOption: { kind: "seasonality", occasion: o.key, label: o.label, start, end, days: built.days, changePct: pct, modifier: built.modifier, estimate, campaigns: names } } });
+  if (!id) throw new Error("Approval storage is unavailable, so no draft was created.");
+  return { ok: true, approvalId: id, start, end, days: built.days, changePct: pct, modifier: built.modifier, estimate };
+}
+
+// The new-customer acquisition goal for one campaign, as the exact request Paul reviews.
+async function draftCustomerGoal({ campaignId, mode, value } = {}) {
+  const O = _campaignOptions(), id = String(campaignId == null ? "" : campaignId).replace(/\D/g, "");
+  if (!id) throw new Error("Choose a campaign.");
+  const c = (await _campaignFacts()).find(x => x.id === id);
+  if (!c) throw new Error("This campaign is not in Google Ads.");
+  const [goals, purchase, drafts] = await Promise.all([_lifecycleGoals(), _purchaseGoalCampaigns().catch(() => new Map()), _openOptionDrafts()]);
+  const current = goals.get(id) || null, e = O.acquisitionEligibility(c, mode, { current, purchaseGoal: purchase.has(id) ? purchase.get(id) : null });
+  if (!e.ok) throw new Error(e.reason + " No draft was created.");
+  if (drafts.some(d => d.type === "acquisition" && String((d.payload.lifecycleGoal || {}).campaignId) === id)) throw new Error("A new-customer draft for this campaign is already waiting in Approvals.");
+  const request = O.lifecycleGoalRequest({ cid: CID, campaignId: id, mode, value, existing: current });
+  const settings = (request.operation.create || request.operation.update).customerAcquisitionGoalSettings, money = (await _accountCurrency().catch(() => null)) || "";
+  const valueText = settings.valueSettings ? ` (+${money ? money + " " : ""}${settings.valueSettings.value.toFixed(2)} per new customer)` : "";
+  const draftId = await enqueueApproval({ type: "acquisition", vetted: false,
+    summary: `New-customer goal · ${c.name} — ${O.ACQUISITION_MODES[current ? current.mode : "TARGET_ALL_EQUALLY"]} → ${O.ACQUISITION_MODES[mode]}${valueText}`,
+    payload: { meta: { existingCampaignId: id, budgetCurrency: money || null }, lifecycleGoal: { campaignId: id, campaignName: c.name, channel: c.channel, mode, value: settings.valueSettings ? settings.valueSettings.value : null, previous: current, request },
+      campaignOption: { kind: "acquisition", tradeoff: O.ACQUISITION_TRADEOFF, prerequisite: O.ACQUISITION_PREREQUISITE } } });
+  if (!draftId) throw new Error("Approval storage is unavailable, so no draft was created.");
+  return { ok: true, approvalId: draftId, campaignId: id, mode, request };
+}
+
+// Google sets the new-customer goal through its own configure method (not a :mutate), so this is the
+// one extra exit for a reviewed change. Like mutate(): dry run validates only, every call is in the
+// ledger, and a 4xx is a definite refusal that changed nothing.
+async function _configureLifecycleGoal(request, { ctrl, label = "", onDispatch = null } = {}) {
+  ctrl = ctrl || (await control());
+  const vo = !!ctrl.dryRun, token = await mintToken(), body = { operation: request.operation, ...(vo ? { validateOnly: true } : {}) };
+  if (onDispatch) onDispatch();
+  const res = await fetch(`${BASE}/customers/${CID}/campaignLifecycleGoal:configureCampaignLifecycleGoals`, { timeout: 90000, method: "POST", headers: adsHeaders(token), body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  await ledger({ kind: "lifecycleGoal", label, validateOnly: vo, count: 1, ok: res.ok, error: res.ok ? null : JSON.stringify(data).slice(0, 1600) });
+  if (!res.ok) throw Object.assign(new Error(_campaignOptions().lifecycleErrorText(data, res.status)), { definiteResponse: res.status >= 400 && res.status < 500 });
+  if (!vo && !((data.result || {}).resourceName)) throw new Error("Google did not return a readable result for the new-customer setting. Check Google Ads before trying again.");
+  return data;
+}
+// Publishes an approved sale-day or new-customer draft after checking that Google still matches it.
+async function _publishCampaignOption(it, ctrl, { id, onDispatch }) {
+  const O = _campaignOptions(), p = it.payload || {};
+  if (p.seasonalityAdjustment) {
+    const op = p.seasonalityAdjustment.operation || {}, c = op.create || {}, today = _acctDateYmd(await _accountTz(), 0), start = _dateOnly(c.startDateTime);
+    const refs = Array.isArray(c.campaigns) ? c.campaigns : [], own = new RegExp(`^customers/${CID}/campaigns/\\d+$`);
+    if (Object.keys(op).length !== 1 || c.scope !== "CAMPAIGN" || !refs.length || refs.some(r => !own.test(String(r))) || !(Number(c.conversionRateModifier) > 0)) throw new Error("This draft contains an unexpected operation. Nothing was changed.");
+    if (!start || start <= today) throw new Error("This sale-day adjustment's start date has passed. Nothing was changed. Delete it and draft new dates.");
+    const facts = new Map((await _campaignFacts()).map(x => [x.id, x]));
+    if (refs.some(r => !O.seasonalityEligible(facts.get(String(r).split("/").pop()), start).ok)) throw new Error("A campaign in this adjustment no longer uses smart bidding, ends first, or was removed. Nothing was changed. Delete this draft and draft it again.");
+    return mutate("biddingSeasonalityAdjustments", [op], { ctrl, label: "reviewed-approval:" + id, onDispatch });
+  }
+  const g = p.lifecycleGoal || {}, cid = String(g.campaignId || "");
+  const c = (await _campaignFacts()).find(x => x.id === cid), current = (await _lifecycleGoals()).get(cid) || null, purchase = await _purchaseGoalCampaigns().catch(() => new Map());
+  const e = O.acquisitionEligibility(c, g.mode, { current, purchaseGoal: purchase.has(cid) ? purchase.get(cid) : null });
+  if (!e.ok) throw new Error(e.reason + " Nothing was changed.");
+  // Google must still hold what the draft was built from, so the reviewed request describes the change.
+  const request = O.lifecycleGoalRequest({ cid: CID, campaignId: cid, mode: g.mode, value: g.value, existing: current });
+  if (creativeHash(request) !== creativeHash(g.request || null)) throw new Error("This campaign's new-customer setting changed in Google Ads after the draft was made. Nothing was changed. Delete this draft and draft it again.");
+  return _configureLifecycleGoal(request, { ctrl, label: "reviewed-approval:" + id, onDispatch });
+}
+
+// Approval-card switch between a daily budget and a campaign total budget for the draft's fixed dates
+// (same spend: the total is the daily amount times the days). Saved like the other draft settings.
+async function setApprovalTotalBudget({ id, on } = {}) {
+  const f = fb(); if (!f) throw new Error("Approval storage is unavailable.");
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(String(id || ""))) throw new Error("Choose a draft.");
+  const ref = f.db.collection(COL.approvals).doc(String(id)), snap = await ref.get(); if (!snap.exists) throw new Error("Draft not found.");
+  const it = snap.data() || {}, p = it.payload || {};
+  if (it.status !== "PENDING") throw new Error("Only a pending draft can change its budget type.");
+  if (p.designStudioSpec || ["studio", "adDesignSubmission"].includes(it.type) || p.service || p.groupSplitGuard || p.groupActivationGuard) throw new Error("This draft keeps a daily budget.");
+  const today = _acctDateYmd(await _accountTz(), 0), r = _campaignOptions().setTotalBudget(p.mutateOperations, { on: on === true, today, prior: p.totalBudget || null });
+  const payload = { ...p, mutateOperations: r.ops };
+  if (r.on) payload.totalBudget = { total: r.total, daily: r.daily, days: r.days, start: r.start, end: r.end }; else delete payload.totalBudget;
+  await saveDraftPayload(ref, p, payload);
+  return { ok: true, id: String(id), on: r.on, total: r.total || null, daily: r.daily, days: r.days, start: r.start, end: r.end };
+}
+
 module.exports = {
+  campaignOptionsStatus, draftBrandSearch, draftSeasonalityAdjustment, draftCustomerGoal, setApprovalTotalBudget,
   adGroups, adGroupDetail, adDesignSavedWorkspaces, draftAdGroupSplit, draftAdGroupActivation,
   fixAdDesignEditorAI, startAdEvaluation, adEvaluationStatus, runAdEvaluation, startAdMotionPublication, runAdMotionPublication, verifyAdMotionPublication, startAdDesignMotion, adDesignMotionStatus, runAdDesignMotion, adVersionApprovalStatus, reviewAdVersion, adDesignWorkspace, saveAdDesign, cropAdDesignImage, adDesignEditorSource, adDesignEditorState, adDesignResponsiveState, saveAdDesignEditor, startAdDesignEditorAI, adDesignEditorAIStatus, resumeAdDesignEditorAI, recordAnimationHandoff, applyAdDesignEditorScene, runAdDesignEditorAI, exportAdDesignEditor, adDesignSavedDesigns, openAdDesignSavedDesign, deleteAdDesignSavedDesign, deleteAdDesignGeneratedImage, adDesignGooglePreview, uploadAdDesignReference, resetAdDesignFailures, startAdDesign, adDesignStatus, runAdDesign, adDesignProductImages, adDesignGalleryPage, saveAdDesignCopy, adDesignDelivery, prepareAdDesignPublication, publishAdDesignSubmission, publishAdDesignPublication,
   reviseCreativeApproval, markApprovalApproved, needsCreativeReview, prepareCreativeApproval, creativeApprovalStatus, reviewCreativeApproval, assertCreativeReviewed, creativeHash,
