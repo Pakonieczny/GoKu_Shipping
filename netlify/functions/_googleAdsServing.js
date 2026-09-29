@@ -22,6 +22,10 @@
 // Levels:  block — Google will not serve it (or its core part) until this is fixed.
 //          risk  — it serves, but not the way Paul intends, or it can waste money.
 //          note  — worth knowing (under review, learning, weak ad strength).
+//
+// settling: the check that runs right after Google accepted a publication. Google has
+// not listed a new campaign's products yet at that point, so "no products" is a note
+// until the next check, not a verdict.
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS']);
 const PRODUCT_LIMIT = 1000;
@@ -216,7 +220,7 @@ function buildQueries({ customerId, campaignId, channel } = {}) {
 
 // ── Analysis (pure) ──────────────────────────────────────────────────────────
 // raw: { key: rows } for every read that succeeded; a missing key means the read failed.
-function analyze(raw, { today = null, shippingCountries = null, apiVersion = '', reduced = [], ownedHosts = OWNED_HOSTS } = {}) {
+function analyze(raw, { today = null, shippingCountries = null, apiVersion = '', reduced = [], ownedHosts = OWNED_HOSTS, settling = false } = {}) {
   const findings = [], facts = [], warnings = [], fewer = new Set(reduced || []);
   const add = (level, area, text, extra = {}) => findings.push({ level, area, text, ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.fix ? { fix: extra.fix } : {}) });
   const fact = (label, value) => { if (value != null && value !== '') facts.push({ label, value: String(value) }); };
@@ -496,14 +500,17 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
         return [...n].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([d, k]) => `${d} (${k})`).join('; '); };
       const pauseOnly = isPaused(c.status) && products.some(p => p.status === 'NOT_ELIGIBLE' && !blocking(p).length);
       fact('Products', products.length ? `${truncated ? PRODUCT_LIMIT + '+' : products.length} in this campaign · ${products.length - notEligible.length - limited.length} eligible${pauseOnly ? ' once enabled' : ''}` + (limited.length ? ` · ${limited.length} limited` : '') + (notEligible.length ? ` · ${notEligible.length} not eligible` : '') : 'none found');
-      if (!products.length) add('block', 'Products', `Google finds no products for this campaign (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}), so it cannot show product ads.`, { fix: 'Check the feed label and that the products are approved in Merchant Center.' });
+      if (!products.length && settling) add('note', 'Products', `Google has not listed products for this campaign yet (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}). Right after a publication this can take a few hours; the next check confirms it.`);
+      else if (!products.length) add('block', 'Products', `Google finds no products for this campaign (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}), so it cannot show product ads.`, { fix: 'Check the feed label and that the products are approved in Merchant Center.' });
       else if (notEligible.length === products.length) add('block', 'Products', `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: 'Fix the product issues in Merchant Center.' });
       else if (notEligible.length) add('risk', 'Products', `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: 'Fix the product issues in Merchant Center.' });
       if (limited.length) add('note', 'Products', `${plural(limited.length, 'product')} can show only in some places.`, { reason: topIssues(limited) || undefined });
       if (pauseOnly && !notEligible.length) add('note', 'Products', 'Google lists the products as not eligible only because the campaign is paused.');
       if (!truncated && includedIds.size) {
         const found = new Set(products.map(p => String(p.itemId || '').toLowerCase())), missing = [...includedIds].filter(id => !found.has(id));
-        if (missing.length) add(missing.length === includedIds.size ? 'block' : 'risk', 'Products', `${missing.length} of ${includedIds.size} products in the product filter are not in Merchant Center under this campaign's feed: ${listOf(missing, 3)}.`, { fix: 'Remove them from the filter, or fix the feed label.' });
+        // Right after a publication Google may not have applied a new product filter yet.
+        if (missing.length && settling) add('note', 'Products', `${missing.length} of ${includedIds.size} products in the product filter are not listed for this campaign yet: ${listOf(missing, 3)}. Right after a publication this can take a few hours; the next check confirms it.`);
+        else if (missing.length) add(missing.length === includedIds.size ? 'block' : 'risk', 'Products', `${missing.length} of ${includedIds.size} products in the product filter are not in Merchant Center under this campaign's feed: ${listOf(missing, 3)}.`, { fix: 'Remove them from the filter, or fix the feed label.' });
       }
       if (!products.length && raw.productLinks) {
         const linked = raw.productLinks.map(r => r.productLink && r.productLink.merchantCenter && String(r.productLink.merchantCenter.merchantCenterId)).filter(Boolean);
@@ -536,7 +543,7 @@ function withDeadline(promise, at) {
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 // today and shippingCountries may be values or promises; they are awaited only after the reads.
-async function auditCampaign({ gaql, customerId, campaignId, channel = null, today = null, shippingCountries = null, apiVersion = '', deadlineMs = 8000, isQuotaError = null, ownedHosts = OWNED_HOSTS } = {}) {
+async function auditCampaign({ gaql, customerId, campaignId, channel = null, today = null, shippingCountries = null, apiVersion = '', deadlineMs = 8000, isQuotaError = null, ownedHosts = OWNED_HOSTS, settling = false } = {}) {
   const id = String(campaignId || '').replace(/\D/g, '');
   if (!id || typeof gaql !== 'function') return { ok: false, error: 'A campaign ID and a Google Ads reader are required.' };
   const raw = {}, readWarnings = [], reduced = [], at = Date.now() + deadlineMs;
@@ -562,10 +569,22 @@ async function auditCampaign({ gaql, customerId, campaignId, channel = null, tod
   await Promise.all(jobs);
   const [todayValue, shipping] = await Promise.all([Promise.resolve(today).catch(() => null), Promise.resolve(shippingCountries).catch(() => null)]);
   let result;
-  try { result = analyze(raw, { today: todayValue, shippingCountries: shipping, apiVersion, reduced, ownedHosts }); }
+  try { result = analyze(raw, { today: todayValue, shippingCountries: shipping, apiVersion, reduced, ownedHosts, settling }); }
   catch (e) { result = { ok: false, verdict: 'unknown', headline: 'The serving check could not be completed.', findings: [], facts: [], warnings: ['Analysis failed: ' + clip(e && e.message, 160)], counts: { block: 0, risk: 0, note: 0 } }; }
   return { ...result, warnings: readWarnings.concat(result.warnings || []), partial: readWarnings.length > 0, campaignId: id, channel: channelOf() || channel || null,
-    apiVersion: apiVersion || null, checkedAt: new Date().toISOString(), readOnly: true };
+    apiVersion: apiVersion || null, checkedAt: new Date().toISOString(), readOnly: true, quotaExhausted: quotaHit, settling: !!settling };
 }
 
-module.exports = { buildQueries, analyze, auditCampaign, policyText, localDate, PRODUCT_LIMIT, PMAX_MINIMUM, OWNED_HOSTS };
+// What the Overview badge keeps between checks: the verdict, its counts and the first findings
+// that decide it. Facts, notes and Google's full wording stay with the live check. A check that
+// could not read the campaign has no verdict to keep (null).
+function summaryOf(result, source) {
+  if (!result || !['blocked', 'attention', 'ready'].includes(result.verdict)) return null;
+  const counts = result.counts || {};
+  return { verdict: result.verdict, headline: clip(result.headline, 240), source: String(source || 'console'),
+    counts: { block: Number(counts.block) || 0, risk: Number(counts.risk) || 0, note: Number(counts.note) || 0 },
+    top: (result.findings || []).filter(f => f && f.level !== 'note').slice(0, 3).map(f => ({ level: f.level, area: clip(f.area, 40), text: clip(f.text, 200) })),
+    partial: !!result.partial, settling: !!result.settling, channel: result.channel || null, checkedAt: result.checkedAt || new Date().toISOString() };
+}
+
+module.exports = { buildQueries, analyze, auditCampaign, summaryOf, policyText, localDate, PRODUCT_LIMIT, PMAX_MINIMUM, OWNED_HOSTS };
