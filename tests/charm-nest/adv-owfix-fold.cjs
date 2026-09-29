@@ -1,12 +1,12 @@
 // Adversarial (28 Sep, wave 5; Paul: "some of the animations were not exactly visible and they were jerky"): the order
-// view's decision box (#owFix, a custom order's question) opens and folds away on transform, opacity and clip-path
-// only. It used to fold by animating its height frame by frame (every frame a layout of the whole view) and to pop in at
-// once. Measured in a real Chromium on the order's own line, the question answered (it folds) and asked again (it opens):
-// - the box's room is taken or given back once (#owFix has at most two heights while it moves), and nothing in the
-//   view animates any property but transform, opacity and clip-path;
-// - the move is seen: what is under the box glides for at least 280 ms over several frames; the folding copy is seen
-//   part-way faded, the opening box part-way revealed; it ends in place, nothing clipped, no copy left behind;
-// - what was picked in the question is still picked once it opens again.
+// view's decision box (#owFix, a custom order's question) used to open and fold away on transform, opacity and
+// clip-path only. Since Paul, 29 Sep 01:01 ("Remove this from the UI and the review tab, from all pop-up modals": the
+// red "This line is waiting on a decision" box) there is no box to fold: measured in a real Chromium on a custom order's
+// own line, the question it raised answered and asked again,
+// - no decision box is ever shown: #owFix stays empty (no question, no "waiting on a decision"), and no copy of a box
+//   folds anywhere;
+// - what was under the box stands where it stood (#owFix keeps one height, the field under it never moves), and nothing
+//   in the view animates any property but transform, opacity and clip-path; nothing is left moved.
 // Frame times are gated only when the load per core is under 1.2 (the machine is shared).
 // Headless Chromium against the fake site (bridge-server.cjs); every request that is not to the loopback is aborted; the
 // custom reading is answered by the fake site's stub model: no paid call, no Etsy call.
@@ -67,62 +67,52 @@ async function main() {
     }, ORDERS);
 
     await page.evaluate(k => OrderWin.open(k), A);
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'));
+    await page.waitForFunction(k => OrderWin.isOpen() && OrderWin.key() === k && !document.querySelector('#orderWin').classList.contains('owLoading'), A);
     await page.waitForTimeout(1200);   // the view has landed
-    await page.selectOption('#owFix .cuStep [data-f=mat]', 'silver');
+    const asked = () => page.evaluate(() => ({ fix: document.getElementById('owFix').innerHTML, controls: document.querySelectorAll('#orderWin .cuStep, #orderWin .owFixCard, #orderWin .rvItem, #orderWin [data-f=mat]').length,
+      words: /waiting on a decision|decide below/i.test(document.getElementById('orderWin').textContent) }));
+    const none = { fix: '', controls: 0, words: false };
+    assert.deepEqual(await asked(), none, 'the custom order\'s line shows no decision box');
+    assert(await page.evaluate(k => Review.items().some(it => (it.rows || [it.row]).some(r => r && r.key === k) && !it.info && !it.done), A), 'its line does wait on a decision (in Review): the window asks nothing all the same');
 
-    // the question answered (the line no longer raises it): the box folds away on the same line
+    // the question answered (the line no longer raises it), then asked again: nothing opens or folds, nothing moves
     const measure = async fn => { await page.evaluate(() => __f.begin()); await page.evaluate(fn, A); await page.waitForTimeout(1150); return page.evaluate(() => __f.end()); };
     const l0 = load();
     const fold = await measure(k => { const r = Orders.rows().find(x => x.key === k); r.problems = []; Review.syncOrderItems(); OrderWin.paint(); });
-    const folded = await page.evaluate(() => ({ html: document.getElementById('owFix').innerHTML, ghosts: document.querySelectorAll('#orderWin .motionLayer .mGhost').length }));
-    // asked again: the box opens where it was
+    const folded = Object.assign(await asked(), await page.evaluate(() => ({ ghosts: document.querySelectorAll('#orderWin .motionLayer .mGhost').length })));
     const openM = await measure(() => { Orders.interpretAll(); Review.syncOrderItems(); OrderWin.paint(); });
     const l1 = load();
     const end = await page.evaluate(() => {
-      const fix = document.getElementById('owFix'), box = fix.querySelector(':scope > .owFix'), next = fix.nextElementSibling, sc = fix.closest('.owMain');
-      const fr = fix.getBoundingClientRect(), br = box && box.getBoundingClientRect(), nr = next.getBoundingClientRect(), bs = box && getComputedStyle(box);
+      const fix = document.getElementById('owFix');
       const moving = [...fix.parentNode.children].filter(n => getComputedStyle(n).transform !== 'none').map(n => n.id || n.className);
-      const f = document.querySelector('#owFix .cuStep [data-f=mat]');
-      return { box: !!box, clip: bs && bs.clipPath, op: bs && +bs.opacity, tf: bs && bs.transform, inFix: !!br && br.top >= fr.top - .5 && br.bottom <= fr.bottom + .5 && br.height > 20, above: !!br && br.bottom <= nr.top + .5,
-        cut: !!box && box.scrollHeight > box.clientHeight + 1, moving, mat: f ? f.value : null, ghosts: document.querySelectorAll('#orderWin .motionLayer .mGhost').length, scTop: sc.scrollTop };
+      return { fix: fix.innerHTML, moving, ghosts: document.querySelectorAll('#orderWin .motionLayer .mGhost').length };
     });
 
     const report = (name, m) => {
       const hs = [...new Set(m.fr.map(f => f.fixH))], tops = m.fr.map(f => f.nextTop);
-      const moved = m.fr.filter((f, i) => i && f.nextTop !== m.fr[i - 1].nextTop), span = moved.length ? moved[moved.length - 1].t - moved[0].t : 0;
       const dts = m.fr.slice(1).map((f, i) => f.t - m.fr[i].t).filter((_, i) => m.fr[i + 1].t < 800);
-      console.log(`  ${name.padEnd(5)} #owFix heights ${JSON.stringify(hs)} · field under it moved over ${Math.round(span)} ms in ${new Set(tops).size} positions · animated: ${m.props.join(',') || 'nothing'} · worst frame ${Math.round(Math.max(0, ...dts))} ms`);
-      return { hs, span, positions: new Set(tops).size, over34: dts.filter(x => x > 34).length };
+      console.log(`  ${name.padEnd(8)} #owFix heights ${JSON.stringify(hs)} · field under it drawn at ${new Set(tops).size} position(s) · animated: ${m.props.join(',') || 'nothing'} · worst frame ${Math.round(Math.max(0, ...dts))} ms`);
+      return { hs, positions: new Set(tops).size, over34: dts.filter(x => x > 34).length, box: m.fr.some(f => f.box), ghost: m.fr.some(f => f.ghost) };
     };
-    const F = report('fold', fold), O = report('open', openM);
+    const F = report('answered', fold), O = report('asked', openM);
 
-    for (const [name, m, R] of [['fold', fold, F], ['open', openM, O]]) {
+    for (const [name, m, R] of [['answered', fold, F], ['asked again', openM, O]]) {
       assert.deepEqual(m.targets, [], `${name}: nothing in the view animates a property but ${OK_PROPS.join(', ')}`);
-      assert(R.hs.length <= 2, `${name}: #owFix's room is taken or given back once, not frame by frame (${R.hs.length} heights)`);
-      assert(R.span >= 280 && R.positions >= 6, `${name}: what is under the box glides, seen (${Math.round(R.span)} ms, ${R.positions} positions)`);
+      assert(!R.box && !R.ghost, `${name}: no decision box, and no copy of one folding, in any frame`);
+      assert.deepEqual(R.hs, [0], `${name}: #owFix takes no room (what was under the box stands where it stood)`);
+      assert.equal(R.positions, 1, `${name}: the field under it never moves`);
     }
-    // the folding copy is seen part-way: part-faded and part-clipped, never a blink
-    const gMid = fold.fr.filter(f => f.ghost && f.ghost.op > .05 && f.ghost.op < .95);
-    assert(gMid.length >= 3, 'fold: the box is seen fading and folding over several frames: ' + gMid.length);
-    assert(new Set(fold.fr.filter(f => f.ghost).map(f => f.ghost.clip)).size >= 4, 'fold: its copy folds (its clip moves)');
-    assert.equal(folded.html, '', 'fold: the box has left #owFix');
-    assert.equal(folded.ghosts, 0, 'fold: its copy is gone once it has folded');
-    // the opening box is seen part-way revealed
-    const bMid = openM.fr.filter(f => f.box && (f.box.clip !== 'none' || f.box.op < .95));
-    assert(bMid.length >= 3 && new Set(bMid.map(f => f.box.clip)).size >= 3, 'open: the box is seen opening over several frames: ' + bMid.length);
-    // ends in place: nothing clipped, nothing left moved, no copy left behind
-    assert(end.box && end.inFix && end.above, 'open: the box stands in its room, above the field under it: ' + JSON.stringify(end));
-    assert(end.clip === 'none' && end.op === 1 && end.tf === 'none' && !end.cut, 'open: nothing of it is clipped or faded once open: ' + JSON.stringify(end));
-    assert.deepEqual(end.moving, [], 'open: nothing under it is left moved');
+    assert.deepEqual(folded, Object.assign({ ghosts: 0 }, none), 'answered: nothing asked, no copy');
+    // ends as it began: nothing asked, nothing left moved, no copy left behind
+    assert.equal(end.fix, '', 'asked again: still no decision box');
+    assert.deepEqual(await asked(), none, 'asked again: nothing asked');
+    assert.deepEqual(end.moving, [], 'nothing under it is left moved');
     assert.equal(end.ghosts, 0, 'no copy left behind');
-    // what was picked there is still picked
-    assert.equal(end.mat, 'silver', 'the metal picked in the question is still picked once it opens again');
     assert.deepEqual(errors, [], 'no page errors');
     const busy = Math.max(l0, l1);
-    if (busy < 1.2) { assert(F.over34 <= 2 && O.over34 <= 2, `at most two frames over 34 ms (fold ${F.over34}, open ${O.over34})`); console.log(`  ✓ frame times held (load per core ${busy.toFixed(2)})`); }
+    if (busy < 1.2) { assert(F.over34 <= 2 && O.over34 <= 2, `at most two frames over 34 ms (answered ${F.over34}, asked ${O.over34})`); console.log(`  ✓ frame times held (load per core ${busy.toFixed(2)})`); }
     else console.log(`  – load per core ${busy.toFixed(2)} ≥ 1.2: frame times not gated`);
-    console.log('  ✓ the decision box folds and opens on transform, opacity and clip-path only, seen, nothing cut off, the pick kept');
+    console.log('  ✓ no decision box: the question answered or asked again, nothing opens or folds, nothing under it moves');
     await context.close();
   } finally { await browser.close(); await srv.close(); }
 }

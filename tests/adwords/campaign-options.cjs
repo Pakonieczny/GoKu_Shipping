@@ -382,6 +382,11 @@ async function engineChecks(){
  W.ctrl={maxDailyBudgetTotal:90};await E.setCampaignStatus('201','ENABLED',{ctrl:C()});check(sent.length===1&&sent[0].ops[0].update.status==='ENABLED','within the ceiling: enabled');
  W.camps[201].status='ENABLED';sent.length=0;
  await rejects(E.setCampaignEndDate('201',{endDate:day(3),ctrl:C()}),/CAD 120\.00, over your daily ceiling of CAD 90\.00/,'an earlier end date spends the same total over fewer days');check(!sent.length,'nothing sent');
+ // A first enable that starts a planned run moves the end date in the same update: the total counts over those dates.
+ {W.camps[201].status='PAUSED';W.spend[201]=0;W.ctrl={maxDailyBudgetTotal:80};f.docs.set('Brites_GAds_State/plannedFlight_201',{days:20,publishedAt:Date.now()-86400000});
+  const r=await E.setCampaignStatus('201','ENABLED',{ctrl:C()}),u=sent[0]&&sent[0].ops[0];
+  check(r.endDate===day(19)&&sent.length===1&&u.updateMask==='status,end_date_time'&&u.update.status==='ENABLED','a planned 20-day run: 300 counts 15 a day (75 of 80), not 30 over the old end date');
+  f.docs.delete('Brites_GAds_State/plannedFlight_201');W.spend[201]=60;W.camps[201].status='ENABLED';W.ctrl={maxDailyBudgetTotal:90};sent.length=0;}
  W.ctrl={maxDailyBudgetTotal:70};const t=await E.enforceBudgetCeiling({ctrl:C()});
  const after={[B(11)]:20,[B(12)]:10,[B(13)]:30};sent[0].ops.forEach(o=>{after[o.update.resourceName]=o.update.amountMicros/1e6;});
  check(t.total===84&&sent.length===1&&sent[0].ops.every(o=>o.update.resourceName!==B(21))&&Object.values(after).reduce((a,v)=>a+v,0)+24<=70.001,'the trim lowers daily budgets only; the total budget counts and is never rewritten');
@@ -389,9 +394,14 @@ async function engineChecks(){
  const flight=total=>[{campaignBudgetOperation:{create:{resourceName:B(-1),name:'BA · flight · 1',deliveryMethod:'STANDARD',explicitlyShared:false,period:'CUSTOM_PERIOD',totalAmountMicros:total*1e6}}},{campaignOperation:{create:{resourceName:Cp(-2),name:'BA · flight',status:'PAUSED',advertisingChannelType:'SEARCH',campaignBudget:B(-1),manualCpc:{enhancedCpcEnabled:false},startDateTime:compact(day(1))+' 00:00:00',endDateTime:compact(day(10))+' 23:59:59'}}}];
  const put=(id,data)=>f.docs.set('Brites_GAds_Approvals/'+id,clone({vetted:false,createdAt:1,summary:'x',...data}));
  reset();put('big',{type:'keywords',status:'APPROVED',payload:{mutateOperations:flight(500)}});
- await rejects(E.applyApproval('big',C()),/no longer fits the daily budget ceiling/,'500 over 10 days counts 50 a day: over the ceiling');check(!sent.length,'nothing sent');
+ await rejects(E.applyApproval('big',C()),/these budgets total CAD 50\.00, but only CAD 40\.00 of your CAD 100\.00 ceiling is free/,'500 over 10 days counts 50 a day: over the ceiling');check(!sent.length,'nothing sent');
  put('fits',{type:'keywords',status:'APPROVED',payload:{mutateOperations:flight(300)}});res=await E.applyApproval('fits',C());
  check(res.status==='APPLIED'&&sent[1].ops[0].campaignBudgetOperation.create.totalAmountMicros===300e6&&sent[1].ops.some(o=>o.campaignConversionGoalOperation),'30 a day fits: published with its total budget and purchase-only goals');
+ // A planned run moves the end date at publication: the total counts over the planned days from today.
+ {const stale=flight(300),sc=stale[1].campaignOperation.create;sc.startDateTime=compact(day(-4))+' 00:00:00';sc.endDateTime=compact(day(5))+' 23:59:59';
+  put('run',{type:'keywords',status:'APPROVED',payload:{mutateOperations:stale,meta:{plannedDays:{[Cp(-2)]:10}}}});sent.length=0;res=await E.applyApproval('run',C());
+  const pc=sent[1].ops.find(o=>o.campaignOperation).campaignOperation.create;
+  check(res.status==='APPLIED'&&get('_dateOnly')(pc.endDateTime)===day(9),'published with the end date 10 days from today: 300 counts 30 a day (fits), not 50 over the stale dates');}
  reset();W.brandLists=[['103','customers/123/sharedSets/55']];W.sharedSets=['customers/123/sharedSets/55'];
  put('px',{type:'keywords',status:'APPROVED',payload:{mutateOperations:[{campaignBudgetOperation:{create:{resourceName:B(-1),name:'BA · px · 1',amountMicros:5e6,deliveryMethod:'STANDARD',explicitlyShared:false}}},{campaignOperation:{create:{resourceName:Cp(-2),name:'BA · px',status:'PAUSED',advertisingChannelType:'PERFORMANCE_MAX',campaignBudget:B(-1),maximizeConversionValue:{}}}}]}});
  res=await E.applyApproval('px',C());

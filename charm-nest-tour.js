@@ -23,6 +23,11 @@
   const CSS = `
 #tourLayer{position:fixed;inset:0;z-index:150;pointer-events:none;overflow:hidden;contain:strict}
 #tourLayer>*{position:fixed;left:0;top:0;will-change:transform,opacity}
+#tourTop{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;border:0;padding:0;background:transparent;box-shadow:none;overflow:hidden;pointer-events:none;outline:none}
+#tourTop::backdrop{background:transparent}
+/* the flying design is never under a caption of its own tour (the captions sit over the card and the sheets) */
+#tourLayer>.tourCoin,#tourLayer>.tourPiece{z-index:3}
+#tourLayer>.tourCap,#tourLayer>.tourPlus{z-index:2}
 .tourCard{border-radius:14px}
 .tourLift{position:absolute!important;inset:0;border-radius:14px;box-shadow:0 22px 48px rgba(30,24,16,.24),0 0 0 1.5px rgba(202,168,97,.55);opacity:0}
 .tourCoin{width:72px;height:72px;margin:-36px 0 0 -36px}
@@ -94,8 +99,9 @@
       if (tabOf(e)) { t.userTab = true; t.forward(); return; }
       if (t.ff) return;
       // a press on the view it goes home to, while that view is still in sight, is the person's own: it goes through
+      // (not while a window waits to come back over it: it would open a second one)
       const v = viewOf(home.mode);
-      if (modeNow() === home.mode && v && e.target && v.contains(e.target)) { t.forward(); return; }
+      if (!t.held && modeNow() === home.mode && v && e.target && v.contains(e.target)) { t.forward(); return; }
       swallow = Date.now() + 700; e.preventDefault(); e.stopPropagation(); t.forward();
     };
     const click = e => { if (Date.now() < swallow && !tabOf(e)) { e.preventDefault(); e.stopPropagation(); swallow = 0; } };
@@ -208,7 +214,7 @@
     // the list's own update (Motion.reconcile) makes no copy of its own for this card: this one is it
     card._mLeaving = true;
     setTimeout(() => { if (!g._claimed) g.remove(); }, 9000);
-    return { ghost: g, rect: r, thumbs: rectOf(th), imgs, mkey: card.dataset.mkey || "", node: card, at: Date.now() };
+    return { ghost: g, rect: r, thumbs: rectOf(th), imgs, mkey: card.dataset.mkey || "", rid: card.dataset.rid || "", node: card, at: Date.now() };
   }
   async function play(o = {}) {
     if (T) { T.forward(); await T.done.catch(() => {}); }
@@ -220,12 +226,19 @@
     let finish; t.done = new Promise(r => { finish = r; });
     const home = { mode: modeNow() || "review", scroll: scroller() ? scroller().scrollTop : 0 };
     listen(t, home);
+    // pressed in a window (the order window, on any of its tabs): it steps out of the way, alive, and the design lifts
+    // off the button pressed; a copy of a card made while a window was open over it shows once that window is back in it.
+    // (A window opened while the designs were read, over the card pressed, steps aside too: nothing is flown under it.)
+    const pop = o.from ? popOf() : null;
+    if (pop) { t.held = tuck(t, pop, o); if (t.held.inside) o = Object.assign({}, o, { from: t.held.spot }); }
+    if (s0 && o.delay) s0.ghost.style.visibility = "hidden";
     // a watchdog: never longer than the whole tour should take
     const guard = setTimeout(() => t.forward(), 6000 + (o.delay || 0) + legs.length * 3200 + waiting.length * 2400);
     try {
       if (o.delay) await t.wait(o.delay);
       mark("start");
-      await lift(t, o, s0, legs, waiting);
+      const s1 = startFrom(t, s0, o);
+      await lift(t, s1.o, s1.s0, legs, waiting);
       // (skipped before the Nest tab was reached: it is never switched to, only to come straight back)
       if (!t.ff) await toNest(t);
       const there = () => !t.userTab && modeNow() === "nest";
@@ -243,6 +256,8 @@
       // each Nest card back on the sheet it showed before the tour (it switched them to the sheets it opened); home,
       // this is out of sight
       tryDo(() => { const NF = root.NestFocus; if (!NF) return; if (NF.isOpen && NF.isOpen() && NF.close) NF.close(); if (NF.restore) NF.restore(); });
+      // (skipped, a tab picked or anything amiss: the window still comes back as it was)
+      if (t.held) await back(t, true).catch(() => {});
       if (T === t) T = null; mark("end"); finish();
     }
   }
@@ -477,13 +492,99 @@
       await t.wait(200);
     }
     if (modeNow() !== home.mode) return;
+    // a window held: it grows back out of its card first (and, when the press was its own, says there what went where)
+    if (t.held && await backHome(t, o)) return;
     const M = root.Motion; if (!M) return;
-    const live = s0 && s0.mkey ? $(`#rvList [data-mkey="${CSS_ESC(s0.mkey)}"]`) : null;
+    const live = liveOf(s0);
     const show = { label: "Show", title: "open the sheets", fn: () => setMode("nest") }, held = (o.waiting || []).find(w => w.held);
     const words = o.words ? o.words + (held ? ` · ${held.why}` : "") : "", ms = held ? 9000 : 7000;
     if (live && onScreen(rectOf(live))) { const strip = live.querySelector(".cuDesigns") || live; tryDo(() => M.arrive(strip, { plus: false })); if (words) tryDo(() => M.note(strip, { text: words, actions: [show], ms, tone: held ? "bad" : "" })); }
     else { const tab = nestTab(); if (tab) tryDo(() => M.arrive(tab, { plus: false, note: words ? { text: words, actions: [show], ms, tone: held ? "bad" : "" } : null })); }
   }
+
+  /* ── the start and the way home, from a window (Paul, 29 Sep 01:30: "half the animation is not visible because it's
+     blocked by the pop-up and it doesn't engage smoothly and it looks broken and disjointed"). Send to Sheet pressed in
+     the order window, on any of its tabs: the window is never closed, only stepped out of the way. It shrinks and fades
+     toward its card (its backdrop fading with it) as the design lifts off the button pressed, and waits out of sight,
+     its order, tab, scroll, focus and typed text untouched. The flight runs in a clear, bare modal layer of the tour's
+     own, over everything, the window included: nothing covers it, and nothing under it takes a press (a press or a key
+     skips, as always). Home, the window grows back out of its card exactly as it was and says there what went where.
+     Transform and opacity only. A card's own Send to Sheet starts from the card itself. ── */
+  // (the window over the page as the flight starts, not one already going: the order window's own close, or a copy)
+  const popOf = () => [...doc.querySelectorAll("dialog[open]")].reverse().find(d => d.id !== "tourTop" && !d._mdClosing && !(d.id === "orderWin" && root.OrderWin && !OrderWin.isOpen()) && tryDo(() => d.matches(":modal"))) || null;
+  /** The flight's layer lifted into the top layer, over the window held (on), or back on the page. */
+  function over(on) {
+    const l = layer(); let top = $("#tourTop");
+    if (on) {
+      if (!top) { top = doc.createElement("dialog"); top.id = "tourTop"; top.setAttribute("data-no-grow", ""); top.setAttribute("aria-label", "Sending to the sheets"); top.addEventListener("cancel", e => e.preventDefault()); doc.body.appendChild(top); }
+      top.appendChild(l); if (!top.open) tryDo(() => top.showModal());
+    } else { if (l.parentNode !== doc.body) doc.body.appendChild(l); if (top && top.open) tryDo(() => top.close()); }
+  }
+  /** Where the window goes back into: its card, when in sight; else the button pressed. The window keeps its shape,
+   *  scaled between the two sizes, centred on it. */
+  const aimOf = k => { const h = rectOf(k.home); return h && onScreen(h) ? h : k.R; };
+  function tuckTf(D, A) {
+    const s = Math.max(.04, Math.min(1, Math.sqrt((A.width / D.width) * (A.height / D.height))));
+    return `translate(${(A.left + A.width / 2 - D.width * s / 2 - D.left).toFixed(1)}px,${(A.top + A.height / 2 - D.height * s / 2 - D.top).toFixed(1)}px) scale(${s.toFixed(4)})`;
+  }
+  function tuck(t, d, o) {
+    const D = d.getBoundingClientRect(), R = rectOf(o.from) || (o.from && o.from.rect) || { left: innerWidth / 2 - 20, top: innerHeight / 2 - 12, width: 40, height: 24 };
+    const k = { d, D, R, from: o.from, inside: !!(o.from && o.from.nodeType && d.contains(o.from)), home: o.home && o.home.nodeType ? o.home : null, focus: doc.activeElement, st: {} };
+    for (const p of ["transformOrigin", "willChange", "visibility"]) k.st[p] = d.style[p];
+    // where the design lifts off: the button pressed, as it stood
+    k.spot = t.node("tourSpot"); Object.assign(k.spot.style, { width: R.width + "px", height: R.height + "px", transform: `translate(${R.left}px,${R.top}px)`, opacity: 0 });
+    over(true); mark("tuck"); d._tourHeld = true;
+    Object.assign(d.style, { transformOrigin: "0 0", willChange: "transform,opacity" });
+    k.a = d.animate([{ transform: "none", opacity: 1 }, { opacity: .45, offset: .4 }, { transform: tuckTf(D, aimOf(k)), opacity: 0 }], { duration: 480, easing: GROW, fill: "forwards" });
+    k.b = tryDo(() => d.animate([{ opacity: 1 }, { opacity: 0 }], { pseudoElement: "::backdrop", duration: 440, easing: "ease", fill: "forwards" }));
+    // (out of sight once gone: nothing of it drawn under the flight)
+    k.a.finished.then(() => { if (!k.returning) d.style.visibility = "hidden"; }, () => {});
+    return k;
+  }
+  /** The window back as it was, grown out of its card (fast: a skip, a tab picked). */
+  async function back(t, fast) {
+    const k = t.held; if (!k) return; t.held = null; k.returning = true;
+    const d = k.d, ms = fast ? 320 : 560, drop = () => { tryDo(() => k.a.cancel()); tryDo(() => k.b && k.b.cancel()); };
+    if (d.isConnected && d.open) {
+      // what changed meanwhile is drawn while it is still out of sight (the order window: its Send to Sheet gone)
+      tryDo(() => d.dispatchEvent(new CustomEvent("tour:back")));
+      d.style.visibility = k.st.visibility; mark("back");
+      const a = d.animate([{ transform: tuckTf(k.D, aimOf(k)), opacity: 0 }, { opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], { duration: ms, easing: GROW });
+      tryDo(() => d.animate([{ opacity: 0 }, { opacity: 1 }], { pseudoElement: "::backdrop", duration: ms, easing: "ease" }));
+      drop();
+      await Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 400))]);
+    } else drop();
+    for (const [p, v] of Object.entries(k.st)) d.style[p] = v;
+    d._tourHeld = false;
+    // (the tour's layer closing gives the focus back where it was; set again in case it went elsewhere)
+    over(false);
+    const f = k.focus; if (f && f !== doc.body && f.isConnected && d.contains(f) && f.getClientRects().length && doc.activeElement !== f) tryDo(() => f.focus({ preventScroll: true }));
+  }
+  /** 5 · home, into the window: it is back as it was, and says, where the button stood, what went where. True when it
+   *  said it there; false when the press was not its own (a card's, under it), so home is said on the card as ever. */
+  async function backHome(t, o) {
+    const k = t.held; await back(t, t.ff);
+    const d = k && k.d, M = root.Motion; if (!k || !k.inside) return false;
+    if (!d || !d.open || !M || !o.words) return true;
+    const held = (o.waiting || []).find(w => w.held), words = o.words + (held ? ` · ${held.why}` : ""), ms = held ? 9000 : 7000, R = k.R;
+    const at = doc.createElement("i"); at.setAttribute("aria-hidden", "true");
+    Object.assign(at.style, { position: "fixed", left: R.left + "px", top: R.top + "px", width: R.width + "px", height: R.height + "px", pointerEvents: "none", visibility: "hidden" });
+    d.appendChild(at); setTimeout(() => at.remove(), ms + 2000);
+    const n = tryDo(() => M.note(at, { text: words, ms, tone: held ? "bad" : "" })); if (n && d.open) d.appendChild(n);
+    return true;
+  }
+  /** Where the design starts, from a card: one still in its list is lifted from where it stands now, its copy (made
+   *  before the list was drawn again) only fading where it was: it slid over the card drawn anew under it, two cards seen
+   *  at once. One gone from its list keeps its copy, which slides out. From its window (the designs window, gone back
+   *  into the card): that was the card seen going, and no copy of it shows again (it stood over the window's). */
+  function startFrom(t, s0, o) {
+    if (!s0 || !s0.ghost) return { s0, o };
+    const g = s0.ghost, hid = g.style.visibility === "hidden", live = liveOf(s0), lr = rectOf(live), there = !!(lr && onScreen(lr));
+    if (hid || there) { if (hid) g.remove(); else t.anim(g, [{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: "ease" }).then(() => g.remove()); }
+    return there ? { s0: null, o: Object.assign({}, o, { from: live }) } : hid ? { s0: Object.assign({}, s0, { ghost: null }), o } : { s0, o };
+  }
+  /** The card in the list now (drawn anew once sent, and a custom card sent is another item then: by its order too). */
+  const liveOf = s0 => !s0 ? null : (s0.mkey && $(`#rvList [data-mkey="${CSS_ESC(s0.mkey)}"]`)) || (s0.rid && $(`#rvList .reviewListRow[data-rid="${CSS_ESC(s0.rid)}"]`)) || null;
   const CSS_ESC = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
 
   root.SendTour = { play, snap, playing: () => !!T, skip: () => { if (T) T.forward(); } };
