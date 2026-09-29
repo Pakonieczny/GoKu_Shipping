@@ -31,6 +31,8 @@ const D={CID:'123',reportContext:async()=>({budgetCurrency:'CAD',accountToday:'2
  await assert.rejects(()=>api.detail({campaignId:'42',groupRef:'customers/999/assetGroups/7'}),/account/);n++;
  await assert.rejects(()=>api.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:2,snapshotHash:'a'.repeat(64)}),/changed/);n++;
  const split=await api.draftSplit({campaignId:'42',groupRef:ref,expectedVersion:3,snapshotHash:'a'.repeat(64)});check(split.groups.length===2&&draft.payload.groupSplitGuard.sourceGroupRef===ref,'split proposal retains the current source guard');
+ const splitOps=draft.payload.mutateOperations,tempIds=splitOps.map(o=>Object.values(o)[0].create).filter(c=>c&&c.resourceName).map(c=>c.resourceName.match(/-\d+$/)[0]),linkedJson=JSON.stringify(splitOps.filter(o=>!o.assetOperation));
+ check(new Set(tempIds).size===tempIds.length,'every product in one split mutate keeps globally unique temp IDs');check(splitOps.filter(o=>o.assetOperation).every(o=>linkedJson.includes(JSON.stringify(o.assetOperation.create.resourceName))),'a split never creates unlinked campaign-level assets');
  const originalDraft=clone(draft),oldId='split-'+draft.payload.meta.adDesignId;let replacementId;
  const closed={status:'REJECTED',deletedAt:1,payload:clone(draft.payload)};
  const closedStore={where:()=>({limit:()=>({get:async()=>({docs:[]})})}),doc:id=>({get:async()=>({exists:id===oldId,id,data:()=>closed})})};
