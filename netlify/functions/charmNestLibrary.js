@@ -422,6 +422,10 @@ async function op_putSheet(b) {
   const ref = col(SHEETS).doc(s.id);
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
+    // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
+    const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
+    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — an order line goes on a sheet once`, status: 409 }; }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
@@ -871,7 +875,7 @@ function poolEvents(ids, p, before, b) {
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
   if (!rows.length) return { error: "no pool rows" };
-  const out = { written: 0, contended: [] };
+  const out = { written: 0, contended: [], placed: [] };
   /* Two runs contending for one line: a row claimed by a LIVE run (fresh within 24 h, not finished) belongs to that run.
      A run that was stopped or given up is not live, whatever its rows say: yesterday's stopped run kept 152 lines
      out of today's on the strength of rows it never finished, so the run itself is asked, once per run. */
@@ -883,10 +887,19 @@ async function op_poolPut(b) {
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
   for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId))));
+  /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
+     row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
+     still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
+  const onSheet = new Map(), want = new Map();
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (cur && cur.sheetId && !p.sheetId && !["abandoned", "superseded"].includes(cur.state)) want.set(p.poolId, cur); });
+  const sheetIds = [...new Set([...want.values()].map(c => String(c.sheetId)).filter(isId))], sheetsRead = new Map();
+  for (let i = 0; i < sheetIds.length; i += 100) for (const s of await db.getAll(...sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["poolIds", "archived", "fileBase"] })) if (s.exists) sheetsRead.set(s.id, s.data());
+  for (const [id, cur] of want) { const sh = sheetsRead.get(String(cur.sheetId)); if (sh && !sh.archived && (sh.poolIds || []).includes(id)) onSheet.set(id, { poolId: id, sheetId: cur.sheetId, sheetName: cur.sheetName || sh.fileBase || null, state: cur.state || null, setId: cur.setId || null }); }
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
+    if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
     batch.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
     if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
