@@ -75,7 +75,10 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     runTransaction: async (fn) => fn({ get: (ref) => ref.get(), set: (ref, value, opts) => write(`${ref.coll}/${ref.id}`, value, opts) }) };
   const bucket = {
     getFiles: async ({ prefix }) => [[...bucketFiles].filter((name) => name.startsWith(prefix)).map((name) => ({ name }))],
-    file: (name) => ({ name, exists: async () => [bucketFiles.has(name)], copy: async (dest) => { bucketFiles.add(dest.name); } }),
+    file: (name) => ({ name, exists: async () => [bucketFiles.has(name)], copy: async (dest) => {
+      if (!bucketFiles.has(name)) throw new Error(`No such object: ${name}`);
+      bucketFiles.add(dest.name);
+    } }),
   };
   const json = (statusCode, value) => ({ statusCode, body: JSON.stringify(value) });
   const handler = async (event) => {
@@ -200,11 +203,10 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.equal(queued.retryOf, "batch_stuck");
   assert.equal(queued.stallRestarts, 1);
   assert.equal(queued.sessionId, "sess_1", "the restart stays in the same batch on the dashboard");
-  assert(w.bucketFiles.has(`${folder(1)}/Slot_6.png`), "the missing copied image is copied, not generated");
   assert.equal(w.submits.length, 1, "the restarted set is submitted in the same round");
   const sent = w.submits[0];
-  assert.deepEqual(sent.sets[0].tasks.filter((t) => t.type !== "copy").map((t) => t.slotIndex), [2, 3, 4],
-    "only the images the set still lacks are generated");
+  assert.deepEqual(sent.sets[0].tasks.map((t) => [t.slotIndex, t.type]), [[2, "edit"], [3, "edit"], [4, "edit"], [5, "copy"]],
+    "only the images the set still lacks; the copied one rides along as in a retry");
   assert.equal(sent.sets[0].allTasks.length, 6);
   assert.equal(sent.stallRestarts, 1);
   assert.match(sent.displayName, /^stall-restart-Beady_Necklace-Set_1-/);
@@ -224,12 +226,17 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   const stopped = (n, extra = {}) => job(`batch_s${n}`, n, { state: "JOB_STATE_RUNNING", providerStatus: "cancelling",
     stallCancelRequestedAt: at(START - HOUR), ...extra });
   const g = world({
-    records: [stopped(10), stopped(11), stopped(12), stopped(13), stopped(14, { stallRestartBlocked: true })],
+    records: [stopped(10), stopped(11), stopped(12), stopped(13), stopped(14, { stallRestartBlocked: true }),
+      stopped(15), stopped(16)],
     jobs: { batch_s10: openai("cancelled"), batch_s11: openai("cancelled", 2, 0, { output_file_id: "file-out" }),
-      batch_s12: openai("cancelled"), batch_s13: openai("cancelling"), batch_s14: openai("cancelled") },
+      batch_s12: openai("cancelled"), batch_s13: openai("cancelling"), batch_s14: openai("cancelled"),
+      batch_s15: openai("cancelled"), batch_s16: openai("cancelled") },
     files: [
       "listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/Beady_Necklace_Set_10/Slot_1.png",
       ...[1, 2, 3, 4, 5, 6].map((i) => `${folder(12)}/Slot_${i}.png`),
+      // Sets 15 and 16 lack only their copied image; set 16's source is gone.
+      ...[1, 2, 3, 4, 5].flatMap((i) => [`${folder(15)}/Slot_${i}.png`, `${folder(16)}/Slot_${i}.png`]),
+      "listing-generator-1/Sources/15.png",
     ],
   });
   const approved = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s10" });
@@ -243,6 +250,13 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   const full = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s12" });
   assert.equal(full.complete, true, "a set with every image needs no new job");
   assert.equal(g.get("batch_s12").retryStatus, "complete");
+  const copied = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s15" });
+  assert.equal(copied.complete, true, "a set missing only a copied image is finished without a new job");
+  assert(g.bucketFiles.has(`${folder(15)}/Slot_6.png`));
+  const noSource = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s16" });
+  assert.equal(noSource.closed, true, "a copy that cannot be made stops once instead of every round");
+  assert.equal(g.get("batch_s16").stallRestartClosed, true);
+  assert.match(g.get("batch_s16").retryError, /No such object/);
   const early = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s13" });
   assert.equal(early.waiting, true, "nothing is queued before OpenAI confirms the cancel");
   const blocked = await g.call({ kind: "batch_restart_stalled", batchName: "batch_s14" });

@@ -6420,13 +6420,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /* The sticker printed (its print dialog closed): `labelPrinted` on the order's timeline, whether or not its lines are
      then marked completed. Paul, 28 Sep: the Review tab is where the Design Station prints, so the station is design;
-     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is. */
+     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is.
+     Every print is an event of its own (Paul, 29 Sep 02:08: each print a seal on the timeline): its id is its moment,
+     not its minute, so a label printed again within the minute is not folded into the one before; print is its
+     seal's number on the card (Print Nº n). */
   function labelled(rid, who, o) {
     try {
       const at = Date.now();
-      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${Math.floor(at / 60000)}`,
+      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
         text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -6496,7 +6499,7 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
@@ -6527,8 +6530,17 @@ const CustomPrint = window.CustomPrint = (() => {
     const go = anyway(it, "complete"); if (go === false) return;
     withName(key, who => completeAs(it, who, go));
   }
+  /* where Complete Order, Reopen or Undo was pressed, for its point on the order's timeline (Paul, 29 Sep 02:08): the
+     order window (a modal: while it is open nothing behind it takes a press), else Review, by the card's tab */
+  function pressedIn(it) {
+    try { if (OrderWin.isOpen()) return "Order window"; } catch (_) {}
+    return !it ? "Review" : "Review · " + (it.kind === "customOrder" ? "Custom Orders" : it.category || "a card");
+  }
+  /** The open order window's timeline reads the new point now (its feed otherwise reads again only within 20 s). */
+  function tlFresh() { try { const f = OrderWin.isOpen() && OrderWin._feed(); if (f && f.refresh) f.refresh({ force: true }); } catch (_) {} }
   function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
+    const from = pressedIn(it);
     const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
     if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
     const held = rows.map(r => r.key).filter(k => !printing.has(k));
@@ -6540,7 +6552,7 @@ const CustomPrint = window.CustomPrint = (() => {
       const saved = {}; let putErr = null, cut = 0;
       for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
-        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
+        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label, from }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
       }
       const done = Object.keys(saved), rid = rows[0].order.receiptId;
       keepDone(saved);
@@ -6548,7 +6560,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length) sealed(it, rows, saved, done, who, "button");
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
-      settle(); say(key, null); pressSoon();
+      settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
@@ -6592,7 +6604,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack(it.key, u.rows, employeeName() || u.who, "undo");
+    takeBack(it.key, u.rows, employeeName() || u.who, "undo", pressedIn(it));
   }
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
@@ -6600,24 +6612,25 @@ const CustomPrint = window.CustomPrint = (() => {
     if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo");
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo", pressedIn(null));
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
+    const from = pressedIn(it);
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen", from); });
   }
   /** Each line's record reopened, never deleted: its seals stay on it for good and show on the Open card's buttons (Paul,
    *  29 Sep 00:35); only its state changes, with who and when in its history and on the order's timeline. The page
    *  follows each as it goes (a failure part way leaves it saying what the cloud holds), then the lines are put back for
    *  cutting; a failure of either is said as what it is. */
-  async function takeBack(key, rows, who, how) {
+  async function takeBack(key, rows, who, how, from) {
     const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
     say(key, how === "undo" ? "Undoing…" : "Reopening…");
     let gone = 0;
     for (const r of rows) {
       let back = null;
-      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how }, { quiet: true }); }
+      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how, from }, { quiet: true }); }
       catch (e) {
         busy.delete(key); settle(); say(key, null);
         toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
@@ -6635,7 +6648,7 @@ const CustomPrint = window.CustomPrint = (() => {
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
     catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
-    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`);
+    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`); tlFresh();
   }
   /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */

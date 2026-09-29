@@ -1372,6 +1372,38 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if (!c) { const w = x.p.wPt * W.k / (x.p.scale || 1), hh = x.p.hPt * W.k / (x.p.scale || 1); ctx.roundRect ? ctx.roundRect(-w / 2, -hh / 2, w, hh, 3 * W.dpr) : ctx.rect(-w / 2, -hh / 2, w, hh); return; }
     const t = tx0(c); CharmNestPDF.pathToCanvas(ctx, c.outline, t); if (holes) for (const m of cutLinesOf(c)) CharmNestPDF.pathToCanvas(ctx, m, t);
   }
+  /* ── the gold line round a charm in hand (Paul, 29 Sep: "a strange outline that doesn't look very nice … fix this so the
+     outline matches the actual charm"): one thin line that follows the charm's own cut edge — its jump ring, its fingers,
+     a notch — the same few pixels out all the way round, at any zoom and from either side. It is the outline grown
+     outwards (its filled shape under a round-joined stroke, less the same grown a little less), drawn once into a small
+     picture of its own, so a pulse only moves and fades it (transform and opacity). It replaces the outline scaled up
+     about the charm's middle, which stood unevenly off any charm that is not round and doubled the gold line. ── */
+  const HALO = { gap: 2.6, w: 1.5, gold: "#b8893a" };   // css px: out from the cut edge, and the line's width
+  function haloOf(x, k, dpr, back, o = {}) {
+    const p = x.p, c = x.c, sc = p.scale || 1, gap = (o.gap || HALO.gap) * dpr, lw = (o.w || HALO.w) * dpr, col = o.color || HALO.gold;
+    const key = [k, dpr, back ? 1 : 0, p.angle, sc, p.wPt, p.hPt, gap, lw, col].join("|"), was = x._halo;
+    if (was && was.key === key && was.c === c) return was;
+    const wPt = Math.max(+p.wPt || 0, c ? (+c.widthPt || 0) * sc : 0) || 10, hPt = Math.max(+p.hPt || 0, c ? (+c.heightPt || 0) * sc : 0) || 10;
+    const r = Math.hypot(wPt, hPt) / 2 * k, half = Math.ceil(r + gap + lw + 2 * dpr);
+    const cv = document.createElement("canvas"); cv.width = cv.height = 2 * half;
+    const ctx = cv.getContext("2d");
+    ctx.translate(half, half); if (back) ctx.scale(-1, 1); ctx.rotate((+p.angle || 0) * Math.PI / 180); ctx.scale(sc, sc);
+    // its solid parts one closed path at a time: a hole or a jump ring's opening is filled, so the line goes round its outside
+    const subs = c && c.outline && c.outline.subpaths || [];
+    let parts;
+    if (subs.length) { const cx = c.centerPt[0], cy = c.centerPt[1], t = (px, py) => [(px - cx) * k, (cy - py) * k];
+      parts = subs.map(sp => { const q = new Path2D(); CharmNestPDF.pathToCanvas(q, { subpaths: [sp] }, t); return q; }); }
+    else { const w = (+p.wPt || 10) * k / sc, hh = (+p.hPt || 10) * k / sc, q = new Path2D(); if (q.roundRect) q.roundRect(-w / 2, -hh / 2, w, hh, 3 * dpr); else q.rect(-w / 2, -hh / 2, w, hh); parts = [q]; }
+    ctx.lineJoin = "round"; ctx.fillStyle = ctx.strokeStyle = col;
+    const grown = d => { ctx.lineWidth = 2 * d / sc; for (const q of parts) { ctx.fill(q); ctx.stroke(q); } };
+    grown(gap + lw / 2); ctx.globalCompositeOperation = "destination-out"; grown(gap - lw / 2);
+    return (x._halo = { key, c, cv, half, r: r + gap });
+  }
+  /** The line laid on a plate: centred on the piece (X, Y in canvas px), grown by s about its middle, at alpha a. */
+  function layHalo(ctx, h, X, Y, s, a) {
+    if (!h || !(a > 0)) return;
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, X, Y); ctx.globalAlpha = Math.min(1, a); if (s !== 1) ctx.scale(s, s); ctx.drawImage(h.cv, -h.half, -h.half); ctx.restore();
+  }
   function paintBase() {
     const cv = W.el.base, ctx = cv.getContext("2d"), st = W.st, R = W.R, k = W.k; if (!st) return;
     const Wp = cv.width - R, Hp = cv.height - R;
@@ -1419,11 +1451,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       ctx.save(); ctx.globalAlpha = u;
       // (the rest of the order lighter than the charm itself, which is marked last, above them)
       for (const x of keep) { if (x.gone || (fs && x === fs.f)) continue; const mate = !!fs && fs.mates.includes(x); withPiece(ctx, x, () => {
-        ctx.save(); ctx.scale(1.07, 1.07); outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.55)" : "rgba(74,107,120,.55)"; ctx.lineWidth = 1.6 * W.dpr / 1.07; ctx.stroke(); ctx.restore();
         ctx.fillStyle = mate ? "rgba(202,168,97,.14)" : "rgba(74,107,120,.14)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
         if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), k);
-        outlinePath(ctx, x); ctx.strokeStyle = mate ? "rgba(169,130,63,.6)" : "rgba(74,107,120,.7)"; ctx.lineWidth = (mate ? 1.2 : 1.4) * W.dpr; ctx.stroke();
-        markBack(ctx, x); }); }
+        else { outlinePath(ctx, x); ctx.strokeStyle = "rgba(60,54,46,.5)"; ctx.lineWidth = W.dpr; ctx.stroke(); }
+        markBack(ctx, x); });
+        // one line round it, along its own outline (haloOf): gold for the rest of the order, slate for a search's finds
+        layHalo(ctx, haloOf(x, k, W.dpr, backFace(), mate ? { w: 1.3 } : { w: 1.3, color: "#4a6b78" }), plateX(x.p.cxPt), R + x.p.cyPt * k, 1, .72 * u); }
       ctx.restore();
       if (fs && !fs.f.gone) markMain(ctx, fs.f, t1);
     } else if (!W.geom && W.pre && W.pre.sel) markMain(ctx, W.pre.sel, t1);
@@ -1463,24 +1496,25 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // the selected charm's pulse
     for (const f of W.fx) if (f.kind === "pulse") {
       const t = Math.min(1, (t1 - f.t0) / f.ms), x = f.piece; if (!x || !x.p || x.gone) continue;
-      withPiece(ctx, x, () => { const s = 1 + .22 * t; ctx.scale(s, s); outlinePath(ctx, x); ctx.strokeStyle = `rgba(202,168,97,${.9 * (1 - t)})`; ctx.lineWidth = 3 * W.dpr / s; ctx.stroke(); });
+      // (its own line going out from it and fading: the same picture, moved and faded)
+      const h = haloOf(x, k, W.dpr, backFace(), { w: 1.9 }); layHalo(ctx, h, plateX(x.p.cxPt), R + x.p.cyPt * k, 1 + 9 * W.dpr * t / h.r, .9 * (1 - t));
     }
     for (const f of W.fx) if (f.kind === "arrive") paintArrive(ctx, f, t1);
   }
-  /** The charm in hand: warm, in a firm gold line, above the rest of its order; it pops once as the sheet it opened on
-      comes to rest (its copy in the sheet under it covered while it is bigger). */
+  /** The charm in hand: warm, with its one gold line round it, above the rest of its order; it pops once as the sheet it
+      opened on comes to rest (its copy in the sheet under it covered while it is bigger). */
   function markMain(ctx, x, t1) {
     const f = W.fx.find(e => e.kind === "arrive" && e.piece && keyOf(e.piece) === keyOf(x)), u = f ? (t1 - f.t0) / 350 : 1;
     const s = u > 0 && u < 1 ? 1 + .08 * Math.sin(Math.PI * u) : 1;
     withPiece(ctx, x, () => {
       if (s !== 1) { ctx.scale(s, s); ctx.fillStyle = "#fffefb"; outlinePath(ctx, x); ctx.fill(); }
-      // a ring just outside it, so it is told apart by its own gold and this line, not by dimming the sheet round it
-      ctx.save(); ctx.scale(1.1, 1.1); outlinePath(ctx, x); ctx.strokeStyle = "rgba(184,137,58,.85)"; ctx.lineWidth = 2.4 * W.dpr / (s * 1.1); ctx.stroke(); ctx.restore();
       ctx.fillStyle = "rgba(202,168,97,.42)"; outlinePath(ctx, x, true); ctx.fill("evenodd");
       if (x.c && !backFace()) CharmNestPDF.drawCharm(ctx, x.c, tx0(x.c), W.k);
-      outlinePath(ctx, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = 2.5 * W.dpr / s; ctx.stroke();
+      else { outlinePath(ctx, x); ctx.strokeStyle = "rgba(60,54,46,.55)"; ctx.lineWidth = W.dpr / s; ctx.stroke(); }
       markBack(ctx, x);
     });
+    // told apart by its own gold and this line along its outline (haloOf), never by dimming the sheet round it
+    layHalo(ctx, haloOf(x, W.k, W.dpr, backFace(), { w: 1.9 }), plateX(x.p.cxPt), W.R + x.p.cyPt * W.k, s, 1);
   }
   /** A charm marked above the plate keeps its words: they are drawn again over the mark, in full ink, never covered. */
   function markBack(ctx, x) {
@@ -4071,16 +4105,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       });
     }
     // (Paul, 28 Sep: "make sure that everything is always perfectly visible and there's no weird semi-transparent haze
-    //  over the sheet" — nothing is ever laid over the sheet: the order's pieces are told apart by their own gold, a
-    //  firmer line and a ring just outside them, never by washing the rest of the sheet out)
+    //  over the sheet" — nothing is ever laid over the sheet: the order's pieces are told apart by their own gold and one
+    //  gold line round each along its own outline (orderHalos, over this layer), never by washing the rest of the sheet out)
     for (const x of G.mine) {
       const on = G.focus && (x.poolId === G.focus || x.id === G.focus);
       orderPiece(ctx, G, x, () => {
-        const rs = on ? 1.1 : 1.07;
-        ctx.save(); ctx.scale(rs, rs); orderOutline(ctx, G, x); ctx.strokeStyle = on ? "rgba(184,137,58,.85)" : "rgba(184,137,58,.6)"; ctx.lineWidth = (on ? 2.4 : 1.8) * dpr / rs; ctx.stroke(); ctx.restore();
         ctx.fillStyle = on ? "rgba(202,168,97,.58)" : "rgba(202,168,97,.42)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
-        if (!G.backSide) drawOf(ctx, G, x);
-        orderOutline(ctx, G, x); ctx.strokeStyle = "#b8893a"; ctx.lineWidth = (on ? 3.6 : 2.5) * dpr; ctx.stroke();
+        if (x.c && !G.backSide) drawOf(ctx, G, x); else { ctx.strokeStyle = "rgba(60,54,46,.55)"; ctx.lineWidth = dpr; orderOutline(ctx, G, x); ctx.stroke(); }
       });
     }
     // from behind: every charm's own words, on the charm, where the laser burns them — in full ink on every charm of every
@@ -4108,20 +4139,29 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     return true;
   }
-  /** The plate on screen: its still layer, and over it the order's slow gold ring (a pop as the drawing lands). */
+  /** The plate on screen: its still layer, and over it the order's gold line round each of its pieces, breathing slowly —
+      it swells a pixel or two and softens, and comes back (Paul, 29 Sep: "before it used to pulsate, but now it just sits
+      there"; the pulse had been buried under a second, static ring), with a pop as the drawing lands. With reduced motion
+      the same line, at rest. */
+  const BREATH_MS = 2400;
   function paintOrder(G, now) {
     const cv = G.cv; if (!G.base || !cv.isConnected || cv._order !== G) return;
-    const ctx = cv.getContext("2d"), t1 = now || performance.now();
+    const ctx = cv.getContext("2d"), t1 = now || performance.now(), calm = still();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(G.base, 0, 0);
-    if (still() || !G.mine.length) return;
-    const ph = ((t1 - (G.t0 || 0)) % 1800) / 1800, land = G.t0 ? Math.min(1, (t1 - G.t0) / 900) : 1;
-    ctx.save(); ctx.translate(G.R, G.R); if (G.backSide) { ctx.translate(G.Wp, 0); ctx.scale(-1, 1); }
-    for (const x of G.mine) orderPiece(ctx, G, x, () => {
-      if (land < 1) { const pop = 1 + .1 * Math.sin(Math.PI * Math.min(1, land * 2.6)); ctx.save(); ctx.scale(pop, pop); orderOutline(ctx, G, x); ctx.strokeStyle = `rgba(184,137,58,${.9 * (1 - land)})`; ctx.lineWidth = 3 * G.dpr / pop; ctx.stroke(); ctx.restore(); }
-      const s = 1 + .6 * ph; ctx.scale(s, s); orderOutline(ctx, G, x); ctx.strokeStyle = `rgba(202,168,97,${.9 * (1 - ph)})`; ctx.lineWidth = 1.6 * G.dpr / s; ctx.stroke();
-    });
-    ctx.restore();
-    if (!G.raf && cv.offsetParent && !document.hidden) G.raf = requestAnimationFrame(t => { G.raf = 0; paintOrder(G, t); });
+    if (!G.mine.length) return;
+    const b = calm ? 0 : (1 - Math.cos(2 * Math.PI * (((t1 - (G.t0 || 0)) % BREATH_MS) / BREATH_MS))) / 2;
+    const land = calm || !G.t0 ? 1 : Math.min(1, (t1 - G.t0) / 900);
+    orderHalos(ctx, G, b, land < 1 ? .08 * Math.sin(Math.PI * Math.min(1, land * 2.6)) : 0);
+    if (!calm && !G.raf && cv.offsetParent && !document.hidden) G.raf = requestAnimationFrame(t => { G.raf = 0; paintOrder(G, t); });
+  }
+  /** Each of the order's pieces ringed along its own outline (haloOf), the one pointed at in a firmer line; b: how far
+      into its breath (0 at rest, 1 at its widest and softest), pop: the landing's swell. */
+  function orderHalos(ctx, G, b, pop) {
+    for (const x of G.mine) {
+      const on = !!G.focus && (x.poolId === G.focus || x.id === G.focus), h = haloOf(x, G.k, G.dpr, G.backSide, { w: on ? 1.9 : 1.5 });
+      const X = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), Y = G.R + x.p.cyPt * G.k;
+      layHalo(ctx, h, X, Y, 1 + 1.8 * G.dpr * b / h.r + pop, (on ? 1 : .8) * (1 - .45 * b));
+    }
   }
   function soonPaint(G) { if (G.soon) return; G.soon = requestAnimationFrame(() => { G.soon = 0; if (paintOrderBase(G)) paintOrder(G); }); }
   /** The piece under a point on the screen (hover names its order; a click opens it). */
@@ -4169,7 +4209,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       // where a piece's centre is on the screen
       pointOf: key => { const x = pieces.find(p => p.poolId === key || p.id === key), r = cv.getBoundingClientRect(); if (!x || !G.base || !r.width) return null; const px = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), py = G.R + x.p.cyPt * G.k; return { x: r.left + px * r.width / cv.width, y: r.top + py * r.height / cv.height }; },
       // a copy of what is drawn (the sheet window grows out of it)
-      snap: () => { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; try { c.getContext("2d").drawImage(G.base || cv, 0, 0); } catch (_) { return null; } return c; }
+      snap: () => { const c = document.createElement("canvas"); c.width = cv.width; c.height = cv.height; try { const x2 = c.getContext("2d"); x2.drawImage(G.base || cv, 0, 0); if (G.base) orderHalos(x2, G, 0, 0); } catch (_) { return null; } return c; }
     };
     if (opts.onInfo) tryDo(() => opts.onInfo(info));
     if (G.backSide) ensureBacks(G, opts);
