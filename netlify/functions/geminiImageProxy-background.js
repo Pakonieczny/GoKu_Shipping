@@ -15337,13 +15337,21 @@ async function _handlerImpl(event) {
       const allTasks = Array.isArray(set.allTasks) ? set.allTasks : set.tasks;
       const missingTasks = (allTasks || []).filter((t) => Number.isInteger(Number(t?.slotIndex)) &&
         !presentSlots.has(Number(t.slotIndex) + 1));
-      for (const t of missingTasks.filter((x) => x.type === "copy")) {
-        const dest = bucket.file(`${set.outputBasePath}/Slot_${Number(t.slotIndex) + 1}.png`);
-        const [exists] = await dest.exists();
-        if (!exists) await bucket.file(t.source_storage_path).copy(dest);
-      }
+      // Copied slots ride along with the new job (its submission copies
+      // them), as in batch_retry_missing; only an all-copy set is done here.
       const toGenerate = missingTasks.filter((t) => t.type !== "copy");
       if (!toGenerate.length) {
+        try {
+          for (const t of missingTasks) {
+            const dest = bucket.file(`${set.outputBasePath}/Slot_${Number(t.slotIndex) + 1}.png`);
+            const [exists] = await dest.exists();
+            if (!exists) await bucket.file(t.source_storage_path).copy(dest);
+          }
+        } catch (err) {
+          // Stop here rather than retry the same failing copy every sweep.
+          await close("failed", `Could not copy a missing image: ${String(err?.message || err).slice(0, 300)}`);
+          return json(200, { ok: true, closed: true });
+        }
         // Everything is saved: finish the set (manifest, charm) from this
         // job's results when it has any, as a normal collection would.
         if (finishedWhileCancelling) await collectHere({});
