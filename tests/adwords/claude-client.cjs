@@ -246,5 +246,30 @@ const env = { ANTHROPIC_API_KEY: 'test-key' };
     assert.equal(C.MODEL, 'claude-sonnet-5-5');
   }
 
+  // 11. retryUnknown:false (paid analysis): a rejected request (error status,
+  //     nothing generated) is retried; a stream that fails after the request was
+  //     accepted is never sent again, because it may already be billed.
+  {
+    const rejectedFirst = fakeFetch([{ status: 529, errorType: 'overloaded_error', message: 'Overloaded' }, { events: streamOf({ blocks: [{ type: 'text', text: '{"ok":true}' }] }) }]);
+    const out = await C.createClaudeClient({ env, fetch: rejectedFirst, sleep: noSleep, log: quiet }).json({ prompt: 'x', retryUnknown: false });
+    assert.deepEqual(out.data, { ok: true });
+    assert.equal(rejectedFirst.calls.length, 2, 'an overloaded rejection is safe to retry');
+    const cut = fakeFetch([{ events: streamOf({ blocks: [{ type: 'text', text: '{"a":' }], cut: true }) }, { events: streamOf({ blocks: [{ type: 'text', text: '{"a":1}' }] }) }]);
+    await assert.rejects(C.createClaudeClient({ env, fetch: cut, sleep: noSleep, log: quiet }).message({ messages: [{ role: 'user', content: 'x' }] }, { retryUnknown: false }), e => e.code === 'CLAUDE_STREAM_CUT' && !e.rejected && !e.definiteResponse);
+    assert.equal(cut.calls.length, 1, 'a possibly billed stream is not repeated');
+    const midStream = fakeFetch([{ events: [...streamOf({ blocks: [] }).slice(0, 1), { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }] }, { events: streamOf({ blocks: [] }) }]);
+    await assert.rejects(C.createClaudeClient({ env, fetch: midStream, sleep: noSleep, log: quiet }).message({ messages: [{ role: 'user', content: 'x' }] }, { retryUnknown: false }), e => /stream error/.test(e.message) && !e.rejected);
+    assert.equal(midStream.calls.length, 1);
+    const bad = fakeFetch([{ status: 400, message: 'bad image' }]);
+    await assert.rejects(C.createClaudeClient({ env, fetch: bad, sleep: noSleep, log: quiet }).json({ prompt: 'x', retryUnknown: false }), e => e.rejected === true && e.definiteResponse === true);
+  }
+
+  // 12. Unparseable JSON keeps the text and the web sources it read, for salvage.
+  {
+    const result = { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', url: 'https://example.org/holidays', title: 'Holidays' }] };
+    const fetch = fakeFetch([{ events: streamOf({ blocks: [{ type: 'server_tool_use', id: 'srv_1', query: 'holidays' }, result, { type: 'text', text: 'No JSON here.' }], outUsage: { server_tool_use: { web_search_requests: 1 } } }) }]);
+    await assert.rejects(C.createClaudeClient({ env, fetch, sleep: noSleep, log: quiet }).json({ prompt: 'x', webSearch: true }), e => e.code === 'CLAUDE_BAD_JSON' && e.text === 'No JSON here.' && e.sources[0].url === 'https://example.org/holidays');
+  }
+
   console.log('claude-client: Sonnet 5.5 client streams, retries, prices and bridges offline.');
 })().catch(error => { console.error(error); process.exit(1); });
