@@ -59,7 +59,8 @@ function clean(e, opts = {}) {
   const out = {
     orderId, type, at, by: s(e.by || opts.by || "", 80), source: opts.source || s(e.source, 20) || "sorter", station, device: s(e.device, 40),
     lineKey: s(e.lineKey, 80), transactionId: s(e.transactionId, 30), sheetId: s(e.sheetId, 100), sheet: s(e.sheet, 80), setId: s(e.setId, 100),
-    text: s(e.text, 200), data: small(e.data), milestone: e.milestone === undefined ? MILESTONES.has(type) : !!e.milestone
+    // (a scan says where the order was seen and a label print is a step's detail: neither is ever a milestone)
+    text: s(e.text, 200), data: small(e.data), milestone: type === "scan" || type === "labelPrinted" ? false : e.milestone === undefined ? MILESTONES.has(type) : !!e.milestone
   };
   const key = s(e.id, 120).replace(/[^\w.:-]/g, "_") || `${at}-${Math.random().toString(36).slice(2, 8)}`;
   return { key: `${orderId}~${type}~${key}`.slice(0, 400), doc: out };
@@ -470,6 +471,14 @@ const RAIL_KEYS = ["arrived", "sheet", "engraved", "laser", "sorted", "welded", 
 // the furthest step of the rail an event shows the order has reached
 const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
   engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
+/* A label printed (Paul, 28 Sep 23:51; charm-nest-timeline-ui.js labelStepOf, keep the two alike): an order's QR label
+   printed at the Sorting station or the Design Station (its Review tab) is a detail of the Sorted step, never a step of
+   its own (it moved the rail to Assembled); a shipping label belongs to the Shipped step (the order is at Shipping, so
+   past Assembled; `shipped` stamps the step). data.label: sheetQR | orderQR | custom | shipping, else by the station. */
+const SORT_LABELS = new Set(["sheetQR", "orderQR", "custom"]), SORT_SIDE = new Set(["sorting", "design", "qr", "sorter"]);
+const labelStepOf = e => { const k = e && e.data && e.data.label; return k === "shipping" ? "shipped" : SORT_LABELS.has(k) || SORT_SIDE.has(e && e.station) ? "sorted" : "shipped"; };
+const sortLabel = e => e.type === "labelPrinted" && labelStepOf(e) === "sorted";
+const stepOf = e => (sortLabel(e) ? null : STEP[e.type]);
 /** Where the order is now, from its events (oldest first) and its cancel record:
     { stage, label, text, sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled, step, rail }
     step: the furthest step of the rail (RAIL, 0-7) the order has reached; a cancelled order stopped there.
@@ -480,13 +489,14 @@ const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLin
     written) stays in the history but does not make it cancelled. */
 function whereOf(events, cancelled, hint = {}) {
   const list = (events || []).filter(e => e && TYPES.has(e.type)).slice().sort(byTime);
-  let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, cut = false, designed = false, cancel = null, step = list.length ? 0 : -1;
+  let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, cut = false, designed = false, cancel = null, step = list.length ? 0 : -1, seen = false;
   const enter = (st, e) => { if (st !== stage) since = n(e.at); stage = st; };
   for (const e of list) {
     at = Math.max(at, n(e.at));
-    if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]);
+    if (stepOf(e) != null) step = Math.max(step, stepOf(e));
     else if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) step = Math.max(step, 1);
-    if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
+    // (a scan only says where the order was seen: "seen at sorting", never a step)
+    if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; seen = e.type === "scan"; }
     if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
     if (e.setId) setId = e.setId;
     if (e.type === "cancelled" || e.type === "etsyCancelled") { cancel = e; continue; }
@@ -501,7 +511,7 @@ function whereOf(events, cancelled, hint = {}) {
       if (rank <= 2 && (!e.sheetId || !sheetId || e.sheetId === sheetId)) { rank = 0; sheet = ""; sheetId = ""; enter(/hold/i.test((e.data && e.data.reason) || e.text || "") ? "held" : "waiting", e); }
       continue;
     }
-    const r = RANK[e.type]; if (r == null) continue;
+    const r = sortLabel(e) ? null : RANK[e.type]; if (r == null) continue;
     if (r >= 3) { if (r > rank) { rank = r; enter(STAGE_OF[r], e); } if (r === 3) { cut = true; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } } continue; }
     if (rank > 2) continue;   // past the sheet: sorter steps after the cut do not bring it back
     if (r === 2) { rank = 2; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } enter(sheetId ? "sheet" : designed ? "designed" : "sheet", e); continue; }
@@ -527,8 +537,8 @@ function whereOf(events, cancelled, hint = {}) {
   const label = stage === "sheet" && sheet ? `On ${sheet}` : STAGE_LABEL[stage] || stage;
   const bits = [label];
   if (isCancelled && sheet) bits.push(`pieces on ${sheet}`);
-  if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`at ${station}${device ? " (" + device + ")" : ""}`);
+  if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`${seen ? "seen at" : "at"} ${station}${device ? " (" + device + ")" : ""}`);
   if (by) bits.push(`by ${by}`);
   return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
 }
-module.exports = { RAIL, RAIL_KEYS, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, RAIL_KEYS, labelStepOf, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
