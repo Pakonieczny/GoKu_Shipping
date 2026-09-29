@@ -780,13 +780,15 @@ async function createCampaignRestoreDraft({ id, version, expectedVersion, snapsh
 // Producer contract: anything (a Shopify order webhook, or your existing order
 // pipeline) calls enqueueConversion(...) to drop a row in Brites_GAds_ConvQueue.
 // This engine drains it into Google so Smart Bidding optimises on REAL revenue.
-async function enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime, consent, buyerCountry }) {
+async function enqueueConversion({ gclid, gbraid, wbraid, value, orderTotal, currency, orderId, conversionDateTime, consent, buyerCountry }) {
   const f = fb(); if (!f) return false;
   if (!gclid && !gbraid && !wbraid) return false; // no click id ⇒ unattributable
   const row = {
     gclid: gclid || null, gbraid: gbraid || null, wbraid: wbraid || null,
-    value: Number(value) || 0, currency: currency || CURRENCY,
-    orderId: orderId || null, refundedTotal: 0,
+    // value: what Google is sent (merchandise revenue); orderTotal: what the buyer paid, which
+    // refunds are measured against. refundedTotal is in value terms, refundedMoney in money.
+    value: Number(value) || 0, orderTotal: Number(orderTotal) > 0 ? Number(orderTotal) : null, currency: currency || CURRENCY,
+    orderId: orderId || null, refundedTotal: 0, refundedMoney: 0,
     conversionDateTime: conversionDateTime || gAdsTime(new Date()),
     // Only a consent the shopper actually gave is recorded; none is ever assumed.
     consent: consent && (consent.adUserData || consent.adPersonalization) ? { adUserData: consent.adUserData || null, adPersonalization: consent.adPersonalization || null } : null,
@@ -1016,8 +1018,13 @@ async function recordRefund({ orderId, refundAmount, when, refundId, items } = {
       if(claimRef)await claimRef.set({status:"complete",conversionAdjustment:"not_applicable",completedAt:f.FV.serverTimestamp()},{merge:true});
       return { ok: true, skipped: "no matching ad-attributed conversion for this order", orderIntelligenceAdjusted:true };
     }
-    const refundedSoFar = (Number(orig.refundedTotal) || 0) + amount;
-    const newValue = Math.max(0, (Number(orig.value) || 0) - refundedSoFar);
+    // The sale went to Google as merchandise revenue; a refund is money back on the whole order
+    // (tax and shipping too), so it takes the same share of the value. A row queued before
+    // orderTotal was stored holds the order total as its value, and its refunds in money.
+    const value = Math.max(0, Number(orig.value) || 0), total = Number(orig.orderTotal) > 0 ? Number(orig.orderTotal) : value;
+    const moneySoFar = _r2((orig.refundedMoney != null ? Number(orig.refundedMoney) || 0 : Number(orig.refundedTotal) || 0) + amount);
+    const refundedSoFar = total > 0 && moneySoFar < total - 0.005 ? _r2(Math.min(value, moneySoFar * value / total)) : value;
+    const newValue = Math.max(0, _r2(value - refundedSoFar));
     const full = newValue <= 0.005;
     await enqueueConversionAdjustment({
       orderId, gclid: orig.gclid || null,
@@ -1025,7 +1032,7 @@ async function recordRefund({ orderId, refundAmount, when, refundId, items } = {
       restatementValue: full ? null : newValue,
       currency: orig.currency, adjustmentDateTime: when || gAdsTime(new Date()), conversionDateTime: orig.conversionDateTime || null
     });
-    try { await orig.ref.update({ refundedTotal: refundedSoFar }); } catch (e) {}
+    try { await orig.ref.update({ refundedTotal: refundedSoFar, refundedMoney: moneySoFar }); } catch (e) {}
     if(claimRef)await claimRef.set({status:"complete",adjustmentType:full?"RETRACTION":"RESTATEMENT",newValue,completedAt:f.FV.serverTimestamp()},{merge:true});
     return { ok: true, adjustmentType: full ? "RETRACTION" : "RESTATEMENT", newValue, orderIntelligenceAdjusted:true };
   } catch(e){if(claimRef)try{await claimRef.set({status:"failed",error:String(e.message||e).slice(0,300),updatedAt:f.FV.serverTimestamp()},{merge:true});}catch(_e){}throw e;}
@@ -1179,9 +1186,15 @@ async function conversionHealth({ force } = {}) {
       if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");
       const dmx = out.dataManager, stale = Number(dmx.staleProcessing) || 0;
       if (dmx.processing > stale) out.reasons.push((dmx.processing - stale) + " conversion(s) submitted to Google Data Manager; asynchronous processing is still pending (Google allows up to 24 hours).");
-      // Past Google's 24-hour window a submission is stuck, not slow: say why.
-      if (stale) { out.validated = false; const why = Object.entries(dmx.staleReasons || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => n + " × " + k).join("; ");
-        out.reasons.push(stale + " submission(s) have waited more than 24 hours for Google's result, so they are stuck rather than processing" + (why ? ": " + why : "") + "."); }
+      // Past Google's 24-hour window a submission is stuck, not slow: the pipeline is not
+      // working, whatever its settings say. Say since when, and why.
+      const top = map => Object.entries(map || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => n + " × " + k).join("; ");
+      if (stale) { out.healthy = false; out.validated = false; const why = top(dmx.staleReasons);
+        out.reasons.push(stale + " submission(s) have waited more than 24 hours for Google's result (oldest sent " + new Date(dmx.oldestProcessingAt || Date.now()).toISOString().slice(0, 10) + "), so they are stuck rather than processing" + (why ? ": " + why : "") + "."); }
+      if (dmx.unsendable) { out.healthy = false; out.validated = false; out.reasons.push(dmx.unsendable + " queued sale(s) cannot be sent as stored: " + top(dmx.unsendableReasons) + "."); }
+      if (dmx.unsent && dmx.oldestUnsentAt && Date.now() - dmx.oldestUnsentAt > 3 * 3600000) out.reasons.push(dmx.unsent + " sale(s) have waited more than 3 hours to be sent. The hourly sync sends sales only while automation is on; Sync now sends them at once.");
+      // A submission is when the sale was sent; Google's confirmation can take a day.
+      if (dmx.latestSubmittedAt && (!out.lastUpload || !(out.lastUpload.at >= dmx.latestSubmittedAt))) out.lastUpload = { at: dmx.latestSubmittedAt, count: dmx.processing, ok: true, validateOnly: false, confirmed: false };
       if (dmx.consentMissing) out.reasons.push(dmx.consentMissing + " queued sale(s) from the EEA, UK or Switzerland carry no ad_user_data consent, so Google will not use them. The storefront must pass the shopper's consent with the order.");
       if (out.dataManager.unknown) out.reasons.push(out.dataManager.unknown + " upload outcome(s) need reconciliation before retrying.");
     } catch (error) { out.healthy = false; out.validated = false; out.reasons.push("Data Manager status: " + error.message); }
@@ -1191,13 +1204,23 @@ async function conversionHealth({ force } = {}) {
     // Google can record every upload and still misuse it: a fixed default value replaces each
     // order's value, one-per-click drops a repeat order, a secondary action is ignored by
     // bidding, and a second primary purchase action counts the same sale twice.
-    const others = out.actions.filter(a => a.id !== ca.id && a.status === "ENABLED" && a.category === "PURCHASE" && a.primaryForGoal === true), named = others.map(a => a.name + " (" + a.id + ")").join(", ");
+    const purchase = out.actions.filter(a => a.id !== ca.id && a.status === "ENABLED" && a.category === "PURCHASE"), others = purchase.filter(a => a.primaryForGoal === true);
+    const label = a => "\"" + a.name + "\" (" + a.id + ")", named = others.map(label).join(", ");
     out.doubleCounting = ca.primaryForGoal === true ? others.map(a => ({ id: a.id, name: a.name, type: a.type })) : [];
+    // Exactly one purchase action may be primary. The upload should be that one only once
+    // Google has confirmed it; until then the web tag is what bidding has been learning from.
+    const dm = out.dataManager, confirmedUploads = dm ? !!(dm.confirmed > 0 && !dm.staleProcessing && !dm.unknown && !out.failedCount) : !!(out.lastUpload && out.lastUpload.ok && out.lastUpload.count > 0 && !out.failedCount);
+    const tag = others[0] || purchase[0], where = "In Google Ads → Goals → Conversions, open each action's settings and set Action optimization: ";
+    const advice = tag ? where + (confirmedUploads ? "make " + label(ca) + " Primary and " + label(tag) + " Secondary; the upload carries each order's exact value and its refunds."
+      : "keep " + label(tag) + " Primary and set " + label(ca) + " to Secondary until Sales shows uploads confirmed by Google, then swap them.") : "";
     if (ca.alwaysUseDefaultValue === true) { out.healthy = false; out.validated = false; out.reasons.push("The configured conversion action always uses its default value, so Google replaces every order's real value. Set it to use a different value for each conversion."); }
     if (ca.category && ca.category !== "PURCHASE") out.reasons.push("The configured conversion action's category is " + ca.category + ", not Purchase, so purchase goals and ROAS bidding may leave these sales out.");
     if (ca.countingType === "ONE_PER_CLICK") out.reasons.push("The configured conversion action counts one conversion per click, so a second order from the same ad click is dropped. Set counting to Every.");
-    if (ca.primaryForGoal === false) { if (!others.length) out.validated = false; out.reasons.push("The configured conversion action is secondary, so bidding ignores these uploads" + (others.length ? " and optimizes toward " + named + " instead." : ", and no other purchase action is primary.")); }
-    if (out.doubleCounting.length) { out.validated = false; out.reasons.push("Enabled primary purchase action " + named + " also counts sales, so an order both record is counted twice in bidding and ROAS. Keep one purchase action primary and make the other secondary."); }
+    const unknownRole = purchase.filter(a => a.primaryForGoal == null);
+    if (ca.primaryForGoal === false && !others.length && !unknownRole.length) { out.healthy = false; out.validated = false; out.reasons.push("No purchase action is primary, so bidding optimizes toward no sales at all. " + where + "make " + label(ca) + " Primary."); }
+    else if (ca.primaryForGoal === false && others.length) out.reasons.push(label(ca) + " is Secondary, so bidding optimizes toward " + named + " and not these uploads" + (confirmedUploads ? ". Uploads are confirmed now: " + advice : "; keep it that way until Google confirms uploads."));
+    if (out.doubleCounting.length) { out.healthy = false; out.validated = false; out.reasons.push("Two primary purchase actions count the same sales, " + label(ca) + " and " + named + ", so an order both record is counted twice in bidding and ROAS. " + advice); }
+    else if ((ca.primaryForGoal == null && purchase.length) || (unknownRole.length && !(ca.primaryForGoal === false && others.length))) { out.validated = false; out.reasons.push("Google did not report which purchase action is primary, and " + [ca].concat(purchase).map(label).join(" and ") + " are all enabled. Exactly one may be primary. " + advice); }
   }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
   if (out.actionConfigured && out.actionsChecked && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
@@ -1278,29 +1301,6 @@ function _merchantOrganic(x) {
   return campaign === "sag_organic" || reason.indexOf("free google listing") >= 0 ||
     (/^(google|google shopping|google_shopping)$/.test(source) && /^(free[-_ ]?listings?|free[-_ ]?shopping|merchant[-_ ]?organic)$/.test(medium));
 }
-function _signalProductBucket(map, it, orderValue, isAd, isMerchant) {
-  const title = String((it && it.title) || "").trim(); if (!title) return;
-  // Variant/SKU-first keys keep Merchant Center evidence attached to the exact offer
-  // that sold. Title-only historical rows remain usable, but no longer cause sales of
-  // two variants with the same Shopify title to be credited to whichever variant came first.
-  const key = it.variantId ? `variant:${String(it.variantId)}`
-    : (it.sku ? `sku:${String(it.sku).toLowerCase()}`
-      : (it.productId ? `product:${String(it.productId)}` : `title:${title.toLowerCase()}`));
-  const qty = Math.max(1, Number(it.qty) || 1);
-  const margin = _marginRateForText([title,it.sku].filter(Boolean).join(" "));
-  const row = map[key] || (map[key] = { name: title, orders: 0, units: 0, revenue: 0, estimatedProfit: 0, ad: 0, organic: 0, merchantOrganic: 0,
-    marginRate: margin.rate, marginTier: margin.tier, revenueSource: "allocated_order_total",
-    sku: it.sku || null, productId: it.productId || null, variantId: it.variantId || null, handle: it.handle || null });
-  if (!row.sku && it.sku) row.sku = it.sku;
-  if (!row.productId && it.productId) row.productId = it.productId;
-  if (!row.variantId && it.variantId) row.variantId = it.variantId;
-  if (!row.handle && it.handle) row.handle = it.handle;
-  row.orders++; row.units += qty; row.revenue += orderValue; row.estimatedProfit += orderValue * row.marginRate;
-  if (it && it.lineRevenue != null) row.revenueSource = "shopify_line_revenue";
-  if (isAd) row.ad++; else row.organic++;
-  if (isMerchant) row.merchantOrganic++;
-}
-
 function _orderLogDocId(orderId) {
   const clean=String(orderId||"").trim().replace(/^gid:\/\/shopify\/Order\//i,"");
   return clean ? ("order_"+clean.replace(/[^a-zA-Z0-9_-]+/g,"_").slice(0,140)) : null;
@@ -1329,6 +1329,8 @@ async function recordOrderEvent(ev) {
     const row = {
       orderId, orderName: ev.orderName || (prior&&prior.orderName) || null, orderNumericId: ev.orderNumericId || (prior&&prior.orderNumericId) || null,
       value: Number(ev.value != null ? ev.value : (prior&&prior.value)) || 0, currency: ev.currency || (prior&&prior.currency) || CURRENCY,
+      // The value a Google conversion carries (merchandise revenue), beside the order total above.
+      saleValue: ev.saleValue != null && isFinite(Number(ev.saleValue)) ? Number(ev.saleValue) : (prior&&prior.saleValue!=null ? prior.saleValue : null),
       financialStatus:ev.financialStatus||(prior&&prior.financialStatus)||null,cancelledAt:ev.cancelledAt||(prior&&prior.cancelledAt)||null,test:ev.test!=null?!!ev.test:!!(prior&&prior.test),
       source: ev.source || (prior&&prior.source) || null, medium: ev.medium || (prior&&prior.medium) || null,
       campaign: ev.campaign || (prior&&prior.campaign) || null,
@@ -1346,7 +1348,7 @@ async function recentOrders({ limit = 25 } = {}) {
   const f = fb(); if (!f) return [];
   try {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(250, limit)).get();
-    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderName: x.orderName || null, orderNumericId: x.orderNumericId, value: x.value, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, campaignId:x.campaignId,adGroupId:x.adGroupId,adId:x.adId,pipeline:x.pipeline,designId:x.designId, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderName: x.orderName || null, orderNumericId: x.orderNumericId, value: x.value, saleValue: x.saleValue != null ? x.saleValue : null, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, campaignId:x.campaignId,adGroupId:x.adGroupId,adId:x.adId,pipeline:x.pipeline,designId:x.designId, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
     return out;
   } catch (e) { return []; }
 }
@@ -1419,7 +1421,7 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
     totalPriceSet { shopMoney { amount currencyCode } }
     customAttributes { key value }
     ${journey?"customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }":""}
-    lineItems(first: 25) { pageInfo { hasNextPage } edges { node { title quantity currentQuantity sku originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } variant { id } product { id handle } } } }
+    lineItems(first: 25) { pageInfo { hasNextPage } edges { node { title quantity currentQuantity sku originalUnitPriceSet { shopMoney { amount } } totalDiscountSet { shopMoney { amount } } variant { id } product { id handle } } } }
   } } } }`;
   let journeyAvailable=true,pageCount=0,continuationError=null;
   const boundedRead=async query=>{let timer;try{return await Promise.race([shopifyGql(query),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Shopify order-history page exceeded its deadline.")),Math.max(1,Math.min(15000,deadline-Date.now())));})]);}finally{clearTimeout(timer);}};
@@ -1487,11 +1489,13 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
     } catch (x) {} }
     const items = (((n.lineItems && n.lineItems.edges) || []).map(li => { const z = (li && li.node) || {}; const originalQty=Number(z.quantity)||1,qty=z.currentQuantity!=null?Math.max(0,Number(z.currentQuantity)||0):originalQty;
       const unitPrice=Number(z.originalUnitPriceSet&&z.originalUnitPriceSet.shopMoney&&z.originalUnitPriceSet.shopMoney.amount);
-      const lineRevenue=Number(z.discountedTotalSet&&z.discountedTotalSet.shopMoney&&z.discountedTotalSet.shopMoney.amount);
-      const gross=isFinite(unitPrice)?unitPrice*qty:null;
+      // Every discount allocated to the line, its share of an order-level one included
+      // (discountedTotalSet leaves that out), as the webhook stores it. Same query cost.
+      const lineDiscount=Number(z.totalDiscountSet&&z.totalDiscountSet.shopMoney&&z.totalDiscountSet.shopMoney.amount);
+      const whole=qty===originalQty&&isFinite(unitPrice)&&isFinite(lineDiscount);
       return { title:z.title||"",sku:z.sku||null,qty,productId:z.product&&z.product.id?z.product.id:null,variantId:z.variant&&z.variant.id?z.variant.id:null,
-        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:qty===originalQty&&isFinite(lineRevenue)?lineRevenue:null,
-        lineDiscount:gross!=null&&isFinite(lineRevenue)?Math.max(0,gross-lineRevenue):null }; }).filter(it => it.title || it.sku)).slice(0, 25);
+        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:whole?Math.max(0,_r2(unitPrice*originalQty-lineDiscount)):null,
+        lineDiscount:whole?_r2(lineDiscount):null }; }).filter(it => it.title || it.sku)).slice(0, 25);
     const itemCount = items.reduce((a, b) => a + (b.qty || 1), 0);
     const clickId = gclid || gbraid || wbraid || null;
     const captured = !!clickId;

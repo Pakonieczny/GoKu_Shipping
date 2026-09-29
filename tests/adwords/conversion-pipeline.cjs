@@ -12,14 +12,14 @@ function store() {
   const docs = new Map(); let seq = 0;
   const key = (col, id) => col + '/' + id;
   const snap = (col, id) => ({ id, exists: docs.has(key(col, id)), ref: ref(col, id), data: () => clone(docs.get(key(col, id))) });
-  const ref = (col, id) => ({ id, path: key(col, id), get: async () => snap(col, id),
+  const ref = (col, id) => ({ id, path: key(col, id), get: async () => snap(col, id), isEqual: other => !!other && other.path === key(col, id),
     set: async (v, o) => { docs.set(key(col, id), o && o.merge ? { ...(docs.get(key(col, id)) || {}), ...clone(v) } : clone(v)); },
     update: async v => { if (!docs.has(key(col, id))) throw Error('missing ' + key(col, id)); docs.set(key(col, id), { ...docs.get(key(col, id)), ...clone(v) }); },
     create: async v => { if (docs.has(key(col, id))) { const e = Error('6 ALREADY_EXISTS: Document already exists'); e.code = 6; throw e; } docs.set(key(col, id), clone(v)); } });
   const query = (col, filters = [], max = Infinity) => ({
-    where: (k, op, v) => query(col, [...filters, [k, v]], max), limit: n => query(col, filters, n), orderBy: () => query(col, filters, max),
+    where: (k, op, v) => query(col, [...filters, [k, op, v]], max), limit: n => query(col, filters, n), orderBy: () => query(col, filters, max),
     doc: id => ref(col, id == null ? 'auto' + (++seq) : id), add: async v => { const r = ref(col, 'auto' + (++seq)); await r.set(v); return r; },
-    get: async () => { const list = [...docs.keys()].filter(k => k.startsWith(col + '/') && filters.every(([f, v]) => docs.get(k)[f] === v)).slice(0, max).map(k => snap(col, k.slice(col.length + 1)));
+    get: async () => { const list = [...docs.keys()].filter(k => k.startsWith(col + '/') && filters.every(([f, op, v]) => op === '>=' ? docs.get(k)[f] >= v : op === '<=' ? docs.get(k)[f] <= v : docs.get(k)[f] === v)).slice(0, max).map(k => snap(col, k.slice(col.length + 1)));
       return { docs: list, size: list.length, empty: !list.length, forEach: fn => list.forEach(fn) }; } });
   const db = { collection: col => query(col),
     batch: () => { const ops = []; return { set: (r, v, o) => ops.push(() => r.set(v, o)), update: (r, v) => ops.push(() => r.update(v)), delete: r => ops.push(() => docs.delete(r.path)), commit: async () => { for (const op of ops) await op(); } }; },
@@ -96,18 +96,46 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     assert.equal(h.processing, 2); assert.equal(h.staleProcessing, 1); assert.equal(h.consentMissing, 1); assert.match(Object.keys(h.staleReasons)[0], /status request failed: HTTP 403/);
     const out = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE', primaryForGoal: true } }], { ...h, configured: true, confirmed: 3 });
     assert.equal(out.validated, false); assert(out.reasons.some(r => /stuck rather than processing: 1 × the status request failed/.test(r))); assert(out.reasons.some(r => /EEA, UK or Switzerland/.test(r)));
+    assert.equal(out.healthy, false); assert(out.reasons.some(r => /oldest sent 2026-09-16/.test(r)));
+    assert.equal(out.lastUpload.at, now - 3600000); assert.equal(out.lastUpload.confirmed, false);
   });
-  await test('conversion health names double counting, a default value, one-per-click and a secondary upload action', async () => {
+  await test('queued sales that wait or cannot be sent are named, and the latest sent sale dates the last upload', async () => {
+    const s = store(), now = Date.now(), sale = { uploaded: false, value: 10, currency: 'USD', gclid: 'g', conversionDateTime: '2026-09-28 06:00:00+00:00' };
+    s.put('queue', 'late', { ...sale, orderId: 'late', createdAt: now - 5 * 3600000 }); s.put('queue', 'fresh', { ...sale, orderId: 'fresh', createdAt: now - 600000 });
+    s.put('queue', 'bad', { ...sale, orderId: 'bad', conversionDateTime: '2026-09-28 06:00:00' });
+    s.put('queue', 'sent', { ...sale, orderId: 'sent', dmState: 'processing', dmRequestId: 'r', dmSubmittedAt: now - 7200000 });
+    const api = DM.createDataManager({ env: { GADS_CONVERSION_ACTION: 'customers/123/conversionActions/456', GADS_DATAMANAGER_REFRESH_TOKEN: 'x', GADS_CLIENT_ID: 'x', GADS_CLIENT_SECRET: 'x' }, fetch: async () => { throw Error('offline'); }, fb: () => s.f, COL: { convQueue: 'queue' }, ledger: async () => {}, now: () => now });
+    const h = await api.health();
+    assert.equal(h.unsent, 2); assert.equal(h.oldestUnsentAt, now - 5 * 3600000); assert.equal(h.unsendable, 1); assert.match(Object.keys(h.unsendableReasons)[0], /time zone/); assert.equal(h.latestSubmittedAt, now - 7200000);
+    const out = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE', primaryForGoal: true } }], { ...h, configured: true });
+    assert.equal(out.healthy, false); assert(out.reasons.some(r => /1 queued sale\(s\) cannot be sent as stored: 1 × The original conversion timestamp must include its time zone/.test(r)));
+    assert(out.reasons.some(r => /2 sale\(s\) have waited more than 3 hours to be sent/.test(r))); assert.equal(out.lastUpload.at, now - 7200000); assert.equal(out.lastUpload.confirmed, false);
+  });
+  await test('conversion health allows exactly one primary purchase action, and says which', async () => {
     const upload = { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE', primaryForGoal: true, countingType: 'MANY_PER_CLICK', valueSettings: { alwaysUseDefaultValue: false } };
     const web = { id: '789', name: 'Purchase', status: 'ENABLED', type: 'WEBPAGE', category: 'PURCHASE', primaryForGoal: true };
-    const both = await health([{ conversionAction: upload }, { conversionAction: web }]);
-    assert.equal(both.doubleCounting.length, 1); assert(both.reasons.some(r => /Purchase \(789\) also counts sales/.test(r)));
+    const pending = { configured: true, confirmed: 0, processing: 2 }, confirmed = { configured: true, confirmed: 4, processing: 0 };
+    // Both primary: every order both record counts twice. Until Google confirms uploads, the tag stays primary.
+    const both = await health([{ conversionAction: upload }, { conversionAction: web }], pending);
+    assert.equal(both.doubleCounting.length, 1); assert.equal(both.healthy, false); assert.equal(both.validated, false);
+    assert(both.reasons.some(r => /Two primary purchase actions count the same sales/.test(r) && /keep "Purchase" \(789\) Primary and set "offline \(Upload\)" \(456\) to Secondary until Sales shows uploads confirmed/.test(r)));
+    const bothConfirmed = await health([{ conversionAction: upload }, { conversionAction: web }], confirmed);
+    assert.equal(bothConfirmed.healthy, false); assert(bothConfirmed.reasons.some(r => /make "offline \(Upload\)" \(456\) Primary and "Purchase" \(789\) Secondary/.test(r)));
+    const secondary = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }], pending);
+    assert.equal(secondary.doubleCounting.length, 0); assert.equal(secondary.healthy, true);
+    assert(secondary.reasons.some(r => /"offline \(Upload\)" \(456\) is Secondary, so bidding optimizes toward "Purchase" \(789\).*keep it that way until Google confirms uploads/.test(r)));
+    const ready = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }], confirmed);
+    assert(ready.reasons.some(r => /Uploads are confirmed now: .*make "offline \(Upload\)" \(456\) Primary and "Purchase" \(789\) Secondary/.test(r)));
+    const none = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: { ...web, primaryForGoal: false } }], confirmed);
+    assert.equal(none.healthy, false); assert(none.reasons.some(r => /No purchase action is primary/.test(r)));
+    const unknown = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE' } }, { conversionAction: web }], pending);
+    assert.equal(unknown.healthy, true); assert.equal(unknown.validated, false); assert.equal(unknown.doubleCounting.length, 0); assert(unknown.reasons.some(r => /did not report which purchase action is primary/.test(r)));
+    const tagUnknown = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: { id: '789', name: 'Purchase', status: 'ENABLED', type: 'WEBPAGE', category: 'PURCHASE' } }], confirmed);
+    assert.equal(tagUnknown.healthy, true); assert.equal(tagUnknown.validated, false); assert(tagUnknown.reasons.some(r => /did not report which purchase action is primary/.test(r))); assert(!tagUnknown.reasons.some(r => /No purchase action is primary|optimizes toward  /.test(r)));
+    const alone = await health([{ conversionAction: upload }], confirmed);
+    assert.equal(alone.healthy, true); assert.equal(alone.validated, true); assert(!alone.reasons.some(r => /primary/i.test(r)));
     const fixed = await health([{ conversionAction: { ...upload, countingType: 'ONE_PER_CLICK', valueSettings: { alwaysUseDefaultValue: true } } }]);
     assert.equal(fixed.healthy, false); assert(fixed.reasons.some(r => /default value/.test(r))); assert(fixed.reasons.some(r => /one conversion per click/.test(r)));
-    const secondary = await health([{ conversionAction: { ...upload, primaryForGoal: false } }, { conversionAction: web }]);
-    assert.equal(secondary.doubleCounting.length, 0); assert(secondary.reasons.some(r => /secondary.*Purchase \(789\)/.test(r)));
-    const unknown = await health([{ conversionAction: { id: '456', name: 'offline (Upload)', status: 'ENABLED', type: 'UPLOAD_CLICKS', category: 'PURCHASE' } }, { conversionAction: web }]);
-    assert.equal(unknown.healthy, true); assert.equal(unknown.doubleCounting.length, 0);
   });
   await test('two deliveries of one order queue one conversion, with consent and country', async () => {
     const e = engine(), sale = { gclid: 'g', value: 120, currency: 'USD', orderId: '5001', conversionDateTime: '2026-09-20 19:04:05+00:00', consent: { adUserData: 'GRANTED' }, buyerCountry: 'GB' };
@@ -176,6 +204,66 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     await w.send('orders/create', order()); assert.equal(w.calls.enqueue.length, 2);
     await w.send('orders/paid', order({ note_attributes: [{ name: 'gclid', value: 'click-1' }], billing_address: null, shipping_address: { country_code: 'US' } }));
     assert.equal(w.calls.enqueue[2].consent, null); assert.equal(w.calls.enqueue[2].buyerCountry, 'US');
+  });
+  await test('Google is sent merchandise revenue after every discount, and line revenue adds up to it', async () => {
+    const w = webhook(), shop = n => ({ shop_money: { amount: n, currency_code: 'USD' }, presentment_money: { amount: n, currency_code: 'USD' } });
+    // A 10.00 code on the charm alone, as Shopify allocated it (total_discount leaves it out);
+    // shipping 20 and tax 8 are not merchandise.
+    await w.send('orders/paid', order({ total_price: '118.00', subtotal_price: '90.00', line_items: [
+      { title: 'Charm', quantity: 1, price: '60.00', total_discount: '0.00', discount_allocations: [{ amount: '10.00', amount_set: shop('10.00') }] },
+      { title: 'Chain', quantity: 2, price: '20.00', total_discount: '0.00', discount_allocations: [] }] }));
+    assert.equal(w.calls.enqueue[0].value, 90); assert.equal(w.calls.enqueue[0].orderTotal, 118); assert.equal(w.calls.order[0].value, 118); assert.equal(w.calls.order[0].saleValue, 90);
+    assert.deepEqual(w.calls.order[0].items.map(i => [i.lineRevenue, i.lineDiscount]), [[50, 10], [40, 0]]);
+    // Tax-inclusive prices carry their tax, which comes off the value and the line.
+    await w.send('orders/paid', order({ taxes_included: true, total_price: '60.00', subtotal_price: '60.00', line_items: [{ title: 'Charm', quantity: 1, price: '60.00', discount_allocations: [], tax_lines: [{ price: '10.00', price_set: shop('10.00') }] }] }));
+    assert.equal(w.calls.enqueue[1].value, 50); assert.equal(w.calls.order[1].items[0].lineRevenue, 50);
+    // A payload without allocations shares the order's subtotal across its lines.
+    await w.send('orders/paid', order({ total_price: '100.00', subtotal_price: '80.00', line_items: [{ title: 'A', quantity: 1, price: '60.00' }, { title: 'B', quantity: 1, price: '40.00' }] }));
+    assert.equal(w.calls.enqueue[2].value, 80); assert.deepEqual(w.calls.order[2].items.map(i => [i.lineRevenue, i.lineDiscount]), [[48, 12], [32, 8]]);
+    // No subtotal at all: the order total, as before.
+    await w.send('orders/paid', order()); assert.equal(w.calls.enqueue[3].value, 120);
+  });
+  await test('the order log keeps the order name and both values, and returns them', async () => {
+    const e = engine(); Object.assign(e.ctx, { CURRENCY: 'USD' });
+    vm.runInContext(source.slice(source.indexOf('function _orderLogDocId('), source.indexOf('// Aggregate store demand')), e.ctx);
+    await e.ctx.recordOrderEvent({ orderId: '5001', orderName: '#1001', orderNumericId: '5001', value: 118, saleValue: 90, currency: 'USD', ts: 1, items: [] });
+    await e.ctx.recordOrderEvent({ orderId: '5001', value: 118, currency: 'USD', items: [] });
+    const [row] = await e.ctx.recentOrders({ limit: 5 });
+    assert.equal(row.orderName, '#1001'); assert.equal(row.orderNumericId, '5001'); assert.equal(row.value, 118); assert.equal(row.saleValue, 90);
+  });
+  await test('a refund takes its share of the order off the value Google holds', async () => {
+    const e = engine();
+    e.s.put('queue', 'q', { orderId: '100', value: 100, orderTotal: 118, refundedTotal: 0, refundedMoney: 0, currency: 'USD', gclid: 'g', conversionDateTime: '2026-09-20 19:04:05+00:00', uploaded: true, dmState: 'success' });
+    const half = await e.ctx.recordRefund({ orderId: '100', refundAmount: 59, refundId: 'r1' });
+    assert.equal(half.adjustmentType, 'RESTATEMENT'); assert.equal(half.newValue, 50);
+    assert.equal(e.s.get('queue', 'q').refundedTotal, 50); assert.equal(e.s.get('queue', 'q').refundedMoney, 59); assert.equal(DM.netValue(e.s.get('queue', 'q')), 50);
+    const rest = await e.ctx.recordRefund({ orderId: '100', refundAmount: 59, refundId: 'r2' });
+    assert.equal(rest.adjustmentType, 'RETRACTION'); assert.equal(e.s.get('queue', 'q').refundedTotal, 100);
+    // A sale queued before orderTotal was stored: its value is the order total, its refunds money.
+    e.s.put('queue', 'old', { orderId: '200', value: 120, refundedTotal: 30, currency: 'USD', gclid: 'g', uploaded: true, dmState: 'success' });
+    assert.equal((await e.ctx.recordRefund({ orderId: '200', refundAmount: 20, refundId: 'r3' })).newValue, 70);
+  });
+  await test('an order stored before lines carried its order-level discount credits its products no more than it brought in', () => {
+    const now = Date.now(), row = (id, value, items) => ({ orderId: id, ts: now - 86400000, value, currency: 'USD', financialStatus: 'PAID', items });
+    const s = evidence.aggregateOrderEvidence({ rows: [row('1', 95, [{ title: 'A', variantId: '1', qty: 1, lineRevenue: 60 }, { title: 'B', variantId: '2', qty: 1, lineRevenue: 40 }]), row('2', 50, [{ title: 'A', variantId: '1', qty: 1, lineRevenue: 40 }])],
+      days: 30, startAt: now - 30 * 86400000, endAt: now, complete: true, currency: 'USD', normalizeItem: x => x, marginForText: () => ({ rate: 0.5, tier: 'estimated' }), googlePaid: () => false, merchantOrganic: () => false, paidChannel: () => null });
+    const revenue = Object.fromEntries(s.productRows.map(p => [p.name, p.revenue]));
+    assert.deepEqual(revenue, { A: 97, B: 38 }); assert.equal(s.totalRevenue, 145);
+  });
+  await test('the order backfill stores line revenue net of every allocated discount', async () => {
+    const e = engine(), now = Date.now(), money = n => ({ shopMoney: { amount: n, currencyCode: 'USD' } });
+    const line = (title, qty, current, unit, discount, id) => ({ node: { title, quantity: qty, currentQuantity: current, sku: title.toLowerCase(), originalUnitPriceSet: money(unit), totalDiscountSet: money(discount), variant: { id: 'gid://shopify/ProductVariant/' + id }, product: { id: 'gid://shopify/Product/' + id, handle: title.toLowerCase() } } });
+    const node = (id, lines) => ({ node: { id: 'gid://shopify/Order/' + id, name: '#' + id, createdAt: new Date(now - 86400000).toISOString(), displayFinancialStatus: 'PAID', test: false,
+      currentTotalPriceSet: money('118.00'), totalPriceSet: money('118.00'), customAttributes: [], lineItems: { pageInfo: { hasNextPage: false }, edges: lines } } });
+    e.s.put('orders', 'order_7001', { orderId: '7001', orderName: '#7001', orderNumericId: '7001', ts: now - 86400000, value: 118, currency: 'USD', items: [{ title: 'Charm', qty: 1, unitPrice: 60, lineRevenue: 60, lineDiscount: 0 }] });
+    Object.assign(e.ctx, { CURRENCY: 'USD', setTimeout, clearTimeout, salesEvidenceUtil: evidence, _merchantOrganic: () => false, _auditText: (t, n) => String(t || '').slice(0, n),
+      shopifyGql: async q => q.includes('accessScopes') ? { currentAppInstallation: { accessScopes: [{ handle: 'read_orders' }] } }
+        : { orders: { pageInfo: { hasNextPage: false }, edges: [node('7001', [line('Charm', 1, 1, '60.00', '6.00', 1), line('Chain', 2, 2, '20.00', '4.00', 2)]), node('7002', [line('Ring', 2, 1, '30.00', '0.00', 3)])] } } });
+    const start = source.indexOf('async function backfillOrders('); vm.runInContext(source.slice(start, source.indexOf('\n}', start) + 2), e.ctx);
+    const r = await e.ctx.backfillOrders({ limit: 5, pages: 1 });
+    assert.equal(r.fetched, 2); assert.equal(r.added, 1); assert.equal(r.enriched, 1);
+    assert.deepEqual(e.s.get('orders', 'order_7001').items.map(i => [i.title, i.lineRevenue, i.lineDiscount]), [['Charm', 54, 6], ['Chain', 36, 4]]);
+    const added = [...e.s.docs].find(([k, v]) => k.startsWith('orders/') && v.orderId === '7002')[1]; assert.equal(added.items[0].lineRevenue, null); assert.equal(added.items[0].qty, 1);
   });
   await test('a Shopping click on a feed link is credited to the campaign in its suffix, not to the free listing', async () => {
     const w = webhook(), feed = '/products/charm?utm_source=google&utm_medium=product_sync&utm_campaign=sag_organic&utm_source=google&utm_medium=paid_shopping&utm_campaign=21212121&utm_content=pmax';

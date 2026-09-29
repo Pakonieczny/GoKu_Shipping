@@ -18,7 +18,13 @@ this scope cannot remove access needed by campaigns and reporting.
 4. Keep `GADS_CONVERSION_ACTION` as the original full
    `customers/<conversion-owner>/conversionActions/<action>` resource. If using
    manager access, retain `GADS_LOGIN_CUSTOMER_ID`. The conversion action must
-   be enabled and configured for click imports with order-specific values.
+   be enabled and configured for click imports with order-specific values,
+   category Purchase, counting Every.
+   Exactly one purchase action may be Primary (Goals → Conversions → the
+   action's settings → Action optimization); two primaries count each order
+   twice in bidding and ROAS. Keep the website tag Primary and this upload
+   action Secondary until Sales shows uploads confirmed by Google, then swap
+   them. Sales names the actions and says which step applies.
 5. Redeploy after changing environment variables. Re-check Sales. Use Sync now
    to submit existing captured orders. Do not create replacement order IDs or
    change historical timestamps, values, currency, or click identifiers.
@@ -52,13 +58,22 @@ gain a new scope merely because the application requests it at refresh time.
 
 ## What each sale sends
 
-- **Value:** Shopify `total_price`, in the shop's currency: after discounts,
-  including tax and shipping. Google converts it to the account currency.
-- **Refunds:** a refund recorded before the sale is sent is subtracted from it;
-  a sale refunded in full is never sent. Later refunds become one adjustment per
-  order (the latest refund's net value) once Google has recorded the sale. A
-  refund with no money back (a restock or exchange) changes nothing. Refund
-  amounts are converted to the shop's currency when the buyer paid in another.
+- **Value:** merchandise revenue, in the shop's currency: Shopify
+  `subtotal_price` (after every discount, order-level codes included), without
+  shipping, taxes, duties or tips; with tax-inclusive prices the line taxes come
+  off. Value-based bidding then targets product revenue, so set tROAS on that
+  basis. An order without a subtotal falls back to `total_price`. Google
+  converts it to the account currency. The order log (Sales, product evidence)
+  keeps the order total; each line's revenue is after its allocated discounts
+  and adds up to the value sent.
+- **Refunds:** a refund is money back on the whole order (tax and shipping
+  too), so it takes the same share off the value sent: 59 back on a 118 order
+  sent as 100 leaves 50. A refund recorded before the sale is sent is taken off
+  it; a sale refunded in full is never sent. Later refunds become one
+  adjustment per order (the latest refund's net value) once Google has recorded
+  the sale. A refund with no money back (a restock or exchange) changes
+  nothing. Refund amounts are converted to the shop's currency when the buyer
+  paid in another.
 - **Not sent:** test orders, cancelled orders, `orders/create` before payment,
   and any order without a Google click identifier.
 - **Consent:** sent only when the storefront recorded it on the cart as the

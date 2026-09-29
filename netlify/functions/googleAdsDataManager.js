@@ -298,16 +298,24 @@ function errorDetail(data, status) {
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
     const rows = await queue.where('uploaded', '==', false).limit(500).get();
-    Object.assign(info, { staleProcessing: 0, oldestProcessingAt: null, staleReasons: {}, consentMissing: 0 });
+    Object.assign(info, { staleProcessing: 0, oldestProcessingAt: null, latestSubmittedAt: null, staleReasons: {}, consentMissing: 0, unsent: 0, oldestUnsentAt: null, unsendable: 0, unsendableReasons: {} });
     rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) { if (correctedRefusal(x)) info.awaitingRetry++; else info.awaitingAccess++; }
       if (x.dmRequestId && x.dmState === 'processing') {
         const at = Number(x.dmSubmittedAt) || 0;
         if (at && (!info.oldestProcessingAt || at < info.oldestProcessingAt)) info.oldestProcessingAt = at;
+        if (at > (info.latestSubmittedAt || 0)) info.latestSubmittedAt = at;
         if (at && now() - at > PROCESSING_WINDOW) {
           info.staleProcessing++;
           const why = String(x.dmCheckError ? 'the status request failed: ' + x.dmCheckError : x.uploadError ? x.uploadError : x.dmLastStatus ? 'Google still answers ' + x.dmLastStatus : Number(x.dmChecks) ? 'checked ' + x.dmChecks + ' time(s); Google has not finished' : 'its status has never been checked').slice(0, 200);
           info.staleReasons[why] = (info.staleReasons[why] || 0) + 1;
         }
+      }
+      // Queued and never sent: waiting for the next sync, or unsendable as stored (the run
+      // skips those without a trace, so the queue would grow with no stated cause).
+      if (!x.dmRequestId && !x.dmState && !x.failed) {
+        let bad = null; try { eventFor(x); } catch (error) { bad = String(error.message).slice(0, 200); }
+        if (bad) { info.unsendable++; info.unsendableReasons[bad] = (info.unsendableReasons[bad] || 0) + 1; }
+        else { info.unsent++; const created = x.createdAt && typeof x.createdAt.toMillis === 'function' ? x.createdAt.toMillis() : Number(x.createdAt) || 0; if (created && (!info.oldestUnsentAt || created < info.oldestUnsentAt)) info.oldestUnsentAt = created; }
       }
       if (needsConsent(x)) info.consentMissing++; });
     if (!env.GADS_CONVERSION_ACTION) return { ...info, blocked: true };
