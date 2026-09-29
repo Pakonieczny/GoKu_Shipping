@@ -653,9 +653,15 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
   }
 }
 async function _observeCampaignCreative(id, { servingSource = null, settling = false } = {}) {
-  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
+  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.id = ${id}`);
   if (!rows.length) throw new Error("Campaign was not found in this account.");
-  const row = rows[0], channel = row.campaign.advertisingChannelType, values = { "Campaign settings": rows.map(r => r.campaign), Budget: rows.map(r => r.campaignBudget) }, warnings = [];
+  // Budget keeps the fields it always fingerprinted, so reading the period and total records no false
+  // change on any campaign. A campaign total budget (fixed dates) also gets its own fingerprint, so a
+  // changed total is noticed like a changed daily amount.
+  const budgets = rows.map(r => r.campaignBudget), totals = budgets.filter(b => _campaignOptions().isTotalBudget(b));
+  const row = rows[0], channel = row.campaign.advertisingChannelType, warnings = [], values = { "Campaign settings": rows.map(r => r.campaign),
+    Budget: budgets.map(b => { if (!b) return b; const { period, totalAmountMicros, ...kept } = b; return kept; }) };
+  if (totals.length) values["Total budget"] = totals.map(b => ({ period: b.period, totalAmountMicros: b.totalAmountMicros }));
   const read = async (category, query) => {
     try { values[category] = await gaql(query); }
     catch (error) {
@@ -1689,7 +1695,7 @@ function sanitizeOps(ops, meta) {
           c.brandGuidelinesEnabled == null && c.brand_guidelines_enabled == null) {
         c.brandGuidelinesEnabled = false;
       }
-      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyyMMdd HH:MM:SS"),
+      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss"),
       // not startDate/endDate. Migrate any draft queued before this fix so it applies cleanly.
       if (c.startDate != null) { const v = _toGAdsDateTime(c.startDate, "00:00:00"); if (v) c.startDateTime = v; delete c.startDate; }
       if (c.endDate != null)   { const v = _toGAdsDateTime(c.endDate, "23:59:59"); if (v) c.endDateTime = v; delete c.endDate; }
@@ -2293,7 +2299,7 @@ async function dueEvents(now) {
 /* ===================== Build a Search campaign (atomic) ===================== */
 // Returns mutateOperations[] for googleAds:mutate. Creates budget→campaign→adgroup
 // →RSA in one transaction using temp resource names. Gated/queued by the worker.
-/* date helpers for campaign scheduling windows (YYYY-MM-DD ↔ Google's YYYYMMDD) */
+/* date helpers for campaign scheduling windows (YYYY-MM-DD; Google Ads date-times are "yyyy-MM-dd HH:mm:ss", see _toGAdsDateTime) */
 function _ymd(d) { return d.toISOString().slice(0, 10); }
 function _parseYmd(s) {
   // Accept a Date or epoch-ms number too (callers like the campaign builders pass
@@ -2306,6 +2312,7 @@ function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFu
 // opportunity, plan and draft date counts from it: the server's UTC date runs a day ahead each evening.
 function _acctToday() { return _parseYmd(_acctDateYmd(_tzCache || "America/Toronto")); }
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
+// A date alone as YYYYMMDD (the old date-only form, not a date-time: date-times go through _toGAdsDateTime).
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _acctToday(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
 // Campaign schedule fields for a builder. Accepts Date, epoch ms, or YYYY[-]MM[-]DD.
@@ -2320,16 +2327,16 @@ function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
   // Google reads the start in the account's time zone, so "future" means after the account's today (UTC is a day ahead of Toronto every evening).
-  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _toGAdsDateTime(_ymd(s), "00:00:00");
   const e = _parseYmd(endDate);
-  if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
+  if (e) out.endDateTime = _toGAdsDateTime(_ymd(e), "23:59:59");
   return out;
 }
 
 // Extract a clean YYYY-MM-DD from a Google Ads date/datetime string ("2026-06-29 00:00:00", "20260629 000000", "2026-06-29").
 function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
 
-// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
+// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYY-MM-DD — so scheduling
 // decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
 let _tzCache = null;
 async function _accountTz() {
@@ -2338,8 +2345,9 @@ async function _accountTz() {
         if (r[0] && r[0].customer && r[0].customer.timeZone) { _tzCache = r[0].customer.timeZone; return _tzCache; } } catch (e) {}
   return "America/Toronto";
 }
-// Current wall-clock in the account's timezone (+optional ms offset) as "yyyyMMdd HH:MM:SS".
-// Used for scheduling so Google Ads never sees a start_date_time in the past.
+// Current wall-clock in the account's timezone (+optional ms offset) as "yyyy-MM-dd HH:mm:ss", the layout
+// _toGAdsDateTime writes and Google Ads returns. Used for scheduling so Google Ads never sees a
+// start_date_time in the past.
 function _accountDateTime(tz, offsetMs) {
   const when = new Date(Date.now() + (offsetMs || 0)); const o = {};
   try {
@@ -2352,10 +2360,10 @@ function _accountDateTime(tz, offsetMs) {
     o.minute = String(when.getUTCMinutes()).padStart(2, "0"); o.second = String(when.getUTCSeconds()).padStart(2, "0");
   }
   const hh = (o.hour === "24") ? "00" : o.hour;   // some environments emit "24" for midnight
-  return `${o.year}${o.month}${o.day} ${hh}:${o.minute}:${o.second}`;
+  return `${o.year}-${o.month}-${o.day} ${hh}:${o.minute}:${o.second}`;
 }
 // Account-timezone calendar date (with optional ms offset) as "YYYY-MM-DD", for segments.date ranges.
-function _acctDateYmd(tz, offsetMs) { const s = _accountDateTime(tz, offsetMs || 0); return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; }
+function _acctDateYmd(tz, offsetMs) { return _accountDateTime(tz, offsetMs || 0).slice(0, 10); }
 
 // GAQL's DURING operator has no LAST_90_DAYS literal (that was the old
 // AdWords API) — 90-day windows must be an explicit BETWEEN on segments.date.
@@ -2364,16 +2372,19 @@ async function _last90Clause() {
   return `segments.date BETWEEN '${_acctDateYmd(tz, -89 * 86400000)}' AND '${_acctDateYmd(tz, 0)}'`;
 }
 
-// Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
-// Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
+// The one writer of a campaign's schedule fields, startDateTime/endDateTime. Google Ads API v24 documents
+// them as "yyyy-MM-dd HH:mm:ss" in the account's time zone (Campaign.start_date_time / end_date_time) and
+// returns that layout from GAQL, so every value sent uses it; _googleAdsCampaignOptions.gadsDateTime does
+// the formatting and is shared with the sale-day adjustments. Accepts a date (YYYY-MM-DD / YYYYMMDD) and
+// appends `time`, or a full date-time in either layout (drafts saved before this used yyyyMMdd HH:mm:ss).
+// A time in a layout it does not know passes through unchanged.
 function _toGAdsDateTime(val, time) {
   if (val == null) return null;
   const s = String(val).trim();
   if (!s) return null;
-  if (/\d{1,2}:\d{2}/.test(s)) return s;            // already has a time component
-  const ymd = s.replace(/-/g, "");
-  if (!/^\d{8}$/.test(ymd)) return null;
-  return ymd + " " + time;
+  const v = _campaignOptions().gadsDateTime(s, time);
+  if (v) return v;
+  return /\d{1,2}:\d{2}/.test(s) ? s : null;
 }
 
 /* ===================== Keyword research (Google Keyword Planner + AI) =====================
@@ -6868,7 +6879,7 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected start-now for campaign ${id}: ${msg}`);
   }
-  return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
+  return { ok: true, id, startDate: dt.slice(0, 10), startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
 // "Run longer": push a campaign's END date out without rebuilding anything. A campaign that
@@ -7039,8 +7050,8 @@ async function setCampaignCountries(campaignId, countryIds, { ctrl } = {}) {
 // Rewrite the target countries on a PENDING approval draft (before it's applied), by swapping the
 // location criterion ops inside its stored payload. Lets the user choose countries at approval time.
 // Edit a pending draft's flight dates before approval. Campaign create ops
-// carry startDateTime/endDateTime ("yyyyMMdd HH:MM:SS") — same format the
-// sanitize/migrate path enforces.
+// carry startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss") — same format the
+// sanitize/migrate path enforces (both write it through _toGAdsDateTime).
 async function saveDraftPayload(ref,original,payload) {
   const f=fb();await f.db.runTransaction(async tx=>{const now=await tx.get(ref);if(!now.exists)throw new Error("Draft not found.");const it=now.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("Only an idle pending draft can be edited.");
@@ -7143,75 +7154,6 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
     } catch (e) { out.verified = null; out.verification = { error: String(e.message || e).slice(0, 200) }; }
     await _verifyLedger(mres && mres.__ledgerId, out.verified, out.verification);
   }
-  return out;
-}
-
-/* ===================== Per-campaign AI optimization analysis ===================== */
-async function latestSnapshotCampaign(campaignId) {
-  const f = fb(); if (!f) return null;
-  try {
-    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(1).get();
-    let snap = null; mt.forEach(d => snap = d.data().snapshot);
-    if (!snap) return null;
-    const id = String(campaignId).replace(/\D/g, "");
-    return snap.find(c => String(c.id) === id) || null;
-  } catch (e) { return null; }
-}
-// A suggested daily budget in the account currency: within 1 and the ceiling, and a real change.
-function _suggestedBudget(value, current, ceiling) {
-  if (value == null || value === "" || !isFinite(Number(value))) return null;
-  const b = Math.round(Math.max(1, Math.min(Number(ceiling) || 9999, Number(value))) * 100) / 100;
-  return current != null && Math.abs(b - Number(current)) < 0.01 ? null : b;
-}
-// Researches one campaign's real metrics and returns a structured optimization read.
-// Honest like Google's own recommendations: if there isn't enough data, it says so.
-async function analyzeCampaign(campaignId, { force, cacheOnly } = {}) {
-  const f = fb(); const ctrl = await control();
-  const id = String(campaignId).replace(/\D/g, "");
-  const cacheKey = "analysis_" + id;
-  if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 6 * 60 * 60 * 1000 && x.analysis) return x.analysis; } } catch (e) {}
-  }
-  if (cacheOnly) return null; // the console's quick check: a fresh analysis is a paid AI call, run by the background worker
-  const c = await latestSnapshotCampaign(id);
-  if (!c) return { score: null, status: "unknown", summary: "No snapshot for this campaign yet — run Measure first.", actions: [], campaignId: id, currency: CURRENCY };
-  const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;
-  // Spend and value are converted to the reporting currency; budgets stay in the Google Ads account currency.
-  const target = ctrl.targetRoas || 0, ccy = c.currency || CURRENCY, bccy = ctrl.budgetCurrency || "the Google Ads account currency";
-  const kind = { SEARCH: "Search", PERFORMANCE_MAX: "Performance Max", SHOPPING: "Shopping", DISPLAY: "Display", VIDEO: "Video", DEMAND_GEN: "Demand Gen" }[c.channel] || "Google Ads";
-  const enoughData = c.conv >= 15 || c.cost >= 50;
-  const _convH = await conversionHealth().catch(() => ({ validated: false, healthy: false }));
-  const convNote = _convH.validated ? "" :
-    `\nCRITICAL: account conversion tracking is ${_convH.healthy ? "configured but has recorded no sales yet" : "NOT confirmed to be recording sales"}. Any ROAS/CPA above may be undercounted or zero for that reason — treat performance as UNVALIDATED. Do NOT recommend scaling on ROAS; if conversions are 0, prioritize verifying conversion tracking over campaign changes.`;
-  const metrics = `status=${c.status}, dailyBudget=${c.budget} ${bccy}, spend14d=${ccy}${c.cost}, impressions=${c.impr}, clicks=${c.clicks}, ctr=${ctr == null ? "n/a" : ctr.toFixed(2) + "%"}, conversions=${c.conv}, convValue=${ccy}${c.value}, roas=${roas == null ? "n/a" : roas.toFixed(2) + "x"}, cpa=${cpa == null ? "n/a" : ccy + cpa.toFixed(2)}`;
-  const prompt =
-`You are a senior Google Ads strategist optimizing a ${kind} campaign for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Spend and conversion value are in ${ccy}; budgets are in ${bccy}. Account target ROAS: ${target || "not set by the owner (do not assume one)"}. Account ceiling for the total of enabled daily budgets: ${ctrl.maxDailyBudgetTotal} ${bccy}.
-Campaign "${c.name}" — last 14 days: ${metrics}.${convNote}
-Give an honest optimization assessment. If there isn't enough data to optimize responsibly (Google Smart Bidding generally needs ~15+ conversions), SAY SO and recommend gathering data rather than inventing changes. Otherwise recommend concrete, prioritized actions (budget, bidding, keywords, creative, or status).
-Return ONLY JSON:
-{"score": <0-100 optimization/health score>,
- "status": "<one of: not serving | learning | limited by budget | underperforming | healthy | scaling | insufficient data>",
- "summary": "<2 plain-language sentences>",
- "actions": [{"title":"<short>","detail":"<why + expected effect, <=140 chars>","type":"<budget|bid|status|keywords|creative|wait>","suggestedBudget": <daily budget in ${bccy} or null>}]}`;
-  let out = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 3500 }); if (j && j.summary) out = j; } catch (e) {}
-  if (!out) {
-    out = {
-      score: enoughData ? 55 : 25,
-      // Without a target ROAS there is nothing to grade against, so no health label is claimed.
-      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (!target ? "insufficient data" : roas != null && roas >= target ? "healthy" : "underperforming") : "learning"),
-      summary: enoughData ? (target ? "Automated read from current metrics (AI analysis unavailable)." : "AI analysis unavailable, and no target ROAS is set to grade these results against.") : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
-      actions: c.status === "PAUSED" ? [{ title: "Enable to start", detail: "Campaign is paused — enable it to begin serving and gathering data.", type: "status", suggestedBudget: null }] : []
-    };
-  }
-  out.score = Math.max(0, Math.min(100, Number(out.score) || 0));
-  out.actions = Array.isArray(out.actions) ? out.actions.slice(0, 5).map(a => ({
-    title: String(a.title || "").slice(0, 70), detail: String(a.detail || "").slice(0, 160),
-    type: ["budget", "bid", "status", "keywords", "creative", "wait"].indexOf(a.type) >= 0 ? a.type : "wait",
-    suggestedBudget: _suggestedBudget(a.suggestedBudget, c.budget, ctrl.maxDailyBudgetTotal)
-  })) : [];
-  out.campaignId = id; out.currency = ccy; out.budgetCurrency = ctrl.budgetCurrency || null; out.generatedAt = Date.now();
-  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ analysis: out, at: Date.now() }); } catch (e) {} }
   return out;
 }
 
@@ -9235,7 +9177,7 @@ async function fetchDiagnostics(campaignId) {
       reasonsText: _diagReasonsText(c.primaryStatusReasons),
       channel: c.advertisingChannelType || null,
       startDate: null, endDate: null, // filled by the version-tolerant fetch below
-      budget: budgetOf(r), budgetRes: b.resourceName,
+      budget: budgetOf(r), ..._budgetKind(b), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
@@ -9657,7 +9599,9 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
   const byId = new Map((diag.campaigns || []).map(c => [String(c.id), c])), seen = new Set(), campaigns = [], list = x => Array.isArray(x) ? x : [];
   const ceiling = Number(ctrl && ctrl.maxDailyBudgetTotal) || 0, text = x => String(x == null ? "" : x).trim();
   const words = s => " " + text(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + " ";
+  // A campaign total budget (fixed dates) is never set as a daily amount: its budget advice stays advice.
   const budgetFor = (c, value, dir) => {
+    if (c.budgetPeriod === "CUSTOM_PERIOD") return null;
     const b = Math.round(Number(value) * 100) / 100, cur = Number(c.budget), known = c.budget != null && isFinite(cur);
     if (!(b > 0) || !isFinite(b) || (known && Math.abs(b - cur) < 0.5) || (dir && known && (dir > 0 ? b <= cur : b >= cur))) return null;
     const total = enabledTotal != null ? enabledTotal - (c.status === "ENABLED" && known ? cur : 0) + b : b;
@@ -11655,11 +11599,16 @@ async function _purchaseGoalCampaigns() {
   rows.forEach(r => { const id = String((r.campaign || {}).id || ""); if (/^\d+$/.test(id)) out.set(id, out.get(id) === true || (r.campaignConversionGoal || {}).biddable === true); });
   return out;
 }
-// Google's sale-day adjustments that have not ended.
+// Google's sale-day adjustments that have not ended: the exclusive end is after the start of today in the
+// account's time zone. Both times are read as "yyyy-MM-dd HH:mm:ss", so the end is compared with today's
+// midnight (a date-time with a date would keep an adjustment that ended at midnight today), and every
+// window handed on compares in one layout with a new window. One with no readable end is left out.
 async function _seasonalityAdjustments(today) {
+  const O = _campaignOptions(), from = O.gadsDateTime(today, "00:00:00");
   const rows = await gaql("SELECT bidding_seasonality_adjustment.resource_name, bidding_seasonality_adjustment.name, bidding_seasonality_adjustment.scope, bidding_seasonality_adjustment.campaigns, bidding_seasonality_adjustment.start_date_time, bidding_seasonality_adjustment.end_date_time, bidding_seasonality_adjustment.conversion_rate_modifier FROM bidding_seasonality_adjustment WHERE bidding_seasonality_adjustment.status = 'ENABLED'");
-  return rows.map(r => r.biddingSeasonalityAdjustment || {}).filter(a => String(a.endDateTime || "") > today).map(a => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
-    campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start: String(a.startDateTime || ""), endExclusive: String(a.endDateTime || ""), modifier: Number(a.conversionRateModifier) || null }));
+  return rows.map(r => r.biddingSeasonalityAdjustment || {}).map(a => ({ a, start: O.gadsDateTime(a.startDateTime) || "", end: O.gadsDateTime(a.endDateTime) || "" })).filter(x => x.end > from)
+    .map(({ a, start, end }) => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
+      campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start, endExclusive: end, modifier: Number(a.conversionRateModifier) || null }));
 }
 // Option drafts not yet published or deleted.
 async function _openOptionDrafts() {
@@ -11697,7 +11646,7 @@ async function campaignOptionsStatus() {
       keywords: O.BRAND_SEARCH.keywords.map(k => (k.matchType === "EXACT" ? `[${k.text}]` : `"${k.text}"`)), ceiling: Number(ctrl.maxDailyBudgetTotal) || 0 },
     sale: { limits: O.SEASONALITY_LIMITS, occasions: windows.map(w => ({ key: w.key, label: w.label, start: w.start, end: w.end, days: w.days, peak: w.peak, estimate: _saleEstimate(w, history),
         campaigns: campaigns.filter(c => O.seasonalityEligible(c, w.start).ok).map(c => ({ id: c.id, name: c.name, status: c.status })) })),
-      upcoming: adjustments.map(a => ({ name: a.name, start: a.start.slice(0, 10), end: O._dates.addDays(a.endExclusive.slice(0, 10), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
+      upcoming: adjustments.map(a => ({ name: a.name, start: O._dates.dateOnly(a.start), end: O._dates.addDays(O._dates.dateOnly(a.endExclusive), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
       drafts: drafts.filter(d => d.type === "seasonality").map(d => ({ id: d.id, status: d.status, label: (d.payload.campaignOption || {}).label || null, start: (d.payload.campaignOption || {}).start || null, end: (d.payload.campaignOption || {}).end || null })) },
     customers: { modes: O.ACQUISITION_MODES, tradeoff: O.ACQUISITION_TRADEOFF, prerequisite: O.ACQUISITION_PREREQUISITE,
       campaigns: campaigns.filter(c => O.ACQUISITION_CHANNELS.includes(c.channel)).map(c => { const cur = goals.get(c.id) || null, pg = purchase.has(c.id) ? purchase.get(c.id) : null;
@@ -11740,7 +11689,7 @@ async function draftSeasonalityAdjustment({ occasion, startDate, endDate, change
   const facts = new Map((await _campaignFacts()).map(c => [c.id, c]));
   const bad = ids.map(id => [id, facts.get(id)]).map(([id, c]) => [id, c, O.seasonalityEligible(c, start)]).filter(x => !x[2].ok);
   if (bad.length) throw new Error(bad.map(([id, c, e]) => `${c ? "“" + c.name + "”" : "Campaign " + id}: ${e.reason}`).join("; ") + ". Sale-day adjustments apply only to smart-bidding campaigns. No draft was created.");
-  const win = { start: `${start} 00:00:00`, endExclusive: `${O._dates.addDays(end, 1)} 00:00:00` };
+  const win = O.seasonalityWindow(start, end);
   const [existing, drafts] = await Promise.all([_seasonalityAdjustments(today), _openOptionDrafts()]);
   const clash = existing.find(a => (a.scope !== "CAMPAIGN" || a.campaignIds.some(id => ids.includes(id))) && O.seasonalityOverlaps(win, a));
   if (clash) throw new Error(`Google already has the sale-day adjustment “${clash.name}” on these dates for these campaigns. No draft was created.`);
@@ -11848,7 +11797,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
+  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
   generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,

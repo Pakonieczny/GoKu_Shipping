@@ -161,7 +161,7 @@ const J=x=>JSON.stringify(x);
   const fns=Object.assign({},fakes,{fb:()=>({db:st.db,FV:{serverTimestamp:()=>null}}),loadCalendar:async()=>({}),accountWasteNegatives:async()=>[],recordOccasionUse:async()=>{},gaql:async()=>[],
    generateRSAAssets:async()=>{out.rsa++;return {headlines:Array.from({length:15},(_,i)=>'Headline '+i),descriptions:Array.from({length:4},(_,i)=>'Description '+i)};},
    enqueueApproval:async item=>{out.approvals.push(item);return 'ap'+out.approvals.length;},
-   buildSearchCampaignOps:(coll,event,assets,o)=>{out.built.push(o);return {ops:[{campaignOperation:{create:Object.assign({},o.startDate?{startDateTime:o.startDate.replace(/-/g,'')+' 00:00:00'}:{},o.endDate?{endDateTime:o.endDate.replace(/-/g,'')+' 23:59:59'}:{})}}],tag:'celestial-halloween',negatives:[],assetSummary:null,keywordSummary:{count:(o.keywordPlan||[]).length,measured:(o.keywordPlan||[]).length,researched:true,exact:0},adGroupSummary:[]};},
+   buildSearchCampaignOps:(coll,event,assets,o)=>{out.built.push(o);return {ops:[{campaignOperation:{create:Object.assign({},o.startDate?{startDateTime:o.startDate+' 00:00:00'}:{},o.endDate?{endDateTime:o.endDate+' 23:59:59'}:{})}}],tag:'celestial-halloween',negatives:[],assetSummary:null,keywordSummary:{count:(o.keywordPlan||[]).length,measured:(o.keywordPlan||[]).length,researched:true,exact:0},adGroupSummary:[]};},
    keywordResearch:async s=>{out.kp++;return {ok:true,status:200,ideas:s.map(idea)};}},over.fns||{});
   return {e:engine(fns,over.now||NOW),out};}
  const cardArgs=(o={})=>Object.assign({ctrl:ctrlG,startDate:h.startDate,endDate:h.endDate,countries:['2124','2840'],maxCpc:h.maxCpc,peakDate:h.peakDate},o);
@@ -171,7 +171,8 @@ const J=x=>JSON.stringify(x);
   const e=engine({_accountTz:async()=>'America/Toronto'},Date.parse('2026-09-29T02:00:00Z')).test;
   const u2=e.plan({title:'Celestial',occasion:'Evergreen gifting',ceiling:100,headroom:80,research:null,aov:100,currency:'CAD',nativeToUsd:0.72});
   assert.equal(J([u2.duration.startDate,u2.duration.endDate]),J(['2026-09-28','2026-10-25']),'an undated test starts on the account day');
-  assert.equal(e.schedule('2026-09-29','2026-10-10').startDateTime,'20260929 00:00:00','tomorrow in Toronto is a future start, so it is sent');
+  assert.equal(e.schedule('2026-09-29','2026-10-10').startDateTime,'2026-09-29 00:00:00','tomorrow in Toronto is a future start, so it is sent, as "yyyy-MM-dd HH:mm:ss" (the layout Google documents and returns)');
+  assert.equal(e.schedule('2026-09-29','2026-10-10').endDateTime,'2026-10-10 23:59:59','the end is the last second of its day, in the same layout');
   assert.equal(e.schedule('2026-09-28','2026-10-10').startDateTime,undefined,'today in Toronto starts on enable');
   assert.equal(e.gdate('2026-09-20',true),'20260928','a past date is clamped to the account day');
   assert.equal(engine({},Date.parse('2026-12-26T02:00:00Z')).test.peak('Christmas'),'2026-12-25','Christmas evening in Toronto is still Christmas');

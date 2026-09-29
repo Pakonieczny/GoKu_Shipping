@@ -78,6 +78,15 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(g.queries.every(q => /^SELECT\s/.test(q.trim())) && !g.queries.some(q => /mutate|validate_only/i.test(q)), 'every Google request is a GAQL read');
   check(r.verdict === 'blocked' && /end date \(2026-09-06\) has passed/.test(r.headline), 'a passed end date blocks serving and leads the headline');
   check(has(r, 'block', /end date \(2026-09-06\) has passed.*Set a later end date/), 'the end-date finding says how to fix it');
+  // Google returns "yyyy-MM-dd HH:mm:ss". A campaign written earlier in the compact layout ("yyyyMMdd HH:mm:ss") must read the same way.
+  {
+    const older = JSON.parse(JSON.stringify(search)), camp = older.campaign[0].campaign;
+    camp.startDateTime = camp.startDateTime.replace(/-/g, ''); camp.endDateTime = camp.endDateTime.replace(/-/g, '');
+    check(camp.startDateTime === '20260820 00:00:00' && camp.endDateTime === '20260906 23:59:59', 'the older campaign really carries the compact layout');
+    const rc = await S.auditCampaign({ gaql: fakeGoogle(older).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH', today: '2026-09-29', shippingCountries: ['2036', '2124', '2826', '2840'], apiVersion: 'v24' });
+    check(fact(r, 'Dates') === 'starts 2026-08-20 · ends 2026-09-06' && fact(rc, 'Dates') === fact(r, 'Dates'), 'the dashed and the compact layout read as the same start and end day');
+    check(JSON.stringify(rc.findings) === JSON.stringify(r.findings) && rc.verdict === r.verdict && rc.headline === r.headline, 'and give the same findings, verdict and headline');
+  }
   check(has(r, 'risk', /presence or interest.*Presence/), 'the presence-or-interest location option is flagged');
   check(has(r, 'risk', /targets location 2250, outside your shipping countries/), 'a location outside the shipping countries is flagged');
   check(has(r, 'risk', /Search partners is on/) && has(r, 'risk', /Display expansion is on/), 'search partners and display expansion are flagged');
