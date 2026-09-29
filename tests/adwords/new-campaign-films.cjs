@@ -133,5 +133,19 @@ const motionOf=job=>({jobId:job.id,reviewHash:reviewHash(job)});
  out=await Kmod.exports.handleAction({action:'publishAdDesignPublication',withFilms:true});
  ok(calls.length===1&&calls[0].tasks[0]==='adMotionPublication'&&calls[0].jobId===JOB&&calls[0].groupRef===NEW_AD&&calls[0].token==='pass'&&out.status==='APPLIED','an APPLIED first ad dispatches its queued film upload');
  await Kmod.exports.handleAction({action:'publishAdDesignPublication'});await Kmod.exports.handleAction({action:'publishAdDesignSubmission'});ok(calls.length===1,'no queued films, no dispatch');
+ // 12. Animated ads panel: where the films attach, before and after an upload exists.
+ const {JSDOM}=require('jsdom');
+ async function panel(status){const dom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.setTimeout=()=>0;w.clearTimeout=()=>{};
+  w.eval(fs.readFileSync(path.join(__dirname,'../../brites-ad-motion.js'),'utf8'));const calls=[];w.BritesAdMotion.mount(w.document.getElementById('host'),{scope:{workspaceId:WS,productId:PRODUCT,groupRef:NEW_AD},request:async(a,b)=>{calls.push({a,b});return a==='adDesignMotionStatus'?status:{ok:true,queued:true};}});
+  await new Promise(setImmediate);return {dom,calls,q:s=>w.document.querySelector(s)};}
+ const ready={ok:true,workspaceId:WS,jobId:JOB,phase:'ready',reviewHash:'f'.repeat(64),variants:[],quality:{score:98},qualityTargetMet:true};
+ let ui=await panel({...ready,attachTarget:null,attachNote:'Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.'});
+ ok(ui.q('[data-publish]').hidden&&/Publish this product’s ad first/.test(ui.q('[data-publication]').textContent),'unbound new-ad films explain why no upload is offered');ui.dom.window.close();
+ ui=await panel({...ready,attachTarget:{campaignId:'555',groupRef:groupOf(66)},attachNote:'These films attach to paused campaign 555, created when this ad was published.'});
+ ok(!ui.q('[data-publish]').hidden&&/paused campaign 555/.test(ui.q('[data-publication]').textContent),'bound films offer the upload step');
+ ui.q('[data-publish]').click();ok(/Target: paused campaign 555 · asset group 66\. The campaign stays paused\./.test(ui.q('[data-confirm]').textContent),'the approval names the exact paused campaign and group');
+ await ui.q('[data-confirm] .bam-primary').onclick();ok(ui.calls.some(c=>c.a==='startAdMotionPublication'&&c.b.jobId===JOB&&c.b.reviewHash==='f'.repeat(64)),'approving starts the reviewed upload');ui.dom.window.close();
+ ui=await panel({...ready,publication:{phase:'validated',message:'Dry run: Google validated attaching these videos. Nothing was attached. Turn off dry run, then approve the upload again to attach them.',target:{campaignId:'555',groupRef:groupOf(66)},videos:[]}});
+ ok(/Dry run/.test(ui.q('[data-publication]').textContent)&&/Target: paused campaign 555/.test(ui.q('[data-publication]').textContent)&&!ui.q('[data-publish]').hidden,'a dry-run result explains itself and can be approved again');ui.dom.window.close();
  console.log('PASS '+checks+' new-campaign film binding, dry-run attachment, target safety and dispatch checks');
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

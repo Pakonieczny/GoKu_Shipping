@@ -6,6 +6,7 @@ assert.throws(()=>R.selection(['pmax'],{pmax:NaN},['2840']));
 assert.throws(()=>R.selection(['pmax'],{pmax:10},[]));
 assert.equal(R.fixedProofs([{width:2048,height:2048,asset:{}},{width:300,height:250,asset:{}},{width:300,height:250,asset:{}}]).length,1);
 assert.throws(()=>R.validatePhoto({width:1080,height:1920,bytes:100},'portrait'));
+assert.doesNotThrow(()=>R.validatePhoto({width:1200,height:300,bytes:100},'landscape_logo'));assert.throws(()=>R.validatePhoto({width:600,height:300,bytes:100},'landscape_logo'));
 const fixture=path.join(__dirname,'design-publication.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{')[0];
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
 vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
@@ -24,9 +25,24 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  assert.equal(campaigns.length,3);assert(campaigns.every(c=>c.status==='PAUSED'));assert.equal(new Set(campaigns.map(c=>c.resourceName)).size,3);
  const rda=ops.find(o=>o.adGroupAdOperation?.create.ad.responsiveDisplayAd).adGroupAdOperation.create.ad.responsiveDisplayAd;
  assert.equal(rda.marketingImages.length,1);assert.equal(rda.squareMarketingImages.length,1);assert(!rda.portraitMarketingImages);assert.equal(rda.controlSpec.enableAutogenVideo,false);
+ // Google supports Ad.name only for image/upload/video/Demand Gen ads; flexible colour keeps native placements eligible.
+ assert.equal(ops.find(o=>o.adGroupAdOperation?.create.ad.responsiveDisplayAd).adGroupAdOperation.create.ad.name,undefined);assert.equal(rda.allowFlexibleColor,true);assert(ops.find(o=>o.adGroupAdOperation?.create.ad.imageAd).adGroupAdOperation.create.ad.name);
+ // Google's optional 4:1 logo reaches wide placements in both responsive styles, built from the official wide wordmark.
+ const wide=plan.payload.generatedAssets.find(a=>a.asset.width===1200&&a.asset.height===300);assert(wide&&wide.asset.bytes<=5120*1024);assert.equal(rda.logoImages.length,1);assert.equal(rda.logoImages[0].asset,wide.tempResourceName);assert.equal(rda.squareLogoImages.length,1);
+ assert.equal(ops.filter(o=>o.assetGroupAssetOperation?.create.fieldType==='LANDSCAPE_LOGO'&&o.assetGroupAssetOperation.create.asset===wide.tempResourceName).length,1);
+ // The plan states each campaign's bidding exactly as built.
+ const bidding=Object.fromEntries(plan.summary.campaigns.map(c=>[c.style,c.bidding]));assert.equal(bidding.pmax,'Maximize conversion value');assert.equal(bidding.fixed_display,'Maximize conversions');assert.equal(bidding.responsive_display,'Maximize conversions');
+ assert('audienceSignal' in plan.summary.campaigns.find(c=>c.style==='pmax'));assert(/may make one from your images/.test(plan.summary.videoStatus));
  assert.equal(ops.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).length,1);
  const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));
  for(const match of JSON.stringify(ops).matchAll(/customers\/123\/(?:assets|campaigns|campaignBudgets|assetGroups|adGroups)\/-\d+/g))assert(refs.has(match[0]),'unresolved temporary reference '+match[0]);
  assert(plan.payload.generatedAssets.filter(a=>a.fixed).every(a=>a.asset.bytes<=150*1024&&a.asset.width===300&&a.asset.height===250));
- console.log('PASS campaign selection, budgets, all three routed builders, fixed-size filtering, disjoint references, frozen approval and image materialization');
+ // The daily ceiling is refused while preparing, before any plan is built; a plan inside it proceeds.
+ const id='design-review-'+'a'.repeat(32),reviewHash='r'.repeat(64);let prepared=0;
+ await f.db.collection('Brites_GAds_Approvals').doc(id).set({type:'adDesignSubmission',status:'PENDING',reviewHash,sourceHash:E.get('_adDesignSelectionHash')(w),designReview:{workspaceId:'test',context:w.context}});
+ E.bind({_adDesignPublicationContext:async()=>({w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}}),control:async()=>({maxDailyBudgetTotal:100,budgetCurrency:'CAD'}),_enabledBudgetTotal:async()=>28,_prepareCampaignStyles:async({identity})=>{prepared++;return {identity,hash:'plan',payload:{},summary:{campaigns:[]}};}});
+ const ask=pmax=>E.E.publishAdDesignSubmission({id,hash:reviewHash,prepareOnly:true,styles:['pmax'],budgets:{pmax},countries:['2840'],durations:{pmax:42}});
+ await assert.rejects(()=>ask(90),/Over your daily ceiling.*CAD 90\.00.*CAD 72\.00/);assert.equal(prepared,0);
+ assert.equal((await ask(40)).planHash,'plan');assert.equal(prepared,1);
+ console.log('PASS campaign selection, budgets, all three routed builders, fixed-size filtering, disjoint references, frozen approval, image materialization, supported ad fields, the 4:1 brand logo, disclosed bidding and the ceiling checked at preparation');
 })();

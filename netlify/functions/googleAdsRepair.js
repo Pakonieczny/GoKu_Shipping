@@ -17,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
+const { sameSecret } = require("./_adsCheckGate"); // constant-time, like the console
 const ENV = process.env;
 const V = ENV.GADS_API_VERSION || "v24";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
@@ -250,7 +251,7 @@ exports.handler = async (event) => {
   // self-check: confirm config WITHOUT revealing the passcode
   if (q.check === "1") {
     const g = gateVal();
-    return json(200, { editPasscodeSet: !!g, open: !g, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) }); // never the passcode's length
+    return json(200, { editPasscodeSet: !!g, open: !g, customerIdSet: !!CID, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) }); // never the passcode's length or the account ID: anyone can open this
   }
 
   const gate = gateVal();
@@ -261,7 +262,7 @@ exports.handler = async (event) => {
 
   // POST: gate matches the console — required only if EDIT_PASSCODE is set.
   const key = (headers["x-edit-passcode"] || headers["X-Edit-Passcode"] || body.key || "").trim();
-  if (gate && key !== gate) return json(401, { error: "wrong passcode", editPasscodeSet: true });
+  if (gate && !sameSecret(key, gate)) return json(401, { error: "wrong passcode", editPasscodeSet: true });
 
   return json(409, {error:"Legacy campaign creation is retired. Open brites-adwords.html, create a review draft, then review and publish its exact creative."});
 };

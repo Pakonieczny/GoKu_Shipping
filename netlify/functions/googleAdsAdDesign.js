@@ -6,6 +6,9 @@ const sha = v => crypto.createHash("sha256").update(typeof v === "string" ? v : 
 const token = value => /^[a-zA-Z0-9_-]{1,100}$/.test(String(value || ""));
 const active = job => job && Number(job.leaseUntil) > Date.now() && ["queued", "running"].includes(job.phase);
 const MAX_UPLOAD = 4 * 1024 * 1024;
+// Research, copy and reviews run on Claude Sonnet 5.5; new photographs on GPT Image 2.5 Sunburst.
+const TEXT_MODEL = require("./_googleAdsClaude").MODEL;
+const TEXT_MISSING = "Sonnet 5.5 is not connected: ANTHROPIC_API_KEY is missing, so AI research, copy and reviews cannot run. No AI request was sent.", IMAGE_MISSING = "Image generation is not connected: OPENAI_API_KEY is missing, so new product photographs cannot be generated. No image request was sent.";
 const productKey = id => String(id || '').split('/').pop();
 function isSharedProductGroup(workspace, group) {
   const {offerParts, destination}=require('./googleAdsAdDesignContext'),parts=workspace.sourceSnapshot?.components||{};
@@ -174,7 +177,7 @@ function createAdDesignService(deps) {
   const f = () => { const value = deps.fb(); if (!value) throw new Error("Ad Design storage is unavailable."); return value; };
   const refFor = id => { if (!token(id)) throw new Error("Invalid design workspace."); return f().db.collection(deps.COL.state).doc("adDesign").collection("workspaces").doc(id); };
   const formats = () => deps.formats || FORMATS;
-  const provider = () => ({ available: !!deps.env.OPENAI_API_KEY, label: "GPT Image 2.5 Sunburst", quality: "high", referenceLimit: 16, selectedPhotoLimit: 144, formats: formats(), ...deps.provider, model: "gpt-image-2.5-sunburst" });
+  const provider = () => ({ available: !!deps.env.ANTHROPIC_API_KEY && !!deps.env.OPENAI_API_KEY, textAvailable: !!deps.env.ANTHROPIC_API_KEY, imageAvailable: !!deps.env.OPENAI_API_KEY, reason: !deps.env.ANTHROPIC_API_KEY ? TEXT_MISSING : !deps.env.OPENAI_API_KEY ? IMAGE_MISSING : null, textModel: TEXT_MODEL, label: "GPT Image 2.5 Sunburst", quality: "high", referenceLimit: 16, selectedPhotoLimit: 144, formats: formats(), ...deps.provider, model: "gpt-image-2.5-sunburst" });
   function settle(job, key, output) {
     const reservations = job.reservations || [], reservation = reservations.find(row => row.requestId === output.requestId) || [...reservations].reverse().find(row => row.key === key && !row.settled);
     if (!reservation) return;
@@ -602,14 +605,14 @@ function createAdDesignService(deps) {
   }
   async function editorAIFix(input={}){
     const {workspaceId,productId,groupRef}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);
-    if(!deps.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for the AI designer.');
+    if(!deps.env.ANTHROPIC_API_KEY)throw new Error(TEXT_MISSING);
     const parentRef=editorAIRef(workspaceId,input.jobId),parentRow=await parentRef.get();if(!parentRow.exists)throw new Error('The reviewed design was not found.');const parent=parentRow.data();editorScope(w,parent.scope);
     if(parent.scope.productId!==String(productId)||parent.scope.groupRef!==groupRef)throw new Error('This review belongs to another product or ad group.');
     if(parent.resetAt||parent.phase!=='ready')throw new Error('Only a completed, reviewed design can receive a targeted fix.');
     const status=await editorAIStatus({workspaceId,productId,groupRef,jobId:parent.id,allSizes:true}),category=String(input.fix?.category||''),index=Number(input.fix?.index);
     if(!status.quality)throw new Error('This design has no saved review to correct.');
     if(input.reviewHash&&input.reviewHash!==sha({id:parent.id,quality:status.quality}))throw new Error('The design review changed. Refresh before approving a fix.');
-    const plan=(status.fixOptions||[]).find(o=>o.category===category&&o.index===index);if(!plan)throw new Error('That review finding is no longer available.');
+    const plan=(status.fixOptions||[]).find(o=>o.category===category&&o.index===index);if(!plan)throw new Error('That review finding is no longer available.');if(plan.kind==='scene'&&!deps.env.OPENAI_API_KEY)throw new Error(IMAGE_MISSING);
     const id='eai_'+sha([parent.id,'fix',category,index]).slice(0,40),target=editorAIRef(workspaceId,id),requestRow=await parentRef.collection('data').doc('request').get();if(!requestRow.exists)throw new Error('The reviewed design request is unavailable.');
     const rows=await parentRef.collection('data').get(),skip=/^(candidate|result|ad_proofs_v\d+|ad_quality_v\d+(_response)?|crop_[a-z_]+|scene_fit_notes|scene_repair(_quality)?|scene_quality|copy_refine.*|plan_fix(_response)?|request)$/;
     const reused=rows.docs.filter(row=>!skip.test(row.id)&&!(plan.kind==='scene'&&(row.id==='scene_'+plan.sceneKey||row.id==='scene_'+plan.sceneKey+'_fit_repair')));
@@ -637,7 +640,7 @@ function createAdDesignService(deps) {
   }
   async function editorAIStart(input={}){
     const {workspaceId,productId,groupRef,device,artboard}=input,ref=refFor(workspaceId),w=await read(workspaceId);editorScope(w,input);const designKey=editorKey(input);
-    if(!deps.env.OPENAI_API_KEY)throw new Error('OpenAI access is not configured for the AI designer.');
+    if(!deps.env.ANTHROPIC_API_KEY)throw new Error(TEXT_MISSING);if(input.mode==='design'&&input.generateScene===true&&!deps.env.OPENAI_API_KEY)throw new Error(IMAGE_MISSING);
     if(!token(input.requestId)||!['design','text'].includes(input.mode))throw new Error('Choose a valid AI design request.');
     const {document,sourceIds}=editorDocument(input.document),objects=document.objects;
     if(!objects.length||!sourceIds.length)throw new Error('Add a product photo to the artboard before asking AI to design it.');
@@ -698,19 +701,19 @@ function createAdDesignService(deps) {
         const originals=[];for(const source of request.identitySources||request.sources){const bytes=await deps.loadAsset(source.asset),normalized=await require('sharp')(bytes,{limitInputPixels:40000000}).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).flatten({background:'#ffffff'}).jpeg({quality:86}).toBuffer();originals.push({...source,dataUrl:'data:image/jpeg;base64,'+normalized.toString('base64')});}
         const screenshot=await deps.loadAsset(request.previewAsset),prepared=require('./googleAdsAdDesignResearch')[request.responsive?'buildResponsiveRequest':'buildEditorRequest']({evidence,request,screenshotDataUrl:'data:image/jpeg;base64,'+screenshot.toString('base64'),sources:originals});
         const quote=await deps.reserveCost({key:'copy',workspace:w,job:{inputCoverage:{preparedReferenceCount:originals.length+1}}}),textBytes=prepared.input.reduce((n,row)=>n+Buffer.byteLength(typeof row.content==='string'?row.content:row.content.filter(c=>c.type==='input_text').map(c=>c.text).join('\n')),0);
-        // UTF-8 bytes bound text-token count conservatively; use the adapter's
-        // higher context rates, the actual output limit and a vision allowance.
-        const boundedReserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000+(originals.length+1)*.12)*100)/100,reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
+        // Sonnet 5.5: about 4 bytes per text token plus the schema, (w×h)/750 tokens
+        // per image (every image here is at most 1280px) and the full output ceiling.
+        const boundedReserve=require('./googleAdsAdDesignAdapters').textReserveUsd({textBytes:textBytes+Buffer.byteLength(JSON.stringify(prepared.text||{})),imagePixels:prepared.input.reduce((n,row)=>n+(Array.isArray(row.content)?row.content.filter(c=>c.type==='input_image').length:0),0)*1280*1280,maxOutputTokens:prepared.max_output_tokens}),reserve=Math.max(Number(typeof quote==='object'?quote.reservedUsd:quote),boundedReserve),ctrl=await deps.control(),allowance=Math.max(1,Math.min(30,Number(ctrl.creativeBudgetUsd)||8));
         if(!Number.isFinite(reserve)||reserve<=0)throw new Error('The configured creative allowance cannot cover this bounded AI design request.');
         await verify();if(deps.verifyContext)await deps.verifyContext(w);
-        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning coordinated photographs for each ad shape':'Astra is inspecting the ad and designing tailored copy, typography and layout'}});
+        const requestId=crypto.randomUUID();await save({reservedUsd:reserve,textReservedUsd:reserve,inFlight:{requestId,key:'response',at:Date.now()},progress:{pct:36,label:request.responsive?'Planning coordinated photographs for each ad shape':'AI is inspecting the ad and designing tailored copy, typography and layout'}});
         const response=await deps.responses({...prepared,background:true},requestId);
         // Write the provider receipt before parsing or validation. A reload or
         // interrupted worker can use this response without a second API charge.
         await saveData('response',{response,requestId,receivedAt:Date.now()});responseRow=await target.collection('data').doc('response').get();
       }
       if(!evidence)throw new Error('The saved response is missing its original evidence.');
-      const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||'gpt-6-astra',usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:(job.textReservedUsd||job.reservedUsd),costEstimated:response.costEstimated!==false,at:Date.now()};
+      const response=responseRow.data().response,actual=Number(response.estimatedUsd),usage={requestId:responseRow.data().requestId,providerModel:response.model||TEXT_MODEL,usage:response.usage||{},estimatedUsd:response.costEstimated===false&&Number.isFinite(actual)&&actual>=0?actual:(job.textReservedUsd||job.reservedUsd),costEstimated:response.costEstimated!==false,at:Date.now()};
       await save({usage,inFlight:job.inFlight?.key&&job.inFlight.key!=='response'?job.inFlight:null,progress:{pct:request.responsive?48:86,label:request.responsive?'Scene and messaging planned; preparing new product photography':'Checking product claims, editable layers, photo integrity and placement'}});
       const research=require('./googleAdsAdDesignResearch'),output=research.parseResponse(response),result=request.responsive?await responsiveEditorResult({workspaceId,jobId,job,request,evidence,output,target,ref,w,save,saveData,verify,usage}):research.applyEditorPlan({output,request,evidence,sources:request.sources});
       if(result.continue){await save({phase:'queued',leaseUntil:0,error:null});return {ok:true,continue:true,workspaceId,jobId};}
@@ -741,7 +744,7 @@ function createAdDesignService(deps) {
       const reservedUsd=Math.max(reserveOverride,Number(typeof estimate==='object'?estimate.reservedUsd:estimate)),spent=stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0),ctrl=await deps.control();
       if(!Number.isFinite(reservedUsd))throw new Error('The remaining creative allowance cannot cover the next image step. Completed research and images are saved.');
       await verify();const requestId=crypto.randomUUID();await save({reservedUsd,inFlight:{key,requestId,at:Date.now()},progress:{pct,label}});
-      const result=await perform(requestId);await saveData(key,{...result,requestId,reservedUsd,receivedAt:Date.now()});return {...result,requestId,reservedUsd};
+      const result=await perform(requestId,reservedUsd);await saveData(key,{...result,requestId,reservedUsd,receivedAt:Date.now()});return {...result,requestId,reservedUsd};
     };
     const recordCost=async(key,row)=>{if(!row?.reusedFrom&&!stageUsage.some(u=>u.key===key)){stageUsage.push({key,requestId:row.requestId,providerModel:row.providerModel||row.model,usage:row.usage||{},estimatedUsd:row.costEstimated===false&&Number.isFinite(row.estimatedUsd)?row.estimatedUsd:row.reservedUsd,costEstimated:row.costEstimated!==false,at:Date.now()});}await save({stageUsage,inFlight:job.inFlight?.key&&job.inFlight.key!==key?job.inFlight:null});};
     for(const [reviewKey,key] of [['ad_quality_v2','copy_refine_v3'],['ad_quality_v4','copy_refine_v5']]){
@@ -753,7 +756,7 @@ function createAdDesignService(deps) {
       if(key==='copy_refine_v5')prepared.input[0].content+=' Keep the main headline as a distinctive buyer/occasion hook, at most 30 characters, and the compact headline as a concise product identifier. The description must add one concrete reason to buy without repeating the product name. Diversify native descriptions by purpose: recipient/occasion, product use, verified packaging, and verified made-to-order dispatch timing. Use only purposes supported by exact evidence; dispatch is not delivery. Do not repeat the same packaging or made-to-order sentence across multiple descriptions. Preserve honest research limitations.';
       prepared.input[1].content=prepared.input[1].content.filter(c=>c.type==='input_text').concat([{type:'input_text',text:JSON.stringify({savedPlan:plan,review:priorReview.data().issues||[]})}]);
       prepared.max_output_tokens=12000;
-      const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000)*100)/100;
+      const reserve=require('./googleAdsAdDesignAdapters').textReserveUsd({textBytes:Buffer.byteLength(JSON.stringify([prepared.input,prepared.text])),maxOutputTokens:prepared.max_output_tokens});
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const revised=await paid(key,89,'Improving saved messaging from the complete-ad review',async requestId=>{
         let response=raw.exists?raw.data().response:await deps.responses({...prepared,background:true},requestId);
@@ -773,7 +776,7 @@ function createAdDesignService(deps) {
       prepared.input[0].content+='\nThis is a targeted correction of ONE reviewed finding in an existing saved design. Change only the copy, style or wording that the finding requires and keep everything else identical: the same product and group scope, the same scene plans, image directions, master format and alternate settings. Do not request new photography. Cite every factual claim from the evidence. Return the same complete recipe schema. Limit description to 65 characters, shortHeadline to 20 characters and CTA to 18 characters.';
       prepared.input[1].content=prepared.input[1].content.filter(c=>c.type==='input_text').concat([{type:'input_text',text:JSON.stringify({savedPlan:plan,finding:{category:fix.category,reason:fix.reason,evidence:fix.evidence,correction:fix.correction,formats:fix.formats}})}]);
       prepared.max_output_tokens=12000;
-      const textBytes=Buffer.byteLength(JSON.stringify(prepared.input)),reserve=Math.ceil((textBytes*20/1000000+(prepared.max_output_tokens||0)*75/1000000)*100)/100;
+      const reserve=require('./googleAdsAdDesignAdapters').textReserveUsd({textBytes:Buffer.byteLength(JSON.stringify([prepared.input,prepared.text])),maxOutputTokens:prepared.max_output_tokens});
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const revised=await paid(key,40,'Revising the copy and layout plan for one reviewed finding',async requestId=>{
         let response=raw.exists?raw.data().response:await deps.responses({...prepared,background:true},requestId);
@@ -810,10 +813,10 @@ function createAdDesignService(deps) {
     for(const image of images){
       const source=sources.find(s=>s.id===image.id),key='subject_focus_'+sha(source.asset).slice(0,24),raw=await target.collection('data').doc(key+'_response').get();
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
-      const located=await paid(key,90,'Finding the charm for close, size-aware crops',async requestId=>{
+      const located=await paid(key,90,'Finding the charm for close, size-aware crops',async(requestId,reservedUsd)=>{
         let response=raw.exists?raw.data().response:null;
         if(!response){const bytes=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();response=await deps.responses({...research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),product}),background:true},requestId);await saveData(key+'_response',{response,requestId});}
-        await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd:.45});
+        await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd});
         return {focus:research.validateSubjectFocus(research.parseResponse(response)),model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
       });
       await recordCost(key,located);image.focus=located.focus;source.focus=located.focus;await ref.collection('editorSources').doc(source.id).set(clean(source));
@@ -1031,7 +1034,8 @@ function createAdDesignService(deps) {
     const ref = refFor(workspaceId), value = await read(workspaceId), capability = provider();
     if(mode==='copy'&&value.job&&!['ready','draft'].includes(value.job.phase)&&value.job.mode!=='copy')throw new Error('Resume the saved image request before starting separate messaging research. Its paid work is preserved.');
     if (value.job && (value.job.phase === "ready"&&!newRequest || active(value.job))) return { ok: true, workspaceId, jobId: value.job.id, cached: true, queued: false };
-    if (!capability.available) throw new Error(capability.reason || "Image generation is not configured.");
+    if (!capability.textAvailable) throw new Error(TEXT_MISSING);
+    if (mode !== "copy" && !capability.imageAvailable) throw new Error(IMAGE_MISSING);
     if (value.context.generationAllowed === false) throw new Error("This source context is not ready for generation. Choose an eligible product and current ad or draft.");
     if (deps.verifyContext) await deps.verifyContext(value);
     if (value.context.campaignId) await deps.verifyBasis({ campaignId: value.context.campaignId, expectedVersion: expectedVersion == null ? value.sourceVersion : Number(expectedVersion), snapshotHash: snapshotHash || value.snapshotHash });
@@ -1176,8 +1180,8 @@ function createAdDesignService(deps) {
           const result=prior||await deps.responses(request,requestId);
           if(!prior)await writeReceipt(key,{rawResponse:result,receivedAt:Date.now()});
           let output;try{output=deps.research.validateResult({output:require('./googleAdsAdDesignResearch').parseResponse(result),evidence:job.evidence,channel:group.channel,group,mode:job.mode});}
-          catch(error){settle(job,key,{requestId,usage:result.usage||{},providerModel:result.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;throw error;}
-          return {...output,usage:result.usage||{},responseId:result.id||null,providerModel:result.model||request&&request.model||"gpt-6-astra",estimatedUsd:result.estimatedUsd==null?1:result.estimatedUsd,costEstimated:result.costEstimated!==false};
+          catch(error){settle(job,key,{requestId,usage:result.usage||{},providerModel:result.model||TEXT_MODEL,estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;throw error;}
+          return {...output,usage:result.usage||{},responseId:result.id||null,providerModel:result.model||request&&request.model||TEXT_MODEL,estimatedUsd:result.estimatedUsd==null?1:result.estimatedUsd,costEstimated:result.costEstimated!==false};
         });
       };
       let copy;
@@ -1220,7 +1224,9 @@ function createAdDesignService(deps) {
         job.placementAssets.mobile[format.key]=mobile?mobile.asset:output.asset;
         await progress(30+Math.floor((i+1)/wanted.length*45), format.label+" image saved; "+(i+1)+" of "+wanted.length+" formats complete");
       }
-      if (Date.now() - started > 620000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
+      // A Sonnet review may stream for up to 5 minutes; start it only when it can
+      // finish inside this 15-minute worker, otherwise continue in a fresh one.
+      if (Date.now() - started > 560000) { await saveJob({ phase: "paused", leaseUntil: 0, progress: { pct: job.progress.pct, label: "Every format is saved; continuing the quality review" } }); return { ok: true, paused: true, dispatch: true, workspaceId, jobId }; }
       await progress(82, "Checking product fidelity, framing and mobile readability");
       // Re-review old paid artwork only when its research inherited a different
       // keyword scope. Keep the original review and every paid image receipt.
@@ -1231,7 +1237,7 @@ function createAdDesignService(deps) {
         const stored=await ref.collection('outputs').doc(jobId+'_'+key).get();let response=stored.exists&&stored.data().rawResponse,output;
         const files = await Promise.all(finalAssets.map(asset => deps.loadAsset(asset)));
         try{output=await deps.reviewImages(sourceFiles[0], files, { ...copy.brief, copy: copy.copy, keywords: researchGroup.keywords || [], settings: value.settings, product: product.title, products: researchProducts, placementAssets:job.placementAssets, inputCoverage: job.inputCoverage }, sourceFiles, requestId,{rawResponse:response,onResponse:async raw=>{response=raw;await writeReceipt(key,{rawResponse:raw,receivedAt:Date.now()});}});}
-        catch(error){if(response){settle(job,key,{requestId,usage:response.usage||{},providerModel:response.model||'gpt-6-astra',estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;}throw error;}
+        catch(error){if(response){settle(job,key,{requestId,usage:response.usage||{},providerModel:response.model||TEXT_MODEL,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;}throw error;}
         await writeReceipt(key, { stageResult: output, receivedAt: Date.now() });
         return { ...output, estimatedUsd: output.estimatedUsd == null ? 1 : output.estimatedUsd, costEstimated: output.costEstimated !== false };
       });
