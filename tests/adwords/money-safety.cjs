@@ -140,6 +140,22 @@ async function engineChecks(){
  {const after={[B(11)]:150,[B(15)]:0.5};(muts[0]||{ops:[]}).ops.forEach(o=>{after[o.update.resourceName]=o.update.amountMicros/1e6;});
   check(after[B(15)]===0.5&&after[B(11)]<150,'a trim never raises a budget below the floor: '+JSON.stringify(after));
   check(after[B(11)]+after[B(15)]<=100,'and the trimmed total still fits the ceiling: '+(after[B(11)]+after[B(15)]));}
+ // The trim reports the total it leaves. No budget goes below 1 a day, so that total can stay above
+ // the ceiling, and the Controls answer says so instead of "Trimmed to fit".
+ {const page=fs.readFileSync(path.resolve(__dirname,'../../brites-adwords.html'),'utf8'),a=page.indexOf('var ct=$("#cTrim");'),z=page.indexOf('done();reload();};',a)+'done();reload();};'.length;
+  const ui={DASH:{budgetCurrency:'CAD'},Intl,Number,String,Math,saving:(k,o,fn)=>fn(),btnBusy:()=>()=>{},reload:()=>{},toasts:[],nodes:{}};ui.toast=(m,ok)=>ui.toasts.push([m,ok]);ui.$=s=>ui.nodes[s]||(ui.nodes[s]={textContent:''});
+  vm.createContext(ui);for(const n of ['money','ccyMoney'])vm.runInContext(page.match(new RegExp('^function '+n+'\\([\\s\\S]*?\\n(?=function |var |//)','m'))[0],ui);vm.runInContext('var ccy=ccyMoney;'+page.slice(a,z),ui);
+  const answer=async t=>{ui.api=async()=>t;ui.toasts.length=0;await ui.nodes['#cTrim'].onclick();return {msg:ui.nodes['#cTrimMsg'].textContent,toast:ui.toasts[0]};};
+  reset();W.camps[4].status='ENABLED';W.budgets[B(15)]=60;let t=await E.enforceBudgetCeiling({ctrl:C()});const sum=muts[0].ops.reduce((n,o)=>n+o.update.amountMicros/1e6,0)+0;
+  check(t.after===+sum.toFixed(2)&&t.after<=100&&t.stillOver===false,'the post-trim total is the sum of the new budgets: '+t.after);
+  let m=await answer(t);check(m.msg==='Trimmed 2 budgets to fit CA$100.'&&m.toast[1]===true,m.msg);
+  reset();t=await E.enforceBudgetCeiling({ctrl:C({maxDailyBudgetTotal:1.5})});
+  check(t.trimmed===2&&t.after===2&&t.stillOver===true&&muts[0].ops.every(o=>o.update.amountMicros===1e6),'cut to the 1-a-day floor, the total stays above a 1.50 ceiling: '+JSON.stringify(t));
+  m=await answer(t);check(m.msg==='Trimmed 2 budgets. The total is still CA$2/day, above the CA$1.50 ceiling, because no budget is cut below CA$1/day. Pause a campaign to get under it.'&&m.toast[1]===undefined,m.msg);
+  m=await answer({...t,dryRun:true});check(/^Dry-run: 2 budgets would be trimmed, and the total would still be CA\$2\/day, above the CA\$1\.50 ceiling/.test(m.msg),m.msg);
+  reset();W.budgets[B(11)]=1;W.budgets[B(15)]=1;t=await E.enforceBudgetCeiling({ctrl:C({maxDailyBudgetTotal:1.5})});check(t.trimmed===0&&t.after===2&&t.stillOver===true&&muts.length===0,'every budget already at the floor: nothing changed, total stated');
+  m=await answer(t);check(m.msg==='Nothing to trim: the total stays CA$2/day, above the CA$1.50 ceiling, because no budget is cut below CA$1/day. Pause a campaign to get under it.',m.msg);
+  m=await answer({ok:true,withinCeiling:true,total:90,ceiling:100});check(m.msg==='Within the ceiling: CA$90 of CA$100.',m.msg);}
 
  // Anomaly breaker: no false trip on a launch; trips on a real spike or on spend beyond 2x the ceiling.
  reset();W.baseline=[10,10,10];W.yesterday=60;let a=await E.anomalyCheck({ctrl:C()});check(!a.tripped&&!f.docs.has('Brites_GAds_Control/control'),'launch after a quiet spell does not trip');

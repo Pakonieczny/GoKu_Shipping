@@ -1976,6 +1976,13 @@ async function markPublishRequested(id) {
   const ref = f.db.collection(COL.approvals).doc(String(id));
   await f.db.runTransaction(async tx => { const s = await tx.get(ref); if (s.exists && s.data().status === "APPROVED") tx.update(ref, { publishRequestedAt: Date.now(), lastError: null }); });
 }
+// The worker could not be started, so nothing was sent: the draft must not read as queued for the
+// next 9 minutes. Its card states why and offers to publish it again.
+async function markPublishNotStarted(id, reason) {
+  const f = fb(); if (!f) return;
+  const ref = f.db.collection(COL.approvals).doc(String(id));
+  await f.db.runTransaction(async tx => { const s = await tx.get(ref); if (s.exists && s.data().status === "APPROVED") tx.update(ref, { publishRequestedAt: null, lastError: "Publishing could not start (" + String(reason || "unknown error").slice(0, 200) + "). Nothing was sent to Google. Publish it again." }); });
+}
 
 /* ============================ Helpers ============================ */
 function micros(v) { return Math.round(Number(v) * 1e6); }
@@ -5733,17 +5740,21 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   const floor = 1, low = items.filter(x => x.budget <= floor), high = items.filter(x => x.budget > floor);
   const highTotal = high.reduce((a, b) => a + b.budget, 0), factor = highTotal > 0 ? Math.max(0, ceiling - low.reduce((a, b) => a + b.budget, 0)) / highTotal : 0;
   const ops = [], moves = [];
+  let after = total;
   high.forEach(x => {
     const nb = Math.min(x.budget, Math.max(floor, Math.floor(x.budget * factor * 100) / 100)); // round down: the trimmed sum never lands above the ceiling
     if (Math.abs(nb - x.budget) < 0.01) return;
+    after -= x.budget - nb;
     moves.push({ campaign: x.name, from: x.budget, to: nb });
     ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });
   });
-  if (!ops.length) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: false, trimmed: 0 };
+  // Budgets at the floor cannot go lower, so the trimmed total can stay above the ceiling: say so.
+  after = +after.toFixed(2); const stillOver = after > ceiling + 0.001;
+  if (!ops.length) return { ok: true, total: +total.toFixed(2), after, ceiling, withinCeiling: false, stillOver, trimmed: 0 };
   const res = await mutate("campaignBudgets", ops, { ctrl, label: "enforceCeiling" });
   if (res && res.partialFailureError) { const m = (res.partialFailureError.message || "").slice(0, 300); throw new Error(`ceiling trim rejected: ${m}`); }
-  await ledger({ kind: "enforceBudgetCeiling", total: +total.toFixed(2), ceiling, trimmed: ops.length, validateOnly: !!ctrl.dryRun });
-  return { ok: true, total: +total.toFixed(2), ceiling, trimmed: ops.length, detail: moves, dryRun: !!ctrl.dryRun };
+  await ledger({ kind: "enforceBudgetCeiling", total: +total.toFixed(2), after, ceiling, trimmed: ops.length, validateOnly: !!ctrl.dryRun });
+  return { ok: true, total: +total.toFixed(2), after, ceiling, stillOver, trimmed: ops.length, detail: moves, dryRun: !!ctrl.dryRun };
 }
 
 // Month-to-date account spend (computed in the account's timezone), converted to USD so it can be
@@ -11027,7 +11038,7 @@ module.exports = {
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, saveDataManagerConnection, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, storeSalesEvidence, clearOrderLog, backfillOrders,
-  ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, reconcileApproval, markPublishRequested, sanitizeOps,
+  ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, reconcileApproval, markPublishRequested, markPublishNotStarted, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,

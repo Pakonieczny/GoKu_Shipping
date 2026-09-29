@@ -240,8 +240,14 @@ async function handleAction(body) {
   if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
   if (a === "approvalStatus") {
     const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
-    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data(),req=Number(d.publishRequestedAt)||0;
+    // Queued: handed to the worker, not started or checked since, while another publication holds the
+    // lease. The worker waits its turn (up to 8 minutes), so the console stops polling and says so.
+    let queued=false;
+    if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
+      try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
+    }
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
@@ -251,8 +257,12 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    // Server time of this request: the console tells this attempt's result from an earlier one by it,
+    // whatever its own clock says. The marker also clears an Approved draft's previous error.
+    const requestedAt = Date.now();
     try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
-    return await dispatchTask("publishApproval", { id:String(body.id) });
+    try { return { ...(await dispatchTask("publishApproval", { id:String(body.id) })), requestedAt }; }
+    catch (e) { try { await E.markPublishNotStarted(body.id, e.message); } catch (x) {} throw e; } // nothing started: the card must not read as queued
   }
   // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
   // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
