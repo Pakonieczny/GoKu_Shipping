@@ -3261,6 +3261,8 @@ function _merchantProductRow(x, merchantId) {
     issueDetails: Array.isArray(x.issues) ? x.issues.map(i => ({description:String(i.description||i.detail||i.errorCode||""),severity:String(i.adsSeverity||""),code:String(i.errorCode||"")})) : [],
     merchantId: String(x.merchantCenterId) };
 }
+// A feed title Google received garbled (UTF-8 read as Latin-1) is a feed problem: flag it, never copy it into ad text.
+function _merchantTitleProblem(title) { return require("./_merchantHealth").titleProblem(title); }
 function _merchantFeedLabels(plan) {
   const labels = new Set();
   (plan.itemIds || []).forEach(id => {
@@ -4497,12 +4499,13 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   } catch(e){}
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
   if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
-  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))];
+  const feedTitle=x=>(_merchantTitleProblem(x.title)||{suggested:x.title}).suggested,garbled=selected.filter(x=>_merchantTitleProblem(x.title));
+  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(feedTitle))];
   // shopping_product has no link field: resolve each selected product's own page so its
   // asset group lands where its copy points instead of on the collection page.
   const productUrls={};
   if(!design.productDestination)try{const pids=[...new Set(exactIds.map(_productIdFromItemId).filter(Boolean))].slice(0,30),d=pids.length?await _withTimeout(shopifyGql(`{ nodes(ids:[${pids.map(id=>`"gid://shopify/Product/${id}"`).join(",")}]) { ... on Product { id handle status } } }`),10000,"Product page lookup"):null;((d&&d.nodes)||[]).filter(p=>p&&p.handle&&p.status==="ACTIVE").forEach(p=>{productUrls[String(p.id).split("/").pop()]=`https://britesjewelry.com/products/${encodeURIComponent(p.handle)}`;});}catch(e){}
-  const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,url:productUrls[_productIdFromItemId(x.itemId)]||x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
+  const liveDetails=selected.map(x=>({itemId:x.itemId,title:feedTitle(x),url:productUrls[_productIdFromItemId(x.itemId)]||x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
   if(!audienceResource&&ENV.GADS_PMAX_AUDIENCE_ID)audienceResource=`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,"")}`;
@@ -4549,7 +4552,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   const destination=design.productDestination?require('./googleAdsAdDesignContext').destination(design.productDestination):null;
   if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
   const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
-  const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
+  const scope=(built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products"))+(garbled.length?` (feed title garbled on ${garbled.slice(0,3).map(x=>x.itemId).join(", ")}${garbled.length>3?` and ${garbled.length-3} more`:""}: fix it at its Merchant source)`:"");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
@@ -7185,6 +7188,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const productLinkCoverage = await _attachCachedProductLinks(prodRows);
   const unidentifiedRows = prodRows.filter(p => !p.identityComplete).length;
   if (unidentifiedRows) warnings.push("Google returned product activity without an offer ID. It remains in totals as unidentified activity, with no guessed product link.");
+  // Shoppers see a garbled feed title in these ads. Name each offer, its spend and the fix at the feed's source.
+  const garbledTitles = prodRows.filter(p => p.identityComplete && (p.titleProblem = _merchantTitleProblem(p.title))).sort((a, b) => b.cost - a.cost);
+  if (garbledTitles.length) warnings.push(require("./_merchantHealth").garbledTitlesNotice(garbledTitles, context.budgetCurrency));
 
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not

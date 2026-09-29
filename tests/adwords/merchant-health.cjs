@@ -50,7 +50,7 @@ function merchantStub(overrides = {}) {
   // A disapproval beyond the first page is still found: no LIMIT, only non-eligible offers, every page read.
   const bodies = [];
   const paged = await merchantHealth({ merchantId: '555', adsCustomerId: '1', request: async (p, method, body) => {
-    if (!/reports:search$/.test(p)) return stub.request(p, method, body);
+    if (!/reports:search$/.test(p) || /REGEXP_MATCH/.test(body.query)) return stub.request(p, method, body);
     bodies.push(body);
     return body.pageToken ? { results: [{ productView: { offerId: 'late-1', aggregatedReportingContextStatus: 'NOT_ELIGIBLE_OR_DISAPPROVED', itemIssues: [] } }] }
       : { results: [{ productView: { offerId: 'early-1', aggregatedReportingContextStatus: 'PENDING', itemIssues: [] } }], nextPageToken: 'next' };
