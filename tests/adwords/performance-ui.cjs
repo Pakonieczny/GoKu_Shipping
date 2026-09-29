@@ -60,4 +60,5 @@ await test('a Google total budget reads as its total in the campaign notes and t
   ctx.closePerformanceDialog();st.data=saved.data;ctx.DASH.lastMetrics=saved.metrics;ctx.api=saved.api;
 });
 console.log(`${passed} focused UI behavior checks passed.`);
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

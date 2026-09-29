@@ -191,4 +191,5 @@ await test('one indicator per wait, shell top bar, phone channel tabs and a shad
   assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
   assert.match(html,/\.ieRow input\{flex:1 1 110px;max-width:170px;min-width:0;/,'on a phone the amount, Save and Cancel share one row');});
 console.log(passed+' console inline action checks passed.');
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

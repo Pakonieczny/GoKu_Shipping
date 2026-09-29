@@ -86,4 +86,5 @@ check(!E.confirm(current, op('adGroupAssetOperation', { remove: image('33').reso
   const partial = await E.capture('42');
   check(!partial.complete && !S.restorationEligibility(partial).restorable, 'a failed image API query cannot claim a complete restorable snapshot');
   console.log('PASS ' + count + ' Search image restoration, reviewed scope, legacy history and provider-state checks');
+  require('./suite-guard.cjs').done();
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -74,4 +74,5 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   assert(alpha(past)<=30,'the field has faded away by the far edge of its reach');
  }
  console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam and protected jewelry in all three ratios');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

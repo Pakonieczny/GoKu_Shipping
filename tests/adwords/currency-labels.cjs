@@ -14,6 +14,7 @@ let passed=0;const check=(v,msg)=>{assert(v,msg);passed++;};
  modelChecks();
  await consoleChecks();
  console.log('PASS '+passed+' currency-label checks (approval summaries, Studio errors, AI prompts, reports, console amounts)');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 function memory(){const docs=new Map();

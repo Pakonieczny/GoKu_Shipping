@@ -150,4 +150,5 @@ const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopify
     'googleAdsRepair is retired: no function source and no build manifest entry');
 
   console.log(passed + ' endpoint smoke checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

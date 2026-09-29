@@ -18,4 +18,5 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.equal(autoCalls.filter(c=>c.a==='startAdDesignMotion'&&c.b.resumeJobId==='motion_old').length,1,'a run stopped by an earlier composition rule resumes itself exactly once');
  auto.window.close();
  dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling, late-response isolation and automatic resume');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

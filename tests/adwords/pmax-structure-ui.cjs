@@ -180,4 +180,5 @@ const TARGETS=[target('101','BA · Necklaces PMax'),target('102','BA · Rings PM
   C.DASH={...C.DASH,pmaxTargets:[]};vm.runInContext('CAMPAIGN_STYLE_DRAFTS={}',C);k=submission();
   check(q('[data-pmax-target-label]').hidden&&!q('[data-pmax-target]').options.length,'with no campaign to join there is no choice to make');
   console.log('PASS '+n+' Performance Max structure console checks: joining a campaign, settling a finished draft, and plain Approvals cards');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

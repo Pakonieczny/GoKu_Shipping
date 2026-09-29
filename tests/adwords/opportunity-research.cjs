@@ -369,4 +369,5 @@ const J=x=>JSON.stringify(x);
  });
  console.log(`opportunity-research: ${passed} follow-up checks passed${failed.length?`, ${failed.length} failed: ${failed.join(' | ')}`:''}.`);
  if(failed.length)process.exitCode=1;
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

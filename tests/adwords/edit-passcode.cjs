@@ -232,6 +232,7 @@ function site(penv, st) {
   check(said.some(l => /created config\/editPasscode/.test(l)) && said.some(l => /failed/.test(l)), 'creation and failures are logged (without the passcode)');
 
   console.log('PASS ' + passed + ' edit-passcode checks (env wins, created once in Firestore, empty or failing Firestore locks changes, one-minute cache, never revealed, server token, check pages)');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });
 
 // The check pages run from their real files, with node-fetch and firebaseAdmin intercepted: every

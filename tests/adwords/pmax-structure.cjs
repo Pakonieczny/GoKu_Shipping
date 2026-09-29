@@ -413,4 +413,5 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
   const forward=/existingCampaignId:\/\^\\d\{1,20\}\$\/\.test\(String\(body\.existingCampaignId\|\|""\)\)\?String\(body\.existingCampaignId\):null,addBudget:Number\(body\.addBudget\)\|\|0/;
   check(forward.test(bg)&&forward.test(kick),'the destination campaign (digits only) and the added budget reach the draft builder');
   console.log('PASS '+n+' Performance Max structure checks: joining a campaign, exclusions and the brand exclusion');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

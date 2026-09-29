@@ -47,4 +47,5 @@ const button=()=>d.querySelector('#pmaxSec .pmx-gen[data-i="0"]'),tick=ms=>new P
   await tick(1600);check(!button()&&d.querySelector('#pmaxSec .oppChannelEmpty'),'then the card folds away and the list is drawn again');
   check(toasts.some(t=>/PMax draft ready/.test(t)),'the ready draft is announced');
   console.log('PASS '+n+' one-generation-per-PMax-opportunity checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

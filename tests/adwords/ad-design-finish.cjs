@@ -126,4 +126,5 @@ async function reviewed(e){const it=e.stored();await e.E.reviewCreativeApproval(
  const destinationPublished=await pub.E.publishAdDesignPublication({workspaceId:'work1',id:prepared.id,hash:prepared.reviewHash,confirmed:true});check(destinationPublished.status==='APPLIED'&&pub.f.docs.get(wsPath).context.groups[0].url===product.url,'confirmed destination advances the version and updates the saved workspace link');
  await rejects(()=>pub.E.prepareAdDesignPublication(destinationInput),/already uses/);
  console.log('PASS '+passed+' design finish, ownership, stale sources, exact copy/logo and Search image publication checks');
+ require('./suite-guard.cjs').done();
 })().catch(error=>{console.error(error);process.exit(1)});

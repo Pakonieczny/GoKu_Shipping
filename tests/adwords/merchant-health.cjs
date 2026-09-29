@@ -110,4 +110,5 @@ function merchantStub(overrides = {}) {
   check(empty.videos.length === 0 && empty.requested === 0, 'a malformed video ID is never sent to YouTube');
 
   console.log(passed + ' Merchant health and YouTube video-state checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

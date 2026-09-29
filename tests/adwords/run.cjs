@@ -2,10 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const files = fs.readdirSync(__dirname).filter(name => name.endsWith('.cjs') && name !== 'run.cjs').sort();
+// Preloaded into each suite: a suite whose awaited step never settles fails instead of exiting 0 with checks skipped.
+const guard = 'suite-guard.cjs';
+const files = fs.readdirSync(__dirname).filter(name => name.endsWith('.cjs') && name !== 'run.cjs' && name !== guard).sort();
 let failed = 0;
 for (const file of files) {
-  const result = spawnSync(process.execPath, [path.join(__dirname, file)], {
+  const result = spawnSync(process.execPath, ['-r', path.join(__dirname, guard), path.join(__dirname, file)], {
     cwd: path.resolve(__dirname, '../..'), encoding: 'utf8', timeout: 300000
   });
   if (result.stdout) process.stdout.write(result.stdout);

@@ -308,4 +308,5 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
     assert.equal(r.deleted, 1); assert.equal(e.s.get('orders', 'old'), undefined); assert.equal([...e.s.docs.keys()].filter(k => k.startsWith('orders/')).length, 6);
   });
   console.log(passed + ' conversion pipeline checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -106,4 +106,5 @@ async function approve(e){await e.E.reviewAdVersion({id:'design1',hash:e.E.creat
  await messagingEngine.E.saveAdDesignCopy({workspaceId:'draft',expectedRevision:1,copy:messagingCopy});check((await messagingRef.get()).data().messaging.copy.headlines[0]==='Seagull Charm','valid compact copy is persisted with its exact product scope');
  const named=await e.get('_creativeImageOps')({designWorkspaceId:'fixture',logo:e.asset,groups:[{channel:'pmax',ref:group,...savedResult}]},opsNative);check(named.ops.every(o=>o.assetOperation.create.name&&o.assetOperation.create.name.length<=128),'every Google image and logo upload has its required asset name');
  console.log('PASS '+passed+' generated-image review, materialization, same-ad publication and draft idempotency checks');
+ require('./suite-guard.cjs').done();
 })().catch(error=>{console.error(error);process.exit(1)});

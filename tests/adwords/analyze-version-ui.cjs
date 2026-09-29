@@ -39,4 +39,5 @@ await test('stale proposal cannot become approvable when image requests finish l
 
 await test('Search image arrays display each exact hydrated new image for approval',()=>{const text=ctx.adExactChangesHtml([{category:'Search images',before:[{imageUrl:'https://images.test/old.jpg'}],after:[{path:'square.jpg',hash:'one',url:'https://images.test/square.jpg'},{path:'landscape.jpg',hash:'two',url:'https://images.test/landscape.jpg'}]}]);assert.equal((text.match(/data-version-image="after"/g)||[]).length,2);assert.equal((text.match(/data-version-image="before"/g)||[]).length,1);assert(text.includes('src="https://images.test/square.jpg"'));assert(text.includes('src="https://images.test/landscape.jpg"'));});
 console.log(`${passed} Analyze Ad / restoration UI checks passed.`);
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

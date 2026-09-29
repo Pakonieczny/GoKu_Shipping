@@ -51,4 +51,5 @@ let passed=0;async function test(name,fn){await fn();passed++;console.log('PASS 
   fail=false;w.document.querySelector('[data-design-refresh]').click();for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));assert.equal(a.statusFailures,0);assert(!a.pollPaused);assert.equal(a.error,'');assert.equal(polls.length,3);
   fail=true;await w.refreshAdDesign(a);assert(!a.pollPaused,'the count starts again after a successful read');assert.equal(polls.length,4);}finally{e.close();}});
  console.log(passed+' navigation regressions passed');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

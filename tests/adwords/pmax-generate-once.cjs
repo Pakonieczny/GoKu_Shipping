@@ -174,4 +174,5 @@ let settled=false;process.on('exit',()=>{if(!settled){console.error('FAIL: the c
   check(s.ok===false&&/stopped before it finished\. Check Approvals/.test(s.error)&&(await T.ask(request(FOX,{existingCampaignId:'101'}))).sent===1,'past fifteen minutes it reads as stopped, and asking again starts a new run');
   check(T.paid.length===8&&T.drafts().length===8,'eight paid copies for eight generations, and one draft each');
   settled=true;console.log('PASS '+n+' one-paid-generation-per-PMax-request checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{settled=true;console.error(e);process.exit(1);});
