@@ -2106,8 +2106,17 @@ const Pool = window.Pool = (() => {
   function cloneCharm(c, id) { const k = Object.assign({}, c, { id, pinned: null }); return k; }
   /** §6.4 · one pooled charm per copy of the line, on the material card the ORDER says. */
   /** A line's copies, made from its traced design, ready to record; null when the line is held, has no design or does
-      not fit (row.state says which). */
+      not fit (row.state says which). A copy a cleanup took off its sheet on purpose (Cleanups.removed: the sheet's record
+      names it) is never made again: a line pooled again (a person's decision, an Etsy change) made every copy of its
+      quantity, and put the one taken off back on a sheet. */
   async function preparePool(row, run) {
+    const prep = await makePool(row, run);
+    if (!prep || !window.Cleanups || !prep.pools.some(p => Cleanups.removed(p.poolId))) return prep;
+    const pools = prep.pools.filter(p => !Cleanups.removed(p.poolId)), keep = new Set(pools.map(p => p.poolId));
+    if (!pools.length) { row.state = "noDesign"; row.reason = "its pieces were taken off their sheet on purpose (cleanup)"; return null; }
+    return Object.assign({}, prep, { pools, charms: prep.charms.filter(c => keep.has(c.poolId)) });
+  }
+  async function makePool(row, run) {
     const sp = row.spec;
     // a custom line whose QR label is being printed (Custom Orders) waits: printed, it is completed by hand, not cut
     if (window.CustomPrint && CustomPrint.printing(row.key)) return null;
@@ -2634,6 +2643,7 @@ const Gate = window.Gate = (() => {
     return !sh.recalled && !committedSheet(sh) && !(B.run && (["complete","abandoned"].includes(B.run.status) || committing(B.run)));
   }
   function projectLibraryRecords(rows) {
+    window.Cleanups?.seen(rows);   // a sheet here whose record carries a cleanup this page has not applied gets it
     const run = B.run; if (!run || !modern(run.runId) || ["complete","abandoned"].includes(run.status)) return rows;
     const set = Sets.ofRun(run.runId).find(s=>s.group==='dispatch');
     return rows.map(row=>{
@@ -6773,7 +6783,21 @@ const CustomSheet = window.CustomSheet = (() => {
     return idx;
   }
   const sentOf = row => (row && index().get(row.key)) || null;
-  const piecesOf = row => { const e = sentOf(row); return e ? (e.sent.lines[row.key] || []).length : 0; };
+  // (a piece a cleanup took off its sheet on purpose stays in its line's list, so the copies keep their numbers, marked
+  //  `removed`: it is not counted, and the pool never makes it again, Pool.preparePool)
+  const piecesOf = row => { const e = sentOf(row); return e ? (e.sent.lines[row.key] || []).filter(pc => !(pc && pc.removed)).length : 0; };
+  /** Pieces a cleanup took off their sheet on purpose (Cleanups): each marked on the line it was sent for (a pool id is
+   *  the line's key and the copy's number). Returns how many were marked. */
+  function dropPieces(poolIds, why) {
+    let n = 0;
+    for (const id of poolIds || []) {
+      const m = /^(.+)_(\d+)$/.exec(String(id)); if (!m) continue;
+      const e = index().get(m[1]), list = e && e.sent && e.sent.lines[m[1]], pc = list && list[+m[2] - 1];
+      if (pc && !pc.removed) { pc.removed = why || true; n++; }
+    }
+    if (n) changed();
+    return n;
+  }
   /** The metal of a sent line's first piece: the line reads as that metal (lists, the day's plan). */
   const metalOfRow = row => { const e = sentOf(row), pc = e && (e.sent.lines[row.key] || [])[0], F = pc && e.files.find(x => x.id === pc.f); return (F && F.metal) || null; };
   /** Every line of the card that can still take designs: not on a sheet, not completed. */
@@ -6927,7 +6951,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
-    let flying = false, snap = null;
+    let flying = false, snap = null, holdKey = "";
+    const letGo = () => { if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 0); holdKey = ""; };
     try {
       // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
       for (const F of e.files) {
@@ -6940,6 +6965,10 @@ const CustomSheet = window.CustomSheet = (() => {
       // the Send to Sheet tour (charm-nest-tour.js, Paul 29 Sep 00:25) keeps where the order started: a lifted copy of
       // its card, made before the list is redrawn without it
       const touring = tourOk(); if (touring && !how.from) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
+      // the card keeps its place in its list while the tour carries it (the list holds it: Motion.carry), pressed in the
+      // order window over it or with reduced motion too; the tour lets go once home
+      holdKey = touring ? cardNode(ck)?.dataset.mkey || "" : "";
+      if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 30000);
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
@@ -6966,12 +6995,13 @@ const CustomSheet = window.CustomSheet = (() => {
       if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
       else {
         if (snap && snap.ghost) snap.ghost.remove();
+        letGo();   // (no tour: the list takes the card where it goes now)
         if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
         else if (!how.from && toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;   // (under a window it would not be seen)
         else toast(words, "ok", 6000);
       }
     } catch (err) {
-      busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
+      busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); letGo(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
     } finally { if (!flying) redraw(); }
   }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
@@ -7437,7 +7467,7 @@ const CustomSheet = window.CustomSheet = (() => {
     }, delay || 0);
     return true;
   }
-  return { add, send, prepare, sentOf, piecesOf, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
+  return { add, send, prepare, sentOf, piecesOf, dropPieces, metalOf: metalOfRow, cardOf, stamp, stripHtml, buttonsHtml, wire, open, shut, prune, notReady, isOpen: () => !!(D.dlg && D.dlg.open), entries: all };
 })();
 
 /* ═══ 23b · Custom Orders — is this line a custom order? ════════════════════
@@ -8265,8 +8295,10 @@ const Review = window.Review = (() => {
     if(was){const pair=was.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     settledRows.set(d, node); return node;
   }
-  function render() {
-    if(window.CharmNestInteraction?.defer('review-view',render))return;
+  /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
+  function render(opts) {
+    opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
+    if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
@@ -8359,10 +8391,24 @@ const Review = window.Review = (() => {
     };
     const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
-    const sameView = host._mView === view && host.childElementCount > 0; host._mView = view;
+    // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
+    // a custom order moves to the foot of its list, and one answered leaves it, its place held empty. Nothing moves
+    // under the coin (Paul, 29 Sep 01:30); the tour lets go once home, out of sight, and the list is laid out anew then.
+    if (window.Motion && Motion.carrying) {
+      const had = [...host.children].filter(n => n.dataset && (n.dataset.mkey || n.dataset.holdKey));
+      had.forEach((n, i) => {
+        const k = n.dataset.mkey || n.dataset.holdKey; if (!Motion.carrying(k)) return;
+        const j = desired.findIndex(x => x.node.dataset.mkey === k), at = Math.min(i, desired.length);
+        if (j >= 0) { if (j !== i) desired.splice(at, 0, desired.splice(j, 1)[0]); return; }
+        const cs = getComputedStyle(n), gap = el("div", "rvHold"); gap.dataset.holdKey = k; gap.setAttribute("aria-hidden", "true");
+        Object.assign(gap.style, { height: n.getBoundingClientRect().height + "px", marginTop: cs.marginTop, marginBottom: cs.marginBottom, pointerEvents: "none" });
+        desired.splice(at, 0, { it: null, node: gap });
+      });
+    }
+    const sameView = !opts.still && host._mView === view && host.childElementCount > 0; host._mView = view;
     if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
     else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
-    for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
+    for (const {it,node} of desired) { if(!it)continue; const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
@@ -11182,7 +11228,7 @@ const Kin = window.Kin = (() => {
 /* Durable workspace: large geometry stays in IndexedDB, never in the small localStorage quota.
    It is a checkpoint, not a second execution engine. Reload reconstructs PDF objects from the original bytes. */
 const Session = window.Session = (() => {
-  let dbP, db0 = null, ready = false, timer = 0, chain = Promise.resolve(), saving = false, forced = false, listening = false, quiet = false;
+  let dbP, db0 = null, ready = false, timer = 0, chain = Promise.resolve(), saving = false, forced = false, listening = false, quiet = false, early = false;
   const key = () => WORKSPACE_SANDBOX ? "sandbox" : "production";
   /* The sorter stays on for days (Paul, 24 Sep: "everything must be able to stay on indefinitely"). A checkpoint copies
      every sheet, order and decision, and one used to be written a second after every change, back to back while a sheet
@@ -11315,7 +11361,7 @@ const Session = window.Session = (() => {
     return { v: 1, at: Date.now(), packingCatalog:copy(S.packingCatalog, seen), carry: copy(B.carry, seen), run: runCopy(seen), orders: copy(B.orders, seen),
       sources: copy(S.sources, seen), poolSources: copy(poolSourcesInUse(), seen), unassigned: copy(S.unassigned, seen),
       sheets: METALS.map(m => ({ metal: m.key, active: S.sheets[m.key].active, pages: allSheets().filter(p => p.metal === m.key).map(p => copy(p, seen)) })),
-      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
+      pools: copy(B.pool.rows, seen), sets: copy(B.sets, seen), customDesigns: copy(B.customDesigns || {}, seen), cleared: copy(B.cleared || {}, seen), jobs: [...B.engrave.items.values()].map(j => ({...copy(j, seen), ...(j.editingBack ? {editRow:copy(j.row, new WeakMap())} : {})})),
       review: B.review.items.map(it => Object.assign(copy(it, seen), { rowKey: it.row?.key, jobKey: it.job?.key })),
       mode: S.mode, orderViewVersion: 1, orderView: copy(Orders.view()), engravingView: copy(Engrave.view?.()), reviewView: copy(Review.view?.()), settled: copy(Review.settled?.()), gate: copy(Gate.state()), recall: copy(Recall.state()), logs: copy(LiveStrip.rows) };
   }
@@ -11357,7 +11403,8 @@ const Session = window.Session = (() => {
   }
   /** flush(true) writes now (after a pass in flight); flush() only when something changed and the pace allows. */
   function flush(force) {
-    clearTimeout(timer); timer = 0; if (!ready) return chain;
+    // (a save asked for before the page listens, a cleanup put on the restored workspace: made as soon as it does)
+    clearTimeout(timer); timer = 0; if (!ready) { if (force) early = true; return chain; }
     if (force) forced = true;
     else if (rev === savedRev) return chain;
     else if (due() > Date.now()) { arm(0); return chain; }
@@ -11407,7 +11454,7 @@ const Session = window.Session = (() => {
       B.run = d.run; B.orders = d.orders; B.orders.byKey = new Map(B.orders.rows.map(r => [r.key, r]));
       // the lines of orders the run is done with come back from their rows (left out of the checkpoint, runCopy)
       if (B.run?.linesFromRows) { const lines = B.run.lines || (B.run.lines = {}); for (const k of B.run.linesFromRows) { const row = B.orders.byKey.get(k); if (row) lines[k] = Orders.lineRecord(row)[1]; } delete B.run.linesFromRows; }
-      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {};
+      B.pool.rows = d.pools || new Map(); B.sets = d.sets || new Map(); B.customDesigns = d.customDesigns || {}; B.cleared = d.cleared || {};
       for (const group of d.sheets) {
         const prim = S.sheets[group.metal], card = prim.cardEl;
         const saved = group.pages[0]; Object.assign(prim, saved); prim.cardEl = card; prim.pages = [prim];
@@ -11461,6 +11508,7 @@ const Session = window.Session = (() => {
   }
   function listen() {
     ready = true;
+    if (early) { early = false; flush(true); }
     if (listening) return; listening = true;
     for (const type of ["input", "change", "pointerup", "keyup"]) document.addEventListener(type, schedule, true);
     window.addEventListener("pagehide", flushNow);
@@ -11469,6 +11517,147 @@ const Session = window.Session = (() => {
     try { navigator.storage?.persisted?.().then(p => p || navigator.storage.persist?.()).catch(() => {}); } catch (_) {}
   }
   return { copy, capture, restore, listen, flush, schedule, checkpointBest, dropBest, poolSourcesInUse, failure: () => failure || bestFailure };
+})();
+
+/* ═══ 24g · Cleanups — a change made on a saved sheet's record, put on this page's own copy of the sheet ═══════════════
+   A cleanup made in the cloud (Paul, 29 Sep: RG 14/20 Sheet 1 held a custom lion twice and a green line 2 no Cut Sheet
+   press made) leaves a `cleanup` on the sheet's record: the pieces it took off (removedPoolIds, removedCharmIds; none
+   when it only took a line off) and the green line it removed. This page keeps its own copy of the workspace (Session,
+   in IndexedDB) and opens from it, not from the cloud: that copy still showed the pieces and the line, its saves were
+   refused ("Reload the page") and a reload did not help, so Cut Sheet could not work. Now, when the page opens, when the
+   Library or a list of sheets is read, when the cloud comes back and when the tab is looked at again, a sheet here whose
+   record carries a cleanup this copy has not applied gets it, with no question and no pop-up: the pieces taken off leave
+   the sheet, the set, the pool, the order lines and the custom designs here; the sheet's green lines are read again from
+   the record (the line removed goes; line 1, roseProtectedJson, as saved); the cleanup is marked applied on the sheet
+   (sh.cleanups) and the workspace is saved as always. A sheet that lost pieces is written again at once (nested with its
+   saved lines locked, then saved), as a sheet that took a new piece is; one that only lost a line keeps its files. It is
+   driven by the record alone: a sheet whose record has no cleanup is never touched, and it keeps working once the op that
+   made the cleanup is gone. */
+const Cleanups = window.Cleanups = (() => {
+  const busy = new Map();       // sheet id ~ cleanup id → the apply under way
+  let lastLook = 0;
+  const cleared = () => B.cleared || (B.cleared = {});   // pool id → the cleanup that took it off (kept with the workspace)
+  /** A piece a cleanup took off its sheet on purpose: never made up or placed again here (Pool.preparePool). */
+  const removed = poolId => !!poolId && Object.prototype.hasOwnProperty.call(cleared(), poolId);
+  const valid = c => !!(c && typeof c.id === "string" && c.id);
+  const applied = (sh, c) => !!(sh && sh.cleanups && sh.cleanups[c.id]);
+  // a sheet being nested or written, or whose green line is being made, keeps its turn: the cleanup waits for it
+  const moving = sh => ["nesting", "finishing"].includes(sh.status) || !!sh._rosePlanning || !!sh._roseAction || !!sh._roseStep;
+  const nameOf = sh => (window.SheetEvents && SheetEvents.label(sh)) || sh.sheetId;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  /** Records read from the cloud (list entries or whole records): each sheet here whose record's cleanup it has not applied
+      gets it. Returns when those are done. */
+  function seen(rows) {
+    const out = [];
+    try {
+      for (const rec of Array.isArray(rows) ? rows : []) {
+        const c = rec && rec.cleanup, id = rec && (rec.id || rec.sheetId);
+        if (!id || !valid(c)) continue;
+        for (const sh of allSheets()) if (sh.sheetId === id && !applied(sh, c)) out.push(queue(sh, c));
+      }
+    } catch (e) { console.warn("[Cleanups]", e); }
+    return Promise.all(out);
+  }
+  /** The list entries of this page's sheets, read from the cloud and looked at (one call). wait: at most that long (ms),
+      then the caller goes on and the rest follows by itself. */
+  function check({ wait: most = 0 } = {}) {
+    if (!S.cloud.ok) return Promise.resolve();
+    const ids = [...new Set(allSheets().map(p => p.sheetId).filter(Boolean))].slice(0, 500);
+    if (!ids.length) return Promise.resolve();
+    lastLook = Date.now();
+    const task = api("charmNestLibrary", { op: "listSheets", cursor: { sheets: ids } }, { quiet: true, all: "sheets" })
+      .then(r => seen(r && r.sheets)).catch(e => console.warn("[Cleanups] the sheets could not be read", e));
+    return most > 0 ? Promise.race([task, wait(most)]) : task;
+  }
+  function queue(sh, c) {
+    const k = sh.sheetId + "~" + c.id;
+    if (!busy.has(k)) busy.set(k, run(sh, c).catch(e => { console.warn("[Cleanups]", e); agent({ metal: sh.metal }, "warn", `${nameOf(sh)}: the cloud's cleanup ${c.id} is not on this page yet (${e.message}); it is tried again when the sheets are read again`); }).finally(() => busy.delete(k)));
+    return busy.get(k);
+  }
+  async function run(sh, c) {
+    for (let tries = 0; tries < 200; tries++) {
+      if (!allSheets().includes(sh) || applied(sh, c)) return;
+      if (moving(sh)) { await wait(3000); continue; }
+      // the whole record: its green lines, and the cleanup as it stands now
+      const rec = (await api("charmNestLibrary", { op: "getSheet", id: sh.sheetId }, { quiet: true })).sheet;
+      if (!rec || !valid(rec.cleanup) || rec.cleanup.id !== c.id) return;
+      // under the sheet's own lock: nothing saves, starts or labels it meanwhile
+      const ops = window.CharmNestOperations, go = () => apply(sh, rec);
+      const done = ops ? await ops.run({ key: "cleanup:" + sh.sheetId, label: "Updating the sheet from the cloud", resources: ["production:" + (sh.runId || sh.sheetId)] }, go) : go();
+      if (done === "busy") { await wait(3000); continue; }
+      // a sheet that lost pieces is written again now, its saved lines locked (a stopped run does not hold it); its card
+      // is drawn again once it is saved, which offers its Cut Sheet (nothing else draws it then)
+      if (done && done.rewrite && allSheets().includes(sh) && sh.dirty && sh.status === "ready") { sh._byHand = true; CN.startNest(sh); saved(sh).then(() => { try { renderCard(sh); } catch (_) {} }); }
+      return;
+    }
+    throw new Error("the sheet was busy for too long");
+  }
+  /** When the sheet has been nested and its save has settled (or it did not start: nothing to nest). */
+  async function saved(sh) {
+    for (let i = 0; i < 900 && allSheets().includes(sh); i++) {
+      await wait(1000);
+      if (["nesting", "finishing", "queued"].includes(sh.status) || sh._operationStarting) continue;
+      if (sh.persisted && !sh.persistedDone) await Promise.resolve(sh.persisted).catch(() => {});
+      return;
+    }
+  }
+  function apply(sh, rec) {
+    if (!allSheets().includes(sh) || applied(sh, rec.cleanup)) return null;
+    if (moving(sh)) return "busy";
+    const c = rec.cleanup, named = new Set([].concat(c.removedPoolIds || [], c.removedCharmIds || []).filter(Boolean));
+    const off = x => !!x && (named.has(x.id) || (!!x.poolId && named.has(x.poolId)));
+    const charmIds = new Set([...(sh.charms || []).filter(off).map(x => x.id), ...(c.removedCharmIds || [])]);
+    const poolIds = new Set([...(sh.charms || []).filter(off).map(x => x.poolId).filter(Boolean), ...(c.removedPoolIds || [])]);
+    const onIt = (sh.charms || []).filter(off).length + (sh.placements || []).filter(p => p && charmIds.has(p.id)).length;
+    // 1 · the sheet: the pieces taken off leave it, and whatever of this page still names them
+    const keep = p => !(p && charmIds.has(p.id));
+    sh.charms = (sh.charms || []).filter(x => !off(x));
+    sh.placements = (sh.placements || []).filter(keep);
+    sh.rejects = (sh.rejects || []).filter(id => !charmIds.has(id));
+    for (const k of ["livePlacements", "nestInitial", "probePlaced"]) if (Array.isArray(sh[k])) sh[k] = sh[k].filter(keep);
+    if (Array.isArray(sh.feedWait)) sh.feedWait = sh.feedWait.filter(id => !charmIds.has(id));
+    if (Array.isArray(sh.backPool)) sh.backPool = sh.backPool.filter(b => !(b && poolIds.has(b.poolId)));
+    S.unassigned = (S.unassigned || []).filter(x => !off(x));
+    // 2 · the pool, the order lines and the run's, the sets, the engraving and the custom designs held here
+    for (const id of poolIds) { B.pool.rows.delete(id); cleared()[id] = c.id; }
+    const drop = list => (Array.isArray(list) && list.some(id => poolIds.has(id)) ? list.filter(id => !poolIds.has(id)) : list);
+    if (poolIds.size) {
+      for (const row of (B.orders && B.orders.rows) || []) row.poolIds = drop(row.poolIds);
+      for (const ln of Object.values((B.run && B.run.lines) || {})) if (ln) ln.poolIds = drop(ln.poolIds);
+      for (const set of B.sets.values()) for (const o of Object.values((set && set.orders) || {})) for (const ln of Object.values((o && o.lines) || {})) if (ln && Array.isArray(ln.copies)) ln.copies = ln.copies.filter(x => !(x && poolIds.has(x.poolId)));
+      for (const j of B.engrave.items.values()) j.copies = drop(j.copies);
+      try { CustomSheet.dropPieces([...poolIds], c.id); } catch (e) { console.warn("[Cleanups] custom designs", e); }
+    }
+    // 3 · the green lines as the record has them: the line taken off goes, line 1 (roseProtectedJson) as saved
+    if (sh.metal === "rose" && !sh.roseCutAt) {
+      const parse = s => { try { return s ? JSON.parse(s) : null; } catch (_) { return null; } };
+      const plan = parse(rec.rosePlanJson), guard = parse(rec.roseProtectedJson);
+      if (plan) { sh.rosePlan = plan; sh.rosePlanHash = rec.rosePlanHash || null; } else { delete sh.rosePlan; delete sh.rosePlanHash; }
+      if (guard) sh.roseProtected = guard; else delete sh.roseProtected;
+      delete sh.rosePlanKey;
+      if (rec.roseRevision != null) sh.roseRevision = rec.roseRevision;
+      if (rec.roseCutAt) sh.roseCutAt = rec.roseCutAt;
+      sh._roseError = null; sh._roseFullKey = null;
+    }
+    // 4 · a sheet that lost pieces: its files still show them, so it is written again, what it keeps staying where it is
+    const rewrite = onIt > 0 && !sh.recalled && !sh.roseCutAt && !(+sh.laserDoneAt > 0);
+    if (rewrite) {
+      Object.assign(sh, { best: null, bestResult: null, bestInfo: null, bestKey: null, _written: null, _beforeNest: null, _beforeLearned: null, problem: null, movedOn: null, dirty: true });
+      sh.appendOnly = sh.intakeAppend = sh.placements.length > 0;
+      if (sh.status !== "queued") sh.status = activeCharms(sh).length ? "ready" : "idle";
+    }
+    // 5 · applied here, and saved as always
+    sh.cleanups = Object.assign({}, sh.cleanups, { [c.id]: { at: Date.now(), mode: c.mode || null, removedPoolIds: [...poolIds] } });
+    try { computeSaturation(sh); renderCard(sh); drawPreview(sh); } catch (e) { console.warn("[Cleanups] card", e); }
+    try { Orders.render(); Review.render(); RunCtl.renderBanner(); } catch (_) {}
+    Session.schedule(); Session.flush(true);
+    const n = onIt ? charmIds.size : 0;
+    agent({ metal: sh.metal }, "ok", `${nameOf(sh)}: the cloud's cleanup (${c.id}) is on this page now${n ? ` · ${n === 1 ? "1 piece" : n + " pieces"} taken off` : ""}${c.lineRemoved ? ` · green line ${c.lineRemoved} removed` : ""}${c.lineKept ? `, line ${c.lineKept} as saved` : ""}${rewrite ? " · the sheet is written again" : ""}`);
+    return { rewrite };
+  }
+  // the tab looked at again: once a minute at most
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastLook > 60000) check().catch(() => {}); });
+  return { check, seen, removed, apply: (sh, rec) => apply(sh, rec) };
 })();
 
 /* Import cadence is independent of run completion. The cloud ledger counts receipt IDs, not API calls. */
@@ -12097,6 +12286,9 @@ async function bootBridge() {
   let recovered = false, recoveryFailed = false;
   try { recovered = await Session.restore(); }
   catch (error) { recoveryFailed = true; console.error("Workspace recovery failed; checkpoint retained", error); }
+  // a cleanup made in the cloud on a sheet this saved workspace still shows as it was goes on it first (Cleanups), before
+  // anything below saves, labels or nests it; a slow cloud is waited for a few seconds, then it follows by itself
+  if (recovered) await Cleanups.check({ wait: 8000 }).catch(() => {});
   // Never overwrite a checkpoint with a partially restored workspace or start
   // an automatic run over it. Navigation and the saved Library remain usable.
   if (!recoveryFailed) {
@@ -12129,6 +12321,7 @@ async function bootBridge() {
      for it are written, and the bridge log kept meanwhile is sent. */
   window.addEventListener("cn-cloud-back", () => {
     Orders.loadMaps().catch(() => {}); Master.load().catch(() => {}); offerRuns();
+    Cleanups.check().catch(() => {});
     if (B.run && B.run.saveError) RunCtl.save(B.run).catch(() => {});
     if (!recoveryFailed) Engrave.resumeBacks();
     DesignLink.flushLog();
