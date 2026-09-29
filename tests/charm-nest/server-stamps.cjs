@@ -190,7 +190,7 @@ const T = Date.now() - 3600e3;
     placements: [{ id: 'pool-1', cxPt: 20, cyPt: 20, angle: 0, scale: 1 }], outputs: { ai: { url: 'saved.ai' }, preview: { url: 'saved.png' } }, label: { files: [{ path: 'qr', url: 'qr.png', payload: 'x', orders: [R7] }] }, orders: [R7] };
   const claim = await ok({ op: 'roseClaim', sheetId: rose.id, wPt: 100, hPt: 50 });
   store.set('Charm_Nest_Sheets/' + rose.id, rose);
-  const plan = await ok({ op: 'rosePlan', sheetId: rose.id, stockId: claim.stock.id, revision: 0, fingerprint: create.fingerprint(rose), shapesJson: JSON.stringify(shapes), allowanceMm: 0.2 });
+  const plan = await ok({ op: 'rosePlan', sheetId: rose.id, stockId: claim.stock.id, revision: 0, fingerprint: create.fingerprint(rose), shapesJson: JSON.stringify(shapes), allowanceMm: 0.2, cut: true });
   const saved = store.get('Charm_Nest_Sheets/' + rose.id);
   assert(Readiness.sheet({ ...saved, engraving: Readiness.decisions(Object.values(store.get('Charm_Nest_Runs/run-rose').lines)) }).ready, 'the fixture passes the production checks');
   const cutArgs = { op: 'roseRecordCut', sheetId: rose.id, stockId: claim.stock.id, revision: 0, planHash: plan.planHash, by: 'Kim' };

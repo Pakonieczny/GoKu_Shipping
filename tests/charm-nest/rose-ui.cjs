@@ -25,7 +25,9 @@ w.eval(fs.readFileSync('charm-nest-rose-ui.js','utf8'));
  sh.status='nesting';w.CN.renderCard(sh);assert(!width.disabled,'background work does not prevent editing a draft');assert(sh.el.querySelector('[data-solid="size"]').disabled);sh.status='complete';
  assert(!sh.el.textContent.includes('Physical sheet'));assert(!sh.el.querySelector('[data-rose-release]'));
 
- await w.RoseStock.plan(sh);assert(sh.rosePlan.lines.length);assert(!/mm contour allowance ·|remaining after this cut/.test(sh.el.textContent),'no allowance or remaining-area line');assert.equal(calls.filter(x=>x==='rosePlan').length,1);
+ // only a Cut Sheet press adds a green line (Paul, 29 Sep): any other contour request for these uncut charms asks nothing
+ await w.RoseStock.plan(sh);assert(!sh.rosePlan&&!calls.includes('rosePlan'),'no line without Cut Sheet');
+ await w.RoseStock.plan(sh,{cut:true});assert(sh.rosePlan.lines.length);assert(!/mm contour allowance ·|remaining after this cut/.test(sh.el.textContent),'no allowance or remaining-area line');assert.equal(calls.filter(x=>x==='rosePlan').length,1);
  // an allowance outside 0.05 to 2 mm goes back to the one in use, and the operator is told the range
  allowance.value='5';allowance.dispatchEvent(new w.Event('change'));assert.equal(allowance.value,'0.2');assert.match(allowance.title,/0\.05 to 2 mm/);assert(toasts.some(([m,k])=>k==='bad'&&/stays 0\.2 mm: it can be 0\.05 to 2 mm/.test(m)),'the range is named');assert.equal(calls.filter(x=>x==='rosePlan').length,1,'an out-of-range allowance plans nothing');
  // the busy line names the step under way
