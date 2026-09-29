@@ -132,6 +132,12 @@
     t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => { if (t.ff) { setTimeout(() => res(null), Math.min(ms, 600)); return; } const w = () => { clearTimeout(h); t.wakes.delete(w); res(null); }, h = setTimeout(w, ms); t.wakes.add(w); })]);
     return t;
   }
+  /** The tour skipped when the press now down is over (its click has been dealt by then), never before. */
+  function afterPress(t) {
+    const evs = ["pointerup", "pointercancel"], off = () => evs.forEach(ev => removeEventListener(ev, up, true));
+    const up = () => { off(); setTimeout(() => t.forward(), 0); };
+    evs.forEach(ev => addEventListener(ev, up, true)); t.off.push(off);
+  }
   /** A click, a key or Esc anywhere: the rest lands at once and the tour goes home. A tab picked: the tour ends there. */
   function listen(t, home) {
     const tabOf = e => e.target && e.target.closest && e.target.closest(".topbar [data-mode], #moreMenu [data-mode]");
@@ -140,9 +146,11 @@
       if (tabOf(e)) { t.userTab = true; unpark(t); t.forward(); return; }
       if (t.ff) return;
       // a press on the view it goes home to, while that view is still in sight, is the person's own: it goes through
-      // (not while a window waits to come back over it: it would open a second one)
+      // (not while a window waits to come back over it: it would open a second one), and the tour skips once the press
+      // is over: skipped at the press itself, the list was laid out anew (settleList) before the button came up, and
+      // the click was lost (pressed on one button, released on its replacement: the Completed switch did nothing)
       const v = viewOf(home.mode);
-      if (!t.win && modeNow() === home.mode && v && e.target && v.contains(e.target)) { t.forward(); return; }
+      if (!t.win && modeNow() === home.mode && v && e.target && v.contains(e.target)) { afterPress(t); return; }
       swallow = Date.now() + 700; e.preventDefault(); e.stopPropagation(); t.forward();
     };
     const click = e => { if (Date.now() < swallow && !tabOf(e)) { e.preventDefault(); e.stopPropagation(); swallow = 0; } };
