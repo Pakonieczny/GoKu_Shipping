@@ -283,8 +283,10 @@
    *  and clipped to the stage, it keeps the screen filled until the new view has been drawn. */
   function holdView(t, n, mode) {
     const r = rectOf(n), st = rectOf($("#stage")); if (!r) return null;
-    const h = { n, mode, style: n.getAttribute("style") || "" };
+    const h = { n, mode, style: n.getAttribute("style") || "" }, disp = getComputedStyle(n).display;
     n.classList.add("tourHold");
+    // (it keeps its box while its tab is changed: hidden and shown again, it was laid out anew in the switch's own frame)
+    if (disp && disp !== "none") n.style.setProperty("display", disp, "important");
     const clip = st ? `inset(${Math.max(0, st.top - r.top)}px ${Math.max(0, r.right - st.right)}px ${Math.max(0, r.bottom - st.bottom)}px ${Math.max(0, st.left - r.left)}px)` : "none";
     Object.assign(n.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", clipPath: clip });
     // (fixed to the window, unless something up the tree makes it its own: then by the difference it landed off by)
@@ -329,6 +331,9 @@
     }
     const fin = ins.map(a => a.finished.catch(() => {}).then(() => { t.anims.delete(a); a.cancel(); }));
     for (const x of outs) x.cancel();
+    // the new view's first layout (the tab change) has this frame to itself; what it is set up with comes after it is
+    // painted (a frame, then a task of its own: the switch itself runs in the frame's animation update)
+    if (prepare && !t.ff) await new Promise(res => requestAnimationFrame(() => setTimeout(res, 0)));
     if (prepare) await Promise.resolve(tryDo(prepare)).catch(() => {});
     if (mode === "nest") drawNow();
     await painted(t);
