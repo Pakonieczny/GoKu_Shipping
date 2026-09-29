@@ -742,7 +742,7 @@ const receipts = [
       assert(/^SKU: /.test(win.sku) && win.metal, 'with the SKU and the metal');
       assert(['Quantity', 'Metal', 'State', 'Ship by', 'Listing', 'Title'].every(k => win.meta.includes(k)), 'and the details: ' + win.meta.join(','));
       assert(win.note && win.thread && win.composer && win.attach && win.photo, 'the staff note, the thread, the composer and the picture are all there');
-      assert(win.fix, 'and the decision the line is waiting on is answered from inside the window');
+      assert(!win.fix, 'and no decision box in the window (Paul, 28 Sep 16:45 and 29 Sep 01:01): its Review card\'s buttons deal with it');
       assert(win.box.w <= win.box.inW && win.box.h <= win.box.inH, `the window fits the screen: ${win.box.w}x${win.box.h} in ${win.box.inW}x${win.box.inH}`);
       // a staff note typed here reaches the station
       const noted = await page.evaluate(async () => {

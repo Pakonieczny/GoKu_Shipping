@@ -55,9 +55,11 @@ const firstPair=()=>w.document.querySelector('#ordersView .comparePair');
  w.document.querySelector('.listMore').click();await wait(20);assert.equal(w.document.querySelectorAll('.orderListRow').length,96);
  w.qa.show('review');assert.equal(w.document.querySelectorAll('#rvList .reviewListRow').length,40);
  assert.equal(w.document.querySelectorAll('#rvList .rvItem').length,0,'controls are built only when opened');
- const btn=w.document.querySelector('[data-review-open]');btn.click();assert.equal(btn.getAttribute('aria-expanded'),'true');assert.ok(w.document.querySelector('.reviewDetails .rvItem'));
+ // no "Review & resolve" (Paul, 29 Sep): a card opens its order, whose window shows its question (Review.cardIn)
+ assert.equal(w.document.querySelector('[data-review-open]'),null,'no Review & resolve');
+ const rvHost=w.document.createElement('div');w.document.body.append(rvHost);const first=w.Review.items().find(x=>!String(x.key).startsWith('eng:'));w.Review.cardIn(rvHost,first);assert.ok(rvHost.querySelector('.rvItem'));
  assert.match(w.document.querySelector('.groupScope').textContent,/2 orders · 2 lines/);
- const text=w.document.querySelector('.reviewDetails input');if(text)text.value='Keep my edit';w.Review.render();if(text)assert.equal(w.document.querySelector('.reviewDetails input')?.value,'Keep my edit','refresh retains edits');
+ const text=rvHost.querySelector('input');if(text)text.value='Keep my edit';w.Review.render();w.Review.cardIn(rvHost,first);if(text)assert.equal(rvHost.querySelector('input')?.value,'Keep my edit','refresh retains edits');
  w.document.querySelector('#rvList .listMore').click();await wait(25);assert.equal(w.document.querySelectorAll('#rvList .reviewListRow').length,80);
  w.qa.show('engrave');assert.equal(w.document.querySelectorAll('.placementRow').length,40);assert.equal(w.document.querySelectorAll('.placementRow [data-listing]').length,40);
  const erow=w.document.querySelector('.placementRow');w.Engrave.render();assert.equal(w.document.querySelector('.placementRow'),erow,'background updates preserve row identity');
