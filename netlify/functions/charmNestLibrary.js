@@ -1627,6 +1627,8 @@ async function op_laserDone(b) {
   if (!kind || !isId(id)) return { error: "bad sheet or set id" };
   const done = b.done !== false && b.done !== "false", by = str(b.by, 80).trim(), at = Date.now();
   if (done && !by) return { error: "Say who marked it completed" };
+  // where it was marked, for the orders' timelines (station tracking B): the page (device) and its view (via)
+  const device = str(b.device, 40).replace(/[^\w.-]/g, ""), via = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
   const mark = done ? { laserDoneAt: at, laserDoneBy: by } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() };
   const res = await db.runTransaction(async tx => {
     let setRef = null, set = null;
@@ -1639,7 +1641,7 @@ async function op_laserDone(b) {
     if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set") return { error: "There is no such set", status: 404 }; else setRef = null; }
     const ids = set ? [...new Set(set.sheetIds || [])].filter(isId).slice(0, 300) : [];
     // (with what the orders' timelines say of each sheet: its orders, its label and the mark it had)
-    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
+    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "poolIds", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     // every read is made: the writes follow
     const touched = [], write = ref => tx.set(ref, Object.assign({}, mark, { updatedAt: FV.serverTimestamp() }), { merge: true });
@@ -1652,7 +1654,9 @@ async function op_laserDone(b) {
       if (setDone !== was) tx.set(setRef, Object.assign({}, setDone ? { laserDoneAt: at, laserDoneBy: by || set.laserDoneBy || null } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() }, { updatedAt: FV.serverTimestamp() }), { merge: true });
     }
     const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
-    const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: Array.isArray(d.orders) ? d.orders : [], d }; });
+    // (a sheet saved without its `orders` list still names them in its pieces' pool ids, "rid_tid_copy")
+    const ordersOf = d => Array.isArray(d.orders) && d.orders.length ? d.orders : (Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey).filter(Boolean);
+    const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: ordersOf(d), d }; });
     return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks };
   });
   if (res.error) return res;
@@ -1662,8 +1666,8 @@ async function op_laserDone(b) {
   await stamp(() => marks.filter(m => (done ? !(m.was > 0) : m.was > 0)).flatMap(m => {
     const sheet = sheetLabel(m.d), orders = [...new Set(m.orders.map(String))].slice(0, 300);
     return orders.map(orderId => done
-      ? { orderId, type: "laserDone", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, id: `${m.sheetId}-${at}` }
-      : { orderId, type: "note", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy }, id: `laserUndone-${m.sheetId}-${m.was}` });
+      ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: { signedIn: true, marked: kind, via: via || undefined }, id: `${m.sheetId}-${at}` }
+      : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
   return Object.assign(res, { counts: await doneCounts() });
 }
