@@ -2246,13 +2246,13 @@ function servingStoredHtml(s){var k=servingClass(s),run='<button type="button" c
     +((s.top||[]).length?'<ul>'+s.top.map(function(f){var b=f.level==="block";return '<li><span class="badge2 '+(b?'b-bad':'b-warn')+'" style="margin-right:6px">'+(b?'Stops it':'Fix first')+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)+'</li>';}).join('')+'</ul>':'')
     +'<div class="servMeta">'+esc(servingSourceText(s)+(servingWhen(s)?', '+servingWhen(s):''))+(s.settling?'; Google was still processing the change':'')+(servingChanged(s)?'; the campaign changed after this check':'')+(s.lastAttempt?'; a later check could not read the campaign':'')+'. Check again for Google’s reasons and every setting it holds.</div>';}
 function servingBoxHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";return '<div class="servbox" data-sc="'+esc(String(c.id))+'">'+servingStoredHtml(servingOf(c.id))+'</div>';}
-// Asks Google now (campaignTimeline's serving result, which the server also keeps for the badge).
+// Asks Google now (servingCheck: the serving check alone, which the server also keeps for the badge).
 // SERV_ASK holds the campaigns being asked: a refresh that redraws the table keeps the spinner on the
 // new button, and the answer lands in the box on screen.
 var SERV_ASK={};
 async function loadServing(box){if(!box)return;var id=box.getAttribute("data-sc");if(SERV_ASK[id])return;SERV_ASK[id]=1;
   var done=btnBusy(box.querySelector(".servRun"),"Asking Google…"),live=function(){var now=!box.isConnected&&document.querySelector('.servbox[data-sc="'+id+'"]');if(now){box=now;done=function(){box.innerHTML=servingStoredHtml(servingOf(id));};}delete SERV_ASK[id];return box;};
-  try{var t=await api("campaignTimeline",{id:id});if(!t||t.error)throw new Error(t&&t.error||"Google did not answer.");
+  try{var t=await api("servingCheck",{id:id});if(!t||t.error)throw new Error(t&&t.error||"Google did not answer.");
     var s=t.serving||null;
     if(servingClass(s)&&typeof DASH!=="undefined"&&DASH){DASH.servingChecks=DASH.servingChecks||{};
       DASH.servingChecks[String(id)]={verdict:s.verdict,headline:s.headline||"",counts:s.counts||null,top:(s.findings||[]).filter(function(f){return f.level!=="note";}).slice(0,3),source:"console",checkedAt:s.checkedAt||new Date().toISOString(),settling:false,partial:!!s.partial,lastAttempt:null};}
@@ -2374,7 +2374,7 @@ async function cmdEditStatus(){var x=CMD_EDIT;if(!x||x.busy)return;var id=x.id,t
     cmdEditSaved(x,!dry);if(!dry)try{renderDiag();}catch(e){}
     toast(dry?(to==="PAUSED"?"Pause":"Enable")+" validated — "+nm+" (dry-run — not applied to Google)":(to==="PAUSED"?"Paused ✓":"Enabled ✓")+" — "+nm+(r2&&r2.endDate?" · runs to "+r2.endDate:""));
   }catch(e){cmdEditFail(x,"Status change failed: "+(e.message||e));}}
-// Google serving check (campaignTimeline's read-only "serving" result): what Google holds for the
+// Google serving check (the servingCheck action's read-only result): what Google holds for the
 // campaign now and what would stop it serving as intended, with Google's own reasons.
 var SERV_LV={block:["Stops it","b-bad"],risk:["Fix first","b-warn"],note:["Note","b-learn"]};
 function renderServing(s){
