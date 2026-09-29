@@ -48,7 +48,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -905,7 +905,21 @@ async function op_poolUpdate(b) {
   for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
   if (told) await stamp(() => poolEvents(ids, p, before, b), "pool");
+  if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, before, b);
   return { ok: true, count: ids.length };
+}
+/* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
+   they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).
+   Only a record already there: a person's cancel writes its record after the take-off, and adds its sheets then
+   (cancelFates). Never fails the op. */
+async function noteCancelRemovals(ids, p, before, b) {
+  try {
+    for (const e of poolEvents(ids, p, before, b).filter(e => e.type === "removed").slice(0, 20)) {
+      const where = str(e.sheet, 100);
+      await OrderCancel.noteRemovals(db, e.orderId, [where ? { id: `sheet~${where}`, at: e.at, where, kind: "sheet", outcome: "removed", by: e.by, lineKey: e.lineKey, text: `taken off ${where}` }
+        : { id: `pool~${e.at}`, at: e.at, where: "the pool", kind: "pool", outcome: "removed", by: e.by, lineKey: e.lineKey, text: "taken out of the pool" }], { prefix: PREFIX });
+    }
+  } catch (e) { console.warn("[charmNestLibrary] cancel record: removal not noted:", (e && e.message) || e); }
 }
 async function op_poolList(b) {
   let q = col(POOL);
@@ -2069,8 +2083,9 @@ async function op_sandboxCancel(b) {
 }
 /* What became of a cancelled order's pieces, sheet by sheet ({orderId, fates:[{sheet, fate: "removed"|"cut", text}]}): the
    sorter's AutoCancel and its sheet window write it on the record (the Cancelled tab reads it); see _orderCancel.noteFates. */
+// (removals: [{ id, at, where, kind, outcome, by, text, lineKey, station }], see _orderCancel.noteRemovals; by: who)
 async function op_cancelFates(b) {
-  const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX });
+  const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX, by: str(b.by, 80), removals: Array.isArray(b.removals) ? b.removals : [] });
   if (out && out.ok && !out.missing) await cancelSteps(b);
   return out;
 }
@@ -2100,16 +2115,22 @@ async function cancelSteps(b) {
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
 async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false }); }   // recorded + derived from the records already kept
-async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX }); }
+// (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
+async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
-   record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel. */
+   record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel.
+   The whole record (its lines, fates and removals, which the event's 2 KB may not hold) is kept for good in
+   Charm_Nest_Cancelled_History/{id}~{at}, in the same batch as the delete: no restore loses it. */
+const CANCEL_HISTORY = "Charm_Nest_Cancelled_History";
 async function op_cancelRestore(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
   const ref = col(CANCELLED).doc(id);
   let rec = null; try { const s = await ref.get(); rec = s.exists ? s.data() : null; } catch (e) { console.warn("[charmNestLibrary] cancel record not read for the timeline:", e.message || e); }
   if (rec) await stamp(() => { const c = cancelCopy(rec); return { orderId: id, type: "cancelRestored", by: str(b.by, 80) || "operator", station: "sorter", sheet: str((c.sheets || []).join(", "), 80),
     text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
-  await ref.delete(); return { ok: true };
+  const batch = db.batch();
+  if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
+  batch.delete(ref); await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
 function cancelCopy(r) {
@@ -2119,7 +2140,11 @@ function cancelCopy(r) {
   if (!fits() && lines()) x.lines = x.lines.map(l => Object.assign({}, l, { title: str(l && l.title, 40) }));
   if (!fits() && lines()) x.lines = x.lines.map(l => { const o = Object.assign({}, l); delete o.title; return o; });
   if (!fits() && Array.isArray(x.sheets)) x.sheets = x.sheets.slice(0, 6);
+  // (the removals, where and how each went, stay before the lines: the whole record is in Charm_Nest_Cancelled_History)
+  if (!fits() && Array.isArray(x.removals)) x.removals = x.removals.map(r => ({ where: str(r && r.where, 60), outcome: str(r && r.outcome, 12), at: num(r && r.at) }));
+  if (!fits() && Array.isArray(x.fates)) delete x.fates;
   while (!fits() && lines() && x.lines.length) { x.lines.pop(); x.linesLeftOut = (x.linesLeftOut || 0) + 1; }
+  while (!fits() && Array.isArray(x.removals) && x.removals.length) { x.removals.pop(); x.removalsLeftOut = (x.removalsLeftOut || 0) + 1; }
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }

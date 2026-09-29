@@ -2958,8 +2958,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      *  server's stepId), so a retry or a later "Set aside" says how the same step stands now, never a second one. */
     function step(rid, cancelAt, place, outcome, by, text) {
       if (!rid || !(+cancelAt > 0) || !place) return;
-      tl({ orderId: String(rid), type: "cancelStep", by: by || "", sheet: String(place).slice(0, 80), text: String(text || "").slice(0, 200), id: `cx-${Math.round(+cancelAt)}-${String(place).slice(0, 80)}`,
-        data: { outcome, done: outcome === "removed" || outcome === "setAside", sheet: String(place).slice(0, 80), cancelAt: Math.round(+cancelAt) } });
+      const where = String(place).slice(0, 80), kind = /^the queue$/i.test(where) ? "queue" : "sheet";
+      tl({ orderId: String(rid), type: "cancelStep", by: by || "", sheet: where, text: String(text || "").slice(0, 200), id: `cx-${Math.round(+cancelAt)}-${where}`,
+        data: { outcome, done: outcome === "removed" || outcome === "setAside", sheet: where, kind, cancelAt: Math.round(+cancelAt) } });
+      // and on the cancel record's own list of removals (_orderCancel.noteRemovals), under the id its fates use: the
+      // record alone tells the story, with who
+      api("charmNestLibrary", { op: "cancelFates", orderId: String(rid), fates: [], by: by || "", removals: [{ id: `${kind}~${where}`, where, kind, outcome, by: by || "", text: String(text || "").slice(0, 160) }] }, { quiet: true })
+        .catch(e => console.warn("cancel step on its record", e.message));
     }
     // where a removed order is seen going: Orders › Cancelled when it shows, else the Orders tab
     const target = () => { const p = document.querySelector('#ordChips [data-pile="cancelled"]'); return p && p.getClientRects().length ? p : document.querySelector('#modeSeg [data-mode="orders"]'); };

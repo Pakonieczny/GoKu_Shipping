@@ -135,7 +135,11 @@ async function cancelCheck(db, ids, opts = {}) {
   if (!list.length) return { cancelled: {} };
   const refs = list.map(id => db.collection((opts.prefix || "") + CANCELLED).doc(id));
   const docs = await db.getAll(...refs), cancelled = {};
-  for (const d of docs) if (d.exists) { const x = d.data(); cancelled[d.id] = { at: n(x.at), by: s(x.by, 80), why: s(x.why, 400), source: s(x.source || (x.by === "Etsy" ? "etsy" : "sorter"), 20), sheets: Array.isArray(x.sheets) ? x.sheets.slice(0, 30) : [] }; }
+  for (const d of docs) if (d.exists) {
+    const x = d.data(); cancelled[d.id] = { at: n(x.at), by: s(x.by, 80), why: s(x.why, 400), source: s(x.source || (x.by === "Etsy" ? "etsy" : "sorter"), 20), sheets: Array.isArray(x.sheets) ? x.sheets.slice(0, 30) : [] };
+    // full (the sorter's library door only; a station's door never asks): the whole record, its lines, fates and removals
+    if (opts.full) { const w = Object.assign({}, x); delete w.createdAt; cancelled[d.id] = Object.assign(w, cancelled[d.id]); }
+  }
   return { cancelled, now: Date.now() };
 }
 
@@ -211,26 +215,36 @@ function cancelEventsOf(id, c) {
   const etsy = c.by === "Etsy" || c.source === "etsy", seenAt = msOf(c.createdAt);
   const out = [{ orderId: id, type: etsy ? "etsyCancelled" : "cancelled", at, by: s(c.by, 80) || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "sorter", id: "d-cancel",
     text: `${etsy ? "Cancelled on Etsy" : "Cancelled by " + (c.by || "someone")}${c.why ? ": " + c.why : ""}`, data: Object.assign({ why: s(c.why, 400), sheets: Array.isArray(c.sheets) ? c.sheets.slice(0, 30) : [] }, etsy && seenAt ? { seenAt } : {}) }];
-  // what became of its pieces on each sheet (the record's fates, _orderCancel.noteFates), for a cancel whose steps were
-  // not recorded (Paul, 29 Sep 00:26): a removal is read from the pieces' own records, so only what stayed is added here
-  for (const f of (Array.isArray(c.fates) ? c.fates : []).slice(0, 30)) {
-    if (!f || !f.sheet || f.fate === "removed") continue;
-    const st = cancelStepOf(f);
-    out.push({ orderId: id, type: "cancelStep", at: n(f.at) || at, by: s(f.by, 80), source: "sorter", station: "sorter", sheet: s(f.sheet, 80), id: `d-fate-${s(f.sheet, 80)}`, text: st.text, data: { outcome: st.outcome, sheet: s(f.sheet, 80), approx: !n(f.at) } });
+  // what the cancel took off and from where, as the record keeps it (its removals, _orderCancel.noteRemovals; an older
+  // record: its fates), each a step (Paul, 29 Sep 00:26). A step recorded on the timeline, or the pieces' own removal
+  // from that place, says the same and wins (dedupe, sameEvent); a station's "seen" is its own cancelAlert event.
+  const rems = Array.isArray(c.removals) && c.removals.length ? c.removals.filter(r => r && r.outcome !== "seen")
+    : (Array.isArray(c.fates) ? c.fates : []).map(f => f && { id: `sheet~${f.sheet}`, where: f.sheet, kind: "sheet", fate: f.fate });
+  for (const r of rems.slice(0, 60)) {
+    const where = s(r && (r.where || r.sheet), 80); if (!where) continue;
+    const st = cancelStepOf(Object.assign({}, r, { sheet: where }));
+    out.push({ orderId: id, type: "cancelStep", at: n(r.at) || at, by: s(r.by, 80), source: "sorter", station: STATIONS.has(r.station) ? r.station : "sorter", sheet: where, id: `d-rm-${s(r.id, 100) || where}`, text: st.text,
+      data: { outcome: st.outcome, done: st.done, sheet: where, kind: s(r.kind, 20), approx: !n(r.at) } });
   }
   return out;
 }
 /* A cancel's step on one sheet or place (type cancelStep; Paul, 29 Sep 00:26: "show that it was removed successfully from
-   a given sheet or process"). fate → outcome: removed (taken off) | setAside (on a cut sheet: set aside; `done` once a
-   person said so) | pending (still on it: not taken off yet) | failed. Its id is the cancel's own time and the place
-   (stepId), so a retry, the next check or a person's "Set aside" lands on the same step and says how it stands now. */
+   a given sheet or process"). From a fate (removed | cut | open, and setAside | failed) or a record's removal (outcome
+   removed | setAside | waiting | failed, kind sheet | pool | queue …) → { outcome, done, text }: removed (taken off),
+   setAside (on a cut sheet: set aside; `done` once a person said so), waiting (still on it: not taken off yet), failed.
+   Its id is the cancel's own time and the place (stepId), so a retry, the next check or a person's "Set aside" lands on
+   the same step and says how it stands now. */
+const FATE_TO = { removed: "removed", cut: "cut", open: "waiting", setAside: "setAside", failed: "failed" };
 function cancelStepOf(f) {
-  const where = s(f && f.sheet, 80) || "its sheet", fate = f && f.fate, by = s(f && f.by, 80);
-  if (fate === "removed") return { outcome: "removed", done: true, text: `Removed from ${where}` };
-  if (fate === "setAside") return { outcome: "setAside", done: true, text: `On a cut sheet: set aside${by ? " by " + by : ""} (${where})` };
-  if (fate === "cut") return { outcome: "setAside", done: false, text: `On a cut sheet: set aside (${where})` };
-  if (fate === "failed") return { outcome: "failed", done: false, text: `Not taken off ${where}: ${s(f && f.text, 120) || "it failed"}` };
-  return { outcome: "pending", done: false, text: `Still on ${where}: not taken off yet` };
+  const where = s(f && (f.sheet || f.where), 80) || "its sheet", by = s(f && f.by, 80), queue = (f && f.kind) === "queue" || /^the queue$/i.test(where);
+  // (a removal on the record says setAside for a cut sheet's instruction too, its fate "cut": it is done only once a
+  //  person said so, "set aside by …", the Set aside press)
+  const o = f && f.fate ? FATE_TO[f.fate] || "waiting" : f && f.outcome === "setAside" ? (/\bset aside by\b/i.test(String(f.text || "")) ? "setAside" : "cut") : (f && f.outcome) || "waiting";
+  if (o === "removed") return { outcome: "removed", done: true, text: queue ? "Taken out of the queue" : `Removed from ${where}` };
+  if (o === "setAside") return { outcome: "setAside", done: true, text: `On a cut sheet: set aside${by ? " by " + by : ""} (${where})` };
+  if (o === "cut") return { outcome: "setAside", done: false, text: `On a cut sheet: set aside (${where})` };
+  if (o === "failed") return { outcome: "failed", done: false, text: `Not taken off ${where}: ${s(f && f.text, 120) || "it failed"}` };
+  return { outcome: "waiting", done: false, text: `Still on ${where}: not taken off yet` };
 }
 const stepId = (cancelAt, sheet) => `cx-${Math.round(n(cancelAt))}-${s(sheet, 80)}`;
 
@@ -412,12 +426,20 @@ function sameEvent(a, b) {
     const o = plain(a) ? b : a;
     return (o.type === "setCommitted" || plain(o) || (o.type === "note" && !!o.data && o.data.stamp === "DESIGNED :)")) && Math.abs(a.at - b.at) <= DEDUPE_MS;
   }
+  // a cancel's steps: one per place, whenever it was said (a set aside hours later is the same step); the pieces' own
+  // removal from a place is that place's step taken off (and one that names no place, a cancel's, is the record's)
+  const place = x => String(x.sheet || "").trim().toLowerCase(), step = a.type === "cancelStep" ? a : b.type === "cancelStep" ? b : null;
+  if (step) {
+    const o = step === a ? b : a;
+    if (o.type === "cancelStep") return place(a) === place(b);
+    if (o.type !== "removed" || !(step.data && step.data.outcome === "removed")) return false;
+    return place(o) ? place(o) === place(step) : /^cancel/i.test(String((o.data && o.data.reason) || ""));
+  }
   if (a.type !== b.type) return false;
   const approx = (a.data && a.data.approx) || (b.data && b.data.approx);
   if (!approx && Math.abs(a.at - b.at) > DEDUPE_MS) return false;
   if (a.sheetId && b.sheetId && a.sheetId !== b.sheetId) return false;
   if (a.lineKey && b.lineKey && a.lineKey !== b.lineKey) return false;
-  if (a.type === "cancelStep" && String(a.sheet || "") !== String(b.sheet || "")) return false;   // (one step per place)
   if (a.type === "note" || a.type === "teamMessage" || a.type === "customerMessage") {
     const t = x => String((x.data && x.data.stamp) || x.text || "").trim().toLowerCase();
     return t(a) === t(b) || (!!(a.data && a.data.stamp) && a.data.stamp === (b.data && b.data.stamp));

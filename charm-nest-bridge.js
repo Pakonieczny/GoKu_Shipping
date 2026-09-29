@@ -10069,6 +10069,19 @@ const OrderWin = window.OrderWin = (() => {
       const byLine = new Map(); for (const p of pools) { const k = p.lineKey || `${rid}_${p.transactionId || ""}`; if (!byLine.has(k)) byLine.set(k, p); }
       rows = [...byLine].map(([k, p]) => Orders.rowFromRecord(k, { orderId: rid, transactionId: p.transactionId, sku: p.sku, material: p.material, quantity: p.quantity, state: p.state === "complete" ? "committed" : p.state, createTs: p.orderDate ? Math.round(p.orderDate) : 0, arrivedAt: p.arrivedAt, poolIds: pools.filter(q => (q.lineKey || "") === k).map(q => q.poolId) }));
     }
+    // no run, pool or sheet keeps it (a cancelled order long gone from the pull, its run purged): its cancel record does,
+    // for good, with what was ordered (Charm_Nest_Cancelled: lines, buyer, dates, and what was removed from where)
+    if (!rows.length) {
+      say("Reading its cancel record…");
+      try {
+        const c = ((await api("charmNestLibrary", { op: "cancelCheck", orderIds: [rid], full: true }, { quiet: true })).cancelled || {})[rid];
+        if (c) {
+          const why = c.source === "etsy" || c.by === "Etsy" ? "cancelled on Etsy" : `cancelled by ${c.by || "someone"}`;
+          rows = (Array.isArray(c.lines) ? c.lines : []).map((l, i) => Object.assign(Orders.rowFromRecord(`${rid}_${l.transactionId || i}`, { orderId: rid, transactionId: l.transactionId || "", sku: l.sku || "", quantity: l.quantity || 1, material: l.material || null, createTs: +c.placedAt || 0,
+            state: "gone", reason: why + (c.why ? ": " + c.why : ""), snap: { title: l.title || "", buyer: c.buyer || "", shipBy: +c.shipBy || 0 } }), { cancelRecord: c }));
+        }
+      } catch (e) { failed = failed || e; console.warn("order view: cancel record", e.message); }
+    }
     // (nothing found because a read failed is not "nothing there": the view says the records could not be read)
     if (!rows.length) { if (failed) throw failed; return null; }
     try { await Orders.loadMaps(); } catch (_) {}

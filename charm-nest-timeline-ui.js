@@ -1879,7 +1879,10 @@
       else if (e.type === "cancelAlert") steps.push({ e, st: "ok", text: `Cancel alert understood${place ? " at " + place : ""}${who ? " by " + who : ""}` });
       else if (e.type === "cancelRestored" && +e.at >= at) steps.push({ e, st: "back", text: `Restored${who ? " by " + who : ""}` });
     }
-    return { cx, at, steps };
+    // one line per place: the latest word on it (a step said "still on" and the pieces came off later, a set aside)
+    const last = new Map();
+    steps.forEach((s, i) => { const p = s.e.type === "removed" || s.e.type === "cancelStep" ? String(s.e.sheet || "").trim().toLowerCase() : ""; if (p) last.set(p, i); });
+    return { cx, at, steps: steps.filter((s, i) => { const p = s.e.type === "removed" || s.e.type === "cancelStep" ? String(s.e.sheet || "").trim().toLowerCase() : ""; return !p || last.get(p) === i; }) };
   }
   function cxList(evs, c) {
     const { cx, at, steps } = cxSteps(evs, c), d = (cx && cx.data) || {};

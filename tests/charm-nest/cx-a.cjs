@@ -127,13 +127,22 @@ const OrderCancel = require(path.join(fnDir, '_orderCancel.js'));
   // the sheet window's fates: one cut sheet stays, one saved sheet still to come off; then it comes off
   await ok({ op: 'cancelFates', orderId: P, cancelAt: pressed, by: 'Ana', fates: [{ sheet: 'GF Sheet 1', fate: 'removed' }, { sheet: 'GF Sheet 4', fate: 'cut' }, { sheet: 'SS Sheet 5', fate: 'open' }] });
   const steps = () => of(P, 'cancelStep').sort((a, b) => a.sheet.localeCompare(b.sheet));
-  assert.deepStrictEqual(steps().map(e => [e.text, e.data.outcome, e.data.done]), [['On a cut sheet: set aside (GF Sheet 4)', 'setAside', false], ['Still on SS Sheet 5: not taken off yet', 'pending', false]], JSON.stringify(steps()));
+  assert.deepStrictEqual(steps().map(e => [e.text, e.data.outcome, e.data.done]), [['On a cut sheet: set aside (GF Sheet 4)', 'setAside', false], ['Still on SS Sheet 5: not taken off yet', 'waiting', false]], JSON.stringify(steps()));
   await ok({ op: 'cancelFates', orderId: P, fates: [{ sheet: 'SS Sheet 5', fate: 'removed' }] });   // (no cancelAt: read from the record)
   assert.deepStrictEqual(steps().map(e => [e.text, e.data.outcome]), [['On a cut sheet: set aside (GF Sheet 4)', 'setAside'], ['Removed from SS Sheet 5', 'removed']], 'the same step says it came off');
   // a person's "Set aside" (AutoCancel.step through timelineAdd) lands on the same step
   await ok({ op: 'timelineAdd', events: [{ orderId: P, type: 'cancelStep', by: 'Bo', sheet: 'GF Sheet 4', id: `cx-${pressed}-GF Sheet 4`, text: 'On a cut sheet: set aside by Bo (GF Sheet 4)', data: { outcome: 'setAside', done: true } }] });
   assert.strictEqual(steps().length, 2, 'no second step for the same place');
   assert.strictEqual(steps()[0].by, 'Bo');
+  // …and on the record's own removals (part B's list), with who; the queue too (AutoCancel.step)
+  await ok({ op: 'cancelFates', orderId: P, fates: [], by: 'Bo', removals: [{ id: 'sheet~GF Sheet 4', where: 'GF Sheet 4', kind: 'sheet', outcome: 'setAside', by: 'Bo', text: 'On a cut sheet: set aside by Bo (GF Sheet 4)' }] });
+  await ok({ op: 'cancelFates', orderId: P, fates: [], by: 'Ana', removals: [{ id: 'queue~the queue', where: 'the queue', kind: 'queue', outcome: 'removed', by: 'Ana', text: 'Taken out of the queue (2 lines)' }] });
+  const recP = store.get('Charm_Nest_Cancelled/' + P);
+  assert.strictEqual(recP.removals.find(r => r.id === 'sheet~GF Sheet 1').by, 'Ana', 'the record\'s removals say who: ' + JSON.stringify(recP.removals));
+  const live = await ok({ op: 'timelineGet', orderId: P });
+  const places = live.events.filter(e => e.type === 'cancelStep' || e.type === 'removed').map(e => e.sheet.toLowerCase());
+  assert.strictEqual(new Set(places).size, places.length, 'one step per place, recorded or read from the record: ' + places);
+  assert(live.events.some(e => e.type === 'cancelStep' && e.text === 'Taken out of the queue'), 'the queue, read from the record');
   console.log('  ✓ 2 · a person\'s cancel at the press; a removal per sheet and the pool, once on a retry; set aside / still on / came off as one step each');
 
   /* ── 3 · the whole story from the server, and in the order view's Now card ── */
@@ -158,7 +167,16 @@ const OrderCancel = require(path.join(fnDir, '_orderCancel.js'));
   const O = '4199000003';
   store.set('Charm_Nest_Cancelled/' + O, { orderId: O, by: 'Etsy', source: 'etsy', at: Date.now() - 3600e3, fates: [{ sheet: 'GF Sheet 9', fate: 'cut' }, { sheet: 'GF Sheet 8', fate: 'removed' }] });
   const otl = await ok({ op: 'timelineGet', orderId: O });
-  assert.deepStrictEqual(otl.events.filter(e => e.type === 'cancelStep').map(e => e.text), ['On a cut sheet: set aside (GF Sheet 9)']);
+  assert.deepStrictEqual(otl.events.filter(e => e.type === 'cancelStep').map(e => e.text).sort(), ['On a cut sheet: set aside (GF Sheet 9)', 'Removed from GF Sheet 8']);
+  // a record with part B's removals: each a step, a waiting one said plainly; a station's "seen" is its own alert
+  const Q = '4199000004';
+  store.set('Charm_Nest_Cancelled/' + Q, { orderId: Q, by: 'Ana', source: 'sorter', at: Date.now() - 7200e3, removals: [{ id: 'sheet~GF Sheet 7', where: 'GF Sheet 7', kind: 'sheet', outcome: 'waiting', by: 'Ana', at: Date.now() - 7100e3 },
+    { id: 'queue~the queue', where: 'the queue', kind: 'queue', outcome: 'removed', by: 'Ana' }, { id: 'sheet~GF Sheet 9', where: 'GF Sheet 9', kind: 'sheet', outcome: 'setAside', by: 'Ana', text: 'already cut on GF Sheet 9: set aside' },
+    { id: 'station~assembly', where: 'Assembly', kind: 'station', outcome: 'seen', by: 'Kim' }] });
+  const qtl = await ok({ op: 'timelineGet', orderId: Q });
+  assert.deepStrictEqual(qtl.events.filter(e => e.type === 'cancelStep').map(e => e.text).sort(), ['On a cut sheet: set aside (GF Sheet 9)', 'Still on GF Sheet 7: not taken off yet', 'Taken out of the queue']);
+  const qn = UI.nowStamps(qtl.events, { cancelled: qtl.events.find(e => e.type === 'cancelled') }).recent.replace(/<[^>]+>/g, '|');
+  assert(qn.includes('Still on GF Sheet 7: not taken off yet') && qn.includes('Taken out of the queue') && qn.includes('Cancelled by Ana'), qn);
   assert(!warnings.some(w => /timeline not recorded/.test(w)), warnings.join('\n'));
   console.log('  ✓ 3 · timelineGet tells it all after a restore; the Now card lists the exact moment, each removal, set aside, restored');
   console.log('cx-a: all passed');
