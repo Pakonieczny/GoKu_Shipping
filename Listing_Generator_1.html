@@ -13206,10 +13206,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (b.updatedAt) s.latest = Math.max(s.latest, b.updatedAt);
           if (b.collectedAt) s.latest = Math.max(s.latest, b.collectedAt);
         }
-        // The API returns the newest 1000 jobs. If it reaches that limit,
-        // the oldest visible session may have earlier records outside the
-        // page; don't label those unseen jobs as unsubmitted.
-        if (batches.length >= 1000) {
+        // The API returns the newest records and says when older ones were
+        // left out. Then the oldest visible session may have earlier records
+        // outside the page; don't label those unseen jobs as unsubmitted.
+        // (An answer without the flag: the old rule, a full 1000.)
+        const listTruncated = typeof resp?.truncated === "boolean" ? resp.truncated : batches.length >= 1000;
+        if (listTruncated && batches.length) {
           const oldestVisible = batches[batches.length - 1];
           const oldestSession = sessions.get(oldestVisible.sessionId || "(unsessioned)");
           if (oldestSession) oldestSession.historyTruncated = true;

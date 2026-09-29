@@ -16066,12 +16066,32 @@ async function _handlerImpl(event) {
       // sets. Default stays at 50 (cheap query for the common small case).
       const limit = clampNumber(body?.limit, 1, 1000, 50);
       const db = getDb();
-      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(limit);
+      // Each restart of a set leaves a queued record behind that only points
+      // at the job sent for it (locallyQueued, retryBatchName set). The
+      // dashboard shows none of them, yet on 2026-09-29 they were a third of
+      // the newest 1000 records and pushed the start of the big submission
+      // out of view: "Earlier history · partial view", no progress. Read up to
+      // half as many again, leave those pointers out, and let a record that
+      // pointed at one point at the job it led to.
+      const fetchLimit = limit >= 200 ? Math.min(Math.ceil(limit * 1.5), 1500) : limit;
+      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(fetchLimit);
       const snap = await q.get();
+      const isPointer = (d) => !!(d.locallyQueued && d.retryBatchName);
+      const pointsTo = new Map();
+      snap.forEach((doc) => {
+        const d = doc.data();
+        if (isPointer(d)) pointsTo.set(d.batchName || doc.id, d.retryBatchName);
+      });
       const out = [];
       snap.forEach((doc) => {
         const d = doc.data();
         if (!includeCollected && d.collected) return;
+        if (isPointer(d)) return;
+        if (d.retryBatchName) {
+          let next = d.retryBatchName;
+          for (let hops = 0; pointsTo.has(next) && hops < 20; hops++) next = pointsTo.get(next);
+          d.retryBatchName = next;
+        }
         out.push({
           docId: doc.id,
           batchName: d.batchName,
@@ -16129,7 +16149,10 @@ async function _handlerImpl(event) {
       // timezone-independent; the browser formats this in the user's zone.
       const minute = Math.floor(Date.now() / 60000);
       const nextSweepAt = (Math.floor((minute - 4) / 10) * 10 + 14) * 60000;
-      return json(200, { ok: true, batches: out, sweep, nextSweepAt,
+      // Older records may exist beyond what was read: only then is the
+      // oldest submission shown as a partial view.
+      const truncated = snap.size >= fetchLimit || out.length > limit;
+      return json(200, { ok: true, batches: out.slice(0, limit), truncated, sweep, nextSweepAt,
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }
 
