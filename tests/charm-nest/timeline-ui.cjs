@@ -117,13 +117,13 @@ function fixture({ MAIN, CX }) {
     window.__waitText = window.__el.querySelector('.tlMsg').textContent;
   }, MAIN);
   assert.match(await page.evaluate(() => window.__waitText), /Loading the timeline of order 4176208841/);
-  // only real milestones and what a person did are sealed (Paul, 28 Sep): 9 of this order's 31 steps
-  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 9, null, { timeout: 5000 });
+  // only real milestones and what a person did are sealed (Paul, 28 Sep), and every QR label printed (29 Sep): 10 of 31
+  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 5000 });
   const r0 = await page.evaluate(() => ({ n: window.__evList.length, first: window.__evList[0], now: window.__nowSaid.text, next: window.__nowSaid.next, step: window.__nowSaid.step, drawn: [...window.__el.querySelectorAll('.tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]) }));
   assert.equal(r0.n, 31); assert.equal(r0.first.type, 'arrived'); assert.equal(r0.first.id, `${MAIN}~arrived~e1`); assert.equal(r0.first.x, undefined, 'the host gets the records, not the drawing');
-  assert.deepEqual(r0.drawn, ['arrived', 'placed', 'engraveApproved', 'held', 'released', 'laserDone', 'sorted', 'welded', 'assembled'], 'seals: the milestones and what a person did — ' + r0.drawn);
+  assert.deepEqual(r0.drawn, ['arrived', 'placed', 'engraveApproved', 'held', 'released', 'laserDone', 'sorted', 'sealPrinted', 'welded', 'assembled'], 'seals: the milestones, what a person did and the label printed — ' + r0.drawn);
   assert.equal(r0.now, 'Packed'); assert.equal(r0.next, 'Shipped'); assert.equal(r0.step, 6);
-  ok.push('mounts on a detached container: a spinner line says what it loads, then 9 seals (milestones and the hold/release), while onEvents still hands the host all 31 records; onNow "Packed", next Shipped');
+  ok.push('mounts on a detached container: a spinner line says what it loads, then 10 seals (milestones, the hold/release and the QR label printed), while onEvents still hands the host all 31 records; onNow "Packed", next Shipped');
   await page.evaluate(() => window.__host(window.__el));
   await page.waitForTimeout(900);
 
@@ -219,13 +219,13 @@ function fixture({ MAIN, CX }) {
   await page.click('.tlSt[data-key="placed~e4"]');
   await page.waitForTimeout(350);
   r = await page.evaluate(() => { const d = window.__el.querySelector('.tlDetail'); return { h: d.querySelector('h3').textContent, kind: d.querySelector('.tlLbl').textContent, ba: [...d.querySelectorAll('.tlBA .m span')].map(s => s.textContent), badge: d.querySelector('.tlBadge').textContent, facts: [...d.querySelectorAll('.tlMeta .m')].map(m => m.textContent).join(' | '), around: [...d.querySelectorAll('.tlArw')].length, cur: d.querySelector('.tlArw.cur b').textContent, sel: window.__el.querySelectorAll('.tlSt.sel').length, lane: window.__el.querySelector('.tlLane.on').dataset.lane, dialogs: document.querySelectorAll('dialog[open]').length }; });
-  assert.equal(r.h, 'Tiny Initial Tag placed on 14K Sheet 3'); assert.match(r.kind, /milestone 2 of 9/);
+  assert.equal(r.h, 'Tiny Initial Tag placed on 14K Sheet 3'); assert.match(r.kind, /milestone 2 of 10/);
   assert.match(r.badge, /Sheet & laser/i); assert.match(r.badge, /Automatic/);
   assert.match(r.facts, /Sheet14K Sheet 3/); assert.equal(r.around, 4); assert.equal(r.cur, 'Tiny Initial Tag placed on 14K Sheet 3');
   assert.equal(r.sel, 1); assert.equal(r.lane, 'sheet'); assert.equal(r.dialogs, 0, 'no pop-up');
   await page.click('.tlDetail .tlOpenSheet');
   assert.deepEqual(await page.evaluate(() => window.__sheet), ['sh-k3', `${MAIN}_555_1`]);
-  ok.push('click: inline detail (milestone 2 of 9, station badge, facts, 4 around); Open sheet calls onSheet(sh-k3, poolId); no dialog');
+  ok.push('click: inline detail (milestone 2 of 10, station badge, facts, 4 around); Open sheet calls onSheet(sh-k3, poolId); no dialog');
   await page.click('.tlSt[data-key="held~e7"]'); await page.waitForTimeout(150);
   assert.match(await page.$eval('.tlDetail .tlWhy', d => d.textContent), /Why it was held.*H or K/);
   // Earlier / Later and the arrow keys
@@ -239,7 +239,7 @@ function fixture({ MAIN, CX }) {
   // ── the noise draws no seal, and the filter chips are gone: one quiet "Stamps" chip is left ──
   const chips = await page.$$eval('.tlChip', c => c.map(x => x.textContent));
   assert.deepEqual(chips, ['Stamps'], 'the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips are gone: ' + chips);
-  const noise = await page.$$eval('.tlSt[data-key]', s => s.map(b => b.dataset.key.split('~')[0]).filter(t => ['pulled', 'interpreted', 'scan', 'moved', 'qrLabel', 'setCommitted', 'included', 'merged', 'note', 'teamMessage', 'customerMessage', 'sealPrinted', 'packed', 'labelPrinted', 'decided', 'sizeChanged', 'roseLine', 'roseCut', 'engraveNeeded'].includes(t)));
+  const noise = await page.$$eval('.tlSt[data-key]', s => s.map(b => b.dataset.key.split('~')[0]).filter(t => ['pulled', 'interpreted', 'scan', 'moved', 'qrLabel', 'setCommitted', 'included', 'merged', 'note', 'teamMessage', 'customerMessage', 'packed', 'labelPrinted', 'decided', 'sizeChanged', 'roseLine', 'roseCut', 'engraveNeeded'].includes(t)));
   assert.deepEqual(noise, [], 'read, pulled, scanned, moved, QR label, set committed … draw no seal');
   assert.equal(await page.$$eval('.tlSt.dim', s => s.length), 0, 'nothing is dimmed any more');
   await page.click('.tlSt[data-key="welded~e25"]'); await page.waitForTimeout(350);
@@ -257,7 +257,7 @@ function fixture({ MAIN, CX }) {
   await page.evaluate(MAIN => OrderTimeline.record({ orderId: MAIN, type: 'shipped', by: 'Dana K.', station: 'shipping', text: 'Shipped — USPS acceptance scan', id: 'live-ship-1', data: { carrier: 'USPS' } }), MAIN);
   await page.waitForTimeout(120);
   r = await page.evaluate(() => { const q = s => [...window.__el.querySelectorAll(s)]; const s = q('.tlSt[data-key="shipped~live-ship-1"]')[0]; return { n: q('.tlSt[data-key]').length, anim: s ? s.getAnimations().length : -1, ring: q('.tlInkRing').length, cur: q('.tlStop.c').map(n => n.dataset.stage), done: q('.tlStop.d').length, now: q('.tlNowT')[0].textContent, h: q('.tlDetail h3')[0].textContent, ghosts: q('.tlSt.ghost').length, nowAnim: q('.tlNowLine')[0].getAnimations().length }; });
-  assert.equal(r.n, 10); assert(r.anim > 0, 'the new stamp drops in'); assert.equal(r.ring, 1, 'an ink ring spreads');
+  assert.equal(r.n, 11); assert(r.anim > 0, 'the new stamp drops in'); assert.equal(r.ring, 1, 'an ink ring spreads');
   assert.deepEqual(r.cur, [], 'Shipped is the last step'); assert.equal(r.done, 8); assert.equal(r.now, 'Shipped', 'the page\'s own step moves Now ahead of the server\'s where');
   assert.equal(r.h, 'Shipped — USPS acceptance scan', 'the reader was on the latest step, so the detail follows the new one');
   assert.equal(r.ghosts, 0); assert(r.nowAnim > 0, 'the NOW line glides');
@@ -267,7 +267,7 @@ function fixture({ MAIN, CX }) {
   const g0 = await page.evaluate(() => window.__gets);
   await page.waitForFunction(g => window.__gets > g, g0, { timeout: 4000 });
   await page.waitForTimeout(250);
-  assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 10);
+  assert.equal(await page.$$eval('.tlSt[data-key]', s => s.length), 11);
   assert.equal(await page.$$eval('.tlStop.d', s => s.length), 8, 'the server\'s older where does not take the rail back');
   ok.push('live: OrderTimeline.record drops the Shipped stamp in with an ink ring, NOW glides, the rail ends at Shipped; the timed refresh asks again and keeps it');
 
@@ -311,7 +311,7 @@ function fixture({ MAIN, CX }) {
   await page.waitForSelector('.tlMsg.err .tlRetry', { timeout: 3000 });
   assert.match(await page.$eval('.tlMsg.err', m => m.textContent), /Couldn't load the timeline: HTTP 503/);
   await page.click('.tlMsg.err .tlRetry');
-  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 9, null, { timeout: 3000 });
+  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 3000 });
   await page.evaluate(() => { window.__tl.destroy(); document.querySelector('.tlTestHost').remove(); });
   // compact, as the order view's header holds it: a 44px strip, the rail alone; a stamp hands its event to onOpen
   await page.evaluate(MAIN => {
@@ -394,7 +394,7 @@ function fixture({ MAIN, CX }) {
   // ── reduced motion: no animations run ──
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.evaluate(MAIN => { window.__el = document.createElement('div'); window.__host(window.__el); window.__tl = OrderTimelineUI.mount(window.__el, { orderId: MAIN, live: false }); }, MAIN);
-  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 9, null, { timeout: 3000 });
+  await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length === 10, null, { timeout: 3000 });
   await page.hover('.tlSt[data-key="welded~e25"]'); await page.click('.tlSt[data-key="placed~e4"]');
   // what is left are the 1 ms stand-ins the reduced-motion rule leaves (instant); nothing lasts longer
   r = await page.evaluate(() => window.__el.getAnimations({ subtree: true }).filter(a => { const t = a.effect.getComputedTiming(); return !(t.duration <= 1 && t.iterations === 1); }).map(a => a.animationName || a.transitionProperty || 'script').join());

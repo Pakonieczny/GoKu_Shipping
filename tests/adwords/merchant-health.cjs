@@ -47,6 +47,17 @@ function merchantStub(overrides = {}) {
   check(health.sections.conversionSources.active === 0 && /not reaching Merchant Center/.test(health.sections.conversionSources.detail), 'a missing conversion source is stated plainly');
   check(health.sections.dataSources.sources[0].primary === true, 'feed ownership is reported so a managed source is not overwritten');
 
+  // A disapproval beyond the first page is still found: no LIMIT, only non-eligible offers, every page read.
+  const bodies = [];
+  const paged = await merchantHealth({ merchantId: '555', adsCustomerId: '1', request: async (p, method, body) => {
+    if (!/reports:search$/.test(p) || /REGEXP_MATCH/.test(body.query)) return stub.request(p, method, body);
+    bodies.push(body);
+    return body.pageToken ? { results: [{ productView: { offerId: 'late-1', aggregatedReportingContextStatus: 'NOT_ELIGIBLE_OR_DISAPPROVED', itemIssues: [] } }] }
+      : { results: [{ productView: { offerId: 'early-1', aggregatedReportingContextStatus: 'PENDING', itemIssues: [] } }], nextPageToken: 'next' };
+  } });
+  check(bodies.length === 2 && bodies.every(b => !/\bLIMIT\b/.test(b.query) && /aggregated_reporting_context_status IN/.test(b.query)), 'the offer scan pages through the catalogue without a LIMIT');
+  check(paged.sections.productIssues.disapproved === 1 && paged.sections.productIssues.complete === true && /whole catalogue/.test(paged.sections.productIssues.detail), 'a disapproval after the first page still blocks health');
+
   const blockers = health.summary.blocking.join(' | ');
   check(/account issue/.test(blockers) && /cannot serve/.test(blockers) && /conversion source/.test(blockers) && /no Google Ads relationship/.test(blockers),
     'every blocker reaches the summary');

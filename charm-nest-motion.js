@@ -350,9 +350,10 @@
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
     }
-    /** One seal, as it sits on a card. */
+    /** One seal, as it sits on a card (one in a row is reached with Tab, and read large in the lens below). */
     function html(st, size, extra) {
-      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}">${svg(st)}</span>`;
+      const reach = /\bloose\b/.test(extra || "") ? "" : ` tabindex="0" role="img" aria-label="${esc(titleOf(st))}"`;
+      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}"${reach}>${svg(st)}</span>`;
     }
     const sizeFor = n => n <= 2 ? 112 : n <= 4 ? 100 : 88;
     /** The card's seals, oldest first, beside the button they belong with. pending: the time of a seal just pressed
@@ -360,7 +361,7 @@
     function row(rec, opts = {}) {
       const st = list(rec); if (!st.length) return "";
       const shown = st.slice(-8), more = st.length - shown.length, size = opts.size || sizeFor(shown.length);
-      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}" role="img" aria-label="${esc(st.map(titleOf).join("; "))}">` +
+      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
         (more ? `<span class="sealMore" title="${esc(st.slice(0, more).map(titleOf).join("\n"))}">+${more} earlier</span>` : "") +
         shown.map(s => html(s, size, opts.pending && +s.at >= opts.pending ? "pending" : "")).join("") + `</span>`;
     }
@@ -503,7 +504,130 @@
       const b = btnOf(s);
       if (b && !b.disabled && inside(b, e)) { b.click(); return; }
       s.classList.remove("wobble"); void s.offsetWidth; s.classList.add("wobble");
+      if (Z.el && Z.seal === s && Z.pinned) lensOff(); else lensOn(s, true);   // a click keeps the lens open
     }, true);
+
+    /* ── the lens (Paul, 29 Sep 02:08: "when I click or hover over these two small seals, they don't show me a zoom
+       version so I can't really read them"). A seal hovered, or reached with Tab, grows out of itself into the same
+       artwork drawn large beside it (above, else below), where its date, time, name and print number read, with one
+       line under it saying what it is. A lens on the motion layer, never a window, moved by transform and opacity only.
+       Over seals that overlap it shows the one under the pointer and glides to the next as the pointer moves on. It takes
+       no pointer while it follows the hover; a click (Enter or Space) keeps it open and lets the pointer rest on it, until
+       the pointer leaves both, a click lands elsewhere or Esc is pressed. The seals themselves look as they did. ── */
+    const LG = 12, LM = 8, EASE = "cubic-bezier(.2,.8,.2,1)";
+    const Z = { el: null, seal: null, pinned: false, hover: false, want: null, t: 0, watch: 0, n: 0 };
+    const sealAt = t => t && t.closest ? t.closest(".sealRow .seal") : null;
+    const zoomable = s => !!(s && s.isConnected && s.matches(".sealRow .seal:not(.pending)") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
+    function ago(t) {
+      const m = Math.round((Date.now() - t) / 60000), h = Math.round(m / 60), d = Math.round(h / 24);
+      return m < 1 ? "just now" : m < 60 ? m + " min ago" : h < 24 ? h + (h === 1 ? " hour ago" : " hours ago") : d < 2 ? "yesterday" : d < 7 ? d + " days ago"
+        : "on " + new Date(t).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    }
+    /** The line under the lens, in words: what the seal records, who, and how long ago. */
+    function capOf(s) {
+      const m = / by (.+?) · /.exec(s.getAttribute("aria-label") || s.getAttribute("title") || ""), who = m ? " by " + m[1] : "", at = +s.dataset.at;
+      return (s.classList.contains("seal-button") ? `Completed${who}, no label printed` : `QR label printed${who}`) + (at ? " · " + ago(at) : "");
+    }
+    /** The seal's own artwork, its ids renamed so the page never holds two of one id. */
+    function faceOf(s) {
+      const g = s.querySelector("svg"); if (!g) return "";
+      let h = g.outerHTML; const k = "-z" + (++Z.n);
+      for (const id of new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))) h = h.split(`id="${id}"`).join(`id="${id}${k}"`).split(`#${id})`).join(`#${id}${k})`).split(`#${id}"`).join(`#${id}${k}"`);
+      return h;
+    }
+    /** The lens's transform: resting beside the seal, or (at) shrunk into the seal itself, turned as it lies. */
+    function lensAt(el, s, at) {
+      const r = s.getBoundingClientRect(), D = el.offsetWidth, o = el._o, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      if (at) { const k = Math.max(.05, s.offsetWidth / (D * .91)), rot = parseFloat(getComputedStyle(s).getPropertyValue("--rot")) || 0; return `translate(${cx - D / 2 - o.left}px,${cy - D / 2 - o.top}px) scale(${k}) rotate(${rot}deg)`; }
+      const c = el.lastElementChild, cw = c ? c.offsetWidth : 0, ch = c ? c.offsetHeight + 8 : 0, vw = root.innerWidth, vh = root.innerHeight;
+      const up = r.top - LG - ch - D >= LM || !(r.bottom + LG + D + ch <= vh - LM) && r.top > vh - r.bottom, half = Math.max(D, cw) / 2;
+      const x = Math.max(LM + half, Math.min(vw - LM - half, cx)) - D / 2, y = Math.max(LM, Math.min(vh - LM - D - ch, up ? r.top - LG - ch - D : r.bottom + LG));
+      return `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px) scale(1) rotate(0deg)`;
+    }
+    const untitle = (s, back) => { if (!s) return; if (back) { if (s.dataset.sealTitle != null) { s.setAttribute("title", s.dataset.sealTitle); delete s.dataset.sealTitle; } } else if (s.hasAttribute("title")) { s.dataset.sealTitle = s.getAttribute("title"); s.removeAttribute("title"); } };
+    /** Shows s in the lens: grown out of it when none shows, else glided over from the seal shown (pin: kept open). */
+    function lensOn(s, pin) {
+      if (!zoomable(s)) return;
+      clearTimeout(Z.t); Z.want = null;
+      const L = layer(s); if (Z.el && Z.el.parentNode !== L) lensOff(true);
+      let el = Z.el; const fresh = !el, same = !fresh && Z.seal === s, was = fresh ? "" : getComputedStyle(el).transform;
+      if (fresh) {
+        el = Z.el = doc.createElement("div"); el.className = "sealLens"; el.setAttribute("aria-hidden", "true");
+        el.addEventListener("click", e => { e.stopPropagation(); lensOff(); });
+        L.appendChild(el); el.style.transform = "none"; const o = el.getBoundingClientRect(); el._o = { left: o.left, top: o.top };
+      }
+      Z.pinned = pin ? true : same && Z.pinned; el.classList.toggle("pinned", Z.pinned);
+      if (!same) {
+        if (Z.seal) untitle(Z.seal, true);
+        Z.seal = s; untitle(s);   // (its tooltip would only say again what the lens says)
+        el.innerHTML = `<div class="lf">${faceOf(s)}</div><div class="lc">${esc(capOf(s))}</div>`;
+      }
+      const to = lensAt(el, s);
+      for (const a of el.getAnimations()) a.cancel();
+      el.style.transform = to;
+      if (reduced()) { if (fresh) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: "ease" }); }
+      else if (fresh) {
+        el.animate([{ transform: lensAt(el, s, true), opacity: 0 }, { opacity: 1, offset: .3 }, { transform: to, opacity: 1 }], { duration: 300, easing: EASE });
+        el.lastElementChild.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, delay: 150, easing: "ease", fill: "backwards" });
+      } else if (!same) {
+        el.animate([{ transform: was }, { transform: to }], { duration: 220, easing: EASE });
+        for (const c of el.children) c.animate([{ opacity: .15 }, { opacity: 1 }], { duration: 200, easing: "ease" });
+      }
+      if (!Z.watch) Z.watch = setInterval(watch, 250);
+    }
+    /** The lens goes back into its seal (at once: now, or when the seal is gone). */
+    function lensOff(now) {
+      clearTimeout(Z.t); Z.want = null; if (Z.watch) { clearInterval(Z.watch); Z.watch = 0; }
+      const el = Z.el, s = Z.seal; Z.el = Z.seal = null; Z.pinned = Z.hover = false;
+      untitle(s, true); if (!el) return;
+      if (now || reduced() || !zoomable(s) || !visible(s)) { el.remove(); return; }
+      const was = getComputedStyle(el).transform; for (const a of el.getAnimations()) a.cancel();
+      el.classList.remove("pinned"); el.style.transform = was;
+      el.animate([{ transform: was, opacity: 1 }, { transform: lensAt(el, s, true), opacity: 0 }], { duration: 180, easing: "cubic-bezier(.4,0,1,1)", fill: "forwards" }).finished.then(() => el.remove(), () => el.remove());
+    }
+    /** While it shows: it follows its seal (a scroll, a redraw that drew the same seal anew), and goes when the seal does. */
+    function watch() {
+      const el = Z.el; if (!el) return;
+      let s = Z.seal;
+      if (!zoomable(s) || !visible(s)) {
+        const k = s && s.classList.contains("seal-button") ? "seal-button" : "seal-print", box = (el.closest && el.closest("dialog")) || doc;
+        const again = s && [...box.querySelectorAll(`.sealRow .seal.${k}[data-at="${s.dataset.at}"]`)].find(x => zoomable(x) && visible(x));
+        if (!again) return lensOff(true);
+        Z.seal = s = again; untitle(s);
+      }
+      if (el.getAnimations().some(a => a.playState === "running")) return;
+      const to = lensAt(el, s); if (el.style.transform !== to) el.style.transform = to;
+    }
+    // hover: a moment's rest opens it; from one seal to the next it glides; leaving lets it go (a kept one: leaving it too)
+    const later = (fn, ms) => { clearTimeout(Z.t); Z.t = setTimeout(fn, ms); };
+    doc.addEventListener("pointerover", e => {
+      if (e.pointerType === "touch") return;
+      if (Z.el && Z.el.contains(e.target)) { Z.hover = true; clearTimeout(Z.t); return; }
+      const s = sealAt(e.target); if (!zoomable(s)) return;
+      Z.hover = true;
+      if (Z.el) { clearTimeout(Z.t); if (Z.seal !== s) lensOn(s); return; }
+      Z.want = s; later(() => { if (Z.hover && Z.want === s) lensOn(s); }, 80);
+    }, true);
+    doc.addEventListener("pointerout", e => {
+      if (e.pointerType === "touch") return;
+      const from = sealAt(e.target) || (Z.el && Z.el.contains(e.target) ? Z.el : null), to = e.relatedTarget; if (!from) return;
+      if (to && (from.contains(to) || (Z.el && Z.el.contains(to)) || sealAt(to) === Z.seal || zoomable(sealAt(to)))) return;
+      Z.hover = false;
+      if (!Z.el) { clearTimeout(Z.t); Z.want = null; return; }
+      later(() => { if (!Z.hover && !(Z.seal && Z.seal.matches(":focus-visible"))) lensOff(); }, Z.pinned ? 260 : 90);
+    }, true);
+    doc.addEventListener("pointerdown", e => { if (Z.el && !Z.el.contains(e.target) && !sealAt(e.target)) lensOff(); }, true);
+    // the keyboard: Tab onto a seal shows it; Enter or Space keeps it; Esc puts it away (and only that: a window it lies in stays open)
+    doc.addEventListener("focusin", e => { const s = sealAt(e.target); if (s && s === e.target && zoomable(s) && s.matches(":focus-visible")) lensOn(s); }, true);
+    doc.addEventListener("focusout", e => { const s = sealAt(e.target); if (s && s === Z.seal && !Z.hover && !(e.relatedTarget && zoomable(sealAt(e.relatedTarget)))) lensOff(); }, true);
+    root.addEventListener("keydown", e => {
+      if (e.key === "Escape" && Z.el) { e.preventDefault(); e.stopImmediatePropagation(); lensOff(); return; }
+      const s = sealAt(e.target);
+      if ((e.key === "Enter" || e.key === " ") && s && s === e.target && zoomable(s)) { e.preventDefault(); e.stopImmediatePropagation(); if (Z.el && Z.seal === s && Z.pinned) lensOff(); else lensOn(s, true); }
+    }, true);
+    const follow = () => { if (Z.el) requestAnimationFrame(watch); };
+    root.addEventListener("scroll", follow, true); root.addEventListener("resize", follow);
+    doc.addEventListener("close", e => { if (Z.el && e.target && e.target.contains && e.target.contains(Z.el)) lensOff(true); }, true);
     return { list, html, row, svg, stampOn, press, pressPending, hasPrint, titleOf, INK };
   })();
 
