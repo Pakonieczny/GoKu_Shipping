@@ -2408,6 +2408,11 @@ body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturat
 @container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
 @container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
 @container(max-width:500px){.doneRow .cuDesigns{padding:8px 10px;gap:8px 10px}.doneRow .cuDesigns .linkBtn{margin-left:0}}
+/* every Review card has the custom card's buttons and takes designs (28 Sep): its designs strip stays above its open details */
+.doneRow .cuDesigns~.reviewDetails{grid-row:3}
+@container(max-width:1100px){.doneRow .cuDesigns~.reviewDetails{grid-row:4}}
+@container(max-width:800px){.doneRow .cuDesigns~.reviewDetails{grid-row:5}}
+.doneRow.rvCu:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
 .cuDesigns.cuGot{animation:aiIn .25s ease-out,cuGot 1.2s ease-out}
 @keyframes cuGot{0%{box-shadow:0 0 0 0 rgba(142,107,184,.5)}35%{box-shadow:0 0 0 6px rgba(142,107,184,.2);background-color:#f1e9fa}100%{box-shadow:0 0 0 12px rgba(142,107,184,0)}}
@@ -6079,7 +6084,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=m23"></script>
-<script src="charm-nest-bridge.js?v=m23"></script>
+<script src="charm-nest-bridge.js?v=20260928-rv-all"></script>
 <script src="charm-nest-sheetwin.js?v=m23"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
