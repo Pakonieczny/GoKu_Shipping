@@ -33,7 +33,19 @@ function mapping(group, filters, ads) {
   const exact=group.channel==='pmax'&&leaves.length>0&&leaves.every(f=>f.caseValue?.productItemId?.value&&offerParts(f.caseValue.productItemId.value));
   const broad=group.channel==='pmax'&&!exact;
   const mixed=offerProducts.length>1||handles.length>1;
-  return {itemIds,productIds:offerProducts,handles,urls,exactOfferScope:exact,status:mixed?'mixed':broad?'unverified':handles.length===1||offerProducts.length===1?'focused':'unverified',reason:mixed?'Multiple product listings share this group.':broad?'The live product filter is broader than exact offer IDs.':!handles.length&&!offerProducts.length?'No exact listing destination is linked.':null};
+  // What the group advertises, for the UI: exact listings, a feed filter, or a page with no listing.
+  const page=group.channel==='pmax'?!relevant.length:!handles.length&&urls.length>0,scope=group.channel==='pmax'?(exact?'listings':page?'page':'feed'):handles.length?'listings':page?'page':'none';
+  return {itemIds,productIds:offerProducts,handles,urls,exactOfferScope:exact,scope,landing:urls[0]||null,status:mixed?'mixed':broad?'unverified':handles.length===1||offerProducts.length===1?'focused':'unverified',reason:mixed?'Multiple product listings share this group.':broad&&page?'No product listing filter is attached; this asset group advertises its landing page.':broad?'The live product filter is broader than exact offer IDs.':!handles.length&&!offerProducts.length?(urls.length?'Ads lead to a collection or page, not to one product listing.':'No ad destination was returned for this group.'):null};
+}
+// Names and photos for the exact Merchant offers each group serves. Read-only and
+// optional: a failed catalogue read leaves names empty and says so in warnings.
+async function withListings(result,D){
+  if(result.listingsChecked)return result;
+  // Google has emitted both market-code cases for the same Shopify offer; ask for both.
+  const wanted=unique(result.groups.flatMap(g=>g.mapping?.itemIds||[]).flatMap(id=>{const o=offerParts(id);return o?['shopify_'+o.market.toLowerCase()+'_'+o.productId+'_'+o.variantId,'shopify_'+o.market.toUpperCase()+'_'+o.productId+'_'+o.variantId]:[id];}));let known=null;
+  if(wanted.length&&D.listingDetails){try{known=new Map(((await D.listingDetails(wanted))||[]).map(p=>[String(p.itemId).toLowerCase(),p]));}catch(e){result.warnings.push('Listing names: '+e.message);}}
+  for(const g of result.groups)g.listings=(g.mapping?.itemIds||[]).map(itemId=>{const p=known&&known.get(String(itemId).toLowerCase());return {itemId,productId:offerParts(itemId)?.productId||null,title:p?.title||null,imageUrl:p?.imageUrl||null,status:p?.status||null,availability:p?.availability||null,inFeed:known?!!p:null};});
+  result.listingsChecked=true;return result;
 }
 function createGroupsService(D){
   const cache=new Map();
@@ -151,6 +163,7 @@ function createGroupsService(D){
     const approvalId=await D.enqueueApproval({type:'groupActivation',summary:'Switch to '+(b.before.length-1)+' product groups',payload:{mutateOperations:b.operations,groupActivationGuard:guard,meta:{existingCampaignId:b.campaignId,sourceGroupRef:b.sourceGroupRef,groupRefs:b.before.map(g=>g.ref),activationChanges:b.before.map((g,i)=>({...g,after:i?'ENABLED':'PAUSED'}))}}});
     return {ok:true,approvalId,changes:b.before};
   }
-  return {index,detail,draftSplit,activationBasis,draftActivation};
+  const listed=async(input={})=>{const result=await index(input);return input.listings===true?withListings(result,D):result;};
+  return {index:listed,detail,draftSplit,activationBasis,draftActivation};
 }
 module.exports={createGroupsService,mapping,totals,savedWorkspaces};

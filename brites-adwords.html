@@ -707,7 +707,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 .campaignTreeHost{overflow-x:auto}.campaignTree .crow td:first-child{min-width:220px}.campaignTree .crow td:first-child>span{display:inline-block;vertical-align:middle}.pipelineLabel,.reportGroup summary small,.reportListing small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}.treeChevron{font-size:24px;margin-right:12px;transition:transform .18s}.crow[aria-expanded=true] .treeChevron{transform:rotate(90deg)}.crow:focus-visible,.reportGroup summary:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.campaignTree .cdet>td{padding:16px 22px;background:var(--paper-2)}.campaignSettings{display:flex;align-items:center;flex-wrap:wrap;gap:12px 24px;padding-bottom:14px;border-bottom:1px solid var(--line);font-size:12px}.reportScope{font-size:11px;color:var(--ink-70);line-height:1.6;margin:12px 0}.campaignBadge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;vertical-align:middle}.campaignBadge .campaignIcon{color:var(--campaign-accent,currentColor);flex:0 0 auto}.campaignBadge>span{overflow:hidden;text-overflow:ellipsis}.campaignStyleOption>label .campaignIcon{margin-right:6px;color:var(--campaign-accent,currentColor)}.campaignAutoSetup{margin:8px 0 0;padding-left:16px;font-size:11px;color:var(--ink-70);line-height:1.6}.campaignBudgetHint{display:block;margin-top:4px;font-size:11px;color:var(--ink-70);line-height:1.5}.campaignBudgetLabel .btn.sm{margin-left:6px}.adDesignShapes{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:10px 12px}.adDesignShapes>summary{cursor:pointer;font-weight:600;font-size:13px}.adDesignShapes table{margin-top:8px}.adDesignShapeDevices{margin:4px 0 0;padding-left:16px;font-size:11px;color:var(--ink-70);line-height:1.5}.reportGroup{border-bottom:1px solid var(--line)}.reportGroup>summary{cursor:pointer;display:flex;align-items:center;gap:16px;padding:16px 4px}.reportGroup>summary:before{content:'›';font-size:22px}.reportGroup[open]>summary:before{transform:rotate(90deg)}.reportGroup>summary>span{flex:1;min-width:100px}.reportMetrics{display:flex;gap:24px;flex-shrink:0;text-align:right}.reportMetrics span{min-width:90px}.reportMetrics small{display:block;font-size:10px;color:var(--ink-70);font-weight:400}.reportMetrics b{font-size:12px;font-variant-numeric:tabular-nums}.reportListings{padding:0 12px 20px 32px}.reportListing{display:flex;gap:20px;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--line);font-size:12px}.reportListing a{display:block;margin-top:5px;font-size:11px}.reportCoverage{font-size:11px;margin:12px 0}.saleOrigin{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px 24px;margin:8px 0 20px}.saleOrigin small{display:block;color:var(--ink-70);font-size:11px;margin-bottom:5px}.saleOrigin span{overflow-wrap:anywhere}.reportListings a,.saleAdLink a{color:var(--ink);text-decoration-color:var(--gold);text-underline-offset:3px}.saleAdLink{grid-column:1/-1}.saleAdLink small{margin-top:6px}@media(max-width:700px){.reportGroup>summary{flex-wrap:wrap}.reportMetrics{gap:12px;width:100%;justify-content:space-between}.reportMetrics span{min-width:0}.reportListing{align-items:flex-start;flex-direction:column}.reportListings{padding-left:18px}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260911-2">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-tree">
 </head>
 <body>
 
@@ -1037,6 +1037,7 @@ function oppCty(i){return (oppCountries[i]&&oppCountries[i].length)?oppCountries
 /* ============================ loading subsystem ============================ */
 /* Central copy for every async action: what's happening, how long, what you get. */
 var LOADINFO={
+  adGroups:{verb:"Loading campaigns, groups and listings",detail:"",eta:""},adGroupDetail:{verb:"Opening the group",detail:"",eta:""},adDesignSavedWorkspaces:{verb:"Loading saved workspaces",detail:"",eta:""},draftAdGroupSplit:{verb:"Preparing the product split",detail:"",eta:""},draftAdGroupActivation:{verb:"Preparing the group switch",detail:"",eta:""},
   startAdDesign:{verb:"Creating researched ad designs",detail:"Each image format, the copy and quality review are saved",eta:"Progress saved in workspace"},
   uploadAdDesignReference:{verb:"Saving reference image",detail:"Adding it to this design workspace",eta:"A few seconds"},
   beginAnalyzeAd:{verb:"Analyzing this ad version",detail:"Checking results, creative, products and relevant research",eta:"Progress saved"},
@@ -4268,7 +4269,7 @@ setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);
 
 </script>
-<script src="/brites-groups.js?v=20260911-delete"></script>
+<script src="/brites-groups.js?v=20260929-tree"></script>
 <script>
 BritesGroups.init({api:api,dashboard:function(){return DASH;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>
