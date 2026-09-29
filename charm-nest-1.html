@@ -161,6 +161,17 @@ select.topSel{border:1px solid var(--line);background:var(--card);border-radius:
 .sheetCard[data-m=gold]{--accent:var(--m-gold)}.sheetCard[data-m=silver]{--accent:var(--m-silver)}.sheetCard[data-m=rose]{--accent:var(--m-rose)}.sheetCard[data-m=gold10k]{--accent:var(--m-gold10k)}.sheetCard[data-m=gold14k]{--accent:var(--m-gold14k)}
 .sheetCard.dragOver{outline-color:var(--accent);box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 18%,transparent),var(--sh)}
 .sheetCard.pulse{animation:pulse 1.1s ease}
+/* NestFocus: the sheet a Send to Sheet flight lands on is spotlit; the other cards ease back and dim (transform and opacity only) */
+.sheets.nfOn>.sheetCard{transition:opacity .62s cubic-bezier(.3,0,.1,1),transform .62s cubic-bezier(.3,0,.1,1),box-shadow .15s,outline-color .15s}
+.sheets.nfDim>.sheetCard:not(.nfFocus){opacity:.32;transform:scale(.965)}
+.sheetCard.nfFocus{z-index:4}
+.sheetCard>.nfGlow{position:absolute;inset:-5px;border-radius:calc(var(--r) + 5px);box-shadow:0 0 0 2px rgba(184,137,58,.62),0 0 34px 6px rgba(202,168,97,.30),0 22px 50px rgba(60,40,12,.16);pointer-events:none;opacity:0;transition:opacity .62s cubic-bezier(.3,0,.1,1)}
+.sheetCard.nfFocus>.nfGlow{opacity:1}
+.sheetCard>.nfCap{position:absolute;left:50%;top:-15px;z-index:5;transform:translate(-50%,-6px);opacity:0;padding:4px 15px 5px;border-radius:999px;background:#fffefb;border:1px solid rgba(184,137,58,.55);box-shadow:0 6px 18px rgba(60,40,12,.13);font:600 15px/1.15 var(--serif);letter-spacing:.03em;color:var(--ink);white-space:nowrap;pointer-events:none;transition:opacity .42s ease,transform .42s cubic-bezier(.3,0,.1,1)}
+.sheetCard>.nfCap.on{opacity:1;transform:translate(-50%,0)}
+.sheetCard>.nfCap.in{top:7px;left:auto;right:12px;transform:translateY(-5px)}.sheetCard>.nfCap.in.on{transform:none}
+.nfPiece,.nfRing{position:absolute;display:block;pointer-events:none;will-change:transform,opacity}
+@media (prefers-reduced-motion:reduce){.sheets.nfOn>.sheetCard,.sheetCard>.nfGlow,.sheetCard>.nfCap{transition:none}.sheets.nfDim>.sheetCard:not(.nfFocus){transform:none}}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 55%,transparent)}100%{box-shadow:0 0 0 22px transparent}}
 .shHead{display:flex;align-items:center;gap:7px;padding:9px 14px 5px;min-width:0;flex-wrap:nowrap}
 .shControls{display:flex;align-items:center;gap:6px;padding:0 14px 7px;min-width:0;min-height:33px}   /* one height with or without Options or Cut Sheet, so the sheets of a row line up */
@@ -464,6 +475,12 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
 .owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
 .owMeta .m span{font:12.5px var(--mono);overflow-wrap:anywhere}
+/* an order still being read: a still block where each thing is coming (drawn before the view flies, so it flies with it) */
+.owSk{display:block;height:9px;width:72%;margin:5px 0;border-radius:5px;background:var(--line)}
+.owSk.short{width:44%}
+.owMeta .m .owSk{height:10px;width:64%;margin:5px 0 3px}
+.owPhoto .owSkPic{width:100%;height:100%;margin:0;border-radius:0;background:var(--line2)}
+#orderWin.owFull .owSub .owSk{display:inline-block;vertical-align:middle;width:150px;height:8px;margin:0}
 .owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
 .owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
 .owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
@@ -728,6 +745,18 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPlateWait[hidden]{display:none}
 .owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
 .owPlateTip[hidden]{display:none}
+/* another order's charm, chosen: its order and "Open order", on the charm (the order view moves to it, never a view over it) */
+.owPlatePick{position:absolute;z-index:4;display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px 3px 3px 10px;box-shadow:0 6px 18px rgba(20,16,10,.12);font:11px var(--sans);color:var(--ink70);white-space:nowrap;transform:translate(-50%,calc(-100% - 12px))}
+.owPlatePick.below{transform:translate(-50%,12px)}
+.owPlatePick[hidden]{display:none}
+.owPlatePick .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.owPlatePick b{font:600 11.5px var(--mono);color:var(--ink)}
+.owPlatePick .s{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.owPlatePick .btn,.owOrdHd .btn{display:inline-flex;align-items:center;gap:4px}
+.owPlatePick .btn svg,.owOrdHd .btn svg{width:11px;height:11px;flex:none}
+.owOrdHd{display:flex;align-items:center;justify-content:space-between;gap:8px;height:18px}
+.owPanel .owOrdHd .fLabel{margin:0}
+.owOrdHd .btn{padding:2px 8px 2px 5px}
 .owPlateNone{display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);max-width:380px}
 /* the plate and its "not on a sheet yet" line share the one centred cell (a hidden plate still holds its room) */
 .owPlateWrap>.owPlate,.owPlateWrap>.owPlateNone{grid-area:1/1}
@@ -2365,6 +2394,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
 .cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
 .cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
+.cuFail.calm{color:var(--ink70);font-weight:500}
 .cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
 /* Custom Orders: the order's own designs (CustomSheet). Plum is custom's colour everywhere: on the card, in the window and
    on the sheets. A card takes .ai / .dxf files dropped on it; its designs sit in a strip under it. */
@@ -2408,6 +2438,11 @@ body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturat
 @container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
 @container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
 @container(max-width:500px){.doneRow .cuDesigns{padding:8px 10px;gap:8px 10px}.doneRow .cuDesigns .linkBtn{margin-left:0}}
+/* every Review card has the custom card's buttons and takes designs (28 Sep): its designs strip stays above its open details */
+.doneRow .cuDesigns~.reviewDetails{grid-row:3}
+@container(max-width:1100px){.doneRow .cuDesigns~.reviewDetails{grid-row:4}}
+@container(max-width:800px){.doneRow .cuDesigns~.reviewDetails{grid-row:5}}
+.doneRow.rvCu:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
 .cuDesigns.cuGot{animation:aiIn .25s ease-out,cuGot 1.2s ease-out}
 @keyframes cuGot{0%{box-shadow:0 0 0 0 rgba(142,107,184,.5)}35%{box-shadow:0 0 0 6px rgba(142,107,184,.2);background-color:#f1e9fa}100%{box-shadow:0 0 0 12px rgba(142,107,184,0)}}
@@ -2730,7 +2765,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 
 <!-- ═══ Sheet report / contact sheet ═══ -->
 <dialog id="dlgReport" class="wide"><div class="dlg">
-  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
+  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button type="button" class="btn ghost xs hidden" id="rpOrder" title="open this charm's order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
   <div class="dlgBody" id="rpBody"></div>
 </div></dialog>
 
@@ -2763,8 +2798,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=m20"></script>
-<script src="charm-nest-timeline-ui.js?v=20260928-a5-4"></script>
+<script src="charm-nest-motion.js?v=20260929-sf2"></script>
+<script src="charm-nest-timeline-ui.js?v=20260929-sf2"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -4871,6 +4906,232 @@ function liftFromSheet(sh, c, to) {
   if (to) return () => M.fly(g, to, { plus: false, ms: M.T.fly });
   return () => g.animate([{ opacity: 1, transform: "none" }, { opacity: 1, transform: "none", offset: .18 }, { opacity: 0, transform: "translateY(-14px) scale(.9)" }], { duration: 1150, easing: "cubic-bezier(.4,0,.3,1)", fill: "forwards" }).finished.catch(() => {}).then(() => g.remove());
 }
+/* ═══ NestFocus · the sheet a Send to Sheet flight lands on (Paul, 29 Sep) ═══
+   The tour (SendTour, charm-nest-tour.js) flies an order's designs from the Review tab onto their sheets, one sheet at a
+   time; this is the Nest tab's side of it. open() shows the sheet on its metal's card, glides the card into view on the
+   app's own curve, spotlights it (the other cards ease back and dim) under a small caption, and says where each of the
+   order's pieces sits on the drawn sheet (from the canvas's own drawing transform). The placement is real and made
+   first; its pieces are only kept out of the picture (a faint gold wash where each will stand) until land() puts each
+   one in: cut from the finished picture along its own outline and laid into the canvas already drawn (never the whole
+   sheet again mid-flight), with the landing ring and the 1.08 pop. close(), a new open(), or a safety timeout always
+   shows everything, so nothing is ever left hidden. */
+const NestFocus = window.NestFocus = (() => {
+  const GROW = "cubic-bezier(.3,0,.1,1)", OPEN_MS = 620, POP_MS = 440, SAFE_MS = 15000, RING = "#b8893a";
+  let cur = null;
+  const reduced = () => !!(window.Motion && Motion.reduced());
+  const layerEl = () => window.Motion ? Motion.layer() : document.body;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const frame = () => new Promise(r => requestAnimationFrame(() => r()));
+  // cubic-bezier(.3,0,.1,1) as a function of time: the glide takes the same curve as every other move
+  const ease = (() => { const B = (t, a, b) => 3 * a * t * (1 - t) * (1 - t) + 3 * b * t * t * (1 - t) + t * t * t;
+    return x => { if (x <= 0) return 0; if (x >= 1) return 1; let lo = 0, hi = 1, t = x; for (let i = 0; i < 20; i++) { t = (lo + hi) / 2; if (B(t, .3, .1) < x) lo = t; else hi = t; } return B(t, 0, 1); }; })();
+  const laidOut = el => !!el && el.isConnected && el.getClientRects().length > 0 && el.getBoundingClientRect().width > 0;
+  function scrollerOf(el) {
+    for (let a = el && el.parentElement; a && a !== document.body; a = a.parentElement) { const o = getComputedStyle(a).overflowY; if ((o === "auto" || o === "scroll") && a.scrollHeight > a.clientHeight + 1) return a; }
+    return document.scrollingElement || document.documentElement;
+  }
+  /** The card brought into view (room for its caption above it, its picture whole), gliding its scroller there. */
+  function glide(card, ms, st) {
+    if (!laidOut(card)) return { d: 0, room: 99, done: Promise.resolve() };
+    const sc = scrollerOf(card), page = sc === document.scrollingElement || sc === document.documentElement;
+    const box = page ? { top: 0, bottom: innerHeight } : sc.getBoundingClientRect();
+    const r = card.getBoundingClientRect(), pv = $(".shPreviewWrap", card), pr = pv ? pv.getBoundingClientRect() : r;
+    const top = r.top - 30, bottom = Math.min(r.bottom, pr.bottom + 56) + 12;
+    let d = top < box.top ? top - box.top : bottom > box.bottom ? Math.min(bottom - box.bottom, top - box.top) : 0;
+    const s0 = sc.scrollTop; d = Math.max(-s0, Math.min(sc.scrollHeight - sc.clientHeight - s0, d));
+    const room = r.top - d - box.top;   // above the card once there: its caption stands over its edge only with room for it
+    if (Math.abs(d) < 1) return { d: 0, room, done: Promise.resolve() };
+    if (reduced() || !ms) { sc.scrollTop = s0 + d; return { d, room, done: Promise.resolve() }; }
+    const t0 = performance.now();
+    const done = new Promise(res => { const step = now => { const u = Math.min(1, (now - t0) / ms); sc.scrollTop = s0 + d * ease(u); if (u < 1 && !(st && st.closed)) requestAnimationFrame(step); else res(); }; requestAnimationFrame(step); });
+    return { d, room, done };
+  }
+  /** The page a flight goes to: the page itself, its saved sheet's id, a metal, or else the page its pieces are on. */
+  function pageOf(sheetId, ids) {
+    const all = allSheets(), onIt = p => ids.some(id => p.charms.some(c => c.poolId === id || c.id === id));
+    if (sheetId && typeof sheetId === "object") return all.includes(sheetId) ? sheetId : null;
+    if (sheetId != null && sheetId !== "") {
+      const hits = all.filter(p => p.sheetId === sheetId || (p.recalled && p.recalled.id === sheetId)), h = hits.find(onIt) || hits[0];
+      if (h) return h;
+      if (S.sheets[sheetId]) return pagesOf(sheetId).find(onIt) || activePage(sheetId);
+    }
+    for (const id of ids) { const p = (window.Pool && Pool.sheetOf && Pool.sheetOf(id)) || all.find(onIt); if (p && onIt(p)) return p; }
+    return null;
+  }
+  const charmsFor = (pg, id) => pg.charms.filter(c => c.poolId === id || c.id === id);
+  const placeOf = (pg, c) => pg.roseCutAt ? null : pg.placements.find(p => p.id === c.id) || null;
+  /** The drawn sheet's transform: canvas px per pt (k), the rulers (R), screen px per canvas px (s), which side is up. */
+  function frameOf(pg) {
+    const cv = pg.el && $('[data-r="canvas"]', pg.el), v = pg._view; if (!cv || !v || !cv.width) return null;
+    const r = cv.getBoundingClientRect(); if (!r.width) return null;
+    return { cv, r, R: v.R, k: v.k, s: r.width / cv.width, back: faceOf(cv) === "back", W: stockFor(pg.metal, pg).wPt * v.k };
+  }
+  /** A placed piece on the canvas: its centre and turn as painted (paintPreview), its own size, the box round it as turned. */
+  function pieceAt(F, p, c) {
+    const sc = p.scale || 1, cx = F.R + (F.back ? F.W - p.cxPt * F.k : p.cxPt * F.k), cy = F.R + p.cyPt * F.k, rot = F.back ? -(+p.angle || 0) : +p.angle || 0;
+    const w = (c.widthPt || 0) * sc * F.k, h = (c.heightPt || 0) * sc * F.k, a = rot * Math.PI / 180;
+    return { cx, cy, w, h, rot, sc, bw: Math.abs(w * Math.cos(a)) + Math.abs(h * Math.sin(a)), bh: Math.abs(w * Math.sin(a)) + Math.abs(h * Math.cos(a)) };
+  }
+  const queueImg = (pg, c) => pg.el ? $$('[data-r="queue"] img[data-cid]', pg.el).find(i => i.dataset.cid === String(c.id)) || null : null;
+  /** Where a piece goes, on screen: rect, its own box (not turned) about its centre; rot, its turn in degrees (clockwise,
+   *  as CSS rotate); scale, screen px per pt of the design; box, the box round it as turned. One not placed yet (its
+   *  sheet still filling) goes to its thumbnail in the card's queue, or the middle of the sheet (placed: false). */
+  function spotOf(pg, c) {
+    const F = frameOf(pg), p = placeOf(pg, c);
+    if (F && p) {
+      const g = pieceAt(F, p, c), X = x => F.r.left + x * F.s, Y = y => F.r.top + y * F.s;
+      return { poolId: c.poolId || c.id, charmId: c.id, placed: true, rect: { left: X(g.cx - g.w / 2), top: Y(g.cy - g.h / 2), width: g.w * F.s, height: g.h * F.s }, rot: g.rot, scale: F.k * F.s * g.sc,
+        box: { left: X(g.cx - g.bw / 2), top: Y(g.cy - g.bh / 2), width: g.bw * F.s, height: g.bh * F.s }, center: { x: X(g.cx), y: Y(g.cy) }, flipped: F.back };
+    }
+    const q = queueImg(pg, c), inQ = laidOut(q), pv = pg.el && $(".shPreviewWrap", pg.el), r = inQ ? q.getBoundingClientRect() : pv ? pv.getBoundingClientRect() : null;
+    const rect = !r ? null : inQ ? { left: r.left, top: r.top, width: r.width, height: r.height } : { left: r.left + r.width / 2 - 24, top: r.top + r.height / 2 - 24, width: 48, height: 48 };
+    return { poolId: c.poolId || c.id, charmId: c.id, placed: false, rect, rot: 0, scale: F ? F.k * F.s : null, box: rect, center: rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null };
+  }
+  /** The finished picture of the page (nothing held back), offscreen at the card canvas's size; made again only when
+   *  the canvas or the sheet's placements change. */
+  function fullOf(st, F) {
+    const pg = st.pg, key = [F.cv.width, F.cv.height, F.back, pg.placements.length].join("|");
+    if (st.full && st.fullKey === key && st.fullPl === pg.placements) return st.full;
+    const f = document.createElement("canvas"); f.width = F.cv.width; f.height = F.cv.height; f._face = F.cv._face;
+    const hid = pg._tourHide, view = pg._view; pg._tourHide = null;
+    try { paintPreview(f, pg, false, F.R); } catch (_) { return null; } finally { pg._tourHide = hid; pg._view = view; }
+    st.full = f; st.fullKey = key; st.fullPl = pg.placements; return f;
+  }
+  /** The piece as the finished picture draws it, cut along its own outline with room round it for its lines and its
+   *  custom ring (a neighbour still held back is left out of it): laid on the canvas, it covers its wash and nothing
+   *  else. withRing: its outline alone too, in the landing gold. */
+  function cutOut(st, c, F, withRing) {
+    const pg = st.pg, p = placeOf(pg, c), full = p && fullOf(st, F); if (!full) return null;
+    const g = pieceAt(F, p, c), dpr = devicePixelRatio || 1, pad = 2.4 * F.k + 5 * dpr;
+    const x0 = Math.max(0, Math.floor(g.cx - g.bw / 2 - pad)), y0 = Math.max(0, Math.floor(g.cy - g.bh / 2 - pad));
+    const x1 = Math.min(F.cv.width, Math.ceil(g.cx + g.bw / 2 + pad)), y1 = Math.min(F.cv.height, Math.ceil(g.cy + g.bh / 2 + pad));
+    if (x1 - x0 < 2 || y1 - y0 < 2) return null;
+    const shape = (ctx, q, cc) => { const gg = pieceAt(F, q, cc), cx = cc.centerPt[0], cy = cc.centerPt[1];
+      ctx.setTransform(1, 0, 0, 1, -x0, -y0); ctx.translate(gg.cx, gg.cy); ctx.rotate(gg.rot * Math.PI / 180); if (F.back) ctx.scale(-1, 1); ctx.scale(gg.sc, gg.sc);
+      ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, cc.outline, (x, y) => [(x - cx) * F.k, (cy - y) * F.k]); return gg; };
+    const m = document.createElement("canvas"); m.width = x1 - x0; m.height = y1 - y0;
+    const ctx = m.getContext("2d");
+    try {
+      shape(ctx, p, c); ctx.fillStyle = "#000"; ctx.fill(); ctx.lineJoin = "round"; ctx.lineWidth = 2 * (1.2 * F.k + 3 * dpr) / g.sc; ctx.strokeStyle = "#000"; ctx.stroke();
+      const hid = pg._tourHide;
+      if (hid && hid.size) { ctx.globalCompositeOperation = "destination-out";
+        for (const q of pg.placements) { if (q.id === c.id || !hid.has(q.id)) continue; const cc = pg.charms.find(x => x.id === q.id); if (!cc) continue;
+          const gq = pieceAt(F, q, cc); if (gq.cx + gq.bw / 2 < x0 || gq.cx - gq.bw / 2 > x1 || gq.cy + gq.bh / 2 < y0 || gq.cy - gq.bh / 2 > y1) continue;
+          shape(ctx, q, cc); ctx.fill(); } }
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = "source-in"; ctx.drawImage(full, -x0, -y0);
+    } catch (_) { return null; }
+    let ring = null;
+    if (withRing) { ring = document.createElement("canvas"); ring.width = m.width; ring.height = m.height; const rc = ring.getContext("2d");
+      try { shape(rc, p, c); rc.fillStyle = "rgba(202,168,97,.30)"; rc.fill(); rc.lineJoin = "round"; rc.lineWidth = 3 * dpr / g.sc; rc.strokeStyle = RING; rc.stroke(); } catch (_) { ring = null; } }
+    return { m, ring, x0, y0, g };
+  }
+  /** The cut piece laid into the canvas already drawn (the sheet is not drawn again). */
+  function lay(cv, piece) { if (!cv || !cv.isConnected) return; const x = cv.getContext("2d"); x.save(); x.setTransform(1, 0, 0, 1, 0, 0); x.globalCompositeOperation = "source-over"; x.drawImage(piece.m, piece.x0, piece.y0); x.restore(); }
+  /** One piece lands: it rises out of its wash to 1.08 and settles (the pop), a gold ring spreads from it and fades, and
+   *  it is laid into the sheet. */
+  async function landOne(st, c) {
+    const pg = st.pg, F = frameOf(pg), hid = pg._tourHide, p = placeOf(pg, c);
+    if (!p || !F) {   // not on the sheet yet: its thumbnail in the queue answers
+      if (hid) hid.delete(c.id);
+      const q = queueImg(pg, c); if (q && window.Motion) Motion.arrive(q, { plus: false });
+      await sleep(reduced() ? 0 : 420); return;
+    }
+    const piece = cutOut(st, c, F, !reduced());
+    if (hid) hid.delete(c.id);
+    if (!piece) { drawPreview(pg); return; }
+    if (reduced() || !laidOut(F.cv)) { lay(F.cv, piece); return; }
+    const L = layerEl(), s = F.s, box = { left: F.r.left + piece.x0 * s + "px", top: F.r.top + piece.y0 * s + "px", width: piece.m.width * s + "px", height: piece.m.height * s + "px" };
+    const origin = `${(piece.g.cx - piece.x0) * s}px ${(piece.g.cy - piece.y0) * s}px`;
+    for (const n of [piece.ring, piece.m]) if (n) { n.className = n === piece.m ? "nfPiece" : "nfRing"; n.setAttribute("aria-hidden", "true"); Object.assign(n.style, box, { transformOrigin: origin }); L.appendChild(n); }
+    if (piece.ring) piece.ring.animate([{ transform: "scale(.96)", opacity: 0 }, { transform: "scale(1.04)", opacity: 1, offset: .2 }, { transform: "scale(1.2)", opacity: .7, offset: .55 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 900, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" }).finished.catch(() => {}).then(() => piece.ring.remove());
+    const pop = piece.m.animate([{ transform: "scale(.94)", opacity: 0 }, { transform: "scale(1.08)", opacity: 1, offset: .4 }, { transform: "scale(1)", opacity: 1 }], { duration: POP_MS, easing: GROW, fill: "forwards" });
+    st.live.add(piece);
+    await pop.finished.catch(() => {});
+    if (st.live.delete(piece)) { lay(F.cv, piece); piece.m.remove(); }
+  }
+  /** Everything held back is shown: the pieces cut and laid in where the picture is at hand, else the sheet drawn once. */
+  function reveal(st) {
+    const pg = st.pg, hid = pg._tourHide; delete pg._tourHide;
+    const cv = pg.el && $('[data-r="canvas"]', pg.el);
+    for (const piece of st.live) { lay(cv, piece); piece.m.remove(); } st.live.clear();
+    if (!hid || !hid.size) return;
+    const F = frameOf(pg), left = [...hid].map(id => pg.charms.find(c => c.id === id)).filter(c => c && placeOf(pg, c));
+    let ok = !!F;
+    if (F) for (const c of left) { const piece = cutOut(st, c, F, false); if (piece) lay(F.cv, piece); else { ok = false; break; } }
+    if (!ok) drawPreview(pg);
+  }
+  function arm(st) { clearTimeout(st.timer); st.timer = setTimeout(() => close(st), st.safe || SAFE_MS); }   // quiet this long (no land): everything is shown
+  function close(st) {
+    if (!st) return Promise.resolve();
+    if (st.closing) return st.closing;
+    st.closed = true; clearTimeout(st.timer); if (cur === st) cur = null;
+    try { reveal(st); } catch (_) { delete st.pg._tourHide; drawPreview(st.pg); }
+    const host = $("#sheets");
+    if (st.card) st.card.classList.remove("nfFocus");
+    if (st.cap) st.cap.classList.remove("on");
+    if (host && !cur) host.classList.remove("nfDim");
+    st.closing = sleep(reduced() ? 0 : OPEN_MS).then(() => { if (host && !cur) host.classList.remove("nfOn"); if (st.cap) st.cap.remove(); if (st.glow) st.glow.remove(); });
+    return st.closing;
+  }
+  async function open(sheetId, opts = {}) {
+    const ids = (opts.poolIds || []).map(String);
+    if (cur) await close(cur);
+    const pg = pageOf(sheetId, ids);
+    const none = { card: null, page: null, spots: [], land: () => Promise.resolve(), close: () => Promise.resolve() };
+    if (!pg) return none;
+    const metal = pg.metal, prim = S.sheets[metal], at = prim.pages.indexOf(pg);
+    if (at >= 0 && prim.active !== at) showPage(metal, at);   // the card shows the sheet the order went on
+    const card = prim.cardEl || pg.el; if (!card) return Object.assign(none, { page: pg });
+    const mine = ids.flatMap(id => charmsFor(pg, id).map(c => ({ id, c })));
+    const st = cur = { pg, card, mine, live: new Set(), timer: 0, closed: false, safe: +opts.safeMs || 0 };
+    // held back from the picture until each lands: drawn now, a faint wash where each will stand
+    if (!reduced() && mine.length) {
+      pg._tourHide = new Set(mine.map(x => x.c.id));
+      if (pg._drawFrame) { cancelAnimationFrame(pg._drawFrame); pg._drawFrame = 0; }
+      try { drawPreviewNow(pg); } catch (_) {}
+    }
+    arm(st);
+    // the Nest tab may still be coming in: wait (a few frames at most) for the card to be laid out
+    for (let i = 0; i < 12 && !laidOut(card) && !st.closed; i++) await frame();
+    if (st.closed) return Object.assign(none, { card, page: pg });
+    const host = $("#sheets");
+    st.glow = document.createElement("i"); st.glow.className = "nfGlow"; st.glow.setAttribute("aria-hidden", "true"); card.appendChild(st.glow);
+    st.cap = document.createElement("div"); st.cap.className = "nfCap"; st.cap.setAttribute("role", "status");
+    st.cap.textContent = opts.caption || `${labelOf(metal)} · Sheet ${pg.page || 1}`; card.appendChild(st.cap);
+    if (host) { host.classList.add("nfOn"); void host.offsetWidth; host.classList.add("nfDim"); }
+    card.classList.add("nfFocus");
+    const g = glide(card, reduced() ? 0 : OPEN_MS, st); if (g.room < 20) st.cap.classList.add("in");   // (the first row: inside, over its head)
+    setTimeout(() => { if (!st.closed) st.cap.classList.add("on"); }, reduced() ? 0 : 220);
+    await Promise.all([g.done, sleep(reduced() ? 0 : OPEN_MS)]);
+    if (!reduced()) { const F = frameOf(pg); if (F) fullOf(st, F); }   // the finished picture is made before any flight, not during one
+    const spots = mine.map(x => Object.assign(spotOf(pg, x.c), { poolId: x.id }));
+    return {
+      card, page: pg, spots,
+      land(poolId) {
+        if (st.closed) return Promise.resolve(); arm(st);
+        const key = poolId && typeof poolId === "object" ? poolId.charmId || poolId.poolId : poolId;
+        const list = mine.filter(x => x.id === String(key) || x.c.id === key).map(x => x.c).filter(c => !pg._tourHide || pg._tourHide.has(c.id) || !placeOf(pg, c));
+        return Promise.all(list.map((c, i) => sleep(i * 110).then(() => st.closed ? null : landOne(st, c)))).then(() => {});
+      },
+      close: () => close(st)
+    };
+  }
+  /** Where a metal's pieces that are not on a sheet yet wait (no run open, or a line held): its card's queue, or its name
+   *  when the queue is empty; the card glides into view, and rect is where that place will stand once it has. */
+  function waiting(metal) {
+    const prim = S.sheets[metal], card = prim && prim.cardEl; if (!card || !laidOut(card)) return { rect: null, card: card || null };
+    const q = $('[data-r="queue"]', card), el = laidOut(q) && q.getBoundingClientRect().height > 8 ? q : $(".shHead .name", card) || card;
+    const g = glide(card, reduced() ? 0 : OPEN_MS), r = el.getBoundingClientRect();
+    return { rect: { left: r.left, top: r.top - g.d, width: r.width, height: r.height }, card, el, done: g.done };
+  }
+  return { open, waiting, close: () => close(cur), isOpen: () => !!cur };
+})();
+/** A piece a Send to Sheet flight has yet to land (NestFocus): a faint gold wash and a dashed line where it will stand. */
+function heldWash(ctx, c, tx, k) {
+  ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
+  ctx.fillStyle = "rgba(202,168,97,.10)"; ctx.fill();
+  ctx.setLineDash([Math.max(3, 2.2 * k), Math.max(2, 1.6 * k)]); ctx.lineWidth = Math.max(1, .45 * k); ctx.strokeStyle = "rgba(184,137,58,.55)"; ctx.stroke(); ctx.setLineDash([]);
+}
 /** A card's Clear, or Clear queues: each card's picture and queue fade into the empty sheet where they stood, while the
  *  tabs of the sheets it took fold away (setSheetTabs); a sheet saved to the cloud is still in the Library, and a note
  *  under the Library tab says so. Called before the clear, with {el, pages, gone()} per card; what it returns plays it
@@ -5347,11 +5608,13 @@ function paintPreview(cv, sh, clean, R) {
     ctx.fillText(sh.status === "nesting" ? (ai ? "its moves will land here one by one" : "the first charm lands here") : sh.status === "queued" ? "it starts on its own" : waitsForYou ? "waiting for you · tick Include in Options" : "press Nest to fill this sheet", FW / 2, FH / 2 + FW / 40);
     ctx.restore();
   }
+  const held = !clean && sh._tourHide && sh._tourHide.size ? sh._tourHide : null;   // pieces a Send to Sheet flight has yet to land (NestFocus)
   (sh.roseCutAt ? [] : sh.placements).forEach((p, i) => {
     const c = byId.get(p.id); if (!c) return;
     ctx.save(); ctx.translate(p.cxPt * k, p.cyPt * k); ctx.rotate(p.angle * Math.PI / 180); if (p.scale) ctx.scale(p.scale, p.scale);
     const cx = c.centerPt[0], cy = c.centerPt[1];
     const tx = (x, y) => [(x - cx) * k, (cy - y) * k];
+    if (held && held.has(c.id)) { heldWash(ctx, c, tx, k); ctx.restore(); return; }
     if (back) { behind(c, p, sel === c.id ? (c.custom ? "rgba(125,86,168,.42)" : "rgba(202,168,97,.35)") : null); ctx.restore(); return; }
     if (!clean) { // faint tint of the metal that will be cut: the outline minus every inner cut line (hoop holes, cut-outs)
       // a custom order's own design is plum, so it stands out on the sheet (Paul, 27 Sep: "clearly identified as Custom")
@@ -5555,6 +5818,51 @@ function cardOrigin(sh, cv) {
 }
 
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
+/* "Open order" (Paul, 28 Sep): the order's detailed view from wherever a charm of a sheet is shown. The order view grows
+   out of the button; the pop-up it was pressed in hands over, never one pop-up over another: it fades and settles back
+   underneath in the same motion, kept open as it was (the same charm, the same scroll, anything typed), and comes back
+   up as the order view shrinks back into the button. A button on a page (not in a pop-up) just grows the view.
+   Only opacity and transform move here; the order view's own clip does the rest. */
+function openOrderFrom(btn, rid, opts = {}) {
+  const OW = window.OrderWin; rid = String(rid || "").replace(/\D/g, "");
+  if (!OW || typeof OW.openOrder !== "function" || !rid || !btn) return false;
+  const src = btn.closest("dialog[open]"), ow = document.getElementById("orderWin");
+  const still = window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EASE = "cubic-bezier(.2,.8,.2,1)";
+  let out = null, back = false;
+  const bring = () => {
+    if (back || !src) return; back = true; ow && ow.removeEventListener("cancel", early, true); ow && ow.removeEventListener("click", early, true);
+    const was = out ? out.effect.getComputedTiming().progress : src.style.opacity === "0" ? 1 : 0; if (out) { try { out.cancel(); } catch (_) {} out = null; }
+    src.style.opacity = ""; src.style.willChange = "";
+    if (!src.open || still || !was) return;
+    // (as long as the order view's shrink back into the button: the two meet)
+    src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 420, easing: EASE, fill: "backwards" });
+  };
+  // the close begins (the ×, Esc): the source is set straight before the view measures the button to go back into, and
+  // comes up from the next frame; an Esc that only ended the view's search leaves it where it was
+  function early(e) {
+    if (back || !src) return;
+    if (e.type === "click" && !(e.target.closest && e.target.closest("#owClose"))) return;
+    if (out) { try { out.cancel(); } catch (_) {} out = null; } src.style.opacity = "0";
+    requestAnimationFrame(() => {
+      if (back) return;
+      if (OW.isOpen && OW.isOpen()) { src.style.opacity = ""; out = src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 0, transform: "scale(.97)" }], { duration: 1, fill: "forwards" }); return; }
+      bring();
+    });
+  }
+  if (src && ow && src !== ow) {
+    ow.addEventListener("close", bring, { once: true });
+    ow.addEventListener("cancel", early, true); ow.addEventListener("click", early, true);
+  }
+  let p;
+  try { p = OW.openOrder(rid, Object.assign({ from: btn }, opts)); }
+  catch (e) { bring(); toast(`Order ${rid} did not open: ${e.message}`, "bad", 6000); return false; }
+  if (src && src !== ow && ow && ow.open) {
+    src.style.willChange = "opacity, transform";
+    out = src.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: still ? 1 : 320, easing: EASE, fill: "forwards" });
+  } else if (src && src !== ow) bring();
+  return p || true;
+}
 function openCharm(sh, c, placement) {
   if (!c) return;
   /* An order line's metal is the customer's choice and its name is its order and SKU. The inspector offered it the
@@ -5564,6 +5872,9 @@ function openCharm(sh, c, placement) {
   const pl = placement || sh.placements.find(p => p.id === c.id);
   const dlg = $("#dlgReport"); $("#rpTitle").textContent = c.name || `Charm #${c.index + 1}`;
   $("#rpDownloadJson").classList.add("hidden");
+  // an order's charm: its order opens from the heading, and the inspector comes back as it was when that closes
+  const rid = line ? String(c.orderInfo?.receiptId || c.order || "").split("/")[0].replace(/\D/g, "") : "", ob = $("#rpOrder");
+  ob.classList.toggle("hidden", !rid || !window.OrderWin); ob.onclick = rid ? () => openOrderFrom(ob, rid, { poolId: c.poolId, row: c.lineKey ? { key: c.lineKey } : null }) : null;
   $("#rpBody").innerHTML = `
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
@@ -5596,7 +5907,7 @@ function openCharm(sh, c, placement) {
 function openReport(sh) {
   const items = sh.charms; const dlg = $("#dlgReport");
   $("#rpTitle").textContent = `${labelOf(sh.metal)} · ${sh.sheetId || "sheet"} · report`;
-  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs);
+  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs); $("#rpOrder").classList.add("hidden");
   $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
   const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal, sh);
   const byId = new Map(items.map(c => [c.id, c]));
@@ -6078,14 +6389,16 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=m23"></script>
-<script src="charm-nest-bridge.js?v=m23"></script>
-<script src="charm-nest-sheetwin.js?v=m23"></script>
+<script src="order-timeline.js?v=20260929-sf2"></script>
+<script src="charm-nest-bridge.js?v=20260929-sf2"></script>
+<script src="charm-nest-sheetwin.js?v=20260929-sf2"></script>
+<script src="charm-nest-tour.js?v=20260929-sf2"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
-<script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
+<script src="charm-nest-rose-ui.js?v=20260928-st-b"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260927-moves"></script>
-<script src="charm-nest-search.js?v=20260928-srS"></script>
+<script src="charm-nest-library.js?v=20260929-m5"></script>
+<script src="charm-nest-search.js?v=20260929-m5"></script>
+<script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
@@ -6157,7 +6470,7 @@ boot();
       <section class="owView owVTime" data-view="timeline" role="tabpanel" aria-label="Timeline" hidden><div class="owTimeline" id="owTimeline"></div></section>
       <section class="owView owVSheet" data-view="sheet" role="tabpanel" aria-label="Sheet" hidden>
         <div class="owPlateArea">
-          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
+          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
         <aside class="owPanel" id="owSheetPanel"></aside>

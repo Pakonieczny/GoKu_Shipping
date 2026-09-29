@@ -85,6 +85,11 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
  await assert.rejects(()=>e.A.cropImage(full,'portrait',{x:0,y:0,width:1,height:1}),/aspect ratio/);passed++;
  const cropRotated=await e.A.cropImage(await sharp({create:{width:1600,height:2400,channels:3,background:'#ffd700'}}).jpeg().withMetadata({orientation:6}).toBuffer(),'landscape');check(cropRotated.sourceWidth===2400&&cropRotated.sourceHeight===1600,'crop coordinates apply after EXIF orientation');
  const synthetic=await e.A.cropImage(syntheticXmp(await jpeg(2400,2400)),'square');check((await sharp(synthetic.bytes).metadata()).xmp.toString().includes('compositeSynthetic'),'AI provenance survives deterministic cropping');
+ // Google rejects images over 5 MB: a grainy photo steps down JPEG quality instead of failing, and a crop that fits keeps its exact maximum-quality bytes.
+ const grain=Buffer.alloc(2048*2048*3);for(let i=0,seed=7;i<grain.length;i++){seed=(seed*1103515245+12345)&0x7fffffff;grain[i]=100+seed%32;}
+ const grainRaw={raw:{width:2048,height:2048,channels:3}},grainy=await e.A.cropImage(await sharp(grain,grainRaw).png().toBuffer(),'square');
+ check((await sharp(grain,grainRaw).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer()).length>5120000&&grainy.bytes.length<=5120000&&grainy.width===2048&&grainy.height===2048,'grainy crop fits Google’s 5 MB limit at full 2K size instead of failing');
+ check(cropped.bytes.equals(await sharp(full).extract({left:2048,top:0,width:2048,height:2048}).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer()),'a crop within the limit keeps its exact maximum-quality bytes');
  let originalURL;e.D.creativeFetch=async u=>{originalURL=u;return full;};await e.A.fullSourceBytes('https://cdn.shopify.com/photo.png?v=17&width=320&height=320&crop=center');check(originalURL==='https://cdn.shopify.com/photo.png?v=17','full source fetch removes thumbnail transforms and retains version identity');
 
  console.log('PASS '+passed+' Sunburst/Astra request, format, provenance, cost and no-retry checks');

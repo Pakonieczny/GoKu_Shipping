@@ -1634,11 +1634,12 @@ function sanitizeOps(ops, meta) {
   return ops;
 }
 // Required aspect ratio (w/h) per image field type + Google's minimum pixel sizes.
+// Google accepts ±1% of the ratio; a 1–3% image passed here and then failed the whole link mutate.
 const _IMG_FIELD_SPECS = {
-  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.03, minW: 300, minH: 300 },
-  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.03, minW: 600, minH: 314 },
-  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.03, minW: 480, minH: 600 },
-  LOGO:                     { ratio: 1.0,      tol: 0.03, minW: 128, minH: 128 }
+  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.01, minW: 300, minH: 300 },
+  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.01, minW: 600, minH: 314 },
+  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.01, minW: 480, minH: 600 },
+  LOGO:                     { ratio: 1.0,      tol: 0.01, minW: 128, minH: 128 }
 };
 // Drop image attach ops whose ALREADY-UPLOADED asset has a disallowed aspect ratio for
 // its field type (live failure: ASPECT_RATIO_NOT_ALLOWED on two pre-uploaded portraits —
@@ -2981,32 +2982,37 @@ async function _accountCurrency() {
   if(!/^[A-Z]{3}$/.test(String(currency||"")))throw new Error("Google Ads account currency could not be verified.");
   _acctCurrencyCache=currency;return currency;
 }
-const _fxMemCache = new Map(); // per-invocation memo; Firestore doc persists the rate across invocations (historical rates never change, so caching indefinitely is correct)
+// Frankfurter answers a date the ECB has not published yet (today, before ~16:00 CET) with the
+// PREVIOUS business day's rate. Saving that under the requested date made every weekday keep the
+// prior day's rate forever. Only a rate published for exactly that date, or the answer for a date
+// old enough that nothing newer can be published for it (weekend/holiday), is final and saved.
+// The earlier "fxRates" document holds such lagged weekday rates, so final rates use a new one.
+const _fxMemCache = new Map(); // key -> { rate, until }: final rates never expire; provisional rates and failures do
 async function _fxRateToUsd(dateYmd) {
   const acct = await _accountCurrency();
   if (acct === "USD") return 1; // nothing to convert
-  const key = acct + ":" + dateYmd;
-  if (_fxMemCache.has(key)) return _fxMemCache.get(key);
+  const key = acct + ":" + dateYmd, now = Date.now(), memo = _fxMemCache.get(key);
+  if (memo && memo.until > now) return memo.rate;
   const f = fb();
   if (f) {
     try {
-      const doc = await f.db.collection(COL.state).doc("fxRates").get();
+      const doc = await f.db.collection(COL.state).doc("fxRatesFinal").get();
       const v = doc.exists ? (doc.data() || {})[key] : null;
-      if (v != null) { _fxMemCache.set(key, v); return v; }
+      if (v != null) { _fxMemCache.set(key, { rate: v, until: Infinity }); return v; }
     } catch (e) {}
   }
-  let rate = null;
+  let rate = null, final = false;
   try {
     // ECB-based daily rates (Frankfurter) — a very close proxy for Google's own "average daily FX
     // rate"; not guaranteed bit-identical to Google's internal number, but the same class of
     // real market rate for that specific date, not a rough approximation.
-    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`);
-    const data = await res.json();
+    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`, { timeout: 8000 });
+    const data = res.ok ? await res.json() : null;
     const v = data && data.rates && Number(data.rates.USD);
-    if (v && isFinite(v)) rate = v;
+    if (v && isFinite(v) && v > 0) { rate = v; final = data.date === dateYmd || dateYmd < new Date(now - 4 * 86400000).toISOString().slice(0, 10); }
   } catch (e) {}
-  if (rate != null && f) { try { await f.db.collection(COL.state).doc("fxRates").set({ [key]: rate }, { merge: true }); } catch (e) {} }
-  _fxMemCache.set(key, rate); // caches null too, so a bad date doesn't get refetched every call within this invocation
+  if (final && f) { try { await f.db.collection(COL.state).doc("fxRatesFinal").set({ [key]: rate }, { merge: true }); } catch (e) {} }
+  _fxMemCache.set(key, { rate, until: final ? Infinity : now + (rate == null ? 60000 : 1800000) });
   return rate;
 }
 
@@ -3139,8 +3145,11 @@ async function metricsRange({ start, end } = {}) {
   }
   if (!scheduleAvailable) warnings.push("Campaign schedules could not be refreshed. Performance dates remain the selected reporting range.");
   const activeInRange = new Set(report.rows.filter(r => { const m = r.metrics || {}; return [m.impressions, m.clicks, m.costMicros, m.conversions, m.conversionsValue, m.conversionsByConversionDate, m.conversionsValueByConversionDate].some(v => Number(v) !== 0 && Number.isFinite(Number(v))); }).map(r => String((r.campaign || {}).id)));
-  const deleted=await _deletedCampaignIds();
-  const snapshot = Object.values(byId).filter(c => !deleted.has(c.id)&&(c.status !== "REMOVED" || activeInRange.has(c.id))); snapshot.forEach(c => c.opportunityLane = _campaignOpportunityLane(c));
+  // A campaign deleted from the console is removed in Google, but its spend in these dates was
+  // real money. Keep it (flagged) whenever it has activity, so account totals still equal the
+  // daily series and Google's own account total; only inactive deleted campaigns are hidden.
+  const deleted=await _deletedCampaignIds().catch(()=>{warnings.push("Deleted-campaign labels could not be loaded. Totals still include every campaign with activity in these dates.");return new Set();});
+  const snapshot = Object.values(byId).filter(c => activeInRange.has(c.id) || (!deleted.has(c.id) && c.status !== "REMOVED")); snapshot.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); if (deleted.has(c.id)) { c.deleted = true; c.historicalOnly = true; } });
   await _attachCampaignVersions(snapshot);
   return { ok: true, snapshot, range, ...context, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: report.cd, scheduleAvailable, includesRemovedWithActivity: true, warnings };
 }
@@ -7035,12 +7044,12 @@ async function dailyStats({ start, end, campaignId } = {}) {
                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM ad_group_ad WHERE ${RANGE}`),
     optional("keywords", `SELECT campaign.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM keyword_view WHERE ${RANGE}`),
     // PMax equivalents. Asset groups are the closest thing PMax has to "ads" (each carries its own
     // creative set + ad strength); asset_group supports metrics + date segmentation in v24.
     optional("assetGroups", `SELECT campaign.id, asset_group.id, asset_group.name, asset_group.status, asset_group.ad_strength,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM asset_group WHERE ${RANGE}`),
     // Per-product performance (feed-based PMax serves from Merchant Center products) — the PMax
     // analog of the Search campaigns' "Top keywords" chips.
@@ -7056,7 +7065,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     // any product (text/display/video surfaces) — not everything, but a genuine breakdown instead
     // of an unexplained remainder.
     optional("channels", `SELECT campaign.id, segments.ad_network_type,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM campaign WHERE ${RANGE} AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'`)
   ]);
 
@@ -7115,7 +7124,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const kwRows = kws.map(r => {
     const m = r.metrics || {}, k = ((r.adGroupCriterion || {}).keyword) || {};
     return { campaignId: String((r.campaign || {}).id), text: k.text || "", match: k.matchType || "", status: (r.adGroupCriterion || {}).status || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).filter(k => k.impr > 0 || k.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   // PMax rows (same deliberate native-currency caveat as ads/keywords above — no per-day segment here)
@@ -7123,7 +7132,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const m = r.metrics || {}, g = r.assetGroup || {};
     return { campaignId: String((r.campaign || {}).id), agId: String(g.id || ""), name: g.name || "(asset group)",
              status: g.status || null, strength: g.adStrength || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   const productPurchaseAvailable = !!coverage.productPurchases.ok, productCdAvailable = !!productData.cd;
@@ -7170,7 +7179,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
   // an unexplained remainder. MIXED means the click predates the Jun-1-2025 v23 cutover.
+  // v24 AdNetworkType reports YouTube as YOUTUBE (plus GOOGLE_TV and, for older rows, GOOGLE_OWNED_CHANNELS).
   const CHANNEL_LABEL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+    YOUTUBE: "YouTube", GOOGLE_TV: "Google TV", GOOGLE_OWNED_CHANNELS: "Google-owned channels",
     YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
     GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
     MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
@@ -7180,10 +7191,10 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const raw = (r.segments || {}).adNetworkType || "UNKNOWN";
     const list = channelTotals[cid] || (channelTotals[cid] = []);
     let row = list.find(x => x.raw === raw);
-    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
-    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 }; list.push(row); }
+    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0; row.value += +m.conversionsValue || 0;
   });
-  Object.values(channelTotals).forEach(list => { list.forEach(r => r.cost = +r.cost.toFixed(2)); list.sort((a, b) => b.clicks - a.clicks); });
+  Object.values(channelTotals).forEach(list => { list.forEach(r => { r.cost = +r.cost.toFixed(2); r.value = +r.value.toFixed(2); }); list.sort((a, b) => b.clicks - a.clicks); });
   // Exact product population totals, before any UI search/sort/page. Google product
   // reports count advertised offers; a purchase attributed to an offer does not prove
   // that same offer was the item bought. Preserve that distinction in the response.
@@ -8884,18 +8895,19 @@ async function campaignTimeline({ id } = {}) {
       });
     } catch (e) {}
   }
-  const days = [];
+  // Same money rules as metricsRange: one currency for the whole strip (a day without an exchange
+  // rate keeps every day in the account currency), and no conversion-date figures when Google did
+  // not supply them, rather than click-date figures relabelled.
+  const fx = await _reportRates(dayRows, dayRows.length ? await _accountCurrency() : "USD"), days = [];
   for (const r of dayRows) {
-    const cv = _rowConv(r.metrics);
-    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = cv.value;
-    const rate = await _fxRateToUsd(r.segments.date);
-    days.push({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
+    const cv = _rowConv(r.metrics), date = _dateOnly(r.segments.date), rate = fx.rate(date);
+    days.push({ date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
       conversions: cv.conv,
-      conversionsCd: dayCd ? cv.convCd : cv.conv,
-      value: rate != null ? valueNative * rate : valueNative,
-      valueCd: dayCd ? (rate != null ? cv.valueCd * rate : cv.valueCd) : (rate != null ? valueNative * rate : valueNative),
-      cost: rate != null ? costNative * rate : costNative,
-      fxIncomplete: rate == null });
+      conversionsCd: dayCd ? cv.convCd : null,
+      value: cv.value * rate,
+      valueCd: dayCd ? cv.valueCd * rate : null,
+      cost: fromMicros(r.metrics.costMicros || 0) * rate,
+      fxIncomplete: fx.fxIncomplete });
   }
   const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
   const reasons = (c.primaryStatusReasons || []).map(String);
@@ -8912,12 +8924,12 @@ async function campaignTimeline({ id } = {}) {
     { key: "learning", label: "Bid strategy", state: learning ? "active" : (notServing ? "pending" : "done"),
       detail: learning ? "Learning — needs ~2-3 weeks or ~30 conversions to stabilize" : (notServing ? null : "Learned / stable") },
     { key: "conversions", label: "Conversion value", state: totals.conversions > 0 ? "done" : (totals.clicks > 10 ? "warn" : "pending"),
-      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · $${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
+      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · ${fx.currency} ${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
     { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
       detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
   ];
   return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
-    steps, adStrength, days, totals, fetchedAt: new Date().toISOString() };
+    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString() };
 }
 /* ====================== Reviewed creative production ======================
  * Drafts are immutable at approval: the review hashes the payload and every
@@ -9007,8 +9019,9 @@ function _putCreativeCopy(payload, groups) {
     }
   }
 }
-// Outlined brand lettering renders consistently on servers without installed fonts.
-function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><rect width="600" height="600" fill="#fffefb"/><path fill="#221f1b" d="M147.142578125 283.962890625H158.5302734375Q165.3857421875 283.962890625 168.546875 280.9921875Q171.7080078125 278.021484375 171.7080078125 271.546875Q171.7080078125 265.1103515625 168.56591796875 262.15869140625Q165.423828125 259.20703125 158.5302734375 259.20703125H147.142578125ZM147.142578125 255.169921875H156.81640625Q163.0625 255.169921875 165.93798828125 252.7705078125Q168.8134765625 250.37109375 168.8134765625 245.19140625Q168.8134765625 239.9736328125 165.93798828125 237.59326171875Q163.0625 235.212890625 156.81640625 235.212890625H147.142578125ZM132.1748046875 288.0V283.962890625H139.4111328125V235.212890625H132.1748046875V231.1376953125H160.244140625Q168.8515625 231.1376953125 173.21240234375 234.66064453125Q177.5732421875 238.18359375 177.5732421875 245.19140625Q177.5732421875 250.2568359375 174.54541015625 253.265625Q171.517578125 256.2744140625 165.6904296875 256.9599609375Q172.9267578125 257.8740234375 176.67822265625 261.58740234375Q180.4296875 265.30078125 180.4296875 271.546875Q180.4296875 280.001953125 175.09765625 284.0009765625Q169.765625 288.0 158.4541015625 288.0ZM229.552734375 259.7783203125Q232.21875 260.501953125 234.14208984375 262.23486328125Q236.0654296875 263.9677734375 237.5888671875 267.0908203125L245.853515625 283.962890625H252.78515625V288.0H239.37890625L230.5048828125 269.9091796875Q227.953125 264.6533203125 225.8203125 263.11083984375Q223.6875 261.568359375 219.955078125 261.568359375H211.4619140625V283.962890625H219.498046875V288.0H196.494140625V283.962890625H203.73046875V235.212890625H196.494140625V231.1376953125H225.3251953125Q233.6279296875 231.1376953125 238.14111328125 235.0986328125Q242.654296875 239.0595703125 242.654296875 246.333984375Q242.654296875 252.19921875 239.35986328125 255.56982421875Q236.0654296875 258.9404296875 229.552734375 259.7783203125ZM211.4619140625 257.4931640625H222.697265625Q228.4482421875 257.4931640625 231.1904296875 254.77001953125Q233.9326171875 252.046875 233.9326171875 246.333984375Q233.9326171875 240.62109375 231.1904296875 237.9169921875Q228.4482421875 235.212890625 222.697265625 235.212890625H211.4619140625ZM277.1904296875 283.962890625H284.4267578125V288.0H262.22265625V283.962890625H269.458984375V235.212890625H262.22265625V231.1376953125H284.4267578125V235.212890625H277.1904296875ZM310.6220703125 288.0V283.962890625H317.896484375V235.669921875H301.1767578125V244.5439453125H296.4921875V231.1376953125H346.994140625V244.5439453125H342.3095703125V235.669921875H325.58984375V283.962890625H332.8642578125V288.0ZM359.0595703125 288.0V283.962890625H366.2958984375V235.212890625H359.0595703125V231.1376953125H404.8388671875V243.7822265625H400.154296875V235.822265625H374.02734375V254.865234375H392.6513671875V247.7431640625H397.3359375V266.6337890625H392.6513671875V259.51171875H374.02734375V283.3154296875H400.763671875V275.35546875H405.4482421875V288.0ZM425.9306640625 285.2578125V272.30859375L430.310546875 272.3466796875Q430.5009765625 278.8212890625 434.06201171875 281.92529296875Q437.623046875 285.029296875 444.8974609375 285.029296875Q451.6767578125 285.029296875 455.23779296875 282.34423828125Q458.798828125 279.6591796875 458.798828125 274.517578125Q458.798828125 270.404296875 456.64697265625 268.1953125Q454.4951171875 265.986328125 447.5634765625 263.8916015625L440.060546875 261.64453125Q431.91015625 259.1689453125 428.57763671875 255.474609375Q425.2451171875 251.7802734375 425.2451171875 245.34375Q425.2451171875 238.107421875 430.38671875 234.1083984375Q435.5283203125 230.109375 444.8212890625 230.109375Q448.7822265625 230.109375 453.5048828125 230.96630859375Q458.2275390625 231.8232421875 463.5595703125 233.4609375V245.572265625H459.255859375Q458.6083984375 239.5546875 455.23779296875 236.86962890625Q451.8671875 234.1845703125 444.9736328125 234.1845703125Q438.9560546875 234.1845703125 435.81396484375 236.64111328125Q432.671875 239.09765625 432.671875 243.7822265625Q432.671875 247.857421875 435.033203125 250.1806640625Q437.39453125 252.50390625 445.0498046875 254.7890625L452.095703125 256.8837890625Q459.8271484375 259.20703125 463.12158203125 262.80615234375Q466.416015625 266.4052734375 466.416015625 272.4609375Q466.416015625 280.7255859375 461.1220703125 284.9150390625Q455.828125 289.1044921875 445.3544921875 289.1044921875Q440.669921875 289.1044921875 435.81396484375 288.15234375Q430.9580078125 287.2001953125 425.9306640625 285.2578125Z"/><path fill="#69563b" d="M216.11279296875 325.31689453125H218.77587890625V343.62890625Q218.77587890625 347.1884765625 217.424560546875 348.796875Q216.0732421875 350.4052734375 213.08056640625 350.4052734375H212.0654296875V348.1640625H212.89599609375Q214.66259765625 348.1640625 215.3876953125 347.17529296875Q216.11279296875 346.1865234375 216.11279296875 343.62890625ZM233.07568359375 325.31689453125H245.52099609375V327.55810546875H235.73876953125V333.38525390625H245.1123046875V335.62646484375H235.73876953125V342.7587890625H245.75830078125V345.0H233.07568359375ZM257.3818359375 325.31689453125H260.0712890625L264.2109375 341.95458984375L268.33740234375 325.31689453125H271.330078125L275.4697265625 341.95458984375L279.59619140625 325.31689453125H282.298828125L277.35498046875 345.0H274.00634765625L269.853515625 327.9140625L265.6611328125 345.0H262.3125ZM294.83203125 325.31689453125H307.27734375V327.55810546875H297.4951171875V333.38525390625H306.86865234375V335.62646484375H297.4951171875V342.7587890625H307.5146484375V345.0H294.83203125ZM320.8916015625 325.31689453125H323.5546875V342.7587890625H333.13916015625V345.0H320.8916015625ZM354.26806640625 335.771484375Q355.125 336.0615234375 355.935791015625 337.0107421875Q356.74658203125 337.9599609375 357.56396484375 339.62109375L360.2666015625 345.0H357.40576171875L354.8876953125 339.95068359375Q353.912109375 337.97314453125 352.995849609375 337.3271484375Q352.07958984375 336.68115234375 350.49755859375 336.68115234375H347.59716796875V345.0H344.93408203125V325.31689453125H350.94580078125Q354.32080078125 325.31689453125 355.98193359375 326.7275390625Q357.64306640625 328.13818359375 357.64306640625 330.98583984375Q357.64306640625 332.8447265625 356.779541015625 334.07080078125Q355.916015625 335.296875 354.26806640625 335.771484375ZM347.59716796875 327.50537109375V334.49267578125H350.94580078125Q352.87060546875 334.49267578125 353.852783203125 333.602783203125Q354.8349609375 332.712890625 354.8349609375 330.98583984375Q354.8349609375 329.2587890625 353.852783203125 328.382080078125Q352.87060546875 327.50537109375 350.94580078125 327.50537109375ZM369.99169921875 325.31689453125H372.8525390625L378.310546875 333.41162109375L383.72900390625 325.31689453125H386.58984375L379.62890625 335.62646484375V345.0H376.95263671875V335.62646484375Z"/></svg>';}
+// Google’s LOGO slot shows the official Brites square logo, never redrawn lettering (brites-brand-assets).
+// White canvas keeps the black script visible on dark placements; 600x600 matches every caller’s saved size.
+function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="600" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#ffffff"/><image width="1024" height="1024" xlink:href="'+require('../../brites-brand-assets').dataUrl('brites_brand_square')+'"/></svg>';}
 async function _saveCreativeAsset(id, bytes, kind, info={}) {
   const f=fb();if(!f)throw new Error("Creative storage is unavailable.");
   const bucket=f.admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);
@@ -9226,17 +9239,17 @@ async function materializeReviewedCreative(it) {
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
   const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
-  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&o.adGroupAssetOperation.create.fieldType==="IMAGE"));
+  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&["AD_IMAGE","IMAGE"].includes(o.adGroupAssetOperation.create.fieldType)));
   clean.unshift(...imageBuild.ops);
   for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
-  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"IMAGE"}}}));
+  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"AD_IMAGE"}}}));
   return clean;
 }
 
 let _groupsService=null;
 function _groupService(){
   _designEngine();
-  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval,listingDetails:itemIds=>merchantProducts({itemIds})});
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval,listingDetails:itemIds=>merchantProducts({itemIds})});
   return _groupsService;
 }
 async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
@@ -9731,7 +9744,7 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   }
   return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,shapeRows,shapeError,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,..._assetShape(a),status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
-    shapeNote:'Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
+    shapeScope:'campaign',shapeNote:'Covers the whole campaign, not only this group: the shape report is read per campaign. Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result,id,sourceHash}){
   if(!_copyValid(result.copy,true))throw new Error('Complete the headlines and descriptions before publication.');

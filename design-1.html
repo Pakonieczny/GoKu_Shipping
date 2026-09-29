@@ -1189,6 +1189,7 @@ dialog.bcLb img{max-width:92vw;max-height:84vh;border-radius:11px;display:block;
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script src="charm-nest-progress.js"></script>
+<script src="order-timeline.js?v=20260929-cx-a"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
    BRITES DESIGN STATION
@@ -1274,6 +1275,37 @@ const LS = {
   printJobs : "metalOrderJobs",
   printLists: "metalOrderLists",
 };
+
+/* ── the order timeline (order-timeline.js, station mode; Paul, 28 Sep: who did what at every station). Each order on a
+   label printed here gets `labelPrinted` (station design, label "sheetQR": the metal's B36 order-list QR the Sorting
+   station scans) and the design completion this print stands for, the "DESIGNED :)" stamp, as a note. Who: the name
+   this station knows (employee_name, "Set your name" in the order chat); nobody named → by "" and signedIn false, never
+   a guess ("Design" is only the chat's sender fallback). Fire-and-forget through the outbox: it never waits or throws. ── */
+const DsTimeline = (() => {
+  const DEVICE = "design-1", T = () => window.OrderTimeline || null;
+  try { const t = T(); if (t) t.config({ mode: "station", station: "design", device: DEVICE, sandbox: SANDBOX }); } catch (_) {}
+  const who = () => { try { return String(localStorage.getItem(LS.employee) || "").trim().slice(0, 80); } catch (_) { return ""; } };
+  const metalName = m => { try { return (METAL_BY_KEY[m] && METAL_BY_KEY[m].label) || String(m).toUpperCase(); } catch (_) { return String(m); } };
+  /** Labels printed (lists: { metal: [receipt ids] }, jobs: the labels as the print page made them, page: that page). */
+  function printed(lists, jobs, page) {
+    try {
+      const t = T(); if (!t || !lists) return 0;
+      const by = who(), at = Date.now(), minute = Math.floor(at / 60000), digits = x => String(x == null ? "" : x).replace(/\D/g, "");
+      const rids = [...new Set(Object.values(lists).flat().map(digits).filter(Boolean))], signed = by ? {} : { signedIn: false };
+      for (const rid of rids) {
+        const metals = Object.keys(lists).filter(m => (lists[m] || []).some(x => digits(x) === rid));
+        const labels = (jobs || []).filter(j => (j.ids || []).some(x => digits(x) === rid)).length || metals.length;
+        t.record({ orderId: rid, type: "labelPrinted", at, by, station: "design", device: DEVICE, id: `${DEVICE}-${rid}-labelPrinted-${minute}`,
+          text: `QR label printed at the Design Station · ${metals.map(metalName).join(", ")}`.slice(0, 200),
+          data: Object.assign({ label: "sheetQR", metals, labels, orders: rids.length, printPage: String(page || "") }, signed) });
+        t.record({ orderId: rid, type: "note", at, by, station: "design", device: DEVICE, id: `${DEVICE}-${rid}-designed-${minute}`, milestone: true,
+          text: "DESIGNED :)", data: Object.assign({ kind: "designed", stamp: "DESIGNED :)" }, signed) });
+      }
+      return rids.length;
+    } catch (e) { try { console.warn("[DsTimeline] labels not recorded", e); } catch (_) {} return 0; }
+  }
+  return { printed, who };
+})();
 
 /* The sandbox streams orders many times faster than the shop, and its ledger shares this origin's storage quota with
    production: it keeps two days and at most 5,000 orders (sandbox.reset clears it anyway). Production keeps 60 days. */
@@ -5007,6 +5039,7 @@ async function proceedToPrint() {
     return;                       // orders stay in the list, handoff stays put
   }
 
+  DsTimeline.printed(lists, jobs, page);   // who printed which order's label, on its timeline (never waits or throws)
   closeDlg($("#qrPreviewModal"));
   try { localStorage.removeItem(LS.printJobs); localStorage.removeItem(LS.printLists); } catch (_) {}
 
@@ -5332,6 +5365,8 @@ const BritesChat = (() => {
     const commit = () => {
       const v = (inp.value || "").trim();
       if (v) { try { localStorage.setItem(LS.employee, v); } catch (_) {} }
+      // sign-in time: a name set here is the person signed in on this computer (the station has no PIN)
+      if (v && v !== cur) { try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {} }
       el.who.dataset.editing = "0";
       el.who.replaceChildren();
       const av = document.createElement("span"); av.className = "bcAv"; av.id = "bcWhoAv";
@@ -5837,6 +5872,8 @@ const BritesChat = (() => {
       if (el.lb)     closeDlg(el.lb);
     },
     listViaServer,
+    /** The name was cleared (the midnight sign-out): the chat shows "Set your name" again. */
+    whoChanged() { if (wired) { try { paintWho(); render(); } catch (_) {} } },
     _state: S,
   };
 })();
@@ -8138,6 +8175,31 @@ window.DesignStation = {
     console.warn("Storage uploader unavailable — image attachments disabled.", e);
   }
   }
+</script>
+<!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
+<script src="station-session.js?v=20260929-ss2"></script>
+<script>
+(function () {
+  const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  /* The Design Station has no PIN. The operator passcode is shared, so it names nobody: the person signed in is the
+     name set in the chat's "Set your name" field (employee_name). */
+  function person() {
+    try { const n = (localStorage.getItem("employee_name") || "").trim(); return n ? { name: n, id: "" } : null; } catch (_) { return null; }
+  }
+  /* At midnight the name goes, and a station on its own also drops this tab's passcode, so its own sign-in box asks
+     again (when a passcode is set). Framed in the sorter, the passcode is the sorter's and stays. Orders, selections,
+     drafts, Etsy's connection and anything typed stay on screen. */
+  function signOut(reason) {
+    try { localStorage.removeItem("employee_name"); } catch (_) {}
+    try { BritesChat.whoChanged(); } catch (_) {}
+    if (!framed) {
+      try { Passcode.set(""); } catch (_) {}
+      if (document.readyState !== "loading") { try { Passcode.gate().catch(() => {}); } catch (_) {} }   // while loading, boot asks
+    }
+    try { if (reason === "midnight") toast("Signed out at midnight. Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
+  }
+  try { if (window.StationSession) StationSession.init({ station: "design", device: "design-1", person, signOut }); } catch (_) {}
+})();
 </script>
 </body>
 </html>
