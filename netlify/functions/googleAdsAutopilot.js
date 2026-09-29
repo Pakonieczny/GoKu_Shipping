@@ -1959,19 +1959,17 @@ Collection: "${coll.title}" (${coll.handle}). Bestsellers: ${heroes || "n/a"}.
 Social proof you may reference: ${proof}.
 Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.${cxBlock}${pbCopy}
 Hard rules:
-- 15 headlines, each ≤30 characters. 4 descriptions, each ≤90 characters.
-- 4 sitelink texts (≤25 chars) with 1-line descriptions, 6 callouts (≤25 chars).
+- 15 distinct headlines, each ≤30 characters. 4 distinct descriptions, each ≤90 characters.
 - Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
 - ${BRAND.messagingRestrictions.join(" ")}
-Return ONLY JSON: {"headlines":[],"descriptions":[],"sitelinks":[{"text":"","desc":""}],"callouts":[]}`;
+Return ONLY JSON: {"headlines":[],"descriptions":[]}`;
   const j = await openaiJSON(prompt, { maxTokens: 5000 });
   if (!j) return null;
+  // Sitelinks and callouts come from buildCampaignAssets (real store pages), so the model is not asked for them.
+  const uniq = a => a.filter((t, i) => a.findIndex(x => x.toLowerCase() === t.toLowerCase()) === i);
   const out = {
-    headlines: (j.headlines || []).map(cleanAdText).filter(t => t && t.length <= 30 && brandSafe(t)).slice(0, 15),
-    descriptions: (j.descriptions || []).map(cleanAdText).filter(t => t && t.length <= 90 && brandSafe(t)).slice(0, 4),
-    sitelinks: (j.sitelinks || []).filter(s => brandSafe(s.text) && brandSafe(s.desc || ""))
-                 .map(s => ({ text: String(s.text).slice(0, 25), desc: String(s.desc || "").slice(0, 35) })).slice(0, 4),
-    callouts: (j.callouts || []).map(s => String(s).slice(0, 25)).filter(brandSafe).slice(0, 6)
+    headlines: uniq((j.headlines || []).map(cleanAdText).filter(t => t && t.length <= 30 && brandSafe(t))).slice(0, 15),
+    descriptions: uniq((j.descriptions || []).map(cleanAdText).filter(t => t && t.length <= 90 && brandSafe(t))).slice(0, 4)
   };
   // RSA minimums: 3 headlines, 2 descriptions
   if (out.headlines.length < 3 || out.descriptions.length < 2) return null;
@@ -2779,6 +2777,8 @@ const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", 
 // "imported / slower shipping" to them. Keep claims true and universally appealing.
 const BRAND_CALLOUTS = ["Handcrafted Jewelry", "Personalized Charms", "Custom-Made Gifts", "Unique Handmade Designs"];
 const _clip = (s, n) => String(s || "").slice(0, n);
+// Clip at a word boundary ("Shop Sports & Athletics", never "Shop Sports & Athleti").
+const _wclip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length <= n ? s : (s.slice(0, n + 1).replace(/\s+\S*$/, "").replace(/[\s&,·:;\-–—]+$/, "") || s.slice(0, n)); };
 // Sitelink + callout + structured-snippet assets. Google: sitelinks alone lift conversions ~15% by
 // adding relevant links + ad real estate. All URLs are pages that always exist (collection, homepage,
 // Shopify's built-in /collections/all sorts) so nothing 404s. Returned as asset + campaignAsset ops
@@ -2791,19 +2791,19 @@ function buildCampaignAssets(coll, finalUrl, cRes, extras) {
   //     fewer than 3 types we skip the snippet entirely rather than pad it.
   extras = extras || {};
   const ASSET = n => `customers/${CID}/assets/${n}`; const ops = []; let an = -10;
-  const short = _clip(coll.title, 16);
   const sitelinks = extras.productOnly ? [] : [
-    { linkText: _clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
-    { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
+    { linkText: _wclip("Shop " + coll.title, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
+    // The Best Sellers collection's own ad must not repeat its page as a second sitelink.
+    ...(coll.handle === "best-sellers" ? [] : [{ linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }])
   ];
   (extras.relatedCollections || []).slice(0, 2).forEach(rc => {
     if (!rc || !rc.handle || rc.handle === coll.handle || rc.handle === "best-sellers") return;
-    sitelinks.push({ linkText: _clip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle });
+    sitelinks.push({ linkText: _wclip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle });
   });
   sitelinks.forEach(s => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: _clip(s.linkText, 25), description1: _clip(s.d1, 35), description2: _clip(s.d2, 35) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } }); });
   BRAND_CALLOUTS.forEach(t => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, calloutAsset: { calloutText: _clip(t, 25) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } }); });
   let snippets = 0;
-  const types = [...new Set((extras.snippetTypes || []).map(t => _clip(String(t || "").trim(), 25)).filter(Boolean))].slice(0, 6);
+  const types = [...new Set((extras.snippetTypes || []).map(t => _wclip(t, 25)).filter(t => t && !/^other$/i.test(t)))].slice(0, 6);
   if (types.length >= 3) {
     const ss = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: types } } } }); ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
     snippets = 1;
@@ -2824,6 +2824,9 @@ async function accountWasteNegatives() {
 const _KW_TYPES = ["necklace","necklaces","earring","earrings","bracelet","bracelets","charm","charms","pendant","pendants","anklet","anklets","locket","lockets","keychain","keychains","ring","rings","hoop","hoops","stud","studs"];
 const _KW_NOISE = new Set(["gift","gifts","present","presents","jewelry","jewellery","accessories","ideas","for","the","and","with","her","him","women","men","girls","boys","custom","personalized","personalised","handmade","dainty","tiny","small","cute"]);
 function _kwWords(x) { return String(x || "").toLowerCase().replace(/[^a-z0-9]+/g," ").trim().split(/\s+/).filter(Boolean); }
+// Text Google accepts as a keyword: at most 80 characters and 10 words, none of , ! @ % ^ * ( ) = { } ; ~ ` < > ? \ | [ ].
+// Returns null when the phrase cannot be sent (one invalid keyword fails the whole atomic campaign create).
+function _adsKeywordText(x) { const t = String(x == null ? "" : x).toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”"]/g, " ").replace(/[,!@%^*()={};~`<>?\\|\[\]]/g, " ").replace(/(^|\s)[-+]+/g, "$1").replace(/\s+/g, " ").trim(); return t && t.length <= 80 && t.split(" ").length <= 10 ? t : null; }
 function _profileKeywordLexicon(profile) {
   const types = new Set(), qualifiers = new Set(), materials = new Set(), personalization = new Set();
   const addWords = (dst, x) => _kwWords(x).forEach(w => { if (w.length > 2 && !_KW_NOISE.has(w)) dst.add(w); });
@@ -2863,7 +2866,9 @@ function _keywordGrounding(text, profile, occasion) {
   if (intent === "low") return { ok:false, reason:"low purchase intent" };
   let groupLabel = null;
   const detailed = ((profile && profile.typesDetail)||[]).map(x=>String(x.type||x.t||x.name||"")).filter(Boolean);
-  groupLabel = detailed.find(t=>_kwWords(t).some(w=>set.has(w))) || (root.charAt(0).toUpperCase()+root.slice(1));
+  // Compare singular forms so "bracelet" and "bracelets" land in ONE ad group; prefer the type the keyword fully names.
+  const one=w=>w.replace(/s$/,""), roots=new Set(words.map(one)), tw=t=>_kwWords(t).map(one);
+  groupLabel = detailed.find(t=>tw(t).length&&tw(t).every(w=>roots.has(w))) || detailed.find(t=>tw(t).includes(root)) || (root.charAt(0).toUpperCase()+root.slice(1));
   return { ok:true, intent, groupLabel, evidence: qualifierHits.slice(0,4) };
 }
 function _inventoryKeywordSeeds(profile, occasion) {
@@ -2872,22 +2877,28 @@ function _inventoryKeywordSeeds(profile, occasion) {
   const motifs = ((profile.motifs)||[]).map(x=>String(x.t||x).toLowerCase()).filter(Boolean).slice(0,7);
   const mats = ((profile.mats)||[]).map(x=>String(x.t||x).toLowerCase()).filter(Boolean).slice(0,3);
   const pers = ((profile.personalization)||[]).map(String).map(x=>x.toLowerCase()).slice(0,3);
-  const out=[]; const add=t=>{ t=String(t||"").replace(/\s+/g," ").trim(); if(t&&!out.includes(t))out.push(t); };
+  const out=[]; const add=t=>{ t=_adsKeywordText(String(t||"").replace(/\([^)]*\)/g," ")); if(t&&!out.includes(t))out.push(t); };
+  // Only a short occasion name ("christmas", "mother's day") is a search phrase; a scan's descriptive
+  // occasion sentence appended to a product made unsearchable, often comma-broken, exact keywords.
+  const occ=_adsKeywordText(occasion);
   types.forEach((ty,ti)=>{
     motifs.slice(0,ti===0?5:3).forEach(m=>add(`${m} ${ty}`));
     mats.slice(0,2).forEach(m=>add(`${m} ${motifs[0]||"personalized"} ${ty}`));
     pers.slice(0,1).forEach(x=>add(`${x} ${motifs[0]||"custom"} ${ty}`));
-    if (occasion && !/evergreen/i.test(occasion) && motifs[0]) add(`${motifs[0]} ${ty} ${occasion}`);
+    if (occ && occ.split(" ").length <= 3 && !/evergreen/i.test(occ) && motifs[0]) add(`${motifs[0]} ${ty} ${occ}`);
   });
   return out.slice(0,16);
 }
 function groundKeywordPlan(keywordPlan, profile, occasion, { min=4, max=18 } = {}) {
   const source = Array.isArray(keywordPlan) ? keywordPlan.slice() : [];
   const candidates = source.concat(_inventoryKeywordSeeds(profile, occasion).map(text=>({text, source:"inventory_seed"})));
-  const accepted=[], rejected=[], seen=new Set();
+  const accepted=[], rejected=[], seen=new Set(), occ=_kwWords(occasion).join(" ");
   for (const raw of candidates) {
-    const text=String((raw&&(raw.text||raw))||"").toLowerCase().replace(/\s+/g," ").trim();
+    const said=String((raw&&(raw.text||raw))||"").toLowerCase().replace(/\s+/g," ").trim(), text=_adsKeywordText(said);
+    if(said&&!text){ if(!seen.has(said)){ seen.add(said); rejected.push({text:said.slice(0,80),reason:"not a valid Google keyword (over 80 characters, over 10 words or unsupported symbols)"}); } continue; }
     if(!text||seen.has(text))continue; seen.add(text);
+    // Earlier scans stored "<motif> <type> <whole occasion sentence>" seeds; nobody searches those.
+    if(occ.split(" ").length>3&&_kwWords(text).join(" ").includes(occ)&&!(raw&&raw.real&&Number(raw.searches)>0)){ rejected.push({text,reason:"occasion description, not a search phrase"}); continue; }
     const g=_keywordGrounding(text,profile,occasion);
     if(!g.ok){ rejected.push({text,reason:g.reason}); continue; }
     accepted.push(Object.assign({}, typeof raw==="object"?raw:{}, { text, intent:g.intent, grounding:g.evidence,
@@ -2913,12 +2924,13 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`;
   const finalUrl = `https://britesjewelry.com/collections/${coll.handle}`;
   const _sched = _campaignScheduleFields(startDate, endDate);
-  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : 0.80;
+  // Google accepts money only in whole cents (CAD minimum unit); 7.555 or 1.237 fails the whole create.
+  const capCpc = Number(maxCpc) > 0 ? Math.max(0.01, Math.round(Number(maxCpc) * 100) / 100) : 0.80;
   const useSmart = (smartBidding != null) ? !!smartBidding : !!ENV.GADS_TARGET_ROAS;
   const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
   const bidding = useSmart ? { maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {} } : { manualCpc: { enhancedCpcEnabled: false } };
   const ops = [
-    { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
+    { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(Math.round(Number(dailyBudget)*100)/100),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     { campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"SEARCH",campaignBudget:bRes,
       containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
       ..._sched,...bidding,
@@ -2932,14 +2944,14 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
       geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"}}}}
   ];
   let groups=(Array.isArray(adGroups)?adGroups:[]).map((g,i)=>({
-    name:String(g.name||g.label||`Intent ${i+1}`).slice(0,70), finalUrl:g.finalUrl||finalUrl,
+    name:_wclip(g.name||g.label||`Intent ${i+1}`,70), finalUrl:g.finalUrl||finalUrl,
     assets:g.assets||assets, keywords:(g.keywords||[]).map(k=>typeof k==="string"?{text:k}:k).filter(Boolean)
   })).filter(g=>g.assets&&g.assets.headlines&&g.assets.descriptions&&g.keywords.length>=2).slice(0,3);
   if(!groups.length && Array.isArray(keywordPlan)) groups=[{name:`${coll.title} · ${event?event.label:"Evergreen"}`,finalUrl,assets,keywords:keywordPlan}];
-  const dedupe=new Set();
+  const dedupe=new Set(), dropped=[];
   groups=groups.map(g=>{ g.keywords=g.keywords.map(k=>{
-    const text=String(k.text||k).toLowerCase().replace(/\s+/g," ").trim(); if(!text||dedupe.has(text))return null; dedupe.add(text);
-    return {text,matchType:String(k.matchType||((k.intent==="high"||_kwWords(text).length>=4)?"EXACT":"PHRASE")).toUpperCase()==="EXACT"?"EXACT":"PHRASE"};
+    const raw=String(typeof k==="string"?k:(k&&k.text)||"").trim(), text=_adsKeywordText(raw); if(!text){ if(raw)dropped.push(raw.slice(0,80)); return null; } if(dedupe.has(text))return null; dedupe.add(text);
+    return {text,matchType:String(k.matchType||((k.intent==="high"||_kwWords(text).length>=4)?"EXACT":"PHRASE")).toUpperCase()==="EXACT"?"EXACT":"PHRASE",measured:!!(k.real&&Number(k.searches)>0)};
   }).filter(Boolean).slice(0,10); return g; }).filter(g=>g.keywords.length>=2);
   const totalKw=groups.reduce((n,g)=>n+g.keywords.length,0);
   if(totalKw<4) throw new Error("Opportunity rejected: fewer than 4 inventory-grounded, purchase-intent keywords survived validation. No broad fallback campaign was created.");
@@ -2953,12 +2965,16 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
     g.keywords.forEach(k=>ops.push({adGroupCriterionOperation:{create:{adGroup:agRes,status:"ENABLED",keyword:{text:k.text,matchType:k.matchType}}}}));
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(gid=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${gid}`}}}}));
-  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(n=>String(n).trim().toLowerCase()).filter(Boolean))];
+  // English, matching the ad copy and the Keyword Planner research (languageConstants/1000). Without a
+  // language criterion Google serves to every language and the ad-design keyword evidence is unavailable.
+  ops.push({campaignCriterionOperation:{create:{campaign:cRes,language:{languageConstant:"languageConstants/1000"}}}});
+  const all=groups.flatMap(g=>g.keywords), kwWords=all.map(k=>new Set(k.text.split(" ")));
+  // A broad negative whose words all sit inside one of our own keywords would block that keyword ("kit" vs "first aid kit charm").
+  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(_adsKeywordText).filter(Boolean))].filter(n=>!kwWords.some(s=>n.split(" ").every(w=>s.has(w))));
   negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n,matchType:"BROAD"}}}}));
   let assetSummary=null; if(withAssets!==false){const ca=buildCampaignAssets(coll,finalUrl,cRes,assetExtras);ops.push(...ca.ops);assetSummary=ca.summary;}
-  const all=groups.flatMap(g=>g.keywords);
   return {ops,tag,finalUrl,negatives:negSet,assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
-    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,researched:true,dropped:[],groups:groups.length,searchPartners:false}};
+    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:true,dropped,groups:groups.length,searchPartners:false}};
 }
 
 /* ============================ STAGES ============================ */
@@ -6882,6 +6898,9 @@ function _bestSearchLandingUrl(profile, group, collectionHandle){
 async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate, smartBidding } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
+  // Google rejects a past end date or an end before the start; stop before any paid copy is written.
+  { const today = _acctDateYmd(await _accountTz(), 0), sd = _dateOnly(startDate), ed = _dateOnly(endDate);
+    if (ed && (ed < today || (sd && ed < sd))) return { ok: false, reason: `The end date ${ed} is ${ed < today ? "in the past" : "before the start date " + sd}. Choose a later end date and generate again.` }; }
   const coll = await collectionMeta(handle);
   const event = (eventLabel && eventLabel !== "Evergreen gifting") ? { label: eventLabel, angle: "" } : null;
   // If this generate belongs to a SCANNED opportunity (same collection + occasion), reuse its
@@ -6921,10 +6940,10 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = sig.totalRevenue!=null?sig.totalRevenue:(sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
   let _cvrInfo = null; try { _cvrInfo = await accountCvr(); } catch (e) {}
   const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov, cvrInfo: _cvrInfo });
-  const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
+  const dailyBudget = _r2(Number(budget) > 0 ? Number(budget) : plan.budget.daily); // whole cents, as Google stores it
   const sDate = startDate || plan.duration.startDate;
   const eDate = endDate || plan.duration.endDate;
-  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : plan.cpc.max;
+  const capCpc = _r2(Number(maxCpc) > 0 ? Number(maxCpc) : plan.cpc.max);
   // Default target countries (so a draft never silently launches to "all countries"). Falls back
   // to the saved control default, then Canada (2124) — the brand's home market.
   let cty = (countries && countries.length) ? countries
@@ -6956,7 +6975,7 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const groupAssets=await Promise.all(grounded.groups.map(async(g,i)=>{
     try{return (await generateRSAAssets(coll,event,Object.assign({},rsaContext,{intentGroup:{label:g.label,keywords:g.keywords.map(k=>k.text)}})))||assets;}catch(e){return assets;}
   }));
-  const adGroups=grounded.groups.map((g,i)=>({name:`${g.label} · ${event?event.label:"Evergreen"}`.slice(0,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
+  const adGroups=grounded.groups.map((g,i)=>({name:_wclip(`${g.label} · ${event?event.label:"Evergreen"}`,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
   // Launch negatives: universal defaults + the opportunity model's theme-conflict
   // list + terms that already wasted money account-wide. Deduped.
   let launchNegs = DEFAULT_NEGATIVES.slice();
@@ -6966,9 +6985,9 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:Number(ctrl.targetRoas||0),assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
-  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
+  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${ctrl.budgetCurrency || CURRENCY} ${capCpc.toFixed(2)}/click`;
   const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
-  const kwTxt = keywordSummary ? `, ${keywordSummary.count} ${keywordSummary.researched ? "researched" : "themed"} keywords${keywordSummary.exact ? ` (${keywordSummary.exact} exact)` : ""}` : "";
+  const kwTxt = keywordSummary ? `, ${keywordSummary.count} keywords (${keywordSummary.measured} with measured Google demand${keywordSummary.exact ? `, ${keywordSummary.exact} exact` : ""})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
     summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
