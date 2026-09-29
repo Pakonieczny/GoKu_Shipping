@@ -2,7 +2,7 @@
 // 00:25; before it, a small copy flew to the Nest tab, Paul 28 Sep: animations "not exactly visible" and "jerky"): a
 // design put on Gold and sent, the window goes back into its card, and the tour lifts the design out of the card as a
 // coin, switches to the Nest tab, lands it on its Gold sheet (queued there: the run is in Manual, "press Nest"), says
-// "+1" and comes back home to the Review tab. Measured here in a real Chromium, unthrottled, on the fake site
+// what arrived ("+1", on its caption) and comes back home to the Review tab. Measured here in a real Chromium, unthrottled, on the fake site
 // (bridge-server.cjs), with requestAnimationFrame deltas, long tasks, every element.animate() call and the tour's own
 // marks (performance.mark "tour:..."):
 //   visible · the coin is on screen and moves, and a "+1" rises where it lands;
@@ -123,7 +123,7 @@ async function scene(browser, profile) {
     const r = await page.evaluate(async () => {
       __start(); performance.mark('__t0'); (window.__syncMark = function __syncMark() { const t = performance.now(); while (performance.now() - t < 4); })();
       __M.watch.push(['copy', () => { const g = document.querySelector('#tourLayer .tourPiece') || document.querySelector('#tourLayer .tourCoin'); if (!g || !g.isConnected) return null; const b = g.getBoundingClientRect(); return Math.round(b.left) + ',' + Math.round(b.top) + '|' + getComputedStyle(g).opacity; }],
-        ['plus', () => [...document.querySelectorAll('#tourLayer .tourPlus, .mPlus')].map(p => p.textContent).join(',') || null],
+        ['plus', () => [...document.querySelectorAll('#tourLayer .tourCap em, #tourLayer .tourPlus, .mPlus')].map(p => p.textContent).join(',') || null],
         ['mode', () => CN.S.mode]);
       document.querySelector('#cuDlg [data-send]').click(); __mark('clicked');
       const t = performance.now(); while (!__M.marks.some(m => m[0] === 'end') && performance.now() - t < 16000) await new Promise(res => setTimeout(res, 50));
@@ -178,7 +178,7 @@ async function scene(browser, profile) {
   console.log('');
   const modes = (r.seen.mode || []).map(x => x[1]).filter((x, i, a) => !i || a[i - 1] !== x);
   check(fly != null && landed != null && landed - fly >= 2400 && at('switch:nest').length === 1 && at('land').length === 1 && at('switch:review').length === 1 && modes.includes('nest') && modes[modes.length - 1] === 'review', `the tour takes the design to the Nest tab, lands it once and comes home (${fly}–${landed} ms; modes ${modes.join(' → ')})`);
-  check(pos.size >= 20 && plus.some(p => /\+1/.test(p)), `the coin is seen moving (${pos.size} positions) and "+1" rises (${[...new Set(plus)].join(' ')})`);
+  check(pos.size >= 20 && plus.some(p => /\+1/.test(p)), `the coin is seen moving (${pos.size} positions) and the caption says "+1" (${[...new Set(plus)].join(' ')})`);
   check(!layout.length && !paint.length, `only transform, opacity and clip-path animated in the flight (${props.join(',')})`);
   check(end.sent && end.strip && !end.dlg && !end.ghosts && end.state === 'pooled' && end.onGold === 1 && end.mode === 'review', `sent, placed on a Gold sheet, the card says so, the window closed, no copy left, home (${JSON.stringify(end)})`);
   if (during) check(!during.long.length && during.over34 <= during.frames / 10, `the window's way back and the tour are smooth, both tab switches included (from the close until home): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}`, quiet);
