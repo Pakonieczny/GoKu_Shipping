@@ -275,16 +275,6 @@ async function runViewport(browser, vp, base, known, canShoot) {
       }
       if (c.tag === 'input' && /^(date|number|text|search|email|url|range|tel)$/.test(c.type || 'text') || c.tag === 'textarea') {
         C.inputs++;
-        // A campaign's budget editor gets a CAD tracer far enough from the budget to reach its
-        // large-change confirmation, and is saved; the confirmation's buttons are walked next.
-        if (await loc.evaluate(el => !!el.closest('.cmdEdit[data-kind="budget"]')).catch(() => false)) {
-          state.lastAction = 'budget editor: 17.47, Save';
-          await loc.fill('17.47', { timeout: 2500 });
-          const save = page.locator('.cmdEdit[data-kind="budget"] [data-k="save"]');
-          if (vp.phone) await save.tap({ timeout: 3000 }); else await save.click({ timeout: 3000 });
-          await afterAction(tab, scopes, c, depth);
-          return;
-        }
         const orig = await loc.inputValue().catch(() => null);
         if (c.type === 'date') await loc.fill(new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10), { timeout: 2500 });
         else if (c.type === 'range') { await loc.focus({ timeout: 2500 }); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); }
@@ -316,6 +306,20 @@ async function runViewport(browser, vp, base, known, canShoot) {
     else if (motion.jumped) add('expands/collapses with no transition (jumps)', vp.name, tab, { control: c.text, tag: c.tag, heightChange: motion.delta, pageHeightChange: motion.docDelta, shift: Math.round(motion.shift * 1000) / 1000 }, c.family);
     else if (motion.shift > 0.05 && !motion.animated.length) add('content below shifts with no transition', vp.name, tab, { control: c.text, tag: c.tag, shift: Math.round(motion.shift * 1000) / 1000, moved: motion.sources }, c.family);
     await afterAction(tab, scopes, c, depth);
+    if (await page.locator('.cmdEdit[data-kind="budget"] #cmdEditIn').count().catch(() => 0)) await budgetEdit(tab, scopes, c, depth);
+  }
+
+  // A campaign's budget editor, once open, gets a CAD tracer far enough from the budget to reach its
+  // large-change confirmation; it is saved and the change applied before another control replaces it.
+  async function budgetEdit(tab, scopes, c, depth) {
+    const box = page.locator('.cmdEdit[data-kind="budget"]'), press = l => vp.phone ? l.tap({ timeout: 3000 }) : l.click({ timeout: 3000 });
+    try {
+      state.lastAction = 'budget editor: 17.47, Save';
+      await box.locator('#cmdEditIn').fill('17.47', { timeout: 2500 }); await press(box.locator('[data-k="save"]'));
+      await afterAction(tab, scopes, c, depth);
+      const apply = box.locator('[data-k="apply"]');
+      if (await apply.count()) { state.lastAction = 'budget editor: Apply anyway'; await press(apply); await afterAction(tab, scopes, c, depth); }
+    } catch (e) { add('control could not be operated', vp.name, tab, { control: 'budget editor', why: String(e.message || e).split('\n')[0].slice(0, 200) }, 'budget editor'); }
   }
 
   async function probeChartMark(tab, loc, c) {

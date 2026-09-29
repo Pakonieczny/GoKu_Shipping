@@ -166,7 +166,8 @@ function pageAudit(opts) {
     if (!visible(el) && !el.closest('svg')) return;
     ['title', 'aria-label', 'placeholder', 'data-tip', 'alt'].forEach(a => { const v = el.getAttribute(a); if (v) leak('@' + a, el, a === 'data-tip' ? v.replace(/<[^>]+>/g, ' ') : v); });
   }));
-  roots.forEach(root => root.querySelectorAll('input,select,textarea').forEach(el => { if (visible(el) && el.type !== 'password') leak('value', el, el.value); }));
+  // A select shows its chosen option's text; its value is never on screen.
+  roots.forEach(root => root.querySelectorAll('input,select,textarea').forEach(el => { if (visible(el) && el.type !== 'password') leak('value', el, el.tagName === 'SELECT' ? (el.selectedOptions[0] || {}).text || '' : el.value); }));
 
   // 7. Dollar amounts with no currency code nearby; CAD tracers flagged explicitly.
   const tracers = (opts.cadTracers || []).map(Number);

@@ -35,9 +35,9 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   });
 
   // (The date picker's phone layout and leftward opening are checked in console-inline-actions.cjs.)
-  await test('on phones picker controls, breadcrumbs, listing links and the Approvals edit links are at least 32 px', () => {
+  await test('on phones picker controls, breadcrumbs, listing links, campaign option checkboxes and the Approvals edit links are at least 32 px', () => {
     const phone = block('@media(max-width:760px){', '/* Phones: controls are at least 32 px');
-    assert.match(phone, /\.rpPreset,\.rpNav,[^{]*,#groupContext \.bg-back\{min-height:32px\}/);
+    assert.match(phone, /\.rpPreset,\.rpNav,[^{]*,#groupContext \.bg-back,\.coCamps label\{min-height:32px\}/);
     assert.match(phone, /\.rpNav,[^{]*\{min-width:32px;min-height:32px\}/);
     assert.match(phone, /\.draft \.apEdit>summary,\.draft \.apLink\{display:inline-block;min-width:32px;min-height:32px;/);
     assert.match(phone, /\.reportListing a,\.reportListings>a,\.bg-products a\{display:inline-block;min-height:32px;/);
@@ -58,6 +58,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.equal(p.anims.length, 1); let a = p.anims[0];
     assert.equal(a.el, d); assert.equal(a.frames[0].height, '40px'); assert.equal(a.frames[1].height, '200px');
     assert(a.opts.duration >= 150 && a.opts.duration <= 400, 'duration ' + a.opts.duration);
+    assert(a.opts.duration >= 200, 'a 160 px change moves long enough to be seen: ' + a.opts.duration);
     // A button whose result arrives later: the card eases when the content lands, capped at 400 ms.
     p.H.set(card, 300); p.document.getElementById('b').click(); await settle(); assert.equal(p.anims.length, 1);
     p.H.set(card, 2400); p.document.getElementById('more').innerHTML = '<p>Loaded</p>'; await settle();

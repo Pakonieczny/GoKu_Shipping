@@ -26,9 +26,9 @@ install anything.
   get a local placeholder SVG.
 - Mutating actions (budgets, status, approvals, deletes) change only the
   fixture's in-memory state. Native `confirm()` dialogs that delete or discard
-  are dismissed; others are accepted so the follow-up UI is exercised. The
-  in-place budget editor (`#cmdEditIn`) gets 17.47 (a CAD tracer) and is saved,
-  to reach its large-change confirmation.
+  are dismissed; others are accepted so the follow-up UI is exercised. When a
+  campaign's in-place budget editor (`#cmdEditIn`) opens, the walk types 17.47
+  (a CAD tracer), saves, and applies its large-change confirmation.
 - An action the server does not route (parsed from
   `netlify/functions/googleAdsAutopilotKick.js` `handleAction`) is reported as
   an unknown API action.
