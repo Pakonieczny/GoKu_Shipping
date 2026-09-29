@@ -141,7 +141,7 @@ async function handleAction(body) {
   const f = fb();
   const a = body.action;
   const ctrl = await E.control();
-  if (a === "dashboard") return await E.dashboard();
+  if (a === "dashboard") return await E.dashboard(body); // body.activity pages the activity feed by its dates
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
   // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
   if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {

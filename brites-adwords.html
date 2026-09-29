@@ -852,6 +852,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 .dayTable{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:8px;font-size:12.5px}.dayTable th{font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}.dayTable td{padding:8px;border-bottom:1px solid var(--line-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dayTable th.r,.dayTable td.r{text-align:right;width:16%}.dayTable td .campaignBadge{vertical-align:-3px}.dayTable tfoot td{font-weight:700;border-bottom:0}.dayRow[data-cid]{cursor:pointer}.dayRow[data-cid]:hover>td{background:var(--paper)}.dayRow:focus-visible{outline:2px solid var(--gold);outline-offset:-2px}.dayRow.sel>td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
 .statusWhy{display:block;margin-top:4px;max-width:200px;font-size:10.5px;line-height:1.35;color:var(--ink-70);white-space:normal}.campaignTree th small{margin-left:3px;font-weight:400;letter-spacing:.02em;color:var(--ink-45)}.campaignTree .idleToggle td{padding:12px 10px}.idleRows.opening>tr.crow{animation:cmdIn .24s ease-out}.crowFlash>td{animation:crowFlash 1.6s ease-out}@keyframes crowFlash{0%,35%{background:var(--gold-soft)}100%{background:transparent}}
 .cdet.opening>td>*,.reportGroup.opening>.reportListings{animation:cmdIn .24s ease-out}.treeUpdating{display:flex;align-items:center;gap:8px;margin-top:0}.treeStale>:not(.treeUpdating){opacity:.55}.campaignTreeHost .reportListing b{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.reportGap{display:flex;align-items:center;gap:16px;padding:16px 4px 16px 28px;border-bottom:1px solid var(--line)}.reportGap>span{flex:1;min-width:100px}.reportGap small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}@media(max-width:700px){.reportGap{flex-wrap:wrap;padding-left:4px}}
 @media(min-width:701px){.campaignTreeHost .reportListing+.reportListing .reportMetrics small{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
 @media(max-width:700px){#srChips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}#srChips>.srchip{flex:none}#snapshot table.campaignTree{min-width:0}.campaignTree>thead{display:none}.campaignTree,.campaignTree>tbody,.campaignTree tr.cdet,.campaignTree .idleToggle tr{display:block}.campaignTree>tbody[hidden]{display:none}.campaignTree tr.crow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;padding:13px 4px;border-bottom:1px solid var(--line)}.campaignTree tr.crow>td{display:block;padding:0;border:0;min-width:0}#snapshot .campaignTree .crow>td:first-child{grid-column:1/3;display:flex;align-items:flex-start;min-width:0;position:static;background:none}.campaignTree .crow>td:first-child>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere}.campaignTree .crow .treeChevron{margin-right:10px;font-size:20px;line-height:1.1}.campaignTree .crow>td.cstat{grid-column:3;text-align:right}.campaignTree .crow>td[data-label]{text-align:left;font-size:12.5px}.campaignTree .crow>td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--sans);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)}.campaignTree tr.cdet>td{display:block;padding:12px 8px}.campaignTree .idleToggle td{display:block;border:0}.statusWhy{max-width:none}.legend .lcHint{margin-left:0;flex-basis:100%}}
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
@@ -976,7 +977,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
         <div class="card pad"><div class="card__h"><h3>Spend & conversion value · daily</h3><span class="sub" id="srSub">live from Google Ads</span></div><div id="srChips" style="gap:6px;margin:2px 0 8px"></div><div id="chartSpendRev"></div><div id="cmdDay" class="dayDetail" role="region" aria-label="Campaigns on the selected day" hidden></div><div class="card__h" id="ccHead" style="margin-top:14px"><h3 style="font-size:13.5px">Clicks & conversions · daily</h3><span class="sub" id="ccSub"></span></div><div id="chartClicks"></div></div>
       </div>
       <div class="grid two">
-        <div class="card pad"><div class="card__h"><h3>Autopilot activity</h3><span class="sub">latest 20 entries</span><span id="feedRangeMount" style="margin-left:auto;display:flex;gap:8px;align-items:center"></span><button class="btn ghost sm" id="clearFeed" style="padding:3px 10px;font-size:11px">Clear</button></div><div class="feed" id="feed"></div></div>
+        <div class="card pad"><div class="card__h"><h3>Autopilot activity</h3><span class="sub" id="feedSub"></span><span id="feedRangeMount" style="margin-left:auto;display:flex;gap:8px;align-items:center"></span><button class="btn ghost sm" id="clearFeed" style="padding:3px 10px;font-size:11px">Clear</button></div><div class="feed" id="feed"></div></div>
         <div class="card pad" id="cmdSales"></div>
       </div>
       <div class="card pad" style="margin-top:16px"><div class="card__h"><h3>Your campaigns</h3><span class="sub" id="snapSub">last snapshot</span></div><div id="snapshot" class="campaignTreeHost"></div></div>
@@ -1205,6 +1206,7 @@ var LOADINFO={
   beginAnalyzeAd:{verb:"Analyzing this ad version",detail:"Checking results, creative, products and relevant research",eta:"Progress saved"},
   createCampaignRestoreDraft:{verb:"Preparing version restoration",detail:"Exact changes are sent to Approvals for your review",eta:"A few seconds"},
   dashboard:{verb:"Loading your dashboard",detail:"Campaigns, metrics & approvals",eta:"~2s"},
+  activity:{verb:"Loading Autopilot activity",detail:"Log entries for the chosen dates",eta:"1–2s"},
   measureNow:{verb:"Pulling live data from Google Ads",detail:"Current campaign metrics",eta:"3\u20136s"},
   analyzeCampaign:{verb:"Analyzing campaign with AI",detail:"Researching the metrics, then writing specific moves",eta:"20\u201340s"},
   generate:{verb:"Generating campaign with AI",detail:"On-brand copy + keywords, queued to Approvals as paused",eta:"30\u2013120s"},
@@ -1284,7 +1286,7 @@ function loadBlock(el,key,over){if(!el)return;var i=loadInfo(key,over);
 function runSteps(el,steps,opts){opts=opts||{};el.innerHTML='<div class="lblock"><b>'+esc(steps[0]||"Working")+'</b><progress aria-label="Operation in progress"></progress><span class="muted">Waiting for the server result</span></div>';return {stop:function(ok){var bar=el.querySelector('progress');if(bar){bar.max=1;bar.value=ok===false?0:1;}var note=el.querySelector('.muted');if(note)note.textContent=ok===false?'Needs attention':'Completed';}};}
 
 async function api(action, extra){
-  const finishWait=window.BritesProgress?.begin(loadInfo(action).verb === "Working" ? "Loading your request" : loadInfo(action).verb)||function(){};
+  const waitInfo=loadInfo(action==="dashboard"&&extra&&extra.activityOnly?"activity":action),finishWait=window.BritesProgress?.begin(waitInfo.verb === "Working" ? "Loading your request" : waitInfo.verb)||function(){};
   try{
   const send = (url) => fetch(url, { method:"POST",
     headers:{ "Content-Type":"application/json", "X-Edit-Passcode": PASS },
@@ -2066,7 +2068,6 @@ var REPORT_TREE_CACHE=new Map(),REPORT_TREE_OPEN=new Set(),REPORT_CAMPAIGN_OPEN=
 function reportCached(action,input){var key=action+'|'+JSON.stringify(input),cached=REPORT_TREE_CACHE.get(key);if(cached&&Date.now()-cached.at<600000)return cached.promise;var pending=api(action,input).then(function(r){if(!r||r.error||r.ok===false)throw Error(r&&r.error||'Reporting details are unavailable.');return r;});REPORT_TREE_CACHE.set(key,{at:Date.now(),promise:pending});pending.catch(function(){var now=REPORT_TREE_CACHE.get(key);if(now&&now.promise===pending)REPORT_TREE_CACHE.delete(key);});if(REPORT_TREE_CACHE.size>30)REPORT_TREE_CACHE.delete(REPORT_TREE_CACHE.keys().next().value);return pending;}
 // A panel the user opens eases in once; re-renders that restore an open panel do not animate.
 function cmdOpening(el){if(!el||!el.classList)return;el.classList.remove('opening');void el.offsetWidth;el.classList.add('opening');var done=function(){el.classList.remove('opening');el.removeEventListener('animationend',done);};el.addEventListener('animationend',done);}
-function cmdGap(total,part){return Math.abs(total-part)>Math.max(0.5,Math.abs(total)*0.005);}
 function cmdCampaign(cid,range){var list=typeof cmdMetrics!=='undefined'&&cmdMetrics||[],rg=cmdReport&&cmdReport.range;if(!rg||rg.start!==range.start||rg.end!==range.end)return null;return list.find(function(x){return String(x.id)===String(cid);})||null;}
 // A group's figures on its campaign row's terms: the same currency and daily rates and, where Google
 // supplies it, the same basis. Without them the group shows Google's native report, labelled as such.
@@ -2074,53 +2075,88 @@ function groupReportMetrics(g,nativeCurrency){var r=g&&g.report,k=convBasis==='c
 // Native campaign spend (account currency, ad-click date), used to prove the listed groups hold all of it.
 function campaignTreeTotal(cid,data,range){var c=cmdCampaign(cid,range);if(!c||!data||!data.currency||data.currency!==cmdReport.budgetCurrency||c.costNative==null||!Number.isFinite(Number(c.costNative)))return null;return {spend:Number(c.costNative)};}
 function productIdOf(p){return String(p&&(p.storeProductId||String(p.itemId||'').split('_')[2])||'').replace(/^.*\//,'');}
-// Campaign-level listing rows from the daily report, usable beside the group report only when both
-// cover the same dates, currency and basis.
+function offerKeyOf(x){return String(x&&x.itemId||'').toLowerCase();}
+// Campaign-level listing rows from the daily report (Google's Shopping product report), usable beside the
+// group report only when both cover the same dates and account currency.
 function campaignProducts(cid,report,range){var d=typeof DAILY!=='undefined'&&DAILY;if(!d||!d.range||d.range.start!==range.start||d.range.end!==range.end||!report||!report.currency||d.breakdownCurrency!==report.currency||d.breakdownBasis!=='click'||!/click/i.test(report.basis||'Ad-click date'))return null;return (d.products||[]).filter(function(p){return String(p.campaignId)===String(cid);});}
-// The campaign's listing rows that provably belong to this asset group: it is the campaign's only
-// group, or every group's product filter is exact and only this group includes the product. Either
-// way the listed groups must account for all of the campaign's spend.
-function groupProductRows(g,report,range){if(!g||g.channel!=='pmax'||(g.listingMetrics&&g.listingMetrics.length))return null;var rows=campaignProducts(g.campaignId,report,range),t=campaignTreeTotal(g.campaignId,report,range);if(!rows||!t)return null;
- var gs=(report.groups||[]).filter(function(x){return String(x.campaignId)===String(g.campaignId);}),sum=gs.reduce(function(a,x){return a+(Number(x.metrics&&x.metrics.spend)||0);},0);if(Math.abs(sum-t.spend)>Math.max(0.05,t.spend*0.005))return null;if(gs.length===1)return rows;
- if(!gs.every(function(x){return x.channel==='pmax'&&x.mapping&&x.mapping.exactOfferScope===true;}))return null;
- var owns=function(x,id){var m=x.mapping||{};return (m.productIds||[]).map(String).indexOf(id)>=0||(m.itemIds||[]).some(function(it){return String(it).split('_')[2]===id;});};
- return rows.filter(function(p){var id=productIdOf(p);if(!id)return false;var holders=gs.filter(function(x){return owns(x,id);});return holders.length===1&&holders[0]===g;});}
-function sumListingRows(rows){return {spend:rows.reduce(function(v,x){return v+(Number(x.cost)||0);},0),value:rows.reduce(function(v,x){return v+(Number(x.value)||0);},0),conversions:rows.reduce(function(v,x){return v+(Number(x.conv)||0);},0)};}
+function treeBasis(b){return b==='click'?'by ad-click date':'by conversion date';}
+// Figures on a row's terms: {click, conversion} in the terms' currency. Each breakdown row carries Google's
+// figures in the account currency by ad-click date, and report: the same figures at the campaign rows' daily
+// rates on both date bases (conversion is null where Google gives no conversion-date figures).
+function treeSource(report,native,t){if(report&&report.currency===t.currency&&report.click)return {click:report.click,conversion:report.conversion||null};return native&&t.currency===t.nativeCurrency?{click:native,conversion:null}:null;}
+// Parts summed on the terms' basis. When a part lacks that basis every part is read by ad-click date instead,
+// never a mix, and the row says so. A part without figures makes the row unavailable.
+function treeFigures(parts,t){if(parts.some(function(p){return !p;}))return null;var b=parts.every(function(p){return p[t.basis];})?t.basis:'click';return {basis:b,m:parts.reduce(function(a,p){var m=p[b]||{};return {spend:a.spend+(+m.spend||0),value:a.value+(+m.value||0),conversions:a.conversions+(+m.conversions||0)};},{spend:0,value:0,conversions:0})};}
+function nativeProduct(p){return {spend:+p.cost||0,value:+p.value||0,conversions:+p.conv||0};}
+// The terms a group row is shown on: its currency and date basis, and the account currency.
+function groupTerms(x,nativeCurrency){return {currency:x.currency,basis:x.native||x.click||convBasis==='click'?'click':'conversion',nativeCurrency:nativeCurrency};}
+// What a total holds beyond its listed parts. Spend has no date basis, so it always compares; conversions and
+// value only when every part is on the total's basis. Rounding noise reads as zero.
+function treeRemainder(total,figs,basis){if(!total||figs.some(function(f){return !f;}))return null;var same=figs.every(function(f){return f.basis===basis;}),left=function(k,eps){var v=(+total[k]||0)-figs.reduce(function(a,f){return a+(+f.m[k]||0);},0);return Math.abs(v)<eps?0:v;};return {spend:left('spend',0.005),value:same?left('value',0.005):null,conversions:same?left('conversions',0.0005):null};}
+function treeMaterial(m){return !!m&&(m.spend!==0||m.value!=null&&m.value!==0||m.conversions!=null&&m.conversions!==0);}
+// Which group each of the campaign's product rows belongs to. Google's product report has both date bases but
+// is per campaign; its per-group listing report is by ad-click date only. A row is a group's when the campaign
+// has only that group and the groups hold all its spend, when that group alone reports the row's offer with the
+// same clicks and spend, or, with no offer figures, when that group alone includes it under exact filters.
+// rest: rows with activity no group can show, which Google reports only for the whole campaign.
+function productOwners(cid,report,range){var rows=campaignProducts(cid,report,range),owner=new Map();if(!rows)return {rows:null,owner:owner,rest:[]};
+ var gs=(report.groups||[]).filter(function(x){return String(x.campaignId)===String(cid);}),t=campaignTreeTotal(cid,report,range),held=!!t&&Math.abs(gs.reduce(function(a,x){return a+(Number(x.metrics&&x.metrics.spend)||0);},0)-t.spend)<=Math.max(0.05,t.spend*0.005),
+  exact=gs.length>0&&gs.every(function(x){return x.channel==='pmax'&&x.mapping&&x.mapping.exactOfferScope===true;}),offersOf=function(x,key){return (x.listingMetrics||[]).filter(function(o){return offerKeyOf(o)===key;});};
+ rows.forEach(function(p){var key=offerKeyOf(p),holders=key?gs.filter(function(x){return offersOf(x,key).length;}):[];
+  if(gs.length===1&&gs[0].channel==='pmax'&&held){owner.set(p,gs[0]);return;}
+  if(holders.length===1){var o=offersOf(holders[0],key).reduce(function(a,o){var m=o.metrics||{};return {spend:a.spend+(+m.spend||0),clicks:a.clicks+(+m.clicks||0)};},{spend:0,clicks:0});if(o.clicks===(+p.clicks||0)&&Math.abs(o.spend-(+p.cost||0))<=Math.max(0.011,Math.abs(o.spend)*0.001))owner.set(p,holders[0]);return;}
+  if(!key||holders.length||!exact||!held)return;
+  var id=productIdOf(p),mine=gs.filter(function(x){var m=x.mapping||{};return (m.productIds||[]).map(String).indexOf(id)>=0||(m.itemIds||[]).some(function(it){return String(it).split('_')[2]===id;});});if(mine.length===1)owner.set(p,mine[0]);});
+ var shown=function(p){var key=offerKeyOf(p);return owner.has(p)||!!key&&gs.some(function(x){return offersOf(x,key).length;});},busy=function(p){return ['cost','value','conv','convCd','valueCd'].some(function(k){var v=Number(p[k]);return Number.isFinite(v)&&v!==0;});};
+ return {rows:rows,owner:owner,rest:rows.filter(function(p){return !shown(p)&&busy(p);})};}
 function cmdSafeUrl(url){try{var u=new URL(url);return u.protocol==='https:'?u.href:'';}catch(e){return '';}}
-function reportListingHtml(p,metrics,currency){var url=cmdSafeUrl(p.url);return '<article class="reportListing"><div><b title="'+cmdAttr(p.title)+'">'+esc(p.title)+'</b>'+(url?'<a href="'+cmdAttr(url)+'" target="_blank" rel="noopener">View listing ↗</a>':'<small>Verified listing link unavailable</small>')+'</div>'+reportMetrics(metrics,currency)+'</article>';}
+function reportListingHtml(p,metrics,currency,note){var url=cmdSafeUrl(p.url);return '<article class="reportListing"><div><b title="'+cmdAttr(p.title)+'">'+esc(p.title)+'</b>'+(note?'<small>'+esc(note)+'</small>':'')+(url?'<a href="'+cmdAttr(url)+'" target="_blank" rel="noopener">View listing ↗</a>':'<small>Verified listing link unavailable</small>')+'</div>'+reportMetrics(metrics,currency)+'</article>';}
+// The explicit remainder that makes listings add up to their group or campaign.
+function treeRestHtml(label,note,m,currency){return '<article class="reportListing reportRest"><div><b>'+esc(label)+'</b><small>'+esc(note)+'</small></div>'+reportMetrics(m,currency)+'</article>';}
 async function loadCampaignTree(box){if(!box||box.dataset.loaded)return;box.dataset.loaded='1';var cid=box.dataset.c,range=dailyRangeYmd(),scope=range.start+'|'+range.end,last=REPORT_TREE_LAST.get(cid);
  if(last&&last.scope===scope){box.innerHTML='<p class="reportScope treeUpdating" role="status"><span class="spin sm"></span> Updating groups and listings…</p>'+last.html;box.classList.add('treeStale');}
  else box.innerHTML='<p class="reportScope" role="status"><span class="spin sm"></span> Loading ad groups and listings…</p>';
  try{var data=await reportCached('adGroups',{start:range.start,end:range.end,reportingTree:true});if(!box.isConnected)return;box.classList.remove('treeStale');
-  var groups=(data.groups||[]).filter(function(g){return String(g.campaignId)===cid;}),cur=data.currency||'',c=cmdCampaign(cid,range),rowCur=cmdReport&&cmdReport.currency||'',gm=groups.map(function(g){return groupReportMetrics(g,cur);}),native=!gm.length||gm.some(function(x){return x.native;});
-  // the listed groups should add up to the campaign row; say so when some spend sits in groups Google no longer lists
-  var gap=null;if(c&&groups.length){if(!native&&gm.every(function(x){return x.currency===rowCur;})){var s=gm.reduce(function(a,x){return a+(Number(x.m&&x.m.spend)||0);},0);if(cmdGap(Number(c.cost)||0,s))gap={sum:s,total:Number(c.cost)||0,currency:rowCur};}else{var t=campaignTreeTotal(cid,data,range),n=groups.reduce(function(a,g){return a+(Number(g.metrics&&g.metrics.spend)||0);},0);if(t&&cmdGap(t.spend,n))gap={sum:n,total:t.spend,currency:cur};}}
-  // a listing shown under its own group (from the group's exact offer figures) is not repeated below
-  var owned=[],offered={};groups.forEach(function(g){var r=groupProductRows(g,data,range),ids=(g.mapping&&g.mapping.productIds||[]).map(String);if(r)owned=owned.concat(r);(g.listingMetrics||[]).forEach(function(x){var id=String(x.itemId||'').split('_')[2];if(id&&ids.indexOf(id)>=0)offered[id]=1;});});var rest=(campaignProducts(cid,data,range)||[]).filter(function(p){return owned.indexOf(p)<0&&!offered[productIdOf(p)]&&(Number(p.cost)>0||Number(p.value)>0||Number(p.conv)>0);}).sort(function(a,b){return (Number(b.cost)||0)-(Number(a.cost)||0);});
-  var html=!groups.length?'':'<p class="reportScope">'+groups.length+(groups.length===1?' group':' groups')+' · '+(native?esc(cur||'Currency unavailable')+' · by ad-click date, as Google reports groups'+(rowCur&&(rowCur!==cur||convBasis!=='click')?'. The campaign row above is '+esc(rowCur)+' '+esc(basisLabel())+'.':''):esc(gm[0].currency)+' · '+esc(basisLabel())+(gm.some(function(x){return x.click;})&&convBasis!=='click'?' · groups marked “by ad-click date” have no conversion-date figures from Google':''))+'</p>';
+  var groups=(data.groups||[]).filter(function(g){return String(g.campaignId)===cid;}),cur=data.currency||'',c=cmdCampaign(cid,range),rowCur=cmdReport&&cmdReport.currency||'',gm=groups.map(function(g){return groupReportMetrics(g,cur);}),native=!gm.length||gm.some(function(x){return x.native;}),removed=groups.filter(function(g){return g.historicalOnly;}).length;
+  // The groups add up to the campaign row. Activity Google does not report under a listed group gets its own row.
+  var gap=null,gapCur='';if(c&&groups.length){if(!native&&gm.every(function(x){return x.currency===rowCur;})){var cv=CV(c),same=convBasis==='click'||gm.every(function(x){return !x.click;}),sum=function(k){return gm.reduce(function(a,x){return a+(Number(x.m&&x.m[k])||0);},0);};gap=treeRemainder({spend:Number(c.cost)||0,value:cv.value,conversions:cv.conv},[{basis:'x',m:{spend:sum('spend'),value:sum('value'),conversions:sum('conversions')}}],same&&cv.value!=null&&cv.conv!=null?'x':'-');gapCur=rowCur;}
+   else{var t=campaignTreeTotal(cid,data,range),n=groups.reduce(function(a,g){return a+(Number(g.metrics&&g.metrics.spend)||0);},0);if(t)gap={spend:Math.abs(t.spend-n)<0.005?0:t.spend-n,value:null,conversions:null};gapCur=cur;}}
+  var own=productOwners(cid,data,range),cb=convBasis==='click'?'click':'conversion',ct=(gm.length?!native&&gm.every(function(x){return x.currency===rowCur;}):!!rowCur)?{currency:rowCur,basis:cb,nativeCurrency:cur}:{currency:cur,basis:'click',nativeCurrency:cur};
+  var html=!groups.length?'':'<p class="reportScope">'+groups.length+(groups.length===1?' group':' groups')+(removed?' ('+removed+' removed)':'')+' · '+(native?esc(cur||'Currency unavailable')+' · by ad-click date, as Google reports groups'+(rowCur&&(rowCur!==cur||convBasis!=='click')?'. The campaign row above is '+esc(rowCur)+' '+esc(basisLabel())+'.':''):esc(gm[0].currency)+' · '+esc(basisLabel())+(gm.some(function(x){return x.click;})&&convBasis!=='click'?' · groups marked “by ad-click date” have no conversion-date figures from Google':''))+'</p>';
   html+=groups.map(function(g,i){var key=scope+'|'+g.ref,x=gm[i];return '<details class="reportGroup" data-group-ref="'+cmdAttr(g.ref)+'"'+(REPORT_TREE_OPEN.has(key)?' open':'')+'><summary><span><b>'+esc(g.name)+'</b><small>'+esc(g.channel==='pmax'?'Asset group':g.channel==='display'?'Display ad group':'Ad group')+(g.historicalOnly?' · Removed':'')+(!x.native&&x.click&&convBasis!=='click'?' · by ad-click date':'')+'</small></span>'+reportMetrics(x.m,x.currency)+'</summary><div class="reportListings"></div></details>';}).join('');
-  if(!groups.length)html+='<p class="reportScope">'+(c&&(c.deleted||c.status==='REMOVED')?'This campaign was removed, so Google no longer lists its groups.':'No ad groups were returned for this campaign.')+'</p>';
-  if(gap)html+='<p class="reportScope">These groups account for '+esc(money(gap.sum))+' of the campaign’s '+esc(money(gap.total))+' '+esc(gap.currency)+'. The rest was spent by groups that have since been removed.</p>';
-  if(rest.length)html+='<details class="reportGroup reportProducts"><summary><span><b>'+(!(owned.length||Object.keys(offered).length)?'Listing results for the whole campaign':groups.length===1?'Other listing results in this campaign':'Listing results not tied to one group')+'</b><small>'+rest.length+' listing'+(rest.length===1?'':'s')+' · by ad-click date'+(groups.length>1?' · Google does not split these by group':'')+'</small></span>'+reportMetrics(sumListingRows(rest),cur)+'</summary><div class="reportListings">'+rest.map(function(p){return reportListingHtml({title:p.title||(productIdOf(p)?'Product '+productIdOf(p):'Product not identified by Google'),url:p.productUrl||''},sumListingRows([p]),cur);}).join('')+'</div></details>';
+  if(treeMaterial(gap))html+='<div class="reportGap"><span><b>Not tied to a group</b><small>Campaign activity Google reports under no group in these dates</small></span>'+reportMetrics(gap,gapCur)+'</div>';
+  if(!groups.length)html+='<p class="reportScope">'+(c&&(c.deleted||c.status==='REMOVED')?'Google reported no group for this removed campaign in these dates.':'No ad groups were returned for this campaign.')+'</p>';
+  // Listings Google reports only for the whole campaign. Beside groups they are already inside those groups'
+  // figures; with no group, they and the remainder add up to the campaign row.
+  if(own.rest.length){var figs=own.rest.map(function(p){return {p:p,f:treeFigures([treeSource(p.report,nativeProduct(p),ct)],ct)};}).sort(function(a,b){return (b.f?b.f.m.spend:-1)-(a.f?a.f.m.spend:-1);}),ok=figs.every(function(x){return x.f;}),rb=ok&&figs.every(function(x){return x.f.basis===ct.basis;})?ct.basis:'click',total=ok?figs.reduce(function(a,x){var m=rb===x.f.basis?x.f.m:{};return {spend:a.spend+(+m.spend||0),value:a.value+(+m.value||0),conversions:a.conversions+(+m.conversions||0)};},{spend:0,value:0,conversions:0}):null,whole=!groups.length&&c&&ct.currency===rowCur?{spend:Number(c.cost)||0,value:CV(c).value,conversions:CV(c).conv}:null,rem=whole?treeRemainder(whole,figs.map(function(x){return x.f;}),ct.basis):null;
+   html+='<details class="reportGroup reportProducts"><summary><span><b>'+(groups.length?'Listings not split by group':'Listing results for the whole campaign')+'</b><small>'+own.rest.length+' listing'+(own.rest.length===1?'':'s')+' · '+treeBasis(rb)+(groups.length?' · already counted in the groups above':'')+'</small></span>'+reportMetrics(total&&rb===ct.basis?total:total&&{spend:total.spend,value:null,conversions:null},ct.currency)+'</summary><div class="reportListings">'+figs.map(function(x){return reportListingHtml({title:x.p.title||(productIdOf(x.p)?'Product '+productIdOf(x.p):'Product not identified by Google'),url:x.p.productUrl||''},x.f&&x.f.m,ct.currency,x.f&&x.f.basis!==ct.basis?'By ad-click date':'');}).join('')+(treeMaterial(rem)?treeRestHtml('Not tied to a listing','The rest of the campaign’s activity',rem,ct.currency):'')+'</div></details>';}
   if((data.warnings||[]).length)html+='<details class="reportCoverage"><summary>Report coverage</summary>'+data.warnings.map(function(w){return '<p>'+esc(w)+'</p>';}).join('')+'</details>';
   box.innerHTML=html;
   box.querySelectorAll('.reportGroup[data-group-ref]').forEach(function(el){var g=groups.find(function(x){return x.ref===el.dataset.groupRef;}),key=scope+'|'+g.ref,sm=el.querySelector('summary');if(sm)sm.addEventListener('click',function(){el._byUser=true;});el.ontoggle=function(){if(el.open){REPORT_TREE_OPEN.add(key);renderGroupListings(el.querySelector('.reportListings'),g,data,range);if(el._byUser)cmdOpening(el);}else REPORT_TREE_OPEN.delete(key);el._byUser=false;};if(el.open)renderGroupListings(el.querySelector('.reportListings'),g,data,range);});
   box.querySelectorAll('.reportProducts>summary').forEach(function(sm){sm.addEventListener('click',function(){if(!sm.parentNode.open)cmdOpening(sm.parentNode);});});}
  catch(e){if(box.isConnected){box.classList.remove('treeStale');box.innerHTML='<p class="reportScope" role="alert">'+esc(e.message)+' <button type="button" class="btn ghost sm treeRetry">Try again</button></p>';var b=box.querySelector('.treeRetry');if(b)b.onclick=function(){delete box.dataset.loaded;REPORT_TREE_LAST.delete(cid);loadCampaignTree(box);};}}}
-function renderGroupListings(box,g,report,range){if(!box||box.dataset.loaded)return;box.dataset.loaded='1';var daily=typeof DAILY!=='undefined'&&DAILY&&DAILY.range&&DAILY.range.start===range.start&&DAILY.range.end===range.end?DAILY:null,products=daily?(daily.products||[]).filter(function(p){return String(p.campaignId)===String(g.campaignId);}):[],mapping=g.mapping||{},urls=(mapping.urls||[]).filter(function(url){try{var u=new URL(url);return u.protocol==='https:'&&/\/products\/[^/]+/.test(u.pathname);}catch(e){return false;}}),list=[];
- urls.forEach(function(url){var p=products.find(function(p){return p.productUrl&&p.productUrl.split('?')[0]===url.split('?')[0];}),handle=new URL(url).pathname.split('/products/')[1].split('/')[0];if(!list.some(function(x){return x.url===url;}))list.push({title:p&&p.title||handle.replace(/-/g,' '),url:url,productId:p&&String(p.storeProductId||p.productId||String(p.itemId||'').split('_')[2]||'').replace(/^.*\//,'')});});
- (mapping.productIds||[]).forEach(function(id){var p=products.find(function(p){return String(p.productId||'').replace(/^.*\//,'')===String(id)||String(p.itemId||'').split('_')[2]===String(id);});if(p&&!list.some(function(x){return x.url===p.productUrl&&p.productUrl||x.title===p.title;}))list.push({title:p.title,url:p.productUrl||'',productId:String(id)});else if(!p)list.push({title:'Product '+id,url:'',productId:String(id)});});
- var ads=daily?(daily.ads||[]).filter(function(a){return String(a.campaignId)===String(g.campaignId)&&String(a.adGroupId)===String(g.id);}):[],owned=groupProductRows(g,report,range),complete=!!(daily&&daily.coverage&&daily.coverage.products&&daily.coverage.products.truncated===false),native=report.currency;
- // rows this group owns that its mapping did not name (including rows Google could not tie to a product) still belong here
- if(owned)owned.forEach(function(r){var id=productIdOf(r);if(!(id&&list.some(function(x){return x.productId===id;}))&&!list.some(function(x){return x.row===r;}))list.push({title:r.title||(id?'Product '+id:'Product not identified by Google'),url:r.productUrl||'',productId:id,row:r});});
- // exact Merchant offer rows arrive on the campaign row's terms (report.click); the daily listing and ad rows stay in the account currency
- var rows=list.map(function(p,i){var exact=ads.filter(function(a){return a.finalUrls&&a.finalUrls.length===1&&a.finalUrls[0].split('?')[0]===p.url.split('?')[0];}),offerRows=(g.listingMetrics||[]).filter(function(x){return p.productId&&String(x.itemId).split('_')[2]===p.productId;}),mine=owned?owned.filter(function(r){return p.row?r===p.row:!!p.productId&&productIdOf(r)===p.productId;}):[];
-  if(g.channel==='pmax'&&offerRows.length){var conv=offerRows.every(function(x){return x.report&&x.report.click&&x.report.currency;}),pick=function(x){return conv?x.report.click:x.metrics;};return {p:p,i:i,offer:true,cur:conv?offerRows[0].report.currency:native,m:{spend:offerRows.reduce(function(v,x){return v+pick(x).spend;},0),value:offerRows.reduce(function(v,x){return v+pick(x).value;},0),conversions:offerRows.reduce(function(v,x){return v+pick(x).conversions;},0)}};}
-  if(owned&&(mine.length||complete))return {p:p,i:i,cur:native,m:sumListingRows(mine)};
-  return {p:p,i:i,cur:native,m:exact.length?{spend:exact.reduce(function(v,a){return v+a.cost;},0),value:exact.every(function(a){return a.value!=null;})?exact.reduce(function(v,a){return v+a.value;},0):null,conversions:exact.reduce(function(v,a){return v+a.conv;},0)}:null};});
- rows.sort(function(a,b){var x=a.m&&a.m.spend!=null?a.m.spend:-1,y=b.m&&b.m.spend!=null?b.m.spend:-1;return y-x||a.i-b.i;});
- var listed=owned?sumListingRows(owned).spend:null,gs=Number(g.metrics&&g.metrics.spend),offers=rows.filter(function(r){return r.offer;}),ocur=offers.length&&offers.every(function(r){return r.cur===offers[0].cur;})?offers[0].cur:null,ogs=!ocur?NaN:ocur===native?gs:g.report&&g.report.currency===ocur&&g.report.click?Number(g.report.click.spend):NaN,olisted=offers.reduce(function(v,r){return v+(Number(r.m.spend)||0);},0),ogap=Number.isFinite(ogs)&&ogs>olisted&&cmdGap(ogs,olisted)?' The other '+money(ogs-olisted)+' '+ocur+' of the group’s spend is not tied to a listed product.':'',note=g.channel!=='pmax'?'Listing figures are by ad-click date and cover ads with that exact product destination. A dash means unavailable.':!owned?'Listing figures are by ad-click date and cover exact Merchant offers within this asset group; they may not cover every placement.'+ogap+' A dash means unavailable.':'Listing figures are Google’s Shopping results for each product in this asset group, by ad-click date.'+(Number.isFinite(gs)&&cmdGap(gs,listed)?' The other '+money(gs-listed)+' '+(native||'')+' of the group’s spend is not reported by product.':'')+(complete?' A zero means the product had no activity in these dates.':' A dash means unavailable.');
- box.innerHTML=(rows.length?rows.map(function(r){return reportListingHtml(r.p,r.m,r.cur);}).join(''):'<p class="reportScope">'+esc(mapping.reason||'No individual listing is recorded for this group.')+'</p>')+'<p class="reportScope">'+esc(note)+'</p><a href="https://ads.google.com/aw/'+(g.channel==='pmax'?'assetgroups':'ads')+'?campaignId='+encodeURIComponent(g.campaignId)+(g.channel==='pmax'?'&assetGroupId=':'&adGroupId=')+encodeURIComponent(g.id)+'" target="_blank" rel="noopener">Inspect '+(g.channel==='pmax'?'group assets':'group ads')+' ↗</a>';
+// A group's listings on the group row's own terms, then what is not tied to a listing, so they add up to the
+// group. PMax: the products Google reports for the group (both date bases when a campaign product row is
+// provably the group's, otherwise its per-group offers by ad-click date). Search and Display: each product page
+// the group's ads lead to. A targeted product with no activity reads zero only when the report is complete.
+function groupListingRows(g,report,range){var x=groupReportMetrics(g,report.currency),t=groupTerms(x,report.currency),own=productOwners(g.campaignId,report,range),daily=typeof DAILY!=='undefined'&&DAILY&&DAILY.range&&DAILY.range.start===range.start&&DAILY.range.end===range.end?DAILY:null,products=daily?(daily.products||[]).filter(function(p){return String(p.campaignId)===String(g.campaignId);}):[],mapping=g.mapping||{},list=[],complete=!!g.listingMetrics;
+ var at=function(key,make){var r=list.find(function(y){return y.key===key;});if(!r){r=make();r.key=key;r.parts=[];list.push(r);}return r;},page=function(url){try{var u=new URL(url);return u.protocol==='https:'&&/\/products\/[^/]+/.test(u.pathname)?String(url).split(/[?#]/)[0]:'';}catch(e){return '';}},handle=function(url){try{return decodeURIComponent(new URL(url).pathname.split('/products/')[1].split('/')[0]).replace(/-/g,' ');}catch(e){return 'Product page';}};
+ if(g.channel==='pmax'){var mine=own.rows?own.rows.filter(function(p){return own.owner.get(p)===g;}):[],ownedKeys={};mine.forEach(function(p){ownedKeys[offerKeyOf(p)]=1;});
+  mine.forEach(function(p){var id=productIdOf(p);at(id||'offer:'+offerKeyOf(p),function(){return {title:p.title||(id?'Product '+id:'Product not identified by Google'),url:p.productUrl||'',productId:id};}).parts.push(treeSource(p.report,nativeProduct(p),t));});
+  (g.listingMetrics||[]).forEach(function(o){var key=offerKeyOf(o);if(ownedKeys[key])return;var id=String(o.itemId||'').split('_')[2]||'',p=products.find(function(y){return offerKeyOf(y)===key;});at(id||'offer:'+key,function(){return {title:p&&p.title||(id?'Product '+id:'Offer '+o.itemId),url:p&&p.productUrl||'',productId:id};}).parts.push(treeSource(o.report,o.metrics,t));});
+  (mapping.productIds||[]).forEach(function(id){id=String(id);if(list.some(function(y){return y.productId===id;}))return;var p=products.find(function(y){return productIdOf(y)===id;});at(id,function(){return {title:p&&p.title||'Product '+id,url:p&&p.productUrl||'',productId:id};});});}
+ else{(g.listingMetrics||[]).forEach(function(l){var url=page(l.url||'');if(url)at(url,function(){return {title:handle(url),url:url};}).parts.push(treeSource(l.report,l.metrics,t));});
+  (mapping.urls||[]).forEach(function(u){var url=page(u);if(url)at(url,function(){return {title:handle(url),url:url};});});}
+ var rows=list.map(function(r,i){return {p:r,i:i,f:r.parts.length?treeFigures(r.parts,t):complete?{basis:t.basis,m:{spend:0,value:0,conversions:0}}:null};}).sort(function(a,b){return (b.f?b.f.m.spend:-1)-(a.f?a.f.m.spend:-1)||a.i-b.i;});
+ return {x:x,t:t,rows:rows,rest:treeRemainder(x.m,rows.map(function(r){return r.f;}),t.basis),campaignRest:own.rest.length,complete:complete};}
+function renderGroupListings(box,g,report,range){if(!box||box.dataset.loaded)return;box.dataset.loaded='1';var L=groupListingRows(g,report,range),t=L.t,pmax=g.channel==='pmax',fallback=L.rows.some(function(r){return r.f&&r.f.basis!==t.basis;}),missing=L.rows.some(function(r){return !r.f;});
+ var label=pmax&&L.campaignRest?'Other activity':'Not tied to a listing',note=pmax?(L.campaignRest?'Includes listings Google reports only for the whole campaign (below)':'Placements Google does not report by product'):'Ads that do not lead to one product page';
+ var html=L.rows.length?L.rows.map(function(r){return reportListingHtml(r.p,r.f&&r.f.m,t.currency,r.f&&r.f.basis!==t.basis?'By ad-click date':'');}).join(''):'<p class="reportScope">'+esc(g.mapping&&g.mapping.reason||'No individual listing is recorded for this group.')+'</p>';
+ if(treeMaterial(L.rest))html+=treeRestHtml(label,note,L.rest,t.currency);
+ // Say what adds up to the group row: all figures on one basis, or only spend when some rows fall back.
+ var last=treeMaterial(L.rest),adds=!L.rest?'':!L.rows.length?(last?'; the row above holds all of it':''):fallback?'; the listings’ spend'+(last?' and the last row':'')+' add up to the group’s spend':'; the listings'+(last?' and the last row':'')+' add up to it';
+ var say=esc(t.currency||'')+' '+treeBasis(t.basis)+', like the group'+adds+'.'+(fallback?' Rows marked “By ad-click date” have no conversion-date figures from Google'+(pmax?', which reports listings per group only by ad-click date':'')+'.':'')+(missing||!L.complete?' A dash means unavailable.':' A zero means no activity in these dates.');
+ box.innerHTML=html+'<p class="reportScope">'+say+'</p><a href="https://ads.google.com/aw/'+(pmax?'assetgroups':'ads')+'?campaignId='+encodeURIComponent(g.campaignId)+(pmax?'&assetGroupId=':'&adGroupId=')+encodeURIComponent(g.id)+'" target="_blank" rel="noopener">Inspect '+(pmax?'group assets':'group ads')+' ↗</a>';
 }
 function wireCampRows(scope){scope.querySelectorAll(".crow").forEach(function(r){r.onkeydown=function(e){if(e.target===r&&(e.key==="Enter"||e.key===" ")){e.preventDefault();r.click();}};});Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d){var opening=d.style.display==="none";d.style.display=opening?"":"none";this.setAttribute("aria-expanded",String(opening));if(opening){if(!_cmdRestoring)cmdOpening(d);REPORT_CAMPAIGN_OPEN.add(this.dataset.cid);loadCampaignTree(d.querySelector(".adlvl"));}else REPORT_CAMPAIGN_OPEN.delete(this.dataset.cid);}};});
   scope.querySelectorAll(".idleBtn").forEach(function(b){b.onclick=function(){var body=scope.querySelector("tbody.idleRows");if(!body)return;cmdShowIdle=body.hidden;body.hidden=!cmdShowIdle;b.setAttribute("aria-expanded",String(cmdShowIdle));b.textContent=idleToggleText(+b.getAttribute("data-n")||0,cmdShowIdle);if(cmdShowIdle)cmdOpening(body);};});
@@ -2862,12 +2898,36 @@ function feedLabel(l){var raw=String(l.label||l.service||l.kind||"event").trim()
   return /^[a-z]+[A-Z]/.test(plain)?plain.replace(/([a-z])([A-Z])/g,"$1 $2").replace(/^./,function(c){return c.toUpperCase();}).replace(/ ([A-Z])(?=[a-z])/g,function(s,c){return " "+c.toLowerCase();}):plain;}
 // Google's error bodies are JSON; show the sentence Google wrote, not the envelope around it.
 function feedError(e){var s=String(e),m=s.match(/"message"\s*:\s*"((?:[^"\\]|\\.){3,300})"/);return (m?m[1].replace(/\\"/g,'"'):s).slice(0,160);}
-function renderFeed(){var lgAll=DASH.recentLedger||[];
+// The activity log for the feed's dates, read from the server newest first, one page at a time. The dashboard
+// brings the first page; other dates and older pages are read on their own.
+var FEED={key:null,entries:[],next:null,busy:false,more:false,error:"",seq:0,dash:null};
+function feedBounds(){var rr=rpResolve(feedRange),from=rr.start?rpParse(rr.start).getTime():null,to=null;if(rr.end){var e=rpParse(rr.end);e.setHours(23,59,59,999);to=e.getTime();}return {from:from,to:to};}
+function feedKey(b){return (b&&b.from!=null?b.from:"")+"|"+(b&&b.to!=null?b.to:"");}
+function feedAppend(list,more){var seen={};list.forEach(function(x){if(x.id)seen[x.id]=1;});return list.concat(more.filter(function(x){return !x.id||!seen[x.id];}));}
+// A fresh first page for the same dates keeps the older pages the viewer already opened below it.
+function feedAdopt(a,key){var last=a.entries[a.entries.length-1],older=FEED.key===key&&a.next&&last&&last.at!=null&&FEED.entries.length>a.entries.length?FEED.entries.filter(function(x){return x.at!=null&&x.at<=last.at;}):[];
+  FEED.next=older.length?FEED.next:a.next||null;FEED.entries=feedAppend(a.entries,older);FEED.key=key;FEED.error="";}
+async function loadFeed(more){var b=feedBounds(),key=feedKey(b),before=more?FEED.next:null;if(more&&(!before||FEED.key!==key||FEED.busy))return;var seq=++FEED.seq;
+  if(!more){FEED.key=key;FEED.entries=[];FEED.next=null;}FEED.busy=true;FEED.more=!!more;FEED.error="";renderFeed();
+  try{var r=await api("dashboard",{activityOnly:true,activity:{from:b.from,to:b.to,before:before}}),a=r&&r.activity;if(seq!==FEED.seq)return;
+    if(!a||!Array.isArray(a.entries))throw new Error(r&&r.error||"Activity could not be loaded.");
+    FEED.entries=more?feedAppend(FEED.entries,a.entries):a.entries;FEED.next=a.next||null;}
+  catch(e){if(seq===FEED.seq)FEED.error=String(e&&e.message||e);}
+  finally{if(seq===FEED.seq){FEED.busy=false;FEED.more=false;renderFeed();}}}
+function renderFeed(){
   var mount=$("#feedRangeMount");if(mount){mount.innerHTML=rangePicker("feed",feedRange,function(res,val){feedRange=val;renderFeed();});wireRangePickers(mount);}
-  var rr=rpResolve(feedRange);var sMs=rr.start?rpParse(rr.start).getTime():null;var eMs=null;if(rr.end){var ee=rpParse(rr.end);ee.setHours(23,59,59,999);eMs=ee.getTime();}
-  var lg=lgAll.filter(function(l){var t=l.at||0;if(sMs!=null&&t<sMs)return false;if(eMs!=null&&t>eMs)return false;return true;});
-  if(!lg.length){$("#feed").innerHTML='<div class="muted" style="font-size:12.5px;padding:8px 0">'+(lgAll.length?"No activity in these dates.":"No activity logged yet. Run a cycle from Controls.")+'</div>';return;}
-  $("#feed").innerHTML=lg.map(function(l){var ok=l.ok!==false;
+  var key=feedKey(feedBounds()),a=DASH&&DASH.activity;
+  if(a&&a!==FEED.dash&&!FEED.more){if(Array.isArray(a.entries)&&feedKey(a)===key){FEED.dash=a;FEED.seq++;FEED.busy=false;feedAdopt(a,key);}
+    else if(a.error&&(FEED.key!==key||!FEED.entries.length)){FEED.dash=a;FEED.seq++;FEED.busy=false;FEED.key=key;FEED.entries=[];FEED.next=null;FEED.error=String(a.error);}}
+  if(FEED.key!==key){loadFeed(false);return;}
+  var box=$("#feed"),sub=$("#feedSub"),lg=FEED.entries,n=lg.length,where=key==="|"?"":" in these dates",note=function(html,role){return '<div class="muted" style="font-size:12.5px;padding:8px 0"'+(role?' role="'+role+'"':'')+'>'+html+'</div>';};
+  // Say exactly what is shown: every entry in these dates, or the latest ones with older entries a click away.
+  if(sub)sub.textContent=!n?"":FEED.next?"latest "+n+where:n+(n===1?" entry":" entries")+where;
+  if(!box)return;
+  if(!n&&FEED.busy){box.innerHTML=note('<span class="spin sm"></span> Loading activity for these dates…','status');return;}
+  if(!n&&FEED.error){box.innerHTML=note(esc(FEED.error)+' <button type="button" class="btn ghost sm" id="feedRetry">Try again</button>','alert');var rb=$("#feedRetry");if(rb)rb.onclick=function(){loadFeed(false);};return;}
+  if(!n){box.innerHTML=note(key==="|"?"No activity logged yet. Run a cycle from Controls.":"No activity in these dates.");return;}
+  box.innerHTML=lg.map(function(l){var ok=l.ok!==false;
     // A 200 OK from uploadConversions/uploadConversionAdjustments can still carry a partialFailureError —
     // Google accepted the HTTP call but rejected the individual conversion (bad/expired gclid, wrong
     // account, etc). That case must NOT read as a clean checkmark, or a silent rejection looks identical
@@ -2884,7 +2944,10 @@ function renderFeed(){var lgAll=DASH.recentLedger||[];
     return '<div class="feed__i"><div class="mk '+((ok&&!pf)?mk:"c")+'">'+((ok&&!pf)?"✓":"⊘")+'</div><div class="tx">'+esc(label)+vBadge
       +(l.error?'<div class="muted" style="font-size:11px">'+esc(feedError(l.error))+'</div>':"")
       +(pf?'<div style="font-size:11px;color:#b42424;margin-top:2px">'+esc(String(pf.message||"Some conversions in this batch were rejected by Google Ads.").slice(0,220))+'</div><details style="margin-top:2px"><summary style="font-size:10.5px;color:var(--ink-45);cursor:pointer">raw detail</summary><pre style="font-size:10px;white-space:pre-wrap;max-height:140px;overflow:auto">'+esc(JSON.stringify(pf,null,1).slice(0,1500))+'</pre></details>':"")
-      +'</div><time'+(l.at?' datetime="'+new Date(l.at).toISOString()+'" title="'+cmdAttr(fmtDateTime(new Date(l.at)))+'"':'')+'>'+when+'</time></div>';}).join("");}
+      +'</div><time'+(l.at?' datetime="'+new Date(l.at).toISOString()+'" title="'+cmdAttr(fmtDateTime(new Date(l.at)))+'"':'')+'>'+when+'</time></div>';}).join("")
+    +(FEED.next?'<button type="button" class="btn ghost sm feedMore" style="align-self:center;margin:10px 0 4px"'+(FEED.busy?' disabled><span class="spin sm"></span> Loading older entries…':'>Show older entries')+'</button>':'')
+    +(FEED.error?note(esc(FEED.error),'alert'):'');
+  var mb=box.querySelector(".feedMore");if(mb&&!FEED.busy)mb.onclick=function(){loadFeed(true);};}
 function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
 
 /* ---- render: approvals ---- */
@@ -4144,7 +4207,7 @@ function bindControlsOnce(){
   var cf=$("#clearFeed");if(cf)cf.onclick=async function(){
     if(!confirm("Clear the autopilot activity log?\n\nThis permanently deletes the recorded ledger history. It does NOT touch your campaigns, approvals, conversions, or settings."))return;
     var done=btnBusy(cf,"Clearing\u2026");var aid=actStart("clearLedger");
-    try{var r=await api("clearLedger");DASH.recentLedger=[];renderFeed();toast("Activity log cleared"+((r&&r.deleted)?" \u2014 "+r.deleted+" entries removed":""),true);}
+    try{var r=await api("clearLedger");DASH.recentLedger=[];FEED.seq++;Object.assign(FEED,{entries:[],next:null,busy:false,more:false,error:""});renderFeed();toast("Activity log cleared"+((r&&r.deleted)?" \u2014 "+r.deleted+" entries removed":""),true);}
     catch(x){toast(x.message);}
     actEnd(aid);done();};
   // One save at a time per control, each with its line in the activity strip.
@@ -4285,7 +4348,7 @@ async function livePull(){
       else if(mg&&mg.tripped&&n)toast("Monthly stop reached: "+camps+" paused.",false);
       if(note&&note!==monthlyNote)toast(note,false);
       monthlyNote=note; }catch(e){}
-    DASH=await api("dashboard");applyBudgetOverrides();applyEndDateOverrides();renderAll();
+    DASH=await api("dashboard",{activity:feedBounds()});applyBudgetOverrides();applyEndDateOverrides();renderAll();
     syncOk();
   }catch(x){ syncFailed(x); }
   finally{ livePulling=false; }
@@ -4317,7 +4380,7 @@ async function reload(toastOk){
   if(reloadInFlight)return;            // overlapping refreshes collapse into one
   reloadInFlight=true;
   try{
-    DASH=await api("dashboard");applyBudgetOverrides();applyEndDateOverrides();renderAll();cmdApplyRange(null,cmdRange);var gp=document.getElementById('v-bench');if(gp&&!gp.classList.contains('hidden'))loadGrowthPerformance(gp.dataset.lane,true);loadDiagnostics(true);
+    DASH=await api("dashboard",{activity:feedBounds()});applyBudgetOverrides();applyEndDateOverrides();renderAll();cmdApplyRange(null,cmdRange);var gp=document.getElementById('v-bench');if(gp&&!gp.classList.contains('hidden'))loadGrowthPerformance(gp.dataset.lane,true);loadDiagnostics(true);
     syncOk();
     if(toastOk)toast("Refreshed",true);
     if(!countriesLoaded){ensureCountries().then(function(){if(COUNTRIES.length)renderAll();});}
