@@ -5508,7 +5508,11 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
   });
   const countries = _studioList((spec.countries || []).map(x => String(x).replace(/\D/g, "")), 20);
   countries.forEach(id2 => ops.push({ campaignCriterionOperation: { create: { campaign: cRes, location: { geoTargetConstant: `geoTargetConstants/${id2}` } } } }));
-  return { ops, tag, landingUrl, countries, groups: groupMeta, audienceResource: audience, images: { created: imageBuild.created, reused: imageBuild.reused, square: imageBuild.assets.square.length, landscape: imageBuild.assets.landscape.length, portrait: imageBuild.assets.portrait.length, logo: !!imageBuild.assets.logo, warnings: imageBuild.errors }, campaignAssets: extensions.summary };
+  // As every new Performance Max campaign: English, the language of the Studio copy (without it PMax serves every
+  // language), and the standard campaign exclusions for searches a made-to-order shop cannot sell to.
+  ops.push({ campaignCriterionOperation: { create: { campaign: cRes, language: { languageConstant: "languageConstants/1000" } } } });
+  ops.push(..._pmaxStructure().negativeOps(cRes, _pmaxStructure().PMAX_DEFAULT_NEGATIVES));
+  return { ops, tag, landingUrl, countries, languages: ["English"], negatives: _pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n => n.text), groups: groupMeta, audienceResource: audience, images: { created: imageBuild.created, reused: imageBuild.reused, square: imageBuild.assets.square.length, landscape: imageBuild.assets.landscape.length, portrait: imageBuild.assets.portrait.length, logo: !!imageBuild.assets.logo, warnings: imageBuild.errors }, campaignAssets: extensions.summary };
 }
 
 function buildDesignStudioSearchCampaignOps(blueprint, { dailyBudget, startDate, endDate, countries, maxCpc } = {}) {
@@ -5573,6 +5577,8 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
       summary: `DESIGN STUDIO · PMax discovery · ${cc}${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
       payload: { designStudioSpec: spec, countries: ctys, meta: { kind: "designStudioPmax", programId, tag: DESIGN_STUDIO_TAGS.pmax, landingUrl: DESIGN_STUDIO_URL,
         dailyBudget: pmaxBudget, startDate, endDate, countries: ctys, biddingMode: "MAXIMIZE_CONVERSIONS", finalUrlExpansion: false,
+        // Built at publication with the campaign; the draft card says so before then.
+        languages: ["English"], negatives: _pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n => n.text),
         audienceSignal: audienceResource, groups: blueprint.pmax.groups.map(g => ({ name: g.name, angle: g.angle, searchThemes: g.searchThemes })),
         textPreview: blueprint.pmax.groups.map(g => ({ name: g.name, headlines: g.headlines, longHeadlines: g.longHeadlines, descriptions: g.descriptions })), imageSources: Object.keys(blueprint.images || {}).filter(k => /^hero|templates|upload|made|logo$/.test(k) && blueprint.images[k]).length } } });
   } else skipped.push({ lane: "pmax", reason: "already in approvals or Google Ads", state: taken[DESIGN_STUDIO_TAGS.pmax] });
