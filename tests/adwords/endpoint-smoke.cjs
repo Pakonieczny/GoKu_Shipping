@@ -41,7 +41,13 @@ function stubFetch(url, options) {
 
 const emptyQuery = { where() { return this; }, limit() { return this; }, orderBy() { return this; }, doc() { return this; },
   get: async () => ({ docs: [], forEach() {}, size: 0, empty: true, exists: false, data: () => ({}) }) };
-const stubAdmin = { firestore: () => (dbCalls++, { collection: () => emptyQuery, doc: () => emptyQuery, runTransaction: async fn => fn({ get: async () => ({ exists: false, data: () => ({}) }), update() {} }) }) };
+// config/editPasscode (the console passcode, see _editPasscode.js) is served on its own and not
+// counted: with EDIT_PASSCODE unset a check must look the passcode up before it can refuse, and a
+// refusal reads nothing else. Here it exists with an empty passcode: no passcode anywhere.
+const passcodeRef = { get: async () => ({ exists: true, data: () => ({ passcode: '' }) }), create: async () => { throw Error('the smoke test never creates a passcode'); } };
+const world = () => (dbCalls++, emptyQuery);
+const stubAdmin = { firestore: () => ({ collection: name => name === 'config' ? { doc: id => id === 'editPasscode' ? passcodeRef : world() } : world(), doc: () => world(),
+  runTransaction: async fn => (dbCalls++, fn({ get: async () => ({ exists: false, data: () => ({}) }), update() {} })) }) };
 
 // Intercept the two modules every endpoint reaches the world through.
 const realResolve = Module._resolveFilename;
@@ -61,8 +67,8 @@ Object.assign(process.env, {
   SHOPIFY_STORE: 'x.myshopify.com', SHOPIFY_CLIENT_ID: 'c', SHOPIFY_CLIENT_SECRET: 's',
   GEMINI_API_KEY: 'g', FIREBASE_PRIVATE_KEY: 'k', FIREBASE_PROJECT_ID: 'p'
 });
-// Every check needs the passcode (they refuse outright without EDIT_PASSCODE; see the end), so
-// they run here the way the owner opens them: ?key=<EDIT_PASSCODE>.
+// Every check needs the passcode (they refuse outright without one; see the end), so they run
+// here the way the owner opens them: ?key=<passcode>. EDIT_PASSCODE, when set, wins over Firebase.
 process.env.EDIT_PASSCODE = 'secret';
 delete process.env.GADS_CONVERSION_UPLOAD_API;
 
@@ -121,17 +127,18 @@ const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopify
     }
   }
 
-  // EDIT_PASSCODE unset: every check refuses with the console's own code, reveals nothing about
-  // the configuration, and spends no API quota — whatever passcode is guessed.
+  // No passcode (EDIT_PASSCODE unset, config/editPasscode empty): every check refuses with the
+  // console's own code, reveals nothing about the configuration, and spends no API quota — whatever
+  // passcode is guessed.
   delete process.env.EDIT_PASSCODE;
   const REVEALING = /1234567890|999|myshopify|GOCSPX|1\/\/|chars|googleusercontent|secret/;
   for (const file of CHECKS) {
     const mod = require(path.join(FN, file)), name = file.replace('.js', '');
     for (const event of [{ queryStringParameters: {}, headers: {} }, { queryStringParameters: { key: 'secret', format: 'json' }, headers: { 'x-edit-passcode': 'secret', accept: 'text/html' } }]) {
-      const res = await quiet(name + ' with EDIT_PASSCODE unset', () => mod.handler(event));
+      const res = await quiet(name + ' with no passcode set', () => mod.handler(event));
       const body = JSON.parse(res.body);
-      check(res.statusCode === 403 && body.code === 'EDIT_PASSCODE_NOT_SET' && body.error === 'Set EDIT_PASSCODE in Netlify to run this check',
-        name + ' refuses with "Set EDIT_PASSCODE…" while no passcode is configured');
+      check(res.statusCode === 403 && body.code === 'EDIT_PASSCODE_NOT_SET' && body.error === 'Locked until a passcode is saved in Firebase (Firestore config/editPasscode)',
+        name + ' refuses with "Locked until a passcode is saved in Firebase…" while no passcode is configured');
       check(!REVEALING.test(res.body), name + ' refusal reveals no ID or credential shape');
     }
   }
