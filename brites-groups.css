@@ -57,6 +57,7 @@
 @container bg-view (max-width:520px){
 .bg-cell .bg-full{display:none}.bg-cell .bg-brief{display:inline}
 .bg-toolbar .bg-breadcrumbs>[data-bg-campaign-back]+span,.bg-toolbar .bg-breadcrumbs>[aria-current]{display:none}
+.bg-scope>span[aria-hidden],.bg-report-label>span[aria-hidden]{display:none}
 .bg-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.bg-metrics>div{padding:13px 14px}.bg-metrics b{font-size:17px}
 }
 @media(max-width:760px){
