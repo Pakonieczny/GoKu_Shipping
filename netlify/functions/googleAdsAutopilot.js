@@ -2160,8 +2160,14 @@ async function dueEvents(now = new Date()) {
     });
   });
   if (!due.length) return due;
-  const taken = await takenTags().catch(() => ({}));
-  return due.filter(d => { const t = taken[oppTag(d.coll.handle, d.event.label)]; return !t || (t.where === "campaign" && t.status === "REMOVED"); });
+  // Each draft pays for research and copy. History that cannot be read drafts nothing today (the
+  // next daily run retries), and an occasion Paul rejected in the last 30 days is not drafted again.
+  const taken = await takenTags().catch(e => ({ _errors: [String((e && e.message) || e)] }));
+  if ((taken._errors || []).length) return [];
+  const rejected = new Set(), f = fb();
+  if (f) { try { (await f.db.collection(COL.approvals).where("status", "==", "REJECTED").limit(500).get()).forEach(d => { const x = d.data() || {}, tag = approvalTag(x);
+    if (tag && Date.now() - Number(x.deletedAt || 0) < 30 * 86400000) rejected.add(tag); }); } catch (e) { return []; } } // deletedAt: rejected in Approvals (a release frees the tag)
+  return due.filter(d => { const tag = oppTag(d.coll.handle, d.event.label), t = taken[tag]; return !rejected.has(tag) && (!t || (t.where === "campaign" && t.status === "REMOVED")); });
 }
 
 /* ===================== Build a Search campaign (atomic) ===================== */
