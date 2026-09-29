@@ -161,7 +161,7 @@ async function consoleChecks(){
  const said=[],bge={attrs:{'data-id':'7','data-b':'10','data-res':''},getAttribute(k){return this.attrs[k];},setAttribute(k,v){this.attrs[k]=v;},innerHTML:'$10 CAD'};
  const tx=vm.createContext({DASH:{budgetCurrency:'CAD',lastMetrics:[]},cmdReport:{budgetCurrency:'CAD'},BUDGET_OVERRIDES:{},Intl,console,esc:s=>String(s==null?'':s),
   prompt:()=>'15',confirm:m=>{said.push(m);return true;},toast:m=>said.push(m),api:async()=>({ok:true})});
- vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+pick('wireCampRows'),tx);
+ vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+pick('wireServing')+'\n'+pick('wireCampRows'),tx);
  tx.wireCampRows({querySelectorAll:sel=>sel==='.bge'?[bge]:[]});await bge.onclick.call(bge,{stopPropagation(){}});
  check(/\(\$10 CAD \u2192 \$15 CAD\)/.test(said[0])&&/^\$15 CAD /.test(bge.innerHTML)&&/^Budget \$10 CAD \u2192 \$15 CAD/.test(said[1]),'campaign tree budget edit names CAD ('+said.join(' | ')+')');
 
