@@ -6358,6 +6358,17 @@ const CustomPrint = window.CustomPrint = (() => {
     setTimeout(() => { const x = armed.get(k); if (x && x.until <= Date.now() && armed.delete(k)) redraw(); }, 4100);
     return false;
   }
+  /* The sticker printed (its print dialog closed): `labelPrinted` on the order's timeline, whether or not its lines are
+     then marked completed. Paul, 28 Sep: the Review tab is where the Design Station prints, so the station is design;
+     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is. */
+  function labelled(rid, who, o) {
+    try {
+      const at = Date.now();
+      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${Math.floor(at / 60000)}`,
+        text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+    } catch (_) {}
+  }
   function printedAnyway(rid, who, act, n) {
     window.SheetEvents?.order({ type: "note", orderId: rid, by: who, id: `cu-anyway-${act}-${Date.now()}`, text: `${act === "print" ? "Custom QR label printed" : "Custom order completed"} by ${who} although the order is cancelled`.slice(0, 200), data: { cancelled: true, how: act === "print" ? "print" : "button", lines: n } });
   }
@@ -6390,6 +6401,7 @@ const CustomPrint = window.CustomPrint = (() => {
       say(key, "Making the QR label…");
       const out = await runPrinter(label, () => say(key, "Print dialog open…"));
       if (!out.ok) { failed(key, out.error || "the printer failed"); say(key, null); toast(`QR label not printed: ${out.error || "the printer failed"} — nothing was marked completed`, "bad", 8000); return; }
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled });
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
       say(key, "Marking it completed…");
