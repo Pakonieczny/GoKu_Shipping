@@ -386,10 +386,16 @@ function _campaignVersionDoc(ref, version) { return ref.collection("versions").d
 const _RESTORATION_SCOPE = "Saved Search copy, image links, landing links and keyword selection; Performance Max asset links and product filters. Existing campaign, Search ad and asset group IDs are preserved. Budgets, schedules, Merchant product data and Google's learned bidding state are not rolled back.";
 async function _captureCampaignEditableSnapshot(id) {
   id = String(id || ""); if (!/^\d+$/.test(id)) throw new Error("Invalid campaign ID.");
-  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${id}`);
+  // Brand guidelines keep BUSINESS_NAME/LOGO on the campaign, so new asset groups must not link them (group splits read this).
+  const head = "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type";
+  let rows, brandKnown = true;
+  try { rows = await gaql(`${head}, campaign.brand_guidelines_enabled FROM campaign WHERE campaign.id = ${id}`); }
+  catch (error) { brandKnown = false; rows = await gaql(`${head} FROM campaign WHERE campaign.id = ${id}`); }
   if (!rows.length) throw new Error("Campaign was not found in this account.");
   const campaign = rows[0].campaign, channel = campaign.advertisingChannelType, components = Object.fromEntries(_versionSnapshots.COMPONENTS.map(key => [key, []])), warnings = [], completeComponents = {};
   const filter = `campaign.id = ${id}`, snapshot = { schema: 1, campaignId: id, channel, capturedAt: Date.now(), complete: true, components, warnings, completeComponents };
+  // Google omits false booleans; null means the setting could not be read. Not part of the snapshot hash.
+  if (channel === "PERFORMANCE_MAX") snapshot.brandGuidelinesEnabled = brandKnown ? campaign.brandGuidelinesEnabled === true : null;
   const read = async (key, query, map) => {
     try {
       const result = await gaql(query); if (result.length > 1000) throw new Error("More than 1,000 settings exceed the complete snapshot limit.");
@@ -780,20 +786,32 @@ async function createCampaignRestoreDraft({ id, version, expectedVersion, snapsh
 // Producer contract: anything (a Shopify order webhook, or your existing order
 // pipeline) calls enqueueConversion(...) to drop a row in Brites_GAds_ConvQueue.
 // This engine drains it into Google so Smart Bidding optimises on REAL revenue.
-async function enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime }) {
+async function enqueueConversion({ gclid, gbraid, wbraid, value, orderTotal, currency, orderId, conversionDateTime, consent, buyerCountry }) {
   const f = fb(); if (!f) return false;
   if (!gclid && !gbraid && !wbraid) return false; // no click id ⇒ unattributable
+  const row = {
+    gclid: gclid || null, gbraid: gbraid || null, wbraid: wbraid || null,
+    // value: what Google is sent (merchandise revenue); orderTotal: what the buyer paid, which
+    // refunds are measured against. refundedTotal is in value terms, refundedMoney in money.
+    value: Number(value) || 0, orderTotal: Number(orderTotal) > 0 ? Number(orderTotal) : null, currency: currency || CURRENCY,
+    orderId: orderId || null, refundedTotal: 0, refundedMoney: 0,
+    conversionDateTime: conversionDateTime || gAdsTime(new Date()),
+    // Only a consent the shopper actually gave is recorded; none is ever assumed.
+    consent: consent && (consent.adUserData || consent.adPersonalization) ? { adUserData: consent.adUserData || null, adPersonalization: consent.adPersonalization || null } : null,
+    buyerCountry: /^[A-Z]{2}$/.test(String(buyerCountry || "")) ? buyerCountry : null,
+    uploaded: false, createdAt: f.FV.serverTimestamp()
+  };
   if (orderId) { // dedup: Shopify retries webhooks; one conversion per order
     try { const ex = await f.db.collection(COL.convQueue).where("orderId", "==", orderId).limit(1).get(); if (!ex.empty) return { duplicate: true, orderId }; } catch (e) {}
+    // One document per order. create() refuses a second writer, so orders/create
+    // arriving beside orders/paid (or a Shopify retry racing the first delivery)
+    // cannot queue the same sale twice between the lookup above and this write.
+    try { await f.db.collection(COL.convQueue).doc(_orderLogDocId(orderId)).create(row); }
+    catch (e) { if (e && (e.code === 6 || /already exists/i.test(String(e.message)))) return { duplicate: true, orderId }; throw e; }
+    return { enqueued: true, orderId };
   }
-  await f.db.collection(COL.convQueue).add({
-    gclid: gclid || null, gbraid: gbraid || null, wbraid: wbraid || null,
-    value: Number(value) || 0, currency: currency || CURRENCY,
-    orderId: orderId || null, refundedTotal: 0,
-    conversionDateTime: conversionDateTime || gAdsTime(new Date()),
-    uploaded: false, createdAt: f.FV.serverTimestamp()
-  });
-  return { enqueued: true, orderId: orderId || null };
+  await f.db.collection(COL.convQueue).add(row);
+  return { enqueued: true, orderId: null };
 }
 
 /* ---- partialFailure decoding (the thing that makes a sale silently disappear) ----
@@ -809,12 +827,16 @@ async function enqueueConversion({ gclid, gbraid, wbraid, value, currency, order
 function _pfIndexErrors(pfErr, fieldName) {
   const out = {};
   if (!pfErr) return out;
+  // Google names the path in proto spelling ("conversion_adjustments"); callers
+  // use the JSON spelling. Compare both without underscores or case, or every
+  // rejected adjustment reads as accepted.
+  const norm = s => String(s || "").replace(/_/g, "").toLowerCase(), want = norm(fieldName);
   const details = Array.isArray(pfErr.details) ? pfErr.details : [];
   for (const d of details) {
     const errs = Array.isArray(d.errors) ? d.errors : [];
     for (const er of errs) {
       const els = ((er.location || {}).fieldPathElements) || [];
-      const hit = els.find(e => e && e.fieldName === fieldName && e.index != null);
+      const hit = els.find(e => e && norm(e.fieldName) === want && e.index != null);
       if (!hit) continue;
       const code = er.errorCode ? Object.keys(er.errorCode).map(k => k + ":" + er.errorCode[k]).join(",") : "";
       const message = String(er.message || "").trim();
@@ -861,17 +883,24 @@ async function uploadLegacyConversions({ ctrl, limit = 500 } = {}) {
   }
   const snap = await f.db.collection(COL.convQueue).where("uploaded", "==", false).limit(limit).get();
   if (snap.empty) return { uploaded: 0, rejected: 0 };
-  const docs = []; const rows = []; const sent = []; const conversions = [];
+  const dm = require("./googleAdsDataManager");
+  const docs = []; const rows = []; const sent = []; const conversions = []; const refunded = [];
   snap.forEach(d => {
     const x = d.data();
     const click = _pickClickId(x);
     if (!click) return; // unattributable — cannot be a click conversion
+    // Same rule as Data Manager: send the sale net of refunds already recorded,
+    // and never send one refunded in full.
+    if (dm.fullyRefunded(x)) { refunded.push(d.ref); return; }
     docs.push(d.ref); rows.push(x); sent.push(click.kind);
     const c = { conversionAction: action, conversionDateTime: x.conversionDateTime,
-                conversionValue: x.value, currencyCode: x.currency, orderId: x.orderId || undefined };
+                conversionValue: dm.netValue(x), currencyCode: x.currency, orderId: x.orderId || undefined };
     c[click.kind] = click.value;
+    const consent = x.consent && String(x.consent.adUserData || "").toUpperCase().replace(/^CONSENT_/, "");
+    if (consent === "GRANTED" || consent === "DENIED") c.consent = { adUserData: consent };
     conversions.push(c);
   });
+  if (refunded.length && !ctrl.dryRun) { const b = f.db.batch(); refunded.forEach(ref => b.update(ref, { uploaded: true, failed: false, dmState: "not_sent_refunded", uploadError: null })); await b.commit(); }
   if (!conversions.length) return { uploaded: 0, rejected: 0 };
   const token = await mintToken();
   const body = { conversions, partialFailure: true };
@@ -882,6 +911,8 @@ async function uploadLegacyConversions({ ctrl, limit = 500 } = {}) {
   const data = await res.json().catch(() => ({}));
   const pf = data.partialFailureError || null;
   const pfMap = _pfIndexErrors(pf, "conversions");
+  // A partial failure that names no conversion cannot vouch for any of them.
+  if (pf && !Object.keys(pfMap).length) conversions.forEach((_, i) => { pfMap[i] = "Google reported a partial failure without naming the conversion: " + String(pf.message || "no detail").slice(0, 200); });
   const rejectedIdx = Object.keys(pfMap).map(Number);
   const accepted = conversions.length - rejectedIdx.length;
   await ledger({ kind: "uploadConversions", count: conversions.length, accepted,
@@ -928,7 +959,7 @@ async function uploadLegacyConversions({ ctrl, limit = 500 } = {}) {
 // tracks cumulative refund, and queues a RETRACTION (fully refunded) or RESTATEMENT
 // (partial — new net value). Keeps Google Ads ROAS honest so Smart Bidding and the
 // recommendation engine don't optimize toward revenue that was handed back.
-async function enqueueConversionAdjustment({ orderId, gclid, adjustmentType, restatementValue, currency, adjustmentDateTime }) {
+async function enqueueConversionAdjustment({ orderId, gclid, adjustmentType, restatementValue, currency, adjustmentDateTime, conversionDateTime }) {
   const f = fb(); if (!f) return false;
   if (!orderId && !gclid) return false;
   await f.db.collection(COL.convAdj).add({
@@ -937,6 +968,7 @@ async function enqueueConversionAdjustment({ orderId, gclid, adjustmentType, res
     restatementValue: restatementValue != null ? Number(restatementValue) : null,
     currency: currency || CURRENCY,
     adjustmentDateTime: adjustmentDateTime || gAdsTime(new Date()),
+    conversionDateTime: conversionDateTime || null,
     uploaded: false, createdAt: f.FV.serverTimestamp()
   });
   return true;
@@ -981,22 +1013,32 @@ async function recordRefund({ orderId, refundAmount, when, refundId, items } = {
       });await batch.commit();}
     } catch(e){console.error("[gads] order refund intelligence update failed",e&&e.message);}
 
+    // A return with no money back (a restock, an exchange) leaves the sale's value as it was.
+    if (amount <= 0) {
+      if(claimRef)await claimRef.set({status:"complete",conversionAdjustment:"no_refund_amount",completedAt:f.FV.serverTimestamp()},{merge:true});
+      return { ok: true, skipped: "no money was refunded", orderIntelligenceAdjusted:true };
+    }
     let orig = null;
     try { const q = await f.db.collection(COL.convQueue).where("orderId", "==", orderId).limit(1).get(); q.forEach(d => { orig = Object.assign({ ref: d.ref }, d.data()); }); } catch (e) {}
     if (!orig) {
       if(claimRef)await claimRef.set({status:"complete",conversionAdjustment:"not_applicable",completedAt:f.FV.serverTimestamp()},{merge:true});
       return { ok: true, skipped: "no matching ad-attributed conversion for this order", orderIntelligenceAdjusted:true };
     }
-    const refundedSoFar = (Number(orig.refundedTotal) || 0) + amount;
-    const newValue = Math.max(0, (Number(orig.value) || 0) - refundedSoFar);
+    // The sale went to Google as merchandise revenue; a refund is money back on the whole order
+    // (tax and shipping too), so it takes the same share of the value. A row queued before
+    // orderTotal was stored holds the order total as its value, and its refunds in money.
+    const value = Math.max(0, Number(orig.value) || 0), total = Number(orig.orderTotal) > 0 ? Number(orig.orderTotal) : value;
+    const moneySoFar = _r2((orig.refundedMoney != null ? Number(orig.refundedMoney) || 0 : Number(orig.refundedTotal) || 0) + amount);
+    const refundedSoFar = total > 0 && moneySoFar < total - 0.005 ? _r2(Math.min(value, moneySoFar * value / total)) : value;
+    const newValue = Math.max(0, _r2(value - refundedSoFar));
     const full = newValue <= 0.005;
     await enqueueConversionAdjustment({
       orderId, gclid: orig.gclid || null,
       adjustmentType: full ? "RETRACTION" : "RESTATEMENT",
       restatementValue: full ? null : newValue,
-      currency: orig.currency, adjustmentDateTime: when || gAdsTime(new Date())
+      currency: orig.currency, adjustmentDateTime: when || gAdsTime(new Date()), conversionDateTime: orig.conversionDateTime || null
     });
-    try { await orig.ref.update({ refundedTotal: refundedSoFar }); } catch (e) {}
+    try { await orig.ref.update({ refundedTotal: refundedSoFar, refundedMoney: moneySoFar }); } catch (e) {}
     if(claimRef)await claimRef.set({status:"complete",adjustmentType:full?"RETRACTION":"RESTATEMENT",newValue,completedAt:f.FV.serverTimestamp()},{merge:true});
     return { ok: true, adjustmentType: full ? "RETRACTION" : "RESTATEMENT", newValue, orderIntelligenceAdjusted:true };
   } catch(e){if(claimRef)try{await claimRef.set({status:"failed",error:String(e.message||e).slice(0,300),updatedAt:f.FV.serverTimestamp()},{merge:true});}catch(_e){}throw e;}
@@ -1009,14 +1051,49 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
   if (!action) return { uploaded: 0, skipped: "GADS_CONVERSION_ACTION not set" };
   const snap = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(limit).get();
   if (snap.empty) return { uploaded: 0 };
+  // Google can only adjust a conversion it has recorded. Each refund is judged
+  // against its original sale: recorded → adjust; still in flight → wait (not
+  // an attempt); never recorded (unsent, refused, refunded before sending) →
+  // nothing to adjust, because that sale is only ever sent net of its refunds.
+  const originals = new Map(), superseded = [], nowMs = Date.now(), candidates = [], net = require("./googleAdsDataManager").netValue;
+  const valueAfter = x => x.adjustmentType === "RETRACTION" ? 0 : Number(x.restatementValue);
+  let waiting = 0;
   const docs = []; const adjRows = []; const adjustments = [];
-  snap.forEach(d => {
-    const x = d.data(); docs.push(d.ref); adjRows.push(x);
+  for (const d of (snap.docs || [])) {
+    const x = d.data();
+    if (Number(x.nextAttemptAt) > nowMs) { waiting++; continue; }
+    if (x.orderId) {
+      if (!originals.has(x.orderId)) { let o = null; try { const q = await f.db.collection(COL.convQueue).where("orderId", "==", x.orderId).limit(1).get(); q.forEach(r => { o = r.data(); }); } catch (e) { o = undefined; } originals.set(x.orderId, o); }
+      const o = originals.get(x.orderId);
+      if (o === undefined) { waiting++; continue; }
+      const recorded = !!o && !o.failed && (o.dmState === "success" || (o.uploaded === true && !o.dmState));
+      if (o && ["submitting", "submission_unknown", "processing"].includes(o.dmState)) { waiting++; continue; }
+      if (!recorded) { superseded.push({ ref: d.ref, reason: !o ? "No uploaded sale matches this order." : o.dmState === "not_sent_refunded" ? "The sale was refunded in full before it was sent, so it was never uploaded." : "Google has not recorded this sale; it is only ever sent net of its refunds." }); continue; }
+      // Refunds only accumulate: an adjustment above the sale's current net value
+      // was overtaken by a later refund, and sending it would raise the value back.
+      if (valueAfter(x) > net(o) + 0.005) { superseded.push({ ref: d.ref, reason: "A later refund for this order replaces this adjustment." }); continue; }
+      if (x.adjustmentType === "RESTATEMENT" && o.dmValue != null && Math.abs(Number(o.dmValue) - Number(x.restatementValue)) < 0.005) { superseded.push({ ref: d.ref, reason: "The sale was sent at this refunded value already." }); continue; }
+    }
+    candidates.push({ d, x });
+  }
+  // One adjustment per order per request, the latest refund's: Google refuses an
+  // older restatement after a newer one, and array order is not refund order.
+  const latest = new Map();
+  candidates.forEach(c => { const k = c.x.orderId, cur = k && latest.get(k); if (k && (!cur || valueAfter(c.x) < valueAfter(cur.x) || (valueAfter(c.x) === valueAfter(cur.x) && String(c.x.adjustmentDateTime) > String(cur.x.adjustmentDateTime)))) latest.set(k, c); });
+  for (const { d, x } of candidates) {
+    if (x.orderId && latest.get(x.orderId).d !== d) { superseded.push({ ref: d.ref, reason: "A later refund for this order replaces this adjustment." }); continue; }
+    docs.push(d.ref); adjRows.push(x);
     const a = { conversionAction: action, adjustmentType: x.adjustmentType, adjustmentDateTime: x.adjustmentDateTime, orderId: x.orderId || undefined };
-    if (!x.orderId && x.gclid) a.gclidDateTimePair = { gclid: x.gclid, conversionDateTime: x.adjustmentDateTime };
+    if (!x.orderId && x.gclid) a.gclidDateTimePair = { gclid: x.gclid, conversionDateTime: x.conversionDateTime || x.adjustmentDateTime };
     if (x.adjustmentType === "RESTATEMENT" && x.restatementValue != null) a.restatementValue = { adjustedValue: x.restatementValue, currencyCode: x.currency };
     adjustments.push(a);
-  });
+  }
+  if (superseded.length && !ctrl.dryRun) {
+    const batch = f.db.batch();
+    superseded.forEach(s => batch.update(s.ref, { uploaded: true, superseded: true, uploadError: null, supersededReason: s.reason, closedAt: f.FV.serverTimestamp() }));
+    await batch.commit();
+  }
+  if (!adjustments.length) return { uploaded: 0, rejected: 0, superseded: superseded.length, waiting, validateOnly: !!ctrl.dryRun };
   const token = await mintToken();
   const body = { conversionAdjustments: adjustments, partialFailure: true };
   if (ctrl.dryRun) body.validateOnly = true;
@@ -1026,6 +1103,8 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
   // this retraction". Marking it uploaded leaves Google Ads reporting refunded revenue.
   const pf = data.partialFailureError || null;
   const pfMap = _pfIndexErrors(pf, "conversionAdjustments");
+  // A partial failure that names no adjustment cannot vouch for any of them.
+  if (pf && !Object.keys(pfMap).length) adjustments.forEach((_, i) => { pfMap[i] = "Google reported a partial failure without naming the adjustment: " + String(pf.message || "no detail").slice(0, 200); });
   const rejectedIdx = Object.keys(pfMap).map(Number);
   const accepted = adjustments.length - rejectedIdx.length;
   await ledger({ kind: "uploadConversionAdjustments", count: adjustments.length, accepted, rejected: rejectedIdx.length, validateOnly: !!ctrl.dryRun, ok: res.ok && rejectedIdx.length === 0, error: res.ok ? null : JSON.stringify(data).slice(0, 600), partialFailure: pf });
@@ -1037,11 +1116,13 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
       const x = adjRows[i] || {};
       const attempts = (Number(x.uploadAttempts) || 0) + 1;
       const exhausted = attempts >= CONV_MAX_ATTEMPTS;
-      batch.update(ref, { uploadAttempts: attempts, uploadError: String(err).slice(0, 300), lastAttemptAt: f.FV.serverTimestamp(), uploaded: exhausted, failed: exhausted || false });
+      // Spaced retries (6h, 12h, …) give Google time to make a just-processed
+      // sale adjustable, instead of spending every attempt in one afternoon.
+      batch.update(ref, { uploadAttempts: attempts, uploadError: String(err).slice(0, 300), lastAttemptAt: f.FV.serverTimestamp(), nextAttemptAt: exhausted ? null : Date.now() + attempts * 6 * 3600000, uploaded: exhausted, failed: exhausted || false });
     });
     await batch.commit();
   }
-  return { uploaded: res.ok && !ctrl.dryRun ? accepted : 0, rejected: rejectedIdx.length, validateOnly: !!ctrl.dryRun };
+  return { uploaded: res.ok && !ctrl.dryRun ? accepted : 0, rejected: rejectedIdx.length, superseded: superseded.length, waiting, validateOnly: !!ctrl.dryRun };
 }
 
 /* ---- Conversion-tracking health (the 3-way connection's vital sign) ---- */
@@ -1051,19 +1132,26 @@ async function uploadConversionAdjustments({ ctrl, limit = 500 } = {}) {
 async function conversionHealth({ force } = {}) {
   const f = fb();
   if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 4) return x.data; } } catch (e) {}
+    try { const s = await f.db.collection(COL.state).doc("conv_health").get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 15 * 60 * 1000 && x.data && x.data.schemaVersion === 5) return x.data; } } catch (e) {}
   }
   const out = { status: "UNKNOWN", actionConfigured: !!ENV.GADS_CONVERSION_ACTION, actionId: ENV.GADS_CONVERSION_ACTION || null,
     actions: [], actionsChecked: false, recentConversions: null, queueDepth: null, adjQueueDepth: null, lastUpload: null,
-    healthy: false, validated: false, reasons: [], schemaVersion: 4, at: Date.now() };
+    healthy: false, validated: false, reasons: [], schemaVersion: 5, at: Date.now() };
   try {
     const r = await gaql(`SELECT customer.conversion_tracking_setting.conversion_tracking_status FROM customer`);
     const cs = r[0] && r[0].customer && r[0].customer.conversionTrackingSetting;
     if (cs && cs.conversionTrackingStatus) out.status = cs.conversionTrackingStatus;
   } catch (e) { out.reasons.push("status check failed: " + String(e.message).slice(0, 70)); }
   try {
-    const rows = await gaql(`SELECT conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category FROM conversion_action`);
-    out.actionsChecked = true; out.actions = rows.map(r => ({ id: String(r.conversionAction.id), name: r.conversionAction.name, status: r.conversionAction.status, type: r.conversionAction.type, category: r.conversionAction.category }));
+    // Whether an upload counts is decided by these settings too: its bidding role,
+    // how it counts repeat purchases, and whether it keeps each order's value.
+    const base = "conversion_action.id, conversion_action.name, conversion_action.status, conversion_action.type, conversion_action.category";
+    let rows;
+    try { rows = await gaql(`SELECT ${base}, conversion_action.primary_for_goal, conversion_action.counting_type, conversion_action.value_settings.always_use_default_value, conversion_action.click_through_lookback_window_days FROM conversion_action`); }
+    catch (e) { rows = await gaql(`SELECT ${base} FROM conversion_action`); }
+    const flag = v => typeof v === "boolean" ? v : null;
+    out.actionsChecked = true; out.actions = rows.map(r => { const a = r.conversionAction; return { id: String(a.id), name: a.name, status: a.status, type: a.type, category: a.category,
+      primaryForGoal: flag(a.primaryForGoal), countingType: a.countingType || null, alwaysUseDefaultValue: flag((a.valueSettings || {}).alwaysUseDefaultValue), lookbackDays: a.clickThroughLookbackWindowDays != null ? Number(a.clickThroughLookbackWindowDays) : null }; });
   } catch (e) { out.reasons.push("conversion-action list failed: " + String(e.message).slice(0, 70)); }
   try {
     const tz = await _accountTz();
@@ -1084,6 +1172,8 @@ async function conversionHealth({ force } = {}) {
       if (out.failedCount > 0) out.reasons.push(out.failedCount + " sale(s) rejected by Google Ads on upload — see Sales → conversion status");
     } catch (e) {}
     try { const q = await f.db.collection(COL.convAdj).where("uploaded", "==", false).limit(500).get(); out.adjQueueDepth = q.size; } catch (e) {}
+    // A refund Google refused after every retry leaves that revenue counted in ROAS.
+    try { const q = await f.db.collection(COL.convAdj).where("failed", "==", true).limit(50).get(); out.adjFailedCount = q.size; if (q.size) out.reasons.push(q.size + " refund adjustment(s) were refused by Google after every retry, so Google still counts that refunded revenue."); } catch (e) {}
     try { const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(50).get(); let found = null; lg.forEach(d => { const x = d.data(); if (!found && x.kind === "uploadConversions") found = { at: x.at && x.at.toMillis ? x.at.toMillis() : null, count: x.accepted == null ? x.count : x.accepted, ok: x.ok, validateOnly: !!x.validateOnly }; }); out.lastUpload = found; } catch (e) {}
   }
   const configuredId = String(out.actionId || "").split("/").pop();
@@ -1100,9 +1190,43 @@ async function conversionHealth({ force } = {}) {
       out.healthy = out.healthy && out.dataManager.configured;
       out.validated = !!(out.healthy && out.dataManager.confirmed > 0 && !out.failedCount && !out.dataManager.unknown);
       if (!out.dataManager.configured) out.reasons.push("Google requires Data Manager authorization for conversion uploads. Connect its dedicated OAuth scope before syncing orders.");
-      if (out.dataManager.processing) out.reasons.push(out.dataManager.processing + " conversion(s) submitted to Google Data Manager; asynchronous processing is still pending.");
+      const dmx = out.dataManager, stale = Number(dmx.staleProcessing) || 0;
+      if (dmx.processing > stale) out.reasons.push((dmx.processing - stale) + " conversion(s) submitted to Google Data Manager; asynchronous processing is still pending (Google allows up to 24 hours).");
+      // Past Google's 24-hour window a submission is stuck, not slow: the pipeline is not
+      // working, whatever its settings say. Say since when, and why.
+      const top = map => Object.entries(map || {}).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => n + " × " + k).join("; ");
+      if (stale) { out.healthy = false; out.validated = false; const why = top(dmx.staleReasons);
+        out.reasons.push(stale + " submission(s) have waited more than 24 hours for Google's result (oldest sent " + new Date(dmx.oldestProcessingAt || Date.now()).toISOString().slice(0, 10) + "), so they are stuck rather than processing" + (why ? ": " + why : "") + "."); }
+      if (dmx.unsendable) { out.healthy = false; out.validated = false; out.reasons.push(dmx.unsendable + " queued sale(s) cannot be sent as stored: " + top(dmx.unsendableReasons) + "."); }
+      if (dmx.unsent && dmx.oldestUnsentAt && Date.now() - dmx.oldestUnsentAt > 3 * 3600000) out.reasons.push(dmx.unsent + " sale(s) have waited more than 3 hours to be sent. The hourly sync sends sales only while automation is on; Sync now sends them at once.");
+      // A submission is when the sale was sent; Google's confirmation can take a day.
+      if (dmx.latestSubmittedAt && (!out.lastUpload || !(out.lastUpload.at >= dmx.latestSubmittedAt))) out.lastUpload = { at: dmx.latestSubmittedAt, count: dmx.processing, ok: true, validateOnly: false, confirmed: false };
+      if (dmx.consentMissing) out.reasons.push(dmx.consentMissing + " queued sale(s) from the EEA, UK or Switzerland carry no ad_user_data consent, so Google will not use them. The storefront must pass the shopper's consent with the order.");
       if (out.dataManager.unknown) out.reasons.push(out.dataManager.unknown + " upload outcome(s) need reconciliation before retrying.");
     } catch (error) { out.healthy = false; out.validated = false; out.reasons.push("Data Manager status: " + error.message); }
+  }
+  const ca = out.configuredAction;
+  if (ca) {
+    // Google can record every upload and still misuse it: a fixed default value replaces each
+    // order's value, one-per-click drops a repeat order, a secondary action is ignored by
+    // bidding, and a second primary purchase action counts the same sale twice.
+    const purchase = out.actions.filter(a => a.id !== ca.id && a.status === "ENABLED" && a.category === "PURCHASE"), others = purchase.filter(a => a.primaryForGoal === true);
+    const label = a => "\"" + a.name + "\" (" + a.id + ")", named = others.map(label).join(", ");
+    out.doubleCounting = ca.primaryForGoal === true ? others.map(a => ({ id: a.id, name: a.name, type: a.type })) : [];
+    // Exactly one purchase action may be primary. The upload should be that one only once
+    // Google has confirmed it; until then the web tag is what bidding has been learning from.
+    const dm = out.dataManager, confirmedUploads = dm ? !!(dm.confirmed > 0 && !dm.staleProcessing && !dm.unknown && !out.failedCount) : !!(out.lastUpload && out.lastUpload.ok && out.lastUpload.count > 0 && !out.failedCount);
+    const tag = others[0] || purchase[0], where = "In Google Ads → Goals → Conversions, open each action's settings and set Action optimization: ";
+    const advice = tag ? where + (confirmedUploads ? "make " + label(ca) + " Primary and " + label(tag) + " Secondary; the upload carries each order's exact value and its refunds."
+      : "keep " + label(tag) + " Primary and set " + label(ca) + " to Secondary until Sales shows uploads confirmed by Google, then swap them.") : "";
+    if (ca.alwaysUseDefaultValue === true) { out.healthy = false; out.validated = false; out.reasons.push("The configured conversion action always uses its default value, so Google replaces every order's real value. Set it to use a different value for each conversion."); }
+    if (ca.category && ca.category !== "PURCHASE") out.reasons.push("The configured conversion action's category is " + ca.category + ", not Purchase, so purchase goals and ROAS bidding may leave these sales out.");
+    if (ca.countingType === "ONE_PER_CLICK") out.reasons.push("The configured conversion action counts one conversion per click, so a second order from the same ad click is dropped. Set counting to Every.");
+    const unknownRole = purchase.filter(a => a.primaryForGoal == null);
+    if (ca.primaryForGoal === false && !others.length && !unknownRole.length) { out.healthy = false; out.validated = false; out.reasons.push("No purchase action is primary, so bidding optimizes toward no sales at all. " + where + "make " + label(ca) + " Primary."); }
+    else if (ca.primaryForGoal === false && others.length) out.reasons.push(label(ca) + " is Secondary, so bidding optimizes toward " + named + " and not these uploads" + (confirmedUploads ? ". Uploads are confirmed now: " + advice : "; keep it that way until Google confirms uploads."));
+    if (out.doubleCounting.length) { out.healthy = false; out.validated = false; out.reasons.push("Two primary purchase actions count the same sales, " + label(ca) + " and " + named + ", so an order both record is counted twice in bidding and ROAS. " + advice); }
+    else if ((ca.primaryForGoal == null && purchase.length) || (unknownRole.length && !(ca.primaryForGoal === false && others.length))) { out.validated = false; out.reasons.push("Google did not report which purchase action is primary, and " + [ca].concat(purchase).map(label).join(" and ") + " are all enabled. Exactly one may be primary. " + advice); }
   }
   if (!out.actionConfigured) out.reasons.push("GADS_CONVERSION_ACTION env var is not set");
   if (out.actionConfigured && out.actionsChecked && !out.configuredAction) out.reasons.push("The configured conversion action was not found in this account.");
@@ -1163,12 +1287,13 @@ function _paidAttribution(x) {
   if (!x) return false;
   if (x.hasClickId) return true;
   const source=String(x.source||"").toLowerCase(), medium=String(x.medium||"").toLowerCase(), campaign=String(x.campaign||"").toLowerCase();
-  return source.indexOf("google")>=0 && (/\b(cpc|ppc|paid|paid_search|paid-shopping|paid_shopping|performance|max)\b/.test(medium+" "+campaign) || /^\d{5,}$/.test(campaign));
+  // paid_pmax is the Studio PMax suffix's medium; \b does not split it into "paid".
+  return source.indexOf("google")>=0 && (/\b(cpc|ppc|paid|paid_search|paid-shopping|paid_shopping|paid_pmax|performance|max)\b/.test(medium+" "+campaign) || /^\d{5,}$/.test(campaign));
 }
 function _paidChannel(x){
   if(!_paidAttribution(x))return null;
   const medium=String(x.medium||"").toLowerCase(),campaign=String(x.campaign||"").toLowerCase();
-  if(/shopping|pmax|performance/.test(medium+" "+campaign))return "pmax";
+  if(x.pipeline==="pmax"||/shopping|pmax|performance/.test(medium+" "+campaign))return "pmax";
   if(/search/.test(medium+" "+campaign))return "search";
   return null;
 }
@@ -1182,29 +1307,6 @@ function _merchantOrganic(x) {
   return campaign === "sag_organic" || reason.indexOf("free google listing") >= 0 ||
     (/^(google|google shopping|google_shopping)$/.test(source) && /^(free[-_ ]?listings?|free[-_ ]?shopping|merchant[-_ ]?organic)$/.test(medium));
 }
-function _signalProductBucket(map, it, orderValue, isAd, isMerchant) {
-  const title = String((it && it.title) || "").trim(); if (!title) return;
-  // Variant/SKU-first keys keep Merchant Center evidence attached to the exact offer
-  // that sold. Title-only historical rows remain usable, but no longer cause sales of
-  // two variants with the same Shopify title to be credited to whichever variant came first.
-  const key = it.variantId ? `variant:${String(it.variantId)}`
-    : (it.sku ? `sku:${String(it.sku).toLowerCase()}`
-      : (it.productId ? `product:${String(it.productId)}` : `title:${title.toLowerCase()}`));
-  const qty = Math.max(1, Number(it.qty) || 1);
-  const margin = _marginRateForText([title,it.sku].filter(Boolean).join(" "));
-  const row = map[key] || (map[key] = { name: title, orders: 0, units: 0, revenue: 0, estimatedProfit: 0, ad: 0, organic: 0, merchantOrganic: 0,
-    marginRate: margin.rate, marginTier: margin.tier, revenueSource: "allocated_order_total",
-    sku: it.sku || null, productId: it.productId || null, variantId: it.variantId || null, handle: it.handle || null });
-  if (!row.sku && it.sku) row.sku = it.sku;
-  if (!row.productId && it.productId) row.productId = it.productId;
-  if (!row.variantId && it.variantId) row.variantId = it.variantId;
-  if (!row.handle && it.handle) row.handle = it.handle;
-  row.orders++; row.units += qty; row.revenue += orderValue; row.estimatedProfit += orderValue * row.marginRate;
-  if (it && it.lineRevenue != null) row.revenueSource = "shopify_line_revenue";
-  if (isAd) row.ad++; else row.organic++;
-  if (isMerchant) row.merchantOrganic++;
-}
-
 function _orderLogDocId(orderId) {
   const clean=String(orderId||"").trim().replace(/^gid:\/\/shopify\/Order\//i,"");
   return clean ? ("order_"+clean.replace(/[^a-zA-Z0-9_-]+/g,"_").slice(0,140)) : null;
@@ -1231,7 +1333,10 @@ async function recordOrderEvent(ev) {
     const captured=!!ev.captured||!!(prior&&prior.captured), hasClickId=!!ev.gclid||!!(prior&&prior.hasClickId);
     const useItems=items.length?items:((prior&&prior.items)||[]);
     const row = {
-      orderId, value: Number(ev.value != null ? ev.value : (prior&&prior.value)) || 0, currency: ev.currency || (prior&&prior.currency) || CURRENCY,
+      orderId, orderName: ev.orderName || (prior&&prior.orderName) || null, orderNumericId: ev.orderNumericId || (prior&&prior.orderNumericId) || null,
+      value: Number(ev.value != null ? ev.value : (prior&&prior.value)) || 0, currency: ev.currency || (prior&&prior.currency) || CURRENCY,
+      // The value a Google conversion carries (merchandise revenue), beside the order total above.
+      saleValue: ev.saleValue != null && isFinite(Number(ev.saleValue)) ? Number(ev.saleValue) : (prior&&prior.saleValue!=null ? prior.saleValue : null),
       financialStatus:ev.financialStatus||(prior&&prior.financialStatus)||null,cancelledAt:ev.cancelledAt||(prior&&prior.cancelledAt)||null,test:ev.test!=null?!!ev.test:!!(prior&&prior.test),
       source: ev.source || (prior&&prior.source) || null, medium: ev.medium || (prior&&prior.medium) || null,
       campaign: ev.campaign || (prior&&prior.campaign) || null,
@@ -1249,7 +1354,7 @@ async function recentOrders({ limit = 25 } = {}) {
   const f = fb(); if (!f) return [];
   try {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").limit(Math.min(250, limit)).get();
-    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderNumericId: x.orderNumericId, value: x.value, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, campaignId:x.campaignId,adGroupId:x.adGroupId,adId:x.adId,pipeline:x.pipeline,designId:x.designId, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
+    const out = []; q.forEach(d => { const x = d.data(); out.push({ id: d.id, orderId: x.orderId, orderName: x.orderName || null, orderNumericId: x.orderNumericId, value: x.value, saleValue: x.saleValue != null ? x.saleValue : null, netValue: x.netValue, financialStatus: x.financialStatus, cancelledAt: x.cancelledAt, test: x.test, currency: x.currency, source: x.source, medium: x.medium, campaign: x.campaign, campaignId:x.campaignId,adGroupId:x.adGroupId,adId:x.adId,pipeline:x.pipeline,designId:x.designId, captured: x.captured, hasClickId: x.hasClickId, reason: x.reason, items: x.items || ((x.products || []).map(t => ({ title: t, qty: 1 }))), itemCount: x.itemCount != null ? x.itemCount : ((x.products || []).length), handle: x.handle, ts: x.ts }); });
     return out;
   } catch (e) { return []; }
 }
@@ -1322,7 +1427,7 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
     totalPriceSet { shopMoney { amount currencyCode } }
     customAttributes { key value }
     ${journey?"customerJourneySummary { firstVisit { landingPage utmParameters { source medium campaign } } }":""}
-    lineItems(first: 25) { pageInfo { hasNextPage } edges { node { title quantity currentQuantity sku originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } variant { id } product { id handle } } } }
+    lineItems(first: 25) { pageInfo { hasNextPage } edges { node { title quantity currentQuantity sku originalUnitPriceSet { shopMoney { amount } } totalDiscountSet { shopMoney { amount } } variant { id } product { id handle } } } }
   } } } }`;
   let journeyAvailable=true,pageCount=0,continuationError=null;
   const boundedRead=async query=>{let timer;try{return await Promise.race([shopifyGql(query),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Shopify order-history page exceeded its deadline.")),Math.max(1,Math.min(15000,deadline-Date.now())));})]);}finally{clearTimeout(timer);}};
@@ -1390,11 +1495,13 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
     } catch (x) {} }
     const items = (((n.lineItems && n.lineItems.edges) || []).map(li => { const z = (li && li.node) || {}; const originalQty=Number(z.quantity)||1,qty=z.currentQuantity!=null?Math.max(0,Number(z.currentQuantity)||0):originalQty;
       const unitPrice=Number(z.originalUnitPriceSet&&z.originalUnitPriceSet.shopMoney&&z.originalUnitPriceSet.shopMoney.amount);
-      const lineRevenue=Number(z.discountedTotalSet&&z.discountedTotalSet.shopMoney&&z.discountedTotalSet.shopMoney.amount);
-      const gross=isFinite(unitPrice)?unitPrice*qty:null;
+      // Every discount allocated to the line, its share of an order-level one included
+      // (discountedTotalSet leaves that out), as the webhook stores it. Same query cost.
+      const lineDiscount=Number(z.totalDiscountSet&&z.totalDiscountSet.shopMoney&&z.totalDiscountSet.shopMoney.amount);
+      const whole=qty===originalQty&&isFinite(unitPrice)&&isFinite(lineDiscount);
       return { title:z.title||"",sku:z.sku||null,qty,productId:z.product&&z.product.id?z.product.id:null,variantId:z.variant&&z.variant.id?z.variant.id:null,
-        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:qty===originalQty&&isFinite(lineRevenue)?lineRevenue:null,
-        lineDiscount:gross!=null&&isFinite(lineRevenue)?Math.max(0,gross-lineRevenue):null }; }).filter(it => it.title || it.sku)).slice(0, 25);
+        handle:z.product&&z.product.handle?z.product.handle:null,unitPrice:isFinite(unitPrice)?unitPrice:null,lineRevenue:whole?Math.max(0,_r2(unitPrice*originalQty-lineDiscount)):null,
+        lineDiscount:whole?_r2(lineDiscount):null }; }).filter(it => it.title || it.sku)).slice(0, 25);
     const itemCount = items.reduce((a, b) => a + (b.qty || 1), 0);
     const clickId = gclid || gbraid || wbraid || null;
     const captured = !!clickId;
@@ -1402,7 +1509,7 @@ async function backfillOrders({ limit = 100, days = 365, pages = 4 } = {}) {
       : (campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
          : (source ? `source — ${source}/${medium || "unknown"}` : "unknown attribution / no Google click id"));
     const row = { orderId, orderName: orderName || null, orderNumericId: numericId || null, value, currency, source: source || null, medium: medium || null, campaign: campaign || null,
-      ...require('./googleAdsCampaignStyles').attribution(fv.landingPage,attrs),hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
+      ...salesEvidenceUtil.clickAttribution(fv.landingPage,attrs,require('./googleAdsCampaignStyles').attribution(fv.landingPage,attrs)),hasClickId: captured, captured, reason, items, itemCount, products: items.map(i => i.title), handle: handle || null,
       financialStatus:n.displayFinancialStatus||null,cancelledAt:n.cancelledAt||null,test:n.test===true,lineItemsComplete:!(n.lineItems&&n.lineItems.pageInfo&&n.lineItems.pageInfo.hasNextPage),netValue:n.currentTotalPriceSet&&n.currentTotalPriceSet.shopMoney?Math.max(0,Number(n.currentTotalPriceSet.shopMoney.amount)||0):value,
       ts: n.createdAt ? Date.parse(n.createdAt) : Date.now(), backfill: true };
     if (prior) {
@@ -1453,8 +1560,10 @@ async function clearOrderLog({ keep = 1000 } = {}) {
   const f = fb(); if (!f) return { deleted: 0 };
   try {
     const q = await f.db.collection(COL.orderLog).orderBy("ts", "desc").get();
-    const docs = q.docs || []; let deleted = 0;
-    for (let i = keep; i < docs.length; i += 400) {
+    // Sales evidence and seasonality read 365 days of orders: a busy year must not
+    // lose its own history to a count cap.
+    const floor = Date.now() - 400 * 86400000, docs = (q.docs || []).filter((d, i) => i >= keep && Number(d.data().ts) < floor); let deleted = 0;
+    for (let i = 0; i < docs.length; i += 400) {
       const batch = f.db.batch(); docs.slice(i, i + 400).forEach(d => { batch.delete(d.ref); deleted++; });
       await batch.commit();
     }
@@ -1980,19 +2089,17 @@ Collection: "${coll.title}" (${coll.handle}). Bestsellers: ${heroes || "n/a"}.
 Social proof you may reference: ${proof}.
 Occasion/emotion focus: ${event ? event.label + " — " + (event.angle || "") : "evergreen gifting"}.${cxBlock}${pbCopy}
 Hard rules:
-- 15 headlines, each ≤30 characters. 4 descriptions, each ≤90 characters.
-- 4 sitelink texts (≤25 chars) with 1-line descriptions, 6 callouts (≤25 chars).
+- 15 distinct headlines, each ≤30 characters. 4 distinct descriptions, each ≤90 characters.
 - Avoid these terms entirely: ${BRAND.termExclusions.join(", ")}.
 - ${BRAND.messagingRestrictions.join(" ")}
-Return ONLY JSON: {"headlines":[],"descriptions":[],"sitelinks":[{"text":"","desc":""}],"callouts":[]}`;
+Return ONLY JSON: {"headlines":[],"descriptions":[]}`;
   const j = await openaiJSON(prompt, { maxTokens: 5000 });
   if (!j) return null;
+  // Sitelinks and callouts come from buildCampaignAssets (real store pages), so the model is not asked for them.
+  const uniq = a => a.filter((t, i) => a.findIndex(x => x.toLowerCase() === t.toLowerCase()) === i);
   const out = {
-    headlines: (j.headlines || []).map(cleanAdText).filter(t => t && t.length <= 30 && brandSafe(t)).slice(0, 15),
-    descriptions: (j.descriptions || []).map(cleanAdText).filter(t => t && t.length <= 90 && brandSafe(t)).slice(0, 4),
-    sitelinks: (j.sitelinks || []).filter(s => brandSafe(s.text) && brandSafe(s.desc || ""))
-                 .map(s => ({ text: String(s.text).slice(0, 25), desc: String(s.desc || "").slice(0, 35) })).slice(0, 4),
-    callouts: (j.callouts || []).map(s => String(s).slice(0, 25)).filter(brandSafe).slice(0, 6)
+    headlines: uniq((j.headlines || []).map(cleanAdText).filter(t => t && t.length <= 30 && brandSafe(t))).slice(0, 15),
+    descriptions: uniq((j.descriptions || []).map(cleanAdText).filter(t => t && t.length <= 90 && brandSafe(t))).slice(0, 4)
   };
   // RSA minimums: 3 headlines, 2 descriptions
   if (out.headlines.length < 3 || out.descriptions.length < 2) return null;
@@ -2083,7 +2190,8 @@ function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if
 function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
-  if (s && s > _todayUtc()) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  // Google reads the start in the account's time zone, so "future" means after the account's today (UTC is a day ahead of Toronto every evening).
+  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
   const e = _parseYmd(endDate);
   if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
   return out;
@@ -2910,6 +3018,8 @@ const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", 
 // "imported / slower shipping" to them. Keep claims true and universally appealing.
 const BRAND_CALLOUTS = ["Handcrafted Jewelry", "Personalized Charms", "Custom-Made Gifts", "Unique Handmade Designs"];
 const _clip = (s, n) => String(s || "").slice(0, n);
+// Clip at a word boundary ("Shop Sports & Athletics", never "Shop Sports & Athleti").
+const _wclip = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length <= n ? s : (s.slice(0, n + 1).replace(/\s+\S*$/, "").replace(/[\s&,·:;\-–—]+$/, "") || s.slice(0, n)); };
 // Sitelink + callout + structured-snippet assets. Google: sitelinks alone lift conversions ~15% by
 // adding relevant links + ad real estate. All URLs are pages that always exist (collection, homepage,
 // Shopify's built-in /collections/all sorts) so nothing 404s. Returned as asset + campaignAsset ops
@@ -2922,19 +3032,19 @@ function buildCampaignAssets(coll, finalUrl, cRes, extras) {
   //     fewer than 3 types we skip the snippet entirely rather than pad it.
   extras = extras || {};
   const ASSET = n => `customers/${CID}/assets/${n}`; const ops = []; let an = -10;
-  const short = _clip(coll.title, 16);
   const sitelinks = extras.productOnly ? [] : [
-    { linkText: _clip("Shop " + short, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
-    { linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }
+    { linkText: _wclip("Shop " + coll.title, 25), d1: "Browse the full collection", d2: "Personalized, made to order", url: finalUrl },
+    // The Best Sellers collection's own ad must not repeat its page as a second sitelink.
+    ...(coll.handle === "best-sellers" ? [] : [{ linkText: "Best Sellers", d1: "Our most-loved pieces", d2: "Top customer favorites", url: "https://britesjewelry.com/collections/best-sellers" }])
   ];
   (extras.relatedCollections || []).slice(0, 2).forEach(rc => {
     if (!rc || !rc.handle || rc.handle === coll.handle || rc.handle === "best-sellers") return;
-    sitelinks.push({ linkText: _clip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle });
+    sitelinks.push({ linkText: _wclip(rc.title, 25), d1: "More personalized designs", d2: "Handcrafted, made to order", url: "https://britesjewelry.com/collections/" + rc.handle });
   });
   sitelinks.forEach(s => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, finalUrls: [s.url], sitelinkAsset: { linkText: _clip(s.linkText, 25), description1: _clip(s.d1, 35), description2: _clip(s.d2, 35) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "SITELINK" } } }); });
   BRAND_CALLOUTS.forEach(t => { const a = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: a, calloutAsset: { calloutText: _clip(t, 25) } } } }); ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } }); });
   let snippets = 0;
-  const types = [...new Set((extras.snippetTypes || []).map(t => _clip(String(t || "").trim(), 25)).filter(Boolean))].slice(0, 6);
+  const types = [...new Set((extras.snippetTypes || []).map(t => _wclip(t, 25)).filter(t => t && !/^other$/i.test(t)))].slice(0, 6);
   if (types.length >= 3) {
     const ss = ASSET(an--); ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: types } } } }); ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
     snippets = 1;
@@ -2954,7 +3064,12 @@ async function accountWasteNegatives() {
 
 const _KW_TYPES = ["necklace","necklaces","earring","earrings","bracelet","bracelets","charm","charms","pendant","pendants","anklet","anklets","locket","lockets","keychain","keychains","ring","rings","hoop","hoops","stud","studs"];
 const _KW_NOISE = new Set(["gift","gifts","present","presents","jewelry","jewellery","accessories","ideas","for","the","and","with","her","him","women","men","girls","boys","custom","personalized","personalised","handmade","dainty","tiny","small","cute"]);
+// Metals, finishes and stones: on their own with a product type they form generic heads ("gold necklace").
+const _KW_GENERIC_MATERIALS = new Set(["gold","silver","sterling","925","10k","14k","18k","22k","24k","karat","carat","filled","plated","vermeil","stainless","steel","titanium","platinum","brass","copper","tungsten","solid","real","pure","metal","pearl","pearls","diamond","diamonds","crystal","crystals","gemstone","gemstones"]);
 function _kwWords(x) { return String(x || "").toLowerCase().replace(/[^a-z0-9]+/g," ").trim().split(/\s+/).filter(Boolean); }
+// Text Google accepts as a keyword: at most 80 characters and 10 words, none of , ! @ % ^ * ( ) = { } ; ~ ` < > ? \ | [ ].
+// Returns null when the phrase cannot be sent (one invalid keyword fails the whole atomic campaign create).
+function _adsKeywordText(x) { const t = String(x == null ? "" : x).toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”"]/g, " ").replace(/[,!@%^*()={};~`<>?\\|\[\]]/g, " ").replace(/(^|\s)[-+]+/g, "$1").replace(/\s+/g, " ").trim(); return t && t.length <= 80 && t.split(" ").length <= 10 ? t : null; }
 function _profileKeywordLexicon(profile) {
   const types = new Set(), qualifiers = new Set(), materials = new Set(), personalization = new Set();
   const addWords = (dst, x) => _kwWords(x).forEach(w => { if (w.length > 2 && !_KW_NOISE.has(w)) dst.add(w); });
@@ -2990,11 +3105,17 @@ function _keywordGrounding(text, profile, occasion) {
   if (!typeGrounded) return { ok:false, reason:`product type '${foundType}' not in collection` };
   const qualifierHits = words.filter(w => !_KW_TYPES.includes(w) && !_KW_NOISE.has(w) && (lex.qualifiers.has(w) || lex.materials.has(w) || lex.personalization.has(w) || _kwWords(occasion).includes(w)));
   if (!qualifierHits.length) return { ok:false, reason:"no inventory/recipient/material/occasion qualifier" };
+  // A material alone ("gold necklace", "14k gold hoop earrings") names no design of this collection: every jeweller bids on it.
+  const designWord = (w, i) => !_KW_GENERIC_MATERIALS.has(w) && !(/^(rose|white|yellow)$/.test(w) && words[i + 1] === "gold") &&
+    (lex.qualifiers.has(w) || lex.personalization.has(w) || _kwWords(occasion).includes(w));
+  if (!words.some((w, i) => qualifierHits.includes(w) && designWord(w, i))) return { ok:false, reason:"generic material + product type, nothing specific to this collection" };
   const intent = _keywordIntent(text, lex, occasion);
   if (intent === "low") return { ok:false, reason:"low purchase intent" };
   let groupLabel = null;
   const detailed = ((profile && profile.typesDetail)||[]).map(x=>String(x.type||x.t||x.name||"")).filter(Boolean);
-  groupLabel = detailed.find(t=>_kwWords(t).some(w=>set.has(w))) || (root.charAt(0).toUpperCase()+root.slice(1));
+  // Compare singular forms so "bracelet" and "bracelets" land in ONE ad group; prefer the type the keyword fully names.
+  const one=w=>w.replace(/s$/,""), roots=new Set(words.map(one)), tw=t=>_kwWords(t).map(one);
+  groupLabel = detailed.find(t=>tw(t).length&&tw(t).every(w=>roots.has(w))) || detailed.find(t=>tw(t).includes(root)) || (root.charAt(0).toUpperCase()+root.slice(1));
   return { ok:true, intent, groupLabel, evidence: qualifierHits.slice(0,4) };
 }
 function _inventoryKeywordSeeds(profile, occasion) {
@@ -3003,26 +3124,32 @@ function _inventoryKeywordSeeds(profile, occasion) {
   const motifs = ((profile.motifs)||[]).map(x=>String(x.t||x).toLowerCase()).filter(Boolean).slice(0,7);
   const mats = ((profile.mats)||[]).map(x=>String(x.t||x).toLowerCase()).filter(Boolean).slice(0,3);
   const pers = ((profile.personalization)||[]).map(String).map(x=>x.toLowerCase()).slice(0,3);
-  const out=[]; const add=t=>{ t=String(t||"").replace(/\s+/g," ").trim(); if(t&&!out.includes(t))out.push(t); };
+  const out=[]; const add=t=>{ t=_adsKeywordText(String(t||"").replace(/\([^)]*\)/g," ")); if(t&&!out.includes(t))out.push(t); };
+  // Only a short occasion name ("christmas", "mother's day") is a search phrase; a scan's descriptive
+  // occasion sentence appended to a product made unsearchable, often comma-broken, exact keywords.
+  const occ=_adsKeywordText(occasion);
   types.forEach((ty,ti)=>{
     motifs.slice(0,ti===0?5:3).forEach(m=>add(`${m} ${ty}`));
     mats.slice(0,2).forEach(m=>add(`${m} ${motifs[0]||"personalized"} ${ty}`));
     pers.slice(0,1).forEach(x=>add(`${x} ${motifs[0]||"custom"} ${ty}`));
-    if (occasion && !/evergreen/i.test(occasion) && motifs[0]) add(`${motifs[0]} ${ty} ${occasion}`);
+    if (occ && occ.split(" ").length <= 3 && !/evergreen/i.test(occ) && motifs[0]) add(`${motifs[0]} ${ty} ${occ}`);
   });
   return out.slice(0,16);
 }
 function groundKeywordPlan(keywordPlan, profile, occasion, { min=4, max=18 } = {}) {
   const source = Array.isArray(keywordPlan) ? keywordPlan.slice() : [];
   const candidates = source.concat(_inventoryKeywordSeeds(profile, occasion).map(text=>({text, source:"inventory_seed"})));
-  const accepted=[], rejected=[], seen=new Set();
+  const accepted=[], rejected=[], seen=new Set(), occ=_kwWords(occasion).join(" ");
   for (const raw of candidates) {
-    const text=String((raw&&(raw.text||raw))||"").toLowerCase().replace(/\s+/g," ").trim();
+    const said=String((raw&&(raw.text||raw))||"").toLowerCase().replace(/\s+/g," ").trim(), text=_adsKeywordText(said);
+    if(said&&!text){ if(!seen.has(said)){ seen.add(said); rejected.push({text:said.slice(0,80),reason:"not a valid Google keyword (over 80 characters, over 10 words or unsupported symbols)"}); } continue; }
     if(!text||seen.has(text))continue; seen.add(text);
+    // Earlier scans stored "<motif> <type> <whole occasion sentence>" seeds; nobody searches those.
+    if(occ.split(" ").length>3&&_kwWords(text).join(" ").includes(occ)&&!(raw&&raw.real&&Number(raw.searches)>0)){ rejected.push({text,reason:"occasion description, not a search phrase"}); continue; }
     const g=_keywordGrounding(text,profile,occasion);
     if(!g.ok){ rejected.push({text,reason:g.reason}); continue; }
     accepted.push(Object.assign({}, typeof raw==="object"?raw:{}, { text, intent:g.intent, grounding:g.evidence,
-      groupLabel:g.groupLabel, matchType:g.intent==="high"||_kwWords(text).length>=4?"EXACT":"PHRASE" }));
+      groupLabel:g.groupLabel, matchType:g.intent==="high"||_kwWords(text).length>=4?"EXACT":"PHRASE", measured:!!(raw&&raw.real&&Number(raw.searches)>0) }));
     if(accepted.length>=max)break;
   }
   const map={}; accepted.forEach(k=>{ const key=k.groupLabel||"Core products"; (map[key]=map[key]||[]).push(k); });
@@ -3033,10 +3160,11 @@ function groundKeywordPlan(keywordPlan, profile, occasion, { min=4, max=18 } = {
   if(groups.length && groups.reduce((n,g)=>n+g.keywords.length,0)<accepted.length){
     const used=new Set(groups.flatMap(g=>g.keywords.map(k=>k.text))); accepted.filter(k=>!used.has(k.text)).forEach(k=>groups[0].keywords.push(k));
   }
-  const real=accepted.filter(k=>k.real||k.source==="google_keyword_planner").length;
-  const conf=Math.max(20,Math.min(96,Math.round(34+accepted.length*3+real*4+(profile&&profile.sampled?Math.min(15,profile.sampled/3):0)-rejected.length)));
+  // Seeds and model estimates stay usable long-tail keywords but are unmeasured: they add no evidence.
+  const measured=accepted.filter(k=>k.measured).length, real=accepted.filter(k=>k.real||k.source==="google_keyword_planner").length;
+  const conf=Math.max(20,Math.min(96,Math.round(34+measured*3+real*4+(profile&&profile.sampled?Math.min(15,profile.sampled/3):0)-rejected.length)));
   return { ok:accepted.length>=min && groups.length>0, keywords:accepted, rejected, groups,
-    confidence:conf, evidence:{accepted:accepted.length,rejected:rejected.length,realKeywordData:real,profileListings:Number(profile&&profile.sampled)||0} };
+    confidence:conf, evidence:{accepted:accepted.length,measured,unmeasured:accepted.length-measured,rejected:rejected.length,realKeywordData:real,profileListings:Number(profile&&profile.sampled)||0} };
 }
 
 function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets, assetExtras, keywordPlan, adGroups } = {}) {
@@ -3044,12 +3172,13 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`;
   const finalUrl = `https://britesjewelry.com/collections/${coll.handle}`;
   const _sched = _campaignScheduleFields(startDate, endDate);
-  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : 0.80;
+  // Google accepts money only in whole cents (CAD minimum unit); 7.555 or 1.237 fails the whole create.
+  const capCpc = Number(maxCpc) > 0 ? Math.max(0.01, Math.round(Number(maxCpc) * 100) / 100) : 0.80;
   const useSmart = (smartBidding != null) ? !!smartBidding : !!ENV.GADS_TARGET_ROAS;
   const tRoas = Number(targetRoas || ENV.GADS_TARGET_ROAS || 0);
   const bidding = useSmart ? { maximizeConversionValue: tRoas > 0 ? { targetRoas: tRoas } : {} } : { manualCpc: { enhancedCpcEnabled: false } };
   const ops = [
-    { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
+    { campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(Math.round(Number(dailyBudget)*100)/100),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     { campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"SEARCH",campaignBudget:bRes,
       containsEuPoliticalAdvertising:"DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
       ..._sched,...bidding,
@@ -3063,14 +3192,14 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
       geoTargetTypeSetting:{positiveGeoTargetType:"PRESENCE"}}}}
   ];
   let groups=(Array.isArray(adGroups)?adGroups:[]).map((g,i)=>({
-    name:String(g.name||g.label||`Intent ${i+1}`).slice(0,70), finalUrl:g.finalUrl||finalUrl,
+    name:_wclip(g.name||g.label||`Intent ${i+1}`,70), finalUrl:g.finalUrl||finalUrl,
     assets:g.assets||assets, keywords:(g.keywords||[]).map(k=>typeof k==="string"?{text:k}:k).filter(Boolean)
   })).filter(g=>g.assets&&g.assets.headlines&&g.assets.descriptions&&g.keywords.length>=2).slice(0,3);
   if(!groups.length && Array.isArray(keywordPlan)) groups=[{name:`${coll.title} · ${event?event.label:"Evergreen"}`,finalUrl,assets,keywords:keywordPlan}];
-  const dedupe=new Set();
+  const dedupe=new Set(), dropped=[];
   groups=groups.map(g=>{ g.keywords=g.keywords.map(k=>{
-    const text=String(k.text||k).toLowerCase().replace(/\s+/g," ").trim(); if(!text||dedupe.has(text))return null; dedupe.add(text);
-    return {text,matchType:String(k.matchType||((k.intent==="high"||_kwWords(text).length>=4)?"EXACT":"PHRASE")).toUpperCase()==="EXACT"?"EXACT":"PHRASE"};
+    const raw=String(typeof k==="string"?k:(k&&k.text)||"").trim(), text=_adsKeywordText(raw); if(!text){ if(raw)dropped.push(raw.slice(0,80)); return null; } if(dedupe.has(text))return null; dedupe.add(text);
+    return {text,matchType:String(k.matchType||((k.intent==="high"||_kwWords(text).length>=4)?"EXACT":"PHRASE")).toUpperCase()==="EXACT"?"EXACT":"PHRASE",measured:!!(k.real&&Number(k.searches)>0)};
   }).filter(Boolean).slice(0,10); return g; }).filter(g=>g.keywords.length>=2);
   const totalKw=groups.reduce((n,g)=>n+g.keywords.length,0);
   if(totalKw<4) throw new Error("Opportunity rejected: fewer than 4 inventory-grounded, purchase-intent keywords survived validation. No broad fallback campaign was created.");
@@ -3084,12 +3213,16 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
     g.keywords.forEach(k=>ops.push({adGroupCriterionOperation:{create:{adGroup:agRes,status:"ENABLED",keyword:{text:k.text,matchType:k.matchType}}}}));
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(gid=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${gid}`}}}}));
-  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(n=>String(n).trim().toLowerCase()).filter(Boolean))];
+  // English, matching the ad copy and the Keyword Planner research (languageConstants/1000). Without a
+  // language criterion Google serves to every language and the ad-design keyword evidence is unavailable.
+  ops.push({campaignCriterionOperation:{create:{campaign:cRes,language:{languageConstant:"languageConstants/1000"}}}});
+  const all=groups.flatMap(g=>g.keywords), kwWords=all.map(k=>new Set(k.text.split(" ")));
+  // A broad negative whose words all sit inside one of our own keywords would block that keyword ("kit" vs "first aid kit charm").
+  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(_adsKeywordText).filter(Boolean))].filter(n=>!kwWords.some(s=>n.split(" ").every(w=>s.has(w))));
   negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n,matchType:"BROAD"}}}}));
   let assetSummary=null; if(withAssets!==false){const ca=buildCampaignAssets(coll,finalUrl,cRes,assetExtras);ops.push(...ca.ops);assetSummary=ca.summary;}
-  const all=groups.flatMap(g=>g.keywords);
   return {ops,tag,finalUrl,negatives:negSet,assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
-    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,researched:true,dropped:[],groups:groups.length,searchPartners:false}};
+    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:all.length>0&&all.every(k=>k.measured),dropped,groups:groups.length,searchPartners:false}};
 }
 
 /* ============================ STAGES ============================ */
@@ -3374,7 +3507,7 @@ const _MERCHANT_SELECT_CORE = `shopping_product.resource_name, shopping_product.
 const _MERCHANT_SELECT = `${_MERCHANT_SELECT_CORE}, shopping_product.product_type_level1,
       shopping_product.product_type_level2, shopping_product.custom_attribute0, shopping_product.custom_attribute1,
       shopping_product.custom_attribute2, shopping_product.custom_attribute3, shopping_product.custom_attribute4,
-      shopping_product.product_image_uri, shopping_product.issues`;
+      shopping_product.product_image_uri, shopping_product.issues, shopping_product.target_countries`;
 function _gaqlString(v) {
   return "'" + String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
 }
@@ -3398,12 +3531,14 @@ function _merchantLookupPlan({ itemIds = [], signals = [], titles = [] } = {}) {
 function _merchantProductRow(x, merchantId) {
   if (!x || String(x.merchantCenterId || "") !== String(merchantId) || !x.itemId || !x.title) return null;
   return { itemId: String(x.itemId), title: String(x.title), status: String(x.status || ""), availability: String(x.availability || ""),
-    type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null,
+    type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null, targetCountries: Array.isArray(x.targetCountries) ? x.targetCountries.map(c => String(c).toUpperCase()) : [],
     imageUrl: x.productImageUri || null, customLabels: [x.customAttribute0,x.customAttribute1,x.customAttribute2,x.customAttribute3,x.customAttribute4].filter(Boolean),
     issues: Array.isArray(x.issues) ? x.issues.map(i => String((i && (i.description || i.detail || i.errorCode || i.code)) || JSON.stringify(i)).slice(0, 180)) : [],
     issueDetails: Array.isArray(x.issues) ? x.issues.map(i => ({description:String(i.description||i.detail||i.errorCode||""),severity:String(i.adsSeverity||""),code:String(i.errorCode||"")})) : [],
     merchantId: String(x.merchantCenterId) };
 }
+// A feed title Google received garbled (UTF-8 read as Latin-1) is a feed problem: flag it, never copy it into ad text.
+function _merchantTitleProblem(title) { return require("./_merchantHealth").titleProblem(title); }
 function _merchantFeedLabels(plan) {
   const labels = new Set();
   (plan.itemIds || []).forEach(id => {
@@ -3441,12 +3576,15 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
       richFieldFallback: mode === "core-field fallback", richError: rows && rows._richError || null,
       error: err ? _auditText((err && err.message) || err, 300) : null });
   };
+  // One item ID can exist under several feed labels (e.g. US and USD_…); each is a separate
+  // Merchant offer with its own status, so never let one label's row overwrite another's.
+  const offerKey = row => String(row.feedLabel || "").toUpperCase() + "|" + row.itemId.toLowerCase();
   const absorb = (rows, kind) => {
     successfulQueries.n++; if (kind && queryKinds[kind] != null) queryKinds[kind]++;
     if (rows && rows._queryMode === "core-field fallback") queryModes.coreFallback++; else queryModes.enriched++;
     (rows || []).forEach(r => {
       const row = _merchantProductRow(r.shoppingProduct || {}, merchantId);
-      if (row) found.set(row.itemId.toLowerCase(), row);
+      if (row) found.set(offerKey(row), row);
     });
   };
   // 1) Fast path: exact, machine-generated offer IDs only. Product titles are
@@ -3465,8 +3603,8 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   const enough = () => {
     if (!found.size) return false;
     if (!wantedIds.size) return true;
-    let hits = 0; found.forEach(x => { if (wantedIds.has(x.itemId.toLowerCase())) hits++; });
-    return hits >= Math.min(wantedIds.size, Math.max(2, Math.ceil(wantedIds.size * .35)));
+    const hits = new Set(); found.forEach(x => { if (wantedIds.has(x.itemId.toLowerCase())) hits.add(x.itemId.toLowerCase()); });
+    return hits.size >= Math.min(wantedIds.size, Math.max(2, Math.ceil(wantedIds.size * .35)));
   };
   // 2) Reliable fallback for historical/title-only orders: read the bounded CA/US
   // feed slices using only safe scalar filters, then match titles locally. Google
@@ -3482,7 +3620,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
           const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
           const idMatch = wantedIds.has(row.itemId.toLowerCase());
           const titleMatch = wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9);
-          if (idMatch || titleMatch) found.set(row.itemId.toLowerCase(), row);
+          if (idMatch || titleMatch) found.set(offerKey(row), row);
         });
       } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("feed", "feed label " + label, 1, null, e); }
     }
@@ -3496,7 +3634,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
       noteRequest("account", "account-wide bounded fallback", 1, rows, null);
       rows.forEach(r => {
         const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
-        if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(row.itemId.toLowerCase(), row);
+        if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(offerKey(row), row);
       });
     } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
   }
@@ -3847,8 +3985,9 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       if(!offers.length)return;
       matchedSignals.add(best);
       const contribution = best.weight * (.55 + bestM * .45) + Math.min(20, Number(prod.sold) || 0);
-      offers.slice(0, 12).forEach(mp => offerMap.set(mp.itemId, mp));
-      allMatches.push({ title: prod.title, productId:best.productId||prod.productId||null,variantId:best.variantId||null,sku:best.sku||null, itemIds:offers.map(mp=>mp.itemId),evidenceId:"demand-"+allMatches.length,weight:contribution,profit30d:best.profit30d||0,monthly:((sig365&&(sig365.productRows||sig365.topProducts))||[]).filter(row=>salesEvidenceUtil.exactProductMatches({productId:best.productId||prod.productId,variantId:best.variantId,itemId:best.itemId||best.sku},row)).flatMap(row=>row.monthly||[]), soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
+      // Keep each feed label's own offer (same item ID, separate Merchant offer) so every market sees the full product.
+      offers.filter(mp => offers.filter(x => x.feedLabel === mp.feedLabel).indexOf(mp) < 12).forEach(mp => offerMap.set(String(mp.feedLabel||"")+"|"+mp.itemId, mp));
+      allMatches.push({ title: prod.title, productId:best.productId||prod.productId||null,variantId:best.variantId||null,sku:best.sku||null, itemIds:[...new Set(offers.map(mp=>mp.itemId))],evidenceId:"demand-"+allMatches.length,weight:contribution,profit30d:best.profit30d||0,monthly:((sig365&&(sig365.productRows||sig365.topProducts))||[]).filter(row=>salesEvidenceUtil.exactProductMatches({productId:best.productId||prod.productId,variantId:best.variantId,itemId:best.itemId||best.sku},row)).flatMap(row=>row.monthly||[]), soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
         revenue: Math.round(Number(best.revenue)||0), estimatedProfit: Math.round(Number(best.estimatedProfit)||0),orders30d:best.orders30d,revenue30d:best.revenue30d,
         source: [...best.sources].join("+"), offers: offers.length,attributionBasis:"Observed Shopify product demand; only explicit source attribution is organic",merchantReportedOnly:[...best.sources].includes("merchant-reported-conversions") });
       });
@@ -3926,9 +4065,12 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
   return chosen.slice(0, 8).map((c,i)=>({...c,rankingContext:{rank:i+1,candidateCount:chosen.length,alternative:chosen[i+1]?{title:chosen[i+1].collectionTitle,score:chosen[i+1].score}:null}}));
 }
 
+// Google rejects the WHOLE atomic mutate for one search theme over 10 words
+// (AssetGroupSignalError TOO_MANY_WORDS), over 80 characters, or with disallowed characters.
+function _pmaxThemeText(x){let out="";for(const w of String(x||"").toLowerCase().replace(/['’]/g,"").replace(/[^a-z0-9 ]+/g," ").split(" ").filter(Boolean).slice(0,10)){if(out.length+(out?1:0)+w.length>80)break;out+=(out?" ":"")+w;}return out;}
 function _derivePmaxSearchThemes(candidate) {
   const TYPE = /\b(necklace|necklaces|earring|earrings|bracelet|bracelets|charm|charms|pendant|pendants|anklet|anklets|locket|lockets)\b/i;
-  const out = [], add = x => { x=String(x||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim(); if(x&&x.length<=80&&!out.includes(x))out.push(x); };
+  const out = [], add = x => { x=_pmaxThemeText(x); if(x&&!out.includes(x))out.push(x); };
   (candidate.productTitles||[]).slice(0,8).forEach(t=>{ const clean=String(t).replace(/\b(14k|solid gold|gold filled|rose gold filled|sterling silver)\b/ig," ").replace(/\s+/g," ").trim(); if(TYPE.test(clean))add(clean); });
   (candidate.types||[]).slice(0,4).forEach(t=>add(`${candidate.collectionTitle} ${t}`));
   add(`${candidate.collectionTitle} jewelry`);
@@ -3941,8 +4083,8 @@ function _merchantOrganicDiscoveryIds(merchant,report30,report90){
   return [...rows.values()].sort((a,b)=>(b.recent*3+Math.max(0,b.longer-b.recent))-(a.recent*3+Math.max(0,a.longer-a.recent))||a.id.localeCompare(b.id)).slice(0,40).map(x=>x.id);
 }
 
-async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, onAudit = null } = {}) {
-  const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } };
+async function proposePmaxOpportunities({ collections = [], profiles = [], ceiling = 100, currency = null, onAudit = null } = {}) {
+  const emit = async e => { if (onAudit) { try { await onAudit(e); } catch (x) {} } }, bc = currency || "account-currency"; // budgets and the ceiling are in the Google Ads account currency
   // Pull recent Shopify orders before ranking. Existing title-only rows are enriched
   // in place with product/variant IDs, while new webhook orders already contain them.
   // This makes the very first scan useful instead of waiting for future purchases.
@@ -4042,7 +4184,7 @@ These are PMax product/creative observations; never treat search themes as exact
 ${JSON.stringify({days30:selectorPeriod(sig30),days90:selectorPeriod(sig90)})}
 Eligible candidates are pre-ranked deterministically from exact Shopify order titles matched to live Merchant Center offer IDs:
 ${JSON.stringify(promptData)}
-Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: $6-$15/day, respecting total ceiling $${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
+Choose 2-3 market-specific, non-overlapping candidates. CA and US feed labels are separate valid campaigns; you may choose the same collection once per market when both have eligible offers. Prefer repeated Shopify purchases and separately reported Merchant conversions over clicks. Lack of past ad sales must not exclude a strong organic/direct seller. The same order can appear in Shopify and Merchant attribution. Missing periods and currency values are unknown; do not assume zero sales or calculate a paid ROAS from organic revenue. Prefer multiple eligible offers. Do not choose a broad collection over a tighter one with the same winning products. Keep budgets conservative enough to learn but meaningful: ${bc} 6-15/day, respecting total ceiling ${bc} ${ceiling}/day. Return ONLY JSON {"pmax":[{"handle":"exact handle","feedLabel":"exact feedLabel","rationale":"<=150 chars citing products/orders/free-listing proof","dailyBudget":6-15,"days":21-45,"angle":"<=80 chars"}]}.`,
       { maxTokens: 5000, effort: "medium" });
     selected = (Array.isArray(j && j.pmax) ? j.pmax : []).map(x => {
       const c = pool.find(y => y.handle === x.handle && String(y.feedLabel||"") === String(x.feedLabel||"")); if (!c) return null;
@@ -4294,7 +4436,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const finalUrl=productDestination||`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
   const ops=[
-    {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
+    {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(Math.round(Number(dailyBudget)*100)/100),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     {campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"PERFORMANCE_MAX",campaignBudget:bRes,
       /* New PMax campaigns default to brand-guidelines ENABLED, which moves BUSINESS_NAME/
          LOGO to campaign-level CampaignAsset links and rejects our group-level attaches
@@ -4312,7 +4454,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const grouped={};exact.forEach(itemId=>{const productId=_productIdFromItemId(itemId);if(!productId)throw new Error("Merchant offer has no verifiable Shopify product reference.");(grouped[productId]=grouped[productId]||[]).push(itemId);});
   const groups=combinedCreativeGroup?[{label:productTitle||coll.title,itemIds:exact}]:Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
   if(groups.length>4)throw new Error("Select up to four products per creative package. Different products receive their own copy and images.");
-  const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
+  const themes=[...new Set((searchThemes||[]).map(_pmaxThemeText).filter(Boolean))].slice(0,25);
   // Campaign-level sitelinks/callouts/structured snippets — same proven machinery the
   // Search builder uses (real collection URLs only). Sitelinks are a scored ad-strength
   // component PMax previews flag as missing without them. Temp IDs -10.. (its own range,
@@ -4332,7 +4474,10 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     const productUrl=details.find(d=>g.itemIds.includes(d.itemId)&&require("./googleAdsAdDesignContext").destination(d.url)?.kind==="product")?.url;
     const groupUrl=productDestination||productUrl||finalUrl;
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
-    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[groupUrl],status:"ENABLED"}}});
+    // Google rejects the whole mutate when two asset groups share a name (DUPLICATE_NAME);
+    // two products can share a feed title or its first 60 characters.
+    const agName=`AG · ${String(g.label).slice(0,60)}`,agTaken=ops.some(o=>o.assetGroupOperation&&o.assetGroupOperation.create.name===agName);
+    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:agTaken?`${agName} · ${gi+1}`:agName,finalUrls:[groupUrl],status:"ENABLED"}}});
     const ctaRes=`customers/${CID}/assets/${_tempIdFloor(ops)}`;
     ops.unshift({assetOperation:{create:{resourceName:ctaRes,callToActionAsset:{callToAction:"SHOP_NOW"}}}});
     ops.push({assetGroupAssetOperation:{create:{assetGroup:agRes,asset:ctaRes,fieldType:"CALL_TO_ACTION_SELECTION"}}});
@@ -4344,8 +4489,8 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     }else ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"UNIT_INCLUDED",listingSource:"SHOPPING"}}});
     // Give each coherent product group its own relevant themes. Signals guide learning;
     // they do not restrict PMax reach.
-    const typeWords=_kwWords(g.label);
-    let local=themes.filter(t=>typeWords.some(w=>t.includes(w))).slice(0,8);if(!local.length)local=[String(g.label).toLowerCase().slice(0,80)];
+    const typeWords=_kwWords(g.label).filter(w=>w.length>2),fit=t=>typeWords.filter(w=>t.split(" ").includes(w)).length;
+    let local=themes.filter(t=>groups.length===1||fit(t)).sort((a,b)=>fit(b)-fit(a)).slice(0,8);if(!local.length)local=[_pmaxThemeText(g.label)].filter(Boolean);
     local.forEach(text=>ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,searchTheme:{text}}}}));
     if(audienceResource)ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,audience:{audience:audienceResource}}}});
     // Supplied creative for small-placement rendering (Display/Discover tiles).
@@ -4535,8 +4680,9 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         if(taken.docs.some(d=>["PENDING","APPROVED","APPLYING","APPLY_UNKNOWN"].includes(d.data().status))){results.push({campaign:c.name,skipped:"A creative refresh is already awaiting review."});continue;}
         const links=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE asset_group.resource_name = '${g.resourceName}'`);
         const themes=await gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
-        const filters=await gaql(`SELECT asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
-        const itemIds=filters.map(x=>((((x.assetGroupListingGroupFilter||{}).caseValue||{}).productItemId)||{}).value).filter(Boolean);
+        const filters=await gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
+        // Only UNIT_INCLUDED nodes are advertised products; an excluded item ID is not.
+        const itemIds=filters.filter(x=>(x.assetGroupListingGroupFilter||{}).type==="UNIT_INCLUDED").map(x=>((((x.assetGroupListingGroupFilter||{}).caseValue||{}).productItemId)||{}).value).filter(Boolean);
         const studio=(g.finalUrls||[]).some(u=>String(u).split("?")[0]===DESIGN_STUDIO_URL);
         const productIds=[...new Set(itemIds.map(_productIdFromItemId).filter(Boolean))];
         const sourceProducts=studio?[]:await _productShotsByIds(productIds);
@@ -4545,7 +4691,7 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         const ops=links.filter(x=>kind.includes((x.assetGroupAsset||{}).fieldType)).map(x=>({assetGroupAssetOperation:{remove:x.assetGroupAsset.resourceName}}));
         ops.push({campaignOperation:{update:{resourceName:c.resourceName,assetAutomationSettings:CREATIVE_AUTOMATIONS.map(assetAutomationType=>({assetAutomationType,assetAutomationStatus:"OPTED_OUT"}))},updateMask:"asset_automation_settings"}});
         const copy=field=>links.filter(x=>(x.assetGroupAsset||{}).fieldType===field).map(x=>(x.asset&&x.asset.textAsset||{}).text).filter(Boolean);
-        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds:ops.filter(x=>x.assetGroupListingGroupFilterOperation&&x.assetGroupListingGroupFilterOperation.create&&x.assetGroupListingGroupFilterOperation.create.assetGroup===g.resourceName&&x.assetGroupListingGroupFilterOperation.create.type==="UNIT_INCLUDED").map(x=>x.assetGroupListingGroupFilterOperation.create.caseValue?.productItemId?.value).filter(Boolean),keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
+        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds,keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
         const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
         results.push({campaign:c.name,assetGroup:g.name,approvalId:id});queued++;
       } catch(e){results.push({campaign:c.name,assetGroup:g.name,error:String(e.message||e).slice(0,300)});}
@@ -4617,8 +4763,13 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   } catch(e){}
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
   if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
-  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))];
-  const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,url:x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
+  const feedTitle=x=>(_merchantTitleProblem(x.title)||{suggested:x.title}).suggested,garbled=selected.filter(x=>_merchantTitleProblem(x.title));
+  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(feedTitle))];
+  // shopping_product has no link field: resolve each selected product's own page so its
+  // asset group lands where its copy points instead of on the collection page.
+  const productUrls={};
+  if(!design.productDestination)try{const pids=[...new Set(exactIds.map(_productIdFromItemId).filter(Boolean))].slice(0,30),d=pids.length?await _withTimeout(shopifyGql(`{ nodes(ids:[${pids.map(id=>`"gid://shopify/Product/${id}"`).join(",")}]) { ... on Product { id handle status } } }`),10000,"Product page lookup"):null;((d&&d.nodes)||[]).filter(p=>p&&p.handle&&p.status==="ACTIVE").forEach(p=>{productUrls[String(p.id).split("/").pop()]=`https://britesjewelry.com/products/${encodeURIComponent(p.handle)}`;});}catch(e){}
+  const liveDetails=selected.map(x=>({itemId:x.itemId,title:feedTitle(x),url:productUrls[_productIdFromItemId(x.itemId)]||x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
   if(!audienceResource&&ENV.GADS_PMAX_AUDIENCE_ID)audienceResource=`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,"")}`;
@@ -4636,13 +4787,17 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     else if(auto&&auto.warning&&!audienceCheck.warning)audienceCheck.warning=auto.warning;
   }else audienceCheck.source="configured audience";
   audienceResource=audienceCheck.resource;
-  const budget=Math.max(3,Number(dailyBudget)||10), start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
+  // Google budgets must be a multiple of the currency's minimum unit (cents).
+  const budget=Math.round(Math.max(3,Number(dailyBudget)||10)*100)/100, start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
   let countries=(Array.isArray(ctrl.defaultCountries)&&ctrl.defaultCountries.length)?ctrl.defaultCountries:["2124"];
-  // Feed labels in this store represent CA/US markets. Align location targeting to
-  // that market so a CA feed campaign cannot accidentally spend against US traffic,
-  // and vice versa. Custom/non-country feed labels retain the configured defaults.
-  if (liveFeedLabel) {
-    try { const all=await listCountries({}); const hit=all.find(c=>String(c.code||"").toUpperCase()===String(liveFeedLabel).toUpperCase()); if(hit&&hit.id)countries=[String(hit.id)]; } catch(e) {}
+  // A country-code feed label (CA/US) keeps the campaign in that market so a CA feed
+  // campaign cannot spend against US traffic, and vice versa. Any other label (e.g. USD_…)
+  // targets only the configured countries its selected offers can actually show in.
+  const offerCountries=[...new Set(selected.flatMap(x=>x.targetCountries||[]))];
+  if (liveFeedLabel||offerCountries.length) {
+    try { const all=await listCountries({}),geo=code=>(all.find(c=>String(c.code||"").toUpperCase()===String(code).toUpperCase())||{}).id;
+      const hit=liveFeedLabel&&geo(liveFeedLabel),within=offerCountries.map(geo).filter(id=>id&&countries.map(String).includes(String(id)));
+      if(hit)countries=[String(hit)];else if(within.length)countries=within.map(String); } catch(e) {}
   }
   const safeTargetRoas=Math.max(0,Number(targetRoas)||0);
   // Source real product photos (preferring close-up/detail shots) and upload
@@ -4661,8 +4816,8 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   const destination=design.productDestination?require('./googleAdsAdDesignContext').destination(design.productDestination):null;
   if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
   const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
-  const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
-  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
+  const scope=(built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products"))+(garbled.length?` (feed title garbled on ${garbled.slice(0,3).map(x=>x.itemId).join(", ")}${garbled.length>3?` and ${garbled.length-3} more`:""}: fix it at its Merchant source)`:"");
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · ${ctrl.budgetCurrency?ctrl.budgetCurrency+" ":""}${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
@@ -4687,7 +4842,7 @@ const _STUDIO_NEGATIVES = [
   "clipart", "printable", "tattoo", "crochet", "knitting", "bead kit", "jewelry supplies",
   "amazon", "temu", "shein", "aliexpress", "used jewelry", "second hand", "pandora replacement"
 ];
-const _STUDIO_CALLOUTS = ["Your Idea, Made Into Jewelry", "Design Your Own Charm", "Preview Your Design", "Made To Order"];
+const _STUDIO_CALLOUTS = ["Turn Ideas Into Jewelry", "Design Your Own Charm", "Preview Your Design", "Made To Order"]; // callouts: 25 characters at most
 const _STUDIO_SNIPPETS = ["Charm Templates", "Photo Upload", "Blank Canvas", "Visual Editor", "Metal Preview"];
 
 function _studioList(a, n) { return [...new Set((Array.isArray(a) ? a : []).map(x => String(x || "").replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, n); }
@@ -4921,7 +5076,8 @@ function buildDesignStudioCampaignAssets(cRes) {
     ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } });
   });
   const ss = ASSET();
-  ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: _STUDIO_SNIPPETS.map(x => _clip(x, 25)) } } } });
+  // Studio tools and design modes are services, not product types: Google's "Service catalog" header fits them.
+  ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Service catalog", values: _STUDIO_SNIPPETS.map(x => _clip(x, 25)) } } } });
   ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
   return { ops, summary: { sitelinks: 0, callouts: _STUDIO_CALLOUTS.length, structuredSnippets: 1, landingInvariant: true } };
 }
@@ -5042,7 +5198,7 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
     txt.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
     txt.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
     ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: txt.ids.businessName, fieldType: "BUSINESS_NAME" } } });
-    const themes = _studioList(g.searchThemes, 25).map(x => x.toLowerCase()).filter(x => x.length <= 80);
+    const themes = [...new Set(_studioList(g.searchThemes, 25).map(_pmaxThemeText).filter(Boolean))];
     themes.forEach(text => ops.push({ assetGroupSignalOperation: { create: { assetGroup: agRes, searchTheme: { text } } } }));
     if (audience) ops.push({ assetGroupSignalOperation: { create: { assetGroup: agRes, audience: { audience } } } });
     groupMeta.push({ name: g.name, angle: g.angle, searchThemes: themes, headlines: copy.headlines.length, longHeadlines: copy.longHeadlines.length, descriptions: copy.descriptions.length });
@@ -5079,9 +5235,9 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (!scan.blueprint) throw new Error(scan.error || "Design Studio scan has not produced a campaign blueprint");
   const blueprint = scan.blueprint, readiness = (blueprint.measurement || {}).readiness || {};
   if (!readiness.apiOk || !readiness.purchaseReady) throw new Error("No enabled primary purchase conversion is available. Verify the purchase goal before creating the goal-based Studio campaign.");
-  const ctrl = await control(), enabledDaily = await _enabledBudgetTotal();
+  const ctrl = await control(), enabledDaily = await _enabledBudgetTotal(), cc = ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""; // budgets are in the account currency
   const ceiling = Number(ctrl.maxDailyBudgetTotal || 0), headroom = ceiling > 0 ? Math.max(0, ceiling - Number(enabledDaily || 0)) : Infinity;
-  if (isFinite(headroom) && headroom < 4) throw new Error(`The daily budget ceiling has only ${CURRENCY}${headroom.toFixed(2)} of headroom. Free at least ${CURRENCY}4.00 before building both Studio lanes.`);
+  if (isFinite(headroom) && headroom < 4) throw new Error(`The daily budget ceiling has only ${cc}${headroom.toFixed(2)} of headroom. Free at least ${cc}4.00 before building both Studio lanes.`);
   const hasPmax = pmaxDaily !== undefined && pmaxDaily !== null && String(pmaxDaily).trim() !== "";
   const hasSearch = searchDaily !== undefined && searchDaily !== null && String(searchDaily).trim() !== "";
   if (hasPmax !== hasSearch) throw new Error("Set both the Search and PMax daily budgets, or leave both blank to use the recommended 60/40 launch split.");
@@ -5089,10 +5245,10 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (hasPmax && hasSearch) {
     pmaxBudget = Math.round(Number(pmaxDaily) * 100) / 100;
     searchBudget = Math.round(Number(searchDaily) * 100) / 100;
-    if (!isFinite(pmaxBudget) || !isFinite(searchBudget) || pmaxBudget < 1 || searchBudget < 1) throw new Error(`Each Design Studio campaign needs a daily budget of at least ${CURRENCY}1.00.`);
+    if (!isFinite(pmaxBudget) || !isFinite(searchBudget) || pmaxBudget < 1 || searchBudget < 1) throw new Error(`Each Design Studio campaign needs a daily budget of at least ${cc}1.00.`);
     total = Math.round((pmaxBudget + searchBudget) * 100) / 100;
-    if (total < 4) throw new Error(`The combined Design Studio budget must be at least ${CURRENCY}4.00/day.`);
-    if (isFinite(headroom) && total > headroom + 0.001) throw new Error(`The selected Studio budgets total ${CURRENCY}${total.toFixed(2)}/day, but only ${CURRENCY}${headroom.toFixed(2)}/day remains under the account ceiling.`);
+    if (total < 4) throw new Error(`The combined Design Studio budget must be at least ${cc}4.00/day.`);
+    if (isFinite(headroom) && total > headroom + 0.001) throw new Error(`The selected Studio budgets total ${cc}${total.toFixed(2)}/day, but only ${cc}${headroom.toFixed(2)}/day remains under the account ceiling.`);
   } else {
     total = Math.max(4, Number(dailyBudget) || Number((blueprint.budget || {}).recommendedDaily) || 10);
     if (isFinite(headroom)) total = Math.min(total, headroom);
@@ -5111,7 +5267,7 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
     const spec = { schema: 1, kind: "designStudioPmax", landingUrl: DESIGN_STUDIO_URL, dailyBudget: pmaxBudget, startDate, endDate, countries: ctys,
       groups: blueprint.pmax.groups, images: blueprint.images || _STUDIO_FALLBACK_IMAGES, audienceResource };
     approvalIds.pmax = await enqueueApproval({ type: "studio", vetted: false, tag: DESIGN_STUDIO_TAGS.pmax, programId,
-      summary: `DESIGN STUDIO · PMax discovery · $${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
+      summary: `DESIGN STUDIO · PMax discovery · ${cc}${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
       payload: { designStudioSpec: spec, countries: ctys, meta: { kind: "designStudioPmax", programId, tag: DESIGN_STUDIO_TAGS.pmax, landingUrl: DESIGN_STUDIO_URL,
         dailyBudget: pmaxBudget, startDate, endDate, countries: ctys, biddingMode: "MAXIMIZE_CONVERSIONS", finalUrlExpansion: false,
         audienceSignal: audienceResource, groups: blueprint.pmax.groups.map(g => ({ name: g.name, angle: g.angle, searchThemes: g.searchThemes })),
@@ -5120,7 +5276,7 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
   if (!active(DESIGN_STUDIO_TAGS.search)) {
     const search = buildDesignStudioSearchCampaignOps(blueprint, { dailyBudget: searchBudget, startDate, endDate, countries: ctys, maxCpc: Math.max(0.25, Number(maxCpc) || Number(blueprint.search.maxCpc) || 1) });
     approvalIds.search = await enqueueApproval({ type: "studio", vetted: false, tag: DESIGN_STUDIO_TAGS.search, programId,
-      summary: `DESIGN STUDIO · high-intent Search · $${searchBudget.toFixed(2)}/day · ${search.keywordSummary.count} exact/phrase keywords · every ad to /pages/custom-studio · starts PAUSED`,
+      summary: `DESIGN STUDIO · high-intent Search · ${cc}${searchBudget.toFixed(2)}/day · ${search.keywordSummary.count} exact/phrase keywords · every ad to /pages/custom-studio · starts PAUSED`,
       payload: { mutateOperations: search.ops, countries: ctys, adGroupSummary: search.adGroupSummary,
         keywordValidation: { confidence: 94, evidence: { accepted: search.keywordSummary.count, rejected: 0 }, source: (blueprint.search.research || {}).source || "Studio page + intent contract" },
         meta: { kind: "designStudioSearch", programId, tag: DESIGN_STUDIO_TAGS.search, landingUrl: DESIGN_STUDIO_URL, dailyBudget: searchBudget, maxCpc: Math.max(0.25, Number(maxCpc) || Number(blueprint.search.maxCpc) || 1), startDate, endDate, countries: ctys, finalUrlInvariant: true } } });
@@ -5238,7 +5394,7 @@ async function designStudioPerformance({ days = 30 } = {}) {
     cpa: funnel.apiOk && funnel.purchase ? overall.cost / funnel.purchase : null,
     roas: funnel.apiOk && overall.cost ? funnel.value / overall.cost : null,
     fxIncomplete: !!funnel.fxIncomplete };
-  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: CURRENCY,
+  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: await _accountCurrency().catch(() => null),
     start, end, days, campaigns, overall, purchase, readiness, daily, funnel, rates, assetGroups, channelMix, searchInsights, fetchedAt: Date.now() };
   const f = fb(); if (f) { try { await f.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).set({ performance: result }, { merge: true }); } catch (e) {} }
   return result;
@@ -5267,7 +5423,7 @@ async function refreshDesignStudioLearning({ days = 30 } = {}) {
   if (minData && purchase.roas != null && targetRoas > 0 && purchase.roas < targetRoas * 0.7) recs.push(_studioRecommendation("high", "Economics", "Purchase efficiency is below the account target.", "Hold budget, isolate the weakest lane and evaluate purchase quality after conversion delay.", `${purchase.roas.toFixed(2)}x purchase ROAS vs ${targetRoas.toFixed(2)}x target`, "Do not scale on assist events alone"));
   if (minData && purchase.roas != null && targetRoas > 0 && purchase.roas >= targetRoas && purchase.conversions >= 5) recs.push(_studioRecommendation("opportunity", "Scale", "The Studio engine is meeting the account return target with purchase evidence.", "Consider one controlled budget step within the global ceiling, then hold through the next learning window.", `${purchase.roas.toFixed(2)}x purchase ROAS · ${purchase.conversions.toFixed(1)} purchases`, `Maximum ${Number(ctrl.maxBudgetStepPct || 15)}% step; approval required`));
   performance.assetGroups.filter(x => /poor|average/i.test(x.adStrength) && x.impressions >= 500).forEach(x => recs.push(_studioRecommendation("medium", "PMax assets", `${x.name} has ${x.adStrength.toLowerCase()} asset strength after meaningful delivery.`, "Replace the weakest asset type with Studio-specific proof; do not change the intent theme at the same time.", `${Math.round(x.impressions)} impressions · ${x.conversions.toFixed(1)} conversions`)));
-  if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · $${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
+  if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · ${performance.currency || "USD"} ${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
   let ai = null;
   if (claudeAI.available() && hasCampaigns && minData) {
     try {
@@ -6632,7 +6788,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   // scanning:true and stale opportunities on screen forever with no signal as to the cause.
   audit = await _auditBegin(runId);
   await _auditEvent(audit,{id:"control_config",category:"Configuration",label:"Autopilot controls and guardrails",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
-    detail:`Daily ceiling ${ctrl.budgetCurrency||CURRENCY} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
+    detail:`Daily ceiling ${ctrl.budgetCurrency||"UNVERIFIED"} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
   try {
   await _scanProg(3, "Reading catalog & memory");
   const collections = await _auditCall(audit,{id:"shopify_collections",category:"Shopify",label:"Shopify collections",detail:"Loading the live collection catalogue or its bounded cache.",source:"Shopify Admin GraphQL / Firestore cache",result:v=>({detail:`${(v||[]).length} collections available to the strategist.`,meta:{collections:(v||[]).length}})},()=>getCollections({}));
@@ -6677,7 +6833,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   // failure must never hide or discard viable Merchant Center opportunities.
   await _scanProg(35, "Merchant Center opportunity scan", "matching recent organic sales to live GMC offers");
   let pmaxCrashed = false;
-  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
+  const pmaxPack = await proposePmaxOpportunities({ collections, profiles: profiles || [], ceiling, currency:ctrl.budgetCurrency, onAudit:e=>_auditEvent(audit,e) }).catch(e => { pmaxCrashed = true; return { list: [], error: String(e.message || e).slice(0, 220), at: Date.now() }; });
   pmaxList = Array.isArray(pmaxPack.list) ? pmaxPack.list : []; pmaxError = pmaxPack.error || null; pmaxAt = pmaxPack.at || Date.now(); pmaxResearchVersion = _OPPORTUNITY_RESEARCH_SCHEMA; pmaxLearning = pmaxPack.learning || null;
   await _auditEvent(audit,{id:"pmax_pipeline",category:"PMax",label:"PMax opportunity pipeline",status:pmaxCrashed?"failed":(pmaxError?"warning":"ok"),startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:`${pmaxList.length} PMax opportunity/opportunities produced.`,error:pmaxError,meta:{opportunities:pmaxList.length,merchantProducts:pmaxPack.merchantProducts||0,merchantReportsConfigured:!!pmaxPack.merchantReportsConfigured}});
   // Commit the feed result NOW, before the much slower Search reasoning pass. If
@@ -7135,6 +7291,9 @@ function _bestSearchLandingUrl(profile, group, collectionHandle){
 async function generateForCollection(handle, eventLabel, budget, { ctrl, startDate, endDate, countries, maxCpc, peakDate, smartBidding } = {}) {
   ctrl = ctrl || (await control());
   if (!handle) return { ok: false, reason: "no collection given" };
+  // Google rejects a past end date or an end before the start; stop before any paid copy is written.
+  { const today = _acctDateYmd(await _accountTz(), 0), sd = _dateOnly(startDate), ed = _dateOnly(endDate);
+    if (ed && (ed < today || (sd && ed < sd))) return { ok: false, reason: `The end date ${ed} is ${ed < today ? "in the past" : "before the start date " + sd}. Choose a later end date and generate again.` }; }
   const coll = await collectionMeta(handle);
   const event = (eventLabel && eventLabel !== "Evergreen gifting") ? { label: eventLabel, angle: "" } : null;
   // If this generate belongs to a SCANNED opportunity (same collection + occasion), reuse its
@@ -7159,8 +7318,6 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
     types: (mine && Array.isArray(mine.typesDetail)) ? mine.typesDetail.slice(0, 6).map(t => `${t.type}${(t.priceLow != null && t.priceHigh != null) ? ` $${t.priceLow}\u2013$${t.priceHigh}` : ""}`) : null,
     personalization: (mine && mine.personalization) || null
   };
-  const assets = await generateRSAAssets(coll, event, rsaContext);
-  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   // Research-grounded plan: gives a custom build the SAME costed treatment as a scanned one —
   // a learning-aware run length, a CPC cap, and a budget that fits the ceiling — even when the
   // console sends nothing but collection + occasion. Explicit values from the caller win.
@@ -7171,13 +7328,25 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const _geo = (countries && countries.length) ? countries : ((Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"]);
   const _seeds = [coll.title, `${coll.title} gift`, `${coll.title} necklace`, (event ? `${coll.title} ${event.label}` : null)].filter(Boolean);
   let _res = null; try { _res = await researchOpportunity(_seeds, _geo); } catch (e) {}
+  // Keywords first: both refusals below are free, so a draft that cannot be built never pays for copy.
+  const keywordPlan=(opp&&Array.isArray(opp.keywordData)&&opp.keywordData.length)?opp.keywordData
+                    :((_res&&_res.ok&&Array.isArray(_res.keywords))?_res.keywords:null);
+  const grounded=groundKeywordPlan(keywordPlan,mine,eventLabel,{min:4,max:18});
+  if(grounded.keywords.filter(k=>k.measured).length<4) return {ok:false,reason:"Fewer than four inventory-matched keywords have measured demand. Refresh keyword research before generating a campaign."};
+  if(!grounded.ok)return {ok:false,reason:`generation stopped safely — only ${grounded.keywords.length} inventory-grounded purchase-intent keywords survived; no broad fallback campaign was created`,keywordValidation:grounded};
+  const assets = await generateRSAAssets(coll, event, rsaContext);
+  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = sig.totalRevenue!=null?sig.totalRevenue:(sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
   let _cvrInfo = null; try { _cvrInfo = await accountCvr(); } catch (e) {}
-  const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov, cvrInfo: _cvrInfo });
-  const dailyBudget = Number(budget) > 0 ? Number(budget) : plan.budget.daily;
+  // Forecast from the keywords this draft bids on (grounded, with Keyword Planner data), as the scan does:
+  // the seed research above also holds ideas the campaign never buys. Unmeasured keywords add no demand.
+  const _kp=grounded.keywords.filter(k=>k.real), _bh=_median(_kp.map(k=>k.high).filter(x=>x>0)), _bl=_median(_kp.map(k=>k.low).filter(x=>x>0)), _ci=_median(_kp.map(k=>k.competitionIndex).filter(x=>x!=null)), _band=_r2(0.55+(_ci!=null?_ci:45)/100*2.6);
+  const _planRes=_kp.length?{ok:true,source:"google_keyword_planner",realCount:_kp.length,keywords:grounded.keywords,searchVolume:Math.round(_windowSearches(_kp).monthly),competitionIndex:_ci,cpc:(_bh>0||_bl>0)?{low:_r2(_bl||_bh*.45),high:_r2(_bh||_bl*1.6)}:{low:_r2(_band*.45),high:_band}}:null;
+  const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate: peakDate || (opp && opp.peakDate) || null, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: _planRes, aov: _aov, cvrInfo: _cvrInfo });
+  const dailyBudget = _r2(Number(budget) > 0 ? Number(budget) : plan.budget.daily); // whole cents, as Google stores it
   const sDate = startDate || plan.duration.startDate;
   const eDate = endDate || plan.duration.endDate;
-  const capCpc = Number(maxCpc) > 0 ? Number(maxCpc) : plan.cpc.max;
+  const capCpc = _r2(Number(maxCpc) > 0 ? Number(maxCpc) : plan.cpc.max);
   // Default target countries (so a draft never silently launches to "all countries"). Falls back
   // to the saved control default, then Canada (2124) — the brand's home market.
   let cty = (countries && countries.length) ? countries
@@ -7201,15 +7370,10 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
     if (related.length) assetExtras.relatedCollections = related;
     else if (colls && colls.length) assetExtras.relatedCollections = colls.filter(c => c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
   } catch (e) {}
-  const keywordPlan=(opp&&Array.isArray(opp.keywordData)&&opp.keywordData.length)?opp.keywordData
-                    :((_res&&_res.ok&&Array.isArray(_res.keywords))?_res.keywords:null);
-  const grounded=groundKeywordPlan(keywordPlan,mine,eventLabel,{min:4,max:18});
-  if(grounded.keywords.filter(k=>k.real&&Number(k.searches)>0).length<4) return {ok:false,reason:"Fewer than four inventory-matched keywords have measured demand. Refresh keyword research before generating a campaign."};
-  if(!grounded.ok)return {ok:false,reason:`generation stopped safely — only ${grounded.keywords.length} inventory-grounded purchase-intent keywords survived; no broad fallback campaign was created`,keywordValidation:grounded};
   const groupAssets=await Promise.all(grounded.groups.map(async(g,i)=>{
     try{return (await generateRSAAssets(coll,event,Object.assign({},rsaContext,{intentGroup:{label:g.label,keywords:g.keywords.map(k=>k.text)}})))||assets;}catch(e){return assets;}
   }));
-  const adGroups=grounded.groups.map((g,i)=>({name:`${g.label} · ${event?event.label:"Evergreen"}`.slice(0,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
+  const adGroups=grounded.groups.map((g,i)=>({name:_wclip(`${g.label} · ${event?event.label:"Evergreen"}`,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
   // Launch negatives: universal defaults + the opportunity model's theme-conflict
   // list + terms that already wasted money account-wide. Deduped.
   let launchNegs = DEFAULT_NEGATIVES.slice();
@@ -7218,13 +7382,17 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:Number(ctrl.targetRoas||0),assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
-  const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
-  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${CURRENCY} ${capCpc.toFixed(2)}/click`;
-  const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
-  const kwTxt = keywordSummary ? `, ${keywordSummary.count} ${keywordSummary.researched ? "researched" : "themed"} keywords${keywordSummary.exact ? ` (${keywordSummary.exact} exact)` : ""}` : "";
+  // The run exactly as Google receives it (inclusive days); with no start time it serves from the day it is enabled.
+  const _cc = ops.find(o => o.campaignOperation).campaignOperation.create, _s = _dateOnly(_cc.startDateTime), _e = _dateOnly(_cc.endDateTime);
+  const _days = _e ? _daysBetween(_parseYmd(_s || _acctDateYmd(await _accountTz(), 0)), _parseYmd(_e)) + 1 : 0;
+  const win = _e ? (_s ? ` (${_s} → ${_e}, ${_days}d)` : ` (starts when enabled, ends ${_e}, up to ${_days}d)`) : (_s ? ` (from ${_s})` : "");
+  const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""}${capCpc.toFixed(2)}/click`; // the cap is in the account currency
+  const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts${assetSummary.structuredSnippets ? " + a structured snippet" : ""}` : "";
+  const kwTxt = keywordSummary ? `, ${keywordSummary.count} keywords (${keywordSummary.measured} with measured Google demand${keywordSummary.exact ? `, ${keywordSummary.exact} exact` : ""})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
+    // Ad copy is written and checked per ad group in creative review, so the summary states no headline count.
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${adGroupSummary.length} ad group${adGroupSummary.length === 1 ? "" : "s"} (copy set in creative review)${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
     payload:{meta:{buyer:rsaContext.audience,angle:rsaContext.angle,handle:coll.handle},mutateOperations:ops,finalCollection:coll.handle,event:event?event.label:null,startDate:sDate||null,endDate:eDate||null,countries:cty,maxCpc:capCpc,smartBidding:smart,negatives,assetSummary,keywordSummary,adGroupSummary,keywordValidation:{confidence:grounded.confidence,evidence:grounded.evidence,rejected:grounded.rejected.slice(0,12)},plan},
     experimentId: tag
   });
@@ -7419,6 +7587,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const productLinkCoverage = await _attachCachedProductLinks(prodRows);
   const unidentifiedRows = prodRows.filter(p => !p.identityComplete).length;
   if (unidentifiedRows) warnings.push("Google returned product activity without an offer ID. It remains in totals as unidentified activity, with no guessed product link.");
+  // Shoppers see a garbled feed title in these ads. Name each offer, its spend and the fix at the feed's source.
+  const garbledTitles = prodRows.filter(p => p.identityComplete && (p.titleProblem = _merchantTitleProblem(p.title))).sort((a, b) => b.cost - a.cost);
+  if (garbledTitles.length) warnings.push(require("./_merchantHealth").garbledTitlesNotice(garbledTitles, context.budgetCurrency));
 
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
@@ -8728,7 +8899,7 @@ async function _analyzeCampaignSet(diag, ctrl, history, { single, enabledTotal }
   const prompt = `${single ? "SINGLE-CAMPAIGN DEEP DIVE: only the campaign(s) below are in scope; go deeper than usual.\n" : ""}You are a SENIOR Google Ads specialist managing Brites Jewelry (handmade personalized charm jewelry, britesjewelry.com; ships US+Canada). Review each campaign like an owner: skeptical of Google's spend-maximizing recommendations, but honest when they're right.
 
 CHANNEL NOTE — PERFORMANCE_MAX: these run on the Merchant Center product feed with NO keywords/search-terms/RSAs — but they are NOT exempt from deep analysis. Their evidence is different, and you have it: assetGroups (each with its own adStrength — EXCELLENT/GOOD/AVERAGE/POOR — status and 30d metrics; an AVERAGE/POOR group is the PMax equivalent of a weak ad), products (per-product cost/clicks/conv from the feed — spot products burning spend with zero conversions, and top sellers being under-served), channelBreakdown (real Search/YouTube/Display/Discover/Gmail/Maps/Search Partners split of ALL spend/clicks/conversions, API v23+ — this is what the majority of clicks that products can't attribute actually did; if one channel burns cost with zero conversions while another converts, SAY SO by channel name — that is a genuine, named finding, not a guess), searchInsights (the search categories Google matched this campaign to — flag categories that don't fit charm jewelry), and pmaxAssetPerformance (Google's own LOW/GOOD/BEST grades per text asset — name the LOW ones). PMax findings must reference this evidence specifically, never generic "it's learning" filler. PMax executables: setBudget when earned; for weak asset groups prescribe the console's "Upgrade copy + sitelinks" / "Re-image (AI)" actions by asset-group NAME as the fix text (executable kind:"none" — they're one-click actions the owner runs); for wrong-fit search categories, wasteful products, or a lopsided channel mix, advisory with the exact category/product/channel named.
-ACCOUNT GUARDRAILS: target ROAS ${Number(ctrl.targetRoas) > 0 ? ctrl.targetRoas : "NOT SET by the owner — do not assume or invent one; judge conversion value against cost and conversion volume"}; account daily budget ceiling ${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total ${Math.round(totalBudget * 100) / 100}); monthly hard cap ${ctrl.maxMonthlySpend || "none"}. CURRENCIES: every Google Ads figure (budgets, ceiling, cost, conversion value) is in ${adsCcy}; store sales below are in ${CURRENCY}. Name the currency with every amount and never add or directly compare amounts in different currencies.
+ACCOUNT GUARDRAILS: target ROAS ${Number(ctrl.targetRoas) > 0 ? ctrl.targetRoas : "NOT SET by the owner — do not assume or invent one; judge conversion value against cost and conversion volume"}; account daily budget ceiling ${ctrl.maxDailyBudgetTotal || "n/a"} (current enabled total ${Math.round(totalBudget * 100) / 100}); monthly hard cap ${ctrl.maxMonthlySpend ? "USD " + ctrl.maxMonthlySpend + " (month-to-date spend converted to USD)" : "none"}. CURRENCIES: every Google Ads figure (budgets, ceiling, cost, conversion value) is in ${adsCcy}; store sales below are in ${CURRENCY}. Name the currency with every amount and never add or directly compare amounts in different currencies.
 ${salesCtx}
 CAMPAIGNS (Google Ads diagnostics + our measured performance):
 ${JSON.stringify(compact)}
@@ -9461,10 +9632,9 @@ function _creativeGroups(item) {
   return groups;
 }
 function _putCreativeCopy(payload, groups) {
-  const rawOps=payload.mutateOperations||[];
-  const auxiliary=new Set(rawOps.filter(o=>o.assetOperation&&o.assetOperation.create&&(o.assetOperation.create.sitelinkAsset||o.assetOperation.create.calloutAsset||o.assetOperation.create.structuredSnippetAsset)).map(o=>o.assetOperation.create.resourceName));
-  const ops=rawOps.filter(o=>!(o.assetOperation&&o.assetOperation.create&&auxiliary.has(o.assetOperation.create.resourceName))&&!(o.campaignAssetOperation&&o.campaignAssetOperation.create&&auxiliary.has(o.campaignAssetOperation.create.asset)));
-  if(payload.assetSummary)payload.assetSummary={sitelinks:0,callouts:0,structuredSnippets:0};
+  // Only ad text is replaced. Sitelinks, callouts and structured snippets (real store pages and fixed brand text,
+  // covered by the reviewed payload hash) stay created and linked to the campaign, for Search and PMax alike.
+  const ops=payload.mutateOperations||[];
   if(payload.designStudioSpec) {
     payload.designStudioSpec.groups=payload.designStudioSpec.groups.map((g,i)=>({...g,...groups[i].copy}));
     payload.meta=payload.meta||{};payload.meta.textPreview=groups.map(g=>({name:g.name,...g.copy}));
@@ -9473,11 +9643,13 @@ function _putCreativeCopy(payload, groups) {
   const refs=new Set(groups.filter(g=>g.channel==="pmax").map(g=>g.ref));
   const oldText=new Set(ops.filter(o=>o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["HEADLINE","LONG_HEADLINE","DESCRIPTION","BUSINESS_NAME"].includes(o.assetGroupAssetOperation.create.fieldType)).map(o=>o.assetGroupAssetOperation.create.asset));
   payload.mutateOperations=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["HEADLINE","LONG_HEADLINE","DESCRIPTION","BUSINESS_NAME"].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.assetOperation&&o.assetOperation.create&&oldText.has(o.assetOperation.create.resourceName)));
+  // With brand guidelines the business name is a campaign asset; Google rejects it on an asset group.
+  const brand=!!(payload.meta&&payload.meta.brandGuidelinesEnabled);
   for(const g of groups) {
     if(g.channel==="pmax") {
-      const t=_buildPmaxTextAssetOps({...g.copy,businessName:"Brites Jewelry"},_tempIdFloor(payload.mutateOperations));payload.mutateOperations.unshift(...t.ops);
+      const t=_buildPmaxTextAssetOps({...g.copy,businessName:"Brites Jewelry"},_tempIdFloor(payload.mutateOperations));payload.mutateOperations.unshift(...(brand?t.ops.filter(o=>o.assetOperation.create.resourceName!==t.ids.businessName):t.ops));
       for(const [key,field] of [["headlines","HEADLINE"],["longHeadlines","LONG_HEADLINE"],["descriptions","DESCRIPTION"]]) t.ids[key].forEach(a=>payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:a,fieldType:field}}}));
-      payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:t.ids.businessName,fieldType:"BUSINESS_NAME"}}});
+      if(!brand)payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:t.ids.businessName,fieldType:"BUSINESS_NAME"}}});
     } else {
       payload.mutateOperations.forEach(o=>{const a=o.adGroupAdOperation&&o.adGroupAdOperation.create;if(a&&a.adGroup===g.ref&&a.ad&&a.ad.responsiveSearchAd)a.ad.responsiveSearchAd={headlines:g.copy.headlines.map(text=>({text})),descriptions:g.copy.descriptions.slice(0,4).map(text=>({text}))};});
       (payload.operations||[]).forEach(o=>{const a=o.update||o.create;if(a&&a.resourceName===g.ref)a.responsiveSearchAd={headlines:g.copy.headlines.map(text=>({text})),descriptions:g.copy.descriptions.slice(0,4).map(text=>({text}))};});
@@ -9618,7 +9790,8 @@ Lead with the physical jewellery and its meaning. Premium, inviting, specific, c
     pkg.playbookVersions=[...new Set(pkg.groups.map(g=>(g.learning||{}).playbookVersion).filter(v=>v!=null))];
     delete pkg.playbookVersion;
     _putCreativeCopy(payload,pkg.groups);
-    if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo) {
+    // A brand-guidelines campaign already carries its logo; the review shows only what Google will receive.
+    if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo&&!(payload.meta||{}).brandGuidelinesEnabled) {
       const sharp=require("sharp");
       const svg=_brandWordmarkSvg();
       pkg.logo=await _saveCreativeAsset(id,await sharp(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_wordmark",{width:600,height:600,kind:"Brites wordmark"});
@@ -9703,10 +9876,12 @@ async function materializeReviewedCreative(it) {
   if(p.service||!p.mutateOperations)return null;
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
-  const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
+  // Brand guidelines keep the logo on the campaign: no logo asset or asset-group LOGO link is sent.
+  const brand=!!(p.meta&&p.meta.brandGuidelinesEnabled);
+  const imageBuild=await _creativeImageOps(brand?{...c,logo:null}:c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
   const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&["AD_IMAGE","IMAGE"].includes(o.adGroupAssetOperation.create.fieldType)));
   clean.unshift(...imageBuild.ops);
-  for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
+  for(const [ref,a] of Object.entries(imageBuild.groups)) {if(a.logo)clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
   for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"AD_IMAGE"}}}));
   return clean;
 }
@@ -9714,10 +9889,12 @@ async function materializeReviewedCreative(it) {
 let _groupsService=null;
 function _groupService(){
   _designEngine();
-  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval,listingDetails:itemIds=>merchantProducts({itemIds})});
   return _groupsService;
 }
-async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
+// A deleted campaign's groups stay only as history: the reporting tree keeps those with activity in the
+// dates (historicalOnly), exactly as its Overview row keeps the spend.
+async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId))||g.historicalOnly);return out;}
 async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
 async function adDesignSavedWorkspaces(input={}){return require('./googleAdsGroups').savedWorkspaces({db:fb().db,stateCollection:COL.state,after:input.after,deletedCampaignIds:await _deletedCampaignIds()});}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
@@ -9726,7 +9903,10 @@ async function _guardProductGroupActivation(item){const p=item.payload||{},g=p.g
 async function _guardProductGroupSplit(item){
   const p=item.payload||{},guard=p.groupSplitGuard;if(!guard)return;
   const current=await _guardCampaignVersion(guard),groups=p.meta&&p.meta.assetGroups||[];
-  const search=guard.channel==='search';if(!(search?(current.snapshot.components.searchAds||[]).some(a=>a.adGroup===guard.sourceGroupRef):(current.snapshot.components.assetGroups||[]).some(g=>g.resourceName===guard.sourceGroupRef))||groups.length<2)throw new Error('The source group for this split is unavailable.');
+  const search=guard.channel==='search';
+  // A split drafted for the other brand-guidelines setting would link the business name and logo where Google refuses them.
+  if(!search&&typeof current.snapshot.brandGuidelinesEnabled==='boolean'&&current.snapshot.brandGuidelinesEnabled!==!!(p.meta&&p.meta.brandGuidelinesEnabled))throw new Error('This split was prepared for a different brand guidelines setting than the campaign now has. Delete this draft and prepare the split again.');
+  if(!(search?(current.snapshot.components.searchAds||[]).some(a=>a.adGroup===guard.sourceGroupRef):(current.snapshot.components.assetGroups||[]).some(g=>g.resourceName===guard.sourceGroupRef))||groups.length<2)throw new Error('The source group for this split is unavailable.');
   const sourceOffers=new Set((current.snapshot.components.listingGroups||[]).filter(f=>f.assetGroup===guard.sourceGroupRef&&f.type==='UNIT_INCLUDED').map(f=>f.caseValue&&f.caseValue.productItemId&&f.caseValue.productItemId.value).filter(Boolean));
   const selected=groups.flatMap(g=>g.itemIds||[]);if(new Set(selected).size!==selected.length||selected.length!==sourceOffers.size||selected.some(x=>!sourceOffers.has(x)))throw new Error('The split must preserve every exact product offer once.');
   const creates=(p.mutateOperations||[]).filter(o=>search?o.adGroupOperation:o.assetGroupOperation).map(o=>search?o.adGroupOperation:o.assetGroupOperation);
@@ -9808,7 +9988,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,placementAssets:result.placementAssets||null,review:result.quality,copyReview:{pass:true,provider:GEN_MODEL,researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
   pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
   const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
-  if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
+  if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo&&!(payload.meta||{}).brandGuidelinesEnabled){
     const svg=_brandWordmarkSvg();
     pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:600,height:600,kind:"brand logo"});
   }}

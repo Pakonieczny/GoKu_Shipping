@@ -57,7 +57,11 @@
     }
     await load(sh);window.Session?.schedule();
   }
-  async function plan(sh){
+  // Only a Cut Sheet press adds a green line (Paul, 29 Sep: Send to Sheet drew line 2 by itself). The contour is also
+  // made again when a sheet joins a set, is saved, is nested or its allowance changes: that may redraw the lines it has
+  // or take a full sheet whole, never add one. Charms past the last line stay uncut until the next press.
+  async function plan(sh,opts={}){
+    if(!opts.cut&&addsLine(sh))return;
     if(sh._rosePlanning)return sh._rosePlanning;
     const task=(async()=>{
       if(sh.roseCutAt)return;
@@ -66,7 +70,7 @@
       sh._roseError=null;
       if(!sh.roseStock)await prepare(sh,{fresh:true});
       const shapes=window.CharmNestBackground ? await CharmNestBackground.run('roseShapes',{charms:sh.charms.map(c=>({id:c.id,outline:c.outline,members:c.members,centerPt:c.centerPt,bbox:c.bbox})),placements:sh.placements}) : R.shapes(sh.charms,sh.placements);
-      const result=await api('rosePlan',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseStock.revision,fingerprint:key,shapesJson:JSON.stringify(shapes),allowanceMm:sh.roseAllowanceMm||.2});
+      const result=await api('rosePlan',{sheetId:sh.sheetId,stockId:sh.roseStock.id,revision:sh.roseStock.revision,fingerprint:key,shapesJson:JSON.stringify(shapes),allowanceMm:sh.roseAllowanceMm||.2,...(opts.cut?{cut:true}:{})});
       if(fingerprint(sh)!==key||sh.dirty)throw new Error('Layout changed while saving its contour');
       sh.rosePlan=parse(result.planJson);sh.rosePlanHash=result.planHash;sh.rosePlanKey=key;sh.roseRevision=sh.roseStock.revision;
       window.SheetEvents?.roseLines(sh);   // a new green line: on the timelines of the orders it covers (idle time)
@@ -88,7 +92,7 @@
       if(!inSet(sh))throw new Error('Not cut: '+(G.policy?.(sh)?.reason||'this sheet is not in a set yet'));
       refresh(sh);
     }
-    if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh);
+    if(!sh.rosePlanHash||(!sh.recalled&&sh.rosePlanKey!==fingerprint(sh)))await plan(sh,{cut:true});
     // who cut it: the sorter's signed-in person (its own name, or the Design Station's sign-in); nobody is sent as ""
     // and the server keeps 'operator' in the stock ledger only, the order's roseCut then says "not signed in"
     let who='';try{who=String(window.CNEmployee?.name?.()||window.B?.employee||'').trim();}catch(_){who=String(window.B?.employee||'').trim();}
@@ -181,6 +185,11 @@
       catch(_){sh._roseFull=false;}
     }
     return sh._roseFull;
+  }
+  // Whether a contour made now would add a green line: a charm outside every line the sheet has, and room left past it.
+  function addsLine(sh){
+    const lined=new Set([...(sh.roseProtected?.placements||[]).map(p=>p.id),...(sh.rosePlan&&!sh.dirty?sh.rosePlan.shapes||[]:[]).map(s=>s.id)]);
+    return (sh.placements||[]).some(p=>!lined.has(p.id))&&!sheetFull(sh);
   }
   const length=path=>path.slice(1).reduce((n,p,i)=>n+Math.hypot(p[0]-path[i][0],p[1]-path[i][1]),0);
   function midpoint(path){let left=length(path)/2;for(let i=1;i<path.length;i++){const a=path[i-1],b=path[i],d=Math.hypot(b[0]-a[0],b[1]-a[1]);if(d>0&&d>=left)return [a[0]+(b[0]-a[0])*left/d,a[1]+(b[1]-a[1])*left/d];left-=d;}return path[0];}
