@@ -6417,13 +6417,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /* The sticker printed (its print dialog closed): `labelPrinted` on the order's timeline, whether or not its lines are
      then marked completed. Paul, 28 Sep: the Review tab is where the Design Station prints, so the station is design;
-     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is. */
+     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is.
+     Every print is an event of its own (Paul, 29 Sep 02:08: each print a seal on the timeline): its id is its moment,
+     not its minute, so a label printed again within the minute is not folded into the one before; print is its
+     seal's number on the card (Print Nº n). */
   function labelled(rid, who, o) {
     try {
       const at = Date.now();
-      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${Math.floor(at / 60000)}`,
+      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
         text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -6493,7 +6496,7 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));

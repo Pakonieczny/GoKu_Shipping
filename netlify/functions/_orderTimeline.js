@@ -436,6 +436,7 @@ function sameEvent(a, b) {
     return place(o) ? place(o) === place(step) : /^cancel/i.test(String((o.data && o.data.reason) || ""));
   }
   if (a.type !== b.type) return false;
+  if (a.type === "sealPrinted") return samePrint(a, b);
   const approx = (a.data && a.data.approx) || (b.data && b.data.approx);
   if (!approx && Math.abs(a.at - b.at) > DEDUPE_MS) return false;
   if (a.sheetId && b.sheetId && a.sheetId !== b.sheetId) return false;
@@ -445,6 +446,12 @@ function sameEvent(a, b) {
     return t(a) === t(b) || (!!(a.data && a.data.stamp) && a.data.stamp === (b.data && b.data.stamp));
   }
   return true;
+}
+/* A label printed (Paul, 29 Sep 02:08: every print is a seal on the timeline, a reprint a seal of its own): customPut
+   stamps the print on the timeline and in its record's stamps with the same moment, so the record's seal (derived) is
+   the recorded one only at that moment (a second's leeway); a second print minutes later is a print of its own. */
+function samePrint(a, b) {
+  return Math.abs(n(a.at) - n(b.at)) <= 1000 && !(a.lineKey && b.lineKey && a.lineKey !== b.lineKey);
 }
 /** The derived events that say something no recorded event (nor an earlier derived one) already says. */
 function dedupe(recorded, derived) {
