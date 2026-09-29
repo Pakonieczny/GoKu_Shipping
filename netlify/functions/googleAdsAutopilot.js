@@ -5593,10 +5593,13 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   const items = [...byRes.values()].filter(x => x.budget > 0);
   const total = items.reduce((a, b) => a + b.budget, 0);
   if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
-  const factor = ceiling / total, floor = 1;
+  // A trim never raises a budget: those at or under the 1-a-day floor stay as they are, and the
+  // larger budgets are scaled into the room that leaves.
+  const floor = 1, low = items.filter(x => x.budget <= floor), high = items.filter(x => x.budget > floor);
+  const highTotal = high.reduce((a, b) => a + b.budget, 0), factor = highTotal > 0 ? Math.max(0, ceiling - low.reduce((a, b) => a + b.budget, 0)) / highTotal : 0;
   const ops = [], moves = [];
-  items.forEach(x => {
-    const nb = Math.max(floor, Math.floor(x.budget * factor * 100) / 100); // round down: the trimmed sum never lands above the ceiling
+  high.forEach(x => {
+    const nb = Math.min(x.budget, Math.max(floor, Math.floor(x.budget * factor * 100) / 100)); // round down: the trimmed sum never lands above the ceiling
     if (Math.abs(nb - x.budget) < 0.01) return;
     moves.push({ campaign: x.name, from: x.budget, to: nb });
     ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });

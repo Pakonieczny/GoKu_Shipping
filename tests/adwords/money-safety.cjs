@@ -135,6 +135,11 @@ async function engineChecks(){
  reset();W.camps[4].status='ENABLED';W.budgets[B(15)]=60;const t=await E.enforceBudgetCeiling({ctrl:C()});
  check(t.total===120&&muts.length===1&&muts[0].ops.length===2&&new Set(muts[0].ops.map(o=>o.update.resourceName)).size===2,'shared budget counted and trimmed once; ended campaign ignored');
  check(muts[0].ops.reduce((n,o)=>n+o.update.amountMicros/1e6,0)<=100,'trimmed total at or under the ceiling');
+ // A budget under the 1-a-day floor is never raised by a trim; the larger budgets make the room instead.
+ reset();W.budgets[B(11)]=150;W.budgets[B(15)]=0.5;await E.enforceBudgetCeiling({ctrl:C()});
+ {const after={[B(11)]:150,[B(15)]:0.5};(muts[0]||{ops:[]}).ops.forEach(o=>{after[o.update.resourceName]=o.update.amountMicros/1e6;});
+  check(after[B(15)]===0.5&&after[B(11)]<150,'a trim never raises a budget below the floor: '+JSON.stringify(after));
+  check(after[B(11)]+after[B(15)]<=100,'and the trimmed total still fits the ceiling: '+(after[B(11)]+after[B(15)]));}
 
  // Anomaly breaker: no false trip on a launch; trips on a real spike or on spend beyond 2x the ceiling.
  reset();W.baseline=[10,10,10];W.yesterday=60;let a=await E.anomalyCheck({ctrl:C()});check(!a.tripped&&!f.docs.has('Brites_GAds_Control/control'),'launch after a quiet spell does not trip');
