@@ -87,7 +87,7 @@ const TARGETS=[target('101','BA · Necklaces PMax'),target('102','BA · Rings PM
   const dom=new JSDOM('<body><main><div id="oppList"></div></main></body>'),d=dom.window.document,requests=[],toasts=[];let answer=null;
   const P={window:{BritesPmaxRecommendation:model},document:d,Intl,Date,Math,JSON,console,Promise,setTimeout,clearTimeout,setInterval,clearInterval,esc,apvEnc:encodeURIComponent,friendlyResearchError:String,researchNeedsRefresh:()=>false,
     toast:m=>toasts.push(String(m)),acctMoney:v=>'$'+v,wireOpportunityDeletion:()=>{},reload:async()=>{},setOppMeta:()=>{},PMAXAT:Date.now(),PMAXERR:null,BritesCampaignStyles:CS,DASH:{control:{defaultCountries:['2840']},pmaxTargets:TARGETS},
-    api:async(action,payload)=>{requests.push([action,JSON.parse(JSON.stringify(payload))]);if(action==='generatePmax')return {queued:true,genId:payload.genId};if(action==='genStatus')return await new Promise(r=>{answer=r;});throw Error('Unexpected '+action);}};
+    api:async(action,payload)=>{requests.push([action,JSON.parse(JSON.stringify(payload))]);if(action==='generatePmax')return {queued:true,genId:'pmax-test'};if(action==='genStatus')return await new Promise(r=>{answer=r;});throw Error('Unexpected '+action);}};
   P.renderOpportunities=()=>P.renderPmaxSection(d.getElementById('oppList'));vm.createContext(P);vm.runInContext(src,P);
   const $=q=>d.querySelector('#pmaxSec '+q),sel=()=>$('.pmx-dest[data-i="0"]'),bud=()=>$('.pmx-bud[data-i="0"]'),gen=()=>$('.pmx-gen[data-i="0"]'),line=()=>$('[data-pmx-join="0"]'),label=()=>bud().closest('label').textContent;
   const design=()=>JSON.parse(decodeURIComponent($('[data-pmx-design="0"]').dataset.designOpportunity)),generated=()=>requests.filter(r=>r[0]==='generatePmax').map(r=>r[1]);
