@@ -359,6 +359,19 @@ const mutations=sent=>sent.filter(s=>/:mutate$/.test(s.url));
    check(lists.length===1&&lists[0].campaign===C(-2)&&lists[0].negative===true&&lists[0].brandList.sharedSet==='customers/123/sharedSets/501','it excludes the account\'s Brites list once, copied as it is created');
    check(cc.filter(c=>c.negative&&c.keyword).length===16&&new Set(cc.filter(c=>c.keyword).map(c=>c.keyword.text)).size===16&&cc.filter(c=>c.language).length===1,'its 16 standard exclusions and English go once');
    check(sentOps.filter(o=>o.campaignConversionGoalOperation).map(o=>o.campaignConversionGoalOperation.update.biddable).join()==='true,false','its own goals: purchase stays biddable, add to cart is off');}
+  // A Design Studio Performance Max campaign is built at publication: after its countries it serves on English
+  // searches and carries the same standard exclusions, and its draft says so before then.
+  {const T=setup(),{e}=T,G=i=>'customers/123/assetGroups/-'+(3+i),img=i=>'customers/123/assets/-'+(900001+i),groups={};
+   [0,1,2].forEach(i=>{groups[G(i)]={logo:img(0),square:[img(1)],landscape:[img(2)],portrait:[img(3)]};});
+   e.bind({_creativeImageOps:async()=>({ops:[],groups,searchGroups:{}}),_enabledBudgetTotal:async()=>40,takenTags:async()=>({}),buildDesignStudioSearchCampaignOps:()=>({ops:[],keywordSummary:{count:6},adGroupSummary:[]}),
+     scanDesignStudioOpportunity:async()=>({blueprint:{measurement:{readiness:{apiOk:true,purchaseReady:true}},budget:{recommendedDaily:10,countries:['2124']},pmax:{groups:[{name:'Gifts',angle:'a',searchThemes:['custom charm gift'],headlines:['A'],longHeadlines:['B'],descriptions:['C']}]},search:{maxCpc:1.1},images:{}}})});
+   const b=await e.E.buildDesignStudioPmaxCampaignOps({dailyBudget:5,startDate:'2026-10-01',endDate:'2026-12-30',countries:['2124','2840'],reviewedCreative:{groups:[]}},{ctrl:T.ctrl});
+   const cc=creates(b.ops,'campaignCriterionOperation'),at=f=>b.ops.findIndex(o=>o.campaignCriterionOperation&&o.campaignCriterionOperation.create[f]),lastCountry=b.ops.map(o=>!!(o.campaignCriterionOperation&&o.campaignCriterionOperation.create.location)).lastIndexOf(true),lang=cc.find(c=>c.language);
+   check(cc.filter(c=>c.location).length===2&&cc.filter(c=>c.language).length===1&&lang.campaign===C(-2)&&lang.language.languageConstant==='languageConstants/1000'&&at('language')>lastCountry,'a Studio Performance Max campaign serves on English searches, added after its countries');
+   check(JSON.stringify(cc.filter(c=>c.keyword).map(c=>[c.campaign,c.negative,c.keyword.text,c.keyword.matchType]))===JSON.stringify(S.PMAX_DEFAULT_NEGATIVES.map(x=>[C(-2),true,x.text,x.matchType]))&&at('keyword')>at('language'),'and excludes the same 16 standard searches once');
+   check(b.languages.join()==='English'&&JSON.stringify(b.negatives)===JSON.stringify(S.PMAX_DEFAULT_NEGATIVES.map(x=>x.text)),'the build reports its language and exclusions');
+   await e.E.generateDesignStudioApprovals({pmaxDaily:6,searchDaily:4});const sm=((T.approvals().find(a=>((a.payload||{}).meta||{}).kind==='designStudioPmax')||{}).payload||{}).meta||{};
+   check((sm.languages||[]).join()==='English'&&JSON.stringify(sm.negatives)===JSON.stringify(S.PMAX_DEFAULT_NEGATIVES.map(x=>x.text)),'the Studio draft names English and its exclusions for its card, before its operations exist');}
   {const T=setup(),{e,W,mem}=T,campaigns=[{id:'101',name:'BA · Necklaces PMax',status:'ENABLED'},{id:'102',name:'BA · Rings PMax',status:'PAUSED'}],fresh={waiting:new Set(),brandWaiting:false,brandDeclined:false,brandSearchDraft:false};
    const draftBrand=async(state={})=>{const r=await e.get('_draftPmaxBrandExclusion')({campaigns,terms:[],state:{...fresh,...state},currency:'CAD'});return r.approvalId?{...r,a:T.approval(r.approvalId)}:r;};
    const L=(id,name,brands)=>({resourceName:'customers/123/sharedSets/'+id,name,brands});

@@ -44,7 +44,8 @@ check(styles.iconSvg('no-such-icon').includes(styles.ICONS.unknown), 'an unknown
 // 4. The console draws them everywhere a campaign type is named, through the
 //    one helper, and tolerates the vocabulary being absent.
 check(/function campaignBadgeHtml/.test(html), 'the console has one badge helper');
-check((html.match(/campaignBadgeHtml\(c\)/g) || []).length >= 2, 'the campaign table and the spend report both use it');
+check(/function campaignTable\([^]*?campaignBadgeHtml\(c\)/.test(html) && (html.match(/campaignBadgeHtml\((?:c|x\.c),\{label:false/g) || []).length >= 2,
+  'the campaign table and the daily charts use it');
 check(!/esc\(campaignPipeline\(c\)\)/.test(html), 'no place still prints the bare text where the icon belongs');
 check(/typeof BritesCampaignStyles==='undefined'/.test(html), 'the console degrades to text rather than throwing if the vocabulary is missing');
 check(/brites-campaign-styles\.js/.test(html), 'the console loads the shared vocabulary');

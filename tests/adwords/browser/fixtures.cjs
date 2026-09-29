@@ -383,7 +383,6 @@ function createFixtures(opts = {}) {
     campaignVersionDetail: body => ({ ok: true, id: String(body && body.id || ''), version: Number(body && body.version) || 6, snapshot: { complete: true, campaign: { name: 'Harness snapshot', status: 'ENABLED' }, components: { searchAds: [], assetGroups: [], assetLinks: [] } }, restorable: Number(body && body.version) === 5, summary: 'Harness version detail' }),
     campaignImprovement,
     servingCheck,
-    analyzeCampaign: body => ({ ok: true, id: String(body && body.id || ''), verdict: 'healthy', summary: 'Harness analysis: steady CPA, budget-limited on weekends.', moves: [{ title: 'Raise weekend budget', detail: 'Shift 10% to Sat/Sun.' }], generatedAt: now }),
     keywordDiag: () => ({ ok: true, source: 'keyword_planner', keyword: 'charm necklace', rows: [{ text: 'charm necklace', volume: 12100, competition: 'HIGH', cpcLow: 0.55, cpcHigh: 1.62 }], checks: [{ label: 'OAuth', ok: true }, { label: 'Keyword Planner access', ok: true }] }),
     genStatus,
     approvalStatus: body => ({ ok: true, id: body && body.id, status: 'APPLIED', error: null, validatedAt: now, startedAt: now }),

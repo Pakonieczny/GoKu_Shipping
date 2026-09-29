@@ -9,11 +9,9 @@ const c={BritesCampaignStyles:require('../../brites-campaign-styles'),campaignBa
 vm.createContext(c);vm.runInContext(html.slice(html.indexOf('function campaignPipeline('),html.indexOf('function renderCommand(){')),c);
 assert.equal(c.campaignPipeline({channel:'DISPLAY'}),'Display · format not identified');
 assert.equal(c.campaignPipeline({channel:'SEARCH'}),'Search · text ads');
-const spending=c.campaignSpendHtml([{name:'Example',channel:'PERFORMANCE_MAX',id:'123',budget:10,cost:2,conv:9,value:100}]);
-assert(spending.includes('$10 CAD'));assert(spending.includes('Unavailable'));assert(!spending.includes('$100'));
 assert(!/api\(/.test(html.slice(html.indexOf('function campaignPipeline('),html.indexOf('function renderCommand(){'))));
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)){if(m[1].trim())new vm.Script(m[1]);}
-console.log('PASS attribution tags, missing IDs, campaign distinctions, unavailable metrics, currency separation, no added API requests, and inline JavaScript syntax');
+console.log('PASS attribution tags, missing IDs, campaign distinctions, no added API requests, and inline JavaScript syntax');
 const {selection}=require('../../netlify/functions/googleAdsCampaignStyles');
 const durations=selection(['fixed_display','pmax'],{fixed_display:5,pmax:15},['2840'],{fixed_display:7,pmax:30});
 assert.equal(durations.durations.fixed_display,7);assert.equal(durations.durations.pmax,30);

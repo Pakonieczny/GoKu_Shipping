@@ -653,9 +653,15 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
   }
 }
 async function _observeCampaignCreative(id, { servingSource = null, settling = false } = {}) {
-  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
+  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.id = ${id}`);
   if (!rows.length) throw new Error("Campaign was not found in this account.");
-  const row = rows[0], channel = row.campaign.advertisingChannelType, values = { "Campaign settings": rows.map(r => r.campaign), Budget: rows.map(r => r.campaignBudget) }, warnings = [];
+  // Budget keeps the fields it always fingerprinted, so reading the period and total records no false
+  // change on any campaign. A campaign total budget (fixed dates) also gets its own fingerprint, so a
+  // changed total is noticed like a changed daily amount.
+  const budgets = rows.map(r => r.campaignBudget), totals = budgets.filter(b => _campaignOptions().isTotalBudget(b));
+  const row = rows[0], channel = row.campaign.advertisingChannelType, warnings = [], values = { "Campaign settings": rows.map(r => r.campaign),
+    Budget: budgets.map(b => { if (!b) return b; const { period, totalAmountMicros, ...kept } = b; return kept; }) };
+  if (totals.length) values["Total budget"] = totals.map(b => ({ period: b.period, totalAmountMicros: b.totalAmountMicros }));
   const read = async (category, query) => {
     try { values[category] = await gaql(query); }
     catch (error) {
@@ -1689,7 +1695,7 @@ function sanitizeOps(ops, meta) {
           c.brandGuidelinesEnabled == null && c.brand_guidelines_enabled == null) {
         c.brandGuidelinesEnabled = false;
       }
-      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyyMMdd HH:MM:SS"),
+      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss"),
       // not startDate/endDate. Migrate any draft queued before this fix so it applies cleanly.
       if (c.startDate != null) { const v = _toGAdsDateTime(c.startDate, "00:00:00"); if (v) c.startDateTime = v; delete c.startDate; }
       if (c.endDate != null)   { const v = _toGAdsDateTime(c.endDate, "23:59:59"); if (v) c.endDateTime = v; delete c.endDate; }
@@ -2293,7 +2299,7 @@ async function dueEvents(now) {
 /* ===================== Build a Search campaign (atomic) ===================== */
 // Returns mutateOperations[] for googleAds:mutate. Creates budget→campaign→adgroup
 // →RSA in one transaction using temp resource names. Gated/queued by the worker.
-/* date helpers for campaign scheduling windows (YYYY-MM-DD ↔ Google's YYYYMMDD) */
+/* date helpers for campaign scheduling windows (YYYY-MM-DD; Google Ads date-times are "yyyy-MM-dd HH:mm:ss", see _toGAdsDateTime) */
 function _ymd(d) { return d.toISOString().slice(0, 10); }
 function _parseYmd(s) {
   // Accept a Date or epoch-ms number too (callers like the campaign builders pass
@@ -2306,6 +2312,7 @@ function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFu
 // opportunity, plan and draft date counts from it: the server's UTC date runs a day ahead each evening.
 function _acctToday() { return _parseYmd(_acctDateYmd(_tzCache || "America/Toronto")); }
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
+// A date alone as YYYYMMDD (the old date-only form, not a date-time: date-times go through _toGAdsDateTime).
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _acctToday(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
 // Campaign schedule fields for a builder. Accepts Date, epoch ms, or YYYY[-]MM[-]DD.
@@ -2320,16 +2327,16 @@ function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
   // Google reads the start in the account's time zone, so "future" means after the account's today (UTC is a day ahead of Toronto every evening).
-  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _toGAdsDateTime(_ymd(s), "00:00:00");
   const e = _parseYmd(endDate);
-  if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
+  if (e) out.endDateTime = _toGAdsDateTime(_ymd(e), "23:59:59");
   return out;
 }
 
 // Extract a clean YYYY-MM-DD from a Google Ads date/datetime string ("2026-06-29 00:00:00", "20260629 000000", "2026-06-29").
 function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
 
-// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
+// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYY-MM-DD — so scheduling
 // decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
 let _tzCache = null;
 async function _accountTz() {
@@ -2338,8 +2345,9 @@ async function _accountTz() {
         if (r[0] && r[0].customer && r[0].customer.timeZone) { _tzCache = r[0].customer.timeZone; return _tzCache; } } catch (e) {}
   return "America/Toronto";
 }
-// Current wall-clock in the account's timezone (+optional ms offset) as "yyyyMMdd HH:MM:SS".
-// Used for scheduling so Google Ads never sees a start_date_time in the past.
+// Current wall-clock in the account's timezone (+optional ms offset) as "yyyy-MM-dd HH:mm:ss", the layout
+// _toGAdsDateTime writes and Google Ads returns. Used for scheduling so Google Ads never sees a
+// start_date_time in the past.
 function _accountDateTime(tz, offsetMs) {
   const when = new Date(Date.now() + (offsetMs || 0)); const o = {};
   try {
@@ -2352,10 +2360,10 @@ function _accountDateTime(tz, offsetMs) {
     o.minute = String(when.getUTCMinutes()).padStart(2, "0"); o.second = String(when.getUTCSeconds()).padStart(2, "0");
   }
   const hh = (o.hour === "24") ? "00" : o.hour;   // some environments emit "24" for midnight
-  return `${o.year}${o.month}${o.day} ${hh}:${o.minute}:${o.second}`;
+  return `${o.year}-${o.month}-${o.day} ${hh}:${o.minute}:${o.second}`;
 }
 // Account-timezone calendar date (with optional ms offset) as "YYYY-MM-DD", for segments.date ranges.
-function _acctDateYmd(tz, offsetMs) { const s = _accountDateTime(tz, offsetMs || 0); return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; }
+function _acctDateYmd(tz, offsetMs) { return _accountDateTime(tz, offsetMs || 0).slice(0, 10); }
 
 // GAQL's DURING operator has no LAST_90_DAYS literal (that was the old
 // AdWords API) — 90-day windows must be an explicit BETWEEN on segments.date.
@@ -2364,16 +2372,19 @@ async function _last90Clause() {
   return `segments.date BETWEEN '${_acctDateYmd(tz, -89 * 86400000)}' AND '${_acctDateYmd(tz, 0)}'`;
 }
 
-// Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
-// Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
+// The one writer of a campaign's schedule fields, startDateTime/endDateTime. Google Ads API v24 documents
+// them as "yyyy-MM-dd HH:mm:ss" in the account's time zone (Campaign.start_date_time / end_date_time) and
+// returns that layout from GAQL, so every value sent uses it; _googleAdsCampaignOptions.gadsDateTime does
+// the formatting and is shared with the sale-day adjustments. Accepts a date (YYYY-MM-DD / YYYYMMDD) and
+// appends `time`, or a full date-time in either layout (drafts saved before this used yyyyMMdd HH:mm:ss).
+// A time in a layout it does not know passes through unchanged.
 function _toGAdsDateTime(val, time) {
   if (val == null) return null;
   const s = String(val).trim();
   if (!s) return null;
-  if (/\d{1,2}:\d{2}/.test(s)) return s;            // already has a time component
-  const ymd = s.replace(/-/g, "");
-  if (!/^\d{8}$/.test(ymd)) return null;
-  return ymd + " " + time;
+  const v = _campaignOptions().gadsDateTime(s, time);
+  if (v) return v;
+  return /\d{1,2}:\d{2}/.test(s) ? s : null;
 }
 
 /* ===================== Keyword research (Google Keyword Planner + AI) =====================
@@ -3196,12 +3207,34 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
 
 // Default campaign-level negative keywords for a premium, made-to-order jewelry store: strip out
 // makers, bargain-hunters, repairs, jobs, and competitor-marketplace traffic that won't convert.
-// Broad-match negatives exclude the term in any query. Cuts wasted spend → better effective ROAS.
-const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
-  "bulk", "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
+// Cuts wasted spend → better effective ROAS. Written like keywords: plain text is a broad-match negative
+// (its words in any order), { text, matchType: "PHRASE" } excludes only that phrase. Negatives never match
+// close variants, so plurals are listed where needed. Deliberately absent, as in Performance Max: a lone
+// "free" ("nickel free earrings" and "free shipping" are buying searches; the phrases keep freebie hunters
+// out) and "bulk" (team and wedding-party gifts are real orders; "wholesale" still excludes resellers).
+const DEFAULT_NEGATIVES = ["diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
+  "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
   "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png",
   "printable", "template", "tattoo", "drawing", "coloring", "crochet", "knitting", "beads only",
-  "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora"];
+  "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora",
+  ...["free pattern", "free patterns", "free download", "free downloads", "free printable", "free printables", "free svg", "for free"].map(text => ({ text, matchType: "PHRASE" }))];
+// Buying searches no negative may block through their buying words, whatever its source (these defaults, a
+// scanned idea's theme-conflict terms, an Ad Doctor fix): in jewelry searches "free" is usually a material or
+// delivery promise. A product word alone ("earrings" in a necklace campaign) can still be excluded.
+const _BUYING_SEARCHES = ["nickel free earrings", "tarnish free necklace", "lead free", "hypoallergenic nickel free", "free shipping"];
+const _BUYING_WORDS = new Set(["free", "nickel", "tarnish", "lead", "hypoallergenic", "shipping"]);
+// Whether a negative keyword stops a search: broad needs all its words in any order, phrase its words
+// together and in order, exact the whole search.
+function _negativeBlocks(neg, search) {
+  const n = _kwWords(neg && neg.text), q = _kwWords(search), m = String((neg && neg.matchType) || "BROAD").toUpperCase();
+  if (!n.length || !q.length) return false;
+  if (m === "EXACT") return n.join(" ") === q.join(" ");
+  if (m === "PHRASE") return (" " + q.join(" ") + " ").includes(" " + n.join(" ") + " ");
+  return n.every(w => q.includes(w));
+}
+function _blocksBuyingSearch(neg) {
+  return _kwWords(neg && neg.text).some(w => _BUYING_WORDS.has(w)) && _BUYING_SEARCHES.some(q => _negativeBlocks(neg, q));
+}
 // Brand callouts — descriptive (not promises), true for Brites, each ≤25 chars.
 // No origin-country callout: most buyers are in the US, and "Handmade in Canada" reads as
 // "imported / slower shipping" to them. Keep claims true and universally appealing.
@@ -3407,12 +3440,17 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   // English, matching the ad copy and the Keyword Planner research (languageConstants/1000). Without a
   // language criterion Google serves to every language and the ad-design keyword evidence is unavailable.
   ops.push({campaignCriterionOperation:{create:{campaign:cRes,language:{languageConstant:"languageConstants/1000"}}}});
-  const all=groups.flatMap(g=>g.keywords), kwWords=all.map(k=>new Set(k.text.split(" ")));
-  // A broad negative whose words all sit inside one of our own keywords would block that keyword ("kit" vs "first aid kit charm").
-  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(_adsKeywordText).filter(Boolean))].filter(n=>!kwWords.some(s=>n.split(" ").every(w=>s.has(w))));
-  negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n,matchType:"BROAD"}}}}));
+  const all=groups.flatMap(g=>g.keywords), negSet=[];
+  // Negatives are written like keywords: plain text is broad match, {text,matchType} keeps its match type. One that would
+  // block our own keyword ("kit" vs "first aid kit charm") or a buying search ("free" vs "nickel free earrings") is left out.
+  (Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).forEach(n=>{
+    const m=String((n&&n.matchType)||"BROAD").toUpperCase(), neg={text:_adsKeywordText(n&&typeof n==="object"?n.text:n),matchType:m==="PHRASE"||m==="EXACT"?m:"BROAD"};
+    if(!neg.text||negSet.some(x=>x.text===neg.text)||all.some(k=>_negativeBlocks(neg,k.text))||_blocksBuyingSearch(neg))return;
+    negSet.push(neg);
+  });
+  negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n.text,matchType:n.matchType}}}}));
   let assetSummary=null; if(withAssets!==false){const ca=buildCampaignAssets(coll,finalUrl,cRes,assetExtras);ops.push(...ca.ops);assetSummary=ca.summary;}
-  return {ops,tag,finalUrl,negatives:negSet,assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
+  return {ops,tag,finalUrl,negatives:negSet.map(n=>n.text),assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
     keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:all.length>0&&all.every(k=>k.measured),dropped,groups:groups.length,searchPartners:false}};
 }
 
@@ -5470,7 +5508,11 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
   });
   const countries = _studioList((spec.countries || []).map(x => String(x).replace(/\D/g, "")), 20);
   countries.forEach(id2 => ops.push({ campaignCriterionOperation: { create: { campaign: cRes, location: { geoTargetConstant: `geoTargetConstants/${id2}` } } } }));
-  return { ops, tag, landingUrl, countries, groups: groupMeta, audienceResource: audience, images: { created: imageBuild.created, reused: imageBuild.reused, square: imageBuild.assets.square.length, landscape: imageBuild.assets.landscape.length, portrait: imageBuild.assets.portrait.length, logo: !!imageBuild.assets.logo, warnings: imageBuild.errors }, campaignAssets: extensions.summary };
+  // As every new Performance Max campaign: English, the language of the Studio copy (without it PMax serves every
+  // language), and the standard campaign exclusions for searches a made-to-order shop cannot sell to.
+  ops.push({ campaignCriterionOperation: { create: { campaign: cRes, language: { languageConstant: "languageConstants/1000" } } } });
+  ops.push(..._pmaxStructure().negativeOps(cRes, _pmaxStructure().PMAX_DEFAULT_NEGATIVES));
+  return { ops, tag, landingUrl, countries, languages: ["English"], negatives: _pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n => n.text), groups: groupMeta, audienceResource: audience, images: { created: imageBuild.created, reused: imageBuild.reused, square: imageBuild.assets.square.length, landscape: imageBuild.assets.landscape.length, portrait: imageBuild.assets.portrait.length, logo: !!imageBuild.assets.logo, warnings: imageBuild.errors }, campaignAssets: extensions.summary };
 }
 
 function buildDesignStudioSearchCampaignOps(blueprint, { dailyBudget, startDate, endDate, countries, maxCpc } = {}) {
@@ -5535,6 +5577,8 @@ async function generateDesignStudioApprovals({ dailyBudget, pmaxDaily, searchDai
       summary: `DESIGN STUDIO · PMax discovery · ${cc}${pmaxBudget.toFixed(2)}/day · 3 intent-led asset groups · every click to /pages/custom-studio · starts PAUSED`,
       payload: { designStudioSpec: spec, countries: ctys, meta: { kind: "designStudioPmax", programId, tag: DESIGN_STUDIO_TAGS.pmax, landingUrl: DESIGN_STUDIO_URL,
         dailyBudget: pmaxBudget, startDate, endDate, countries: ctys, biddingMode: "MAXIMIZE_CONVERSIONS", finalUrlExpansion: false,
+        // Built at publication with the campaign; the draft card says so before then.
+        languages: ["English"], negatives: _pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n => n.text),
         audienceSignal: audienceResource, groups: blueprint.pmax.groups.map(g => ({ name: g.name, angle: g.angle, searchThemes: g.searchThemes })),
         textPreview: blueprint.pmax.groups.map(g => ({ name: g.name, headlines: g.headlines, longHeadlines: g.longHeadlines, descriptions: g.descriptions })), imageSources: Object.keys(blueprint.images || {}).filter(k => /^hero|templates|upload|made|logo$/.test(k) && blueprint.images[k]).length } } });
   } else skipped.push({ lane: "pmax", reason: "already in approvals or Google Ads", state: taken[DESIGN_STUDIO_TAGS.pmax] });
@@ -6862,7 +6906,7 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected start-now for campaign ${id}: ${msg}`);
   }
-  return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
+  return { ok: true, id, startDate: dt.slice(0, 10), startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
 // "Run longer": push a campaign's END date out without rebuilding anything. A campaign that
@@ -7033,8 +7077,8 @@ async function setCampaignCountries(campaignId, countryIds, { ctrl } = {}) {
 // Rewrite the target countries on a PENDING approval draft (before it's applied), by swapping the
 // location criterion ops inside its stored payload. Lets the user choose countries at approval time.
 // Edit a pending draft's flight dates before approval. Campaign create ops
-// carry startDateTime/endDateTime ("yyyyMMdd HH:MM:SS") — same format the
-// sanitize/migrate path enforces.
+// carry startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss") — same format the
+// sanitize/migrate path enforces (both write it through _toGAdsDateTime).
 async function saveDraftPayload(ref,original,payload) {
   const f=fb();await f.db.runTransaction(async tx=>{const now=await tx.get(ref);if(!now.exists)throw new Error("Draft not found.");const it=now.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("Only an idle pending draft can be edited.");
@@ -7137,75 +7181,6 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
     } catch (e) { out.verified = null; out.verification = { error: String(e.message || e).slice(0, 200) }; }
     await _verifyLedger(mres && mres.__ledgerId, out.verified, out.verification);
   }
-  return out;
-}
-
-/* ===================== Per-campaign AI optimization analysis ===================== */
-async function latestSnapshotCampaign(campaignId) {
-  const f = fb(); if (!f) return null;
-  try {
-    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(1).get();
-    let snap = null; mt.forEach(d => snap = d.data().snapshot);
-    if (!snap) return null;
-    const id = String(campaignId).replace(/\D/g, "");
-    return snap.find(c => String(c.id) === id) || null;
-  } catch (e) { return null; }
-}
-// A suggested daily budget in the account currency: within 1 and the ceiling, and a real change.
-function _suggestedBudget(value, current, ceiling) {
-  if (value == null || value === "" || !isFinite(Number(value))) return null;
-  const b = Math.round(Math.max(1, Math.min(Number(ceiling) || 9999, Number(value))) * 100) / 100;
-  return current != null && Math.abs(b - Number(current)) < 0.01 ? null : b;
-}
-// Researches one campaign's real metrics and returns a structured optimization read.
-// Honest like Google's own recommendations: if there isn't enough data, it says so.
-async function analyzeCampaign(campaignId, { force, cacheOnly } = {}) {
-  const f = fb(); const ctrl = await control();
-  const id = String(campaignId).replace(/\D/g, "");
-  const cacheKey = "analysis_" + id;
-  if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 6 * 60 * 60 * 1000 && x.analysis) return x.analysis; } } catch (e) {}
-  }
-  if (cacheOnly) return null; // the console's quick check: a fresh analysis is a paid AI call, run by the background worker
-  const c = await latestSnapshotCampaign(id);
-  if (!c) return { score: null, status: "unknown", summary: "No snapshot for this campaign yet — run Measure first.", actions: [], campaignId: id, currency: CURRENCY };
-  const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;
-  // Spend and value are converted to the reporting currency; budgets stay in the Google Ads account currency.
-  const target = ctrl.targetRoas || 0, ccy = c.currency || CURRENCY, bccy = ctrl.budgetCurrency || "the Google Ads account currency";
-  const kind = { SEARCH: "Search", PERFORMANCE_MAX: "Performance Max", SHOPPING: "Shopping", DISPLAY: "Display", VIDEO: "Video", DEMAND_GEN: "Demand Gen" }[c.channel] || "Google Ads";
-  const enoughData = c.conv >= 15 || c.cost >= 50;
-  const _convH = await conversionHealth().catch(() => ({ validated: false, healthy: false }));
-  const convNote = _convH.validated ? "" :
-    `\nCRITICAL: account conversion tracking is ${_convH.healthy ? "configured but has recorded no sales yet" : "NOT confirmed to be recording sales"}. Any ROAS/CPA above may be undercounted or zero for that reason — treat performance as UNVALIDATED. Do NOT recommend scaling on ROAS; if conversions are 0, prioritize verifying conversion tracking over campaign changes.`;
-  const metrics = `status=${c.status}, dailyBudget=${c.budget} ${bccy}, spend14d=${ccy}${c.cost}, impressions=${c.impr}, clicks=${c.clicks}, ctr=${ctr == null ? "n/a" : ctr.toFixed(2) + "%"}, conversions=${c.conv}, convValue=${ccy}${c.value}, roas=${roas == null ? "n/a" : roas.toFixed(2) + "x"}, cpa=${cpa == null ? "n/a" : ccy + cpa.toFixed(2)}`;
-  const prompt =
-`You are a senior Google Ads strategist optimizing a ${kind} campaign for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Spend and conversion value are in ${ccy}; budgets are in ${bccy}. Account target ROAS: ${target || "not set by the owner (do not assume one)"}. Account ceiling for the total of enabled daily budgets: ${ctrl.maxDailyBudgetTotal} ${bccy}.
-Campaign "${c.name}" — last 14 days: ${metrics}.${convNote}
-Give an honest optimization assessment. If there isn't enough data to optimize responsibly (Google Smart Bidding generally needs ~15+ conversions), SAY SO and recommend gathering data rather than inventing changes. Otherwise recommend concrete, prioritized actions (budget, bidding, keywords, creative, or status).
-Return ONLY JSON:
-{"score": <0-100 optimization/health score>,
- "status": "<one of: not serving | learning | limited by budget | underperforming | healthy | scaling | insufficient data>",
- "summary": "<2 plain-language sentences>",
- "actions": [{"title":"<short>","detail":"<why + expected effect, <=140 chars>","type":"<budget|bid|status|keywords|creative|wait>","suggestedBudget": <daily budget in ${bccy} or null>}]}`;
-  let out = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 3500 }); if (j && j.summary) out = j; } catch (e) {}
-  if (!out) {
-    out = {
-      score: enoughData ? 55 : 25,
-      // Without a target ROAS there is nothing to grade against, so no health label is claimed.
-      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (!target ? "insufficient data" : roas != null && roas >= target ? "healthy" : "underperforming") : "learning"),
-      summary: enoughData ? (target ? "Automated read from current metrics (AI analysis unavailable)." : "AI analysis unavailable, and no target ROAS is set to grade these results against.") : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
-      actions: c.status === "PAUSED" ? [{ title: "Enable to start", detail: "Campaign is paused — enable it to begin serving and gathering data.", type: "status", suggestedBudget: null }] : []
-    };
-  }
-  out.score = Math.max(0, Math.min(100, Number(out.score) || 0));
-  out.actions = Array.isArray(out.actions) ? out.actions.slice(0, 5).map(a => ({
-    title: String(a.title || "").slice(0, 70), detail: String(a.detail || "").slice(0, 160),
-    type: ["budget", "bid", "status", "keywords", "creative", "wait"].indexOf(a.type) >= 0 ? a.type : "wait",
-    suggestedBudget: _suggestedBudget(a.suggestedBudget, c.budget, ctrl.maxDailyBudgetTotal)
-  })) : [];
-  out.campaignId = id; out.currency = ccy; out.budgetCurrency = ctrl.budgetCurrency || null; out.generatedAt = Date.now();
-  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ analysis: out, at: Date.now() }); } catch (e) {} }
   return out;
 }
 
@@ -7438,7 +7413,7 @@ Find the 8-12 best Search advertising OPPORTUNITIES: gift occasions whose date f
 - rationale (<=120 chars: why now, why this collection)
 - keywords: an array of 6-10 search phrases (strings). SPECIFICITY IS THE LAW: every keyword must contain a concrete jewelry product type (necklace, charm, bracelet, pendant, earrings...) AND at least one motif, style, material, or recipient qualifier drawn from the inventory. NEVER category-only or gifting-head terms ("nurse gifts", "summer jewelry", "gifts for her" are all FORBIDDEN — they buy browsers, not buyers). Every keyword is 3+ words phrased exactly as a ready-to-buy shopper types it (the validator rejects a two-word motif+type term such as "bunny necklace" as browsing intent). DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms — styles, recipients, occasions, materials — and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) — head terms from its high-frequency motifs, long-tail from mid-frequency motifs × product types × the occasion (a collection with bunny(31) and axolotl(6) earns both "gold bunny necklace" AND "axolotl charm gift") — phrased the way the audience below actually searches.
 - keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
-- negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (free/cheap/diy are already blocked account-wide).
+- negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (cheap, diy, wholesale and free downloads or patterns are already blocked account-wide), and never a lone "free": nickel free and tarnish free are buying searches.
 - keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fitWhy reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
@@ -8004,11 +7979,11 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   }));
   const adGroups=grounded.groups.map((g,i)=>({name:_wclip(`${g.label} · ${event?event.label:"Evergreen"}`,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
   // Launch negatives: universal defaults + the opportunity model's theme-conflict
-  // list + terms that already wasted money account-wide. Deduped.
+  // list + terms that already wasted money account-wide. The builder dedupes them, keeps each
+  // match type and leaves out any that would block a keyword or a buying search.
   let launchNegs = DEFAULT_NEGATIVES.slice();
   if (opp && Array.isArray(opp.negatives) && opp.negatives.length) launchNegs = launchNegs.concat(opp.negatives);
   try { launchNegs = launchNegs.concat(await accountWasteNegatives({})); } catch (e) {}
-  launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:0,assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   // The run exactly as Google receives it (inclusive days); with no start time it serves from the day it is enabled.
@@ -9229,7 +9204,7 @@ async function fetchDiagnostics(campaignId) {
       reasonsText: _diagReasonsText(c.primaryStatusReasons),
       channel: c.advertisingChannelType || null,
       startDate: null, endDate: null, // filled by the version-tolerant fetch below
-      budget: budgetOf(r), budgetRes: b.resourceName,
+      budget: budgetOf(r), ..._budgetKind(b), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
@@ -9617,10 +9592,10 @@ For EACH campaign return an object:
 - Do NOT return fixReview: the console measures applied fixes itself (see "measured" above).
 - remedies: an array with ONE ENTRY PER ISSUE you flagged. NEVER re-recommend a fix that already appears in the applied or queued list unless it verifiably failed or clearly needs extension (say so explicitly if you do). Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
   {issue:"...", fix:"exact prescription", impact:"high|medium|low", executable:{kind:"addNegatives"|"pauseKeywords"|"addKeywords"|"rewriteAds"|"landingPage"|"setBudget"|"none", ...params}}
-  The console validates every executable against the evidence before it offers a button: ids that are not in the evidence, a setBudget equal to the current budget, a budget over the ceiling, or a negative that would block a converting search term or an active keyword become advice only (kind "none"). When the fix is to keep something as it is, or to do something the console cannot execute (for example re-enabling a campaign), use kind "none".
+  The console validates every executable against the evidence before it offers a button: ids that are not in the evidence, a setBudget equal to the current budget, a budget over the ceiling, or a negative that would block a converting search term, a buying search or an active keyword become advice only (kind "none"). When the fix is to keep something as it is, or to do something the console cannot execute (for example re-enabling a campaign), use kind "none".
   Rules for remedies:
   * Rank/QS problems: name the FAILING COMPONENT per keyword (expectedCtr BELOW_AVERAGE = weak ad-to-keyword match; adRelevance BELOW_AVERAGE = headlines don't contain the keyword; landingPage BELOW_AVERAGE = URL doesn't match intent). Prescribe per keyword: pause it (executable pauseKeywords with keywords:[{adGroupId,criterionId,text}]), tighten match type, or fix copy.
-  * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root).
+  * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free downloads or patterns, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root; never a lone "free": nickel free and tarnish free are buying searches).
   * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 NEW headlines (max 30 chars each) and 1-2 NEW descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with {adId:"<the adId from the ads evidence>", headlines:[...], descriptions:[...]}. This creates a draft the owner reviews in Approvals; once approved, the copy is APPENDED to the live RSA (merged up to the 15-headline / 4-description limits) AND any asset Google has rated LOW (see assetPerformance evidence) is pruned in the same edit — GOOD/BEST/LEARNING assets are never touched. So: write additions targeting the gap, and call out LOW-rated assets in your findings when they exist.
   * Landing page: if the finalUrl doesn't match keyword intent, name the better britesjewelry.com collection URL -> executable landingPage with url:"...".
   * Dead weight: keywords with ~0 impressions after 7+ days, or unproven broad terms dragging a campaign -> executable pauseKeywords with the EXACT {adGroupId,criterionId,text} objects copied from the evidence. A keyword-level fix WITHOUT its executable payload is a defect — if the keyword appears in the evidence, include its ids.
@@ -9651,7 +9626,9 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
   const byId = new Map((diag.campaigns || []).map(c => [String(c.id), c])), seen = new Set(), campaigns = [], list = x => Array.isArray(x) ? x : [];
   const ceiling = Number(ctrl && ctrl.maxDailyBudgetTotal) || 0, text = x => String(x == null ? "" : x).trim();
   const words = s => " " + text(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + " ";
+  // A campaign total budget (fixed dates) is never set as a daily amount: its budget advice stays advice.
   const budgetFor = (c, value, dir) => {
+    if (c.budgetPeriod === "CUSTOM_PERIOD") return null;
     const b = Math.round(Number(value) * 100) / 100, cur = Number(c.budget), known = c.budget != null && isFinite(cur);
     if (!(b > 0) || !isFinite(b) || (known && Math.abs(b - cur) < 0.5) || (dir && known && (dir > 0 ? b <= cur : b >= cur))) return null;
     const total = enabledTotal != null ? enabledTotal - (c.status === "ENABLED" && known ? cur : 0) + b : b;
@@ -9671,7 +9648,8 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
       if (ex.kind === "setBudget") { const budget = budgetFor(c, ex.budget); return budget ? { kind: "setBudget", budget } : none; }
       if (ex.kind === "pauseKeywords") { const keywords = [...new Map(list(ex.keywords).map(k => kw.get(text((k || {}).adGroupId) + "~" + text((k || {}).criterionId))).filter(Boolean).map(k => [k.adGroupId + "~" + k.criterionId, { adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text }])).values()].slice(0, 25); return keywords.length ? { kind: "pauseKeywords", keywords } : none; }
       if (ex.kind === "addNegatives") {
-        // A phrase negative blocks every query containing it: never one that would block a converting term or an active keyword.
+        // A phrase negative blocks every query containing it: never one that would block a converting term, a buying
+        // search ("free" vs "nickel free earrings") or an active keyword.
         if (!guard) return none;
         // Performance Max reports searches only as categories: a negative is offered there only when a category
         // that never converted in the last year contains it (or it that category) and no converting one does.
@@ -9679,10 +9657,13 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
         if (pmax && !Array.isArray(cats)) return none;
         const near = (t, w) => t.includes(w) || w.includes(t), label = conv => (cats || []).filter(x => (Number(x.conv) > 0) === conv).map(x => words(x.label)).filter(t => t.trim());
         const sold = label(true), quiet = label(false);
+        const buyer = k => _blocksBuyingSearch({ text: k, matchType: "PHRASE" });
         const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); if (w.trim() === "") return pmax;
-          return converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
-        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks);
-        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(pmax ? { skippedWhy: "no search category that never converted contains them, or one that converted does" } : {}) } : {}) };
+          return buyer(k) || converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
+        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks), forBuyers = skipped.some(buyer);
+        // The card reads "Left out because <why>: …"; without a why it says they would block converting searches or active keywords.
+        const why = [forBuyers && "they would block buying searches such as “nickel free earrings”", pmax ? "no search category that never converted contains them, or one that converted does" : forBuyers && skipped.some(k => !buyer(k)) && "they would block converting searches or active keywords"].filter(Boolean).join(", or ");
+        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(why ? { skippedWhy: why } : {}) } : {}) };
       }
       if (ex.kind === "addKeywords") {
         const adGroupId = text(ex.adGroupId).replace(/\D/g, ""); if (!groups.has(adGroupId)) return none;
@@ -11717,11 +11698,16 @@ async function _purchaseGoalCampaigns() {
   rows.forEach(r => { const id = String((r.campaign || {}).id || ""); if (/^\d+$/.test(id)) out.set(id, out.get(id) === true || (r.campaignConversionGoal || {}).biddable === true); });
   return out;
 }
-// Google's sale-day adjustments that have not ended.
+// Google's sale-day adjustments that have not ended: the exclusive end is after the start of today in the
+// account's time zone. Both times are read as "yyyy-MM-dd HH:mm:ss", so the end is compared with today's
+// midnight (a date-time with a date would keep an adjustment that ended at midnight today), and every
+// window handed on compares in one layout with a new window. One with no readable end is left out.
 async function _seasonalityAdjustments(today) {
+  const O = _campaignOptions(), from = O.gadsDateTime(today, "00:00:00");
   const rows = await gaql("SELECT bidding_seasonality_adjustment.resource_name, bidding_seasonality_adjustment.name, bidding_seasonality_adjustment.scope, bidding_seasonality_adjustment.campaigns, bidding_seasonality_adjustment.start_date_time, bidding_seasonality_adjustment.end_date_time, bidding_seasonality_adjustment.conversion_rate_modifier FROM bidding_seasonality_adjustment WHERE bidding_seasonality_adjustment.status = 'ENABLED'");
-  return rows.map(r => r.biddingSeasonalityAdjustment || {}).filter(a => String(a.endDateTime || "") > today).map(a => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
-    campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start: String(a.startDateTime || ""), endExclusive: String(a.endDateTime || ""), modifier: Number(a.conversionRateModifier) || null }));
+  return rows.map(r => r.biddingSeasonalityAdjustment || {}).map(a => ({ a, start: O.gadsDateTime(a.startDateTime) || "", end: O.gadsDateTime(a.endDateTime) || "" })).filter(x => x.end > from)
+    .map(({ a, start, end }) => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
+      campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start, endExclusive: end, modifier: Number(a.conversionRateModifier) || null }));
 }
 // Option drafts not yet published or deleted.
 async function _openOptionDrafts() {
@@ -11759,7 +11745,7 @@ async function campaignOptionsStatus() {
       keywords: O.BRAND_SEARCH.keywords.map(k => (k.matchType === "EXACT" ? `[${k.text}]` : `"${k.text}"`)), ceiling: Number(ctrl.maxDailyBudgetTotal) || 0 },
     sale: { limits: O.SEASONALITY_LIMITS, occasions: windows.map(w => ({ key: w.key, label: w.label, start: w.start, end: w.end, days: w.days, peak: w.peak, estimate: _saleEstimate(w, history),
         campaigns: campaigns.filter(c => O.seasonalityEligible(c, w.start).ok).map(c => ({ id: c.id, name: c.name, status: c.status })) })),
-      upcoming: adjustments.map(a => ({ name: a.name, start: a.start.slice(0, 10), end: O._dates.addDays(a.endExclusive.slice(0, 10), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
+      upcoming: adjustments.map(a => ({ name: a.name, start: O._dates.dateOnly(a.start), end: O._dates.addDays(O._dates.dateOnly(a.endExclusive), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
       drafts: drafts.filter(d => d.type === "seasonality").map(d => ({ id: d.id, status: d.status, label: (d.payload.campaignOption || {}).label || null, start: (d.payload.campaignOption || {}).start || null, end: (d.payload.campaignOption || {}).end || null })) },
     customers: { modes: O.ACQUISITION_MODES, tradeoff: O.ACQUISITION_TRADEOFF, prerequisite: O.ACQUISITION_PREREQUISITE,
       campaigns: campaigns.filter(c => O.ACQUISITION_CHANNELS.includes(c.channel)).map(c => { const cur = goals.get(c.id) || null, pg = purchase.has(c.id) ? purchase.get(c.id) : null;
@@ -11802,7 +11788,7 @@ async function draftSeasonalityAdjustment({ occasion, startDate, endDate, change
   const facts = new Map((await _campaignFacts()).map(c => [c.id, c]));
   const bad = ids.map(id => [id, facts.get(id)]).map(([id, c]) => [id, c, O.seasonalityEligible(c, start)]).filter(x => !x[2].ok);
   if (bad.length) throw new Error(bad.map(([id, c, e]) => `${c ? "“" + c.name + "”" : "Campaign " + id}: ${e.reason}`).join("; ") + ". Sale-day adjustments apply only to smart-bidding campaigns. No draft was created.");
-  const win = { start: `${start} 00:00:00`, endExclusive: `${O._dates.addDays(end, 1)} 00:00:00` };
+  const win = O.seasonalityWindow(start, end);
   const [existing, drafts] = await Promise.all([_seasonalityAdjustments(today), _openOptionDrafts()]);
   const clash = existing.find(a => (a.scope !== "CAMPAIGN" || a.campaignIds.some(id => ids.includes(id))) && O.seasonalityOverlaps(win, a));
   if (clash) throw new Error(`Google already has the sale-day adjustment “${clash.name}” on these dates for these campaigns. No draft was created.`);
@@ -11910,7 +11896,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
+  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
   generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,

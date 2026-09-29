@@ -235,13 +235,22 @@ function runGaql(raw) {
   unknownGaql.add(from || q.slice(0, 60));
   return [];
 }
+// Google Ads API v24 takes Campaign.start_date_time / end_date_time only as "yyyy-MM-dd HH:mm:ss" in the account time zone (the v24
+// reference, the "Create campaigns" guide and DateError.INVALID_STRING_DATE_TIME_SECONDS) and returns that layout. Some of Google's client
+// samples send "yyyyMMdd HH:mm:ss" and it happens to work; this synthetic account is strict on purpose, so a writer that drifts to another
+// layout fails here (validate-only requests included) instead of relying on that leniency.
+const GADS_DATE_TIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+const dateTime = (field, v) => { if (v != null && !GADS_DATE_TIME.test(String(v))) throw new Error('INVALID_STRING_DATE_TIME_SECONDS campaign.' + field + ' ' + JSON.stringify(v)); return v; };
+function assertDateTimes(ops) { for (const o of ops || []) { const c = o && o.campaignOperation && (o.campaignOperation.create || o.campaignOperation.update); if (c) { dateTime('start_date_time', c.startDateTime); dateTime('end_date_time', c.endDateTime); } } }
 // Applies an accepted mutation the way Google would: temporary (negative) ids become real ids.
 function applyMutations(ops) {
+  assertDateTimes(ops); // Google checks the whole request before it applies any of it
   const real = new Map(), map = rn => real.get(rn) || rn, idOf = rn => String(rn).split('/').pop();
   return ops.map(o => {
     const type = Object.keys(o)[0], op = o[type], c = op.create;
     if (!c) {
-      if (type === 'campaignOperation' && op.update) { const camp = world.campaigns.get(idOf(op.update.resourceName)); if (!camp) throw new Error('RESOURCE_NOT_FOUND ' + op.update.resourceName); if (op.update.status) camp.status = op.update.status; return { campaignResult: { resourceName: camp.resourceName } }; }
+      if (type === 'campaignOperation' && op.update) { const camp = world.campaigns.get(idOf(op.update.resourceName)); if (!camp) throw new Error('RESOURCE_NOT_FOUND ' + op.update.resourceName); if (op.update.status) camp.status = op.update.status;
+        if (op.update.startDateTime) camp.startDateTime = op.update.startDateTime; if (op.update.endDateTime) camp.endDateTime = op.update.endDateTime; return { campaignResult: { resourceName: camp.resourceName } }; }
       throw new Error('Unsupported synthetic operation ' + type);
     }
     const created = rn => { if (c.resourceName) real.set(c.resourceName, rn); return rn; };
@@ -278,7 +287,7 @@ const KEYWORDS = { 'snowy owl necklace': 880, 'sterling silver owl necklace': 39
 const OPPORTUNITY = { collectionTitle: COLLECTION.title, occasion: 'Evergreen gifting', startDate: TODAY, endDate: ymd(29), daysOut: 0, priority: 'high', recommendedDailyBudget: 12,
   market: { fit: 1.05, fitWhy: 'Owl motifs dominate the collection listings', demand: 'steady', angle: 'A keepsake owl for the bird lover' }, proven: false,
   rationale: 'Steady owl demand and deep motif inventory', keywords: Object.keys(KEYWORDS).map(text => ({ text, searches: 100, competition: 'LOW', cpcLow: 0.4, cpcHigh: 1.1, intent: 'medium', tail: 'MID' })),
-  keywordStrategy: 'Motif plus product type, long-tail first', negatives: ['owl costume', 'owl plush', 'owl drawing'], keyPhrases: ['A little owl to keep close'],
+  keywordStrategy: 'Motif plus product type, long-tail first', negatives: ['owl costume', 'owl plush', 'owl drawing', 'free'], keyPhrases: ['A little owl to keep close'],
   audience: { buyer: 'Partners of bird watchers', recipient: 'Owl lovers', motivation: 'A meaningful nature keepsake', searchStyle: 'motif plus jewelry type' } };
 const RSA = { headlines: ['Owl Necklaces for Bird Lovers', 'Handcrafted Owl Jewelry', 'Snowy Owl Necklace', 'Barn Owl Earrings', 'Sterling Silver Owl Charms', 'Engraved Owl Keepsakes',
   'Gifts for Owl Lovers', 'Personalize Your Owl Charm', 'Made to Order by Brites', 'Nature Lover Jewelry', 'A Keepsake Owl for Them', 'Owl Jewelry Made With Care',
@@ -338,7 +347,10 @@ async function fakeFetch(url, opts = {}) {
       lowTopOfPageBidMicros: '450000', highTopOfPageBidMicros: '1250000', monthlySearchVolumes: Array.from({ length: 12 }, (_, i) => ({ year: '2026', month: 'M' + i, monthlySearches: String(KEYWORDS[text] || 50) })) } })) });
     if (/:mutate$/.test(method)) {
       call.mutate = { service: method.split(':')[0], validateOnly: !!body.validateOnly, operations: body.mutateOperations || body.operations };
-      if (body.validateOnly) return reply(200, {});
+      if (body.validateOnly) {
+        try { assertDateTimes(body.mutateOperations || (body.operations || []).map(op => ({ campaignOperation: op }))); } catch (e) { return reply(400, { error: { code: 400, status: 'INVALID_ARGUMENT', message: e.message } }); }
+        return reply(200, {});
+      }
       try {
         if (method === 'googleAds:mutate') return reply(200, { mutateOperationResponses: applyMutations(body.mutateOperations) });
         const svc = method.split(':')[0], type = { campaigns: 'campaignOperation' }[svc]; if (!type) throw new Error('Unsupported synthetic service ' + svc);
@@ -437,8 +449,8 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
     'draft creates one paused manual-CPC Search campaign named for its opportunity tag');
   check(Number(budgetCreate.amountMicros) === Math.round(card.budget * 1e6) && gen.currency === 'CAD', 'draft daily budget equals the card budget, in the account currency');
   check(created('adGroupOperation').every(g => Number(g.cpcBidMicros) === Math.round(card.maxCpc * 1e6)), 'every ad group bid cap equals the card CPC cap');
-  check(String(campaignCreate.endDateTime).startsWith(card.endDate.replace(/-/g, '')) && (card.startDate > TODAY ? String(campaignCreate.startDateTime).startsWith(card.startDate.replace(/-/g, '')) : !campaignCreate.startDateTime),
-    'draft schedule equals the card run window');
+  check(campaignCreate.endDateTime === card.endDate + ' 23:59:59' && (card.startDate > TODAY ? campaignCreate.startDateTime === card.startDate + ' 00:00:00' : !campaignCreate.startDateTime),
+    'draft schedule equals the card run window, written as "yyyy-MM-dd HH:mm:ss" (the layout Google documents and returns)');
   check(opp.startDate === TODAY, 'an undated card starts on the account date (' + TODAY + ' in ' + tz + '), not the server UTC date');
   const dplan = pending.payload.plan || {};
   check(dplan.duration && dplan.duration.startDate === opp.startDate && dplan.duration.endDate === opp.endDate && dplan.duration.days === opp.durationDays && dplan.budget.daily === card.budget && dplan.cpc.max === card.maxCpc,
@@ -448,6 +460,9 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   check((pending.summary.includes('(' + opp.startDate + ' → ' + opp.endDate + ', ' + opp.durationDays + 'd)') || pending.summary.includes('(starts when enabled, ends ' + opp.endDate + ', up to ' + opp.durationDays + 'd)')) && pending.summary.includes('Manual CPC ≤ CAD '),
     'the Approvals summary shows the card window with both end dates counted and the cap in the account currency');
   check(JSON.stringify(created('campaignCriterionOperation').filter(c => c.location).map(c => c.location.geoTargetConstant.split('/').pop())) === JSON.stringify(card.countries), 'draft targets exactly the card countries');
+  const draftNegatives = created('campaignCriterionOperation').filter(c => c.negative).map(c => c.keyword);
+  check(['owl costume', 'owl plush', 'owl drawing'].every(t => draftNegatives.some(k => k.text === t && k.matchType === 'BROAD')) && ['free pattern', 'for free'].every(t => draftNegatives.some(k => k.text === t && k.matchType === 'PHRASE')) && !draftNegatives.some(k => k.text === 'free'),
+    'draft excludes the card theme-conflict terms and freebie phrases; the card\'s lone "free" would stop "nickel free" buyers and is left out');
   const draftKeywords = created('adGroupCriterionOperation').map(k => k.keyword.text), grounded = new Set(opp.keywordData.map(k => k.text));
   check(measured.every(k => draftKeywords.includes(k.text)) && draftKeywords.every(k => grounded.has(k)), 'draft keywords are the grounded research keywords, including every measured one');
   check(mutations().length === 0, 'nothing has been sent to Google before approval');
@@ -504,6 +519,8 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   check(doc.status === 'APPLIED' && doc.publishedCampaignIds.length === 1 && !doc.lastError, 'approval is recorded as APPLIED with its Google campaign id');
   const campaignId = doc.publishedCampaignIds[0], campaign = world.campaigns.get(campaignId);
   check(campaign && campaign.status === 'PAUSED' && campaign.name === campaignCreate.name && world.budgets.get(campaign.budget).amountMicros === String(budgetCreate.amountMicros), 'Google holds the new campaign paused with the approved budget');
+  check(campaign.endDateTime === card.endDate + ' 23:59:59' && (card.startDate > TODAY ? campaign.startDateTime === card.startDate + ' 00:00:00' : !campaign.startDateTime),
+    'Google accepted the run window in its documented "yyyy-MM-dd HH:mm:ss" layout (the synthetic account refuses any other, validate-only requests included)');
   check(world.keywords.size === draftKeywords.length && [...world.ads.values()].every(a => a.status === 'ENABLED'), 'every approved keyword and ad exists in Google');
   const versions = [...store.docs.keys()].filter(k => k.startsWith('Brites_GAds_State/adVersions/campaigns/' + campaignId));
   check(versions.length > 0 && !doc.versionWarning, 'publication saved a version history entry for the new campaign');
@@ -529,6 +546,7 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   const range = (await api('metricsRange', { start, end })).json;
   const mr = range.snapshot.find(c => c.id === campaignId);
   check(range.ok && range.currency === 'USD' && range.budgetCurrency === 'CAD' && mr && mr.status === 'ENABLED' && mr.budget === card.budget, 'metricsRange lists the enabled campaign with its CAD budget and USD metrics');
+  check(mr.endDate === card.endDate && (card.startDate > TODAY ? mr.startDate === card.startDate : !mr.startDate), 'the campaign\'s dates, read back from Google\'s "yyyy-MM-dd HH:mm:ss" values, are the card\'s dates');
   check(near(mr.costNative, sum(mine, m => m.costMicros) / 1e6) && near(mr.cost, sum(mine, m => m.costMicros) / 1e6 * FX) && mr.clicks === 43 && mr.impr === 1500, 'campaign spend, clicks and impressions match Google (CAD converted at the daily rate)');
   check(mr.conv === 2 && near(mr.value, 131.5 * FX) && mr.convCd === 2 && near(mr.valueCd, 131.5 * FX), 'click-date and conversion-date conversions are carried separately');
   const daily = (await api('dailyStats', { start, end })).json;
