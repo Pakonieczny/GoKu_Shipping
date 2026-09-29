@@ -2320,7 +2320,13 @@ function metalToBadge(label){
           window.StationTimeline && window.StationTimeline.init({
             station: "assembly",
             device: stName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || "assembly",       // "assembly-1"
-            getEmployee: () => localStorage.getItem("employee_name") || ""
+            /* who: the person signed in on this station's PIN login right now, by the name the login stored ("" when nobody
+               is; never the PIN). The timeline's default follows it, so nothing after a sign-out carries the last name. */
+            getEmployee: () => {
+              const n = String(localStorage.getItem("employee_name") || "").trim();
+              try { window.OrderTimeline && window.OrderTimeline.config({ by: n }); } catch (_) {}
+              return n;
+            }
           });
         } catch (err) { console.warn("Station timeline init failed:", err); }
 
@@ -2775,7 +2781,7 @@ function metalToBadge(label){
       const words = String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
       const done  = w => /^qa\d{0,2}$/.test(w) || /^(assembled|done|complete|completed|finished)$/.test(w);
       return words.length > 0 && words.length <= 3 && words.some(done)
-        && words.every(w => done(w) || /^(assembly|ok|okay|checked|\d{1,2})$/.test(w));
+        && words.every(w => done(w) || /^(assembly|ok|okay|checked|check|good|ready|packed|and|am|pm|\d{1,2})$/.test(w));
     }
 
     if (sendBtn) {
@@ -2804,7 +2810,11 @@ function metalToBadge(label){
           newMsgInp.value = "";                // clear box on success
           try {
             if (window.StationTimeline && isAssemblyStamp(msgTxt)) {
-              window.StationTimeline.did("assembled", orderId, "Assembled · " + msgTxt, { message: msgTxt });
+              /* the Assembled seal names who sent the stamp (the PIN login's name, via getEmployee); nobody signed in:
+                 by "" and signedIn false, so the seal says "not signed in" */
+              const signedIn = !!String(localStorage.getItem("employee_name") || "").trim();
+              window.StationTimeline.did("assembled", orderId, "Assembled · " + msgTxt,
+                signedIn ? { message: msgTxt } : { message: msgTxt, signedIn: false });
             }
           } catch (errTl) { console.warn("Station timeline failed:", errTl); }
         } catch (err) {
