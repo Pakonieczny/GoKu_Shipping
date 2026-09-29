@@ -426,6 +426,13 @@ async function op_putSheet(b) {
     // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
     const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
     if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — an order line goes on a sheet once`, status: 409 }; }
+    // a piece a cleanup took off this sheet on purpose (its record's `cleanup`, rg-cleanup-2026-09-29) is not put back by
+    // a page that still shows the sheet as it was before: that page reloads first
+    const cleared = new Set(old.cleanup ? [].concat(old.cleanup.removedPoolIds || [], old.cleanup.removedCharmIds || []) : []);
+    if (cleared.size) {
+      const back = [...new Set([...(Array.isArray(s.poolIds) ? s.poolIds : []), ...(Array.isArray(s.charms) ? s.charms.flatMap(c => [c && c.id, c && c.poolId]) : []), ...(Array.isArray(s.placements) ? s.placements.map(p => p && p.id) : [])].filter(id => cleared.has(id)))];
+      if (back.length) return { error: `Sheet ${s.id} was not saved: it would put back ${back[0]}, which was taken off this sheet on purpose (${old.cleanup.id || "cleanup"}). Reload the page to see the sheet as it is now`, status: 409 };
+    }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
@@ -1277,7 +1284,7 @@ async function op_setUpdate(b) {
   const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" };
   const ref=col(SETS).doc(id);
   await db.runTransaction(async tx=>{
-    const old=await tx.get(ref),next={...(old.exists?old.data():{}),...(b.patch || {})};
+    const old=await tx.get(ref),patch=withoutCleared(old.exists?old.data():null,b.patch || {}),next={...(old.exists?old.data():{}),...patch};
     if(/^complete/.test(next.status || '')) {
       const ids=[...new Set(next.sheetIds || [])];
       if(!ids.length)throw new Error('A set without sheets is not ready for laser');
@@ -1294,11 +1301,20 @@ async function op_setUpdate(b) {
     }
     // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
-    const doc=Object.assign({}, b.patch || {},{setId:id,updatedAt:FV.serverTimestamp()});
+    const doc=Object.assign({}, patch,{setId:id,updatedAt:FV.serverTimestamp()});
     delete doc.laserDoneAt;delete doc.laserDoneBy;   // written by op_laserDone alone
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
+}
+/* Copies a cleanup took off a set's sheet on purpose (the set's `cleanup`, rg-cleanup-2026-09-29) stay off the set when a
+   page that still lists them saves its orders. Nothing else in the patch changes. */
+function withoutCleared(set, patch) {
+  const gone = new Set(set && set.cleanup && Array.isArray(set.cleanup.removedPoolIds) ? set.cleanup.removedPoolIds : []);
+  if (!gone.size || !patch || !patch.orders || typeof patch.orders !== "object") return patch;
+  const orders = {};
+  for (const [k, o] of Object.entries(patch.orders)) orders[k] = o && Array.isArray(o.lines) ? Object.assign({}, o, { lines: o.lines.map(l => (l && Array.isArray(l.copies) ? Object.assign({}, l, { copies: l.copies.filter(c => !(c && gone.has(c.poolId))) }) : l)) }) : o;
+  return Object.assign({}, patch, { orders });
 }
 async function op_setGet(b) { const id = str(b.setId, 80); if (!isId(id)) return { error: "bad set id" }; const s = await col(SETS).doc(id).get(); if (!s.exists) return { set: null }; const d = s.data(); d.updatedAt = ms(d.updatedAt); d.createdAt = ms(d.createdAt); d.committedAt = ms(d.committedAt) || d.committedAt || null; return { set: d }; }
 async function op_setList(b) {
@@ -2230,6 +2246,130 @@ async function op_sessionsList(b) {
   return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
 }
 OPS.sessionsList = op_sessionsList;
+
+/* ── ONE-OFF CLEANUP rg-cleanup-2026-09-29 (Paul, 29 Sep 03:58 UTC, "Clean it up": save a backup, then remove the second
+   lion and line 2; line 1 and everything else stay as they are). Delete this whole block, down to its OPS line, once it
+   has run; the putSheet and setUpdate checks that read a record's `cleanup` stay.
+   RG 14/20 · Set 1 · Sheet 1 (rose-mul8mkas-azxcg5mkas, sandbox workspace) holds the custom lion of order 4176537942
+   twice (copies _1 and _2 of line 4176537942_5219250436, sent as Test_Charm.ai × 2) and green line 2 around both lions,
+   which no Cut Sheet press made. This takes the later copy (_2, "2/2") off the sheet and removes line 2 (rosePlanJson);
+   line 1 (roseProtectedJson) is not touched, so the lion left on the sheet is outside every line until Cut Sheet.
+   It works on this one sheet, in the sandbox, only while every record it reads is exactly as backed up at 04:19 UTC
+   (/mnt/project-files/backups/rg-cleanup-2026-09-29: RG0929.expect), and once. A dry run (the default) answers the exact
+   before and after and writes nothing; {dryRun:false, confirm:"rg-cleanup-2026-09-29"} writes, in one transaction: a copy
+   of every record it changes (Sandbox_Charm_Nest_Cleanup_Backups/rg-cleanup-2026-09-29, whose presence also refuses a
+   second run), the sheet, pool row _2, the set's entry for the order and a note on the order's timeline. No Etsy call,
+   no file in Storage, no other record. The sheet is marked dirty: its saved front file still shows both lions, so the
+   page nests it again (line 1 locked) and saves new files before its Cut Sheet. ── */
+const RG0929 = {
+  id: "rg-cleanup-2026-09-29", sheetId: "rose-mul8mkas-azxcg5mkas", sheetLabel: "RG Sheet 1", orderId: "4176537942", lineKey: "4176537942_5219250436", transactionId: "5219250436",
+  keepPool: "4176537942_5219250436_1", dropPool: "4176537942_5219250436_2",
+  keepCharm: "cust:16e926a18c4cdb9d:4176537942_5219250436_1", dropCharm: "cust:16e926a18c4cdb9d:4176537942_5219250436_2",
+  setId: "set-2026-09-28-1", stockId: "rgs-28f9597b-1002-4480-8ea6-8f577eeb0f89", backups: "Charm_Nest_Cleanup_Backups",
+  note: "Extra copy removed from RG 14/20 Sheet 1 (it was placed twice by mistake); line 2 removed (it was added without Cut Sheet)",
+  // rgDigest0929 of the records as read at 2026-09-29T04:19:03.982Z (the backup's sheet.json, pools-of-order.json,
+  // set.json and stock.json); tests/charm-nest/rg-cleanup-0929.cjs checks these against the backup's files
+  expect: { sheet: "fe295e5ac3e6443d0340dd862ba1a34166bd795a870b96a6914f99896d8693d0", pools: "e585a6b5ba2195db74c7478456bb535e241e65759946bc996632f05d142e189c",
+    set: "45612205f6e3a165efdadfad6a70a80e95df68ec7ab1ef4cb9d5dcbdc1f8a08a", stock: "91a70d4b459fd1a99544e91a171cc99db1af3fb7a92dbd20614c2a8d1d0035a4" }
+};
+// what of each record the check covers: the sheet's own fields (not its readiness or links, which a read makes again)
+const RG0929_SHEET = ["id", "metal", "day", "runId", "setId", "draft", "dirty", "saving", "status", "archived", "roseCutAt", "roseStockId", "roseRevision", "rosePlanHash", "roseFingerprint", "rosePlanJson", "roseProtectedJson",
+  "poolIds", "placements", "charms", "charmCount", "placedCount", "rejects", "rejectCount", "density", "freePt2", "usablePt2", "names", "orders", "listings", "sources", "backPool", "label", "outputs", "verification", "laserDoneAt", "updatedAt"];
+// one form for a record as stored and as a read op answers it: times as milliseconds, keys in order, no download links
+const rgCanon0929 = v => (v && typeof v.toMillis === "function" ? v.toMillis() : Array.isArray(v) ? v.map(rgCanon0929) : v && typeof v === "object"
+  ? Object.fromEntries(Object.keys(v).sort().filter(k => v[k] !== undefined && !["url", "thumbUrl", "aiUrl"].includes(k)).map(k => [k, rgCanon0929(v[k])])) : v);
+function rgDigest0929({ sheet, pools, set, stock }) {
+  const sha = v => require("crypto").createHash("sha256").update(JSON.stringify(rgCanon0929(v))).digest("hex");
+  const pick = (d, keys) => (d ? Object.fromEntries(keys.filter(k => d[k] !== undefined).map(k => [k, d[k]])) : null);
+  return {
+    sheet: sha(pick(sheet, RG0929_SHEET)),
+    pools: sha([RG0929.keepPool, RG0929.dropPool].map(id => (pools && pools[id]) || null)),
+    set: sha(set ? { sheetIds: set.sheetIds || null, status: set.status || null, committedAt: ms(set.committedAt) || set.committedAt || null, order: (set.orders && set.orders[RG0929.orderId]) || null } : null),
+    stock: sha(pick(stock, ["id", "owner", "revision", "profileJson", "available", "wPt", "hPt"]))
+  };
+}
+// a record as JSON text for the backup, times as {ms}, Storage download tokens left out (a read makes the links again)
+const rgJson0929 = v => JSON.stringify(v, (k, x) => (x && typeof x.toMillis === "function" ? { ms: x.toMillis() } : x)).replace(/([?&]token=)[^"&\\\s]+/g, "$1REDACTED");
+async function op_rgCleanup0929(b) {
+  const C = RG0929, TL = require("./_orderTimeline");
+  if (PREFIX !== "Sandbox_") return { error: `${C.id} works only in the sandbox workspace, where the sheet is: send sandbox:true`, status: 400 };
+  if (b.sheetId !== undefined && b.sheetId !== C.sheetId) return { error: `${C.id} works only on sheet ${C.sheetId}`, status: 400 };
+  const write = b.dryRun === false;
+  if (write && b.confirm !== C.id) return { error: `Nothing was changed. To make the change send dryRun:false with confirm:"${C.id}"`, status: 400 };
+  const by = str(b.by, 80) || "cleanup", stockRef = col("Charm_Nest_Rose_Stock").doc(C.stockId);
+  const refs = { sheet: col(SHEETS).doc(C.sheetId), keep: col(POOL).doc(C.keepPool), drop: col(POOL).doc(C.dropPool), set: col(SETS).doc(C.setId), stock: stockRef, cut: stockRef.collection("cuts").doc(C.sheetId), backup: db.collection(PREFIX + C.backups).doc(C.id) };
+  const noteEvent = { orderId: C.orderId, type: "note", by, station: "sorter", lineKey: C.lineKey, transactionId: C.transactionId, sheetId: C.sheetId, sheet: C.sheetLabel, setId: C.setId, text: C.note,
+    data: { cleanup: C.id, removedPoolIds: [C.dropPool], keptPoolIds: [C.keepPool], lineRemoved: 2, lineKept: 1, backup: `${PREFIX}${C.backups}/${C.id}` }, id: C.id };
+  const noteKey = TL.clean(noteEvent).key, noteRef = db.collection(PREFIX + TL.COL).doc(noteKey);
+  return db.runTransaction(async tx => {
+    // every read before any write
+    const got = {}; for (const [k, ref] of Object.entries(refs)) got[k] = await tx.get(ref);
+    const noted = await tx.get(noteRef);
+    if (got.backup.exists || noted.exists) { const d = got.backup.exists ? got.backup.data() : {}; return { error: `Nothing was changed: ${C.id} already ran${d.at ? ` (${new Date(num(d.at)).toISOString()}${d.by ? " by " + d.by : ""})` : ""}. It runs once`, status: 409, done: true }; }
+    const missing = ["sheet", "keep", "drop", "set", "stock"].filter(k => !got[k].exists);
+    if (missing.length) return { error: `Nothing was changed: not found: ${missing.join(", ")}`, status: 409 };
+    const sheet = got.sheet.data(), keep = got.keep.data(), drop = got.drop.data(), set = got.set.data(), stock = got.stock.data();
+    const digest = rgDigest0929({ sheet, pools: { [C.keepPool]: keep, [C.dropPool]: drop }, set, stock });
+    const changed = Object.keys(C.expect).filter(k => digest[k] !== C.expect[k]);
+    if (changed.length) return { error: `Nothing was changed: the ${changed.join(", ")} record${changed.length > 1 ? "s have" : " has"} changed since the backup of 2026-09-29 04:19 UTC. Read ${changed.length > 1 ? "them" : "it"} again and decide again before any cleanup`, status: 409, changed, digest, expect: C.expect };
+    // the digest pins every record read; these say in words what the change relies on
+    let plan = null, guard = null; try { plan = JSON.parse(sheet.rosePlanJson); guard = JSON.parse(sheet.roseProtectedJson); } catch (_) { /* said below */ }
+    const placements = Array.isArray(sheet.placements) ? sheet.placements : [], charms = Array.isArray(sheet.charms) ? sheet.charms : [], poolIds = Array.isArray(sheet.poolIds) ? sheet.poolIds : [];
+    const count = (list, f) => list.filter(f).length, stages = (plan && plan.stages) || [], sorted = a => JSON.stringify([...(a || [])].sort());
+    const order = set.orders && set.orders[C.orderId], line = order && Array.isArray(order.lines) ? order.lines.find(l => String(l.transactionId) === C.transactionId) : null;
+    const why = [
+      [sheet.metal !== "rose" || sheet.archived || sheet.roseCutAt || num(sheet.laserDoneAt) > 0 || got.cut.exists, "the sheet is not an uncut Rose Gold sheet"],
+      [sheet.roseStockId !== C.stockId || stock.owner !== C.sheetId || stock.revision !== sheet.roseRevision || stock.profileJson != null, "its physical sheet is not this layout's uncut stock"],
+      [count(placements, p => p.id === C.dropCharm) !== 1 || count(placements, p => p.id === C.keepCharm) !== 1 || count(charms, c => c.id === C.dropCharm) !== 1 || count(poolIds, id => id === C.dropPool) !== 1, "the sheet does not hold the lion twice"],
+      [sheet.charmCount !== charms.length || sheet.placedCount !== placements.length || sheet.names !== charms.map(c => c.name).filter(Boolean).join(" "), "its counts do not match its pieces"],
+      [!plan || !guard || stages.length !== 2 || sorted(stages[1].ids) !== sorted([C.keepCharm, C.dropCharm]), "line 2 is not the lions' line"],
+      [!plan || !guard || JSON.stringify(guard.stages) !== JSON.stringify(stages.slice(0, 1)) || JSON.stringify(guard.lines) !== JSON.stringify((plan.lines || []).slice(0, 1)) || (guard.placements || []).some(p => p.id === C.keepCharm || p.id === C.dropCharm), "line 1 is not the saved line of the other charms"],
+      [drop.sheetId !== C.sheetId || keep.sheetId !== C.sheetId || !line || count(line.copies || [], c => c.poolId === C.dropPool) !== 1, "the pool rows or the set do not have the second copy on this sheet"]
+    ].filter(([bad]) => bad).map(([, words]) => words);
+    if (why.length) return { error: `Nothing was changed: ${why.join("; ")}`, status: 409, digest };
+    const at = Date.now(), area = p => +(p && p.areaPt2) || 0, placedArea = placements.reduce((n, p) => n + area(p), 0);
+    const share = placedArea > 0 ? area(placements.find(p => p.id === C.dropCharm)) / placedArea : 0, used = num(sheet.usablePt2) - num(sheet.freePt2);
+    const keptCharms = charms.filter(c => c.id !== C.dropCharm), keptPlacements = placements.filter(p => p.id !== C.dropCharm);
+    const backupPath = `${PREFIX}${C.backups}/${C.id}`, reason = "placed twice by mistake: the later copy (2/2) is taken off; green line 2 was added without Cut Sheet and is removed";
+    // the sheet: one lion, line 1 only (its saved guard, untouched), the fill worked out again from the pieces' areas
+    const sheetAfter = {
+      placements: keptPlacements, charms: keptCharms, poolIds: poolIds.filter(id => id !== C.dropPool), names: keptCharms.map(c => c.name).filter(Boolean).join(" "),
+      charmCount: keptCharms.length, placedCount: keptPlacements.length,
+      freePt2: Math.round(num(sheet.usablePt2) - used * (1 - share)), density: num(sheet.density) * (1 - share),
+      rosePlanJson: null, rosePlanHash: null, roseFingerprint: null, dirty: true,
+      cleanup: { id: C.id, at, by, reason, removedPoolIds: [C.dropPool], removedCharmIds: [C.dropCharm], lineRemoved: 2, lineKept: 1, fillEstimated: true, backup: backupPath }
+    };
+    const dropAfter = { state: "abandoned", sheetId: null, setId: null, cleanup: { id: C.id, at, by, reason, fromSheetId: C.sheetId, fromSheetName: drop.sheetName || null, fromSetId: drop.setId || null } };
+    const orderAfter = Object.assign({}, order, { lines: order.lines.map(l => (l === line ? Object.assign({}, l, { copies: l.copies.filter(c => c.poolId !== C.dropPool) }) : l)) });
+    const setAfter = { orders: Object.assign({}, set.orders, { [C.orderId]: orderAfter }), cleanup: { id: C.id, at, by, removedPoolIds: [C.dropPool], sheetId: C.sheetId } };
+    const before = { sheet: Object.fromEntries(Object.keys(sheetAfter).map(k => [k, sheet[k] === undefined ? null : sheet[k]])), dropPool: Object.fromEntries(Object.keys(dropAfter).map(k => [k, drop[k] === undefined ? null : drop[k]])), setOrder: order };
+    const writes = [`${PREFIX}${C.backups}/${C.id} (new)`, `${PREFIX}${SHEETS}/${C.sheetId}`, `${PREFIX}${POOL}/${C.dropPool}`, `${PREFIX}${SETS}/${C.setId}`, `${PREFIX}${TL.COL}/${noteKey} (new)`];
+    const summary = [
+      `Takes ${C.dropCharm} (pool ${C.dropPool}, "2/2", at ${placements.find(p => p.id === C.dropCharm).cxPt}, ${placements.find(p => p.id === C.dropCharm).cyPt}) off ${C.sheetId}: ${placements.length} pieces become ${keptPlacements.length}.`,
+      `Removes green line 2 (rosePlanJson, rosePlanHash and roseFingerprint become null). Line 1 stays in roseProtectedJson, which is not written (sha256 ${require("crypto").createHash("sha256").update(sheet.roseProtectedJson).digest("hex")}).`,
+      `The lion left (${C.keepCharm}) is outside every line until the next Cut Sheet. The sheet is marked dirty so the page nests it again with line 1 locked and saves new files.`,
+      `Pool row ${C.dropPool} becomes abandoned (off the sheet and the set); the set's copies of line ${C.lineKey} become copy 1 only; the order's timeline gets a note.`
+    ];
+    if (!write) return { ok: true, dryRun: true, id: C.id, digest, matchesBackup: true, summary, writes, before, after: { sheet: sheetAfter, dropPool: dropAfter, setOrder: orderAfter }, note: TL.clean(Object.assign({ at }, noteEvent)).doc };
+    const backup = {
+      id: C.id, at, by, workspace: PREFIX, sheetId: C.sheetId, digest, writes, summary,
+      words: "Each record as it was just before the cleanup changed it, as JSON text (times as {ms}; Storage download tokens left out as token=REDACTED, which getSheet makes again from the paths). To undo it by hand: put before.sheet's fields named in changedSheetFields back on the sheet and delete its cleanup, pool row _2 back from before.pools, the set's orders and cleanup back from before.set, and delete the note.",
+      changedSheetFields: Object.keys(sheetAfter),
+      before: { sheet: rgJson0929(sheet), pools: { [C.keepPool]: rgJson0929(keep), [C.dropPool]: rgJson0929(drop) }, set: rgJson0929(set), stock: rgJson0929(stock) },
+      noteKey, createdAt: FV.serverTimestamp()
+    };
+    if (Buffer.byteLength(JSON.stringify(backup)) > SHEET_DOC_BYTES) return { error: "Nothing was changed: the backup would be too large for one record", status: 413 };
+    tx.set(refs.backup, backup);
+    tx.update(refs.sheet, Object.assign({}, sheetAfter, { updatedAt: FV.serverTimestamp() }));
+    tx.update(refs.drop, Object.assign({}, dropAfter, { updatedAt: FV.serverTimestamp() }));
+    tx.update(refs.set, Object.assign({}, setAfter, { updatedAt: FV.serverTimestamp() }));
+    tx.set(noteRef, Object.assign({}, TL.clean(Object.assign({ at }, noteEvent)).doc, { createdAt: FV.serverTimestamp() }));
+    return { ok: true, done: true, id: C.id, at, backup: backupPath, writes, summary };
+  });
+}
+OPS.rgCleanup0929 = op_rgCleanup0929;
+exports.rgDigest0929 = rgDigest0929;
+/* ── end of ONE-OFF CLEANUP rg-cleanup-2026-09-29 ── */
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
