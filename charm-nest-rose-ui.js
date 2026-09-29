@@ -40,6 +40,24 @@
       sh.roseProtected={profile:sh.rosePlan.profile,lines:sh.rosePlan.lines,placements:placements.map(p=>({...p})),shapes:sh.rosePlan.shapes,stages:sh.rosePlan.stages};
     }
   }
+  /* Pieces leave an uncut Rose Gold sheet (a cancelled order's, or taken off by hand: Paul, 29 Sep, "I cancelled the 2 orders
+     ... none of them disappears from the sheet"). The saved green lines they are inside give them up first, on the server
+     (roseTakeOff): a line with a piece left stays exactly as saved, a line with nothing left inside it goes, and this page
+     takes its copy of the lines from the answer, so protect() and the save that follows see the sheet as the cloud has it.
+     Nothing is drawn or added: only Cut Sheet draws a line. Resolves the answer ({changed, removedLines, keptLines, exact}),
+     or null when the sheet has no saved record or is cut; rejects when the cloud could not be asked (nothing is changed then).
+     o: by, at (when), cancel (it is a cancel's). */
+  async function takeOff(sh,ids,o={}){
+    if(sh.metal!=='rose'||sh.roseCutAt||!sh.sheetId||!ids||!ids.length)return null;
+    if(!S.cloud.ok)throw new Error('Reconnect to take the pieces off the Rose Gold sheet');
+    const r=await C.api('charmNestLibrary',{op:'roseTakeOff',sheetId:sh.sheetId,ids:[...ids],by:o.by||undefined,at:o.at||undefined,cancel:!!o.cancel,allowanceMm:sh.roseAllowanceMm||undefined},{quiet:true});
+    if(r&&r.changed){
+      if(r.protectedJson)sh.roseProtected=parse(r.protectedJson);else delete sh.roseProtected;
+      delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;sh._roseFullKey=null;sh._roseError=null;
+      window.Session?.schedule();
+    }
+    return r||null;
+  }
   async function prepare(sh,opts={}){
     if(sh.metal!=='rose')return;
     if(sh.roseCutAt)throw new Error('This layout has already been cut');
@@ -271,7 +289,7 @@
       if(!sh.roseCutAt&&sh.rosePlan&&!sh.dirty){const view=shown(sh.rosePlan,sh);stroke(ctx,view.lines,k,'#008974',Math.max(2.5,.2*k),true);numberLines(ctx,view,k);}
     }ctx.restore();
   }
-  window.RoseStock={protect,prepare,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut};
+  window.RoseStock={protect,prepare,takeOff,plan,ensurePlan:sh=>sh.rosePlanHash && sh.rosePlanKey===fingerprint(sh) ? Promise.resolve() : plan(sh),load,restore,render,paint,record,waiting,waitWords,showCut};
   C.allSheets().forEach(render);
 })();
 
