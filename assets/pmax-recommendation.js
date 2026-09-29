@@ -68,6 +68,15 @@
       currency: currency, budget: budget, days: days, spendCeiling: round(budget * days), baseline: b, rates: rates, scenarios: scenarios, missing: missing, budgetToEvidenceFx: fx || null, budgetFxDate: candidate.budgetFxDate || null,
       methodology: 'Conditional planning scenarios, not a Google forecast, guaranteed sales, or a confidence interval. Assumes the planned budget is spent and historical traffic quality persists. Clicks = spend / paid CPC; conversions = clicks × paid conversion rate; revenue = conversions × recorded value per conversion; impressions = clicks / paid CTR. Sensitivity varies CPC +25%/−20% and conversion rate −25%/+25%, holding CTR and value per conversion fixed. PMax reported conversions may include non-purchase goals; these are not verified incremental orders. Actual delivery, conversion lag and competition can change every result.' + (b && b.sourceCurrency ? ' USD history is converted into the budget currency using the verified rate for ' + (b.budgetFxDate || 'the current reporting date') + '; this planning conversion is not a reconstruction of historical native-currency payments.' : '') };
   }
+  // The dated occasion windows the research engine attached (candidate.research.whyNow.timing). Only entries that carry a real date count.
+  function datedTiming(candidate) {
+    var research = candidate && candidate.research, why = research && research.whyNow, list = why && Array.isArray(why.timing) ? why.timing : [];
+    return list.filter(function (t) { return t && /^\d{4}-\d{2}-\d{2}$/.test(String(t.date || '')); });
+  }
+  function researchHeadline(candidate) {
+    var h = candidate && candidate.research && candidate.research.headline;
+    return typeof h === 'string' && h.trim() ? h.trim() : '';
+  }
   function seasonality(rows, candidate, now, legacy) {
     var map = {}, coverage = candidate.seasonalityCoverage || {}, totals = { orders: 0, orders30d: 0, revenue: 0, revenue30d: 0 };
     rows.forEach(function (p) {
@@ -84,8 +93,10 @@
     var detail = legacy ? 'Refresh research to load monthly history for these exact products.' : months.length ? months.length + ' month(s) with recorded sales for these products' + (peak ? '; the best complete month was ' + peak.month + ' (' + peak.orders + ' product-order match' + (peak.orders === 1 ? '' : 'es') + ').' : '; incomplete months cannot establish a seasonal peak.') : 'No monthly order history is available for these exact products.';
     // The trend is stated once, here, with its counts; small counts make a ratio fragile, so the counts always accompany it.
     if (trend) detail += trend.dailyRateRatio == null ? ' Latest 30 days: ' + trend.recentOrders + ' product-order matches; previous 60 days: ' + trend.previous60Orders + ', too few to show a trend.' : ' Daily purchase pace over the latest 30 days is ' + trend.dailyRateRatio + '× the previous 60 days (' + trend.recentOrders + ' versus ' + trend.previous60Orders + ' product-order matches)' + (trend.direction === 'rising' ? ': recent momentum, not a proven seasonal effect.' : trend.direction === 'falling' ? '; test cautiously rather than scale.' : ', broadly steady.');
-    detail += ' With no multi-year comparison, no recurring seasonal uplift or holiday lift is assumed.';
-    return { status: legacy || !months.length ? 'insufficient_history' : 'observed_demand', title: 'Why now · demand and seasonality', detail: detail, months: months, trend: trend, coverage: coverage, totals: totals };
+    // The occasion calendar has dated the season when research supplied timing; the caveat only stands where nothing dated it.
+    var dated = datedTiming(candidate).length > 0;
+    if (!dated) detail += ' With no multi-year comparison, no recurring seasonal uplift or holiday lift is assumed.';
+    return { status: legacy || !months.length ? 'insufficient_history' : 'observed_demand', title: dated ? 'Your sales history' : 'Why now · demand and seasonality', detail: detail, months: months, trend: trend, coverage: coverage, totals: totals, datedTiming: dated };
   }
   function buildRecommendation(candidate, options) {
     candidate = candidate || {}; options = options || {};
@@ -118,7 +129,8 @@
     if (!legacy && candidate.demandCoverage && (!candidate.demandCoverage.days30 || !candidate.demandCoverage.days90)) limits.push('Some order history is incomplete, so counts are lower bounds and period comparisons are unreliable.');
     if (projections.baseline && projections.baseline.scope !== 'selected_products') limits.push('Projection rates come from ' + projections.baseline.label + ', not demonstrated performance of this exact selection.');
     limits.push('An order with several of these products is counted once for each of them.');
-    var summary = legacy ? 'Refresh the evidence for these ' + products.length + ' selected product(s) before relying on the saved recommendation.' : totals.orders > 0 || free.conversions > 0 ? 'Test these products because buyers have already chosen them' + (seasonal.trend && seasonal.trend.direction === 'rising' ? ' and recent demand is increasing' : '') + '. The next question is whether paid reach can convert profitably.' : 'This selection needs more purchase evidence before a strong advertising case can be made.';
+    var headline = researchHeadline(candidate);
+    var summary = headline ? headline : legacy ? 'Refresh the evidence for these ' + products.length + ' selected product(s) before relying on the saved recommendation.' : totals.orders > 0 || free.conversions > 0 ? 'Test these products because buyers have already chosen them' + (seasonal.trend && seasonal.trend.direction === 'rising' ? ' and recent demand is increasing' : '') + '. The next question is whether paid reach can convert profitably.' : 'This selection needs more purchase evidence before a strong advertising case can be made.';
     return { schema: 1, summary: summary, reasons: reasons, seasonality: seasonal, forecast: projections, scope: scope, limitations: limits };
   }
   return { buildRecommendation: buildRecommendation, paidTotal: paidTotal };
