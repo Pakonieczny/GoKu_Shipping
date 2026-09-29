@@ -117,6 +117,10 @@ async function engineChecks(){
  reset();W.mtdNative=800;await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00\) has reached your monthly stop threshold of USD 500/,'enable refused once month-to-date spend reached the monthly stop');
  W.rate=null;await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:5000})}),/without an exchange rate/,'no exchange rate: monthly stop cannot be verified, nothing enabled');
  f.docs.set('Brites_GAds_State/fxRates',{['CAD:'+ymd(tz,-3*86400000)]:0.7,['CAD:2020-01-01']:0.1,['EUR:'+today]:2});await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00/,'recent saved rate used when the rate service is down');
+ // Final daily rates are saved in fxRatesFinal (the reporting's store); the retired fxRates document is no longer written.
+ f.docs.delete('Brites_GAds_State/fxRates');f.docs.set('Brites_GAds_State/fxRatesFinal',{['CAD:'+ymd(tz,-2*86400000)]:0.7,['CAD:2020-01-01']:0.1,['EUR:'+today]:2});
+ await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00/,'rates the reporting saves (fxRatesFinal) back the monthly stop when the rate service is down');
+ {const g=await E.monthlySpendGuard({ctrl:C({maxMonthlySpend:500})});check(g.tripped&&g.mtd===560&&muts.some(m=>m.ops.every(o=>o.update.status==='PAUSED')),'monthly stop still pauses with the rate service down, on the saved final rate');muts.length=0;}
  // Budgets: checked as a total, resolved server-side, lowering always allowed.
  reset();await refuses(()=>E.setCampaignBudget('1',75,{ctrl:C()}),/CAD 105\.00, over your daily ceiling/,'budget raise refused when the total would pass the ceiling');
  await E.setCampaignBudget('1',65,{ctrl:C(),budgetRes:B(999)});check(muts[0].ops[0].update.resourceName===B(11)&&muts[0].ops[0].update.amountMicros===65e6,'budget written to the live resource, never a stale browser one');
@@ -131,6 +135,11 @@ async function engineChecks(){
  reset();W.camps[4].status='ENABLED';W.budgets[B(15)]=60;const t=await E.enforceBudgetCeiling({ctrl:C()});
  check(t.total===120&&muts.length===1&&muts[0].ops.length===2&&new Set(muts[0].ops.map(o=>o.update.resourceName)).size===2,'shared budget counted and trimmed once; ended campaign ignored');
  check(muts[0].ops.reduce((n,o)=>n+o.update.amountMicros/1e6,0)<=100,'trimmed total at or under the ceiling');
+ // A budget under the 1-a-day floor is never raised by a trim; the larger budgets make the room instead.
+ reset();W.budgets[B(11)]=150;W.budgets[B(15)]=0.5;await E.enforceBudgetCeiling({ctrl:C()});
+ {const after={[B(11)]:150,[B(15)]:0.5};(muts[0]||{ops:[]}).ops.forEach(o=>{after[o.update.resourceName]=o.update.amountMicros/1e6;});
+  check(after[B(15)]===0.5&&after[B(11)]<150,'a trim never raises a budget below the floor: '+JSON.stringify(after));
+  check(after[B(11)]+after[B(15)]<=100,'and the trimmed total still fits the ceiling: '+(after[B(11)]+after[B(15)]));}
 
  // Anomaly breaker: no false trip on a launch; trips on a real spike or on spend beyond 2x the ceiling.
  reset();W.baseline=[10,10,10];W.yesterday=60;let a=await E.anomalyCheck({ctrl:C()});check(!a.tripped&&!f.docs.has('Brites_GAds_Control/control'),'launch after a quiet spell does not trip');
@@ -147,7 +156,7 @@ async function engineChecks(){
  const budgetDraft=to=>({type:'budget',status:'APPROVED',payload:{service:'campaignBudgets',operations:[{update:{resourceName:B(11),amountMicros:to*1e6},updateMask:'amount_micros'}],meta:{budgetCurrency:'CAD',baseline:[{budgetRes:B(11),from:60,to}]}}});
  const draft=()=>f.docs.get('Brites_GAds_Approvals/d1');
  reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));W.budgets[B(11)]=50;await refuses(()=>E.applyApproval('d1',C({maxDailyBudgetTotal:500})),/changed after this proposal/,'budget edited since review: approval refused');check(draft().status==='APPROVED'&&/changed after/.test(draft().lastError),'refusal shown on the draft');
- reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));await refuses(()=>E.applyApproval('d1',C()),/exceed the account ceiling/,'approved raise refused when the spendable total would pass the ceiling');
+ reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));await refuses(()=>E.applyApproval('d1',C()),/CAD 102\.00, over your daily ceiling of CAD 100\.00/,'approved raise refused when the spendable total would pass the ceiling, with the figures');
  reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(66));await E.applyApproval('d1',C());check(muts.length===1&&draft().status==='APPLIED','matching, in-limit budget move publishes once');
  await assert.rejects(()=>E.applyApproval('d1',C()),/already published/);check(muts.length===1,'cannot publish twice');
  reset();f.docs.set('Brites_GAds_Approvals/d1',{type:'search',status:'APPROVED',payload:{mutateOperations:[{campaignBudgetOperation:{create:{resourceName:B(-1),amountMicros:5e6}}},{campaignOperation:{create:{resourceName:'customers/123/campaigns/-2',name:'BA · x',status:'ENABLED',campaignBudget:B(-1)}}}]}});

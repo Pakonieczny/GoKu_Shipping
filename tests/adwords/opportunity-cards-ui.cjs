@@ -68,6 +68,14 @@ await test('occasion date, markets, data age and eligibility reason are on the c
   assert.match(pb,/<b>Budget<\/b> — .*Measured demand limits this/);assert.match(pb,/the lower of daily budget ÷ expected CPC and the ~0\.5 a day/);assert.match(pb,/data fetched /);
   const q=Object.assign({},o,{eligibility:{ready:false,measuredKeywords:4,expectedSales:0.2,reason:'Measured demand supports ~0.2 expected sales over the run, too few for a test.'}});ctx.OPPS=[q];
   const hq=ctx.oppCard(q,0,100);assert.match(hq,/disabled>Too few expected sales<\/button>/);assert.match(hq,/oppCardBlock">Measured demand supports ~0\.2 expected sales/);delete ctx.DASH;today='2026-10-01';});
+await test('a web-verified occasion date links the page it was verified on: a small external link, http(s) only',()=>{today='2026-10-21';
+  const card=dc=>{const o=served(research(300),{durationDays:11,startDate:'2026-10-21',dateCheck:dc});ctx.OPPS=[o];return ctx.oppCard(o,0,100);},web=url=>({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com',url});
+  const h=card(web('https://www.timeanddate.com/holidays/canada/halloween?a=1&b="2"')),a=/verified on <a class="oppDateSrc" href="([^"]*)" target="_blank" rel="noopener noreferrer"[^>]*>([^<]*)<\/a>/.exec(h);
+  assert(a,'source link');assert.equal(a[1],'https://www.timeanddate.com/holidays/canada/halloween?a=1&amp;b=&quot;2&quot;');assert.equal(a[2],'timeanddate.com ↗');assert.match(h,/confirmed by web research: timeanddate\.com/);
+  assert(!card({source:'calendar rule',proposedDate:'2026-10-30',reference:null,url:null}).includes('oppDateSrc'),'a calendar-rule date has no source link');
+  assert(!card({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com'}).includes('oppDateSrc'),'research saved before sources were kept shows no link');
+  for(const url of ['javascript:alert(1)','https://evil.example@good.example/x','//cdn.example/x',' https://lead.example/x','ftp://files.example/x'])assert(!card(web(url)).includes('oppDateSrc'),url);
+  today='2026-10-01';});
 await test('editing the dates keeps a valid window: one-day runs allowed, an end before the start is corrected',()=>{today='2026-10-01';const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
   const els={},el=s=>els[s]||(els[s]={value:'',textContent:'',title:'',min:'',classList:{toggle(){}}}),key=s=>s.replace(/\[data-i="\d+"\]/,''),cards={querySelector:s=>el(key(s)),querySelectorAll:s=>[el(key(s))]};
   el('.opBud').value='10';el('.opStart').value='2026-10-05';el('.opEnd').value='2026-10-05';ctx.oppRecalc(cards,0);assert.equal(el('.opEnd').value,'2026-10-05');assert.equal(el('.opDur').textContent,1);assert.equal(el('.opDurU').textContent,'day');
@@ -77,5 +85,30 @@ await test('a research start failure keeps saved results and never polls',async(
   assert.equal(ctx.OPPS.length,1);assert.equal(ctx.OPP_SCANNING,false);assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start.*Saved results are unchanged/);
   ctx.api=async()=>({opportunities:[base()],scannedAt:1,scanning:false,started:false,dispatchError:'background dispatch HTTP 502',lastError:'background dispatch HTTP 502'});await ctx.loadOpportunities(true);
   assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start/);assert.equal(node('oppScan').disabled,false);});
+await test('a draft being written survives a re-render: its card stays busy and a second click starts no second paid generation',async()=>{today='2026-10-01';
+  Object.assign(ctx,{OPP_SCANNING:false,OPP_LAST_ERROR:null,OPP_RECONCILIATION:null,RESEARCH_STATUS:{},OPPSAT:Date.now(),reload:()=>{},btnBusy:(b,l)=>{b.disabled=true;b.innerHTML=l;return()=>{};}});
+  const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
+  const els={},el=s=>els[s]||(els[s]={value:'',innerHTML:'',textContent:''});nodes.oppCards={querySelector:s=>el(s.replace(/\[data-i="\d+"\]/,''))};el('.opBud').value='10';
+  let gens=0,finish;ctx.generateAndWait=()=>{gens++;return new Promise(r=>{finish=r;});};
+  const button=()=>({disabled:false,innerHTML:'',isConnected:true,classList:{add(){},remove(){}}}),first=button();
+  const run=ctx.launchOpp('0',first);assert.equal(gens,1);
+  // Another card finishes, the sort changes or a suggestion is deleted: the list is drawn again mid-generation.
+  first.isConnected=false;const drawn=ctx.oppCard(o,0,100);
+  assert.match(drawn,/class="btn gold sm opGen is-busy"[^>]*disabled>(?:<span[^>]*><\/span>)?Generating/,'the redrawn card shows the draft is still being written');
+  await ctx.launchOpp('0',button());assert.equal(gens,1,'a click on the redrawn card starts no second paid generation');
+  calls.length=0;finish({ok:false,reason:'Fewer than four inventory-matched keywords have measured demand.'});await run;
+  assert.match(toasts.pop(),/Fewer than four/,'the outcome is shown although its card was redrawn');assert(calls.includes('render'),'the card is drawn again with the outcome');
+  assert.match(ctx.oppCard(o,0,100),/>Create review draft</,'once the attempt ends the card can be used again');
+  delete nodes.oppCards;delete ctx.generateAndWait;});
+await test('a demand-capped plan budget is the budget the draft gets: the slider can hold it',()=>{today='2026-09-29';
+  // Thin demand on cheap keywords: the engine sizes the budget down to 1 a day. A slider floor above it would raise it at launch.
+  const cheap=Object.assign(research(40),{cpc:{low:0.3,high:0.9}});cheap.keywords.forEach(k=>{k.low=0.3;k.high=0.9;});
+  const o=served(cheap);assert.equal(o.recommendedDailyBudget,1,'engine budget');ctx.OPPS=[o];delete ctx.OPP_UI[ctx.oppKey(0)];
+  const m=/<input type="range" class="opBud" data-i="0" min="([\d.]+)" max="([\d.]+)" value="([\d.]+)"/.exec(ctx.oppCard(o,0,100));assert(m,'budget slider');
+  assert(+m[1]<=+m[3]&&+m[3]<=+m[2],'min '+m[1]+' ≤ value '+m[3]+' ≤ max '+m[2]);assert.equal(+m[3],1);});
+await test('a plan forecast to lose money names that blocker and never tops Best match',()=>{ctx.RESEARCH_STATUS={search:{status:'ready',checkedAt:Date.now()}};const r='Projected ROAS 0.8x (0.6–1.0x with conversion uncertainty) is below the 2.5x break-even at a 40% margin: this plan is forecast to lose CAD 120 over the run.';
+  const b=ctx.oppBlock(Object.assign(base(),{eligibility:{ready:false,measuredKeywords:5,expectedSales:2,reason:r}}));assert.deepEqual([b.kind,b.label,b.text],['evidence','Forecast below break-even',r]);
+  vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
+  assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
 console.log(`${passed} opportunity card checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

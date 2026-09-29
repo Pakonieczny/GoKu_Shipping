@@ -158,7 +158,7 @@ function memoryDb(seed = {}) {
   const kindness = scan.opportunities.find(o => o.occasion === 'World Kindness Day'), sweetest = scan.opportunities.find(o => o.occasion === 'Sweetest Day');
   ok(kindness && sweetest, 'cited occasions reach Paul: ' + JSON.stringify(scan.opportunities.map(o => o.occasion)));
   eq(kindness.dateCheck, { source: 'web-verified research', proposedDate: '2026-11-13', reference: 'kindnessday.example.org/2026', url: 'https://kindnessday.example.org/2026' }, 'the cited page is kept with the date');
-  eq([kindness.peakDate, kindness.endDate, sweetest.dateCheck.url], ['2026-11-13', '2026-11-13', 'https://www.holidaycalendar.example.com/sweetest-day']);
+  eq([kindness.peakDate, kindness.endDate, sweetest.dateCheck.url], ['2026-11-13', '2026-11-06', 'https://www.holidaycalendar.example.com/sweetest-day'], 'the run ends at the default 7-day order cutoff');
   ok(!scan.opportunities.some(o => /Cat Day|Diwali/.test(o.occasion)), 'unverified dates never reach Paul');
   ok(!scan.scanAudit.checks.some(c => c.category === 'OpenAI'), 'no OpenAI audit rows');
   ok(e.net.calls.every(c => c.url.includes('anthropic')), 'scan made no other network request');
