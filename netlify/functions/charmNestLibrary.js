@@ -833,12 +833,16 @@ function poolEvents(ids, p, before, b) {
     if (!groups.has(orderId)) groups.set(orderId, []);
     groups.get(orderId).push({ id, prev: prev || {} });
   }
-  const by = str(b.by || (kind === "removed" ? p.removedBy : kind === "moved" ? p.movedBy : kind === "setCommitted" ? p.committedBy : "") || (kind === "placed" ? "System" : ""), 80);
+  // (station tracking, 28 Sep: the sorter says who is on duty, b.by, or that nobody is, b.signedIn false: then the stamp
+  //  names no one, by "" with data.signedIn false, and its seal says "not signed in", never "System". A page that says
+  //  neither, an older one, keeps the old default)
+  const nobody = b.signedIn === false;
+  const by = nobody ? "" : str(b.by || (kind === "removed" ? p.removedBy : kind === "moved" ? p.movedBy : kind === "setCommitted" ? p.committedBy : "") || (kind === "placed" ? "System" : ""), 80);
   const out = [];
   for (const [orderId, rows] of groups) {
     const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
     const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
-    const e = { orderId, type: kind, by, station: "sorter", lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: { copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) } };
+    const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
     if (kind === "removed") Object.assign(e, { at, sheetId: was[0] || "", sheet: wasNames.join(", "), setId: rows[0].prev.setId || "", text: [wasNames.join(", "), p.removedReason].filter(Boolean).join(" · "), id: String(at) }, { data: Object.assign(e.data, { reason: str(p.removedReason, 300), sheets: was }) });
     else if (kind === "moved") {
       const from = wasNames.length ? wasNames : String(p.movedFrom || "").split(",").filter(Boolean), to = sheetLabel(null, p.sheetName) || str(p.movedTo, 100);
@@ -1162,12 +1166,16 @@ async function op_backPut(b) {
     catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
     await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); labels.set(sheetId, out.sheet);
   }
-  // each approved back on its order's timeline, once per approval (a copy recorded again keeps its one event)
-  const refused = new Set(errors.map(x => x.row));
+  /* Each approved back on its order's timeline, one event a piece (its copy), once per approval: a copy recorded again
+     keeps its one event. The Engraved seal (station tracking, Paul 28 Sep 23:51): who approved it, as the sorter's own
+     sign-in knows them (approvedBy: an approval without a name is refused above, so it is a signed-in person),
+     where (the sorter, its page) and when (the approval, not the save). No employee id: the sorter's login has none. */
+  const refused = new Set(errors.map(x => x.row)), device = str(b.device, 40) || "charm-nest-1";
   await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
-    const words = str(typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "", 180);
-    return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by: str(x.approvedBy, 80), station: "sorter", lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60) }, id: `${x.poolId}-${num(x.approvedAt)}` };
+    // (the caption is one line: the back's lines joined as the seal and the derived history show them)
+    const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
+    return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, id: `${x.poolId}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
@@ -1627,6 +1635,8 @@ async function op_laserDone(b) {
   if (!kind || !isId(id)) return { error: "bad sheet or set id" };
   const done = b.done !== false && b.done !== "false", by = str(b.by, 80).trim(), at = Date.now();
   if (done && !by) return { error: "Say who marked it completed" };
+  // where it was marked, for the orders' timelines (station tracking B): the page (device) and its view (via)
+  const device = str(b.device, 40).replace(/[^\w.-]/g, ""), via = str(b.via, 24).replace(/[^\w .-]/g, "").trim();
   const mark = done ? { laserDoneAt: at, laserDoneBy: by } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() };
   const res = await db.runTransaction(async tx => {
     let setRef = null, set = null;
@@ -1639,7 +1649,7 @@ async function op_laserDone(b) {
     if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set") return { error: "There is no such set", status: 404 }; else setRef = null; }
     const ids = set ? [...new Set(set.sheetIds || [])].filter(isId).slice(0, 300) : [];
     // (with what the orders' timelines say of each sheet: its orders, its label and the mark it had)
-    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
+    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "poolIds", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     // every read is made: the writes follow
     const touched = [], write = ref => tx.set(ref, Object.assign({}, mark, { updatedAt: FV.serverTimestamp() }), { merge: true });
@@ -1652,7 +1662,9 @@ async function op_laserDone(b) {
       if (setDone !== was) tx.set(setRef, Object.assign({}, setDone ? { laserDoneAt: at, laserDoneBy: by || set.laserDoneBy || null } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() }, { updatedAt: FV.serverTimestamp() }), { merge: true });
     }
     const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
-    const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: Array.isArray(d.orders) ? d.orders : [], d }; });
+    // (a sheet saved without its `orders` list still names them in its pieces' pool ids, "rid_tid_copy")
+    const ordersOf = d => Array.isArray(d.orders) && d.orders.length ? d.orders : (Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey).filter(Boolean);
+    const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: ordersOf(d), d }; });
     return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks };
   });
   if (res.error) return res;
@@ -1662,8 +1674,8 @@ async function op_laserDone(b) {
   await stamp(() => marks.filter(m => (done ? !(m.was > 0) : m.was > 0)).flatMap(m => {
     const sheet = sheetLabel(m.d), orders = [...new Set(m.orders.map(String))].slice(0, 300);
     return orders.map(orderId => done
-      ? { orderId, type: "laserDone", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, id: `${m.sheetId}-${at}` }
-      : { orderId, type: "note", at, by, station: "laser", sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy }, id: `laserUndone-${m.sheetId}-${m.was}` });
+      ? { orderId, type: "laserDone", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: sheet, data: { signedIn: true, marked: kind, via: via || undefined }, id: `${m.sheetId}-${at}` }
+      : { orderId, type: "note", at, by, station: "laser", device, sheetId: m.sheetId, sheet, setId: res.setId || "", text: `laser cut undone · ${sheet}`, data: { undone: "laserDone", laserDoneAt: m.was, laserDoneBy: m.wasBy, signedIn: !!by, via: via || undefined }, id: `laserUndone-${m.sheetId}-${m.was}` });
   }), "laser done");
   return Object.assign(res, { counts: await doneCounts() });
 }
@@ -2078,6 +2090,41 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
+
+/* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
+   sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
+   ({session}, station-session.js). Read-only, behind this function's gate. One range on startAt, newest first: its
+   single-field index, no composite. Bounded: a span of 62 days at most and 1,000 sessions (`truncated` says more were
+   there). A session still open whose heartbeat stopped 15 minutes ago is closed here, when read, at its last heartbeat
+   (endReason "closed"); one still beating is `live`, its minutes counted to the server's `now`. The id a PIN login keeps
+   can be the PIN itself, so no employee id leaves this op. ── */
+const SESSIONS = "Station_Sessions", SESSION_GONE_MS = 15 * 60000, SESSION_SPAN_MS = 62 * 86400000;
+function sessionRow(id, d, now) {
+  const startAt = ms(d.startAt); if (!(startAt > 0)) return null;
+  const lastSeenAt = Math.max(startAt, ms(d.lastSeenAt) || startAt);
+  let endAt = ms(d.endAt) || null, endReason = endAt ? str(d.endReason, 20) || null : null, live = false, minutes;
+  if (endAt) minutes = Number.isFinite(+d.minutes) && d.minutes !== null && d.minutes !== "" ? +d.minutes : (endAt - startAt) / 60000;
+  else if (now - lastSeenAt > SESSION_GONE_MS) { endAt = lastSeenAt; endReason = "closed"; minutes = (lastSeenAt - startAt) / 60000; }
+  else { live = true; minutes = (now - startAt) / 60000; }
+  return { id: str(id, 120), person: str(d.person, 80), station: str(d.station, 20), device: str(d.device, 40), computerId: str(d.computerId, 64), computerLabel: str(d.computerLabel, 80),
+    startAt, lastSeenAt, endAt, endReason, minutes: Math.max(0, Math.round(minutes * 10) / 10), live };
+}
+async function op_sessionsList(b) {
+  const now = Date.now();
+  const until = Math.min(num(b.until) > 0 ? num(b.until) : now + 60000, now + 86400000);
+  const since = Math.max(num(b.since) > 0 ? num(b.since) : until - 7 * 86400000, until - SESSION_SPAN_MS);
+  if (!(since < until)) return { error: "since must be before until" };
+  const limit = Math.max(1, Math.min(1000, Math.floor(num(b.limit)) || 500));
+  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
+  const TS = admin.firestore.Timestamp, ranges = [[since, until]];
+  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(since), TS.fromMillis(until)]);
+  const snaps = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
+  const seen = new Set(), rows = [];
+  for (const s of snaps) for (const d of s.docs) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d.data() || {}, now); if (r) rows.push(r); }
+  rows.sort((x, y) => y.startAt - x.startAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
+}
+OPS.sessionsList = op_sessionsList;
 
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {

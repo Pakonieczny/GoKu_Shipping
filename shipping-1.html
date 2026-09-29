@@ -968,6 +968,29 @@
     </div>
   </div>
 
+  <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
+       the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
+       stay on screen. -->
+  <script src="station-session.js?v=20260929-ss2"></script>
+  <script>
+    try {
+      StationSession.init({
+        station: "shipping", device: "shipping-1",
+        person: () => { try { const n = localStorage.getItem("employee_name"); return localStorage.getItem("employee_id") && n ? { name: n, id: null } : null; } catch (_) { return null; } },
+        signOut: () => {
+          try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
+          if (window.isEmployeeLoggedIn !== true) return;          // still loading: the page shows the PIN box itself
+          window.isEmployeeLoggedIn = false;
+          try { const pin = document.getElementById("employeeNumberInput"); if (pin) { pin.dataset.raw = ""; pin.value = ""; } } catch (_) {}
+          try { const nm = document.getElementById("employeeName"); if (nm) nm.value = ""; } catch (_) {}
+          try { M.Modal.getInstance(document.getElementById("userLoginModal")).open(); } catch (_) {}
+          try { M.toast({ html: "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
+        },
+        labelHost: "#userLoginModal", labelCss: "position:absolute;right:10px;bottom:6px;max-width:150px;text-align:right;"
+      });
+    } catch (_) {}
+  </script>
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
@@ -997,7 +1020,7 @@
 
   <!-- Order timeline: this station records each scan, label and shipment on the order's timeline and stops a
        cancelled order ("CANCELLED ORDER — DO NOT PROCEED"). Optional: without station-timeline.js nothing changes. -->
-  <script src="order-timeline.js?v=20260928-ov3"></script>
+  <script src="order-timeline.js?v=20260929-i1"></script>
   <script src="station-timeline.js?v=20260928-fxS"></script>
   <script>
     (function () {
@@ -1009,15 +1032,50 @@
           getEmployee: () => { try { return localStorage.getItem("employee_name") || ""; } catch (_) { return ""; } }
         });
       } catch (e) { console.warn("StationTimeline.init failed:", e); }
-      window.shipTimeline = {
+      /* Who did it: the person signed in with this station's own 6-digit login (its name only; the login's key is the
+         PIN itself, so no employee id is ever written). Nobody signed in: by "" and signedIn false ("not signed in"). */
+      const signedIn = () => { try { return !!String(localStorage.getItem("employee_name") || "").trim(); } catch (_) { return false; } };
+      const digitsOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30);
+      /* Etsy completion is recorded once per order: this station remembers the orders it completed (across reloads),
+         and an order Etsy already showed as completed when it was pulled is not completed again (no extra Etsy call) */
+      const ONCE = "shipTimeline.completed.v1", onceMem = new Set();
+      const onceRead = () => { try { const o = JSON.parse(localStorage.getItem(ONCE) || "{}"); return o && typeof o === "object" ? o : {}; } catch (_) { return {}; } };
+      const onceHas = id => onceMem.has(id) || !!onceRead()[id];
+      const onceSet = id => {
+        onceMem.add(id);
+        try {
+          const o = onceRead(); o[id] = Date.now();
+          const keys = Object.keys(o); if (keys.length > 500) keys.sort((a, b) => o[a] - o[b]).slice(0, keys.length - 500).forEach(k => delete o[k]);
+          localStorage.setItem(ONCE, JSON.stringify(o));
+        } catch (_) {}
+      };
+      let pulled = { orderId: "", status: "" };   // the Etsy status the page read for the order on screen
+      /* signed out: the outbox's fallback name (the one signed in when the page loaded) must not stand in for nobody */
+      const syncBy = () => { try { if (!signedIn() && window.OrderTimeline) window.OrderTimeline.config({ by: "" }); } catch (_) {} };
+      const api = window.shipTimeline = {
         /* scan, typing or paste: record it; the module checks for a cancel and shows its own full-screen alert */
         scanned(orderId, how, extra) {
-          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.scanned(String(orderId), { how, extra })); }
+          try { pulled = { orderId: digitsOf(orderId), status: String((extra && extra.etsyStatus) || "") }; } catch (_) {}
+          try { if (window.StationTimeline && orderId) { syncBy(); soft(window.StationTimeline.scanned(String(orderId), { how, extra })); } }
           catch (e) { console.warn("StationTimeline.scanned failed:", e); }
         },
         did(type, orderId, text, data) {
-          try { if (window.StationTimeline && orderId) soft(window.StationTimeline.did(type, String(orderId), String(text || "").slice(0, 200), data)); }
-          catch (e) { console.warn("StationTimeline.did failed:", e); }
+          try {
+            if (!window.StationTimeline || !orderId) return;
+            const d = Object.assign({}, data || {});
+            if (!signedIn()) { d.signedIn = false; syncBy(); }
+            soft(window.StationTimeline.did(type, String(orderId), String(text || "").slice(0, 200), d));
+          } catch (e) { console.warn("StationTimeline.did failed:", e); }
+        },
+        /* Complete Order succeeded: etsyCompleted, never twice for the same order */
+        completed(orderId, text, data) {
+          try {
+            const id = digitsOf(orderId); if (!id || onceHas(id)) return false;
+            onceSet(id);
+            if (pulled.orderId === id && /complete/i.test(pulled.status)) return false;   // already completed on Etsy before
+            api.did("etsyCompleted", id, text, data);
+            return true;
+          } catch (e) { console.warn("shipTimeline.completed failed:", e); return false; }
         },
         /* true → go on. A cancelled order goes on only after the module's explicit second confirmation. */
         async guard(orderId) {
@@ -2502,6 +2560,7 @@ function metalToBadge(label){
               /* remember the current employee for future reloads */
               localStorage.setItem("employee_id",  empNumber);
               localStorage.setItem("employee_name", nameFound);
+              try { window.StationSession && StationSession.signedIn({ name: nameFound, id: null }); } catch (_) {}   // the name only, never the PIN
 
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
@@ -2621,6 +2680,7 @@ function metalToBadge(label){
         /* clear employee & login state */
         localStorage.removeItem("employee_id");
         localStorage.removeItem("employee_name");
+        try { window.StationSession && StationSession.signedOut("signOut"); } catch (_) {}
         window.isEmployeeLoggedIn = false;
         if (chatUnsub) chatUnsub();                 // stop Brites listener
         /* show modal again */
@@ -2976,12 +3036,14 @@ function metalToBadge(label){
           if (errMsg) throw new Error(errMsg);
 
           /* 🎉 success */
-          if (window.shipTimeline) {
-            let ss = null; try { ss = JSON.parse(payload); } catch (_) {}
-            const tl = { tracking, carrier, carrierName, shipStationOrderId: ss?.orderId ?? null };
-            window.shipTimeline.did("shipped", receiptId, `Shipped · ${carrierName} ${tracking}`, tl);
-            window.shipTimeline.did("etsyCompleted", receiptId, `Completed on Etsy · tracking ${tracking}`, tl);
-          }
+          try {
+            if (window.shipTimeline) {
+              let ss = null; try { ss = JSON.parse(payload); } catch (_) {}
+              const tl = { tracking, carrier, carrierName, shipStationOrderId: ss?.orderId ?? null };
+              window.shipTimeline.did("shipped", receiptId, `Shipped · ${carrierName} ${tracking}`, Object.assign({ via: "completeOrder" }, tl));
+              window.shipTimeline.completed(receiptId, `Completed on Etsy · tracking ${tracking}`, tl);
+            }
+          } catch (e) { console.warn("shipTimeline:", e); }
           M.toast({ html: "Etsy order marked complete 🎉" });
           trackingInp.value        = "";
           carrierSel.selectedIndex = 0;
@@ -5064,14 +5126,23 @@ function metalToBadge(label){
         }
         let stLabel = null; // set once Chit Chats sold the label, so it is recorded exactly once
         const stRecordLabel = (printed, shipment, err) => {
-          if (!stLabel || stLabel.done || !window.shipTimeline) return;
-          stLabel.done = true;
-          const tracking = shipment?.carrier_tracking_code || "";
-          window.shipTimeline.did("labelPrinted", stOrder,
-            (printed ? "Chit Chats label printed" : "Chit Chats label bought, not printed yet") + (tracking ? " · " + tracking : ""),
-            { service: "chitchats", shipmentId: stLabel.shipmentId, postageType: stLabel.postageType,
-              carrier: shipment?.carrier || null, tracking: tracking || null, printed,
-              error: err ? String(err.message || err).slice(0, 120) : null });
+          try {
+            if (!stLabel || stLabel.done || !window.shipTimeline) return;
+            stLabel.done = true;
+            const tracking = shipment?.carrier_tracking_code || "";
+            const info = { service: "chitchats", shipmentId: stLabel.shipmentId, postageType: stLabel.postageType,
+                           carrier: shipment?.carrier || null, tracking: tracking || null };
+            if (printed) {
+              window.shipTimeline.did("labelPrinted", stOrder, "Chit Chats label printed" + (tracking ? " · " + tracking : ""),
+                Object.assign({ label: "shipping", printed: true, printMethod: "browser" }, info));
+              window.shipTimeline.did("shipped", stOrder, "Shipped · Chit Chats label" + (tracking ? " " + tracking : ""),
+                Object.assign({ via: "label" }, info));
+            } else {
+              /* bought but not printed: not a printed label yet (no labelPrinted type for "bought"), so a note */
+              window.shipTimeline.did("note", stOrder, "Chit Chats label bought, not printed yet" + (tracking ? " · " + tracking : ""),
+                Object.assign({ kind: "labelBought", printed: false, error: err ? String(err.message || err).slice(0, 120) : null }, info));
+            }
+          } catch (e) { console.warn("shipTimeline:", e); }
         };
         try {
 
@@ -5685,7 +5756,7 @@ async function refreshRates(){
           // 2) Buy the label
           await callCc("PATCH", { action:"buy", shipment_id:id, postage_type:selectedPostageType });
           window.shipTimeline && window.shipTimeline.did("labelPrinted", stOrder, "Chit Chats label bought",
-            { service: "chitchats", shipmentId: id, postageType: selectedPostageType });
+            { label: "shipping", service: "chitchats", shipmentId: id, postageType: selectedPostageType });
 
          // 2) Wait for Chit Chats to finish generating the label URL
           const url = await waitForLabelUrl(id, 30, 2000); // ~60s patience

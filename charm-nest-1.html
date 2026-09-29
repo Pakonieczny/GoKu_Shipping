@@ -464,6 +464,12 @@ dialog.owin{width:min(1320px,97vw);max-height:min(94vh,1040px)}
 .owMeta .m{border:1px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);min-width:0}
 .owMeta .m i{display:block;font:9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45);font-style:normal;margin-bottom:2px}
 .owMeta .m span{font:12.5px var(--mono);overflow-wrap:anywhere}
+/* an order still being read: a still block where each thing is coming (drawn before the view flies, so it flies with it) */
+.owSk{display:block;height:9px;width:72%;margin:5px 0;border-radius:5px;background:var(--line)}
+.owSk.short{width:44%}
+.owMeta .m .owSk{height:10px;width:64%;margin:5px 0 3px}
+.owPhoto .owSkPic{width:100%;height:100%;margin:0;border-radius:0;background:var(--line2)}
+#orderWin.owFull .owSub .owSk{display:inline-block;vertical-align:middle;width:150px;height:8px;margin:0}
 .owFix{border:1px solid var(--clay);background:var(--claySoft);border-radius:11px;padding:10px 12px;margin-bottom:12px}
 .owFix .t{font:700 11px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#8a3a26;margin-bottom:5px}
 .owFix .rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
@@ -728,6 +734,18 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPlateWait[hidden]{display:none}
 .owPlateTip{position:absolute;z-index:3;pointer-events:none;background:var(--velvet);color:#f4ecdc;border-radius:8px;padding:4px 9px;font:600 11px var(--mono);white-space:nowrap;transform:translate(-50%,calc(-100% - 10px))}
 .owPlateTip[hidden]{display:none}
+/* another order's charm, chosen: its order and "Open order", on the charm (the order view moves to it, never a view over it) */
+.owPlatePick{position:absolute;z-index:4;display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px 3px 3px 10px;box-shadow:0 6px 18px rgba(20,16,10,.12);font:11px var(--sans);color:var(--ink70);white-space:nowrap;transform:translate(-50%,calc(-100% - 12px))}
+.owPlatePick.below{transform:translate(-50%,12px)}
+.owPlatePick[hidden]{display:none}
+.owPlatePick .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
+.owPlatePick b{font:600 11.5px var(--mono);color:var(--ink)}
+.owPlatePick .s{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.owPlatePick .btn,.owOrdHd .btn{display:inline-flex;align-items:center;gap:4px}
+.owPlatePick .btn svg,.owOrdHd .btn svg{width:11px;height:11px;flex:none}
+.owOrdHd{display:flex;align-items:center;justify-content:space-between;gap:8px;height:18px}
+.owPanel .owOrdHd .fLabel{margin:0}
+.owOrdHd .btn{padding:2px 8px 2px 5px}
 .owPlateNone{display:grid;justify-items:center;gap:8px;text-align:center;color:var(--ink45);font:12.5px var(--sans);max-width:380px}
 /* the plate and its "not on a sheet yet" line share the one centred cell (a hidden plate still holds its room) */
 .owPlateWrap>.owPlate,.owPlateWrap>.owPlateNone{grid-area:1/1}
@@ -2365,6 +2383,7 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .cuStat .spin{width:11px;height:11px;border:2px solid rgba(0,0,0,.15);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;flex:0 0 11px}
 .cuUndo{display:inline-flex;align-items:center;gap:8px;font:600 11.5px var(--sans);color:#3f5b3a;white-space:nowrap}
 .cuFail{font:600 11.5px var(--sans);color:#a4432c;white-space:nowrap}
+.cuFail.calm{color:var(--ink70);font-weight:500}
 .cuWho{display:inline-flex;align-items:center;gap:6px}.cuWho input{width:10em;padding:3px 7px;border:1px solid var(--goldLine);border-radius:7px;font:500 12px var(--sans);background:var(--card);color:var(--ink)}
 /* Custom Orders: the order's own designs (CustomSheet). Plum is custom's colour everywhere: on the card, in the window and
    on the sheets. A card takes .ai / .dxf files dropped on it; its designs sit in a strip under it. */
@@ -2408,6 +2427,11 @@ body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturat
 @container(max-width:1100px){.doneRow .cuDesigns{grid-row:3}}
 @container(max-width:800px){.doneRow .cuDesigns{grid-row:4}}
 @container(max-width:500px){.doneRow .cuDesigns{padding:8px 10px;gap:8px 10px}.doneRow .cuDesigns .linkBtn{margin-left:0}}
+/* every Review card has the custom card's buttons and takes designs (28 Sep): its designs strip stays above its open details */
+.doneRow .cuDesigns~.reviewDetails{grid-row:3}
+@container(max-width:1100px){.doneRow .cuDesigns~.reviewDetails{grid-row:4}}
+@container(max-width:800px){.doneRow .cuDesigns~.reviewDetails{grid-row:5}}
+.doneRow.rvCu:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .cuDesigns.ready{border-color:rgba(125,86,168,.35);background:#faf7fd}.cuDesigns.sent{background:#f5f0fa;border-color:rgba(125,86,168,.25)}
 .cuDesigns.cuGot{animation:aiIn .25s ease-out,cuGot 1.2s ease-out}
 @keyframes cuGot{0%{box-shadow:0 0 0 0 rgba(142,107,184,.5)}35%{box-shadow:0 0 0 6px rgba(142,107,184,.2);background-color:#f1e9fa}100%{box-shadow:0 0 0 12px rgba(142,107,184,0)}}
@@ -2730,7 +2754,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 
 <!-- ═══ Sheet report / contact sheet ═══ -->
 <dialog id="dlgReport" class="wide"><div class="dlg">
-  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
+  <div class="dlgHead"><h3 id="rpTitle">Sheet report</h3><div class="right"><button type="button" class="btn ghost xs hidden" id="rpOrder" title="open this charm's order — everything about it; closing it comes back here">Open order <span aria-hidden="true">↗</span></button><button class="btn ghost xs" id="rpDownloadJson">report.json</button><button class="btn ghost xs" id="rpClose">Close</button></div></div>
   <div class="dlgBody" id="rpBody"></div>
 </div></dialog>
 
@@ -2763,8 +2787,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=m20"></script>
-<script src="charm-nest-timeline-ui.js?v=20260928-a5-4"></script>
+<script src="charm-nest-motion.js?v=20260929-m7"></script>
+<script src="charm-nest-timeline-ui.js?v=20260929-op"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -5555,6 +5579,51 @@ function cardOrigin(sh, cv) {
 }
 
 /* ═══ 13 · dialogs: charm inspector, report ═════════════════════════════ */
+/* "Open order" (Paul, 28 Sep): the order's detailed view from wherever a charm of a sheet is shown. The order view grows
+   out of the button; the pop-up it was pressed in hands over, never one pop-up over another: it fades and settles back
+   underneath in the same motion, kept open as it was (the same charm, the same scroll, anything typed), and comes back
+   up as the order view shrinks back into the button. A button on a page (not in a pop-up) just grows the view.
+   Only opacity and transform move here; the order view's own clip does the rest. */
+function openOrderFrom(btn, rid, opts = {}) {
+  const OW = window.OrderWin; rid = String(rid || "").replace(/\D/g, "");
+  if (!OW || typeof OW.openOrder !== "function" || !rid || !btn) return false;
+  const src = btn.closest("dialog[open]"), ow = document.getElementById("orderWin");
+  const still = window.Motion && Motion.reduced ? Motion.reduced() : matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const EASE = "cubic-bezier(.2,.8,.2,1)";
+  let out = null, back = false;
+  const bring = () => {
+    if (back || !src) return; back = true; ow && ow.removeEventListener("cancel", early, true); ow && ow.removeEventListener("click", early, true);
+    const was = out ? out.effect.getComputedTiming().progress : src.style.opacity === "0" ? 1 : 0; if (out) { try { out.cancel(); } catch (_) {} out = null; }
+    src.style.opacity = ""; src.style.willChange = "";
+    if (!src.open || still || !was) return;
+    // (as long as the order view's shrink back into the button: the two meet)
+    src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 420, easing: EASE, fill: "backwards" });
+  };
+  // the close begins (the ×, Esc): the source is set straight before the view measures the button to go back into, and
+  // comes up from the next frame; an Esc that only ended the view's search leaves it where it was
+  function early(e) {
+    if (back || !src) return;
+    if (e.type === "click" && !(e.target.closest && e.target.closest("#owClose"))) return;
+    if (out) { try { out.cancel(); } catch (_) {} out = null; } src.style.opacity = "0";
+    requestAnimationFrame(() => {
+      if (back) return;
+      if (OW.isOpen && OW.isOpen()) { src.style.opacity = ""; out = src.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 0, transform: "scale(.97)" }], { duration: 1, fill: "forwards" }); return; }
+      bring();
+    });
+  }
+  if (src && ow && src !== ow) {
+    ow.addEventListener("close", bring, { once: true });
+    ow.addEventListener("cancel", early, true); ow.addEventListener("click", early, true);
+  }
+  let p;
+  try { p = OW.openOrder(rid, Object.assign({ from: btn }, opts)); }
+  catch (e) { bring(); toast(`Order ${rid} did not open: ${e.message}`, "bad", 6000); return false; }
+  if (src && src !== ow && ow && ow.open) {
+    src.style.willChange = "opacity, transform";
+    out = src.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.97)" }], { duration: still ? 1 : 320, easing: EASE, fill: "forwards" });
+  } else if (src && src !== ow) bring();
+  return p || true;
+}
 function openCharm(sh, c, placement) {
   if (!c) return;
   /* An order line's metal is the customer's choice and its name is its order and SKU. The inspector offered it the
@@ -5564,6 +5633,9 @@ function openCharm(sh, c, placement) {
   const pl = placement || sh.placements.find(p => p.id === c.id);
   const dlg = $("#dlgReport"); $("#rpTitle").textContent = c.name || `Charm #${c.index + 1}`;
   $("#rpDownloadJson").classList.add("hidden");
+  // an order's charm: its order opens from the heading, and the inspector comes back as it was when that closes
+  const rid = line ? String(c.orderInfo?.receiptId || c.order || "").split("/")[0].replace(/\D/g, "") : "", ob = $("#rpOrder");
+  ob.classList.toggle("hidden", !rid || !window.OrderWin); ob.onclick = rid ? () => openOrderFrom(ob, rid, { poolId: c.poolId, row: c.lineKey ? { key: c.lineKey } : null }) : null;
   $("#rpBody").innerHTML = `
     <div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:start">
       <img crossorigin="anonymous" src="${cors(c.thumb)}" style="width:200px;aspect-ratio:1;object-fit:contain;background:#fff;border:1px solid var(--line);border-radius:10px">
@@ -5596,7 +5668,7 @@ function openCharm(sh, c, placement) {
 function openReport(sh) {
   const items = sh.charms; const dlg = $("#dlgReport");
   $("#rpTitle").textContent = `${labelOf(sh.metal)} · ${sh.sheetId || "sheet"} · report`;
-  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs);
+  $("#rpDownloadJson").classList.toggle("hidden", !sh.outputs); $("#rpOrder").classList.add("hidden");
   $("#rpDownloadJson").onclick = () => download(new TextEncoder().encode(JSON.stringify(sh.outputs.report, null, 2)), `${sh.sheetId}-nest-report.json`, "application/json");
   const v = sh.verification, s = sh.sat || computeSaturation(sh), st = stockFor(sh.metal, sh);
   const byId = new Map(items.map(c => [c.id, c]));
@@ -6078,14 +6150,15 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=m23"></script>
-<script src="charm-nest-bridge.js?v=m23"></script>
-<script src="charm-nest-sheetwin.js?v=m23"></script>
+<script src="order-timeline.js?v=20260929-m9"></script>
+<script src="charm-nest-bridge.js?v=20260929-th2"></script>
+<script src="charm-nest-sheetwin.js?v=20260929-m9"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
-<script src="charm-nest-rose-ui.js?v=20260928-m1"></script>
+<script src="charm-nest-rose-ui.js?v=20260928-st-b"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260927-moves"></script>
-<script src="charm-nest-search.js?v=20260928-srS"></script>
+<script src="charm-nest-library.js?v=20260929-m5"></script>
+<script src="charm-nest-search.js?v=20260929-m5"></script>
+<script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->
 <dialog id="orderWin" class="owin owFull" aria-labelledby="owTitle" data-no-grow>
   <div class="owBox">
@@ -6157,7 +6230,7 @@ boot();
       <section class="owView owVTime" data-view="timeline" role="tabpanel" aria-label="Timeline" hidden><div class="owTimeline" id="owTimeline"></div></section>
       <section class="owView owVSheet" data-view="sheet" role="tabpanel" aria-label="Sheet" hidden>
         <div class="owPlateArea">
-          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
+          <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
         <aside class="owPanel" id="owSheetPanel"></aside>

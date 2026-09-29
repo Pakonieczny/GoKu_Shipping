@@ -200,11 +200,12 @@
       const spec = take(leaves, k) || (opts.leave ? opts.leave(k, b.node) : null);
       if (!seen(b.rect)) { if (spec && spec.to) arrive(spec.to, spec); continue; }
       const g = ghost(b.node, b.rect, cw, host);
-      const h = spec && spec.stamp ? T.stamp + T.hold : 0; hold = Math.max(hold, h);
+      // (a seal already pressed on the button before the card left, stamp.still, is only carried: no stamp, no hold)
+      const h = spec && spec.stamp && !spec.stamp.still ? T.stamp + T.hold : 0; hold = Math.max(hold, h);
       gone.push([g, spec]);
     }
     for (const [g, spec] of gone) (async () => {
-      if (spec && spec.stamp) { try { await Seal.stampOn(g, spec.stamp); } catch (_) {} await wait(T.hold); }
+      if (spec && spec.stamp) { try { await Seal.stampOn(g, spec.stamp); } catch (_) {} if (!spec.stamp.still) await wait(T.hold); }
       if (spec && spec.to) await fly(g, spec.to, spec); else await fade(g);
     })();
     // what stayed glides from where it was (after a stamp, once the stamped card has lifted off)
@@ -445,7 +446,8 @@
       Object.assign(t.style, { left: cx - size * .52 + "px", top: cy - size * .52 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
       host.appendChild(seal); host.appendChild(t);
       const rot = rotOf(st), paint = () => btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
-      if (reduced()) { seal.style.opacity = ""; t.remove(); paint(); return; }
+      // (spec.still: the seal was pressed already and is only put where it rests)
+      if (reduced() || spec.still) { seal.style.opacity = ""; t.remove(); paint(); return; }
       const down = t.animate([
         { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
         { opacity: 1, offset: .22 },
