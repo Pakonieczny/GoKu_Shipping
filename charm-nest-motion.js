@@ -178,6 +178,11 @@
   function expectIn(mkey, spec) { arrivals.set(String(mkey), Object.assign({ until: Date.now() + (spec.ttl || 10000) }, spec)); }
   const take = (m, k) => { const e = m.get(k); if (!e) return null; m.delete(k); return e.until > Date.now() ? e : null; };
   const pending = (k) => { const e = leaves.get(String(k)); return !!(e && e.until > Date.now()); };
+  /* A row another animation is already carrying (the Send to Sheet tour lifts the card itself): its list makes no copy
+     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node. */
+  const carried = new Map();
+  function carry(mkey, ms = 8000) { const k = String(mkey || ""); if (!k) return; if (ms > 0) carried.set(k, Date.now() + ms); else carried.delete(k); }
+  const isCarried = k => { const u = carried.get(String(k)); if (!u) return false; if (u > Date.now()) return true; carried.delete(String(k)); return false; };
 
   /** The one keyed list update: `nodes` in order, in `host`. With opts.animate (the same view as before, drawn already)
    *  what left is seen going (to where its action said, else it fades), what stayed glides into place, and what is new
@@ -185,7 +190,7 @@
   function reconcile(host, nodes, opts = {}) {
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
-    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
+    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving && !isCarried(k)) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
     const keep = new Set(nodes);
     nodes.forEach((node, i) => { if (host.children[i] !== node) host.insertBefore(node, host.children[i] || null); });
     for (const n of [...host.children]) if (!keep.has(n)) n.remove();
@@ -749,21 +754,28 @@
   }
   /* the copy a closed window leaves behind: drawn from the page's own styles inside a closed shadow root, so nothing
      that looks for the window's contents (or counts open dialogs) ever finds it */
-  let sheetKey = "", sheetObj = null;
+  /* Each of the page's style sheets is copied once, as its own sheet, and kept while it is unchanged (by its rule
+     count): a sheet the page adds later (a tour's, a window's own, put in on first use) costs only its own few rules at
+     the next close, never the whole page's again (that rebuild, 45-60 ms of copying and compiling every rule of the
+     page, stood at the start of the designs window's way back when the Send to Sheet tour had just put its styles in). */
+  const copies = new WeakMap();
+  let sheetKey = "", sheetList = null;
+  function copyOf(s) {
+    let n; try { if (s.disabled) return null; n = s.cssRules.length; } catch (_) { return null; }
+    const had = copies.get(s); if (had && had.n === n) return had.sheet;
+    try {
+      const body = [...s.cssRules].map(r => r.cssText).filter(t => !/^@(import|charset)/i.test(t)).join("\n"), m = s.media && s.media.mediaText;
+      const sh = new CSSStyleSheet(); sh.replaceSync(m && m !== "all" ? `@media ${m}{${body}}` : body);
+      copies.set(s, { n, sheet: sh }); return sh;
+    } catch (_) { return null; }
+  }
   function pageSheet() {
     try {
       if (!("adoptedStyleSheets" in doc) || !root.CSSStyleSheet) return null;
-      const list = [...doc.styleSheets]; let key = String(list.length), text = "";
-      for (const s of list) { try { key += "," + s.cssRules.length; } catch (_) { key += ",x"; } }
-      if (sheetObj && key === sheetKey) return sheetObj;
-      for (const s of list) {
-        try {
-          if (s.disabled) continue;
-          const body = [...s.cssRules].map(r => r.cssText).filter(t => !/^@(import|charset)/i.test(t)).join("\n"), m = s.media && s.media.mediaText;
-          text += m && m !== "all" ? `@media ${m}{${body}}\n` : body + "\n";
-        } catch (_) {}
-      }
-      const sh = new CSSStyleSheet(); sh.replaceSync(text); sheetObj = sh; sheetKey = key; return sh;
+      const list = [...doc.styleSheets]; let key = String(list.length);
+      for (const s of list) { try { key += "," + (s.disabled ? "d" : s.cssRules.length); } catch (_) { key += ",x"; } }
+      if (sheetList && key === sheetKey) return sheetList;
+      sheetList = list.map(copyOf).filter(Boolean); sheetKey = key; return sheetList;
     } catch (_) { return null; }
   }
   /** The page's styles for the closing copy, made ready when the page is idle once a window has opened (building them,
@@ -776,7 +788,7 @@
       try {
         const sh = pageSheet(); if (!sh || sh === warmed) return; warmed = sh;
         const host = doc.createElement("div"); host.setAttribute("aria-hidden", "true"); host.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none";
-        const sr = host.attachShadow({ mode: "closed" }); sr.adoptedStyleSheets = [sh]; sr.innerHTML = '<div class="dlg"><div class="dlgHead"></div></div>';
+        const sr = host.attachShadow({ mode: "closed" }); sr.adoptedStyleSheets = sh; sr.innerHTML = '<div class="dlg"><div class="dlgHead"></div></div>';
         doc.body.appendChild(host); getComputedStyle(sr.firstElementChild).color; host.remove();
       } catch (_) {}
     };
@@ -821,7 +833,7 @@
       let shade = null;
       if (snap.back && !/rgba\(0, 0, 0, 0\)|transparent/.test(snap.back)) { shade = doc.createElement("div"); shade.className = "mdGhostBack"; shade.setAttribute("aria-hidden", "true"); shade.style.background = snap.back; L.appendChild(shade); }
       L.appendChild(host);
-      const sr = host.attachShadow({ mode: "closed" }), sheet = snap.copy ? pageSheet() : null; if (sheet) sr.adoptedStyleSheets = [sheet];
+      const sr = host.attachShadow({ mode: "closed" }), list = snap.copy ? pageSheet() : null, sheet = list && list.length ? list : null; if (sheet) sr.adoptedStyleSheets = sheet;
       const box = (bg, more) => { const x = doc.createElement("div"); Object.assign(x.style, { position: "absolute", inset: "0", borderRadius: snap.radius, background: bg }, more || {}); return x; };
       sr.appendChild(box(snap.bg, { backgroundImage: snap.bgi, boxShadow: snap.shadow }));
       const c = sheet ? snap.copy : null;
@@ -965,6 +977,6 @@
     wait();
   }
 
-  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
+  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);
