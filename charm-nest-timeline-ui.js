@@ -129,6 +129,7 @@
     removed: K("clay", "e", "out", "sheet", "sh hc"), renested: K("gold", "e", "renest", "sheet", "sh"),
     held: K("clay", "a", "pause", "office", "hc"), released: K("green", "e", "play", "office", "hc"), restored: K("green", "e", "undo", "office", "hc"),
     cancelled: K("clay", "a", "x", "office", "hc"), etsyCancelled: K("clay", "a", "etsyx", "etsy", "hc"), cancelRestored: K("green", "e", "undo", "office", "hc"),
+    cancelStep: K("clay", "e", "out", "sheet", "sh hc"),
     sizeChanged: K("gold", "e", "resize", "sheet", "sh"), included: K("gold", "e", "set", "sheet", "sh"), excluded: K("note", "e", "set", "sheet", "sh"),
     merged: K("gold", "e", "merge", "sheet", "sh"), roseLine: K("rose", "e", "greenline", "sheet", "sh"), roseCut: K("rose", "e", "scissors", "sheet", "sh"),
     qrLabel: K("blue", "e", "qr", "sheet", "sh"), setCommitted: K("gold", "e", "lock", "sheet", "sh"), laserDone: K("gold", "m", "laser", "sheet", "sh"),
@@ -150,7 +151,7 @@
      the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
-  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]);
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
   const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
@@ -288,7 +289,7 @@
     return r.length ? r : ALL_STAGES;
   }
   // what a person would miss from a cut-short read: the rail's steps and what a person did (the sealed kinds)
-  const MISSED = new Set(STAGES.flatMap(s => s.types).concat(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]));
+  const MISSED = new Set(STAGES.flatMap(s => s.types).concat(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]));
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
      `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
@@ -973,6 +974,12 @@
 .tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
 .tlBlock{display:inline-flex;align-items:baseline;gap:9px;min-width:0;max-width:100%;font:13px/1.45 var(--sans);color:#7a5a1d;background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:10px;padding:5px 12px}
 .tlBlock b{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a24;flex:none}
+.tlCxList{flex:1 1 100%;display:flex;flex-direction:column;gap:3px;min-width:0;margin:2px 0 6px;font:12.5px/1.4 var(--sans)}
+.tlCxList .h{font-weight:700;color:var(--clay,#b0563f)}
+.tlCxList .s{display:flex;align-items:baseline;gap:7px;min-width:0}
+.tlCxList .s i{font-style:normal;font-weight:800;width:1em;flex:none;text-align:center}
+.tlCxList .s.ok i{color:var(--sage,#4f7a5a)}.tlCxList .s.wait i,.tlCxList .s.wait{color:#8a6a24}.tlCxList .s.bad i,.tlCxList .s.bad{color:var(--clay,#b0563f)}.tlCxList .s.back i{color:var(--sage,#4f7a5a)}
+.tlCxList small{opacity:.7;font-size:11px;white-space:nowrap}
 .tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
 /* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
@@ -1854,8 +1861,35 @@
       seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
     } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
     // (`recent`, the old row of six stamps, is gone: one seal says where it is, and the words below say what it waits on)
-    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : "";
+    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : c ? cxList(evs, c) : "";
     return { seal, recent, blocker };
+  }
+  /* A cancelled order's story in plain words (Paul, 29 Sep 00:26): the exact moment it was cancelled (Etsy's own, with
+     when the sorter saw it), then every place it was taken out of, each with its time and how it went ("Still on SS
+     Sheet 3: not taken off yet" when it is not done), a station's "Understood" with who and where, and a restore. */
+  const CX_OK = new Set(["removed", "setAside"]);
+  function cxSteps(evs, c) {
+    const cx = evs.filter(e => CANCEL_TYPES.has(e.type)).pop() || null, at = +(c && c.at) || (cx && +cx.at) || 0;
+    const steps = [];
+    for (const e of evs) {
+      if (+e.at < at - 60000) continue;
+      const d = e.data || {}, who = personOf(e), place = placeOf(e);
+      if (e.type === "removed" && (d.cancel || /^cancel/i.test(reasonOf(e)))) steps.push({ e, st: "ok", text: e.text && /^Removed from/.test(e.text) ? e.text : `Removed from ${e.sheet || "its sheet"}` });
+      else if (e.type === "cancelStep") steps.push({ e, st: d.outcome === "failed" ? "bad" : CX_OK.has(d.outcome) && d.done !== false ? "ok" : "wait", text: e.text || `${d.outcome || "Step"}: ${e.sheet || ""}` });
+      else if (e.type === "cancelAlert") steps.push({ e, st: "ok", text: `Cancel alert understood${place ? " at " + place : ""}${who ? " by " + who : ""}` });
+      else if (e.type === "cancelRestored" && +e.at >= at) steps.push({ e, st: "back", text: `Restored${who ? " by " + who : ""}` });
+    }
+    return { cx, at, steps };
+  }
+  function cxList(evs, c) {
+    const { cx, at, steps } = cxSteps(evs, c), d = (cx && cx.data) || {};
+    const etsy = (cx && cx.type === "etsyCancelled") || c.source === "etsy" || /^etsy$/i.test(c.by || "");
+    const seen = +d.seenAt > at + 60000 ? ` · seen by the sorter ${shortWhen(d.seenAt)}` : "";
+    const who = etsy ? "on Etsy" : `by ${(cx && personOf(cx)) || c.by || "a person"}`;
+    const head = at ? `<span class="h">Cancelled ${esc(who)} ${esc(shortWhen(at))}${esc(seen)}</span>` : "";
+    const mark = { ok: "✓", wait: "…", bad: "✗", back: "↺" };
+    const rows = steps.slice(-12).map(s => `<span class="s ${s.st}"><i>${mark[s.st]}</i>${esc(s.text)}<small>${esc(shortWhen(s.e.at))}${s.e.type !== "cancelAlert" && personOf(s.e) && !/ by /.test(s.text) ? " · " + esc(personOf(s.e)) : ""}</small></span>`).join("");
+    return head || rows ? `<span class="tlCxList">${head}${rows}</span>` : "";
   }
   function wireNow(card, onOpen) {
     if (!card) return;

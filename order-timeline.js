@@ -41,6 +41,8 @@
     cancelled:       { label: "Cancelled",           group: "cancel" },
     etsyCancelled:   { label: "Cancelled on Etsy",   group: "cancel" },
     cancelRestored:  { label: "Cancel undone",       group: "cancel" },
+    // (one place a cancel took the order out of, and how it went: removed, set aside, still waiting, failed)
+    cancelStep:      { label: "Cancel step",         group: "cancel" },
     sizeChanged:     { label: "Sheet size changed",  group: "sheet" },
     included:        { label: "In current set",      group: "sheet" },
     excluded:        { label: "Out of current set",  group: "sheet" },

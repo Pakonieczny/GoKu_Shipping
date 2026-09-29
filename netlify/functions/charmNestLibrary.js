@@ -843,6 +843,18 @@ function poolEvents(ids, p, before, b) {
     const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
     const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
     const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
+    // a cancel's removal (Paul, 29 Sep 00:26): each sheet (or the pool, for pieces not placed yet) its own step, "Removed
+    // from GF Sheet 1 (Set 2)", with the outcome; id: the removal time and the place, which AutoCancel's own event uses too
+    if (kind === "removed" && /^cancel/i.test(String(p.removedReason || ""))) {
+      const bySheet = new Map(); for (const r of rows) { const k = r.prev.sheetId || ""; if (!bySheet.has(k)) bySheet.set(k, []); bySheet.get(k).push(r); }
+      for (const [sid, rs] of bySheet) {
+        const r0 = rs[0].prev, name = sid ? sheetLabel(null, r0.sheetName) || str(sid, 80) : "", set = setLabel(r0.setId), metal = METAL_CODE[r0.material] || METAL_CODE[r0.metal] || "";
+        out.push(Object.assign({}, e, { at, sheetId: str(sid, 100), sheet: name || (metal ? metal + " pool" : "the pool"), setId: r0.setId || "", id: `${at}-${sid || "pool"}`,
+          text: sid ? `Removed from ${name}${set ? " (" + set + ")" : ""}` : `Removed from the ${metal ? metal + " " : ""}pool`,
+          data: Object.assign({}, e.data, { copies: rs.length, poolIds: rs.slice(0, 40).map(r => r.id), reason: str(p.removedReason, 300), sheets: sid ? [sid] : [], cancel: true, outcome: "removed" }) }));
+      }
+      continue;
+    }
     if (kind === "removed") Object.assign(e, { at, sheetId: was[0] || "", sheet: wasNames.join(", "), setId: rows[0].prev.setId || "", text: [wasNames.join(", "), p.removedReason].filter(Boolean).join(" · "), id: String(at) }, { data: Object.assign(e.data, { reason: str(p.removedReason, 300), sheets: was }) });
     else if (kind === "moved") {
       const from = wasNames.length ? wasNames : String(p.movedFrom || "").split(",").filter(Boolean), to = sheetLabel(null, p.sheetName) || str(p.movedTo, 100);
@@ -1991,7 +2003,9 @@ const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30
 async function op_cancelPut(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
   const r = b.record && typeof b.record === "object" ? b.record : {}, who = str(b.by || "operator", 80);
-  const rec = OrderCancel.record({ orderId: id, by: who, why: str(b.why, 400), at: Date.now(), buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines,
+  // at: the moment the person pressed Cancel (the page's clock, within the last day), else now (Paul, 29 Sep 00:26)
+  const pressed = num(b.at), now = Date.now(), at = pressed > now - 864e5 && pressed <= now + 6e4 ? Math.min(Math.round(pressed), now) : now;
+  const rec = OrderCancel.record({ orderId: id, by: who, why: str(b.why, 400), at, buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines,
     source: b.source === "etsy" ? "etsy" : "sorter", etsyStatus: str(b.etsyStatus || r.etsyStatus, 40) });
   const out = await OrderCancel.put(db, FV, rec, { prefix: PREFIX, person: who, detectedBy: "sorter", eventId: str(b.eventId, 80) });
   return out.error ? out : { ok: true, record: out.record, created: out.created, kept: out.kept };
@@ -2055,7 +2069,33 @@ async function op_sandboxCancel(b) {
 }
 /* What became of a cancelled order's pieces, sheet by sheet ({orderId, fates:[{sheet, fate: "removed"|"cut", text}]}): the
    sorter's AutoCancel and its sheet window write it on the record (the Cancelled tab reads it); see _orderCancel.noteFates. */
-async function op_cancelFates(b) { return OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX }); }
+async function op_cancelFates(b) {
+  const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX });
+  if (out && out.ok && !out.missing) await cancelSteps(b);
+  return out;
+}
+/* Each fate on the order's timeline as its own step (cancelStep; Paul, 29 Sep 00:26): "On a cut sheet: set aside (GF
+   Sheet 2)", "Still on SS Sheet 3: not taken off yet". A removal is the pieces' own `removed` event (poolEvents), so a
+   "removed" fate is written only over a step of that sheet already there (it said "still on", it is off now). Ids are
+   the cancel's time and the place (Timeline.stepId): the next check or a retry says how the same step stands now. */
+async function cancelSteps(b) {
+  const id = orderIdOf(b.orderId), fates = (Array.isArray(b.fates) ? b.fates : []).filter(f => f && f.sheet).slice(0, 30);
+  if (!id || !fates.length) return 0;
+  let cancelAt = num(b.cancelAt);
+  if (!(cancelAt > 1e12)) { try { const s = await col(CANCELLED).doc(id).get(); cancelAt = s.exists ? num(s.data().at) : 0; } catch (_) { cancelAt = 0; } }
+  if (!(cancelAt > 1e12)) return 0;
+  const TL = require("./_orderTimeline"), ev = f => { const st = TL.cancelStepOf(f); return { orderId: id, type: "cancelStep", at: Date.now(), by: str(f.by || b.by, 80), station: "sorter", device: str(b.device, 40), sheet: str(f.sheet, 80), id: TL.stepId(cancelAt, f.sheet), text: st.text, data: { outcome: st.outcome, done: st.done, sheet: str(f.sheet, 80), cancelAt, note: str(f.text, 160) } }; };
+  const off = fates.filter(f => f.fate === "removed"), rest = fates.filter(f => f.fate !== "removed");
+  if (off.length) {
+    try {
+      const refs = off.map(f => { const c = TL.clean(ev(f), { prefix: PREFIX }); return c ? db.collection(PREFIX + TL.COL).doc(c.key) : null; });
+      const got = await db.getAll(...refs.filter(Boolean));
+      const had = new Set(got.filter(d => d.exists).map(d => d.id));
+      off.forEach((f, i) => { if (refs[i] && had.has(refs[i].id)) rest.push(f); });
+    } catch (e) { console.warn("[charmNestLibrary] cancel steps not read:", e.message || e); }
+  }
+  return stamp(() => rest.map(ev), "cancel steps");
+}
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }

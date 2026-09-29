@@ -25,7 +25,7 @@ const CANCELLED = "Charm_Nest_Cancelled";
 const TYPES = new Set([
   "arrived", "pulled", "interpreted", "needsDecision", "decided", "skipped", "customRead", "customDecided", "designSent", "designDropped",
   "engraveNeeded", "engraveApproved", "engraveChanged",
-  "pooled", "placed", "moved", "removed", "renested", "held", "released", "restored", "cancelled", "etsyCancelled", "cancelRestored",
+  "pooled", "placed", "moved", "removed", "renested", "held", "released", "restored", "cancelled", "etsyCancelled", "cancelRestored", "cancelStep",
   "sizeChanged", "included", "excluded", "merged", "roseLine", "roseCut",
   "qrLabel", "setCommitted", "laserDone", "recalled",
   "sealPrinted", "sealCompleted",
@@ -208,10 +208,31 @@ function finalize(id, list) {
 /** The events of a cancel record (get() reads it anyway). */
 function cancelEventsOf(id, c) {
   const at = n(c.at) || msOf(c.createdAt); if (!at) return [];
-  const etsy = c.by === "Etsy" || c.source === "etsy";
-  return [{ orderId: id, type: etsy ? "etsyCancelled" : "cancelled", at, by: s(c.by, 80) || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "sorter", id: "d-cancel",
-    text: `${etsy ? "Cancelled on Etsy" : "Cancelled by " + (c.by || "someone")}${c.why ? ": " + c.why : ""}`, data: { why: s(c.why, 400), sheets: Array.isArray(c.sheets) ? c.sheets.slice(0, 30) : [] } }];
+  const etsy = c.by === "Etsy" || c.source === "etsy", seenAt = msOf(c.createdAt);
+  const out = [{ orderId: id, type: etsy ? "etsyCancelled" : "cancelled", at, by: s(c.by, 80) || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "sorter", id: "d-cancel",
+    text: `${etsy ? "Cancelled on Etsy" : "Cancelled by " + (c.by || "someone")}${c.why ? ": " + c.why : ""}`, data: Object.assign({ why: s(c.why, 400), sheets: Array.isArray(c.sheets) ? c.sheets.slice(0, 30) : [] }, etsy && seenAt ? { seenAt } : {}) }];
+  // what became of its pieces on each sheet (the record's fates, _orderCancel.noteFates), for a cancel whose steps were
+  // not recorded (Paul, 29 Sep 00:26): a removal is read from the pieces' own records, so only what stayed is added here
+  for (const f of (Array.isArray(c.fates) ? c.fates : []).slice(0, 30)) {
+    if (!f || !f.sheet || f.fate === "removed") continue;
+    const st = cancelStepOf(f);
+    out.push({ orderId: id, type: "cancelStep", at: n(f.at) || at, by: s(f.by, 80), source: "sorter", station: "sorter", sheet: s(f.sheet, 80), id: `d-fate-${s(f.sheet, 80)}`, text: st.text, data: { outcome: st.outcome, sheet: s(f.sheet, 80), approx: !n(f.at) } });
+  }
+  return out;
 }
+/* A cancel's step on one sheet or place (type cancelStep; Paul, 29 Sep 00:26: "show that it was removed successfully from
+   a given sheet or process"). fate → outcome: removed (taken off) | setAside (on a cut sheet: set aside; `done` once a
+   person said so) | pending (still on it: not taken off yet) | failed. Its id is the cancel's own time and the place
+   (stepId), so a retry, the next check or a person's "Set aside" lands on the same step and says how it stands now. */
+function cancelStepOf(f) {
+  const where = s(f && f.sheet, 80) || "its sheet", fate = f && f.fate, by = s(f && f.by, 80);
+  if (fate === "removed") return { outcome: "removed", done: true, text: `Removed from ${where}` };
+  if (fate === "setAside") return { outcome: "setAside", done: true, text: `On a cut sheet: set aside${by ? " by " + by : ""} (${where})` };
+  if (fate === "cut") return { outcome: "setAside", done: false, text: `On a cut sheet: set aside (${where})` };
+  if (fate === "failed") return { outcome: "failed", done: false, text: `Not taken off ${where}: ${s(f && f.text, 120) || "it failed"}` };
+  return { outcome: "pending", done: false, text: `Still on ${where}: not taken off yet` };
+}
+const stepId = (cancelAt, sheet) => `cx-${Math.round(n(cancelAt))}-${s(sheet, 80)}`;
 
 /** Every event the order's existing records tell, each marked derived with a stable id. */
 async function deriveEvents(db, id, opts) {
@@ -396,6 +417,7 @@ function sameEvent(a, b) {
   if (!approx && Math.abs(a.at - b.at) > DEDUPE_MS) return false;
   if (a.sheetId && b.sheetId && a.sheetId !== b.sheetId) return false;
   if (a.lineKey && b.lineKey && a.lineKey !== b.lineKey) return false;
+  if (a.type === "cancelStep" && String(a.sheet || "") !== String(b.sheet || "")) return false;   // (one step per place)
   if (a.type === "note" || a.type === "teamMessage" || a.type === "customerMessage") {
     const t = x => String((x.data && x.data.stamp) || x.text || "").trim().toLowerCase();
     return t(a) === t(b) || (!!(a.data && a.data.stamp) && a.data.stamp === (b.data && b.data.stamp));
@@ -541,4 +563,4 @@ function whereOf(events, cancelled, hint = {}) {
   if (by) bits.push(`by ${by}`);
   return { stage, label, text: s(bits.join(" · "), 200), sheet, sheetId, setId, station, device, by, at, since, cut, designed, cancelled: isCancelled, step, rail: RAIL };
 }
-module.exports = { RAIL, RAIL_KEYS, labelStepOf, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
+module.exports = { RAIL, RAIL_KEYS, labelStepOf, cancelStepOf, stepId, COL, TYPES, MILESTONES, STATION_TYPES, STATIONS, orderIdOf, clean, add, get, cancelCheck, deriveEvents, dedupe, sameEvent, chronology, byTime, whereOf, msOf, SANDBOXED_DEFAULT, STATION_SANDBOXED };
