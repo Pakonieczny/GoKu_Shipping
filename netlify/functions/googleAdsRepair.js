@@ -250,7 +250,7 @@ exports.handler = async (event) => {
   // self-check: confirm config WITHOUT revealing the passcode
   if (q.check === "1") {
     const g = gateVal();
-    return json(200, { editPasscodeSet: !!g, passcodeLength: g.length, open: !g, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) });
+    return json(200, { editPasscodeSet: !!g, open: !g, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) }); // never the passcode's length
   }
 
   const gate = gateVal();
