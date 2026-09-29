@@ -14,7 +14,7 @@
 // `request(path, method, body)` is injected so this module is testable without
 // network access, and so the caller owns credentials and timeouts.
 
-const PRODUCT_PAGE = 250;
+const PRODUCT_PAGE = 1000;
 const MAX_PRODUCT_PAGES = 4;
 
 function text(value, limit) { return String(value == null ? '' : value).slice(0, limit || 300); }
@@ -46,15 +46,17 @@ async function accountIssues(request, account) {
 // so the exact offer IDs matter more than a count.
 async function productIssues(request, account, limit) {
   const rows = [];
-  let pageToken = null;
+  let pageToken = null, complete = false;
   for (let page = 0; page < MAX_PRODUCT_PAGES; page++) {
+    // A LIMIT caps the whole result, not a page: it hid every offer after the first 250.
+    // Read only offers that are not fully eligible, across the whole catalogue, by page.
     const data = await request('reports/v1/accounts/' + account + '/reports:search', 'POST', {
-      query: 'SELECT id, offer_id, title, aggregated_reporting_context_status, item_issues FROM product_view LIMIT ' + PRODUCT_PAGE,
+      query: "SELECT id, offer_id, title, aggregated_reporting_context_status, item_issues FROM product_view WHERE aggregated_reporting_context_status IN ('NOT_ELIGIBLE_OR_DISAPPROVED', 'PENDING', 'ELIGIBLE_LIMITED')",
       pageSize: PRODUCT_PAGE, ...(pageToken ? { pageToken } : {})
     });
     for (const row of data.results || []) rows.push(row.productView || {});
     pageToken = data.nextPageToken;
-    if (!pageToken) break;
+    if (!pageToken) { complete = true; break; }
   }
   const severityOf = issue => ((issue.severity || {}).aggregatedSeverity) || issue.severity || 'UNKNOWN';
   const affected = rows
@@ -67,15 +69,15 @@ async function productIssues(request, account, limit) {
         resolution: text((i.type || {}).canonicalAttribute ? 'attribute: ' + (i.type || {}).canonicalAttribute : (i.resolution || ''), 120)
       }))
     }))
-    .filter(p => p.issues.length || ['NOT_ELIGIBLE_OR_DISAPPROVED', 'PENDING'].includes(p.status));
+    .filter(p => p.issues.length || ['NOT_ELIGIBLE_OR_DISAPPROVED', 'PENDING', 'ELIGIBLE_LIMITED'].includes(p.status));
   const disapproved = affected.filter(p => p.status === 'NOT_ELIGIBLE_OR_DISAPPROVED');
   return {
     scanned: rows.length, affected: affected.length, disapproved: disapproved.length,
     offers: affected.slice(0, limit),
-    truncated: affected.length > limit,
+    truncated: affected.length > limit || !complete, complete,
     detail: rows.length
-      ? disapproved.length + ' offer(s) cannot serve and ' + (affected.length - disapproved.length) + ' carry warnings, of ' + rows.length + ' read'
-      : 'No products were returned for this account.'
+      ? disapproved.length + ' offer(s) cannot serve and ' + (affected.length - disapproved.length) + ' are limited or pending' + (complete ? ', across the whole catalogue' : '; more such offers exist than were read')
+      : 'No disapproved, limited or pending offers were returned.'
   };
 }
 
