@@ -89,15 +89,15 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   const blocks = (n, q) => n.matchType === 'PHRASE' ? (' ' + q + ' ').includes(' ' + n.text + ' ') : n.matchType === 'EXACT' ? n.text === q : n.text.split(' ').every(w => q.split(' ').includes(w));
   const defaults = Array.from(vm.runInContext('DEFAULT_NEGATIVES', ctx), n => typeof n === 'string' ? { text: n, matchType: 'BROAD' } : { text: n.text, matchType: n.matchType });
   check(defaults.every(n => googleKeyword(n.text) && ['BROAD', 'PHRASE'].includes(n.matchType)) && new Set(defaults.map(n => n.text)).size === defaults.length, 'every default exclusion is valid, unique keyword text with a match type');
-  check(['nickel free earrings', 'tarnish free necklace', 'lead free', 'hypoallergenic nickel free', 'free shipping'].every(q => !defaults.some(n => blocks(n, q))), 'no default exclusion blocks "nickel free earrings", "tarnish free necklace", "lead free" or "free shipping"');
-  check(['free download charm', 'free patterns', 'earrings for free'].every(q => defaults.some(n => blocks(n, q))) && !defaults.some(n => n.text === 'bulk') && defaults.some(n => n.text === 'cheap' && n.matchType === 'BROAD'),
-    'freebie searches stay excluded by phrase; "bulk" (team gifts) stays searchable and "cheap" stays excluded');
+  check(['nickel free earrings', 'tarnish free necklace', 'lead free', 'hypoallergenic nickel free', 'free shipping', 'wish bracelet'].every(q => !defaults.some(n => blocks(n, q))), 'no default exclusion blocks "nickel free earrings", "tarnish free necklace", "lead free", "free shipping" or "wish bracelet"');
+  check(['free download charm', 'free patterns', 'earrings for free', 'wish app earrings', 'wish com necklace'].every(q => defaults.some(n => blocks(n, q))) && !defaults.some(n => n.text === 'bulk' || n.text === 'wish') && defaults.some(n => n.text === 'cheap' && n.matchType === 'BROAD'),
+    'freebie and Wish marketplace searches stay excluded by phrase; "bulk" (team gifts) stays searchable and "cheap" stays excluded');
   const sent = creates(E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, null, copy, { dailyBudget: 5, maxCpc: 1, withAssets: false,
     adGroups: [{ name: 'Earrings', assets: copy, keywords: ['moon stud earrings', 'star stud earrings', 'moon hoop earrings', 'star hoop earrings'].map(text => ({ text })) }] }).ops, 'campaignCriterionOperation').filter(c => c.negative).map(c => c.keyword);
   check(JSON.stringify(sent.map(k => [k.text, k.matchType])) === JSON.stringify(defaults.map(n => [n.text, n.matchType])), 'a campaign built with the defaults sends every exclusion with its match type');
-  const necklaces = E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, null, copy, { dailyBudget: 5, maxCpc: 1, withAssets: false, negatives: ['earrings', { text: 'free earrings', matchType: 'PHRASE' }, 'shipping', 'free svg'],
+  const necklaces = E.buildSearchCampaignOps({ handle: 'celestial', title: 'Celestial' }, null, copy, { dailyBudget: 5, maxCpc: 1, withAssets: false, negatives: ['earrings', { text: 'free earrings', matchType: 'PHRASE' }, 'shipping', 'free svg', 'wish', 'bulk', { text: 'wish app', matchType: 'PHRASE' }],
     adGroups: [{ name: 'Necklace', assets: copy, keywords: ['zodiac necklace', 'star necklace', 'moon necklace', 'zodiac charm necklace'].map(text => ({ text })) }] });
-  check(necklaces.negatives.join() === 'earrings,free svg', 'a product word can still be excluded; "free earrings" and "shipping" would stop buying searches and are left out');
+  check(necklaces.negatives.join() === 'earrings,free svg,wish app', 'a product word can still be excluded; "free earrings", "shipping", a lone "wish" and "bulk" would stop buying searches and are left out');
   const names = creates(ops, 'adGroupOperation').map(g => g.name);
   check(names[0] === 'Earrings · Libra season, October birthdays and Halloween celestial' && names[0].length <= 70, 'long ad group names end on a whole word');
   const refs = new Set(creates(ops, 'adGroupOperation').map(g => g.resourceName));
@@ -204,4 +204,5 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   check(rsa.headlines.join('|') === 'Moon Earrings|Star Necklace Gifts|Zodiac Charms' && rsa.descriptions.length === 2 && !('sitelinks' in rsa), 'generated copy is deduplicated and length-checked');
 
   console.log(`PASS ${n} Search campaign build checks`);
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

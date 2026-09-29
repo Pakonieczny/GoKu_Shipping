@@ -41,4 +41,5 @@ const summaryRow=(x={})=>({offlineConversionUploadConversionActionSummary:{clien
  h=await diagnosed(Error('queryError=PROHIBITED_RESOURCE_TYPE_IN_FROM_CLAUSE'));
  assert(/PROHIBITED_RESOURCE_TYPE/.test(h.googleUploads.error)&&h.configuredAction.status==='ENABLED'&&h.reasons.some(s=>/waited more than 24 hours/.test(s)),'a failed diagnostics read leaves the rest of the health intact');
  console.log('PASS stuck Data Manager submissions are explained with Google Ads\' own import diagnostics');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1});

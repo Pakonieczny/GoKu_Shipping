@@ -35,4 +35,5 @@ const db={collection(name){assert.equal(name,'State');return {doc(name){assert.e
    assert.equal(w.document.querySelector('dialog'),null);dom.window.close();
  }
  console.log('PASS saved-workspace pagination, archive filtering, quota recovery, and exact approval scope');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

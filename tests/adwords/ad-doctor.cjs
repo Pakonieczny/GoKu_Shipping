@@ -87,6 +87,10 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const buyers = plain(e.get('_diagSanitize')(freebie, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
     check(buyers.keywords.join() === 'free charm patterns,earrings' && buyers.skipped.join() === 'free,free earrings,engraved locket' && /buying searches such as “nickel free earrings”/.test(buyers.skippedWhy) && /converting searches or active keywords/.test(buyers.skippedWhy),
       'a negative that would block a buying search ("free" vs "nickel free earrings") is left out; freebie phrases and product words are still offered');
+    const wish = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['wish', 'bulk', 'wish app'] } }] }] };
+    const gifts = plain(e.get('_diagSanitize')(wish, { ...diag, negativeGuard: { '42': { converting: [], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(gifts.keywords.join() === 'wish app' && gifts.skipped.join() === 'wish,bulk' && gifts.skippedWhy === 'they would block buying searches such as “wish bracelet”',
+      'a lone "wish" or "bulk" (gift and group orders) is left out with its own example; "wish app" is still offered');
   }
 
   // ── A Google total budget is carried as its total and never offered as a daily amount ──
@@ -265,8 +269,9 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); assert(m, name); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
     const dom = new JSDOM('<span id="diagSub"></span><button id="diagToggleAll"></button><button id="diagRun"></button><div id="diagBody"></div>', { url: 'https://console.example/', runScripts: 'outside-only' });
     const w = dom.window;
-    w.eval('var DASH=null,__calls=[],__replies={},__toasts=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
-      'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function confirm(){return true;}');
+    // Each fix asks in place (askInline); here every question is answered yes and its words are kept.
+    w.eval('var DASH=null,__calls=[],__replies={},__toasts=[],__asked=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
+      'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function askInline(b,o){__asked.push(o.q+(o.note?" "+o.note:""));return Promise.resolve(b);}');
     for (const name of ['money', 'esc', 'btnBusy', 'timeago', 'reportNumber', 'fmtMon', 'totalBudgetLine']) w.eval(pick(name));
     w.eval(html.match(/var _MON=\[[^\]]*\];/)[0]);
     w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('var feedRange=')));
@@ -320,12 +325,12 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.__replies.dismissRec = { ok: true };
     set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] } }, dash('ENABLED'));
     body().querySelector('.dg-dismiss').click(); await new Promise(r => setTimeout(r, 20));
-    check(!w.__calls.some(c => c[0] === 'runDiagnostics') && !w.DIAG.campaigns[0].recommendations.some(r => r.resourceName === 'customers/123/recommendations/b1'), 'dismissing updates the card without a paid re-diagnosis');
+    check(w.__asked.pop() === 'Dismiss this Google recommendation in Google Ads?' && !w.__calls.some(c => c[0] === 'runDiagnostics') && !w.DIAG.campaigns[0].recommendations.some(r => r.resourceName === 'customers/123/recommendations/b1'), 'dismissing asks in place, then updates the card without a paid re-diagnosis');
 
     w.__replies.applyRemedy = { ok: true, queued: true, approvalId: 'ap1', note: 'Sent to Approvals for review. No live ad was changed.' };
     set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] } }, dash('ENABLED'));
     [...body().querySelectorAll('.dg-remedy')].find(b => /Send to review/.test(b.textContent)).click(); await new Promise(r => setTimeout(r, 20));
-    check(/Sent to Approvals/.test(w.__toasts.join(' ')) && !/Send to review/.test(body().textContent) && /IN APPROVALS/.test(body().textContent), 'a sent rewrite moves to past fixes as waiting in Approvals');
+    check(w.__asked.pop() === 'Send 1 new headline(s) and 0 description(s) for this ad to Approvals? Nothing changes in Google Ads until you approve the draft there.' && /Sent to Approvals/.test(w.__toasts.join(' ')) && !/Send to review/.test(body().textContent) && /IN APPROVALS/.test(body().textContent), 'a sent rewrite asks with the same words, then moves to past fixes as waiting in Approvals');
 
     w.__replies.runDiagnostics = { queued: true };
     w.__replies.diagRunStatus = { ok: false, phase: 'running', done: 0, total: 1 };
@@ -335,4 +340,5 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.close();
   }
   console.log(passed + ' Ad Doctor checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

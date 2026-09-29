@@ -21,6 +21,7 @@ const compact=d=>d.replace(/-/g,'');
  await routerChecks();
  await uiChecks();
  console.log('PASS '+passed+' campaign-options checks (brand Search, sale-day adjustments, new-customer goal, total budgets, purchase-only goals, brand exclusions on new Performance Max)');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
 
 /* ---------------- the rules (pure) ---------------- */

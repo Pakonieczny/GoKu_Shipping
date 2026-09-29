@@ -104,6 +104,14 @@ async function runViewport(browser, vp, base, known, canShoot) {
   const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, isMobile: vp.phone, hasTouch: vp.phone, locale: 'en-CA', timezoneId: 'UTC', serviceWorkers: 'block', reducedMotion: 'no-preference' });
   const state = { tab: 'gate', inflight: 0, lastApi: Date.now(), errors: [], lastAction: '(page load)', activeOverlays: new Set(), crawledDialogs: new Set() };
   await context.addInitScript(() => {
+    // CSS animations and transitions as they start, so a short entrance animation that has already
+    // finished by the time a dialog is inspected still counts.
+    window.__hAnims = [];
+    const logAnim = e => { if (e.target && e.target.nodeType === 1) { window.__hAnims.push({ t: performance.now(), el: e.target, type: e.type }); if (window.__hAnims.length > 400) window.__hAnims.splice(0, 200); } };
+    addEventListener('animationstart', logAnim, true); addEventListener('transitionrun', logAnim, true);
+    // Scripted height eases too (they fire no events), so a block revealed by an easing parent is not a jump.
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (frames) { try { if (Array.isArray(frames) && frames.some(f => f && 'height' in f)) logAnim({ target: this, type: 'height' }); } catch (e) {} return animate.apply(this, arguments); };
     window.__hShifts = [];
     try { new PerformanceObserver(list => { for (const e of list.getEntries()) window.__hShifts.push({ t: e.startTime, v: e.value, src: (e.sources || []).map(s => { const n = s.node; if (!n || n.nodeType !== 1) return n && n.parentElement ? n.parentElement.tagName.toLowerCase() : '?'; return n.tagName.toLowerCase() + (n.id ? '#' + n.id : '') + (n.classList.length ? '.' + [...n.classList].slice(0, 2).join('.') : ''); }) }); }).observe({ type: 'layout-shift', buffered: true }); } catch (e) {}
   });
@@ -146,8 +154,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
   page.on('pageerror', e => { const top = String(e.stack || '').split('\n').slice(0, 3).join(' | ').replace(new RegExp(base, 'g'), ''); add('page error', vp.name, state.tab, { message: String(e.message).slice(0, 240), stack: top.slice(0, 300), after: state.lastAction }, String(e.message).replace(/\d+/g, '#')); });
   page.on('dialog', async d => { const msg = d.message(); add('native ' + d.type() + '()', vp.name, state.tab, { message: msg.slice(0, 160), after: state.lastAction }, d.type() + '|' + msg.slice(0, 60)); state.nativeDialogs = (state.nativeDialogs || 0) + 1;
     for (const m of msg.matchAll(/(US|CA|C)?\$\s?([\d,]+(?:\.\d+)?)/g)) { const val = Number(m[2].replace(/,/g, '')); if (!m[1] && !/\b(CAD|USD)\b/.test(msg) && fx.cadTracers.some(t => Math.abs(t - val) < 0.006)) add('CAD amount shown with bare $', vp.name, state.tab, { amount: m[0], where: 'native ' + d.type() + '()', text: msg.replace(/\s+/g, ' ').slice(0, 110), after: state.lastAction }, 'native|' + msg.slice(0, 30).replace(/\d/g, '#')); }
-    // A budget prompt gets a CAD tracer amount far enough from the current budget to reach the large-change confirm.
-    const answer = d.type() === 'prompt' ? (/budget/i.test(msg) ? '17.47' : (d.defaultValue() || '12')) : undefined;
+    const answer = d.type() === 'prompt' ? (d.defaultValue() || '12') : undefined;
     try { if (d.type() === 'confirm' && /delete|remove|clear|permanent|discard/i.test(msg)) await d.dismiss(); else await d.accept(answer); } catch (e) {} });
   page.on('requestfailed', r => { const u = r.url(); if (u.startsWith(base) && !/\/\.netlify\//.test(u)) add('request failed', vp.name, state.tab, { url: u.replace(base, ''), error: r.failure() && r.failure().errorText }, u); });
 
@@ -156,7 +163,9 @@ async function runViewport(browser, vp, base, known, canShoot) {
     while (Date.now() - t0 < max) { if (state.inflight === 0 && Date.now() - state.lastApi > 300) break; await page.waitForTimeout(80); }
   };
   const audit = async (tab, scopes, full, label) => {
-    let res; try { res = await page.evaluate(pageAudit, { scopes, minTap: vp.phone && full ? 32 : 0, cadTracers: fx.cadTracers }); } catch (e) { notes.push('audit failed on ' + tab + ': ' + e.message); return; }
+    // Layout is judged once height eases have finished, as a person would see it.
+    await page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && a.effect && a.effect.getKeyframes().some(k => 'height' in k)), null, { timeout: 1200, polling: 50 }).catch(() => {});
+    let res; try { res = await page.evaluate(pageAudit, { scopes, minTap: vp.phone && full ? 32 : 0, cadTracers: fx.cadTracers, vw: page.viewportSize().width }); } catch (e) { notes.push('audit failed on ' + tab + ': ' + e.message); return; }
     const ctx = label || state.lastAction;
     if (res.docOverflow) { const f = add('page wider than viewport', vp.name, tab, Object.assign({ after: ctx }, res.docOverflow), (res.docOverflow.culprits[0] || {}).sel || 'doc'); await shoot(f, (res.docOverflow.culprits[0] || {}).sel, tab); }
     for (const o of res.overflow) { const f = add('element overflows its container', vp.name, tab, Object.assign({ after: ctx }, o), o.container + '|' + o.sel); await shoot(f, o.sel, tab); }
@@ -222,7 +231,10 @@ async function runViewport(browser, vp, base, known, canShoot) {
     return page.evaluate(id => {
       document.querySelectorAll('[data-harness-region]').forEach(n => n.removeAttribute('data-harness-region'));
       const el = document.querySelector('[data-harness-id="' + id + '"]'); if (!el) return null;
-      const ctl = el.getAttribute('aria-controls'), reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      const ctl = el.getAttribute('aria-controls');
+      let reg = el.closest('details') || (ctl && document.getElementById(ctl)) || el.closest('.draft,.card,article,section,.view');
+      // Height applies to blocks: an inline region (an inline <details>) is judged by the block holding it.
+      while (reg && reg.parentElement && /^(inline|contents)$/.test(getComputedStyle(reg).display)) reg = reg.parentElement;
       if (!reg) return null; reg.setAttribute('data-harness-region', '1');
       return { h: reg.getBoundingClientRect().height, doc: document.documentElement.scrollHeight };
     }, id).catch(() => null);
@@ -237,7 +249,10 @@ async function runViewport(browser, vp, base, known, canShoot) {
     if (before && s1 && s3) {
       const delta = s3.h - before.h, docDelta = s3.doc - before.doc;
       out.delta = Math.round(delta); out.docDelta = Math.round(docDelta);
-      out.jumped = Math.abs(delta) > 24 && Math.abs(s1.h - s3.h) <= 2 && (!s2 || Math.abs(s2.h - s3.h) <= 2);
+      // A height ease on the region, around it or inside it since the click moved it smoothly, even if a slow
+      // host took the first sample after the ease had ended.
+      const eased = await page.evaluate(t => { const r = document.querySelector('[data-harness-region]'); return !!r && (window.__hAnims || []).some(x => x.type === 'height' && x.t >= t - 5 && x.el.isConnected && (x.el === r || x.el.contains(r) || r.contains(x.el))); }, t0).catch(() => false);
+      out.jumped = !eased && Math.abs(delta) > 24 && Math.abs(s1.h - s3.h) <= 2 && (!s2 || Math.abs(s2.h - s3.h) <= 2);
     }
     return out;
   }
@@ -256,7 +271,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       return;
     }
     if (/sign out/i.test(c.text) || c.type === 'file' || c.type === 'password') { C.skipped++; return; }
-    const t0 = await page.evaluate(() => performance.now());
+    const t0 = await page.evaluate(() => performance.now()); state.actionT0 = t0;
     const before = c.chart || c.tag === 'select' || c.tag === 'input' || c.inPopover ? null : await markRegion(c.id);
     try {
       if (c.tag === 'select') {
@@ -284,9 +299,17 @@ async function runViewport(browser, vp, base, known, canShoot) {
       if (c.chart) { C.charts++; await probeChartMark(tab, loc, c); return; }
       // A styled checkbox is operated through its label, as a person would.
       const target = c.tag === 'input' && /^(checkbox|radio)$/.test(c.type) && !(await loc.isVisible()) ? loc.locator('xpath=ancestor::label[1]') : loc;
-      if (vp.phone) await target.tap({ timeout: 3000 }); else await target.click({ timeout: 3000 });
+      const press = ms => vp.phone ? target.tap({ timeout: ms }) : target.click({ timeout: ms });
+      // Playwright's retries also line a control up with the top edge, under the sticky top bar, where no one
+      // would tap it; a control is reported as covered only when it is covered in the middle of the screen too.
+      try { await press(3000); } catch (e) {
+        if (!/intercepts pointer events/.test(String(e.message || e)) || !(await target.count())) throw e;
+        await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'center' }), null, { timeout: 2000 }); await press(4000);
+      }
       C.clicked++;
     } catch (e) {
+      // A control the page drew again under the press (the reload that follows a change) is gone, not broken.
+      if (!(await loc.count().catch(() => 0))) { C.vanished++; return; }
       const msg = String(e.message || e).split('\n');
       const why = (msg.find(l => /intercepts pointer events/.test(l)) || msg.find(l => /outside of the viewport|not visible|not stable|detached/.test(l)) || msg[0]).trim().slice(0, 200);
       if (/intercepts pointer events/.test(why)) add('control covered by another element', vp.name, tab, { control: c.text, family: c.family, why }, c.family + '|' + why.replace(/\d+/g, '#').slice(0, 80));
@@ -294,11 +317,26 @@ async function runViewport(browser, vp, base, known, canShoot) {
       return;
     }
     const motion = await measureMotion(t0, before);
-    const left = tab !== 'gate' && tab !== 'shell' && depth === 0 && (await activeView()) !== tab; // navigation, not expansion
+    const left = tab !== 'gate' && tab !== 'shell' && (await activeView()) !== tab; // navigation (from a dialog too), not expansion
     if (left || c.inPopover) { /* the popover and view changes are judged elsewhere */ }
     else if (motion.jumped) add('expands/collapses with no transition (jumps)', vp.name, tab, { control: c.text, tag: c.tag, heightChange: motion.delta, pageHeightChange: motion.docDelta, shift: Math.round(motion.shift * 1000) / 1000 }, c.family);
     else if (motion.shift > 0.05 && !motion.animated.length) add('content below shifts with no transition', vp.name, tab, { control: c.text, tag: c.tag, shift: Math.round(motion.shift * 1000) / 1000, moved: motion.sources }, c.family);
     await afterAction(tab, scopes, c, depth);
+    if (await page.locator('.cmdEdit[data-kind="budget"] #cmdEditIn').count().catch(() => 0)) await budgetEdit(tab, scopes, c, depth);
+  }
+
+  // A campaign's budget editor, once open, gets a CAD tracer far enough from the budget to reach its
+  // large-change confirmation; it is saved and the change applied before another control replaces it.
+  async function budgetEdit(tab, scopes, c, depth) {
+    const box = page.locator('.cmdEdit[data-kind="budget"]'), press = l => vp.phone ? l.tap({ timeout: 3000 }) : l.click({ timeout: 3000 });
+    const say = what => { state.lastAction = what; if (process.env.HARNESS_DEBUG) console.error('[' + vp.name + '/' + tab + '] ' + what + (c.row ? ' (row ' + c.row + ')' : '')); };
+    try {
+      say('budget editor: 17.47, Save');
+      await box.locator('#cmdEditIn').fill('17.47', { timeout: 2500 }); await press(box.locator('[data-k="save"]'));
+      await afterAction(tab, scopes, c, depth);
+      const apply = box.locator('[data-k="apply"]');
+      if (await apply.count()) { say('budget editor: Apply anyway'); await press(apply); await afterAction(tab, scopes, c, depth); }
+    } catch (e) { add('control could not be operated', vp.name, tab, { control: 'budget editor', why: String(e.message || e).split('\n')[0].slice(0, 200) }, 'budget editor'); }
   }
 
   async function probeChartMark(tab, loc, c) {
@@ -313,8 +351,9 @@ async function runViewport(browser, vp, base, known, canShoot) {
     else await page.mouse.move(x, y);
     await page.waitForTimeout(220);
     if (vp.phone) tapChanged = await changes().catch(() => 0);
+    // The page's tooltip moves into an open dialog so that it shows above it.
     const tip = await page.evaluate(() => {
-      const cands = [...document.querySelectorAll('body > div, .bcTip')].filter(d => { const s = getComputedStyle(d); return s.display !== 'none' && (s.pointerEvents === 'none') && d.textContent.trim() && (s.position === 'fixed' || s.position === 'absolute'); });
+      const cands = [...document.querySelectorAll('body > div, dialog[open] > div, .bcTip')].filter(d => { const s = getComputedStyle(d); return s.display !== 'none' && (s.pointerEvents === 'none') && d.textContent.trim() && (s.position === 'fixed' || s.position === 'absolute'); });
       const t = cands[cands.length - 1]; if (!t) return null; t.setAttribute('data-harness-tip', '1'); const r = t.getBoundingClientRect();
       return { text: t.textContent.replace(/\s+/g, ' ').trim().slice(0, 120), left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), vw: innerWidth, vh: innerHeight };
     });
@@ -348,7 +387,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
       const label = ov.kind + ' ' + ov.id + ' "' + ov.label + '"';
       const ovSel = ov.kind === 'dialog' ? ov.sel : ov.sel;
       // Entrance motion: does the overlay animate in, or pop?
-      const anim = await page.evaluate(s => { const el = document.querySelector(s); if (!el) return null; return el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length; }, ovSel).catch(() => null);
+      const anim = await page.evaluate(([s, t]) => {
+        const el = document.querySelector(s); if (!el) return null;
+        const live = el.getAnimations({ subtree: true }).filter(a => a.effect && a.effect.getComputedTiming().iterations !== Infinity).length;
+        // Animations that started with this action (anywhere inside), or transitions on the overlay or its panel.
+        const started = (window.__hAnims || []).filter(x => x.t >= t - 5 && x.type !== 'height' && (x.type === 'animationstart' ? el.contains(x.el) : x.el === el || x.el.parentElement === el)).length;
+        return live + started;
+      }, [ovSel, state.actionT0 || 0]).catch(() => null);
       if (anim === 0 && ov.kind !== 'popover') add('dialog appears without transition', vp.name, tab, { overlay: label, opener: state.lastAction }, label);
       // Focus must move into a dialog when it opens (checked before the crawl moves it).
       const focus = await page.evaluate(s => { const el = document.querySelector(s); return !!(el && el.contains(document.activeElement)); }, ovSel).catch(() => false);
@@ -385,11 +430,11 @@ async function runViewport(browser, vp, base, known, canShoot) {
     while (n < budget) {
       let controls; try { controls = await page.evaluate(listControls, { scopes }); } catch (e) { break; }
       if (!controls.length) break;
-      // Tabs and filters wait until the content they reveal has been exercised;
-      // back/close/leave controls go last.
+      // Deletes and discards wait until the rest of the content has been exercised, tabs and filters until
+      // the content they reveal has; back/close/leave controls go last.
       let next = null;
-      const passOf = c => c.backLike ? 2 : c.tabLike ? 1 : 0;
-      for (const pass of [0, 1, 2]) {
+      const passOf = c => c.backLike ? 3 : c.tabLike ? 2 : c.destructive ? 1 : 0;
+      for (const pass of [0, 1, 2, 3]) {
         for (const c of controls) {
           if (passOf(c) !== pass || (depth === 0 && c.inDialog)) continue;
           const sig = c.family + '#' + c.row;
@@ -431,6 +476,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       await goTab(tab);
       await audit(tab, ['#v-' + tab, '#groupContext'], true, 'tab opened');
       if (tab === 'command') await chartResize(tab);
+      if (vp.phone) await narrow(tab);
       await crawl(tab, ['#v-' + tab, '#groupContext'], BUDGET, 0);
       await audit(tab, ['#v-' + tab, '#groupContext'], true, 'after exercising the tab');
     } catch (e) { notes.push(`${vp.name}/${tab}: walk stopped — ${String(e.message).split('\n')[0]}`); try { await page.keyboard.press('Escape'); await ensureSignedIn(); } catch (e2) {} }
@@ -440,6 +486,19 @@ async function runViewport(browser, vp, base, known, canShoot) {
   await crawl('shell', ['.topbar', '#groupContext'], 10, 0);
   await context.close();
 
+  // The narrowest phones in use (320 px): no sideways scroll, with the dry-run pill in the top bar as well.
+  async function narrow(tab) {
+    const wide = async label => {
+      const res = await page.evaluate(pageAudit, { scopes: ['.topbar', '#v-' + tab, '#groupContext'], cadTracers: fx.cadTracers, vw: 320 }).catch(() => null), o = res && res.docOverflow;
+      if (o) { const f = add('page wider than a 320 px phone', vp.name, tab, Object.assign({ after: label }, o), (o.culprits[0] || {}).sel || 'doc'); await shoot(f, (o.culprits[0] || {}).sel, tab); }
+    };
+    await page.setViewportSize({ width: 320, height: vp.height }); await page.waitForTimeout(700);
+    await wide('tab opened');
+    const was = await page.evaluate(() => { const d = document.getElementById('pillDry'), s = d.getAttribute('style'); d.style.display = 'inline-flex'; return s; });
+    await wide('with the dry-run pill');
+    await page.evaluate(s => { const d = document.getElementById('pillDry'); if (s == null) d.removeAttribute('style'); else d.setAttribute('style', s); }, was);
+    await page.setViewportSize({ width: vp.width, height: vp.height }); await page.waitForTimeout(700);
+  }
   async function chartResize(tab) {
     const measure = () => page.evaluate(() => ['chartSpendRev', 'chartClicks', 'salesTrend'].map(id => { const host = document.getElementById(id), svg = host && host.querySelector('svg'); if (!svg || !host.offsetParent) return null; const vb = svg.viewBox && svg.viewBox.baseVal, r = svg.getBoundingClientRect(), hr = host.getBoundingClientRect(); return { id, host: Math.round(hr.width), svg: Math.round(r.width), vb: vb ? Math.round(vb.width) : null }; }).filter(Boolean));
     await settle(400, 6000);

@@ -83,4 +83,5 @@ function refreshFixture({setting,groupLinks}){
   p=await publish({payload:{...clone(plainPayload),meta:{...plainPayload.meta,existingCampaignId:'42'}},live:true,tag:'something-else'});
   check(p.result&&p.sent.length===1,'the guard only applies to creative refresh drafts');
   console.log('PASS '+n+' brand-guidelines creative refresh checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

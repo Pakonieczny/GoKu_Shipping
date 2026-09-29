@@ -203,4 +203,5 @@ async function setup({generatedSource=false,autoProofs=true,layer=null,makeSourc
  await fixable.svc.editorAIApply({...fixable.input,jobId:pf.jobId});ok(fixable.f.docs.get(fixable.p).placements.length===6,'a corrected design applies to the workspace like any reviewed design');
  if(oldPlans===undefined)delete plan.scenePlans;else plan.scenePlans=oldPlans;
  console.log('PASS '+n+' responsive scene generation, native application, idempotency and paid-recovery checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

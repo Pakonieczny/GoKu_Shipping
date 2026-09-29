@@ -73,4 +73,5 @@ const textAssets=ops=>ops.filter(o=>o.assetOperation?.create?.textAsset).length;
   T.set({gaql:async q=>{if(q.includes('brand_guidelines_enabled'))throw Error('Unrecognized field');if(q.includes('FROM campaign WHERE'))return answer;return [];}});
   check((await T.capture('42')).brandGuidelinesEnabled===null,'an unreadable setting is recorded as unknown, and the snapshot is still captured');
   console.log('PASS '+n+' brand-guidelines product split checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

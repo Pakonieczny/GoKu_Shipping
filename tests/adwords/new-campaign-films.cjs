@@ -218,4 +218,5 @@ const motionOf=job=>({jobId:job.id,reviewHash:reviewHash(job)});
  e.f.docs.set(ws2+'/motionJobs/motion_'+'e'.repeat(40),films({id:'motion_'+'e'.repeat(40),workspaceId:W2,groupRef:G66,createdAt:5000}));status=await e.E.adDesignMotionStatus(own);
  ok(status.jobId==='motion_'+'e'.repeat(40)&&!status.jobGroupRef&&status.workspaceId===W2,'films made in the group itself come first');
  console.log('PASS '+checks+' new-campaign film binding, dry-run upload and attachment, free reset, own-group films, target safety and dispatch checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exit(1);});// exit now: an open test window would otherwise keep a failed run alive

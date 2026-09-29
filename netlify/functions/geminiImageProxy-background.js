@@ -256,6 +256,77 @@ async function ensureStudioGoldStyleReference() {
   }
 }
 
+// A charm is identified by its file name. batch_collect moves a used charm from
+// New_Charms/ to Used_Necklace_Charm_Pool/ (earrings likewise) as soon as its
+// batch is collected, and charm_restore moves it back, so a path saved with a
+// set, or held by a browser tab that has been open since the set was built,
+// can name a folder the charm has already left. Adjacent entries are partners.
+const CHARM_POOL_DIRS = [
+  "listing-generator-1/Charm_Maker/New_Charms/",
+  "listing-generator-1/Charm_Maker/Used_Necklace_Charm_Pool/",
+  "listing-generator-1/Charm_Maker/New_Charms_Earrings/",
+  "listing-generator-1/Charm_Maker/Used_Earring_Charm_Pool/",
+];
+
+// Where the same charm file lives now, or null. Only a direct file of a charm
+// pool is looked for elsewhere in the pools; anything else is not a charm path.
+async function findMovedCharmPoolFile(bucket, p) {
+  const dir = CHARM_POOL_DIRS.find((d) => p.startsWith(d));
+  if (!dir) return null;
+  const name = p.slice(dir.length);
+  if (!name || name.includes("/")) return null;
+  for (const other of CHARM_POOL_DIRS) {
+    if (other === dir) continue;
+    const [there] = await bucket.file(other + name).exists();
+    if (there) return other + name;
+  }
+  return null;
+}
+
+// A set has exactly one charm. Redo of a slot of a saved set (and any other
+// edit into a set that already has a manifest) must be composed with THAT
+// charm. The page guards this too, but a browser tab opened before the guard
+// shipped can still send whatever charm it picked, so the server checks the
+// request against the set's own record. Only positive evidence stops a request:
+// no readable manifest, or no charm recorded in it, lets the request through.
+function charmNameOfSetManifest(m) {
+  const base = (p) => String(p || "").split("/").pop();
+  const named = base(m?.sourceCharmName) || base(m?.sourceCharm);
+  if (named) return named;
+  const votes = new Map();
+  for (const s of Array.isArray(m?.slots) ? m.slots : []) {
+    const n = base(s?.newCharm);
+    if (n) votes.set(n, (votes.get(n) || 0) + 1);
+  }
+  const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+  if (!ranked.length || (ranked.length > 1 && ranked[0][1] === ranked[1][1])) return null;
+  return ranked[0][0];
+}
+
+// The charm the page sends is the charm file or a derived copy of it (rotated or
+// hoop-repaired), whose path carries the charm's file name.
+function charmPathIsCharm(p, name) {
+  const s = String(p || "");
+  return s.includes(name) || s.includes(name.replace(/[^A-Za-z0-9._-]/g, "_"));
+}
+
+async function assertCharmBelongsToSet(category, outputBasePath, charmPath) {
+  const p = String(charmPath || "").trim();
+  if (!p || category === "Charms") return;
+  if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(String(outputBasePath || ""))) return;
+  let manifest = null;
+  try {
+    const [buf] = await getBucket().file(`${outputBasePath}/manifest.json`).download();
+    manifest = JSON.parse(buf.toString("utf8"));
+  } catch {
+    return;
+  }
+  const name = charmNameOfSetManifest(manifest);
+  if (!name || charmPathIsCharm(p, name)) return;
+  console.warn(`[edits] refused: ${outputBasePath} belongs to ${name}, request carried ${p}`);
+  throw new Error(`this set's charm is ${name}, but the request carried a different charm (${p.split("/").pop()}). Nothing was changed and no image was made.`);
+}
+
 async function storagePathToBuffer(storagePath) {
   const p = String(storagePath || "").trim();
   if (!p) throw new Error("input_storage_path must be a non-empty string");
@@ -281,10 +352,16 @@ async function storagePathToBuffer(storagePath) {
   }
 
   const bucket = getBucket();
-  const file = bucket.file(p);
+  let file = bucket.file(p);
 
   const [exists] = await file.exists();
-  if (!exists) throw new Error(`input_storage_path not found: ${p}`);
+  if (!exists) {
+    // The same charm file, moved between the pools since the path was saved.
+    const moved = await findMovedCharmPoolFile(bucket, p);
+    if (!moved) throw new Error(`input_storage_path not found: ${p}`);
+    console.warn(`[storagePathToBuffer] ${p} has moved; reading ${moved}`);
+    file = bucket.file(moved);
+  }
 
   let mime = "application/octet-stream";
   try {
@@ -2324,14 +2401,16 @@ function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
   return charmQuad && [2, 3].includes(Number(slotIndex)) ? "1024x1024" : fallback;
 }
 
-// Beady Necklace charms are drawn 10% smaller since 2026-09-28 (the size
-// rules at the top of the Beady prompts in Listing_Generator_1.html). Batch
-// sets queued before then, and batch runs, generations or Redos sent from a
-// tab opened before then, still carry the old wording, so it is swapped as
-// they are sent; otherwise the queue keeps producing the larger charm. Only
-// that exact wording on Beady slots 1, 3 and 5 changes (Regular necklaces
-// share it and keep it), and only until 2026-10-05, by when that queue has
-// long drained.
+// Beady Necklace charms are drawn 10% smaller since 2026-09-28, and another
+// 15% smaller on slots 1 to 5 since 2026-09-29 (the size rules at the top of
+// the Beady prompts in Listing_Generator_1.html). Batch sets queued before
+// then, and batch runs, generations or Redos sent from a tab opened before
+// then, still carry an older wording, so it is swapped as they are sent;
+// otherwise the queue keeps producing the larger charm. Each list runs in
+// order, so the oldest wording is carried through every step to the current
+// one. Only that exact wording on Beady slots 1 to 5 changes (Regular
+// necklaces share it and keep it), and only until 2026-10-05, by when that
+// queue has long drained.
 const BEADY_CHARM_SIZE_SWAPS_UNTIL = Date.parse("2026-10-05T00:00:00Z");
 const BEADY_MODEL_CHARM_SIZE_SWAPS = [
   ["REQUIRED 25% REDUCTION", "REQUIRED 32.5% REDUCTION"],
@@ -2340,9 +2419,34 @@ const BEADY_MODEL_CHARM_SIZE_SWAPS = [
    "× 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675)"],
   ["use 0.75 times the template placeholder", "use 0.675 times the template placeholder"],
   ["charm 100 pixels tall must now be 75 pixels tall", "charm 200 pixels tall must now be 135 pixels tall"],
+  // 2026-09-29: another 15% smaller (0.675 x 0.85 = 0.574)
+  ["REQUIRED 32.5% REDUCTION", "REQUIRED 42.6% REDUCTION"],
+  ["visibly 32.5% smaller", "visibly 42.6% smaller"],
+  ["× 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675)",
+   "× 0.574 / 7 (the previous distance / 7 baseline multiplied by 0.574)"],
+  ["use 0.675 times the template placeholder", "use 0.574 times the template placeholder"],
+  ["charm 200 pixels tall must now be 135 pixels tall", "charm 500 pixels tall must now be 287 pixels tall"],
+];
+// Slot 2 (background scene): 0.65 -> 0.5525 (0.65 x 0.85).
+const BEADY_SLOT2_CHARM_SIZE_SWAPS = [
+  ["REQUIRED 35% REDUCTION", "REQUIRED 44.75% REDUCTION"],
+  ["visibly 35% smaller", "visibly 44.75% smaller"],
+  ["× 0.65 / 7 (the previous distance / 7 baseline multiplied by 0.65)",
+   "× 0.5525 / 7 (the previous distance / 7 baseline multiplied by 0.5525)"],
+  ["use 0.65 times the template placeholder", "use 0.5525 times the template placeholder"],
+  ["charm 100 pixels tall must now be 65 pixels tall", "charm 400 pixels tall must now be 221 pixels tall"],
+];
+// Slot 4 (back-engraving guide): 65% -> 55.25% of the template charm.
+const BEADY_SLOT4_CHARM_SIZE_SWAPS = [
+  ["Render both charms at 65% of", "Render both charms at 55.25% of"],
+  ["This is a 30% increase in both width and height over the previous 50% target (50% × 1.30 = 65%). Apply the final 65% scaling once;",
+   "This is a further 15% reduction in both width and height from the previous 65% target (65% × 0.85 = 55.25%). Apply the final 55.25% scaling once;"],
+  ["(at the specified 65% linear size)", "(at the specified 55.25% linear size)"],
+  ["(must be 65% of the reference placeholder’s linear size)", "(must be 55.25% of the reference placeholder’s linear size)"],
 ];
 const BEADY_CHARM_SIZE_SWAPS = {
   0: BEADY_MODEL_CHARM_SIZE_SWAPS,
+  1: BEADY_SLOT2_CHARM_SIZE_SWAPS,
   2: [
     [`CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
     • The new charm must sit in the EXACT same position as the original charm in the reference image.
@@ -2354,7 +2458,18 @@ const BEADY_CHARM_SIZE_SWAPS = {
     • Apply this reduction exactly ONCE. Never match or exceed the original charm’s size. Resize nothing else: the text, pencil, pointer line, layout and background stay exactly as they are.`],
     ["- Any charm size mismatch vs charm image.",
      "- Any charm that is not 10% smaller than the original charm in the reference image."],
+    // 2026-09-29: another 15% smaller (0.9 x 0.85 = 0.765)
+    ["REQUIRED 10% REDUCTION (NON-NEGOTIABLE)", "REQUIRED 23.5% REDUCTION (NON-NEGOTIABLE)"],
+    ["exactly 10% smaller than the original charm’s on-image size",
+     "exactly 23.5% smaller than the original charm’s on-image size"],
+    ["scale it to fit 0.9 × the original charm’s height and 0.9 × its width",
+     "scale it to fit 0.765 × the original charm’s height and 0.765 × its width"],
+    ["An original charm 400 pixels tall becomes a new charm 360 pixels tall.",
+     "An original charm 400 pixels tall becomes a new charm 306 pixels tall."],
+    ["- Any charm that is not 10% smaller than the original charm in the reference image.",
+     "- Any charm that is not 23.5% smaller than the original charm in the reference image."],
   ],
+  3: BEADY_SLOT4_CHARM_SIZE_SWAPS,
   4: BEADY_MODEL_CHARM_SIZE_SWAPS,
 };
 function withCurrentBeadyCharmSize(set, slotIndex, prompt) {
@@ -16210,6 +16325,7 @@ async function _handlerImpl(event) {
 
       const outputBasePath = assertAllowedOutputBase(output_base_path);
       const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
+      await assertCharmBelongsToSet(cat, outputBasePath, basePath1);
 
       const img0 = await storagePathToBuffer(basePath0);
       const img1 = basePath1 ? await storagePathToBuffer(basePath1) : null;
@@ -16626,6 +16742,8 @@ async function _handlerImpl(event) {
       if (!input_image && !input_storage_path) {
         return json(400, { error: { message: "Missing input_image or input_storage_path" } });
       }
+
+      await assertCharmBelongsToSet(normalizeCategory(activeCategory), output_base_path, input_charm_storage_path);
 
       const ref = input_storage_path
         ? await storagePathToBuffer(input_storage_path)

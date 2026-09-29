@@ -52,4 +52,5 @@ await test('end-to-end opportunity discovery retains a converting product missin
  assert.equal(calls.length,2);assert.deepEqual(Array.from(calls[1].itemIds),[offer.itemId]);assert.equal(result.list.length,1);assert.deepEqual(Array.from(result.list[0].itemIds),[offer.itemId]);assert.equal(result.list[0].organic.matchedProductOrders,0);assert.equal(result.list[0].freePerformance.days30.conversions,3);assert.ok(audits.some(e=>e.id==='pmax_organic_offer_discovery'&&e.status==='ok'&&e.meta.verified===1));
 });
 console.log('Sales evidence: '+pass+' focused checks passed');
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1});

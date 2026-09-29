@@ -136,6 +136,33 @@ if(process.env.BRITES_EDITOR_DOM_RUNTIME){
   try{ctx.renderAdDesign();w.document.querySelector('[data-design-source-key="library:ai_one"]').click();assert.equal(s.imageTab,'generated');assert.equal(s.format,'portrait');assert(w.document.querySelector('#adImagePreviewPanel img').src.endsWith('/ai.png'));w.document.querySelector('[data-design-use-image]').click();assert.equal(placed.source.source.kind,'library');assert.equal(placed.source.source.imageId,'ai_one');assert.equal(placed.device,'mobile');assert.equal(placed.format,'portrait');}finally{ctx.saveAdDesignCrop=originalSave;}
   d.placements=[{groupRef:'group1',productId:'p1',device:'mobile',format:'portrait',imageId:'ai_one'}];s.imageTab='main';ctx.api=async(action,input)=>{assert.equal(action,'deleteAdDesignGeneratedImage');assert.equal(input.groupRef,'group1');return {ok:true};};await ctx.adDesignDeleteGenerated(s,'ai_one');assert(!ctx.adDesignGalleryRows(s).some(r=>r.generated));assert.equal(ctx.adDesignAssignedAsset(s).id,'ai_one');assert(w.document.querySelector('#adImagePreviewPanel img').src.endsWith('/ai.png'));
  }));
+ await test('Use in square ad eases what it moves: its actions and the preview ease to their new height, the preview keeps its height until the new image loads, a new step 2 line grows in, and reduced motion changes at once',()=>withDom(async w=>{
+  // jsdom has no layout: each block's height follows what it shows, an image loads when the test says so, and animate() is recorded.
+  const src=name=>{const m=new RegExp('^function '+name+'\\(','m').exec(html),rest=html.slice(m.index),next=/\n(?:async )?function \w+\(/.exec(rest.slice(1));return next?rest.slice(0,next.index+1):rest;};
+  vm.runInContext(['cmdStill','easeHeight','easeNow','easeStop'].map(src).join('\n'),ctx);Object.assign(ctx,{getComputedStyle:w.getComputedStyle.bind(w),MutationObserver:w.MutationObserver});
+  const E=w.Element.prototype,loaded=new Set(['https://images.test/0.jpg']),anims=[];let still=false,release=null,n=0;
+  const height=el=>el.matches('.adDesignSelectionActions')?(el.querySelector('[data-design-use-image]:not([aria-busy])')?92:60):el.id==='adImagePreviewPanel'?(im=>!im||!loaded.has(im.getAttribute('src'))?220:/crop/.test(im.getAttribute('src'))?616:348)(el.querySelector('img')):el.matches('.adDesignNote[role=status]')?16:0;
+  E.getBoundingClientRect=function(){const h=height(this);return {top:0,left:0,right:0,bottom:h,width:0,height:h,x:0,y:0};};
+  E.animate=function(frames,opts){const a={frames,opts,el:this,cancel(){this.cancelled=true;if(this.oncancel)this.oncancel();}};anims.push(a);return a;};
+  Object.defineProperty(w.HTMLImageElement.prototype,'complete',{configurable:true,get(){return loaded.has(this.getAttribute('src'));}});w.matchMedia=q=>({matches:/reduced-motion/.test(q)&&still});
+  try{
+   const d=copy(fixture),s={data:d,workspaceId:d.workspaceId,device:'desktop',format:'square',preview:'placement'};ctx.AD_DESIGN=s;
+   ctx.api=async action=>{if(action!=='cropAdDesignImage')return copy(s.data);await new Promise(r=>release=r);release=null;n++;return Object.assign(copy(s.data),{imageLibrary:[{id:'crop_'+n,kind:'crop',groupRef:'group1',format:'square',url:'https://images.test/crop'+n+'.jpg',originalUrl:'https://images.test/0.jpg',asset:{width:2048,height:2048},rootSource:{kind:'product',productId:'p1',imageId:'im0'}}],placements:[{groupRef:'group1',device:'desktop',format:'square',imageId:'crop_'+n}]});};
+   const q=sel=>w.document.querySelector(sel),hs=a=>a.frames.map(f=>f.height).join('→'),tick=async done=>{for(let i=0;i<50&&!done();i++)await new Promise(r=>setImmediate(r));assert(done());};
+   const use=async()=>{q('[data-design-use-image]').click();assert.match(q('[data-design-use-image]').textContent,/Saving/);await tick(()=>release);release();await tick(()=>s.cropSaving===false);};
+   ctx.renderAdDesign();const acts=q('.adDesignSelectionActions'),panel=q('#adImagePreviewPanel');assert(panel.querySelector('img').src.endsWith('/0.jpg'));assert(!q('.adDesignDirection>.adDesignNote[role=status]'));
+   await use();
+   const row=anims.find(a=>a.el===acts),note=q('.adDesignDirection>.adDesignNote[role=status]'),grow=anims.find(a=>a.el===note),hold=anims.find(a=>a.el===panel);
+   assert.equal(row&&hs(row),'92px→60px','the actions ease when Saving… shortens them');assert.equal(row.opts.duration,166);assert.equal(row.opts.easing,'cubic-bezier(.2,.7,.3,1)');
+   assert.match(q('.adDesignInUse').textContent,/In square ad/);assert.equal(grow&&hs(grow),'0px→16px','the new Direction saved line grows in');assert.equal(grow.frames[0].marginTop,'0px');
+   assert.equal(hold&&hs(hold),'348px→348px','the preview keeps its height while the new image loads');assert(!hold.cancelled);assert.equal(anims.filter(a=>a.el===panel).length,1);
+   loaded.add('https://images.test/crop1.jpg');panel.querySelector('img').dispatchEvent(new w.Event('load'));
+   const ease=anims.find(a=>a.el===panel&&a!==hold);assert(hold.cancelled);assert.equal(ease&&hs(ease),'348px→616px','then eases to the loaded image');assert.equal(ease.opts.duration,284);
+   // Reduced motion: heights change at once; the preview still waits for its image instead of dropping to an empty frame.
+   still=true;anims.length=0;s.editSources={[ctx.adDesignSlotKey(s)]:ctx.adDesignImageKey('p1','im1')};loaded.add('https://images.test/1.jpg');ctx.renderAdDesign();
+   await use();assert.equal(anims.length,1);assert.equal(hs(anims[0]),'348px→348px');loaded.add('https://images.test/crop2.jpg');panel.querySelector('img').dispatchEvent(new w.Event('load'));assert(anims[0].cancelled);assert.equal(anims.length,1,'no eased motion under reduced motion');
+  }finally{delete ctx.getComputedStyle;delete ctx.MutationObserver;}
+ }));
  await test('Back saves local direction and copy before returning; failed saves retain their cached edits and notice',()=>withDom(async w=>{
   const d=copy(fixture),s={data:d,workspaceId:'workspace1',format:'square',device:'desktop',preview:'placement',context:{returnLabel:'Products & groups',onReturn:()=>{calls.push(['returned']);}},copyDraft:{headlines:['Edited headline'],descriptions:['Edited description']}};ctx.AD_DESIGN=s;ctx.renderAdDesign();const back=()=>w.document.querySelector('[data-design-back]'),left=async()=>{for(let i=0;ctx.AD_DESIGN&&i<30;i++)await new Promise(r=>setImmediate(r));};
   assert.equal(w.document.querySelectorAll('[data-design-back]').length,1);assert.match(back().textContent,/Products & groups/);assert.equal(w.document.querySelector('[data-design-close-workspace]'),null);
@@ -174,4 +201,5 @@ if(process.env.BRITES_EDITOR_DOM_RUNTIME)await test('typing a photo search keeps
  }finally{ctx.closeAdDesign();ctx.document=oldDocument;delete ctx.window;dom.window.close();}
 });
 console.log(`${passed} Ad Design UI checks passed.`);
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

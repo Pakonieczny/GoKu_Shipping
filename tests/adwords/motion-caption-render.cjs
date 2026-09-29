@@ -15,4 +15,5 @@ const {renderVariants,captionLayers,captionCopy,motionPrompt,qualityPass}=requir
  assert.equal(count,3);assert(qualityPass({rubric:'complete-ad-v2',pass:true,productFaithful:true,mobileReadable:true,score:92}));assert(!qualityPass({pass:true,productFaithful:true,mobileReadable:true,score:92}),'old scores are not silently upgraded');
  assert(motionPrompt({title:'Peach Charm',plan,creativeDirection:{setting:'Orchard light',lighting:'Moving softbox',opening:'Metal glint',middle:'Detail',ending:'Hero',portrait:'Safe crop',landscape:'Product right',identity:'Exact'}},'portrait','').includes('Orchard light'));
  console.log('PASS actual rendering of all three captioned video ratios, changing messages, saved proofs and old/new score gates');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

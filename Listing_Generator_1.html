@@ -4469,9 +4469,21 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const charmName = (charmPath.split("/").pop() || charmPath);
       const slug = _gravityKey(charmName) + "_" + charmName.replace(/[^A-Za-z0-9._-]/g, "_");
       const key = slug + "|" + (allowHoopRepair ? "1" : "0");
+      // The memo is keyed by the charm's NAME, so an answer can be handed to a
+      // caller who names the same charm at a different path. Wherever the
+      // answer is just "the original file" it holds the FIRST caller's path,
+      // and by the time of a Redo that path is stale: the collector has moved
+      // the charm to the Used pool, so Redo asked the server for a New_Charms
+      // file that was gone ("input_storage_path not found"). Only the derived
+      // files (rotated copy, hooped copy) are worth sharing; the original is
+      // always answered with the path THIS caller resolved.
+      const forThisCaller = (r) => {
+        const mine = (p) => (p === r.original ? charmPath : p);
+        return { base: mine(r.base), rotated: mine(r.rotated) };
+      };
       // Memoise the PROMISE, not the result, so two slots asking at the same
       // moment share one repair instead of racing into two generations.
-      if (_gravityMemo.has(key)) return await _gravityMemo.get(key);
+      if (_gravityMemo.has(key)) return forThisCaller(await _gravityMemo.get(key));
       const work = (async () => {
         try {
           const cachePath = `${GRAVITY_CACHE_DIR}/${slug}`;
@@ -4542,10 +4554,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
           console.warn("[gravity] correction failed, using original charm:", charmPath, err);
           return { base: charmPath, rotated: charmPath };
         }
-      })();
+      })().then((r) => ({ ...r, original: charmPath }));
       _gravityMemo.set(key, work);
       try {
-        return await work;
+        return forThisCaller(await work);
       } catch (err) {
         _gravityMemo.delete(key);
         console.warn("[gravity] correction threw, using original charm:", charmPath, err);
@@ -5131,6 +5143,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
       } catch (_) {}
 
       const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
+      // The slot's picture before "Working…" replaced it, and whether an image
+      // request has been sent yet. A Redo that stops BEFORE any request (for
+      // example: the set's own charm cannot be confirmed) changed nothing, so
+      // the picture is put back instead of being replaced by "Error".
+      let priorPreview = null;
+      let requestSent = false;
       
       if (isViewing) {
           const targetGrid = prefix === 'gen' ? generateGrid : reviewGrid;
@@ -5140,6 +5158,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           
           if (redoBtn) redoBtn.disabled = true;
           if (prevBox) {
+              priorPreview = { html: prevBox.innerHTML, ok: prevBox.classList.contains("success-border") };
               prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
               prevBox.classList.remove("success-border"); 
           }
@@ -5171,8 +5190,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // because every charm has been moved to the Used pool) is pure
       // waste and a real failure point in that mode. Charm files may be
       // moved out of New_Charms/ once they have been used, so resolveOriginalCharm
-      // reads the manifest written at alloc time and falls back through
-      // several layers before it ever resorts to "latest in folder".
+      // reads the manifest written at alloc time and finds that charm's file
+      // by name. It never substitutes another charm: if the set's own charm
+      // cannot be confirmed it throws and this Redo stops before any image
+      // is requested.
       // A targeted Charm_Types correction still needs the master charm as
       // image 2; otherwise Gemini has no pixel-truth source from which to
       // restore missing or distorted engraving detail.
@@ -5180,11 +5201,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
         charmLatest = await resolveOriginalCharm(ctxSetPath, slotIndex, charmFolderPath);
-        if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
+        if (!charmLatest) throw new Error("this set's own charm could not be found, so Redo stopped. Nothing was changed and no image was made.");
       }
       
 
           if (spec.type === "copy") {
+            requestSent = true;
             const r = await postJson(GEMINI_FN, {
               kind: "copy_to_slot",
               activeCategory: ctxCategory,
@@ -5205,8 +5227,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
             if (isAdjustmentMode) {
               if (isStrictCharmReferenceSlot) {
                 inputPath = slotStoragePath;
-                charmPath = await charmPathForSlot(
-                  charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
+                charmPath = await charmPathThatExists(
+                  await charmPathForSlot(
+                    charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1),
+                  charmLatest.fullPath);
                 const strictReferencePrompt =
                   spec.folder === "Charm_Types"
                     ? CHARM_TYPES_PROMPT
@@ -5267,8 +5291,10 @@ The output must look like the input image with ONLY the user's requested change 
               // Random source reference + the listing's originally-allocated
               // charm + the slot's base prompt.
               inputPath = srcRandom.fullPath;
-              charmPath = await charmPathForSlot(
-                charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
+              charmPath = await charmPathThatExists(
+                await charmPathForSlot(
+                  charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1),
+                charmLatest.fullPath);
               finalPrompt = buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1);
             }
 
@@ -5290,6 +5316,7 @@ The output must look like the input image with ONLY the user's requested change 
             };
             if (charmPath) editsBody.input_charm_storage_path = charmPath;
 
+            requestSent = true;
             await postImageGeneration(editsBody, undefined, redoModel);
 
               waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
@@ -5342,7 +5369,10 @@ The output must look like the input image with ONLY the user's requested change 
           updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
-             if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+             if (prevBox && priorPreview && !requestSent) {
+               prevBox.innerHTML = priorPreview.html;
+               if (priorPreview.ok) prevBox.classList.add("success-border");
+             } else if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
              const redoBtn = document.getElementById(`${prefix}_redo_${slotIndex}`);
              if (redoBtn) redoBtn.disabled = false;
              setStatus("Redo failed: " + err.message);
@@ -5599,30 +5629,58 @@ The output must look like the input image with ONLY the user's requested change 
     }
 
     /**
+     * The charm path a Redo is about to send must name a file that is there.
+     * Whatever the reference helpers hand back (a remembered answer, a cached
+     * rotated or hooped copy) is checked once more, and the charm this Redo
+     * just resolved is sent instead when the file has gone, so a stale path
+     * can no longer reach the server as "input_storage_path not found".
+     */
+    async function charmPathThatExists(path, resolvedPath) {
+      if (!path || path === resolvedPath) return path;
+      try {
+        await getMetadata(ref(storage, path));
+        return path;
+      } catch (_) {
+        console.warn(`[redo] ${path} is gone; sending ${resolvedPath} instead.`);
+        return resolvedPath;
+      }
+    }
+
+    /**
      * Resolves the original charm allocated to a listing, no matter where the
-     * charm file currently lives. Resolution priority:
-     *   1. manifest.sourceCharm (path locked in at allocation time)
-     *   2. If that path 404s, search by manifest.sourceCharmName across the
-     *      known charm folders and one level of subfolders. This handles the
-     *      "charms get moved out of New_Charms once used" workflow.
-     *   3. Per-slot newCharm field on the slot record (set during a previous
-     *      successful gen/redo).
-     *   4. Last-resort legacy fallback: listLatestFile(folder). This preserves
-     *      pre-fix behavior for old listings whose manifests were written
-     *      before sourceCharm existed.
-     * Returns the same shape as listLatestFile: { fullPath, name, url } or null.
+     * charm file currently lives. A set has exactly ONE charm and Redo must
+     * only ever use that one, so the answer comes from the set's own record:
+     *   1. manifest.sourceCharm (locked in at allocation / batch collection)
+     *   2. otherwise the charm most of the set's slots were built with
+     *      (per-slot newCharm, by file name; a tie is refused, never guessed)
+     * Then the charm FILE is found by that file name: the recorded path first,
+     * then the charm pools (a used charm moves from New_Charms/ to the Used
+     * pool once its batch is collected).
+     * There is deliberately NO "latest file in New_Charms" fallback. A set with
+     * no manifest yet (a stalled batch still being finished) or with a charm
+     * that can no longer be found stops Redo with a message instead of
+     * composing the slot with an unrelated charm.
+     * Returns { fullPath, name, url }, or throws with a message for the operator.
      */
     async function resolveOriginalCharm(setPath, slotIndex, fallbackFolderPath) {
       await ensureStorageSignedIn();
 
-      // Read the listing manifest
+      // Read the listing manifest. A missing or unreadable manifest means the
+      // set's charm cannot be confirmed, so Redo stops.
       let manifest = null;
+      let manifestError = null;
       try {
         const buf = await getBytes(ref(storage, `${setPath}/manifest.json`));
         manifest = JSON.parse(new TextDecoder().decode(buf));
-      } catch (_) { /* manifest missing / unreadable — handled below */ }
+      } catch (e) { manifestError = e; }
+      if (!manifest) {
+        const notFound = /object-not-found|not found|does not exist/i.test(String(manifestError?.code || "") + " " + String(manifestError?.message || ""));
+        throw new Error(notFound
+          ? "this set has no record of its charm yet (its batch is still being finished), so Redo is off for it until that is done. Nothing was changed and no image was made."
+          : "the set's charm record could not be read just now. Try again in a moment. Nothing was changed and no image was made.");
+      }
 
-      // Helper: shape result like listLatestFile (fullPath, name, url)
+      // Helper: shape result (fullPath, name, url)
       const toResolved = async (fullPath) => {
         const r = ref(storage, fullPath);
         const url = await getDownloadURL(r);
@@ -5679,57 +5737,58 @@ The output must look like the input image with ONLY the user's requested change 
         return null;
       };
 
-      // Build the list of "candidate paths to try" from the manifest, in
-      // priority order. Then try each verbatim, then by filename. This
-      // structure handles both flavors of manifest:
-      //   • Standard-mode (writes top-level sourceCharm + per-slot newCharm)
-      //   • Batch-collect (writes per-slot newCharm only — sourceCharm
-      //     absent on existing batch-generated listings)
-      const candidatePaths = [];
-      if (manifest?.sourceCharm) candidatePaths.push(manifest.sourceCharm);
-      if (Array.isArray(manifest?.slots)) {
-        // This slot's recorded charm comes first.
-        const thisSlot = manifest.slots.find(s => s?.slot === slotIndex + 1);
-        if (thisSlot?.newCharm) candidatePaths.push(thisSlot.newCharm);
-        // Then every other slot's charm (in batch mode all gen slots in
-        // a set share the same charm, so any slot's record can rescue us
-        // even if THIS slot's record is incomplete).
+      // Which charm is this set's? Recorded paths are grouped by charm FILE
+      // NAME (the folder part goes stale as the charm moves between pools).
+      const nameOf = (p) => String(p || "").split("/").pop();
+      const recorded = new Map(); // charm file name -> recorded paths, in manifest order
+      const note = (p) => {
+        const n = nameOf(p);
+        if (!n) return;
+        if (!recorded.has(n)) recorded.set(n, []);
+        if (!recorded.get(n).includes(p)) recorded.get(n).push(p);
+      };
+      let charmName = null;
+      if (manifest.sourceCharm || manifest.sourceCharmName) {
+        // Locked in when the set was allocated / collected: the set's charm.
+        charmName = String(manifest.sourceCharmName || nameOf(manifest.sourceCharm));
+        if (manifest.sourceCharm) note(manifest.sourceCharm);
+      }
+      // Every slot's recorded charm supplies paths to try (and, when no
+      // sourceCharm was recorded, the vote for which charm the set has).
+      const votes = new Map();
+      if (Array.isArray(manifest.slots)) {
         for (const s of manifest.slots) {
-          if (s?.newCharm && !candidatePaths.includes(s.newCharm)) {
-            candidatePaths.push(s.newCharm);
-          }
+          if (!s?.newCharm) continue;
+          note(s.newCharm);
+          const n = nameOf(s.newCharm);
+          votes.set(n, (votes.get(n) || 0) + 1);
         }
       }
-
-      // Step 1: try each candidate path verbatim. Quick path for
-      // listings whose charms haven't been moved out of the original
-      // location yet.
-      for (const p of candidatePaths) {
-        if (await fileExists(p)) {
-          return await toResolved(p);
+      if (!charmName) {
+        const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+        if (!ranked.length) {
+          throw new Error("this set has no record of its charm, so Redo cannot tell which charm to use. Nothing was changed and no image was made.");
         }
+        if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) {
+          throw new Error(`this set's slots were built with different charms (${ranked.map(([n, c]) => `${n} x${c}`).join(", ")}), so Redo cannot tell which one is its own. Nothing was changed and no image was made.`);
+        }
+        charmName = ranked[0][0];
       }
 
-      // Step 2: search by filename across known charm folders. This is
-      // what catches batch-generated listings whose charms have been
-      // moved to Used_*_Charm_Pool/ post-collection.
-      const candidateNames = new Set();
-      if (manifest?.sourceCharmName) candidateNames.add(manifest.sourceCharmName);
-      for (const p of candidatePaths) {
-        const n = p.split("/").pop();
-        if (n) candidateNames.add(n);
-      }
-      for (const name of candidateNames) {
-        const found = await findByName(name);
-        if (found) return await toResolved(found);
+      // Step 1: the recorded paths for THIS charm, verbatim. Quick path for
+      // listings whose charm has not been moved out of its folder yet.
+      for (const p of recorded.get(charmName) || []) {
+        if (await fileExists(p)) return await toResolved(p);
       }
 
-      // Step 3: legacy last resort. Only reached for listings with no
-      // manifest at all (extremely rare — would mean alloc_set ran but
-      // nothing else did) or with a manifest that has no charm refs of
-      // any kind.
-      console.warn(`[resolveOriginalCharm] No manifest reference resolved; falling back to listLatestFile("${fallbackFolderPath}").`);
-      return await listLatestFile(fallbackFolderPath);
+      // Step 2: the same file name across the known charm folders. This is
+      // what catches batch-generated listings whose charm has been moved to
+      // Used_*_Charm_Pool/ post-collection.
+      const found = await findByName(charmName);
+      if (found) return await toResolved(found);
+
+      // Step 3: nothing. Never a different charm.
+      throw new Error(`this set's own charm (${charmName}) could not be found in any charm folder, so Redo stopped. Nothing was changed and no image was made.`);
     }
 
     // Function to retrieve top N latest files from storage
@@ -10155,13 +10214,16 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // 0. BEADY_NECKLACE
     // =========================================================================
 
-    // Charm size on the necklace model photos (slots 1 and 5) and on the
-    // sizing guide (slot 3). Regular necklaces, and any category that falls
-    // back to these prompts, keep the NECKLACE_ and SIZING_GUIDE_ rules as
-    // written. Beady necklace charms came out too large in Sunburst batch runs
-    // (2026-09-28), so Beady draws them 10% smaller on those three images:
-    // 0.675 instead of 0.75 on the models, 0.9 of the template charm on the
-    // sizing guide. Until 2026-10-05 the server also swaps the old wording in
+    // Charm size on the Beady necklace images: model photos (slots 1 and 5),
+    // background scene (2), sizing guide (3) and back-engraving guide (4).
+    // Regular necklaces, and any category that falls back to these prompts,
+    // keep the NECKLACE_, SIZING_GUIDE_, SLOT2_ and SLOT4_ rules as written.
+    // Beady charms came out too large in Sunburst batch runs (2026-09-28), so
+    // Beady draws them 10% smaller (0.75 -> 0.675 on the models, 1 -> 0.9 of
+    // the template charm on the sizing guide), and on 2026-09-29 another 15%
+    // smaller on all five images: 0.574 on the models, 0.765 on the sizing
+    // guide, 0.5525 on the background scene, 55.25% on the back-engraving
+    // guide. Until 2026-10-05 the server also swaps the older wording in
     // Beady requests sent from older tabs or queued earlier
     // (withCurrentBeadyCharmSize in geminiImageProxy-background.js); change
     // both together.
@@ -10172,10 +10234,10 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
     This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
 
-    const BEADY_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 32.5% REDUCTION
-    The charm must be visibly 32.5% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
-    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675). For a product-only scene, or when those landmarks are not visible, use 0.675 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
-    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 200 pixels tall must now be 135 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    const BEADY_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 42.6% REDUCTION
+    The charm must be visibly 42.6% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.574 / 7 (the previous distance / 7 baseline multiplied by 0.574). For a product-only scene, or when those landmarks are not visible, use 0.574 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 500 pixels tall must now be 287 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
     Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
     This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
 
@@ -10186,22 +10248,42 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
     const SIZING_GUIDE_CHARM_SIZE_FAIL = `- Any charm size mismatch vs charm image.`;
 
-    const BEADY_SIZING_GUIDE_CHARM_SIZE = `CHARM POSITION + SIZE — REQUIRED 10% REDUCTION (NON-NEGOTIABLE)
+    const BEADY_SIZING_GUIDE_CHARM_SIZE = `CHARM POSITION + SIZE — REQUIRED 23.5% REDUCTION (NON-NEGOTIABLE)
     • The new charm must sit in the same position as the original charm in the reference image, centred on the same point, with the pointer line still pointing to it.
-    • The new charm must be exactly 10% smaller than the original charm’s on-image size in BOTH width and height: scale it to fit 0.9 × the original charm’s height and 0.9 × its width, keeping the new charm’s own proportions. An original charm 400 pixels tall becomes a new charm 360 pixels tall.
+    • The new charm must be exactly 23.5% smaller than the original charm’s on-image size in BOTH width and height: scale it to fit 0.765 × the original charm’s height and 0.765 × its width, keeping the new charm’s own proportions. An original charm 400 pixels tall becomes a new charm 306 pixels tall.
     • Apply this reduction exactly ONCE. Never match or exceed the original charm’s size. Resize nothing else: the text, pencil, pointer line, layout and background stay exactly as they are.`;
 
-    const BEADY_SIZING_GUIDE_CHARM_SIZE_FAIL = `- Any charm that is not 10% smaller than the original charm in the reference image.`;
+    const BEADY_SIZING_GUIDE_CHARM_SIZE_FAIL = `- Any charm that is not 23.5% smaller than the original charm in the reference image.`;
 
-    const SLOT2_DUPLICATE_PROMPT = 
-    `${CHARM_GRAVITY_RULES}
-
-      CHARM SIZE AND CAMERA SCALE — REQUIRED 35% REDUCTION
+    // Background scene (slot 2) and back-engraving guide (slot 4). Regular
+    // necklaces share both prompts and keep the sizes as written; Beady draws
+    // the charm another 15% smaller in each (0.65 x 0.85 = 0.5525).
+    const SLOT2_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 35% REDUCTION
     The charm must be visibly 35% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
     For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.65 / 7 (the previous distance / 7 baseline multiplied by 0.65). For a product-only scene, or when those landmarks are not visible, use 0.65 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
     Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 100 pixels tall must now be 65 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
     Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
-    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
+
+    const BEADY_SLOT2_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 44.75% REDUCTION
+    The charm must be visibly 44.75% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
+    For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.5525 / 7 (the previous distance / 7 baseline multiplied by 0.5525). For a product-only scene, or when those landmarks are not visible, use 0.5525 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
+    Apply this reduction exactly ONCE. The formula above already includes it. A previous-baseline charm 400 pixels tall must now be 221 pixels tall, with its width reduced by the same factor. Do not retain the previous larger size, round the size upward, or enlarge the charm to make it more prominent or easier to read. Verify the final dimensions before returning the image and correct any oversize.
+    Keep the same attachment position, camera, crop, model, chain, chain thickness, props and background. Scale the integrated eyelet with the charm; keep external chain hardware unchanged and visibly connected through that eyelet. Never simulate a smaller charm by zooming out or changing the scene. Keep engraving topology and recognizable source details at the required size.
+    This size rule overrides any conflicting template-size or visual-prominence instruction in this slot; it does not change the product's actual stated dimensions or labels. Preserve natural lighting without a dark halo or grey skin patch around the pendant. Dark hatched engraving remains metal, not a cutout.`;
+
+    const SLOT4_CHARM_SIZE = `CHARM SIZE — FRONT AND BACK
+    Render both charms at 65% of the template placeholder's linear size, preserving the new charm's proportions and matching their physical size. Keep their original centres, chain, camera, text and layout unchanged. This is a 30% increase in both width and height over the previous 50% target (50% × 1.30 = 65%). Apply the final 65% scaling once; do not shrink further for emphasis.`;
+    const SLOT4_CHARM_SIZE_PCT = "65%";
+
+    const BEADY_SLOT4_CHARM_SIZE = `CHARM SIZE — FRONT AND BACK
+    Render both charms at 55.25% of the template placeholder's linear size, preserving the new charm's proportions and matching their physical size. Keep their original centres, chain, camera, text and layout unchanged. This is a further 15% reduction in both width and height from the previous 65% target (65% × 0.85 = 55.25%). Apply the final 55.25% scaling once; do not shrink further for emphasis.`;
+    const BEADY_SLOT4_CHARM_SIZE_PCT = "55.25%";
+
+    const slot2DuplicatePrompt = (charmSize) =>
+    `${CHARM_GRAVITY_RULES}
+
+      ${charmSize}
 
         ENGRAVING STANDARD
     Reproduce every source stroke as a recessed groove, about 0.15–0.2 mm deep, with a crisp inner shadow and opposing highlight. Keep the source line topology and spacing. Never flat ink, pencil marks, raised relief, deep gouges or disappearing scratches.
@@ -10253,6 +10335,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     Focus on Charm Engraving details and ensure 100% accuracy to Charm image
     Do not output text.
     Ensure the charm colour, shading and reflections match the necklace chain in the reference image.`;
+
+    const SLOT2_DUPLICATE_PROMPT = slot2DuplicatePrompt(SLOT2_CHARM_SIZE);
+    const BEADY_SLOT2_DUPLICATE_PROMPT = slot2DuplicatePrompt(BEADY_SLOT2_CHARM_SIZE);
 
     const necklaceSizingGuidePrompt = (charmSize, charmSizeFail) =>
     `CRITICAL: Slot 3 is a sizing-guide charm replacement task.
@@ -10402,7 +10487,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     const DEFAULT_PROMPT = necklaceModelPrompt(NECKLACE_MODEL_CHARM_SIZE);
     const BEADY_DEFAULT_PROMPT = necklaceModelPrompt(BEADY_MODEL_CHARM_SIZE);
 
-    const SLOT4_PROMPT =
+    const slot4Prompt = (charmSize, sizePct) =>
     `${CHARM_GRAVITY_RULES}
 
       PROCESS ORDER (NON-NEGOTIABLE)
@@ -10417,8 +10502,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     • Do NOT move, resize, restyle, blur, or alter any text.
     • Do NOT crop, zoom, or reframe the image.
 
-    CHARM SIZE — FRONT AND BACK
-    Render both charms at 65% of the template placeholder's linear size, preserving the new charm's proportions and matching their physical size. Keep their original centres, chain, camera, text and layout unchanged. This is a 30% increase in both width and height over the previous 50% target (50% × 1.30 = 65%). Apply the final 65% scaling once; do not shrink further for emphasis.
+    ${charmSize}
 
         CRITICAL ENGRAVING PLACEMENT RULE (TOP PRIORITY — DO NOT GET THIS WRONG)
     • This entire slot exists to showcase the BACK-ENGRAVING feature. The personalized name engraving (e.g. "Violet", "Vivian", whatever sample name is shown) appears ONLY on the BACK-FACING SILVER CHARM. NEVER on the FRONT-FACING GOLD CHARM.
@@ -10436,7 +10520,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     • HARD FAIL: name engraving on the silver charm rendered as mirrored/reversed/backwards text.
 
     CHARM POSITION + LAYOUT
-    • Both charms must sit centered on the EXACT same positions as the original charms in the reference image (at the specified 65% linear size).
+    • Both charms must sit centered on the EXACT same positions as the original charms in the reference image (at the specified ${sizePct} linear size).
     • Front charm position = gold, fully detailed front face (with decorative engraving from Charm Image, NO personalized name).
     • Back charm position = silver, mirror-flipped silhouette (with personalized name engraving, NO decorative design).
 
@@ -10492,7 +10576,7 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
 
     HARD FAIL CONDITIONS
     - Any text change to the sizing-guide template itself.
-    - Either charm rendered at reference-template size (must be 65% of the reference placeholder’s linear size).
+    - Either charm rendered at reference-template size (must be ${sizePct} of the reference placeholder’s linear size).
     - Charms rendered at mismatched sizes (one larger than the other).
     - PERSONALIZED NAME ENGRAVING APPEARING ON THE FRONT-FACING GOLD CHARM (the name belongs ONLY on the silver back charm).
     - Decorative design engraving (stripes, mane, animal features) appearing on the back-facing silver charm (the silver back is a flat silhouette — only the name shows).
@@ -10507,6 +10591,9 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     - Engraving rendered as black/dark grey/gunmetal on either charm.
     - Engraving rendered as pencil-drawn or flat with no recessed depth.
     - Any gemstone, diamond, bead, dot, or decorative element added to either charm that is not in the source artwork.`;
+
+    const SLOT4_PROMPT = slot4Prompt(SLOT4_CHARM_SIZE, SLOT4_CHARM_SIZE_PCT);
+    const BEADY_SLOT4_PROMPT = slot4Prompt(BEADY_SLOT4_CHARM_SIZE, BEADY_SLOT4_CHARM_SIZE_PCT);
 
     const necklaceSecondModelPrompt = (charmSize) =>
     `${CHARM_GRAVITY_RULES}
@@ -11637,12 +11724,12 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
         5: REGULAR_SLOT5_PROMPT,
         7: REGULAR_SLOT7_PROMPT
       },
-      // 2. Beady_Necklace (Original; charm 10% smaller on slots 1, 3 and 5)
+      // 2. Beady_Necklace (charm smaller than Regular on slots 1 to 5)
       "Beady_Necklace": {
         1: BEADY_DEFAULT_PROMPT,
-        2: SLOT2_DUPLICATE_PROMPT,
+        2: BEADY_SLOT2_DUPLICATE_PROMPT,
         3: BEADY_SLOT3_SIZING_GUIDE_PROMPT,
-        4: SLOT4_PROMPT,
+        4: BEADY_SLOT4_PROMPT,
         5: BEADY_SLOT5_PROMPT,
         7: SLOT7_PROMPT
       },

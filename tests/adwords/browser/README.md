@@ -5,11 +5,14 @@ root on `127.0.0.1`, signs in with a fake passcode, and walks every tab at
 desktop (1440×900) and phone (390×844) sizes: buttons, `<details>`, selects,
 inputs, lane tabs, chart marks, dialogs and popovers.
 
-The walk exercises content first, then tabs and filters, then back/close
-controls. A control repeated across rows is operated in at most two rows
-(`--family-cap`). Each kind of dialog is crawled once per viewport (up to 30
-actions); later openings are audited only. Inputs are put back to their
-original value after each check so filters do not hide the rest of a view.
+The walk exercises content first (deletes and discards after the rest), then
+tabs and filters, then back/close controls. A control repeated across rows is
+operated in at most two rows (`--family-cap`). Each kind of dialog is crawled
+once per viewport (up to 30 actions); later openings are audited only. Inputs
+are put back to their original value after each check so filters do not hide
+the rest of a view. On the phone walk each tab is also checked at 320 px wide,
+with and without the dry-run pill in the top bar. A control the page draws again
+under the press (the reload after a change) counts as gone, not as broken.
 
     node tests/adwords/browser/run.cjs [--tabs=command,sales] [--viewports=desktop,phone] [--budget=100] [--family-cap=2] [--screenshots=0]
 
@@ -26,20 +29,24 @@ install anything.
   get a local placeholder SVG.
 - Mutating actions (budgets, status, approvals, deletes) change only the
   fixture's in-memory state. Native `confirm()` dialogs that delete or discard
-  are dismissed; others are accepted so the follow-up UI is exercised. A budget
-  `prompt()` is answered with 17.47 (a CAD tracer) to reach the large-change
-  confirmation.
+  are dismissed; others are accepted so the follow-up UI is exercised. When a
+  campaign's in-place budget editor (`#cmdEditIn`) opens, the walk types 17.47
+  (a CAD tracer), saves, and applies its large-change confirmation.
 - An action the server does not route (parsed from
   `netlify/functions/googleAdsAutopilotKick.js` `handleAction`) is reported as
   an unknown API action.
 
 ## What it reports
 
-Console errors and page errors, unknown API actions, blocked requests, pages or
+Console errors and page errors, unknown API actions, blocked requests, pages
+wider than the screen as set (a phone browser widens its layout to fit, so the
+page width is not compared with `innerWidth`) or than a 320 px phone,
 elements wider than their container, overlapping or hard-clipped text,
-ellipsis without a tooltip, phone tap targets under 32 px, dialogs that do not
+ellipsis without a tooltip, phone tap targets under 32 px, controls that
+another element still covers in the middle of the screen, dialogs that do not
 take or trap focus or ignore Escape, dialogs and expanders that appear with no
-transition, chart marks without a tooltip or click detail, charts that do not
+transition (a short entrance animation that has already finished when a dialog
+is inspected still counts), chart marks without a tooltip or click detail, charts that do not
 redraw for their width, placeholder leaks (`undefined`, `NaN`, `null`,
 `[object Object]`, raw enum codes, literal `\uXXXX` escapes), native
 `prompt()`/`confirm()` use, and CAD amounts printed with a bare `$` in the page

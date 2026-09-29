@@ -159,4 +159,5 @@ delete process.env.GMC_REFRESH_TOKEN; delete process.env.GEMINI_API_KEY; delete 
     'the write probe is sent exactly once, and only when asked for');
 
   console.log(passed + ' Google connection catalog and executor checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exitCode = 1; });

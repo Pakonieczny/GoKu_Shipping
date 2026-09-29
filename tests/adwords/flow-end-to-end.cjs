@@ -585,5 +585,6 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   const took = ((RealDate.now() - started) / 1000).toFixed(1);
   check(RealDate.now() - started < 30000, 'whole flow ran in ' + took + ' s');
   console.log('PASS ' + passed + ' whole-flow checks (research -> draft -> creative review -> dry run -> publication -> reporting -> learning)');
+  require('./suite-guard.cjs').done();
   process.exit(0);
 })().catch(e => { console.error('FAIL step "' + step + '":', e && e.stack || e); process.exit(1); });

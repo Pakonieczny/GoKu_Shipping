@@ -203,19 +203,27 @@ exports.handler = async (event) => {
         }
       }
       else if (task === "pmaxGenerate") {
-        const gId = String(body.genId || Date.now());
-        try { await E.setGenStatus(gId, { phase: "running", startedAt: Date.now(), kind: "pmax" }); } catch (e) {}
-        try {
-          const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
-            itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
-            feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
-            existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0 });
-          result.pmax = out;
-          try { await E.setGenStatus(gId, { ok: true, ...out }); } catch (e) {}
-        } catch (e) {
-          const msg = String(e.message || e).slice(0, 400);
-          result.pmax = { error: msg };
-          try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
+        // The console claims each generation (E.claimPmaxGeneration) and dispatches it with its runId. Only the worker
+        // that takes that claim writes the paid copy and the draft, so a repeated, superseded or late dispatch pays nothing.
+        const gId = String(body.genId || ""), runId = String(body.runId || "");
+        let mine = false;
+        try { mine = !!(gId && runId) && await E.takePmaxGeneration(gId, runId); }
+        catch (e) { const msg = String(e.message || e).slice(0, 200); log.push("pmaxGenerate: not started: " + msg);
+          try { await E.finishPmaxGeneration(gId, runId, { ok: false, error: "The draft generation could not start (" + msg + "). Nothing was paid for; create the draft again." }); } catch (e2) {} }
+        if (!mine) result.pmax = { skipped: true, genId: gId || null };
+        else {
+          try {
+            const out = await E.generatePmaxApproval({ handle: body.handle, dailyBudget: body.dailyBudget, targetRoas: body.targetRoas, days: body.days,
+              itemIds:Array.isArray(body.itemIds)?body.itemIds.slice(0,30):[],productTitles:Array.isArray(body.productTitles)?body.productTitles.slice(0,10):[],
+              feedLabel:body.feedLabel||null,searchThemes:Array.isArray(body.searchThemes)?body.searchThemes.slice(0,25):[],offerDetails:Array.isArray(body.offerDetails)?body.offerDetails.slice(0,30):[],
+              existingCampaignId:/^\d{1,20}$/.test(String(body.existingCampaignId||""))?String(body.existingCampaignId):null,addBudget:Number(body.addBudget)||0 });
+            result.pmax = out;
+            try { await E.finishPmaxGeneration(gId, runId, { ok: true, ...out }); } catch (e) {}
+          } catch (e) {
+            const msg = String(e.message || e).slice(0, 400);
+            result.pmax = { error: msg };
+            try { await E.finishPmaxGeneration(gId, runId, { ok: false, error: msg }); } catch (e2) {}
+          }
         }
       }
       else if (task === "pmaxBackfillImages") {
@@ -314,7 +322,10 @@ exports.handler = async (event) => {
       else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl });
         // Performance Max has its own search terms report; its drafts wait in Approvals like the Search ones.
-        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } } }
+        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } }
+        // Live Search exclusions that stop buying searches ("free", "bulk", "wish"): one draft removing them and adding
+        // narrower phrases in their place, sent only once approved.
+        if (typeof E.draftSearchNegativeRemovals === "function") { try { result.stopExcluding = await E.draftSearchNegativeRemovals(); } catch (e) { result.stopExcluding = { error: String(e.message || e).slice(0, 300) }; } } }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
       else if (task === "ceiling")  { result.ceiling = await E.enforceBudgetCeiling({ ctrl }); }

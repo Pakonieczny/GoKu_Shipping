@@ -5,7 +5,8 @@
 // Layout and content audit of one region of the page.
 function pageAudit(opts) {
   opts = opts || {};
-  const vw = window.innerWidth, vh = window.innerHeight;
+  // The screen's width as set: a phone browser widens innerWidth to fit a page that is too wide.
+  const vw = opts.vw || window.innerWidth, vh = window.innerHeight;
   const out = { docOverflow: null, overflow: [], clipped: [], overlaps: [], smallTargets: [], leaks: [], bareDollar: [] };
   const roots = (opts.scopes || ['body']).map(s => document.querySelector(s)).filter(Boolean);
   if (!roots.length) return out;
@@ -41,6 +42,8 @@ function pageAudit(opts) {
       const v = node.nodeValue;
       if (!v || !v.trim()) continue;
       const el = node.parentElement; if (!el || !visible(el)) continue;
+      // Text for screen readers only, in a 1 px clipped box, is meant to be hidden.
+      const eb = el.getBoundingClientRect(); if (eb.width <= 1 && eb.height <= 1) continue;
       // Measure the glyphs only: trailing spaces hang past right-aligned boxes.
       const range = document.createRange(); range.setStart(node, v.search(/\S/)); range.setEnd(node, v.length - v.match(/\s*$/)[0].length);
       const r = range.getBoundingClientRect(); if (r.width < 1 || r.height < 1) continue;
@@ -79,6 +82,7 @@ function pageAudit(opts) {
     const over = Math.max(r.right - (pr.right - padR), (pr.left + padL) - r.left);
     if (over <= 3) return; // icon nudges and sub-pixel rounding
     if (parseFloat(s.marginLeft) < 0 || parseFloat(s.marginRight) < 0) return; // deliberate bleed
+    if (s.transform !== 'none' && r.width <= 40) return; // a turned icon (an open row's chevron) takes no layout room
     const key = sel(p); if (seenC.has(key)) return; seenC.add(key);
     out.overflow.push({ sel: sel(el), container: key, overBy: Math.round(over), text: snippet(el.innerText || el.textContent, 70) });
   }));
@@ -166,7 +170,8 @@ function pageAudit(opts) {
     if (!visible(el) && !el.closest('svg')) return;
     ['title', 'aria-label', 'placeholder', 'data-tip', 'alt'].forEach(a => { const v = el.getAttribute(a); if (v) leak('@' + a, el, a === 'data-tip' ? v.replace(/<[^>]+>/g, ' ') : v); });
   }));
-  roots.forEach(root => root.querySelectorAll('input,select,textarea').forEach(el => { if (visible(el) && el.type !== 'password') leak('value', el, el.value); }));
+  // A select shows its chosen option's text; its value is never on screen.
+  roots.forEach(root => root.querySelectorAll('input,select,textarea').forEach(el => { if (visible(el) && el.type !== 'password') leak('value', el, el.tagName === 'SELECT' ? (el.selectedOptions[0] || {}).text || '' : el.value); }));
 
   // 7. Dollar amounts with no currency code nearby; CAD tracers flagged explicitly.
   const tracers = (opts.cadTracers || []).map(Number);
@@ -231,9 +236,11 @@ function listControls(opts) {
     const tabLike = el.getAttribute('role') === 'tab' || el.matches('[data-growth-lane],[data-bg-tab],[data-pb-filter],.oppTab,.srchip,.cbasis,.rpPreset,[data-view]');
     // Controls that leave the current view or close it wait until the view has been exercised.
     const backLike = el.matches('[data-bg-home],[data-bg-history-back],[data-bg-campaign-back]') || /^(←|‹|back\b|close\b|cancel\b|done\b|hide\b)/i.test(text) || (tag === 'button' && /^view all\b|^open (groups|approvals|overview|sales|controls|opportunities)\b/i.test(text));
+    // Controls that delete or discard wait until the rest of the content has been exercised.
+    const destructive = !backLike && /^(delete|remove|discard|reject|clear|dismiss)\b/i.test(text);
     const id = 'h' + (++seq) + '-' + Date.now().toString(36);
     el.setAttribute('data-harness-id', id);
-    found.push({ id, tag, type, family, row, text, chart: !!chart, tabLike, backLike, inPopover: !!el.closest('.rpPop'), disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+    found.push({ id, tag, type, family, row, text, chart: !!chart, tabLike, backLike, destructive, inPopover: !!el.closest('.rpPop'), disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
       href: tag === 'a' ? el.getAttribute('href') : null, target: tag === 'a' ? el.getAttribute('target') : null,
       inDialog: !!el.closest('dialog[open],.ovsheet,[role=dialog]'), w: Math.round(r.width), h: Math.round(r.height) });
   }));

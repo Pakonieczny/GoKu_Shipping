@@ -77,5 +77,6 @@ async function setup(){
  await upload.startUpload({bytes:123,title:'Peach charm',description:'Exact product'});const body=JSON.parse(sent.options.body);ok(body.you_tube_video_upload.video_privacy==='UNLISTED'&&!body.you_tube_video_upload.channel_id,'Google-managed upload is unlisted');ok(sent.options.redirect==='error'&&sent.options.headers['X-Goog-Upload-Header-Content-Length']==='123','bounded resumable upload metadata');
  await upload.finishUpload('https://googleads.googleapis.com/upload/1',Buffer.from('abc'),2);ok(sent.options.headers['X-Goog-Upload-Offset']==='2'&&sent.options.body.toString()==='abc','resumes from confirmed offset');
  console.log('PASS '+checks+' video upload, review scope, duplicate prevention, processing and policy checks');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
 

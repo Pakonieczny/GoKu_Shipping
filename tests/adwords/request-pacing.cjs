@@ -20,4 +20,5 @@ const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),{JSDOM}=
  assert(mexpr&&Number(mexpr[2])<=3000&&Number(mexpr[1])<=30000,'the animation poll is paced the same way: '+(mexpr&&mexpr[0]));
  dom.window.close();
  console.log('PASS deduplicated Google reads, cache expiry and scope isolation, stable sidebar nodes and adaptive polling');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

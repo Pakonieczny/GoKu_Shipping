@@ -248,7 +248,7 @@ input[type=range]{flex:1;accent-color:var(--gold)}
 .rngval{font-family:var(--mono);font-size:14px;font-weight:600;width:74px;text-align:right}
 
 /* toast */
-.toasts{position:fixed;bottom:22px;right:22px;z-index:100;display:flex;flex-direction:column;gap:9px}
+.toasts{position:fixed;bottom:22px;right:22px;z-index:100;display:flex;flex-direction:column;gap:9px;pointer-events:none}
 .toast{background:var(--velvet);color:#f4ecdc;padding:12px 16px;border-radius:11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);display:flex;align-items:center;gap:10px;animation:tin .25s ease;max-width:330px;border:1px solid var(--velvet-line)}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold-2);flex:0 0 8px}
 .toast.ok .d{background:var(--sage)}
@@ -300,7 +300,7 @@ svg{display:block}
 .sgBudget{display:inline-flex;align-items:center;gap:6px;border:1px solid #5a5145;border-radius:9px;padding:0 8px;height:40px;color:#bdb3a4;font-size:11px}.sgBudget b{color:#f4ead9;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.sgBudget input{width:54px;border:0;background:transparent;color:#fff;font:600 13px var(--mono);outline:none;padding:0}.sgBudget:focus-within{border-color:#b79a5b;box-shadow:0 0 0 2px rgba(183,154,91,.13)}.sgBudgetTotal{display:inline-flex;align-items:center;gap:6px;border-left:1px solid #5a5145;padding-left:10px;color:#bdb3a4;font-size:10.5px}.sgBudgetTotal b{color:#f7e5b8;font:700 12px var(--mono)}.sgBudgetTotal small{color:#8f8679}.sgBudgetTotal.over b,.sgBudgetTotal.over small{color:#f1a58e}.sgCtys{display:inline-flex;align-items:center;gap:5px;max-width:240px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:#bdb3a4}
 
 /* =================== Responsive layer: tablet + phone + folds =================== */
-.navburger{display:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
+.navburger{display:none;flex:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
 .navburger span{display:block;height:2px;border-radius:2px;background:var(--ink)}
 .navscrim{display:none;position:fixed;inset:0;background:rgba(22,19,15,.42);z-index:190;opacity:0;transition:opacity .2s}
 
@@ -358,11 +358,12 @@ svg{display:block}
   .toasts{left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));align-items:stretch}
   /* one thin header row on phones: title, status, refresh */
   .topbar{flex-wrap:nowrap;padding-left:10px;padding-right:10px}
-  .topbar #vtitle{font-size:19px!important}
+  /* a long view title takes a second line (within the bar's height) instead of being cut */
+  .topbar #vtitle{font-size:19px!important;line-height:1.1;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
   .topbar .sync{display:none}
   .topbar .pill{padding:4px 9px;letter-spacing:.02em}
   #btnRefresh .rf-ic{display:block}#btnRefresh .rf-t{display:none}#btnRefresh.is-busy{font-size:0}#btnRefresh .bspin{margin-right:0}
-  .actbar .adetail{display:none}
+  .actbar .adetail{display:none}#actbar .alabel{flex:0 1 auto;min-width:0}#actbar .aeta{max-width:18ch;white-space:normal}
   .rail__signout{min-height:36px}
   #v-controls .card__h .sub{margin-left:0}
   /* opportunity metric strips + draft internals wrap cleanly */
@@ -381,6 +382,12 @@ svg{display:block}
   .ovsheet>div{width:100%!important;max-width:100%!important;max-height:92dvh!important;border-radius:18px 18px 0 0!important;padding-bottom:calc(14px + env(safe-area-inset-bottom))!important}
   /* superseded by the .signin responsive rules further down */
 }
+/* Narrow phones: both status pills, the menu and Refresh stay on one row inside the screen; below 340 px the
+   dry-run pill leaves the view title no room, so the sliver of it left is not shown (screen readers still read it). */
+@media (max-width:379px){.topbar{gap:5px}.topbar .pill{font-size:10px;letter-spacing:0;padding:4px 7px;gap:4px}}
+@media (max-width:339px){.topbar:has(#pillDry[style*="inline-flex"]) .topbar__title{opacity:0}}
+/* With the dry-run pill a phone under 430 px has no room for a title word per line: one line, as before. */
+@media (max-width:429px){.topbar:has(#pillDry[style*="inline-flex"]) #vtitle{white-space:nowrap}}
 
 @media (min-width:761px) and (max-width:1020px){
   .view{padding-left:8px;padding-right:8px}
@@ -415,7 +422,7 @@ table.ptable td.r{text-align:right}table.ptable td.c{text-align:center}
 
 .gatewrap{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper);padding:24px}
 /* Visually hidden but present for assistive tech and password managers. */
-.vh{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.vh{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0!important}
 
 .signin{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);width:min(100%,980px);
   background:var(--card);border:1px solid var(--line);border-radius:22px;overflow:hidden;
@@ -522,8 +529,9 @@ table.ptable td.r{text-align:right}table.ptable td.c{text-align:center}
 @keyframes actIn{from{opacity:0;transform:translate(-50%,-4px)}to{opacity:1;transform:translate(-50%,0)}}
 #actbar .spin{width:14px;height:14px;flex:0 0 14px}
 #actbar progress,#actbar .bp-meter{position:absolute;width:1px;height:1px;margin:0;opacity:0;overflow:hidden;pointer-events:none}
-.actbar .alabel{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.actbar .adetail{font-size:12px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* Nothing in the activity line is cut off: the detail wraps under itself (on phones, where it is hidden, the label wraps) */
+.actbar .alabel{font-weight:600;font-size:13px;line-height:1.35;flex:none}
+.actbar .adetail{font-size:12px;line-height:1.35;opacity:.72;min-width:0}
 .actbar .acount{font-family:var(--mono);font-size:11px;opacity:.6;white-space:nowrap}
 .actbar .aeta{font-family:var(--mono);font-size:11px;background:rgba(244,236,220,.13);padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
 
@@ -640,8 +648,8 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .oppDefaults{display:grid;grid-template-columns:1fr auto;gap:12px;margin-bottom:13px}.oppDefault{display:flex;align-items:center;gap:11px;min-height:42px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--card)}.oppDefault>span:first-child{font-size:11px;font-weight:700;color:var(--ink-70);white-space:nowrap}.oppDefault:last-child{justify-content:flex-end}.oppPlaybook{margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:11px;background:var(--card)}.oppPlaybookHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}.oppPlaybookHead h4{margin:0;font-size:12.5px}.oppPlaybookHead .sub{margin-left:auto;font-size:10.5px;color:var(--ink-45)}
 .oppResultsStage{display:flex;flex-direction:column}.oppChannel{margin-bottom:16px;border:1px solid var(--line);border-radius:15px;background:var(--card);overflow:hidden;box-shadow:var(--sh)}.oppChannelHead{display:flex;align-items:center;gap:12px;padding:15px 16px;border-bottom:1px solid var(--line-2)}.oppChannelIcon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:var(--gold-soft);color:#7a5a1d;font-weight:800;flex:0 0 34px}.oppChannelHeadText{min-width:0;flex:1}.oppChannelHeadText .eyebrow{font-size:9px}.oppChannelHead h3{font-size:14px;margin:1px 0 0}.oppChannelHead p{font-size:11.5px;color:var(--ink-45);margin:2px 0 0}.oppChannelCount{padding:4px 9px;border-radius:999px;background:var(--paper-2);color:var(--ink-70);font:700 10px var(--mono);white-space:nowrap}.oppChannelEmpty{padding:17px 18px;color:var(--ink-70);font-size:12.5px;line-height:1.55}
 .oppResultsBar{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line-2);background:var(--card-2)}.oppTabs{display:inline-flex;gap:3px;padding:3px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}.oppTab{border:0;border-radius:7px;padding:7px 11px;background:transparent;color:var(--ink-70);font-size:12px;font-weight:650;cursor:pointer}.oppTab span{font:700 10px var(--mono);opacity:.65;margin-left:4px}.oppTab.active{background:var(--ink);color:#fff;box-shadow:var(--sh)}.oppSortField{margin-left:auto;display:flex;align-items:center;gap:7px;color:var(--ink-45);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppSortField select{width:auto;min-width:145px;padding:7px 28px 7px 9px;font-size:12px!important;text-transform:none;letter-spacing:0;color:var(--ink);background-color:var(--card)}
-.oppCardList{display:grid;gap:11px;padding:12px;background:var(--paper)}.oppCard{position:relative;padding:16px 17px!important;border-left-width:3px!important;box-shadow:none}.oppCard:hover{border-color:var(--ink-25);box-shadow:0 8px 22px rgba(30,26,20,.055)}.oppCardHeader{display:flex;align-items:flex-start;gap:11px}.oppCardPriority{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:0 0 9px}.oppCardTitle{min-width:0;flex:1}.oppCardTitle h4{font-size:15px;line-height:1.3;margin:0}.oppCardMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;color:var(--ink-45);font:10.5px var(--mono)}.oppCardMeta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-25)}.oppCardBadges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.oppCardWhy{margin:11px 0 12px;padding-left:20px;color:var(--ink-70);font-size:12.5px;line-height:1.5;max-width:920px}.oppCardMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--line-2)}.oppCardMetric{padding:9px 11px;background:var(--card-2);min-width:0}.oppCardMetric b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font:700 14px var(--mono)}.oppCardMetric span{display:block;margin-top:1px;color:var(--ink-45);font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppCardActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}.oppCardActions .opDx{margin:0!important}.oppCardActions .opMsg{min-width:120px}.oppCard .opDx>summary{margin:0!important;background:transparent}.oppDetailsBody{margin-top:12px;padding:14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2)}.oppDetailsIntro{margin:0 0 12px;color:var(--ink-70);font-size:12.5px;line-height:1.55}.oppCard .xd:not([open])>summary{margin-bottom:0}.oppCard .xd>summary{background:var(--card)}
-.oppCardActions .opDx[open]{flex:1 1 100%;order:3}.oppCardActions .opMsg{order:2}
+.oppCardList{display:grid;grid-template-columns:minmax(0,1fr);gap:11px;padding:12px;background:var(--paper)}.oppCard{position:relative;padding:16px 17px!important;border-left-width:3px!important;box-shadow:none}.oppCard:hover{border-color:var(--ink-25);box-shadow:0 8px 22px rgba(30,26,20,.055)}.oppCardHeader{display:flex;align-items:flex-start;gap:11px}.oppCardPriority{width:9px;height:9px;border-radius:50%;margin-top:7px;flex:0 0 9px}.oppCardTitle{min-width:0;flex:1}.oppCardTitle h4{font-size:15px;line-height:1.3;margin:0}.oppCardMeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:3px;color:var(--ink-45);font:10.5px var(--mono)}.oppCardMeta .sep{width:3px;height:3px;border-radius:50%;background:var(--ink-25)}.oppCardBadges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}.oppCardWhy{margin:11px 0 12px;padding-left:20px;color:var(--ink-70);font-size:12.5px;line-height:1.5;max-width:920px}.oppCardMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line-2);border-radius:10px;overflow:hidden;background:var(--line-2)}.oppCardMetric{padding:9px 11px;background:var(--card-2);min-width:0}.oppCardMetric b{display:block;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font:700 14px var(--mono)}.oppCardMetric span{display:block;margin-top:1px;color:var(--ink-45);font-size:8.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.oppCardActions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:12px}.oppCardActions .opDx{margin:0!important}.oppCardActions .opMsg{min-width:120px}.oppCard .opDx>summary{margin:0!important;background:transparent}.oppDetailsBody{margin-top:12px;padding:14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2)}.oppDetailsIntro{margin:0 0 12px;color:var(--ink-70);font-size:12.5px;line-height:1.55}.oppCard .xd:not([open])>summary{margin-bottom:0}.oppCard .xd>summary{background:var(--card)}
+.oppCardActions .opDx[open]{flex:1 1 100%;order:3;min-width:0}.oppCardActions .opMsg{order:2}
 .oppInUse{padding:15px 16px!important}.oppInUseHead{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.oppInUseHead h4{margin:0;font-size:14px}.oppInUseLoc{margin-left:auto;color:var(--ink-45);font:10.5px var(--mono)}
 .pmxList{display:grid}.pmxOpportunity{display:grid;grid-template-columns:minmax(0,1fr) auto!important;gap:13px!important;align-items:center!important;padding:15px 16px!important;border-top:1px solid var(--line-2)!important}.pmxOpportunity:first-child{border-top:0!important}.pmxMain{min-width:0}.pmxTitle{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.pmxTitle b{font-size:14px}.pmxRationale{margin-top:5px;color:var(--ink-70);font-size:12px;line-height:1.5}.pmxMetrics{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.pmxMetric{padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card-2);color:var(--ink-70);font-size:10px}.pmxMetric b{color:var(--ink);font-family:var(--mono)}.pmxActions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.pmxBudget{display:inline-flex;align-items:center;gap:3px;padding:6px 8px;border:1px solid var(--line);border-radius:9px;background:var(--card-2);font-size:11px;white-space:nowrap}.pmxBudget input{width:50px!important;border:0!important;background:transparent!important;padding:0!important;font:700 12px var(--mono)}.pmxEvidence{grid-column:1/-1}.pmxEvidence>summary{list-style:none;display:inline-flex;align-items:center;gap:6px;color:var(--gold);font-size:11px;font-weight:700;cursor:pointer}.pmxEvidence>summary::-webkit-details-marker{display:none}.pmxEvidence>summary:before{content:"+"}.pmxEvidence[open]>summary:before{content:"−"}.pmxEvidenceBody{margin-top:8px;padding:10px 12px;border-radius:9px;background:var(--card-2);color:var(--ink-70);font-size:11px;line-height:1.65}
 #customWrap.oppCustom{margin-top:16px;padding:0;overflow:hidden;box-shadow:none}#customWrap.oppCustom>summary{display:flex;width:100%;align-items:center;border:0;border-radius:0;padding:14px 15px!important;background:var(--card);margin:0!important}#customWrap.oppCustom>summary:before{content:"+";display:grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--paper-2);font-size:17px}#customWrap.oppCustom[open]>summary:before{content:"−"}#customWrap.oppCustom>summary>span:first-of-type{display:flex;flex-direction:column;align-items:flex-start}#customWrap.oppCustom>summary b{font-size:12.5px}#customWrap.oppCustom>summary small{font-size:10.5px;color:var(--ink-45);font-weight:400}#customWrap.oppCustom>.bench{margin:0!important;padding:16px;border-top:1px solid var(--line-2);background:var(--card-2)}
@@ -753,7 +761,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 #creativeBody .cr-facts{display:flex;flex-wrap:wrap;gap:4px 18px;margin:2px 0 16px;font-size:12.5px;color:var(--ink-70)}
 #creativeBody .cr-facts b{color:var(--ink);font-weight:600}
 #creativeBody .apError{margin:12px 0 0}
-#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open]{animation:dlgIn .2s ease-out}
+#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],#adDesignDialog[open],dialog.bg-split[open],.ovsheet>div{animation:dlgIn .2s ease-out}
 @keyframes dlgIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 #performanceDialog .cr-head h2,#adAnalysisDialog .cr-head h2,#adVersionDialog .cr-head h2,#creativeDialog .cr-head h2{min-width:0;overflow-wrap:break-word}
 #performanceBody>.perfFacts{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:0 0 6px}
@@ -768,7 +776,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 #performanceBody .gpBreak td small{display:block;margin-top:2px;max-width:440px;font-size:11.5px;line-height:1.45;color:var(--ink-70)}
 #performanceBody .gpBreak td.r,#performanceBody .gpBreak th.r{white-space:nowrap;font-variant-numeric:tabular-nums}
 .creative-dialog [role="status"]>.spin.sm,.draft .spin.sm{margin-right:2px}
-@media (prefers-reduced-motion:reduce){#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],.draft.is-arrived{animation:none}}
+@media (prefers-reduced-motion:reduce){#performanceDialog[open],#adAnalysisDialog[open],#adVersionDialog[open],#creativeDialog[open],#adDesignDialog[open],dialog.bg-split[open],.ovsheet>div,.draft.is-arrived{animation:none}}
 @media(max-width:700px){.apFacts{grid-template-columns:1fr;gap:1px;padding:12px 13px}.apFacts dd{margin-bottom:9px}.apFacts dd:last-child{margin-bottom:0}.apTable{font-size:12px}#performanceDialog,#adAnalysisDialog,#adVersionDialog,#creativeDialog{width:100%;max-width:100%;height:100%;max-height:100%;margin:0;border:0;border-radius:0}#performanceDialog .cr-head,#adAnalysisDialog .cr-head,#adVersionDialog .cr-head,#creativeDialog .cr-head{padding:12px 16px;align-items:center;gap:12px}#performanceDialog .cr-head h2,#adAnalysisDialog .cr-head h2,#adVersionDialog .cr-head h2,#creativeDialog .cr-head h2{font-size:18px;line-height:1.3}#performanceBody,#adAnalysisBody,#adVersionBody,#creativeBody{padding:16px 16px calc(28px + env(safe-area-inset-bottom))}}
 
 /* Ad design workspace: compact sources, one clear canvas, reviewable creative. */
@@ -870,10 +878,21 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 .reportGap{display:flex;align-items:center;gap:16px;padding:16px 4px 16px 28px;border-bottom:1px solid var(--line)}.reportGap>span{flex:1;min-width:100px}.reportGap small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}@media(max-width:700px){.reportGap{flex-wrap:wrap;padding-left:4px}}
 @media(min-width:701px){.campaignTreeHost .reportListing+.reportListing .reportMetrics small{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
 @media(max-width:700px){#srChips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}#srChips>.srchip{flex:none}#snapshot table.campaignTree{min-width:0}.campaignTree>thead{display:none}.campaignTree,.campaignTree>tbody,.campaignTree tr.cdet,.campaignTree .idleToggle tr{display:block}.campaignTree>tbody[hidden]{display:none}.campaignTree tr.crow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;padding:13px 4px;border-bottom:1px solid var(--line)}.campaignTree tr.crow>td{display:block;padding:0;border:0;min-width:0}#snapshot .campaignTree .crow>td:first-child{grid-column:1/3;display:flex;align-items:flex-start;min-width:0;position:static;background:none}.campaignTree .crow>td:first-child>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere}.campaignTree .crow .treeChevron{margin-right:10px;font-size:20px;line-height:1.1}.campaignTree .crow>td.cstat{grid-column:3;text-align:right}.campaignTree .crow>td[data-label]{text-align:left;font-size:12.5px}.campaignTree .crow>td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--sans);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)}.campaignTree tr.cdet>td{display:block;padding:12px 8px}.campaignTree .idleToggle td{display:block;border:0}.statusWhy{max-width:none}.legend .lcHint{margin-left:0;flex-basis:100%}}
+/* The Google scope addresses in the conversion-tracking steps wrap instead of widening a phone screen. */
+[data-dm-reconnect] code{overflow-wrap:anywhere}
+/* Phones: controls are at least 32 px so a thumb lands on them (links inside a line of text excepted). */
+@media(max-width:760px){
+  .rpPreset,.rpNav,.salesLeg,.salesSeg .segF,.bidSeg,#bCollRefresh,#bOccRefresh,.dmConnection input,input[type=range],.adDesignSelectActions button,.adDesignBack,.adDesignUpload input[type=file],.adDesignLinked,#v-groups .bg-link,#groupContext .bg-back,.coCamps label{min-height:32px}
+  .rpNav,.adDesignGroupNav button{min-width:32px;min-height:32px}#adDesignDialog .adDesignInspect{width:32px;height:32px}
+  .signin__details summary,.reportCoverage>summary,[data-dm-reconnect]>summary,.researchTechnical>summary,.gpDetail>summary,#adDesignDialog summary,#v-groups .bg-more>summary{min-height:32px;align-content:center}
+  .draft .apEdit>summary,.draft .apLink{display:inline-block;min-width:32px;min-height:32px;align-content:center}
+  .reportListing a,.reportListings>a,.bg-products a{display:inline-block;min-height:32px;align-content:center}
+  .sw{width:52px;height:33px;flex-basis:52px;border:4px solid transparent;background-clip:padding-box}
+}
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260929-shell">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-narrow-dates">
 </head>
 <body>
 
@@ -957,7 +976,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
         <span class="signin__dotsep">·</span>
         <span>Internal tool</span>
         <span class="signin__dotsep">·</span>
-        <a href="https://britesjewelry.com" rel="noopener">britesjewelry.com</a>
+        <a href="https://britesjewelry.com" target="_blank" rel="noopener">britesjewelry.com</a>
       </footer>
     </main>
 
@@ -974,7 +993,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
   <div class="main">
     <header class="topbar">
       <button class="navburger" id="navBurger" aria-label="Menu" aria-controls="nav" aria-expanded="false"><span></span><span></span><span></span></button>
-      <div class="topbar__title"><h1 id="vtitle">Overview</h1><div class="sub" id="vsub"></div></div>
+      <div class="topbar__title"><h1 id="vtitle" title="Overview">Overview</h1><div class="sub" id="vsub"></div></div>
       <div class="spacer"></div>
       <span class="pill live" id="pillLive"><span class="d"></span>AUTOPILOT ON</span>
       <span class="pill dry" id="pillDry" title="Dry-run is on: changes are validated and queued, never applied"><span class="d"></span>DRY-RUN</span>
@@ -1091,7 +1110,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
           <div class="card__h"><h3>Run now</h3><span class="sub" id="runNote"></span></div>
           <div class="runbtns">
           <button class="btn ghost sm runTask" onclick="runNow(['conversions'],this)" title="Send recent Shopify purchases and refunds to Google Ads">Upload conversions</button>
-          <button class="btn ghost sm runTask" onclick="runNow(['mine','prune'],this)" title="Draft converting search terms as keywords and wasteful ones as negatives for Search and Performance Max, the Brites brand exclusion for Performance Max, and flag weak ad text">Mine search terms</button>
+          <button class="btn ghost sm runTask" onclick="runNow(['mine','prune'],this)" title="Draft converting search terms as keywords and wasteful ones as negatives for Search and Performance Max, the Brites brand exclusion for Performance Max, the removal of Search exclusions that stop buyers (free, bulk, wish) with narrower phrases in their place, and flag weak ad text">Mine search terms</button>
           <button class="btn ghost sm runTask" onclick="runNow(['budgets'],this)" title="Draft budget moves toward campaigns beating the target ROAS">Reallocate budgets</button>
           <button class="btn ghost sm runTask" onclick="runNow(['events'],this)" title="Draft campaigns for occasions coming up (uses AI)">Draft due events</button>
           <button class="btn ghost sm" id="pmxBackfillBtn" onclick="pmaxBackfillImages()" title="Choose new photos for running Performance Max ads; each swap waits in Approvals">Redesign existing product ads</button>
@@ -1101,7 +1120,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
           <div class="runmsg" aria-live="polite"><span id="runMsg"></span><span id="pmxBackfillMsg"></span><span id="pmxUpgradeMsg"></span></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
-          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">Read-only · set by GADS_TERM_EXCLUSIONS in Netlify</span></div>
+          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">Read-only · set in Netlify’s environment variables</span></div>
           <div class="chips" id="termChips"></div>
         </div>
       </div>
@@ -1121,7 +1140,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 <script src="/brites-ad-format-policy.js?v=20260917-shapes"></script>
 <script src="/brites-campaign-styles.js?v=20260929-styles"></script>
 <script src="/brites-brand-assets.js?v=20260914"></script>
-<script src="/brites-ad-motion.js?v=20260929-films-reset-usd"></script>
+<script src="/brites-ad-motion.js?v=20260929-chooser-view"></script>
 <script src="/assets/pmax-recommendation.js?v=20260929-unverified"></script>
 <script>
 
@@ -1187,7 +1206,10 @@ function openCountryEditor(o){
     '<div class="ctylist" style="flex:1;overflow:auto;padding:2px 18px 6px;min-height:120px"><div class="lrow" style="padding:18px 0"><span class="spin"></span> <span class="muted">Loading countries\u2026</span></div></div>'+
     '<div style="padding:13px 18px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="ctycount muted" style="font-size:12px;flex:1"></span><button class="btn ghost sm ctycancel">Cancel</button><button class="btn gold sm ctysave">'+esc(o.saveLabel||"Save")+'</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
-  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close();}}
+  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close();return;}
+    // Tab stays inside the sheet: past the last control it wraps to the first, and back.
+    if(e.key!=="Tab")return;var f=Array.prototype.filter.call(box.querySelectorAll("button,input"),function(x){return !x.disabled&&x.getClientRects().length;});if(!f.length)return;
+    var i=f.indexOf(document.activeElement);if(e.shiftKey?i<=0:(i<0||i===f.length-1)){e.preventDefault();f[e.shiftKey?f.length-1:0].focus();}}
   function close(){document.removeEventListener("keydown",onKey,true);ov.remove();try{if(opener&&opener.isConnected)opener.focus();}catch(e){}}
   document.addEventListener("keydown",onKey,true);
   ov.onclick=function(e){if(e.target===ov)close();};
@@ -1646,7 +1668,9 @@ function bigChart(id,points,o){o=o||{};var W=Math.max(280,Math.round(o.w||940)),
   return '<div class="bigchart" id="bc-'+id+'" data-w="'+W+'" data-h="'+H+'" style="position:relative"><svg viewBox="0 0 '+W+' '+H+'" width="100%" height="'+H+'" preserveAspectRatio="xMidYMid meet" style="display:block;overflow:visible">'+grid+bars+xl+bands+'</svg><div class="bcTip" role="status" style="position:absolute;display:none;pointer-events:none;background:var(--ink);color:var(--paper);font-size:11.5px;line-height:1.5;padding:7px 10px;border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.25);white-space:nowrap;transform:translate(-50%,calc(-100% - 8px));z-index:5"></div></div>';}
 // Mouse: hover shows the detail, click lists the orders. Touch: the first tap shows the detail, a second tap lists them.
 function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;var tip=box.querySelector(".bcTip"),W=+box.getAttribute("data-w")||940,H=+box.getAttribute("data-h")||280,shown=-1,touch=false,down=false;
-  function place(b){var cw=box.clientWidth,s=Math.min(1,cw/W)||1,half=tip.offsetWidth/2,left=Math.max(0,cw-W*s)/2+(+b.getAttribute("data-cx"))*s;tip.style.left=(cw?Math.max(half,Math.min(cw-half,left)):left)+"px";tip.style.top=((H-H*s)/2+(+b.getAttribute("data-top"))*s)+"px";}
+  function place(b){var cw=box.clientWidth,s=Math.min(1,cw/W)||1,half=tip.offsetWidth/2,left=Math.max(0,cw-W*s)/2+(+b.getAttribute("data-cx"))*s;tip.style.left=(cw?Math.max(half,Math.min(cw-half,left)):left)+"px";tip.style.top=((H-H*s)/2+(+b.getAttribute("data-top"))*s)+"px";
+    // Above the bar by default; flipped below its top when that would leave the screen (as the line chart's tip does).
+    tip.style.transform="translate(-50%,calc(-100% - 8px))";if(tip.getBoundingClientRect().top<8)tip.style.transform="translate(-50%,8px)";}
   function show(i,tap){var p=points[i],b=box.querySelector('.bcBand[data-i="'+i+'"]');if(!p||!b||!tip)return;shown=i;
     Array.prototype.forEach.call(box.querySelectorAll(".bcBar"),function(r){r.classList.toggle("hover",+r.getAttribute("data-i")===i);});
     tip.innerHTML=o.tipHtml?o.tipHtml(p,tap):'<b>'+esc(p.x)+'</b><br>'+money(p.y);tip.style.display="block";place(b);}
@@ -1680,7 +1704,7 @@ function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen")
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&document.body.classList.contains("navOpen"))navDrawer(false);});
   var nv=document.getElementById("nav");if(nv&&window.MutationObserver)new MutationObserver(function(){nv.querySelectorAll("button").forEach(function(x){if(x.classList.contains("active"))x.setAttribute("aria-current","page");else x.removeAttribute("aria-current");});}).observe(nv,{subtree:true,attributes:true,attributeFilter:["class"]});
   if(sc)sc.onclick=function(){navDrawer(false);};})();
-function go(k){if(k==="perf")k="command";if(!document.getElementById("v-"+k))return;navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(window.BritesGroups){BritesGroups.chrome(k);if(k==="groups")BritesGroups.show();}if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);loadGrowthPerformance(document.getElementById('v-bench').dataset.lane,false);}if(typeof BritesFlow!=="undefined")BritesFlow.go(k);}
+function go(k){if(k==="perf")k="command";if(!document.getElementById("v-"+k))return;navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k),vt=$("#vtitle");vt.textContent=vt.title=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(window.BritesGroups){BritesGroups.chrome(k);if(k==="groups")BritesGroups.show();}if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);loadGrowthPerformance(document.getElementById('v-bench').dataset.lane,false);}if(typeof BritesFlow!=="undefined")BritesFlow.go(k);}
 
 /* ---- attribution basis ----
    Google Ads files a conversion under the day the AD WAS CLICKED. Shopify (and the Sales
@@ -2072,6 +2096,50 @@ var REPORT_TREE_CACHE=new Map(),REPORT_TREE_OPEN=new Set(),REPORT_CAMPAIGN_OPEN=
 function reportCached(action,input){var key=action+'|'+JSON.stringify(input),cached=REPORT_TREE_CACHE.get(key);if(cached&&Date.now()-cached.at<600000)return cached.promise;var pending=api(action,input).then(function(r){if(!r||r.error||r.ok===false)throw Error(r&&r.error||'Reporting details are unavailable.');return r;});REPORT_TREE_CACHE.set(key,{at:Date.now(),promise:pending});pending.catch(function(){var now=REPORT_TREE_CACHE.get(key);if(now&&now.promise===pending)REPORT_TREE_CACHE.delete(key);});if(REPORT_TREE_CACHE.size>30)REPORT_TREE_CACHE.delete(REPORT_TREE_CACHE.keys().next().value);return pending;}
 // A panel the user opens eases in once; re-renders that restore an open panel do not animate.
 function cmdOpening(el){if(!el||!el.classList)return;el.classList.remove('opening');void el.offsetWidth;el.classList.add('opening');var done=function(){el.classList.remove('opening');el.removeEventListener('animationend',done);};el.addEventListener('animationend',done);}
+// Expanders, cards, lanes and dialog contents (not the design studio's) ease to their new height (150–400 ms,
+// longer the further it moves) when a click opens, closes, swaps or loads what they hold: the smallest block
+// around the control whose height changed resizes smoothly, so what follows (or a centred dialog) glides
+// instead of jumping; a table row opening under its control grows from nothing. Restored re-renders and
+// reduced motion do not animate. The block clips its overflow only while it eases, through its own style:
+// clipping animated as part of the ease can outlive a cancelled ease in Chrome's hit testing, which left
+// everything below that height unclickable.
+function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|scroll/.test(getComputedStyle(el).overflowY))return;var to=el.getBoundingClientRect().height,a;if(!(Math.abs(to-from)>=8))return;
+  if(!el._ease)el._easeOv=el.style.overflow;el.style.overflow='clip';
+  a=el._ease=el.animate([{height:from+'px'},{height:to+'px'}],{duration:Math.round(Math.min(400,150+Math.abs(to-from)/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a){el._ease=null;el.style.overflow=el._easeOv||'';}};}
+function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
+// Stops a block's ease at once (the browser reports the cancel a frame later): its own overflow is back and
+// its height reads as settled for what is measured next.
+function easeStop(x){var a=x._ease;if(!a)return;x._ease=null;a.cancel();x.style.overflow=x._easeOv||'';}
+// A block's style without its overflow: an ease setting or putting back its clip is not a change to follow.
+function easeBare(s){return String(s||'').replace(/overflow\s*:[^;]*;?/g,'').replace(/[\s;]/g,'');}
+// Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
+// The smallest block whose height changed eases, so a change elsewhere that moves nothing (a status line) does
+// not widen it; blocks a redraw removed or hid are passed over, so what held them eases. A change during a
+// running ease continues from where the block stands.
+function easeWatch(els,row){var top=els[els.length-1],H=new Map(),live=function(x){return x.isConnected&&x.getClientRects().length>0;},mark=function(){els.forEach(function(x){H.set(x,x._ease?x._ease.to:x.getBoundingClientRect().height);});};
+  if(top._easeMo)top._easeMo.disconnect();mark();
+  var mo=top._easeMo=new MutationObserver(function(recs){
+    if(row){if(!top.getClientRects().length)return;mo.disconnect();Array.prototype.forEach.call(top.querySelectorAll(':scope>td>*'),function(c){easeHeight(c,0);easeWatch([c]);});return;}
+    recs=recs.filter(function(r){return r.attributeName!=='style'||easeBare(r.oldValue)!==easeBare(r.target.getAttribute('style'));});if(!recs.length)return;
+    var i,j,el,from,run=null;
+    for(i=0;i<els.length;i++){el=els[i];if(!live(el))continue;
+      if(el._ease){run=el;if(recs.some(function(r){return el.contains(r.target);}))break;continue;}
+      if(Math.abs(el.getBoundingClientRect().height+(run?run._ease.to-easeNow(run._ease):0)-H.get(el))>=8)break;}
+    if(i===els.length){if(!run)mark();return;}
+    for(j=i+1;j<els.length;j++)if(els[j]._ease&&live(els[j]))i=j;el=els[i];
+    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&live(els[j]))from-=els[j]._ease.to-easeNow(els[j]._ease);
+    els.forEach(easeStop);mark();easeHeight(el,from);});
+  mo.observe(top,row?{attributes:true}:{attributes:true,attributeOldValue:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
+function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;
+  row=document.getElementById(t.getAttribute('aria-controls')||'');if(row&&row.tagName==='TR'&&!row.getClientRects().length)return easeWatch([row],true);
+  top=t.closest('.draft,.card,.view,dialog:not(#adDesignDialog)>*')||(t.tagName==='SUMMARY'?t.parentNode:t.closest('details'));if(!top)return;
+  // A card that is all its wrapper holds (a panel shown and hidden as one) is watched from the card or view that
+  // holds the wrapper, so that one eases when the wrapper hides.
+  n=top.parentElement;if(n&&n.children.length===1&&n.tagName!=='DIALOG'&&!top.matches('.view'))top=n.closest('.draft,.card,.view,dialog:not(#adDesignDialog)>*')||top;
+  // Height applies to blocks only: inline boxes, table parts and scrolling boxes are passed over.
+  for(n=t.parentNode;n&&n!==top&&top.contains(n);n=n.parentNode){cs=getComputedStyle(n);if(/^(block|flex|grid|flow-root|list-item)$/.test(cs.display)&&!/auto|scroll/.test(cs.overflowY))els.push(n);}
+  els.push(top);easeWatch(els);}
+document.addEventListener('click',easeClick,true);
 function cmdCampaign(cid,range){var list=typeof cmdMetrics!=='undefined'&&cmdMetrics||[],rg=cmdReport&&cmdReport.range;if(!rg||rg.start!==range.start||rg.end!==range.end)return null;return list.find(function(x){return String(x.id)===String(cid);})||null;}
 // A group's figures on its campaign row's terms: the same currency and daily rates and, where Google
 // supplies it, the same basis. Without them the group shows Google's native report, labelled as such.
@@ -2808,9 +2876,12 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
       '</div>'+
       '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+inner+past+'</div></div>';});
   body.innerHTML=html;
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b"),google=this.classList.contains("dg-gbudget");
-    if(!confirm("Set this campaign’s daily budget to "+diagMoney(bud)+"?"))return;
-    var done=btnBusy(this,"Setting…");
+  // Each question opens in place under the row of buttons that asked, and follows that button through a redraw.
+  var dgAsk=function(b,key,q,yes,sel,match){var i=q.indexOf("? ");return askInline(b,{key:key,q:i>0?q.slice(0,i+1):q,note:i>0?q.slice(i+2):"",yes:yes,
+    place:function(box,x){x.parentNode.after(box);},find:function(){return Array.prototype.find.call(document.querySelectorAll(sel),match)||null;}});};
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=async function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b"),google=this.classList.contains("dg-gbudget");
+    var btn=await dgAsk(this,"dgBudget:"+id+":"+bud,"Set this campaign’s daily budget to "+diagMoney(bud)+"?","Set budget",google?".dg-gbudget":".dg-aibudget",function(x){return x.getAttribute("data-id")===id&&+x.getAttribute("data-b")===bud;});if(!btn)return;
+    var done=btnBusy(btn,"Setting…");
     // Logged as a fix, so its result is measured like any other.
     api("applyRemedy",{campaignId:id,remedy:{issue:(google?"Google":"AI")+" budget recommendation",fix:"Set the daily budget to "+diagMoney(bud),impact:"medium",executable:{kind:"setBudget",budget:bud}}}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The budget was not changed.");return;}
@@ -2819,21 +2890,22 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
       toast("Daily budget set to "+diagMoney(bud)+(r.verified?" and confirmed in Google Ads.":r.verified===false?", but Google Ads has not confirmed it yet.":"."),r.verified!==false);
       loadRemedyHistory();renderDiag();
     }).catch(function(e){done();toast(e.message||String(e));});};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation in Google Ads?"))return;
-    var done=btnBusy(this,"Dismissing…");
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=async function(){var rn=this.getAttribute("data-rn");
+    var btn=await dgAsk(this,"dgDismiss:"+rn,"Dismiss this Google recommendation in Google Ads?","Dismiss",".dg-dismiss",function(x){return x.getAttribute("data-rn")===rn;});if(!btn)return;
+    var done=btnBusy(btn,"Dismissing…");
     api("dismissRec",{resourceName:rn}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The recommendation was not dismissed.");return;}
       if(r.dryRun){done();toast("Dry run is on, so the recommendation was not dismissed in Google Ads.");return;}
       diagDropRec(rn);toast("Recommendation dismissed in Google Ads.",true);renderDiag();
     }).catch(function(e){done();toast(e.message||String(e));});};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=function(){
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=async function(){
     var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
     var aiBy2={};((((DIAG||{}).ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
     var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
     var ex=rm.executable||{},n=function(a){return (a||[]).length;};
     var what=ex.kind==="addNegatives"?("Add "+n(ex.keywords)+" negative keyword(s) to this campaign?"):ex.kind==="pauseKeywords"?("Pause "+n(ex.keywords)+" keyword(s) in this campaign?"):ex.kind==="addKeywords"?("Add "+n(ex.keywords)+" keyword(s) to this campaign?"):ex.kind==="rewriteAds"?("Send "+n(ex.headlines)+" new headline(s) and "+n(ex.descriptions)+" description(s) for this ad to Approvals? Nothing changes in Google Ads until you approve the draft there."):ex.kind==="setBudget"?("Set this campaign’s daily budget to "+diagMoney(ex.budget)+"?"):ex.kind==="setTargetRoas"?("Send a target ROAS of "+Math.round(ex.targetRoas*100)+"% for this campaign to Approvals? Bidding changes only after you approve the draft there."):"Apply this fix?";
-    if(!confirm(what))return;
-    var done=btnBusy(this,ex.kind==="rewriteAds"||ex.kind==="setTargetRoas"?"Sending…":"Applying…");
+    var btn=await dgAsk(this,"dgRemedy:"+cid+":"+ri,what,this.textContent.trim()||"Apply fix",".dg-remedy",function(x){return x.getAttribute("data-id")===cid&&x.getAttribute("data-r")===String(ri);});if(!btn)return;
+    var done=btnBusy(btn,ex.kind==="rewriteAds"||ex.kind==="setTargetRoas"?"Sending…":"Applying…");
     api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The fix was not applied.");return;}
       if(r.queued){toast(r.note||"Sent to Approvals for review.",true);
@@ -3029,6 +3101,11 @@ function apPmaxNegatives(pl){var m=pl.meta||{},terms=m.terms||[],std=terms.filte
   return {glance:[name,n+" exclusion"+(n===1?"":"s")],body:apFacts([["Excludes",esc(n+" search"+(n===1?"":"es")+" · "+name+" stops showing ads for "+(n===1?"it":"them")+" on Google Search and Shopping")],["Why",esc([std.length?std.length+" standard exclusion"+(std.length===1?"":"s")+" for searches a made-to-order jewellery shop cannot sell to: makers, resellers, jobs and digital files":"",waste.length?waste.length+" search"+(waste.length===1?"":"es")+" with at least "+(m.wasteClicks||30)+" clicks and "+apMoney(m.wasteCost||8,m)+" spent without a sale in the last "+(m.days||90)+" days":""].filter(Boolean).join(". "))],["Never excluded",esc("Searches for Brites (the brand exclusion covers them) and the campaign’s own search themes")]])
     +(std.length?'<div class="eyebrow" style="margin:12px 0 4px">Standard exclusions</div>'+apTerms(std):"")
     +(waste.length?'<div class="eyebrow" style="margin:12px 0 4px">Spent without a sale</div><table class="apTable"><thead><tr><th>Search</th><th>Clicks</th><th>Cost</th></tr></thead><tbody>'+waste.map(function(t){return '<tr><td>'+esc(t.text)+' <small>'+esc(apMatch(t.matchType))+'</small></td><td class="num">'+esc(Number(t.clicks||0).toLocaleString())+'</td><td class="num">'+esc(apMoney(t.cost,m))+'</td></tr>';}).join("")+'</tbody></table>':"")};}
+// Removing Search exclusions that stop buying searches, each with the narrower phrases that take its place: one line
+// per word, with its campaign and why.
+function apStopExcluding(pl){var m=pl.meta||{},list=m.removals||[],n=list.length,camps=[],na=0,eg=[];list.forEach(function(r){var a=r.adds||[];if(camps.indexOf(r.campaignId)<0)camps.push(r.campaignId);na+=a.length;if(a.length&&!eg.some(function(x){return x.w===r.text;}))eg.push({w:r.text,t:a[0]});});
+  return {glance:[camps.length===1?list[0].campaignName||apCampaignName(list[0].campaign):camps.length+" Search campaigns","Remove "+n+(na?" · add "+na:"")],body:apFacts([["Removes",esc(n+" exclusion"+(n===1?"":"s")+" · your Search ads can show again for searches with "+(n===1?"this word":"these words"))],["Adds",na?esc(na+" phrase exclusion"+(na===1?"":"s")+" · searches such as "+eg.map(function(x){return "“"+x.t+"”";}).join(" and ")+" stay excluded"):""],["Stays the same",esc("Every other exclusion, keyword, ad and budget")]])
+    +'<table class="apTable"><thead><tr><th>Change</th><th>Campaign</th><th>Why</th></tr></thead><tbody>'+list.map(function(r){var a=r.adds||[];return '<tr><td>Stop excluding <b>'+esc(r.text)+'</b> <small>'+esc(apMatch(r.matchType))+'</small>'+(a.length?' · add phrase'+(a.length===1?' ':'s ')+esc(a.join(", ")):'')+'</td><td>'+esc(r.campaignName||apCampaignName(r.campaign))+'</td><td>'+esc(r.reason||"")+'</td></tr>';}).join("")+'</tbody></table>'};}
 // Excluding searches for Brites from Performance Max, paired with the brand Search campaign that keeps an ad on them.
 function apBrandExclusion(pl){var m=pl.meta||{},b=m.brand||{},list=m.list||{},camps=m.campaigns||[],bs=m.brandSearch||{},q="\u201c"+(bs.name||"BA · brand-search")+"\u201d";
   var pair={live:q+" is running, so searches for Brites keep showing your brand ad.",paused:q+" is paused. Enable it with this exclusion, or searches for Brites show no ad.",draft:"The brand Search campaign is waiting in Approvals. Publish it with this exclusion, or searches for Brites show no ad.",none:"No brand Search campaign yet. Once this is published, searches for Brites show no ad until one runs; your site still appears in the free results."}[bs.state]||"";
@@ -3041,15 +3118,17 @@ function apDateEditor(id,s,e,reviewed){return '<details class="apEdit"><summary>
 function apCountryEdit(id,ids,reviewed){return '<button type="button" class="apLink apcty-edit" data-id="'+adAttr(id)+'" data-sel="'+adAttr((ids||[]).join(","))+'"'+(reviewed?' data-note="'+adAttr(AP_EDIT_NOTE)+'"':'')+'>Edit</button>';}
 function apTerms(list){return '<div class="apTerms">'+(list||[]).map(function(k){return '<span>'+esc(k.text)+(k.matchType?'<small>'+esc(apMatch(k.matchType))+'</small>':'')+'</span>';}).join("")+'</div>';}
 function apGroupsHtml(groups){return (groups||[]).map(function(g){var path=String(g.url||"").replace(/^https?:\/\/[^/]+/,"");return '<details class="apGroup"><summary>'+esc(g.name||"Ad group")+'<small>'+esc([path,g.headlines.length?g.headlines.length+" headlines":"",g.descriptions.length?g.descriptions.length+" descriptions":"",g.keywords.length?g.keywords.length+" keywords":""].filter(Boolean).join(" · "))+'</small></summary>'+(g.headlines.length?'<span class="eyebrow">Headlines · up to 30 characters</span>'+g.headlines.map(function(t){return copyLine(t,30);}).join(""):"")+(g.descriptions.length?'<span class="eyebrow">Descriptions · up to 90 characters</span>'+g.descriptions.map(function(t){return copyLine(t,90);}).join(""):"")+(g.keywords.length?'<span class="eyebrow">Keywords</span>'+apTerms(g.keywords):"")+'</details>';}).join("");}
-// Where a draft came from, what approving it does, and the label of the one button that does it.
+// Where a draft came from, what approving it does, and the label of the one button that does it (what it adds
+// and what it removes, never a removal counted as an addition).
 function approvalAction(a,dry){var pl=a.payload||{},ops=pl.mutateOperations||[],n=(pl.operations||[]).length,isNew=!!pl.designStudioSpec||ops.some(function(o){return o.campaignOperation&&o.campaignOperation.create;}),owner=(pl.meta||{}).existingCampaignId?apCampaignName(pl.meta.existingCampaignId):"Live campaign",kind=(pl.meta||{}).kind,v;
   if(kind==="pmaxAddToCampaign")v=["Product ads","Opportunities","Google Ads · joins "+(pl.meta.existingCampaignName||owner),"Add to campaign"];
   else if(kind==="pmaxBrandExclusion")v=["Exclusions","Search terms report","Google Ads · brand searches excluded","Exclude brand searches"];
   else if(pl.groupSplitGuard)v=["Product groups","Products & groups","Google Ads · new groups start paused","Create product groups"];
   else if(pl.groupActivationGuard)v=["Product groups","Products & groups","Google Ads · groups switch","Switch product groups"];
   else if(pl.service==="campaignBudgets")v=["Budget","Measured purchases","Google Ads · applies at once","Apply budget changes"];
-  else if(pl.service==="adGroupCriteria")v=["Keywords","Search terms report","Google Ads · live keywords","Add "+n+" keyword"+(n===1?"":"s")];
-  else if(pl.service==="campaignCriteria")v=["Exclusions","Search terms report","Google Ads · blocked searches","Add "+n+" exclusion"+(n===1?"":"s")];
+  else if(kind==="searchNegativeRemoval"){var xr=(pl.operations||[]).filter(function(o){return o&&o.remove;}).length,xa=n-xr;v=["Exclusions","Search campaigns","Google Ads · exclusions removed"+(xa?", phrases added":""),"Remove "+xr+(xa?", add "+xa:"")+" exclusion"+(n===1?"":"s")];}
+  else if(pl.service==="adGroupCriteria"||pl.service==="campaignCriteria"){var kwd=pl.service==="adGroupCriteria",rm=(pl.operations||[]).filter(function(o){return o&&o.remove;}).length,ad=n-rm;
+    v=[kwd?"Keywords":"Exclusions","Search terms report",kwd?"Google Ads · live keywords":"Google Ads · blocked searches",(rm&&!ad?"Remove "+rm:"Add "+ad+(rm?", remove "+rm:""))+(kwd?" keyword":" exclusion")+(n===1?"":"s")];}
   else if(pl.service==="ads")v=["Ad refresh",owner,"Google Ads · live ad updated","Update the live ad"];
   else if(pl.service==="campaigns"&&(pl.meta||{}).targetRoas)v=["Bidding","Ad Doctor","Google Ads · applies at once","Set target ROAS"];
   else if(pl.note==="operator-review")v=["Ad text","Google asset ratings","Your review",""];
@@ -3059,7 +3138,7 @@ function approvalAction(a,dry){var pl=a.payload||{},ops=pl.mutateOperations||[],
   else if(isNew)v=[a.type==="pmax"?"Product ads":a.type==="brand"?"Brand Search":"Search",a.type==="brand"?"Campaign options":"Opportunities","Google Ads · created paused","Publish paused campaign"];
   else v=["Ad refresh",owner,"Google Ads · live ads updated","Publish ad refresh"];
   return {tag:v[0],from:v[1],to:v[2],publish:dry&&v[3]?"Validate draft":v[3]};}
-function approvalTitle(a){var pl=a.payload||{},camp=null,n=(pl.operations||[]).length,m=pl.meta||{};if(m.kind==="pmaxAddToCampaign")return "Add "+(m.collectionTitle||"products")+" to "+(m.existingCampaignName||"a Performance Max campaign");if(m.kind==="pmaxBrandExclusion")return "Exclude brand searches from Performance Max";if(m.kind==="pmaxNegatives")return "Exclusions · "+(m.campaignName||"Performance Max");(pl.mutateOperations||[]).forEach(function(o){if(!camp&&o.campaignOperation&&o.campaignOperation.create)camp=o.campaignOperation.create;});if(camp&&camp.name)return camp.name;if(a.type==="studio")return "Design Studio · "+(((pl.meta||{}).kind||"")==="designStudioPmax"?"Performance Max":"Search");if(pl.service==="campaignBudgets")return "Daily budgets for "+n+" campaign"+(n===1?"":"s");return String(a.summary||"Campaign draft").split(" — ")[0];}
+function approvalTitle(a){var pl=a.payload||{},camp=null,n=(pl.operations||[]).length,m=pl.meta||{};if(m.kind==="pmaxAddToCampaign")return "Add "+(m.collectionTitle||"products")+" to "+(m.existingCampaignName||"a Performance Max campaign");if(m.kind==="pmaxBrandExclusion")return "Exclude brand searches from Performance Max";if(m.kind==="pmaxNegatives")return "Exclusions · "+(m.campaignName||"Performance Max");if(m.kind==="searchNegativeRemoval"){var sw=[];(m.removals||[]).forEach(function(r){if(r&&r.text&&sw.indexOf(r.text)<0)sw.push(r.text);});return "Stop excluding "+(sw.length?sw.map(function(w){return "“"+w+"”";}).join(", "):"searches");}(pl.mutateOperations||[]).forEach(function(o){if(!camp&&o.campaignOperation&&o.campaignOperation.create)camp=o.campaignOperation.create;});if(camp&&camp.name)return camp.name;if(a.type==="studio")return "Design Studio · "+(((pl.meta||{}).kind||"")==="designStudioPmax"?"Performance Max":"Search");if(pl.service==="campaignBudgets")return "Daily budgets for "+n+" campaign"+(n===1?"":"s");return String(a.summary||"Campaign draft").split(" — ")[0];}
 function approvalStep(a,needsReview,reviewed,info){var ph=(a.creative||{}).phase||"not_started";if(info)return "Review only · nothing is published from this card";if(!needsReview)return "Ready for your approval";if(reviewed)return "Step 2 of 2 · Creative approved, ready to publish";return (ph==="running"?'<span class="spin sm" aria-hidden="true"></span>':'')+"Step 1 of 2 · "+esc({not_started:"Create the ad creative",running:"Creative in production",paused:"Creative paused, resume to finish",needs_changes:"Creative needs changes",ready:"Review the finished creative"}[ph]||String(ph).replace(/_/g," "));}
 function approvalFlow(v){return '<p class="apFlow"><span>From '+esc(v.from)+'</span><i aria-hidden="true">→</i><span class="now">Your approval</span><i aria-hidden="true">→</i><span>'+esc(v.to)+'</span></p>';}
 /* Re-renders keep each unchanged card (typed dates, open sections, loaded previews) and freeze a card while it publishes. */
@@ -3147,8 +3226,9 @@ function renderApprovals(){var list=$("#apprList");var scope=window.BritesGroups
         body+='<table class="apTable"><thead><tr><th>Campaign</th><th>Daily budget</th><th>Measured</th></tr></thead><tbody>'+rows.map(function(r){var d=r.from!=null?r.to-r.from:null,pct=r.from?Math.round(d/r.from*100):0;return '<tr><td>'+esc(r.name)+'</td><td class="num">'+(r.from!=null?esc(money(r.from))+' → ':'')+'<b>'+esc(apMoney(r.to,bm))+'</b>'+(pct?'<span class="apDelta '+(d>0?'up':'down')+'">'+(d>0?'+':'−')+Math.abs(pct)+'%</span>':'')+'</td><td>'+(r.roas!=null?'ROAS '+esc(Number(r.roas).toFixed(2))+'×'+(r.target?' <span class="muted">vs '+esc(Number(r.target).toFixed(2))+'× target</span>':''):'—')+(r.purchases!=null?'<br><span class="muted">'+esc(Math.round(r.purchases*10)/10)+' purchases</span>':'')+'</td></tr>';}).join('')+'</tbody></table>';
         body+=apFacts([["Net change",esc(netText)+apCeiling(0,chg)],["Applies","Right after you approve · each budget then holds for "+esc(bm.cooldownDays||14)+" days"],["Measured",esc(bm.start&&bm.end?"Purchases "+apDay(bm.start)+" → "+apDay(bm.end):"Recent purchases")]]);}
       else if((pl.meta||{}).kind==="pmaxNegatives"){var pn=apPmaxNegatives(pl);glance=pn.glance;body+=pn.body;}
-      else if(pl.service==="adGroupCriteria"||pl.service==="campaignCriteria"){var neg=pl.service==="campaignCriteria",byOwner={},owners=[];ops.forEach(function(o){var k0=o.create&&(o.create.adGroupCriterion||o.create.campaignCriterion||o.create);if(!k0||!k0.keyword)return;var k=neg?k0.campaign:k0.adGroup;if(!byOwner[k]){byOwner[k]=[];owners.push(k);}byOwner[k].push(k0.keyword);});glance=owners.slice(0,2).map(function(k){return neg?apCampaignName(k):apGroupName(k);});
-        body+=apFacts([[neg?"Excludes":"Adds",esc(neg?n+" search term"+(n===1?"":"s")+" · your ads stop showing for "+(n===1?"it":"them"):n+" exact-match keyword"+(n===1?"":"s")+" · "+(n===1?"it":"they")+" can serve right after approval")],["Why",esc(neg?"Spent without a conversion in the last 90 days":"Led to conversions in the last 90 days")]])+owners.map(function(k){return '<div class="eyebrow" style="margin:12px 0 4px">'+esc(neg?apCampaignName(k):apGroupName(k))+'</div>'+apTerms(byOwner[k]);}).join('');}
+      else if((pl.meta||{}).kind==="searchNegativeRemoval"){var sx=apStopExcluding(pl);glance=sx.glance;body+=sx.body;}
+      else if(pl.service==="adGroupCriteria"||pl.service==="campaignCriteria"){var neg=pl.service==="campaignCriteria",byOwner={},owners=[],rmv=ops.filter(function(o){return o&&o.remove;}).length,na=n-rmv;ops.forEach(function(o){var k0=o.create&&(o.create.adGroupCriterion||o.create.campaignCriterion||o.create);if(!k0||!k0.keyword)return;var k=neg?k0.campaign:k0.adGroup;if(!byOwner[k]){byOwner[k]=[];owners.push(k);}byOwner[k].push(k0.keyword);});glance=owners.slice(0,2).map(function(k){return neg?apCampaignName(k):apGroupName(k);});
+        body+=apFacts([[neg?"Excludes":"Adds",na?esc(neg?na+" search term"+(na===1?"":"s")+" · your ads stop showing for "+(na===1?"it":"them"):na+" exact-match keyword"+(na===1?"":"s")+" · "+(na===1?"it":"they")+" can serve right after approval"):""],["Removes",rmv?esc(rmv+" existing "+(neg?"exclusion":"keyword")+(rmv===1?"":"s")):""],["Why",na?esc(neg?"Spent without a conversion in the last 90 days":"Led to conversions in the last 90 days"):""]])+owners.map(function(k){return '<div class="eyebrow" style="margin:12px 0 4px">'+esc(neg?apCampaignName(k):apGroupName(k))+'</div>'+apTerms(byOwner[k]);}).join('');}
       else if(pl.service==="ads"){var am=pl.meta||{},where2=apCampaignName(am.existingCampaignId);glance=[where2];
         body+=apFacts([["Updates",esc(where2)+'<small>'+esc(n+" existing ad"+(n===1?"":"s")+" · same ad, new text")+'</small>'],["Landing page",esc(String(am.landingUrl||"Unchanged").replace(/^https?:\/\/[^/]+/,""))],["Stays the same","Budget, bidding, schedule, countries and keywords"]]);
         ops.forEach(function(o){var rsa=o.update&&o.update.responsiveSearchAd||{};if((rsa.headlines||[]).length)body+='<div class="eyebrow" style="margin:12px 0 6px">New headlines</div>'+rsa.headlines.map(function(h){return copyLine(h.text,30);}).join('');if((rsa.descriptions||[]).length)body+='<div class="eyebrow" style="margin:12px 0 6px">New descriptions</div>'+rsa.descriptions.map(function(d){return copyLine(d.text,90);}).join('');});}
@@ -3860,7 +3940,8 @@ function renderPmaxSection(host){
     // The button on screen now: this one, or the one a redraw drew in its place.
     var live=function(){if(btn.isConnected)return btn;var n=PMAXOPPS.findIndex(function(x){return pmaxUi(x)===ui;});return n<0?null:document.querySelector('#pmaxSec .pmx-gen[data-i="'+n+'"]');};
     var t0=ui.working.at,tk=setInterval(function(){var cur=live();if(cur&&cur.dataset.working==='true')cur.textContent='Generating… '+Math.round((Date.now()-t0)/1000)+'s';},1000),done=function(){clearInterval(tk);delete ui.working;if(destSel&&destSel.isConnected)destSel.disabled=false;if(!btn.isConnected)return;btn.dataset.working='false';btn.textContent='Create review draft';pmaxUpdateSelection(sec,i);};
-    try{var genId=String(Date.now())+'-pmx',started=await api('generatePmax',Object.assign({},payload,{genId:genId,targetRoas:o.recommendedTargetRoas||0,days:o.days}));if(started&&started.error)throw new Error(started.error);var t1=Date.now(),st=null;while(Date.now()-t1<600000){st=await api('genStatus',{genId:genId}).catch(function(){return null;});if(st&&(st.ok===true||st.ok===false))break;await new Promise(function(res){setTimeout(res,3000);});}if(st&&st.ok===true){clearInterval(tk);delete ui.working;btn=live()||btn;var note=(btn.isConnected&&btn.parentNode.querySelector('.pmx-msg'))||msg;if(btn.isConnected){btn.disabled=true;btn.setAttribute('aria-disabled','true');btn.dataset.working='false';btn.textContent='In Approvals ✓';}toast(st.joined?'PMax draft ready — adds the products to “'+st.joined.name+'”, in Approvals ✓':'PMax draft ready — '+((st.itemIds||[]).length||'feed')+' selected offers in Approvals ✓');if(note)note.textContent='✓ in Approvals';PMAXOPPS=PMAXOPPS.map(function(x){return pmaxUi(x)===ui?Object.assign({},x,{acted:{where:'approval',status:'PENDING'}}):x;});if(typeof BritesFlow!=="undefined")BritesFlow.send(btn,'approvals',{id:st.approvalId,from:'Opportunities'});if(btn.isConnected)pmaxSettle(btn.closest(".pmxrow"));else renderOpportunities();try{await reload();}catch(_e){}}else throw new Error((st&&st.error)||'no answer after 10 minutes. Check Approvals before trying again; the draft may still arrive.');}catch(x){if(msg)msg.textContent='✕ '+String(x.message).slice(0,120);toast('PMax draft failed: '+x.message);var redrawn=!btn.isConnected;done();if(redrawn)renderOpportunities();}
+    // The server names the generation from the request, so another tab or a retry follows the same one instead of paying again.
+    try{var started=await api('generatePmax',Object.assign({},payload,{targetRoas:o.recommendedTargetRoas||0,days:o.days}));if(started&&started.error)throw new Error(started.error);var genId=started&&started.genId;if(!genId)throw new Error('the draft generation did not start. Try again.');var t1=Date.now(),st=null;while(Date.now()-t1<600000){st=await api('genStatus',{genId:genId}).catch(function(){return null;});if(st&&(st.ok===true||st.ok===false))break;await new Promise(function(res){setTimeout(res,3000);});}if(st&&st.ok===true){clearInterval(tk);delete ui.working;btn=live()||btn;var note=(btn.isConnected&&btn.parentNode.querySelector('.pmx-msg'))||msg;if(btn.isConnected){btn.disabled=true;btn.setAttribute('aria-disabled','true');btn.dataset.working='false';btn.textContent='In Approvals ✓';}toast(st.joined?'PMax draft ready — adds the products to “'+st.joined.name+'”, in Approvals ✓':'PMax draft ready — '+((st.itemIds||[]).length||'feed')+' selected offers in Approvals ✓');if(note)note.textContent='✓ in Approvals';PMAXOPPS=PMAXOPPS.map(function(x){return pmaxUi(x)===ui?Object.assign({},x,{acted:{where:'approval',status:'PENDING'}}):x;});if(typeof BritesFlow!=="undefined")BritesFlow.send(btn,'approvals',{id:st.approvalId,from:'Opportunities'});if(btn.isConnected)pmaxSettle(btn.closest(".pmxrow"));else renderOpportunities();try{await reload();}catch(_e){}}else throw new Error((st&&st.error)||'no answer after 10 minutes. Check Approvals before trying again; the draft may still arrive.');}catch(x){if(msg)msg.textContent='✕ '+String(x.message).slice(0,120);toast('PMax draft failed: '+x.message);var redrawn=!btn.isConnected;done();if(redrawn)renderOpportunities();}
   };});
 }
 function renderOpportunities(){
@@ -4249,7 +4330,7 @@ async function runNow(tasks,btn){var t=RUN_TASKS[tasks.join(",")]||[tasks.join("
   actEnd(aid);done();}
 async function pmaxUpgradeAdStrength(){
   var btn=$("#pmxUpgradeBtn"),msg=$("#pmxUpgradeMsg");
-  if(!confirm("This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target. It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else. Continue?"))return;
+  if(!await askInline(btn,{key:"pmxUpgrade",q:"This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target.",note:"It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else.",yes:"Continue",place:function(box,x){x.parentNode.after(box);}}))return;
   btn.disabled=true;var t0=Date.now();
   var tk=setInterval(function(){if(btn.disabled)btn.textContent="Upgrading\u2026 "+Math.round((Date.now()-t0)/1000)+"s";},1000);
   var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Upgrade running PMax ads (headlines + sitelinks)";};
@@ -4277,7 +4358,7 @@ async function pmaxUpgradeAdStrength(){
 }
 async function pmaxBackfillImages(){
   var btn=$("#pmxBackfillBtn"),msg=$("#pmxBackfillMsg");
-  if(!confirm("This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model). New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval. Continue?"))return;
+  if(!await askInline(btn,{key:"pmxBackfill",q:"This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model).",note:"New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval.",yes:"Continue",place:function(box,x){x.parentNode.after(box);}}))return;
   btn.disabled=true;var t0=Date.now();
   var tk=setInterval(function(){if(btn.disabled)btn.textContent="Re-imaging… "+Math.round((Date.now()-t0)/1000)+"s";},1000);
   var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Redesign existing product ads";};
@@ -4289,13 +4370,13 @@ async function pmaxBackfillImages(){
     var t1=Date.now(),st=null;
     while(Date.now()-t1<1200000){
       st=await api("genStatus",{genId:genId}).catch(function(){return null;});
-      if(st&&st.phase==="running"&&st.assetGroup)msg.textContent=" scanning "+st.campaign+" · "+st.assetGroup+" ("+(st.groupsSeen||0)+" groups so far)…";
+      if(st&&st.phase==="running"&&st.assetGroup)msg.textContent=" scanning "+st.campaign+" · "+st.assetGroup+" ("+(st.done||0)+" groups so far)…";
       if(st&&(st.ok===true||st.ok===false))break;
       await new Promise(function(res){setTimeout(res,3000);});
     }
     if(st&&st.ok===true){
       done();
-      var summary=st.queued+" asset group"+(st.queued===1?"":"s")+" queued to Approvals across "+st.campaigns+" campaign"+(st.campaigns===1?"":"s")+" ("+st.assetGroups+" scanned)";
+      var summary=st.queued+" asset group"+(st.queued===1?"":"s")+" queued to Approvals across "+st.campaigns+" campaign"+(st.campaigns===1?"":"s")+" ("+(st.results||[]).length+" scanned)";
       msg.textContent=" ✓ "+summary;
       toast("PMax re-image backfill done — "+summary,true);
       try{await reload();}catch(_e){}
@@ -4689,7 +4770,7 @@ function adDesignAcceptData(s,r){
 }
 function adDesignFormatStripHtml(s){return '<div class="adDesignFormats" role="group" aria-label="All image formats">'+adDesignFormats(s).map(function(format){var state=Object.assign({},s,{format:format.id,imageTab:s.imageTab==='generated'&&adDesignLibrary(s).some(function(im){return im.kind==='generated'&&im.format===format.id&&!im.deletedAt;})?'generated':'main',editSources:{}}),source=adDesignEditing(state),asset=adDesignAssignedAsset(state),url=adDesignDisplayUrl(source);return '<button type="button" class="adDesignFormatTile" data-design-format-tile="'+adAttr(format.id)+'" aria-pressed="'+(s.format===format.id)+'" aria-label="'+adAttr('Preview '+format.label+' for '+s.device)+'"'+(url?' data-design-hover-url="'+adAttr(url)+'"':'')+'><span class="adDesignFormatThumb">'+(url?adDesignPreviewPhotoHtml(state,source,s.device+' '+format.label+' image choice'):'<span class="adDesignFormatOutline" style="aspect-ratio:'+adDesignAspectRatio(format.id)+'">'+esc(format.ratio)+'</span>')+'</span><b>'+esc(format.label)+'</b><small>'+esc(s.device==='mobile'?'Mobile':'Desktop')+' · '+(source&&source.savedPreview?'Saved design':state.imageTab==='generated'?'AI-generated image':source&&source.record&&asset&&source.id===asset.id?'Chosen 2K crop':source&&source.current?'Current Google image':source?'Preview image':'Choose an image')+'</small>'+adDesignTileMetricsHtml(state,source)+'<small class="adDesignDropHint">Drop an image here</small></button>';}).join('')+'</div>';}
 var AD_DESIGN_EDITOR_SCRIPT=null;
-async function loadAdDesignEditor(){var finishWait=window.BritesProgress?.begin('Opening the design editor')||function(){};try{if(!AD_DESIGN_EDITOR_SCRIPT)AD_DESIGN_EDITOR_SCRIPT=(async function(){for(var src of ['/vendor/fabric-7.4.0.min.js','/brites-ad-responsive.js?v=20260914-landscape-center','/brites-ad-editor.js?v=20260929-inline-questions'])await new Promise(function(resolve,reject){var script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=function(){script.remove();reject(new Error('The editor could not load. Please retry.'));};document.head.appendChild(script);});})().catch(function(e){AD_DESIGN_EDITOR_SCRIPT=null;throw e;});await AD_DESIGN_EDITOR_SCRIPT;return window.BritesAdEditor;}finally{finishWait();}}
+async function loadAdDesignEditor(){var finishWait=window.BritesProgress?.begin('Opening the design editor')||function(){};try{if(!AD_DESIGN_EDITOR_SCRIPT)AD_DESIGN_EDITOR_SCRIPT=(async function(){for(var src of ['/vendor/fabric-7.4.0.min.js','/brites-ad-responsive.js?v=20260914-landscape-center','/brites-ad-editor.js?v=20260929-drawer-clear'])await new Promise(function(resolve,reject){var script=document.createElement('script');script.src=src;script.onload=resolve;script.onerror=function(){script.remove();reject(new Error('The editor could not load. Please retry.'));};document.head.appendChild(script);});})().catch(function(e){AD_DESIGN_EDITOR_SCRIPT=null;throw e;});await AD_DESIGN_EDITOR_SCRIPT;return window.BritesAdEditor;}finally{finishWait();}}
 
 function adDesignSavedGalleryHtml(s){var rows=s.data.savedDesigns||[];if(!rows.length)return '';return '<details class="adDesignSavedList" open><summary>Saved designs · '+rows.length+'</summary><div class="adDesignSavedGrid">'+rows.map(function(d){return '<article class="adDesignSavedCard"><button type="button" draggable="true" data-design-open-saved="'+adAttr(d.id)+'" data-design-hover-url="'+adAttr(d.url)+'" data-design-hover-label="'+adAttr(d.name)+'" title="Select '+adAttr(d.name)+'"'+(s.savedDesignBusy?' disabled':'')+'><img'+adImageCors(d.thumbnailUrl||d.url)+' src="'+adAttr(d.thumbnailUrl||d.url)+'" alt="'+adAttr(d.name)+'" loading="lazy" draggable="false"><b>'+esc(d.name)+'</b></button><small>'+d.artboard.width+' × '+d.artboard.height+' · '+esc(new Date(d.createdAt).toLocaleDateString())+'</small><div><button type="button" data-design-use-saved="'+adAttr(d.id)+'">Use</button><a href="'+adAttr(d.url)+'" target="_blank" rel="noopener">Full quality ↗</a><button type="button" data-design-delete-saved="'+adAttr(d.id)+'" aria-label="Delete '+adAttr(d.name)+'"'+(s.savedDesignBusy?' disabled':'')+'>Delete</button></div></article>';}).join('')+'</div>'+(s.data.savedDesignCursor?'<button class="adDesignTextButton" data-design-more-saved'+(s.savedDesignBusy?' disabled':'')+'>More saved designs</button>':'')+'</details>';}
 async function adDesignSavedAction(s,id){if(s.savedDesignBusy)return;var f=adDesignSettings(s),scope={workspaceId:s.workspaceId,productId:f.productId,groupRef:f.groupRef};s.savedDesignBusy=true;s.error='';renderAdDesign();try{if(id){var deleted=await api('deleteAdDesignSavedDesign',Object.assign({},scope,{id:id}));if(!deleted||deleted.error||deleted.ok===false)throw new Error(deleted&&deleted.error||'The design could not be deleted.');}var r=await api('adDesignSavedDesigns',Object.assign({},scope,id?{}:{before:s.data.savedDesignCursor}));if(!r||r.error||r.ok===false)throw new Error(r&&r.error||'Saved designs could not be loaded.');if(AD_DESIGN===s&&adDesignSettings(s).productId===scope.productId&&adDesignSettings(s).groupRef===scope.groupRef){if(id&&s.selectedSavedDesign&&s.selectedSavedDesign.id===id)s.selectedSavedDesign=null;s.data.savedDesigns=id?r.savedDesigns:(s.data.savedDesigns||[]).concat(r.savedDesigns||[]);s.data.savedDesignCursor=r.savedDesignCursor;s.notice=id?'Saved design deleted.':'';}}catch(e){if(AD_DESIGN===s)s.error=e.message;}finally{s.savedDesignBusy=false;if(AD_DESIGN===s)renderAdDesign();}}
@@ -4736,16 +4817,34 @@ function adDesignPreviewHtml(s){
   return mediaTabs+adDesignSelectionSummary(s,source)+actions+'<div data-design-size-previews></div><section id="adImagePreviewPanel" aria-label="Selected repository image" class="adDesignSelectedPreview">'+image+'</section>';
 }
 
+// "Use in … ad" (a saved crop or a cleared choice too) turns its button into Saving… and then the In … ad mark, and
+// swaps the preview's image. Each block whose height this changes eases to its new height as the console's panels do
+// (easeHeight), and a status line that appears in step 2 grows in, so nothing below jumps. The preview keeps its
+// height while its new image loads under the loading spinner, instead of dropping to an empty frame first. Reduced
+// motion changes each height at once, the preview's when its image is ready.
+function adDesignEaseSwap(host){
+  var sels=['.adDesignSelectionActions','#adImagePreviewPanel','.adDesignDirection>.adDesignNote[role=status]'],before=host&&host.querySelector?sels.map(function(sel){var el=host.querySelector(sel);return el?el.getBoundingClientRect().height:null;}):[];
+  return function(){if(!before.length||!host.isConnected)return;sels.forEach(function(sel,i){var el=host.querySelector(sel),from=before[i],im;if(!el)return;if(from===null)return adDesignGrow(el);easeStop(el);im=el.querySelector('img');if(el.id==='adImagePreviewPanel'&&im&&!im.complete&&el.animate)return adDesignHoldPreview(el,from);easeHeight(el,from);});};
+}
+function adDesignHoldPreview(el,from){
+  var hold=el.animate([{height:from+'px'},{height:from+'px'}],{duration:30000}),done=false,mo=new MutationObserver(check);
+  function end(){if(done)return;done=true;mo.disconnect();el.removeEventListener('load',check,true);el.removeEventListener('error',check,true);hold.cancel();easeHeight(el,from);}
+  function check(){var im=el.querySelector('img');if(!el.isConnected||!im||im.complete)end();}
+  mo.observe(el,{childList:true});el.addEventListener('load',check,true);el.addEventListener('error',check,true);hold.onfinish=end;
+}
+// A line that appears grows from nothing, its margins too, at the pace of the console's eases.
+function adDesignGrow(el){if(!el.isConnected||!el.animate||cmdStill())return;var cs=getComputedStyle(el),h=el.getBoundingClientRect().height,ov=el.style.overflow,a;if(!(h>0))return;el.style.overflow='clip';
+  a=el.animate([{height:'0px',marginTop:'0px',marginBottom:'0px'},{height:h+'px',marginTop:cs.marginTop,marginBottom:cs.marginBottom}],{duration:Math.round(Math.min(400,150+h/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.onfinish=a.oncancel=function(){el.style.overflow=ov;};}
 async function saveAdDesignCrop(s,source,rect,remove){
   if(AD_DESIGN!==s||s.cropSaving||adDesignBusy(s)||s.saving||s.uploading)return;
   var slot=adDesignSlotKey(s),placement=adDesignPlacement(s),device=s.device,format=s.format,groupRef=adDesignSettings(s).groupRef;
-  s.cropSaving=true;s.error='';adDesignReadForm(s);renderAdDesign();
+  s.cropSaving=true;s.error='';adDesignReadForm(s);var eased=adDesignEaseSwap(document.getElementById('adDesignBody'));renderAdDesign();eased();
   try{
     await saveAdDesignSettings(s);if(AD_DESIGN!==s)return;
     var r=await api('cropAdDesignImage',{workspaceId:s.workspaceId,source:source&&source.source,rect:rect||null,device:device,format:format,groupRef:groupRef,expectedImageId:placement&&placement.imageId||null,remove:!!remove});
     if(!r||r.error||r.ok===false)throw new Error(r&&r.error||'The image crop could not be saved.');
     if(AD_DESIGN!==s)return;adDesignAcceptData(s,r);s.editSources=s.editSources||{};delete s.editSources[slot];s.imageTab='main';s.savedAt=Date.now();s.notice=remove?'Image choice cleared.':'This image is now in the '+format+' ad'+(adDesignSettings(s).deviceLinked===false?' on '+device:'')+'.';
-  }catch(e){if(AD_DESIGN===s)s.error=String(e.message||e);}finally{if(AD_DESIGN===s){s.cropSaving=false;renderAdDesign();}}
+  }catch(e){if(AD_DESIGN===s)s.error=String(e.message||e);}finally{if(AD_DESIGN===s){s.cropSaving=false;eased=adDesignEaseSwap(document.getElementById('adDesignBody'));renderAdDesign();eased();}}
 }
 function adDesignSavedSource(s,id){var d=(s.data.savedDesigns||[]).find(function(d){return d.id===id;});return d?{id:d.id,source:{kind:'savedDesign',imageId:d.id},url:d.url,title:d.name,width:d.artboard.width,height:d.artboard.height,savedDesign:true}:null;}
 async function openAdDesignCrop(s,source){
@@ -5213,7 +5312,7 @@ setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);
 
 </script>
-<script src="/brites-groups.js?v=20260929-pages"></script>
+<script src="/brites-groups.js?v=20260929-image-alt"></script>
 <script>
 BritesGroups.init({api:api,dashboard:function(){return DASH;},basis:function(){return convBasis;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>
