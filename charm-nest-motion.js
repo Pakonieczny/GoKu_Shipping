@@ -200,11 +200,12 @@
       const spec = take(leaves, k) || (opts.leave ? opts.leave(k, b.node) : null);
       if (!seen(b.rect)) { if (spec && spec.to) arrive(spec.to, spec); continue; }
       const g = ghost(b.node, b.rect, cw, host);
-      const h = spec && spec.stamp ? T.stamp + T.hold : 0; hold = Math.max(hold, h);
+      // (a seal already pressed on the button before the card left, stamp.still, is only carried: no stamp, no hold)
+      const h = spec && spec.stamp && !spec.stamp.still ? T.stamp + T.hold : 0; hold = Math.max(hold, h);
       gone.push([g, spec]);
     }
     for (const [g, spec] of gone) (async () => {
-      if (spec && spec.stamp) { try { await Seal.stampOn(g, spec.stamp); } catch (_) {} await wait(T.hold); }
+      if (spec && spec.stamp) { try { await Seal.stampOn(g, spec.stamp); } catch (_) {} if (!spec.stamp.still) await wait(T.hold); }
       if (spec && spec.to) await fly(g, spec.to, spec); else await fade(g);
     })();
     // what stayed glides from where it was (after a stamp, once the stamped card has lifted off)
@@ -445,7 +446,8 @@
       Object.assign(t.style, { left: cx - size * .52 + "px", top: cy - size * .52 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
       host.appendChild(seal); host.appendChild(t);
       const rot = rotOf(st), paint = () => btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
-      if (reduced()) { seal.style.opacity = ""; t.remove(); paint(); return; }
+      // (spec.still: the seal was pressed already and is only put where it rests)
+      if (reduced() || spec.still) { seal.style.opacity = ""; t.remove(); paint(); return; }
       const down = t.animate([
         { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
         { opacity: 1, offset: .22 },
@@ -469,7 +471,15 @@
       await up.finished.catch(() => {}); t.remove();
     }
     /* a seal over its button: a press there presses the button (and the seal sinks with it); anywhere else it wobbles */
-    const btnOf = s => { const r = s.closest(".sealRow"); return r && r.parentElement ? r.parentElement.querySelector("[data-seal-btn]") : null; };
+    // (the button just before its row: an open card has its print seals on Print QR label and its Complete Order seals on
+    // Complete Order, 29 Sep; else the row's first sealed button, as a completed card has one)
+    const btnOf = s => {
+      const r = s.closest(".sealRow"); if (!r) return null;
+      let p = r.previousElementSibling; while (p && p.classList.contains("sealRow")) p = p.previousElementSibling;
+      if (p && p.matches("[data-seal-btn]")) return p;
+      return r.parentElement ? r.parentElement.querySelector("[data-seal-btn]") : null;
+    };
+    const rowOf = b => { const n = b.nextElementSibling; return n && n.classList.contains("sealRow") ? n : b.parentElement && b.parentElement.querySelector(".sealRow"); };
     const inside = (el, e) => { const r = el.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; };
     let pressed = null;
     doc.addEventListener("pointermove", e => {
@@ -483,9 +493,9 @@
       if (!b || b.disabled) return;
       if (s && !inside(b, e)) return;
       pressed = b; b.classList.add("act");
-      const row = b.parentElement && b.parentElement.querySelector(".sealRow"); if (row) row.classList.add("press");
+      const row = rowOf(b); if (row) row.classList.add("press");
     });
-    const release = () => { if (!pressed) return; pressed.classList.remove("act"); const row = pressed.parentElement && pressed.parentElement.querySelector(".sealRow"); if (row) { row.classList.remove("press"); row.classList.remove("spring"); void row.offsetWidth; row.classList.add("spring"); } pressed = null; };
+    const release = () => { if (!pressed) return; pressed.classList.remove("act"); const row = rowOf(pressed); if (row) { row.classList.remove("press"); row.classList.remove("spring"); void row.offsetWidth; row.classList.add("spring"); } pressed = null; };
     doc.addEventListener("pointerup", release); doc.addEventListener("pointercancel", release);
     doc.addEventListener("click", e => {
       const s = e.target.closest && e.target.closest(".sealRow .seal"); if (!s) return;

@@ -34,7 +34,9 @@
     { k: "welded", l: "Welded", only: "stud" }, { k: "assembled", l: "Assembled" }, { k: "shipped", l: "Shipped" }];
   const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
     engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
-  const TUI = () => (W.OrderTimelineUI && Array.isArray(W.OrderTimelineUI.STAGES) && W.OrderTimelineUI.STAGES.length ? W.OrderTimelineUI : null);
+  // (a label printed at Sorting or the Design Station is the Sorted step's detail, never a step: timeline-ui's stepOf)
+  const stepAt = ev => { const U = W.OrderTimelineUI; if (U && typeof U.stepOf === "function") { try { return U.stepOf(ev); } catch (_) {} } return ev && ev.type === "labelPrinted" && ["sorting", "design", "qr", "sorter"].includes(ev.station) ? null : STEP[ev && ev.type]; };
+  const TUI =() => (W.OrderTimelineUI && Array.isArray(W.OrderTimelineUI.STAGES) && W.OrderTimelineUI.STAGES.length ? W.OrderTimelineUI : null);
   const allSteps = () => { const U = TUI(); return U ? U.STAGES : RAIL0; };
   /** The order's own steps, as its view draws them: every piece's line read for a stud (none known: every step). */
   function stepsOf(e) {
@@ -189,7 +191,7 @@
     let last = null;
     if (c) {
       if (c.step >= 0) reach(Math.min(7, c.step));
-      for (const ev of c.events) { if (STEP[ev.type] != null) reach(STEP[ev.type]); if (!last || ev.at >= last.at) last = ev; }
+      for (const ev of c.events) { if (stepAt(ev) != null) reach(stepAt(ev)); if (!last || ev.at >= last.at) last = ev; }
       if (c.shipped) reach(7);
     }
     const all = allSteps(), stepName = (all[Math.min(reached, all.length - 1)] || {}).l || "";
@@ -200,8 +202,8 @@
     if (cancel) { tone = "bad"; pill = "Cancelled"; now = `Cancelled${cancel.by ? " by " + cancel.by : ""}${cancel.at ? " · " + whenTxt(cancel.at) : ""}`; }
     else if (hold) { tone = "bad"; pill = "On hold"; now = `On hold · ${String(hold.hold)}`; }
     else if (review) { tone = "warn"; pill = "Decision"; now = "Needs a decision in Review"; }
-    else if (reached >= 7) { tone = "ok"; pill = stepName; now = last && STEP[last.type] === 7 ? `${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : stepName; }
-    else if (last && STEP[last.type] >= 4) { tone = "ok"; pill = stepName; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
+    else if (reached >= 7) { tone = "ok"; pill = stepName; now = last && stepAt(last) === 7 ?`${TYPE_LABEL(last.type)}${last.by ? " · " + last.by : ""} · ${whenTxt(last.at)}` : stepName; }
+    else if (last && stepAt(last) >= 4) { tone = "ok"; pill = stepName; now = `${TYPE_LABEL(last.type)}${last.station ? " at " + last.station[0].toUpperCase() + last.station.slice(1) : ""}${last.by ? " · " + last.by : ""}`; }
     else if (e.custom.length && !rows.some(r => r.state === "pulled")) { tone = "ok"; pill = stepName; const k = e.custom[0]; now = `Completed by hand${k.completedBy || k.printedBy ? " · " + (k.completedBy || k.printedBy) : ""}`; }
     else if (reached >= 1) {
       tone = reached >= 3 ? "ok" : "info"; pill = stepName;

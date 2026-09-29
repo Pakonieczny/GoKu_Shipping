@@ -201,14 +201,16 @@ async function check(name, fn) {
     assert.equal(etsyCalls - e0, 1, "only the mirror's own page");
     for (const id of ["4210000300", "4210000400", "4210000500"]) assert.equal(cancelDoc(id).by, "Etsy", id);
     assert(!store.has("Charm_Nest_Cancelled_Backlog/pending"), "done: the backlog is gone");
-    // capped at 200 ids, newest kept; a retry that fails keeps them all
-    await OrderCancel.keepBacklog(db, Array.from({ length: 250 }, (_, i) => String(4220000000 + i)));
-    const ids = store.get("Charm_Nest_Cancelled_Backlog/pending").ids; assert.equal(ids.length, 200); assert.equal(ids[199], "4220000249");
+    // capped at 2000 ids (200 before 29 Sep, cx-b: kept for good), newest kept; a retry that fails keeps them all
+    await OrderCancel.keepBacklog(db, Array.from({ length: 2050 }, (_, i) => String(4220000000 + i)));
+    const ids = store.get("Charm_Nest_Cancelled_Backlog/pending").ids; assert.equal(ids.length, 2000); assert.equal(ids[1999], "4220002049");
     const realGetAll = db.getAll; db.getAll = async () => { throw new Error("UNAVAILABLE"); };
     try { await assert.rejects(OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue)); } finally { db.getAll = realGetAll; }
-    assert.equal(store.get("Charm_Nest_Cancelled_Backlog/pending").ids.length, 200, "a failed retry keeps them all");
+    assert.equal(store.get("Charm_Nest_Cancelled_Backlog/pending").ids.length, 2000, "a failed retry keeps them all");
+    // a run retries the oldest 200 (the mirror's run stays as short as it was); ids not in the mirror are done too
     const r = await OrderCancel.retryBacklog(db, fakeAdmin.firestore.FieldValue); assert.equal(r.retried, 200);
-    assert(!store.has("Charm_Nest_Cancelled_Backlog/pending"), "ids not in the mirror are done too");
+    assert.equal(store.get("Charm_Nest_Cancelled_Backlog/pending").ids.length, 1800, "the rest wait their turn");
+    store.delete("Charm_Nest_Cancelled_Backlog/pending");
   });
 
   await check("cancelSweep resumes where it stopped: each call makes progress within its budget", async () => {

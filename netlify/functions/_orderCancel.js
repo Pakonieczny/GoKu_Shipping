@@ -9,7 +9,14 @@
  *    source      "sorter" (a person) | "etsy" (Etsy cancelled it)
  *    etsyStatus  Etsy's own word for the receipt ("Canceled", "Fully Refunded"), once Etsy is known to have cancelled it
  *    etsyAt      when Etsy's receipt last changed (ms), with etsyStatus
+ *    fates       what became of its pieces, sheet by sheet (noteFates)
+ *    removals    every removal the cancel caused, each with when, where, who and how it went (noteRemovals, below):
+ *                the record alone tells the story. Only added to or updated, never pruned
  *    createdAt
+ *
+ *  Kept for good (Paul, 29 Sep): nothing prunes, expires or collects a record. A restore deletes it (the sorter reads the
+ *  ids to keep an order out of the pull), after copying the whole record to Charm_Nest_Cancelled_History/{id}~{at}
+ *  (op cancelRestore, in the same batch) and onto the timeline's cancelRestored event.
  *
  *  The rule for "Etsy cancelled it" (isCancelled): the receipt's status matches /cancel/i ("Canceled"), or it is
  *  "Fully Refunded" and not shipped (a full refund before shipping is how a paid order is called off; after shipping it
@@ -75,7 +82,8 @@ function fromReceipt(r) {
 const personal = x => (x.source ? x.source !== "etsy" : x.by !== "Etsy");
 const etsyKnown = x => !!(x && (x.etsyStatus || !personal(x)));
 const etsyEvent = (rec, o) => ({ orderId: rec.orderId, type: "etsyCancelled", id: rec.orderId, at: rec.etsyAt || rec.at, by: "Etsy", source: "etsy", station: "",
-  text: `Cancelled on Etsy${rec.etsyStatus ? ` (${rec.etsyStatus})` : ""}`, data: { etsyStatus: rec.etsyStatus || "", detectedBy: o.detectedBy || "", notedBy: o.person && o.person !== "Etsy" ? o.person : "" } });
+  // (at: Etsy's own moment, the receipt's change; seenAt: when the mirror or the sorter saw it, Paul 29 Sep 00:26)
+  text: `Cancelled on Etsy${rec.etsyStatus ? ` (${rec.etsyStatus})` : ""}`, data: { etsyStatus: rec.etsyStatus || "", detectedBy: o.detectedBy || "", notedBy: o.person && o.person !== "Etsy" ? o.person : "", etsyAt: rec.etsyAt || rec.at, seenAt: Date.now() } });
 const personEvent = (rec, o) => ({ orderId: rec.orderId, type: "cancelled", id: s(o.eventId, 80) || String(rec.at), at: rec.at, by: rec.by, source: "sorter", station: "sorter",
   text: rec.why ? `Cancelled · ${rec.why}` : "Cancelled", data: { why: rec.why, sheets: rec.sheets } });
 /** What a record lacks that the new cancel knows: buyer, dates, lines when it has none, sheets it did not name. */
@@ -98,9 +106,12 @@ function plan(cur, inc, o = {}) {
     return { kind: Object.keys(patch).length ? "update" : null, doc: patch, record: Object.assign({}, cur, patch), events, kept: true };
   }
   if (personal(cur)) {
-    // a person's record again: written anew, as it always was, keeping what Etsy said of it (and what became of its pieces)
+    // a person's record again: written anew, as it always was, keeping what Etsy said of it (and what became of its
+    // pieces, and every removal it recorded: never lost to a second press)
     const doc = Object.assign({}, inc); if (cur.etsyStatus) { doc.etsyStatus = cur.etsyStatus; doc.etsyAt = n(cur.etsyAt); }
     if (Array.isArray(cur.fates) && cur.fates.length) doc.fates = cur.fates;
+    if (Array.isArray(cur.removals) && cur.removals.length) doc.removals = cur.removals;
+    if (n(cur.removalsLeftOut)) doc.removalsLeftOut = n(cur.removalsLeftOut);
     return { kind: "set", doc, record: doc, events: [personEvent(inc, o)], kept: false };
   }
   // Etsy cancelled it first: Etsy stays the canceller; the sorter adds the sheets and the lines as it knows them
@@ -248,8 +259,10 @@ async function sweep(db, FV, opts = {}) {
 
 /* ── the mirror's backlog: a page whose cancels were not recorded (the hook failed, timed out or had no time left) keeps
    their receipt ids here, and the next mirror run retries them first from the receipts the mirror already stored (no Etsy
-   call). One small document; the newest BACKLOG_MAX ids are kept (op cancelSweep catches up on any dropped). ── */
-const BACKLOG = "Charm_Nest_Cancelled_Backlog", BACKLOG_MAX = 200;
+   call). One small document; the newest BACKLOG_MAX ids are kept (op cancelSweep catches up on any dropped). 2000, not
+   the 200 it was: an ID dropped here is an Etsy cancel with no record until someone runs the sweep by hand (29 Sep,
+   kept for good), and 2000 ids are some 30 KB of the document's 1 MiB. ── */
+const BACKLOG = "Charm_Nest_Cancelled_Backlog", BACKLOG_MAX = 2000, RETRY_MAX = 200;
 const backlogRef = db => db.collection(BACKLOG).doc("pending");
 const idsOfDoc = snap => (snap && snap.exists && Array.isArray(snap.data().ids) ? snap.data().ids.map(idOf).filter(Boolean) : []);
 /** The ids of a page's cancelled receipts (no read). */
@@ -267,7 +280,8 @@ async function keepBacklog(db, ids) {
 /** Retries the backlog (null when there is none: one document read). Ids done (recorded, no longer cancelled, or not in
     the mirror) leave it; on any failure they all stay for the next run. */
 async function retryBacklog(db, FV) {
-  const ref = backlogRef(db), ids = idsOfDoc(await ref.get()).slice(0, BACKLOG_MAX);
+  // (the oldest RETRY_MAX a run: the mirror's run stays as short as it was; the rest wait their turn, kept)
+  const ref = backlogRef(db), ids = idsOfDoc(await ref.get()).slice(0, RETRY_MAX);
   if (!ids.length) return null;
   const recs = [];
   for (let i = 0; i < ids.length; i += 100) {
@@ -290,22 +304,60 @@ async function retryBacklog(db, FV) {
 }
 /** What became of a cancelled order's pieces, sheet by sheet (the sorter's AutoCancel as it takes them off or finds them
     cut, and a cancel made in its sheet window): fates [{ sheet: "GF Sheet 2", fate: "removed" | "cut" | "open", text }], merged by
-    sheet into the record there is. Never makes a record: an order restored meanwhile stays restored. opts: prefix. */
+    sheet into the record there is. Never makes a record: an order restored meanwhile stays restored. opts: prefix, and
+    removals / by (noteRemovals): each fate is also a removal of its own (sheet~<sheet>), with its time. */
 // "open": still on a saved sheet not cut yet that the sorter has not loaded (its pieces are to come off before cutting)
 const fateOf = f => ({ sheet: s(f && f.sheet, 80), fate: f && (f.fate === "cut" || f.fate === "open") ? f.fate : "removed", text: s(f && f.text, 160) });
+const FATE_OUTCOME = { removed: "removed", cut: "setAside", open: "waiting" };
 async function noteFates(db, orderId, fates, opts = {}) {
   const id = idOf(orderId); if (!id) return { error: "orderId required" };
-  const inc = (Array.isArray(fates) ? fates : []).map(fateOf).filter(f => f.sheet).slice(0, 30);
-  if (!inc.length) return { ok: true, changed: false };
+  const inc = (Array.isArray(fates) ? fates : []).map(fateOf).filter(f => f.sheet).slice(0, 30), now = Date.now();
+  const rem = inc.map(f => removalOf({ id: `sheet~${f.sheet}`, where: f.sheet, kind: "sheet", outcome: FATE_OUTCOME[f.fate], text: f.text, by: opts.by }, now))
+    .concat((Array.isArray(opts.removals) ? opts.removals : []).slice(0, 60).map(r => removalOf(r, now))).filter(Boolean);
+  if (!inc.length && !rem.length) return { ok: true, changed: false };
   const ref = colOf(db, opts.prefix).doc(id);
   return db.runTransaction(async t => {
     const snap = await t.get(ref); if (!snap.exists) return { ok: true, changed: false, missing: true };
-    const cur = Array.isArray(snap.data().fates) ? snap.data().fates : [], bySheet = new Map(cur.map(f => [f.sheet, f]));
+    const d = snap.data(), cur = Array.isArray(d.fates) ? d.fates : [], bySheet = new Map(cur.map(f => [f.sheet, f]));
     for (const f of inc) bySheet.set(f.sheet, f);
-    const next = [...bySheet.values()].slice(0, 30);
-    if (JSON.stringify(next) === JSON.stringify(cur)) return { ok: true, changed: false, fates: cur };
-    t.update(ref, { fates: next });
-    return { ok: true, changed: true, fates: next };
+    const next = [...bySheet.values()].slice(0, 30), m = mergeRemovals(d.removals, rem), patch = {};
+    if (JSON.stringify(next) !== JSON.stringify(cur)) patch.fates = next;
+    if (m.changed) patch.removals = m.list;
+    if (m.left) patch.removalsLeftOut = n(d.removalsLeftOut) + m.left;
+    if (!Object.keys(patch).length) return { ok: true, changed: false, fates: cur, removals: m.list };
+    t.update(ref, patch);
+    return { ok: true, changed: true, fates: patch.fates || cur, removals: m.list };
   });
 }
-module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, BACKLOG, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates, cancelledIds, keepBacklog, retryBacklog };
+/* ── what the cancel took off, and from where (Paul, 29 Sep: "show that it was removed successfully from a given sheet or
+   process ... all this must be saved"): the record's own list, one entry per removal under a stable id, so a retry or a
+   re-detection lands on the same one:
+     removals [{ id, at, where ("GF Sheet 1", "the SS pool", "the queue"), kind: sheet | pool | queue | station | other,
+                 outcome: removed | setAside | waiting | failed | seen, by, text, lineKey, station, was? }]
+   Entries are only added or updated: a waiting or failed one turns removed or set aside when that happens (its earlier
+   state kept as `was`), never back. Nothing is pruned; past REMOVALS_MAX (far more than any order has pieces) a new one is
+   not added and removalsLeftOut counts it. ── */
+const REMOVALS_MAX = 300, OUTCOMES = new Set(["removed", "setAside", "waiting", "failed", "seen"]), FINAL = new Set(["removed", "setAside"]);
+const KINDS = new Set(["sheet", "pool", "queue", "station", "other"]);
+function removalOf(x, now) {
+  if (!x || typeof x !== "object") return null;
+  const where = s(x.where || x.sheet, 100), kind = KINDS.has(x.kind) ? x.kind : "sheet";
+  const id = s(x.id, 120).replace(/[^\w.:~ ()-]/g, "_") || (where ? `${kind}~${where}` : ""); if (!id) return null;
+  return { id, at: n(x.at) || now || Date.now(), where, kind, outcome: OUTCOMES.has(x.outcome) ? x.outcome : "removed", by: s(x.by, 80), text: s(x.text, 160), lineKey: s(x.lineKey, 120), station: s(x.station, 40) };
+}
+function mergeRemovals(cur, inc) {
+  const list = (Array.isArray(cur) ? cur : []).filter(r => r && typeof r === "object").slice(), idx = new Map(list.map((r, i) => [r.id, i]));
+  let changed = false, left = 0;
+  for (const r of inc || []) {
+    const i = idx.get(r.id);
+    if (i == null) { if (list.length >= REMOVALS_MAX) { left++; continue; } idx.set(r.id, list.length); list.push(r); changed = true; continue; }
+    const o = list[i], nx = Object.assign({}, o);
+    for (const k of ["where", "kind", "by", "text", "lineKey", "station"]) if (r[k] && r[k] !== o[k]) nx[k] = r[k];
+    if (r.outcome !== o.outcome && !(FINAL.has(o.outcome) && !FINAL.has(r.outcome))) { nx.outcome = r.outcome; nx.at = r.at; nx.was = { outcome: s(o.outcome, 20), at: n(o.at) }; }
+    if (JSON.stringify(nx) !== JSON.stringify(o)) { list[i] = nx; changed = true; }
+  }
+  return { list, changed, left };
+}
+/** Removals of a cancelled order onto its record (never makes one: a restored order stays restored). opts: prefix · by. */
+async function noteRemovals(db, orderId, removals, opts = {}) { return noteFates(db, orderId, [], Object.assign({}, opts, { removals })); }
+module.exports = { COL, RECEIPTS, ETSY_WHY, SWEEP_STATUSES, BACKLOG, REMOVALS_MAX, isCancelled, record, fromReceipt, plan, put, putMany, fromReceipts, sweep, noteFates, noteRemovals, removalOf, mergeRemovals, cancelledIds, keepBacklog, retryBacklog };

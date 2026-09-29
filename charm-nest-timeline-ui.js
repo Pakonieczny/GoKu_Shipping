@@ -129,6 +129,7 @@
     removed: K("clay", "e", "out", "sheet", "sh hc"), renested: K("gold", "e", "renest", "sheet", "sh"),
     held: K("clay", "a", "pause", "office", "hc"), released: K("green", "e", "play", "office", "hc"), restored: K("green", "e", "undo", "office", "hc"),
     cancelled: K("clay", "a", "x", "office", "hc"), etsyCancelled: K("clay", "a", "etsyx", "etsy", "hc"), cancelRestored: K("green", "e", "undo", "office", "hc"),
+    cancelStep: K("clay", "e", "out", "sheet", "sh hc"),
     sizeChanged: K("gold", "e", "resize", "sheet", "sh"), included: K("gold", "e", "set", "sheet", "sh"), excluded: K("note", "e", "set", "sheet", "sh"),
     merged: K("gold", "e", "merge", "sheet", "sh"), roseLine: K("rose", "e", "greenline", "sheet", "sh"), roseCut: K("rose", "e", "scissors", "sheet", "sh"),
     qrLabel: K("blue", "e", "qr", "sheet", "sh"), setCommitted: K("gold", "e", "lock", "sheet", "sh"), laserDone: K("gold", "m", "laser", "sheet", "sh"),
@@ -150,7 +151,7 @@
      the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
-  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]);
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
   const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
@@ -196,11 +197,27 @@
   ];
   const LANE = Object.fromEntries(LANES.map((L, i) => [L.k, Object.assign({ i }, L)]));
   const STATION_LANE = { sorting: "sorting", qr: "sorting", welding: "welding", assembly: "assembly", shipping: "shipping", laser: "sheet", design: "office", inbox: "office" };
-  const STATION_NAME = { sorting: "Sorting", qr: "QR station", welding: "Welding", assembly: "Assembly", shipping: "Shipping", laser: "Laser", design: "Design", sorter: "Sorter", inbox: "Inbox" };
+  const STATION_NAME = { sorting: "Sorting", qr: "QR station", welding: "Welding", assembly: "Assembly", shipping: "Shipping", laser: "Laser", design: "Design Station", sorter: "Sorter", inbox: "Inbox" };
   const ETSY_SIDE = new Set(["arrived", "etsyCancelled", "etsyCompleted", "customerMessage"]);
   const laneOf = e => ETSY_SIDE.has(e.type) ? "etsy" : STATION_LANE[e.station] || (e.source === "etsy" ? "etsy" : kindOf(e.type).lane);
-  const whoOf = e => String(e.by || "").trim() || (e.source === "etsy" ? "Etsy" : e.source === "station" ? "Station" : "Automatic");
+  /* who did it (Paul, 28 Sep 23:51): the person signed in on that station's own login, as the station recorded it. A step
+     done with nobody signed in says so: data.signedIn false, or a completion recorded with no name (never a guess) */
+  const COMPLETION = new Set(["placed", "renested", "setCommitted", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "packed", "labelPrinted", "shipped", "sealPrinted", "sealCompleted"]);
+  const unsigned = e => !!e && !String(e.by || "").trim() && e.source !== "etsy" && e.source !== "system" && !e.derived && ((!!e.data && e.data.signedIn === false) || COMPLETION.has(e.type));
+  const personOf = e => String((e && e.by) || "").trim() || (unsigned(e) ? "Not signed in" : "");
+  const whoOf = e => personOf(e) || (e.source === "etsy" ? "Etsy" : e.source === "station" ? "Station" : "Automatic");
   const stationName = e => STATION_NAME[e.station] || (LANE[e.lane] || LANE.office).l;
+  // where it happened, as the seals and the step card say it ("Welded · Marco R. · Welding", "…at the Design Station")
+  const placeOf = e => (e && own(STATION_NAME, e.station) ? STATION_NAME[e.station] : "");
+  const AT_PLACE = { sorting: "the Sorting station", qr: "the QR station", welding: "the Welding station", assembly: "the Assembly station", shipping: "the Shipping station", laser: "the laser", design: "the Design Station", sorter: "the sorter", inbox: "the inbox" };
+  /* A label printed: an order's QR label printed at the Sorting station or the Design Station (its Review tab) is a detail
+     of the Sorted step; a shipping label is the Shipped step's. Never a step of its own. (_orderTimeline.js labelStepOf,
+     keep the two alike.) data.label: sheetQR | orderQR | custom | shipping, else by the station. */
+  const SORT_LABELS = new Set(["sheetQR", "orderQR", "custom"]), SORT_SIDE = new Set(["sorting", "design", "qr", "sorter"]);
+  const labelStepOf = e => { const k = e && e.data && e.data.label; return k === "shipping" ? "shipped" : SORT_LABELS.has(k) || SORT_SIDE.has(e && e.station) ? "sorted" : "shipped"; };
+  const LABEL_WORD = { sheetQR: "sheet QR", orderQR: "order QR", custom: "custom QR", shipping: "shipping" };
+  // a scan only says where the order was seen: "Seen at Sorting", never a step
+  const seenAt = e => "Seen at " + (placeOf(e) || "a station");
   // the milestone rail (Paul, 28 Sep 21:18; the server's `where.rail`/`where.step`): the real steps a piece goes through,
   // in process order. Each step: the events that stand for it (the stamp it shows, the event a click opens) and the lane
   // its dashed stamp waits on. `only`: a step only some pieces take ("stud": a stud earring; "engrave": a piece with a
@@ -272,7 +289,7 @@
     return r.length ? r : ALL_STAGES;
   }
   // what a person would miss from a cut-short read: the rail's steps and what a person did (the sealed kinds)
-  const MISSED = new Set(STAGES.flatMap(s => s.types).concat(["cancelled", "etsyCancelled", "cancelRestored", "removed", "held", "released", "restored", "cancelAlert"]));
+  const MISSED = new Set(STAGES.flatMap(s => s.types).concat(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]));
 
   /* where the order is now: a copy of whereOf in netlify/functions/_orderTimeline.js (keep the two alike). The server's
      `where` is used as it comes; this one counts the steps this page recorded that the server has not seen yet. */
@@ -288,16 +305,20 @@
   // the furthest step of STAGES (the full rail, 0-7) an event shows the order has reached
   const STEP = { arrived: 0, placed: 1, moved: 1, renested: 1, qrLabel: 1, roseLine: 1, included: 1, merged: 1, sizeChanged: 1, setCommitted: 1, sealCompleted: 1,
     engraveApproved: 2, laserDone: 3, roseCut: 3, sorted: 4, welded: 5, assembled: 6, packed: 6, labelPrinted: 6, shipped: 7, etsyCompleted: 7 };
+  // (a label printed at Sorting or the Design Station is the Sorted step's detail: it moves the order on nowhere)
+  const sortLabel = e => !!e && e.type === "labelPrinted" && labelStepOf(e) === "sorted";
+  /** The furthest step of the full rail (0-7) one event shows the order reached; null: none. */
+  const stepOf = e => (!e || sortLabel(e) || STEP[e.type] == null ? null : STEP[e.type]);
   const isDesigned = e => e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete");
   function whereOf(events, cancelled, hint) {
     hint = hint || {};
     const list = (events || []).filter(e => e && own(KIND, e.type)).slice().sort(byAt);
-    let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, designed = false, cancel = null, step = list.length ? 0 : -1;
+    let rank = 0, stage = "waiting", since = 0, sheet = "", sheetId = "", setId = "", station = "", device = "", by = "", at = 0, designed = false, cancel = null, step = list.length ? 0 : -1, seen = false;
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
       at = Math.max(at, +e.at || 0);
-      if (STEP[e.type] != null) step = Math.max(step, STEP[e.type]); else if (isDesigned(e)) step = Math.max(step, 1);
-      if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; }
+      if (stepOf(e) != null) step = Math.max(step, stepOf(e)); else if (isDesigned(e)) step = Math.max(step, 1);
+      if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; seen = e.type === "scan"; }
       if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
       if (e.setId) setId = e.setId;
       if (CANCEL_TYPES.has(e.type)) { cancel = e; continue; }
@@ -308,7 +329,7 @@
         if (rank <= 2 && (!e.sheetId || !sheetId || e.sheetId === sheetId)) { rank = 0; sheet = ""; sheetId = ""; enter(/hold/i.test((e.data && e.data.reason) || e.text || "") ? "held" : "waiting", e); }
         continue;
       }
-      const r = RANK[e.type]; if (r == null) continue;
+      const r = sortLabel(e) ? null : RANK[e.type]; if (r == null) continue;
       if (r >= 3) { if (r > rank) { rank = r; enter(STAGE_BY_RANK[r], e); } if (r === 3 && e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } continue; }
       if (rank > 2) continue;
       if (r === 2) { rank = 2; if (e.sheetId) { sheetId = e.sheetId; sheet = e.sheet || sheet; } enter(sheetId ? "sheet" : designed ? "designed" : "sheet", e); continue; }
@@ -325,7 +346,7 @@
     const label = stage === "sheet" && sheet ? `On ${sheet}` : STAGE_LABEL[stage] || stage;
     const bits = [label];
     if (isCancelled && sheet) bits.push(`pieces on ${sheet}`);
-    if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`at ${station}${device ? " (" + device + ")" : ""}`);
+    if (station && !["sheet", "waiting", "review", "held"].includes(stage)) bits.push(`${seen ? "seen at" : "at"} ${station}${device ? " (" + device + ")" : ""}`);
     if (by) bits.push(`by ${by}`);
     return { stage, label, text: bits.join(" · ").slice(0, 200), sheet, sheetId, setId, station, device, by, at, since, designed, cancelled: isCancelled, step, rail: STAGES.map(s => s.l) };
   }
@@ -368,7 +389,11 @@
     const d = e.data || {}, L = LANE[e.lane] || LANE.office;
     if (d.foot) return String(d.foot);
     if (e.type === "sealPrinted" && d.n) return "PRINT Nº " + d.n;
+    // where it happened (Paul, 28 Sep 23:51): the station, with the sheet when it names one ("Laser · 14K Sheet 4")
+    const at = placeOf(e);
+    if (at && e.sheet) return `${at} · ${e.sheet}`;
     if (e.sheet) return e.sheet;
+    if (at) return /station$/i.test(at) || !(LANE[STATION_LANE[e.station]] || {}).st ? at : at + " station";
     return L.st ? L.l + " station" : L.k === "etsy" ? "From Etsy" : L.l;
   }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
@@ -480,6 +505,7 @@
     return f;
   }
   const titleOf = (e, max) => {
+    if (e.type === "scan") return seenAt(e);
     const t = e.text && e.text.length <= (max || 90) ? e.text : "";
     return t || labelOf(e.type) + (e.sheet ? " — " + e.sheet : "");
   };
@@ -571,8 +597,10 @@
     sheet: ["pooled", "moved", "renested", "included", "merged", "sizeChanged", "designSent", "designDropped"],
     engraved: ["engraveNeeded", "engraveChanged", "engraveApproved"],
     laser: ["qrLabel", "setCommitted", "sealPrinted", "sealCompleted", "recalled", "roseLine"],
-    sorted: ["scan", "cancelAlert"], welded: ["scan"], assembled: ["scan"], shipped: ["packed", "labelPrinted", "etsyCompleted"]
+    sorted: ["cancelAlert"], welded: [], assembled: [], shipped: ["packed", "etsyCompleted"]
   };
+  // a scan is a quiet fact of its own station's step ("Seen at Welding" under Welded), never of every station's
+  const SCAN_STEP = { sorting: "sorted", qr: "sorted", welding: "welded", assembly: "assembled", shipping: "shipped" };
   const HOW = {     // how a step gets done, when nothing more precise is known
     arrived: "Etsy's order record is read every few minutes",
     sheet: "the sorter nests it on a sheet at its next pass",
@@ -592,21 +620,41 @@
     const s = STAGES[i]; if (!s) return null;
     const evs = (data.events || []).map(e => e && e.lane && e.key ? e : norm(e)).filter(Boolean).sort(byAt);
     let D = data.D || derive(evs, data.cancelled || null, data.where || null);
-    if (!Array.isArray(D.rail)) D = railed(D, keepDone(data.stages, evs));
+    // (derive's own rail is the steps themselves; the rail a view draws is railed's { s, i })
+    if (!Array.isArray(D.rail) || !D.rail.length || !D.rail[0].s) D = railed(D, keepDone(data.stages, evs));
     const R = D.rail, pos = R.findIndex(r => r.i === i);
     const cx = data.context && typeof data.context === "object" ? data.context : {};
     const lines = Array.isArray(cx.lines) ? cx.lines : [], sheets = Array.isArray(cx.sheets) ? cx.sheets.filter(x => x && x.name) : [];
     const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
     const done = [], need = [], facts = [];
-    const whenWho = e => [shortWhen(e.at), whoOf(e)].concat(e.station && STATION_NAME[e.station] ? [STATION_NAME[e.station]] : []).join(" · ");
-    for (const e of evs) if (STOP_OF[e.type] === i) done.push({ t: titleOf(e, 80), sub: whenWho(e), key: e.key });
+    // who did it, where and when (Paul, 28 Sep 23:51): "Welded · Marco R. · Welding", then its time and the station's words
+    const doneOf = e => {
+      const t = [e.type === s.types[0] ? s.l : labelOf(e.type), whoOf(e)].concat(placeOf(e) ? [placeOf(e)] : []).join(" · ");
+      const said = e.text && e.text.toLowerCase() !== t.toLowerCase() ? str(e.text, 80) : "";
+      return { t, sub: shortWhen(e.at) + (said ? " · " + said : ""), key: e.key };
+    };
+    for (const e of evs) if (STOP_OF[e.type] === i) done.push(doneOf(e));
     if (state === "done" && !done.length) done.push({ t: s.l, sub: "done before the timeline was kept" });
+    /* the order's labels (Paul, 28 Sep 23:51): its QR label printed at the Sorting station or the Design Station is said
+       under Sorted, "Label printed at the Sorting station by Ana P." (the latest print per place), or "Label not printed
+       yet"; a shipping label under Shipped */
+    const labels = s.k === "sorted" || s.k === "shipped" ? evs.filter(e => e.type === "labelPrinted" && labelStepOf(e) === s.k) : [];
+    const lastAt = new Map(); for (const e of labels) lastAt.set(e.station || "", e);
+    for (const e of lastAt.values()) {
+      const who = personOf(e), n = labels.filter(x => (x.station || "") === (e.station || "")).length, kind = LABEL_WORD[e.data && e.data.label] || "";
+      done.push({ t: `${s.k === "shipped" ? "Shipping label" : "Label"} printed at ${AT_PLACE[e.station] || "a station"}${who === "Not signed in" ? ", not signed in" : who ? " by " + who : ""}`,
+        sub: [shortWhen(e.at)].concat(kind && s.k !== "shipped" ? [kind + " label"] : [], n > 1 ? [`printed ${n} times`] : []).join(" · "), key: e.key, label: true });
+    }
     const quiet = QUIET[s.k] || [];
-    for (const e of evs) if (quiet.includes(e.type) && STOP_OF[e.type] == null) facts.push(`${titleOf(e, 70)} · ${shortWhen(e.at)}`);
+    for (const e of evs) {
+      if (e.type === "scan" ? SCAN_STEP[e.station] === s.k : quiet.includes(e.type) && STOP_OF[e.type] == null)
+        facts.push(`${titleOf(e, 70)}${e.type === "scan" ? " · " + whoOf(e) : ""} · ${shortWhen(e.at)}`);
+    }
     const out = () => ({ k: s.k, label: s.l, i, n: pos + 1, of: R.length, state, done, need, facts: facts.slice(-6) });
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
+    const noLabel = () => { if (s.k === "sorted" && !labels.length) add("label", "Label not printed yet"); };
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
     // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
     // under Nested even once another piece of the order is nested
@@ -623,7 +671,7 @@
         else if (l.reason) add("wait", `${name(l)}: ${l.reason}`);
       }
     };
-    if (state === "done") { if (s.k === "sheet") loose(); return out(); }
+    if (state === "done") { if (s.k === "sheet") loose(); noLabel(); return out(); }
     if (state === "later") { const cp = R.findIndex(r => r.i === D.cur); add("after", `${STAGES[Math.max(0, D.cur)].l}${cp >= 0 && cp < pos - 1 ? " and the steps between" : ""}`); }
     if (D.hold) { const r = reasonOf(D.hold) || D.hold.text || ""; add("person", `On hold${r ? ": " + r.slice(0, 120) : ""}. Release it in Review`); }
     if (state === "now" && s.k !== "sheet") loose();
@@ -653,23 +701,28 @@
       if (!evs.some(e => e.type === "setCommitted")) add("next", "its set is committed once every sheet in it is ready");
       add("next", "the laser cuts the sheet and marks it cut");
     } else add("next", HOW[s.k] || `${s.l.toLowerCase()} at its station`);
+    noLabel();
     return out();
   }
-  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped" };
+  const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "" };
+  // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
+  const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
   const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed" };
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
   /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
   function reqLines(q, full) {
-    const done = q.done.slice(full ? -6 : -2).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
-    const need = (full ? q.need : q.need.slice(0, 4)).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span><em>${esc(REQ_WORD[n.kind] || "")}</em>${esc(cap1(n.t))}</span></li>`);
+    // (the step's own lines, then its labels: a label line never pushes out who did the step)
+    const mine = q.done.filter(d => !d.label), labels = q.done.filter(d => d.label);
+    const done = mine.slice(full ? -6 : -2).concat(labels.slice(-2)).map(d => `<li class="rq ok"><i>${CHECK}</i><span>${esc(d.t)}<small>${esc(d.sub)}</small></span></li>`);
+    const need = (full ? q.need : q.need.slice(0, 4)).map(n => `<li class="rq ${n.kind}"><i aria-hidden="true"></i><span>${REQ_WORD[n.kind] ? `<em>${esc(REQ_WORD[n.kind])}</em>` : ""}${esc(cap1(n.t))}</span></li>`);
     const more = !full && q.need.length > 4 ? `<li class="rq more"><span>${q.need.length - 4} more · click to see them</span></li>` : "";
     if (q.state === "none") return `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(q.facts[0] || "Not needed")}</span></li></ul>`;
     const facts = full && q.facts.length ? `<div class="tlReqF"><span class="tlLbl">Also recorded</span>${q.facts.map(f => `<span>${esc(f)}</span>`).join("")}</div>` : "";
     return `<ul class="tlReq">${done.join("")}${need.join("")}${more}</ul>${facts}`;
   }
   /** The small card under a hovered step. */
-  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
+  const reqCard = q => `<div class="xh"><b>${esc(q.label)}</b><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>${reqLines(q, false)}` +
     `<div class="xf">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}${q.state === "done" ? " · click to open it" : " · click to pin"}</div>`;
   /** Shows the card (a fixed layer) under dot, never over it: below when there is room, else beside it (and beside seal,
    *  the zoomed seal's rect in the view, when one is open). → the animation. */
@@ -921,6 +974,12 @@
 .tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
 .tlBlock{display:inline-flex;align-items:baseline;gap:9px;min-width:0;max-width:100%;font:13px/1.45 var(--sans);color:#7a5a1d;background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:10px;padding:5px 12px}
 .tlBlock b{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a24;flex:none}
+.tlCxList{flex:1 1 100%;display:flex;flex-direction:column;gap:3px;min-width:0;margin:2px 0 6px;font:12.5px/1.4 var(--sans)}
+.tlCxList .h{font-weight:700;color:var(--clay,#b0563f)}
+.tlCxList .s{display:flex;align-items:baseline;gap:7px;min-width:0}
+.tlCxList .s i{font-style:normal;font-weight:800;width:1em;flex:none;text-align:center}
+.tlCxList .s.ok i{color:var(--sage,#4f7a5a)}.tlCxList .s.wait i,.tlCxList .s.wait{color:#8a6a24}.tlCxList .s.bad i,.tlCxList .s.bad{color:var(--clay,#b0563f)}.tlCxList .s.back i{color:var(--sage,#4f7a5a)}
+.tlCxList small{opacity:.7;font-size:11px;white-space:nowrap}
 .tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
 /* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
@@ -1302,7 +1361,8 @@
           : stampSvg({ key: "g-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
         const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
-        const say = (c === "d" ? (ev ? `${s.l}: done ${longWhen(ev.at)} by ${whoOf(ev)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
+        // (who did it and where: "Welded · Marco R. · Welding · done Tuesday, Sep 29, 2026 · 10:15 AM")
+        const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
@@ -1356,7 +1416,7 @@
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
       const selLane = S.sel && S.byKey.get(S.sel) ? S.byKey.get(S.sel).lane : "";
-      const html = LANES.map(L => { const w = who[L.k] ? [...who[L.k]].join(", ") : "—"; return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
+      const html = LANES.map(L => { const w = !who[L.k] || !who[L.k].size ? "—" : L.k === "office" ? "Operator" : [...who[L.k]].join(", "); /* (the Office lane names no one: Paul, 29 Sep, "it just should say Operator") */ return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
       if (html !== lanesHtml) { lanesHtml = html; $(".tlLanes").innerHTML = html; }
     }
     function paintCanvas(D, o) {
@@ -1381,7 +1441,7 @@
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
       const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
-      const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}`;
+      const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
       const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
       // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
       // the days, lines, path, NOW line and ghosts are drawn again
@@ -1629,7 +1689,7 @@
       const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
       const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
       const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
-        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${q.state === "done" && q.need.length ? " now" : ""}">${esc(q.state === "done" && q.need.length ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
+        `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
         `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
         `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
@@ -1801,8 +1861,38 @@
       seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
     } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
     // (`recent`, the old row of six stamps, is gone: one seal says where it is, and the words below say what it waits on)
-    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : "";
+    const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : c ? cxList(evs, c) : "";
     return { seal, recent, blocker };
+  }
+  /* A cancelled order's story in plain words (Paul, 29 Sep 00:26): the exact moment it was cancelled (Etsy's own, with
+     when the sorter saw it), then every place it was taken out of, each with its time and how it went ("Still on SS
+     Sheet 3: not taken off yet" when it is not done), a station's "Understood" with who and where, and a restore. */
+  const CX_OK = new Set(["removed", "setAside"]);
+  function cxSteps(evs, c) {
+    const cx = evs.filter(e => CANCEL_TYPES.has(e.type)).pop() || null, at = +(c && c.at) || (cx && +cx.at) || 0;
+    const steps = [];
+    for (const e of evs) {
+      if (+e.at < at - 60000) continue;
+      const d = e.data || {}, who = personOf(e), place = placeOf(e);
+      if (e.type === "removed" && (d.cancel || /^cancel/i.test(reasonOf(e)))) steps.push({ e, st: "ok", text: e.text && /^Removed from/.test(e.text) ? e.text : `Removed from ${e.sheet || "its sheet"}` });
+      else if (e.type === "cancelStep") steps.push({ e, st: d.outcome === "failed" ? "bad" : CX_OK.has(d.outcome) && d.done !== false ? "ok" : "wait", text: e.text || `${d.outcome || "Step"}: ${e.sheet || ""}` });
+      else if (e.type === "cancelAlert") steps.push({ e, st: "ok", text: `Cancel alert understood${place ? " at " + place : ""}${who ? " by " + who : ""}` });
+      else if (e.type === "cancelRestored" && +e.at >= at) steps.push({ e, st: "back", text: `Restored${who ? " by " + who : ""}` });
+    }
+    // one line per place: the latest word on it (a step said "still on" and the pieces came off later, a set aside)
+    const last = new Map();
+    steps.forEach((s, i) => { const p = s.e.type === "removed" || s.e.type === "cancelStep" ? String(s.e.sheet || "").trim().toLowerCase() : ""; if (p) last.set(p, i); });
+    return { cx, at, steps: steps.filter((s, i) => { const p = s.e.type === "removed" || s.e.type === "cancelStep" ? String(s.e.sheet || "").trim().toLowerCase() : ""; return !p || last.get(p) === i; }) };
+  }
+  function cxList(evs, c) {
+    const { cx, at, steps } = cxSteps(evs, c), d = (cx && cx.data) || {};
+    const etsy = (cx && cx.type === "etsyCancelled") || c.source === "etsy" || /^etsy$/i.test(c.by || "");
+    const seen = +d.seenAt > at + 60000 ? ` · seen by the sorter ${shortWhen(d.seenAt)}` : "";
+    const who = etsy ? "on Etsy" : `by ${(cx && personOf(cx)) || c.by || "a person"}`;
+    const head = at ? `<span class="h">Cancelled ${esc(who)} ${esc(shortWhen(at))}${esc(seen)}</span>` : "";
+    const mark = { ok: "✓", wait: "…", bad: "✗", back: "↺" };
+    const rows = steps.slice(-12).map(s => `<span class="s ${s.st}"><i>${mark[s.st]}</i>${esc(s.text)}<small>${esc(shortWhen(s.e.at))}${s.e.type !== "cancelAlert" && personOf(s.e) && !/ by /.test(s.text) ? " · " + esc(personOf(s.e)) : ""}</small></span>`).join("");
+    return head || rows ? `<span class="tlCxList">${head}${rows}</span>` : "";
   }
   function wireNow(card, onOpen) {
     if (!card) return;
@@ -1846,5 +1936,6 @@
   /** The icon of the lane an event belongs to (the station badge's disc), as SVG markup; "" for no event. */
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
-  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn };
+  root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
+    stepOf, labelStepOf, personOf, placeOf };
 })(typeof window !== "undefined" ? window : globalThis);
