@@ -61,4 +61,5 @@ db.store.set('Brites_GAds_State/fxRates',{'CAD:2026-09-02':.5});answer['2026-09-
 answer['2026-09-03']=new Error('offline');check(await T.fxRate('2026-09-03')===null,'an outage yields no rate');answer['2026-09-03']={date:'2026-09-03',rates:{USD:.725}};NOW+=61000;check(await T.fxRate('2026-09-03')===.725,'an outage is retried instead of sticking for the warm instance');
 network=async()=>{throw Error('network forbidden')};T.set({fb:false});NOW=Date.parse('2026-09-10T16:00:00Z');
 console.log('PASS '+count+' reporting date, currency, missing coverage and historical campaign checks');
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});

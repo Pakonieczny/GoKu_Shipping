@@ -121,4 +121,5 @@ await test('a plan forecast to lose money names that blocker and never tops Best
   vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
   assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
 console.log(`${passed} opportunity card checks passed.`);
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

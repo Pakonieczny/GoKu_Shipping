@@ -99,4 +99,5 @@ const input={start:'2026-09-09',end:'2026-09-10',reportingTree:true,force:true};
     check(!w.BritesGroups.state.selected&&w.BritesGroups.state.campaign==='42'&&groupEl('B').classList.contains('is-open'),'asking to open a removed group shows it expanded in its campaign instead');
   }
   console.log('PASS '+count+' removed-group history, campaign totals and plain status checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});

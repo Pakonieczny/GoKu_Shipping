@@ -339,4 +339,5 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.close();
   }
   console.log(passed + ' Ad Doctor checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

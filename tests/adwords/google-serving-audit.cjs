@@ -429,4 +429,5 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   check(w.calls.length === 1 && w.calls[0].budgetMs <= 0, 'late in a run it leaves the worker\'s last three minutes to the tasks after it');
 
   console.log(`google-serving-audit: ${passed} checks passed`);
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

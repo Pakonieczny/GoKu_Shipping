@@ -48,4 +48,5 @@ const input={start:'2026-09-09',end:'2026-09-10',reportingTree:true,force:true};
   r=await service(async()=>({currency:'USD',fxIncomplete:false,rate:()=>{throw Error('Missing exchange rate for a reporting date.')}})).index(input);check(g(A).report===undefined&&g(A).metrics.spend===30&&r.warnings.some(w=>/could not be converted/.test(w)),'a conversion failure drops only the converted figures, never the group report');
   r=await service().index(input);check(g(A).report===undefined&&g(A).metrics.spend===30,'without rates the native report is unchanged');
   console.log('PASS '+count+' group and listing reporting currency and basis checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});

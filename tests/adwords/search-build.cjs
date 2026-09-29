@@ -204,4 +204,5 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   check(rsa.headlines.join('|') === 'Moon Earrings|Star Necklace Gifts|Zodiac Charms' && rsa.descriptions.length === 2 && !('sitelinks' in rsa), 'generated copy is deduplicated and length-checked');
 
   console.log(`PASS ${n} Search campaign build checks`);
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

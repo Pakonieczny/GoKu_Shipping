@@ -204,5 +204,5 @@ check(scopeDoc.job.stages.quality.score===82&&scopedRecovery.f.docs.get(scopedRe
 await scopedRecovery.svc.start({workspaceId:scopedRecovery.id});await scopedRecovery.svc.run({workspaceId:scopedRecovery.id,jobId:scopeRun.jobId});
 check(scopedRecovery.calls.quality===2,'resuming corrected review never repeats a completed paid call');
 
-console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');})().catch(error=>{console.error(error);process.exit(1)});
+console.log('PASS '+n+' Ad Design upload, source identity, paid-stage reuse, complete formats, exact approvals and quality checks');require('./suite-guard.cjs').done();})().catch(error=>{console.error(error);process.exit(1)});
 

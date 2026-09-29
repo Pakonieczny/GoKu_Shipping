@@ -150,4 +150,5 @@ async function open(){const dom=new JSDOM(skeleton,{runScripts:'dangerously',pre
  const manifest=read('scripts/build-public.cjs');
  if(/brites-flow\.js/.test(manifest))assert.match(manifest,/brites-flow\.css/);else console.log('NOTE scripts/build-public.cjs does not list brites-flow.js and brites-flow.css yet; the public build will not ship them until it does.');
  console.log('PASS flow cues: guarded hooks, journey state and steps, hand-offs to Approvals and Overview, marks that survive refresh, fold-away, dialog and phone and reduced-motion behaviour');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

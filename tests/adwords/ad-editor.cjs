@@ -138,6 +138,7 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
     await e.openSavedDesign(firstCopy);check(e.canvas.getObjects().some(o=>o.type==='group'&&o.getObjects().some(x=>x.text==='Choose your charm')),'saved design reopens with editable button layers');await e.action('save');await e.dispose();dom.window.close();
   }
   console.log('PASS '+checks+' professional editor source, layout, save and export checks');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack||e);process.exitCode=1;});
 
 const identityIssue='Exact-product integrity needs correction: '+ 'The attachment geometry drifts. '.repeat(12);

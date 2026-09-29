@@ -249,4 +249,5 @@ function memoryDb(seed = {}) {
   // 6. No OpenAI text model, vision model or chat endpoint is left in the autopilot.
   ok(!/gpt-6-astra|OPENAI_VISION_MODEL|GADS_GEN_MODEL \|\||api\.openai\.com\/v1\/chat\/completions/.test(source), 'only image generation still calls OpenAI');
   say('PASS ' + passed + ' Sonnet 5.5 autopilot wrapper, scan web search, vision, creative review and key-split checks');
+  require('./suite-guard.cjs').done();
 })().catch(err => { process.stderr.write(String(err && err.stack || err) + '\n'); process.exit(1); });

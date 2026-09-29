@@ -64,4 +64,5 @@ function load(file){const mod={exports:{}};const env={EDIT_PASSCODE:'test-pass',
  for(const h of [{},{'x-edit-passcode':'wrong'}]){calls.length=0;r=await api.httpHandler(servingEvent(h));assert.equal(r.statusCode,401);assert.equal(calls.length,0);}count++;
  assert(ctx.isReadAction('servingCheck',{})&&!ctx.isReadAction('campaignTimeline',{}));r=await api.handleAction({action:'campaignTimeline',id:'77'});assert.match(String(r.error),/unknown action/);count++;
  console.log('PASS',count,'API / worker checks (authentication, approval gate, dispatch, status IDs, automation-off behavior)');
+ require('./suite-guard.cjs').done();
 })();

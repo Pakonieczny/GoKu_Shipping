@@ -174,4 +174,5 @@ if(process.env.BRITES_EDITOR_DOM_RUNTIME)await test('typing a photo search keeps
  }finally{ctx.closeAdDesign();ctx.document=oldDocument;delete ctx.window;dom.window.close();}
 });
 console.log(`${passed} Ad Design UI checks passed.`);
+require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});

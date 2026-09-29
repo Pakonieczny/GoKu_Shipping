@@ -56,4 +56,5 @@ vm.runInContext(source+'\nglobalThis.mem=memory;',ctx);
  assert.equal(calls.create,0,'no new film may be generated');
  assert.equal(calls.review,1,'the recovered set is reviewed once');
  console.log('PASS the exact stuck production job recovers to three reviewed films with no new video charge');
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack||e);process.exit(1)});

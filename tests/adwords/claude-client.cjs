@@ -298,4 +298,5 @@ const env = { ANTHROPIC_API_KEY: 'test-key' };
   assert.ok(!Object.keys(require.cache).some(k => /[\\/]node-fetch[\\/]/.test(k)), 'an injected fetch never loads node-fetch');
 
   console.log('claude-client: Sonnet 5.5 client streams, retries, prices and bridges offline.');
+  require('./suite-guard.cjs').done();
 })().catch(error => { console.error(error); process.exit(1); });

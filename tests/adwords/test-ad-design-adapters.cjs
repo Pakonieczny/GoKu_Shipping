@@ -124,5 +124,6 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
  e=adapter();await assert.rejects(()=>e.A.responses({model:TEXT_MODEL,input:[{role:'user',content:Array(101).fill(inline(tinySource))}]},'too-many'),error=>error.notDispatched===true&&/at most 100/.test(error.message));check(e.calls.length===0,'more than 100 images are refused before sending');
  e=adapter();e.D.reply={output_text:'I will not review this.',stop_reason:'refusal'};const refused=await e.A.responses({model:TEXT_MODEL,input:'Review'},'refusal');assert.throws(()=>parseResponse(refused),error=>error.code==='AI_REFUSAL'&&error.definiteResponse===true);check(refused.output[0].content[0].type==='refusal'&&refused.output_text==='','a Sonnet refusal keeps its refusal part and is a definite outcome');
  console.log('PASS '+passed+' Sunburst image and Sonnet 5.5 text request, format, provenance, cost and no-retry checks');
+ require('./suite-guard.cjs').done();
 })().catch(error=>{console.error(error);process.exit(1)});
 

@@ -475,4 +475,5 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
   }
 
   console.log(passed + ' spend and paid-AI guard checks passed.');
+  require('./suite-guard.cjs').done();
 })().catch(e => { console.error(e); process.exit(1); });

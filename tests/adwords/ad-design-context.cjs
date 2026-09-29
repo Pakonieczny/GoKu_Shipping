@@ -72,4 +72,5 @@ const D={shopifyGql:async q=>{requests.push(q);if(q.includes('AdDesignProductIma
  await assert.rejects(()=>paged.loadGalleryPage({source:{key:'bad',type:'productIds',productHandles:['not-an-ad-destination'],offset:0},context:exact}),/outside/);checks++;
  live.missing=true;const removed=await paged.loadRelatedProducts({productId:'1',context:full.context});eq(removed.products.length,0);eq(removed.warnings.length,12,'removed related listings are explicit, never inferred from titles');
  console.log('Ad Design context/gallery checks passed: '+checks);
+ require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});
