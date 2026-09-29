@@ -116,6 +116,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
         // Preparing the same batch again (a new allowance, a reload) keeps its
         // original date, and a line prepared before dates were kept stays undated.
         const same=last&&last.n===earlier.length+1&&key(last.ids)===key(ids);
+        // Only a Cut Sheet press adds a green line (Paul, 29 Sep: Send to Sheet drew line 2 by itself). A page opened
+        // before this rule plans on its own, so the rule is kept here; nothing is written.
+        if(!same&&b.cut!==true)throw new Error('Only Cut Sheet adds a green line. Reload the page, then press Cut Sheet');
         plan.stages=[...earlier,{n:earlier.length+1,at:same?last.at:Date.now(),ids,lines:[from,plan.lines.length]}];
       }else plan.stages=earlier;
       const planJson=JSON.stringify(plan);if(Buffer.byteLength(JSON.stringify({...sheet,rosePlanJson:planJson}))>950000)throw new Error('Cut geometry is too complex to save');
