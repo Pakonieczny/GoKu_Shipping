@@ -1,13 +1,13 @@
 // netlify/functions/googleMerchantHealth.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only Merchant Center health:
-//   https://goldenspike.app/.netlify/functions/googleMerchantHealth?key=<EDIT_PASSCODE>
+//   https://goldenspike.app/.netlify/functions/googleMerchantHealth?key=<passcode>
 //   …&format=json
 //
 // Answers what googleConnectionsCheck only proved reachable: which offers cannot
 // serve and why, whether Google records the advertising link, and whether store
 // conversions reach Merchant Center. Every call is a read. Needs the passcode, and
-// refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
+// refuses outright while no passcode is set (_adsCheckGate.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
@@ -91,8 +91,8 @@ function html(result) {
 }
 
 exports.handler = async (event) => {
-  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while EDIT_PASSCODE is unset.
-  const refused = refuse(event, 'the Merchant Center health check');
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, 'the Merchant Center health check');
   if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
   let result;
