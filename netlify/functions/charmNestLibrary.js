@@ -33,7 +33,8 @@
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
  *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · aliasGet · aliasPut ·
- *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customDelete
+ *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customReopen
+ *      (customDelete: an older page's name for customReopen; nothing deletes a record)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -1936,7 +1937,9 @@ async function op_optionMapPut(b) {
 /* Review → Custom Orders prints the sorting station's QR sticker for a special line and marks it completed: the line is
    then never pooled and no longer holds its order. One document per order line (its sorter key, "{receipt}_{transaction}"),
    kept with the sticker it printed so it can be printed again after the order has left the pull. Every sorter browser
-   reads the same records (customGet); reopening deletes one (customDelete). Sandboxed with the sorter's own records. */
+   reads the same records (customGet). A record is kept for good (Paul, 29 Sep 00:35: "the seal must always remain and
+   follow that order forever"): reopening or undoing (customReopen) only sets its state to "open", with who and when in
+   its history; its seals (stamps) are never cleared. Sandboxed with the sorter's own records. */
 const CUSTOM = "Charm_Custom_Orders";
 SANDBOXED.add(CUSTOM);
 const CUSTOM_DAYS = 180;
@@ -1945,12 +1948,12 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
   // the lines a sorter has pulled, read by their keys (it polls these every minute): a key with no record was never
-  // completed or has been reopened; `keys` says how many were read, the first that many asked for
+  // completed; one reopened says state "open" and keeps its seals; `keys` says how many were read, the first that many asked for
   if (Array.isArray(b.keys)) {
     const keys = [...new Set(b.keys.map(String))].filter(lineKeyOk).slice(0, 1000), records = {};
     for (let i = 0; i < keys.length; i += 100) for (const s of await db.getAll(...keys.slice(i, i + 100).map(k => col(CUSTOM).doc(k)), { fieldMask: CUSTOM_FIELDS })) if (s.exists) records[s.id] = customRow(s.data(), false);
@@ -1963,7 +1966,8 @@ async function op_customGet(b) {
 }
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label
    printed, so no print is counted). Either records who completed it and when (completedAt/completedBy).
-   stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order, the newest 24: { how: "print" | "button", at, by }.
+   stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order: { how: "print" | "button", at, by }. Every seal is
+   kept (29 Sep: none is ever dropped; the cap only guards the document's size, far past any order's presses).
    The card shows each as a seal of its own (a print seal or a Complete Order seal). A record from before them has its
    seals read from what it kept (the completion, the first and the last print). */
 const legacyStamps = c => {
@@ -1989,14 +1993,34 @@ async function op_customPut(b) {
   if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
   doc.hasLabel = !!(doc.label || (cur && cur.label));
   const prev = cur && Array.isArray(cur.stamps) ? cur.stamps : legacyStamps(cur);
-  doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-24);
+  doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-STAMPS_MAX);
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
     text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
-async function op_customDelete(b) { const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" }; await col(CUSTOM).doc(key).delete(); return { ok: true }; }
+const STAMPS_MAX = 2000;
+/* Reopen or Undo (Paul, 29 Sep 00:35: "the seals can never ever disappear… even though you can reopen an order, the
+   seal must always remain and follow that order forever"). The record is never deleted and its seals never cleared: its
+   state becomes "open" (the sorter reads the line as not completed), who and when join its history, and the order's
+   timeline gets a note (not a seal). A record from before the stamps has its seals written out from what it kept, so a
+   later completion cannot take them. One already open is left as it is (a retry records nothing again). */
+async function op_customReopen(b) {
+  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" };
+  const ref = col(CUSTOM).doc(key), snap = await ref.get(); if (!snap.exists) return { ok: true, record: null };
+  const cur = snap.data(); if (cur.state === "open") return { ok: true, record: customRow(cur, false) };
+  const how = b.how === "undo" ? "undo" : "reopen", who = str(b.by || "operator", 80), now = Date.now();
+  const doc = { state: "open", reopenedAt: now, reopenedBy: who, updatedAtMs: now, updatedAt: FV.serverTimestamp(),
+    history: (Array.isArray(cur.history) ? cur.history : []).concat({ how, at: now, by: who }).slice(-STAMPS_MAX) };
+  if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
+  await ref.set(doc, { merge: true });
+  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
+  await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
+    text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
+    data: { reopened: how, seals, sku: cur.sku || "" }, id: `customReopen-${key}-${now}` }), "custom reopen");
+  return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
+}
 /* Is a line a custom order? Claude's kept readings (only those read from exactly what the page has now) and a person's
    decisions (_charmNestCustomRead). A reading is shared by production and the sandbox (the sandbox plays the real orders
    under their real numbers); a person's decision is kept per workspace. A new reading is a customRead job (startAgent). */
@@ -2154,7 +2178,7 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
-  customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
+  customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
