@@ -1908,7 +1908,8 @@ function cmdRangeBarHtml(){var state=cmdRefreshing?'<span class="cmdUpdating" ro
 function badge(s){var cls=s==="ENABLED"?"b-on":s==="PAUSED"?"b-pause":"b-learn";var t=s==="ENABLED"?"live":String(s||"").toLowerCase();return '<span class="badge2 '+cls+'">'+t+'</span>';}
 // Google Ads campaign.primary_status -> friendly label + badge class (the real serving state).
 var PRI_STATUS={ELIGIBLE:["Serving","b-on"],LEARNING:["Learning","b-learn"],LIMITED:["Limited","b-warn"],PAUSED:["Paused","b-pause"],PENDING:["Scheduled","b-learn"],ENDED:["Ended","b-end"],MISCONFIGURED:["Misconfigured","b-bad"],NOT_ELIGIBLE:["Not eligible","b-bad"],REMOVED:["Removed","b-gone"]};
-var REASON_LABEL={BIDDING_STRATEGY_LEARNING:"Bid strategy learning",BIDDING_STRATEGY_LIMITED:"Bid strategy limited \u2014 needs more conversion data",BIDDING_STRATEGY_MISCONFIGURED:"Bid strategy misconfigured",BIDDING_STRATEGY_SUGGESTED:"Could capture more value \u2014 adjust ROAS target",CAMPAIGN_BUDGET_LIMITED:"Limited by budget",CAMPAIGN_BUDGET_MISCONFIGURED:"Budget misconfigured",CAMPAIGN_PENDING:"Starts in the future",CAMPAIGN_ENDED:"End date has passed",CAMPAIGN_PAUSED:"Campaign paused",CAMPAIGN_DRAFT:"Draft campaign",CAMPAIGN_REMOVED:"Campaign removed",AD_GROUPS_PAUSED:"All ad groups paused",NO_AD_GROUPS:"No ad groups",KEYWORDS_PAUSED:"All keywords paused",NO_KEYWORDS:"No keywords",AD_GROUP_ADS_PAUSED:"All ads paused",NO_AD_GROUP_ADS:"No ads",HAS_ADS_LIMITED_BY_POLICY:"Some ads limited by policy",HAS_ADS_DISAPPROVED:"Some ads disapproved",MOST_ADS_UNDER_REVIEW:"Ads under review"};
+// Google Ads v24 CampaignPrimaryStatusReason names. Budget reasons are BUDGET_*, not CAMPAIGN_BUDGET_*.
+var REASON_LABEL={BIDDING_STRATEGY_LEARNING:"Bid strategy learning",BIDDING_STRATEGY_LIMITED:"Bid strategy limited",BIDDING_STRATEGY_CONSTRAINED:"Bid strategy held back by its targets",BIDDING_STRATEGY_MISCONFIGURED:"Bid strategy misconfigured",BUDGET_CONSTRAINED:"Limited by budget",BUDGET_MISCONFIGURED:"Budget misconfigured",CAMPAIGN_PENDING:"Starts in the future",CAMPAIGN_ENDED:"End date has passed",CAMPAIGN_PAUSED:"Campaign paused",CAMPAIGN_DRAFT:"Draft campaign",CAMPAIGN_REMOVED:"Campaign removed",AD_GROUPS_PAUSED:"All ad groups paused",NO_AD_GROUPS:"No ad groups",KEYWORDS_PAUSED:"All keywords paused",NO_KEYWORDS:"No keywords",AD_GROUP_ADS_PAUSED:"All ads paused",NO_AD_GROUP_ADS:"No ads",HAS_ADS_LIMITED_BY_POLICY:"Some ads limited by policy",HAS_ADS_DISAPPROVED:"Some ads disapproved",MOST_ADS_UNDER_REVIEW:"Ads under review",ASSET_GROUPS_PAUSED:"All asset groups paused",NO_ASSET_GROUPS:"No asset groups",HAS_ASSET_GROUPS_DISAPPROVED:"Some asset groups disapproved",HAS_ASSET_GROUPS_LIMITED_BY_POLICY:"Some asset groups limited by policy",MOST_ASSET_GROUPS_UNDER_REVIEW:"Asset groups under review",MISSING_LOCATION_TARGETING:"No location targeting",SEARCH_VOLUME_LIMITED:"Low search volume"};
 // Google repeats UNKNOWN for reasons this API version does not name. Showing
 // it, twice over, tells the operator nothing and buries the reason that does.
 function reasonText(rs){if(!rs||!rs.length)return "";var seen={};return rs.filter(function(r){
@@ -2177,12 +2178,35 @@ function renderTimeline(t){
     +'<div style="display:flex;gap:0;align-items:flex-start;margin-bottom:'+((t.adStrength||[]).length||((t.days||[]).length)?'12px':'0')+'">'+steps+'</div>'
     +((t.adStrength||[]).length?'<div style="margin-bottom:8px"><span class="muted" style="font-size:11px;margin-right:6px">Ad strength:</span>'+strength+'</div>':"")
     +((t.days||[]).length?'<div style="display:flex;align-items:flex-end;gap:2px;height:28px" aria-label="14-day impressions">'+spark+'</div><div class="muted" style="font-size:10px;margin-top:2px">Last 14 days \u00B7 '+(t.totals?t.totals.impressions.toLocaleString()+' impr, '+t.totals.clicks.toLocaleString()+' clicks, '+(convBasis==='conversion'&&t.cdAvailable===true?(t.days||[]).reduce(function(a,d){return a+(+d.conversionsCd||0);},0).toFixed(1)+' conv. by conversion date, ':t.totals.conversions.toFixed(1)+' conv. by ad-click date, ')+money(t.totals.cost)+(t.currency?' '+esc(t.currency):'')+' spend'+(t.fxIncomplete?' (a daily exchange rate is missing, so every day is in '+esc(t.currency||'the account currency')+')':''):'')+'</div>':"")
+    +renderServing(t.serving)
     +(String((t.campaign||{}).channel)==="PERFORMANCE_MAX"?'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
       +'<span class="muted" style="font-size:11px;margin-right:8px">Improve this campaign (adds only \u2014 safe during Learning, never resets bidding):</span>'
       +'<button class="btn ghost sm tlact" data-act="pmaxUpgradeAdStrength" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Upgrade copy + sitelinks</button> '
       +'<button class="btn ghost sm tlact" data-act="pmaxBackfillImages" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Re-image (AI)</button>'
       +'<span class="tlactmsg muted" style="font-size:11px;margin-left:8px"></span></div>':"")
     +'</div>';
+}
+// Google serving check (campaignTimeline's read-only "serving" result): what Google holds for the
+// campaign now and what would stop it serving as intended, with Google's own reasons.
+var SERV_LV={block:["Stops it","b-bad"],risk:["Fix first","b-warn"],note:["Note","b-learn"]};
+function renderServing(s){
+  if(!s)return "";
+  var box='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">';
+  if(s.ok===false&&!(s.findings||[]).length)return box+'<span class="muted" style="font-size:11.5px">Google serving check unavailable: '+esc(s.error||(s.warnings||[])[0]||s.headline||"no answer")+'</span></div>';
+  var tone=s.verdict==="blocked"?"var(--clay)":s.verdict==="attention"?"#8a4a1d":"#3c5a39";
+  var item=function(f){var lv=SERV_LV[f.level]||SERV_LV.note;
+    return '<li style="margin:5px 0;list-style:none;overflow-wrap:anywhere"><span class="badge2 '+lv[1]+'" style="margin-right:6px">'+lv[0]+'</span><b>'+esc(f.area)+':</b> '+esc(f.text)
+      +(f.reason?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Google: '+esc(f.reason)+'</div>':'')
+      +(f.fix?'<div class="muted" style="font-size:11px;margin:1px 0 0 2px">Fix: '+esc(f.fix)+'</div>':'')+'</li>';};
+  var all=s.findings||[],main=all.filter(function(f){return f.level!=="note";}),notes=all.filter(function(f){return f.level==="note";});
+  var when=s.checkedAt?new Date(s.checkedAt):null;
+  return box+'<div style="font-size:12px;font-weight:650;margin-bottom:4px">Google serving check <span style="font-weight:600;color:'+tone+'">· '+esc(s.headline||"")+'</span></div>'
+    +(main.length?'<ul style="margin:0;padding:0;font-size:12px">'+main.map(item).join("")+'</ul>':"")
+    +(notes.length?'<details class="xd" style="margin-top:6px"><summary>Notes <span class="xd-n">'+notes.length+'</span></summary><ul style="margin:0;padding:0;font-size:12px">'+notes.map(item).join("")+'</ul></details>':"")
+    +((s.facts||[]).length?'<details class="xd" style="margin-top:6px"><summary>What Google has now</summary><div style="display:grid;grid-template-columns:minmax(80px,max-content) minmax(0,1fr);gap:2px 12px;font-size:11.5px">'
+      +s.facts.map(function(f){return '<span class="muted">'+esc(f.label)+'</span><span style="overflow-wrap:anywhere">'+esc(f.value)+'</span>';}).join("")+'</div></details>':"")
+    +'<div class="muted" style="font-size:10.5px;margin-top:5px">Read from Google Ads'+(s.apiVersion?' (API '+esc(s.apiVersion)+')':'')+(when&&!isNaN(when)?' at '+esc(when.toLocaleTimeString()):'')+'; nothing was changed.'
+    +((s.warnings||[]).length?' Not checked: '+esc(s.warnings.join(" ")):'')+'</div></div>';
 }
 // Scoped per-campaign creative job (upgrade copy/sitelinks or re-image) — same background
 // pipeline as the account-wide buttons, but limited to one campaign via campaignIds.
