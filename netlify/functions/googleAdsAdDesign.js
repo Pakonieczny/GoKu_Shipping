@@ -1088,7 +1088,7 @@ function createAdDesignService(deps) {
       // allowance and spent were computed and never compared, so a retry could
       // dispatch past the budget. An unsettled reservation is still money at
       // risk: count it at its reserved amount until the provider settles it.
-      if (spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request: $" + spent.toFixed(2) + " of a $" + allowance.toFixed(2) + " allowance is already reserved and this step needs $" + reserve.toFixed(2) + ". Completed work is saved.");
+      if (spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request: US$" + spent.toFixed(2) + " of a US$" + allowance.toFixed(2) + " allowance is already reserved and this step needs US$" + reserve.toFixed(2) + ". Completed work is saved.");
       const requestId = crypto.randomUUID(); job.reservations = (job.reservations || []).concat({ key, requestId, reservedUsd: reserve, rationale: String(quote && quote.rationale || "Planning reservation; actual provider token usage is recorded separately.").slice(0, 400), at: Date.now(), settled: false });
       await saveJob({ requests: Number(job.requests || 0) + 1, inFlight: { key, at: Date.now(), requestId } });
       let output;
