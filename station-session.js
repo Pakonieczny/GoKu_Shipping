@@ -100,11 +100,10 @@
     lsSet(K.days, JSON.stringify(o));
   }
   function dayOf(name) { const m = lsJson(K.days, {}); return (m && m[name]) || lsGet(K.day); }
+  // (a name's old day is kept, not deleted: another app on this computer that signs in first this morning must not make a
+  // login left over from yesterday in this one look like today's; markDay keeps the last 20 names)
   function clearStaleDays(today) {
     if (lsGet(K.day) && lsGet(K.day) !== today) lsDel(K.day);
-    const m = lsJson(K.days, {}); if (!m || typeof m !== "object") return;
-    for (const k of Object.keys(m)) if (m[k] !== today) delete m[k];
-    lsSet(K.days, JSON.stringify(m));
   }
 
   /* ── this page's session (kept so a reload within 15 minutes goes on with it) ── */
