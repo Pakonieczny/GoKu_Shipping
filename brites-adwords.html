@@ -783,7 +783,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260929-history">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-inline">
 </head>
 <body>
 
@@ -1556,7 +1556,8 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
   box.onpointerleave=function(e){if(e.pointerType==="mouse")hide();};box._show=show;box._hide=hide;}
 
 /* ---- nav ---- */
-var NAV=[["groups","Products & groups","","◈"],["command","Overview","Account performance","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
+// The top bar is one thin row: the page title alone, no subtitle line.
+var NAV=[["groups","Products & groups","","◈"],["command","Overview","","◆"],["sales","Sales","","◷"],["approvals","Approvals","","✎"],["bench","Opportunities","","⚒"],["controls","Controls","","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();if(typeof BritesFlow!=="undefined")BritesFlow.nav(n);}
 // The badge counts exactly what the Approvals tab lists. Counting every
 // draft while the tab shows only the selected product group would have the
@@ -4829,7 +4830,7 @@ setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);
 
 </script>
-<script src="/brites-groups.js?v=20260929-history"></script>
+<script src="/brites-groups.js?v=20260929-inline"></script>
 <script>
 BritesGroups.init({api:api,dashboard:function(){return DASH;},basis:function(){return convBasis;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>

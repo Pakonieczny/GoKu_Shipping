@@ -1,4 +1,4 @@
-.topbar{min-height:52px;padding-top:10px!important;padding-bottom:10px!important}.topbar h1{font-size:24px!important}.topbar #vsub{display:none}.brand{padding-top:20px!important;padding-bottom:20px!important}.bg-global-note{font-size:11px;color:var(--ink-70)}
+.topbar{min-height:52px;padding-top:10px!important;padding-bottom:10px!important}.topbar h1{font-size:24px!important}.brand{padding-top:20px!important;padding-bottom:20px!important}.bg-global-note{font-size:11px;color:var(--ink-70)}
 /* Products & groups: campaign › group › listing, each with its own figures. Columns line up at every level. */
 /* The tree's room depends on the rail as much as the window, so layouts follow the view's own width. */
 #v-groups{container:bg-view/inline-size;--bg-cols:minmax(0,1fr) 112px minmax(84px,104px) minmax(54px,70px) minmax(48px,62px) minmax(84px,104px) 68px}
@@ -38,10 +38,12 @@
 .bg-empty{padding:28px 20px;color:var(--ink-70);font-size:13px;text-align:center}.bg-error{border:1px solid #d69280;background:#fbece7;padding:11px 15px;border-radius:9px;font-size:13px;margin:0 0 12px}
 .bg-split{max-width:680px;width:90vw;border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--ink);padding:24px 26px}.bg-split::backdrop{background:#1d191866}.bg-split h2{margin-top:0;font:500 26px var(--serif)}.bg-split p{font-size:13px;line-height:1.6}.bg-split p[role=status]{display:flex;align-items:center;gap:8px;min-height:20px}.bg-split table{width:100%;border-collapse:collapse;font-size:13px;text-align:left}.bg-split th,.bg-split td{padding:11px 8px;border-bottom:1px solid var(--line)}.bg-split th{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)}.bg-split th:nth-child(n+2),.bg-split td:nth-child(n+2){white-space:nowrap}.bg-split>div{display:flex;justify-content:flex-end;gap:10px}
 /* The context line under the header: Back names its destination; the trail appears only where it narrows the page. */
-.bg-context{display:flex;align-items:center;gap:12px;min-width:0;max-width:1184px;margin:14px 28px -10px;font-size:12px;white-space:nowrap}.bg-context[hidden]{display:none!important}.bg-back{flex:0 1 auto;min-width:0;max-width:34%;padding:4px 0;border:0;background:none;color:var(--ink-70);font:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis}.bg-back:hover{color:var(--ink)}.bg-back+.bg-breadcrumbs{padding-left:12px;border-left:1px solid var(--line)}
+.bg-context{position:relative;z-index:1;display:flex;align-items:center;gap:12px;min-width:0;max-width:1184px;margin:10px 28px -14px;font-size:12px;white-space:nowrap}
+/* In Products & groups the trail opens the toolbar row: dates and Saved workspaces stay together on the right. */
+.bg-toolbar>.bg-context{flex:0 1 auto;max-width:100%;margin:0 6px 0 0}.bg-toolbar>.bg-context+.bg-dates{margin-left:auto}.bg-toolbar>.bg-context+.bg-dates+[data-bg-action=saved]{margin-left:0}.bg-context[hidden]{display:none!important}.bg-back{flex:0 1 auto;min-width:0;max-width:34%;padding:4px 0;border:0;background:none;color:var(--ink-70);font:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis}.bg-back:hover{color:var(--ink)}.bg-back+.bg-breadcrumbs{padding-left:12px;border-left:1px solid var(--line)}
 .bg-breadcrumbs{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden}.bg-breadcrumbs button{flex:0 1 auto;min-width:0;max-width:280px;padding:4px 0;border:0;background:none;color:var(--gold,#a9823f);font:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis}.bg-breadcrumbs button:hover{text-decoration:underline}.bg-breadcrumbs [data-bg-home]{flex:none}.bg-breadcrumbs>span{flex:none;color:var(--ink-45)}.bg-breadcrumbs>[aria-current]{flex:0 1 auto;min-width:0;color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
 @keyframes bg-turn{to{transform:rotate(360deg)}}@keyframes bg-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
-@media(min-width:761px) and (max-width:1020px){.bg-context{margin:10px 8px -10px}}
+@media(min-width:761px) and (max-width:1020px){.bg-context{margin:8px 8px -10px}}
 @container bg-view (max-width:900px){.bg-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.bg-detail-head h2{font-size:22px}.bg-copy ul{columns:1}.bg-notice{align-items:flex-start;flex-direction:column}.bg-tabs{gap:18px}}
 /* Narrow views (tablet, narrow window beside the rail, phone): name, state and action on one line, the figures beneath it. */
 @container bg-view (max-width:900px){
@@ -57,7 +59,7 @@
 .bg-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.bg-metrics>div{padding:13px 14px}.bg-metrics b{font-size:17px}
 }
 @media(max-width:760px){
-.bg-context{margin:8px 3px -12px}.bg-back{max-width:45%}
+.bg-context{margin:8px 3px -12px}.bg-back{max-width:45%}.bg-toolbar>.bg-context{flex-basis:100%;margin:0}
 .bg-toolbar>input[type=search]{flex-basis:100%}.bg-toolbar>select{flex:1 1 100%}.bg-dates{flex:1 1 100%}.bg-dates label{flex:1;min-width:0}.bg-dates input{width:auto;flex:1;min-width:0}.bg-toolbar [data-bg-action=saved]{margin-left:0}
 .bg-split{padding:20px 18px;width:94vw}.bg-split table{font-size:12px}.bg-split th,.bg-split td{padding:9px 6px}
 }
