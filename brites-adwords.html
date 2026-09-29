@@ -2867,9 +2867,12 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
       '</div>'+
       '<div class="diagBody" style="'+(open?"":"display:none;")+'padding:0 4px 12px 26px">'+inner+past+'</div></div>';});
   body.innerHTML=html;
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b"),google=this.classList.contains("dg-gbudget");
-    if(!confirm("Set this campaign’s daily budget to "+diagMoney(bud)+"?"))return;
-    var done=btnBusy(this,"Setting…");
+  // Each question opens in place under the row of buttons that asked, and follows that button through a redraw.
+  var dgAsk=function(b,key,q,yes,sel,match){var i=q.indexOf("? ");return askInline(b,{key:key,q:i>0?q.slice(0,i+1):q,note:i>0?q.slice(i+2):"",yes:yes,
+    place:function(box,x){x.parentNode.after(box);},find:function(){return Array.prototype.find.call(document.querySelectorAll(sel),match)||null;}});};
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-aibudget,.dg-gbudget"),function(b){b.onclick=async function(){var id=this.getAttribute("data-id"),bud=+this.getAttribute("data-b"),google=this.classList.contains("dg-gbudget");
+    var btn=await dgAsk(this,"dgBudget:"+id+":"+bud,"Set this campaign’s daily budget to "+diagMoney(bud)+"?","Set budget",google?".dg-gbudget":".dg-aibudget",function(x){return x.getAttribute("data-id")===id&&+x.getAttribute("data-b")===bud;});if(!btn)return;
+    var done=btnBusy(btn,"Setting…");
     // Logged as a fix, so its result is measured like any other.
     api("applyRemedy",{campaignId:id,remedy:{issue:(google?"Google":"AI")+" budget recommendation",fix:"Set the daily budget to "+diagMoney(bud),impact:"medium",executable:{kind:"setBudget",budget:bud}}}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The budget was not changed.");return;}
@@ -2878,21 +2881,22 @@ function renderDiag(){var body=document.getElementById("diagBody");if(!body)retu
       toast("Daily budget set to "+diagMoney(bud)+(r.verified?" and confirmed in Google Ads.":r.verified===false?", but Google Ads has not confirmed it yet.":"."),r.verified!==false);
       loadRemedyHistory();renderDiag();
     }).catch(function(e){done();toast(e.message||String(e));});};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=function(){var rn=this.getAttribute("data-rn");if(!confirm("Dismiss this Google recommendation in Google Ads?"))return;
-    var done=btnBusy(this,"Dismissing…");
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-dismiss"),function(b){b.onclick=async function(){var rn=this.getAttribute("data-rn");
+    var btn=await dgAsk(this,"dgDismiss:"+rn,"Dismiss this Google recommendation in Google Ads?","Dismiss",".dg-dismiss",function(x){return x.getAttribute("data-rn")===rn;});if(!btn)return;
+    var done=btnBusy(btn,"Dismissing…");
     api("dismissRec",{resourceName:rn}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The recommendation was not dismissed.");return;}
       if(r.dryRun){done();toast("Dry run is on, so the recommendation was not dismissed in Google Ads.");return;}
       diagDropRec(rn);toast("Recommendation dismissed in Google Ads.",true);renderDiag();
     }).catch(function(e){done();toast(e.message||String(e));});};});
-  Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=function(){
+  Array.prototype.forEach.call(body.querySelectorAll(".dg-remedy"),function(b){b.onclick=async function(){
     var cid=this.getAttribute("data-id"),ri=+this.getAttribute("data-r");
     var aiBy2={};((((DIAG||{}).ai||{}).campaigns)||[]).forEach(function(v){aiBy2[String(v.id)]=v;});
     var rm=((aiBy2[cid]||{}).remedies||[])[ri];if(!rm)return;
     var ex=rm.executable||{},n=function(a){return (a||[]).length;};
     var what=ex.kind==="addNegatives"?("Add "+n(ex.keywords)+" negative keyword(s) to this campaign?"):ex.kind==="pauseKeywords"?("Pause "+n(ex.keywords)+" keyword(s) in this campaign?"):ex.kind==="addKeywords"?("Add "+n(ex.keywords)+" keyword(s) to this campaign?"):ex.kind==="rewriteAds"?("Send "+n(ex.headlines)+" new headline(s) and "+n(ex.descriptions)+" description(s) for this ad to Approvals? Nothing changes in Google Ads until you approve the draft there."):ex.kind==="setBudget"?("Set this campaign’s daily budget to "+diagMoney(ex.budget)+"?"):ex.kind==="setTargetRoas"?("Send a target ROAS of "+Math.round(ex.targetRoas*100)+"% for this campaign to Approvals? Bidding changes only after you approve the draft there."):"Apply this fix?";
-    if(!confirm(what))return;
-    var done=btnBusy(this,ex.kind==="rewriteAds"||ex.kind==="setTargetRoas"?"Sending…":"Applying…");
+    var btn=await dgAsk(this,"dgRemedy:"+cid+":"+ri,what,this.textContent.trim()||"Apply fix",".dg-remedy",function(x){return x.getAttribute("data-id")===cid&&x.getAttribute("data-r")===String(ri);});if(!btn)return;
+    var done=btnBusy(btn,ex.kind==="rewriteAds"||ex.kind==="setTargetRoas"?"Sending…":"Applying…");
     api("applyRemedy",{campaignId:cid,remedy:rm}).then(function(r){
       if(!r||!r.ok){done();toast((r&&r.error)||"The fix was not applied.");return;}
       if(r.queued){toast(r.note||"Sent to Approvals for review.",true);
@@ -4384,7 +4388,7 @@ async function runNow(tasks,btn){var t=RUN_TASKS[tasks.join(",")]||[tasks.join("
   actEnd(aid);done();}
 async function pmaxUpgradeAdStrength(){
   var btn=$("#pmxUpgradeBtn"),msg=$("#pmxUpgradeMsg");
-  if(!confirm("This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target. It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else. Continue?"))return;
+  if(!await askInline(btn,{key:"pmxUpgrade",q:"This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target.",note:"It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else.",yes:"Continue",place:function(box,x){x.parentNode.after(box);}}))return;
   btn.disabled=true;var t0=Date.now();
   var tk=setInterval(function(){if(btn.disabled)btn.textContent="Upgrading\u2026 "+Math.round((Date.now()-t0)/1000)+"s";},1000);
   var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Upgrade running PMax ads (headlines + sitelinks)";};
@@ -4412,7 +4416,7 @@ async function pmaxUpgradeAdStrength(){
 }
 async function pmaxBackfillImages(){
   var btn=$("#pmxBackfillBtn"),msg=$("#pmxBackfillMsg");
-  if(!confirm("This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model). New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval. Continue?"))return;
+  if(!await askInline(btn,{key:"pmxBackfill",q:"This re-images every currently ENABLED PMax campaign with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model).",note:"New images upload immediately; the actual swap on each asset group is queued to Approvals for you to review — nothing goes live without approval.",yes:"Continue",place:function(box,x){x.parentNode.after(box);}}))return;
   btn.disabled=true;var t0=Date.now();
   var tk=setInterval(function(){if(btn.disabled)btn.textContent="Re-imaging… "+Math.round((Date.now()-t0)/1000)+"s";},1000);
   var done=function(){clearInterval(tk);btn.disabled=false;btn.textContent="Redesign existing product ads";};

@@ -129,14 +129,23 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.match(groups, /photoHtml\(a\.url,fieldLabel\(a\.fieldType\)\)/); assert.doesNotMatch(groups, /photoHtml\(a\.url,a\.fieldType\)/);
   });
 
+  await test('Ad Doctor fixes and the PMax re-image and upgrade runs ask in place, with the same words', () => {
+    const diag = pick('renderDiag');
+    for (const [name, src] of [['renderDiag', diag], ['pmaxBackfillImages', pick('pmaxBackfillImages')], ['pmaxUpgradeAdStrength', pick('pmaxUpgradeAdStrength')]]) assert.doesNotMatch(src, /\b(?:prompt|confirm|alert)\(/, name + ' asks in the page');
+    assert.equal((diag.match(/await dgAsk\(this,/g) || []).length, 3);
+    assert.match(diag, /"Set this campaign’s daily budget to "\+diagMoney\(bud\)\+"\?"/); assert.match(diag, /"Dismiss this Google recommendation in Google Ads\?"/);
+    assert.match(pick('pmaxBackfillImages'), /askInline\(btn,\{key:"pmxBackfill",q:"This re-images every currently ENABLED PMax campaign/);
+  });
+
   await test('the re-image progress line and summary use what the engine sends', async () => {
     const said = [], calls = [], statuses = [{ phase: 'running', startedAt: 1 }, { phase: 'running', campaign: 'Moon PMax', assetGroup: 'Moon charms', done: 2, total: 5 },
       { ok: true, queued: 2, results: [{ approvalId: 'a' }, { approvalId: 'b' }, { skipped: 'A creative refresh is already awaiting review.' }], campaigns: 1 }];
-    const msg = { set textContent(v) { said.push(v); }, get textContent() { return said[said.length - 1] || ''; } }, btn = { disabled: false, textContent: '' };
-    const ctx = { $: s => s === '#pmxBackfillMsg' ? msg : btn, confirm: () => true, actStart: () => 1, actEnd: () => {}, reload: async () => {}, toast: (m, ok) => said.push('toast:' + m),
+    const msg = { set textContent(v) { said.push(v); }, get textContent() { return said[said.length - 1] || ''; } }, btn = { disabled: false, textContent: '' }, asked = [];
+    const ctx = { $: s => s === '#pmxBackfillMsg' ? msg : btn, askInline: async (b, o) => { asked.push(o.key); return b; }, actStart: () => 1, actEnd: () => {}, reload: async () => {}, toast: (m, ok) => said.push('toast:' + m),
       setInterval: () => 1, clearInterval: () => {}, setTimeout: f => { f(); return 1; }, Date, Promise, String, Error,
       api: async (action, input) => { calls.push(action); if (action === 'genStatus') { assert(/-pmxbf$/.test(input.genId)); return statuses.shift(); } return { ok: true, started: true }; } };
     vm.createContext(ctx); vm.runInContext(pick('pmaxBackfillImages'), ctx); await ctx.pmaxBackfillImages();
+    assert.deepEqual(asked, ['pmxBackfill']);
     assert.deepEqual(calls, ['pmaxBackfillImages', 'genStatus', 'genStatus', 'genStatus']);
     assert(said.includes(' scanning Moon PMax · Moon charms (2 groups so far)…'), said.join(' | '));
     assert(said.includes(' ✓ 2 asset groups queued to Approvals across 1 campaign (3 scanned)'), said.join(' | '));
