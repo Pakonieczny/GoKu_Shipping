@@ -3,7 +3,7 @@
 // prompt for the model and the strict validation of what the model returns. Offline: pure functions, no Google
 // request, no paid AI call; the "model answers" below are hand-written fixtures.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
-const R = require('../../netlify/functions/_googleAdsPmaxResearch');
+const R = require('../../netlify/functions/_googleAdsPmaxResearch'), Sched = require('../../netlify/functions/_googleAdsSchedule');
 let checks = 0;
 const test = (name, fn) => { try { fn(); } catch (e) { e.message = name + ': ' + e.message; throw e; } checks++; };
 const clone = v => JSON.parse(JSON.stringify(v));
@@ -11,11 +11,12 @@ const TODAY = '2026-09-29', DAY = 86400000;
 
 // ---------- fixtures ----------
 const occasions = [
-  { label: 'Halloween', date: '2026-10-31', markets: null },
+  { label: "World Teachers' Day", date: '2026-10-05', markets: ['CA', 'GB', 'US'] },
   { label: 'Canadian Thanksgiving', date: '2026-10-12', markets: ['CA'] },
   { label: 'Black Friday', date: '2026-11-27', markets: null },
   { label: 'Christmas', date: '2026-12-25', markets: null }
 ];
+const halloween = { label: 'Halloween', date: '2026-10-31', markets: null };
 const timing = R.timingWindows({ today: TODAY, occasions, markets: ['US', 'CA'] });
 const ids = { bracelet: 'shopify_US_111111_1001', braceletB: 'shopify_US_111111_1002', pendant: 'shopify_US_222222_2001', initial: 'shopify_US_333333_3001' };
 const paid = { available: true, monetaryComplete: true, impressions: 5000, clicks: 120, cost: 84.5, conversions: 3, value: 260, currency: 'USD', days: 90 };
@@ -56,28 +57,76 @@ const ctx = { today: TODAY, timing, keywords: rankedKeywords, orderCutoffDays: 0
 const words = s => JSON.stringify(s);
 
 // ---------- timing ----------
-test('timing on 2026-09-29 for US and CA: near dates are too late, Black Friday leads, Christmas follows', () => {
+test('timing on 2026-09-29 for US and CA comes from the Product ads schedule', () => {
   assert.equal(timing.length, 4);
   const by = Object.fromEntries(timing.map(t => [t.label, t]));
-  assert.equal(timing[0].label, 'Black Friday'); assert.equal(timing[0].role, 'main');
-  assert.equal(by['Black Friday'].daysAway, 59); assert.equal(by['Black Friday'].startBy, '2026-10-09');
-  assert.equal(by['Christmas'].role, 'also'); assert.equal(by['Christmas'].daysAway, 87); assert.equal(by['Christmas'].startBy, '2026-11-06');
-  assert.equal(by['Halloween'].role, 'too-late'); assert.equal(by['Halloween'].daysAway, 32); assert.equal(by['Halloween'].startBy, null);
-  assert.equal(by['Canadian Thanksgiving'].role, 'too-late'); assert.equal(by['Canadian Thanksgiving'].daysAway, 13);
-  assert.match(by['Halloween'].note, /still be learning when it passes/); assert.match(by['Christmas'].note, /Nov 6/); assert.match(by['Black Friday'].note, /Nov 27 is 59 days away/);
+  assert.deepEqual(timing.map(t => t.label), ['Black Friday', "World Teachers' Day", 'Canadian Thanksgiving', 'Christmas']);
+  assert.equal(timing[0].role, 'main'); assert.equal(by['Black Friday'].daysAway, 59); assert.equal(by['Black Friday'].startBy, '2026-10-17');
+  assert.equal(by['Christmas'].role, 'also'); assert.equal(by['Christmas'].daysAway, 87); assert.equal(by['Christmas'].startBy, '2026-11-14');
+  assert.equal(by["World Teachers' Day"].role, 'too-late'); assert.equal(by["World Teachers' Day"].startBy, null);
+  assert.equal(by['Canadian Thanksgiving'].role, 'too-late'); assert.equal(by['Canadian Thanksgiving'].daysAway, 13); assert.equal(by['Canadian Thanksgiving'].startBy, null);
+  assert.equal(by['Black Friday'].note, 'Google finishes learning Nov 6, then 21 days of selling run to the last orders on Nov 27. A fair verdict comes from Nov 28.');
+  assert.equal(by['Christmas'].note, 'Google finishes learning Dec 4, then 21 days of selling run to the last orders on Dec 25. A fair verdict comes from Dec 26.');
+  assert.equal(by['Canadian Thanksgiving'].note, 'Started today, Google would finish learning Oct 19, after the last orders on Oct 12.');
   assert.equal(by['Black Friday'].market, 'US/CA'); assert.equal(by['Canadian Thanksgiving'].market, 'CA');
-  assert(timing.every(t => t.note.length <= 160));
+  assert(timing.every(t => t.note.length <= 160 && !/^Start (by|today)/.test(t.note)), 'the card prints "Start by <date>." itself, so the note continues after it');
 });
-test('startBy is the date minus learning, the order cutoff and a week; main is the first date with room', () => {
-  const d = date => new Date(Date.parse(date + 'T00:00:00Z') - 49 * DAY).toISOString().slice(0, 10);
-  assert.equal(timing.find(t => t.role === 'main').startBy, d('2026-11-27'));
-  // exactly 49 days of room still counts; one day less does not
-  const edge = R.timingWindows({ today: TODAY, occasions: [{ label: 'Edge', date: '2026-11-17' }, { label: 'Short', date: '2026-11-16' }], markets: ['US'] });
-  assert.deepEqual(edge.map(t => [t.label, t.role]), [['Edge', 'main'], ['Short', 'too-late']]);
-  const cut = R.timingWindows({ today: TODAY, occasions: [{ label: 'Gift day', date: '2026-11-27' }], markets: ['US'], orderCutoffDays: 10 });
-  assert.equal(cut[0].role, 'main'); assert.equal(cut[0].startBy, '2026-09-29'); assert.match(cut[0].note, /last day to order/);
-  const late = R.timingWindows({ today: TODAY, occasions: [{ label: 'Gift day', date: '2026-11-27' }], markets: ['US'], orderCutoffDays: 11 });
-  assert.equal(late[0].role, 'too-late');
+test('a date about a month away is the main one when the schedule says it fits (Halloween on 2026-09-29)', () => {
+  const t = R.timingWindows({ today: TODAY, occasions: [halloween].concat(occasions), markets: ['US', 'CA'] });
+  assert.deepEqual(t.map(x => [x.label, x.role]), [['Halloween', 'main'], ["World Teachers' Day", 'too-late'], ['Canadian Thanksgiving', 'too-late'], ['Black Friday', 'also']]);
+  const h = t[0]; assert.equal(h.startBy, TODAY); assert.equal(h.note, 'Google finishes learning Oct 19, then 12 days of selling run to the last orders on Oct 31.');
+  assert.equal(Sched.buildSchedule({ kind: 'pmax', today: TODAY, event: { label: 'Halloween', date: '2026-10-31', market: 'US/CA' } }).verdict, 'good');
+});
+test('the verdict edges follow the schedule: 5 selling days is a tight fit (listed, not the main date), 4 is too late, and the order cutoff moves both', () => {
+  const at = (date, cutoff) => R.timingWindows({ today: TODAY, occasions: [{ label: 'Gift day', date }], markets: ['US'], orderCutoffDays: cutoff })[0];
+  const tight = at('2026-10-24'), short = at('2026-10-23');
+  assert.equal(tight.role, 'also'); assert.equal(tight.startBy, TODAY); assert.match(tight.note, /^Tight fit: Google finishes learning Oct 19, leaving only 5 days to sell before the last orders on Oct 24\.$/);
+  assert.equal(short.role, 'too-late'); assert.equal(short.startBy, null); assert.match(short.note, /learning Oct 19, only 4 days before the last orders on Oct 23/);
+  assert.equal(at('2026-11-03', 10).role, 'also'); assert.match(at('2026-11-03', 10).note, /last orders on Oct 24/); assert.equal(at('2026-11-12', 10).role, 'main', '10 selling days is a comfortable fit'); assert.equal(at('2026-11-02', 10).role, 'too-late');
+  const far = at('2026-12-25', 0); assert.equal(far.startBy, '2026-11-14', 'a far date starts 42 days before its last order day');
+  const closed = at('2026-10-05', 10); assert.equal(closed.role, 'too-late'); assert.equal(closed.note, 'The last orders that can arrive were due Sep 25.');
+});
+const dayText = (ymd, today) => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(ymd.slice(5, 7)) - 1] + ' ' + Number(ymd.slice(8, 10)) + (ymd.slice(0, 4) !== today.slice(0, 4) ? ', ' + ymd.slice(0, 4) : '');
+test('every timing entry agrees with buildSchedule for the same inputs, whatever the day, cutoff or market', () => {
+  const pool = occasions.concat([halloween, { label: 'Cyber Monday', date: '2026-11-30' }, { label: "Valentine's Day", date: '2027-02-14' }, { label: 'Odd year', date: '2027-01-02' }]);
+  let seen = 0;
+  for (const today of ['2026-06-20', '2026-09-01', TODAY, '2026-10-20', '2026-11-20', '2026-12-10']) for (const cutoff of [0, 3, 10, 30]) for (const markets of [['US'], ['CA'], ['US', 'CA']]) {
+    const t = R.timingWindows({ today, occasions: pool, markets, orderCutoffDays: cutoff });
+    const expected = pool.filter(o => !o.markets || o.markets.some(m => markets.includes(m))).filter(o => o.date >= today).map(o => ({ o, s: Sched.buildSchedule({ kind: 'pmax', today, event: { label: o.label, date: o.date, market: null }, orderCutoffDays: cutoff }) }))
+      .filter(x => x.s && x.s.event.daysAway <= 400).sort((a, b) => a.s.event.daysAway - b.s.event.daysAway || a.o.label.localeCompare(b.o.label));
+    const mainOne = expected.find(x => x.s.verdict === 'good');
+    assert.equal(!!t.find(e => e.role === 'main'), !!mainOne, [today, cutoff, markets].join(' '));
+    assert(t.length <= 4);
+    for (const e of t) {
+      const s = Sched.buildSchedule({ kind: 'pmax', today, event: { label: e.label, date: e.date, market: e.market }, orderCutoffDays: cutoff });
+      assert.equal(e.daysAway, s.event.daysAway); assert.equal(e.startBy, e.role === 'too-late' ? null : s.start, e.label + ' start');
+      assert.equal(e.role === 'too-late', s.verdict === 'too_short', e.label + ' verdict ' + s.verdict);
+      if (e.role === 'main') assert.equal(e.label, mainOne.o.label, 'main is the nearest date with a comfortable schedule');
+      if (e.role === 'also') assert(s.verdict === 'tight' || (mainOne && e.date > mainOne.o.date), e.label + ' is a tight fit or comes after the main date');
+      if (e.role !== 'too-late') { assert(e.note.includes(dayText(s.learning.endsOn, today)), e.note); }
+      seen++;
+    }
+  }
+  assert(seen > 100);
+});
+test('the words, the prompt and the saved list all use the schedule dates, and a stale list is worked out again', () => {
+  const mainE = timing[0], sch = Sched.buildSchedule({ kind: 'pmax', today: TODAY, event: { label: mainE.label, date: mainE.date, market: mainE.market } });
+  const r = R.computedResearch(candidate, ctx), p = R.researchPrompt(candidate, ctx);
+  assert.equal(sch.start, mainE.startBy);
+  assert.match(r.headline, /^Start by Oct 17 for Black Friday, 59 days away/); assert.match(r.whyNow.summary, /Start by Oct 17: Google finishes learning Nov 6, then 21 days of selling run to the last orders on Nov 27\./);
+  [sch.start, sch.learning.endsOn, sch.judgeAfter, sch.end].forEach(d => assert(p.includes(d), d));
+  assert.match(p, /Use ONLY these dates/); assert.match(p, /never work out, guess or mention any other start date/); assert.match(p, /State a date only if it is listed/);
+  assert(p.includes('start by 2026-10-17; Google finishes learning 2026-11-06; 21 days of selling; last orders that can arrive 2026-11-27; a fair verdict from 2026-11-28'));
+  assert(!/start ads by|about six-week|a week before/.test(p + r.whyNow.summary + r.headline));
+  // a list worked out on another day, or for another cutoff, is replaced by the schedule's own numbers
+  const stale = R.timingWindows({ today: '2026-09-01', occasions, markets: ['US', 'CA'], orderCutoffDays: 0 });
+  const fixed = R.computedResearch(candidate, { ...ctx, timing: stale }).whyNow.timing;
+  assert.deepEqual(fixed.map(t => [t.label, t.role, t.startBy, t.daysAway]), timing.map(t => [t.label, t.role, t.startBy, t.daysAway]));
+  const cut10 = R.computedResearch(candidate, { ...ctx, timing, orderCutoffDays: 10 }), fresh10 = R.timingWindows({ today: TODAY, occasions, markets: ['US', 'CA'], orderCutoffDays: 10 });
+  assert.deepEqual(cut10.whyNow.timing.map(t => [t.label, t.role, t.startBy]), fresh10.map(t => [t.label, t.role, t.startBy]));
+  assert.match(cut10.whyNow.summary, /last orders on Nov 17/);
+  assert(R.researchPrompt(candidate, { ...ctx, orderCutoffDays: 10 }).includes('last orders that can arrive 2026-11-17'));
+  assert.deepEqual(R.validateResearch(cut10), []);
 });
 test('only occasions observed in the candidate markets appear; markets are merged; past dates and bad dates are dropped', () => {
   const t = R.timingWindows({ today: TODAY, markets: ['US'], occasions: [
@@ -97,7 +146,7 @@ test('timing is capped at four with the main date first and later dates kept ahe
   assert.equal(t.filter(x => x.role === 'too-late').length, 2);
   const none = R.timingWindows({ today: TODAY, occasions: [{ label: 'Near', date: '2026-10-05' }], markets: ['US'] });
   assert.equal(none.length, 1); assert.equal(none[0].role, 'too-late');
-  assert.match(R.timingWindows({ today: TODAY, occasions: [{ label: 'Graduation', date: '2027-06-10', approx: true }], markets: ['US'] })[0].note, /^Falls around Jun 10, 2027/);
+  assert.match(R.timingWindows({ today: TODAY, occasions: [{ label: 'Graduation', date: '2027-06-10', approx: true }], markets: ['US'] })[0].note, /^The date is approximate\. Google finishes learning May 20, 2027/);
 });
 
 // ---------- evidence ----------
@@ -145,9 +194,11 @@ test('computed research is complete, valid and specific', () => {
   assert.deepEqual(R.validateResearch(computed), []);
   assert.equal(computed.source, 'computed'); assert.equal(computed.model, null); assert.equal(computed.version, 1); assert.equal(computed.whyNow.marketRead, null);
   assert.equal(computed.today, TODAY); assert.equal(computed.at, ctx.at);
-  assert.match(computed.headline, /Start by Oct 9 for Black Friday, 59 days away/); assert.match(computed.headline, /Personalized Birthstone Charm Bracelet/); assert.match(computed.headline, /18 times in 90 days/);
+  assert.match(computed.headline, /Start by Oct 17 for Black Friday, 59 days away/); assert.match(computed.headline, /Personalized Birthstone Charm Bracelet/); assert.match(computed.headline, /18 times in 90 days/);
   const s = computed.whyNow.summary;
-  assert.match(s, /Black Friday is 59 days away \(Nov 27\)/); assert.match(s, /six-week learning period if this starts by Oct 9/); assert.match(s, /Canadian Thanksgiving \(Oct 12\) and Halloween \(Oct 31\) are too close/); assert.match(s, /ordered Personalized Birthstone Charm Bracelet and 2 more 18 times/);
+  assert.match(s, /Black Friday is 59 days away \(Nov 27\)/); assert.match(s, /Start by Oct 17: Google finishes learning Nov 6/); assert.match(s, /ordered Personalized Birthstone Charm Bracelet and 2 more 18 times/); assert.match(s, /World Teachers. Day \(Oct 5\) and Canadian Thanksgiving \(Oct 12\) come too soon/);
+  const lone = R.computedResearch({ ...candidate, itemIds: [ids.pendant], offerDetails: [candidate.offerDetails[2]], evidenceTotals: { orders: 4, revenue: 160, orders30d: 2, revenue30d: 80 } }, ctx).whyNow.summary;
+  assert.match(lone, /World Teachers' Day \(Oct 5\) and Canadian Thanksgiving \(Oct 12\) come too soon for Google to finish learning and still sell\./); assert(lone.length <= 420);
   assert.match(s, /picking up/);
   assert(s.length <= 420 && computed.headline.length <= 140);
   assert.deepEqual(computed.whyNow.timing, timing); assert.deepEqual(computed.whyNow.evidence, R.evidenceFacts(candidate, { today: TODAY, timing }));
@@ -197,8 +248,8 @@ test('with no ranked keywords the product names stand in; with no calendar the r
   assert.equal(bare.keywords[0].text, 'personalized birthstone charm bracelet 14k gold filled'); assert.equal(bare.keywords[0].monthlySearches, null);
   assert.match(bare.whyNow.summary, /No dated occasion is on the calendar/); assert.match(bare.headline, /no dated occasion/);
   const allLate = R.computedResearch(candidate, { ...ctx, timing: R.timingWindows({ today: '2026-12-10', occasions, markets: ['US'] }), today: '2026-12-10' });
-  assert.match(allLate.whyNow.summary, /No date on the calendar leaves room for Google's six-week learning period: Christmas is only 15 days away/);
-  assert.match(allLate.whyNow.caution, /too close for Google's learning period/); assert.deepEqual(R.validateResearch(allLate), []);
+  assert.match(allLate.whyNow.summary, /No date on the calendar leaves enough time: Christmas is only 15 days away, and Google needs about 3 weeks to learn/);
+  assert.match(allLate.whyNow.caution, /too close for Google to finish learning before the last orders/); assert.deepEqual(R.validateResearch(allLate), []);
   assert.equal(R.computedResearch({}, {}).listingFit.length, 0);
 });
 test('headline and summary stay within their limits for long titles and many notes', () => {
@@ -212,7 +263,7 @@ test('the prompt carries the date, markets, timing, evidence, keywords, every of
   const p = R.researchPrompt(candidate, ctx);
   assert.match(p, /TODAY: 2026-09-29/); assert.match(p, /ACCOUNT MARKETS: US, CA/);
   timing.forEach(t => { assert(p.includes(t.label) && p.includes(t.date), t.label); });
-  assert(p.includes('start ads by 2026-10-09')); assert(p.includes('too late for a campaign started today'));
+  assert(p.includes('start by 2026-10-17')); assert(p.includes('so there is not enough time'));
   R.evidenceFacts(candidate, { today: TODAY, timing }).forEach(f => assert(p.includes(f), f));
   rankedKeywords.forEach(k => assert(p.includes('"' + k.text + '"'), k.text)); assert(p.includes('about 74,000 searches a month')); assert(p.includes('search volume not available'));
   Object.values(ids).forEach(id => assert(p.includes(id), id));
@@ -227,8 +278,8 @@ test('the prompt carries the date, markets, timing, evidence, keywords, every of
 
 // ---------- normalizing the model's answer ----------
 const good = () => ({
-  headline: 'Start by Oct 9 for Black Friday: the birthstone charm bracelet was ordered 18 times in 90 days.',
-  whyNow: { summary: 'Black Friday is 59 days away (Nov 27), so ads started by Oct 9 finish learning in time. Buyers ordered these products 18 times in 90 days, 9 in the last 30, which shows current interest.',
+  headline: 'Start by Oct 17 for Black Friday: the birthstone charm bracelet was ordered 18 times in 90 days.',
+  whyNow: { summary: 'Black Friday is 59 days away (Nov 27), so ads started by Oct 17 finish learning in time. Buyers ordered these products 18 times in 90 days, 9 in the last 30, which shows current interest.',
     marketRead: 'Gift guides on example.com/gifts list personalized jewelry among the top picks this season, up 30% on last year.', caution: 'Paid ads have returned 3 purchases so far, so keep the first budget small.' },
   listingFit: [
     { itemId: ids.bracelet, reason: 'The best seller: 12 orders in 90 days, and a personalized gift.', role: 'hero' },
@@ -273,16 +324,16 @@ test('thin answers are filled from the computed research so the card is never th
 });
 test('every string is clamped, cleaned of control characters and emoji, and limited in count', () => {
   const raw = good(), big = 'Black Friday is 59 days away. ' + 'Buyers ordered these products 18 times in 90 days. '.repeat(20);
-  raw.whyNow.summary = big; raw.headline = 'Start by Oct 9. ' + 'x'.repeat(300); raw.whyNow.marketRead = 'Read on example.com. ' + 'y'.repeat(500); raw.whyNow.caution = 'Watch closely. ' + 'z'.repeat(400);
+  raw.whyNow.summary = big; raw.headline = 'Start by Oct 17. ' + 'x'.repeat(300); raw.whyNow.marketRead = 'Read on example.com. ' + 'y'.repeat(500); raw.whyNow.caution = 'Watch closely. ' + 'z'.repeat(400);
   raw.listingFit = [{ itemId: ids.bracelet, reason: 'r'.repeat(400), role: 'hero' }]; raw.creativeAngles = ['a'.repeat(200), 'b', 'c', 'd', 'e', 'f'];
   raw.keywords = [{ text: 'christmas gifts for mom', reason: 'k'.repeat(300) }]; raw.limits = ['l'.repeat(300)];
   const n = R.normalizeResearch(raw, candidate, ctx);
   assert.deepEqual(R.validateResearch(n), []);
   assert(n.whyNow.summary.length <= 420 && n.headline.length <= 140 && n.whyNow.marketRead.length <= 300 && n.whyNow.caution.length <= 200);
   assert(n.listingFit[0].reason.length <= 140 && n.keywords[0].reason.length <= 100); assert.equal(n.creativeAngles.length, 4); assert(n.creativeAngles.every(a => a.length <= 90)); assert(n.limits.every(l => l.length <= 160));
-  const dirty = good(); dirty.whyNow.summary = 'Black Friday is 59 days away.\u0000\u0007 ​Buyers ordered these products 18 times \u{1F381}\u{2728} in 90 days.\n\n**Start by Oct 9.**';
+  const dirty = good(); dirty.whyNow.summary = 'Black Friday is 59 days away.\u0000\u0007 ​Buyers ordered these products 18 times \u{1F381}\u{2728} in 90 days.\n\n**Start by Oct 17.**';
   const c = R.normalizeResearch(dirty, candidate, ctx).whyNow.summary;
-  assert.equal(c, 'Black Friday is 59 days away. Buyers ordered these products 18 times in 90 days. Start by Oct 9.');
+  assert.equal(c, 'Black Friday is 59 days away. Buyers ordered these products 18 times in 90 days. Start by Oct 17.');
   assert(!/[\u0000-\u001F]/.test(words(R.normalizeResearch(dirty, candidate, ctx)).replace(/\\n|\\u[0-9a-f]{4}/g, '')));
 });
 test('prose that quotes an unsupplied number, hypes, promises or leaks internal names is rejected or replaced', () => {
@@ -304,12 +355,12 @@ test('prose that quotes an unsupplied number, hypes, promises or leaks internal 
 test('malformed input never throws and dates the model made up are rejected', () => {
   const junk = [null, 7, { date: 'x' }, { label: 'A', date: '2026-11-27', daysAway: 59, role: 'main' }, { label: 'B', date: '2026-11-27', daysAway: 59, role: 'main', startBy: 'never' }];
   const r = R.computedResearch(candidate, { ...ctx, timing: junk, keywords: [null, 'x', { text: 'a b c d e f g h i j k' }, { text: 'y'.repeat(90) }, { text: 'ok text', kind: 'bogus', competition: 'HIGH', monthlySearches: '150' }] });
-  assert.deepEqual(R.validateResearch(r), []); assert.deepEqual(r.whyNow.timing, []); assert.deepEqual(r.keywords.map(k => [k.text, k.kind, k.competition, k.monthlySearches]), [['x', 'product', null, null], ['ok text', 'product', 'high', 150]]);
+  assert.deepEqual(R.validateResearch(r), []); assert.deepEqual(r.whyNow.timing.map(t => [t.label, t.role, t.startBy]), [['A', 'main', '2026-10-17'], ['B', 'also', '2026-10-17']], 'a list with missing or wrong fields is worked out again from the dates'); assert.deepEqual(r.keywords.map(k => [k.text, k.kind, k.competition, k.monthlySearches]), [['x', 'product', null, null], ['ok text', 'product', 'high', 150]]);
   assert.match(R.researchPrompt({}, {}), /TODAY:/); assert.deepEqual(R.validateResearch(R.computedResearch({}, {})), []);
-  assert.equal(R.normalizeResearch({ whyNow: { summary: 'Black Friday is 59 days away (Nov 27), so ads started by Oct 9 are ready in time.' }, listingFit: [{ itemId: ids.bracelet, reason: 'x', role: 'hero' }] }, {}, ctx).listingFit.length, 0);
+  assert.equal(R.normalizeResearch({ whyNow: { summary: 'Black Friday is 59 days away (Nov 27), so ads started by Oct 17 are ready in time.' }, listingFit: [{ itemId: ids.bracelet, reason: 'x', role: 'hero' }] }, {}, ctx).listingFit.length, 0);
   const iso = good(); iso.whyNow.summary = 'Black Friday is 59 days away, so start on 2026-11-13. Buyers ordered these products 18 times.';
   assert.equal(R.normalizeResearch(iso, candidate, ctx), null);
-  const okDates = good(); okDates.whyNow.summary = 'Black Friday falls on November 27, so ads started by October 9 (or 2026-10-09) are ready. Buyers ordered these products 18 times, and Christmas on 25th of December follows.';
+  const okDates = good(); okDates.whyNow.summary = 'Black Friday falls on November 27, so ads started by October 17 (or 2026-10-17) are ready. Buyers ordered these products 18 times, and Christmas on 25th of December follows.';
   assert(R.normalizeResearch(okDates, candidate, ctx), 'dates from the calendar are fine');
   const nan = good(); nan.whyNow.summary = 'Black Friday is 59 days away, and Nan will love the Mom Heart Pendant Necklace. Buyers ordered these products 18 times.';
   assert(R.normalizeResearch(nan, candidate, ctx), 'a grandmother called Nan is not a technical leak');
@@ -376,7 +427,7 @@ vm.createContext(sandbox); vm.runInContext(fs.readFileSync(enginePath, 'utf8'), 
   assert.match(out.whyNow.evidence.join(' '), /Last November, the same time of year, these products were ordered 9 times/); assert.match(out.whyNow.evidence.join(' '), /free product listings reported 2 purchases and 20 clicks/);
   assert(!out.limits.join(' ').includes('Order history only reaches back'), 'a year of history reaches last December');
   assert.match(R.researchPrompt(real, rc), /Corgi charm necklace/);
-  const ai = R.normalizeResearch({ headline: 'Corgi necklaces are the pet-lover pick for Black Friday.', whyNow: { summary: 'Black Friday is 59 days away, so ads started by Oct 9 have their learning done. Buyers ordered these products 9 times in 90 days.' }, listingFit: [{ itemId: eids[0], reason: 'The leader with 6 orders.', role: 'hero' }] }, real, rc);
+  const ai = R.normalizeResearch({ headline: 'Corgi necklaces are the pet-lover pick for Black Friday.', whyNow: { summary: 'Black Friday is 59 days away, so ads started by Oct 17 have their learning done. Buyers ordered these products 9 times in 90 days.' }, listingFit: [{ itemId: eids[0], reason: 'The leader with 6 orders.', role: 'hero' }] }, real, rc);
   assert.equal(ai.source, 'ai'); assert.equal(ai.listingFit.length, 2); assert.deepEqual(R.validateResearch(ai), []);
   checks++;
   console.log('PMax research: ' + checks + ' focused checks passed');

@@ -14,18 +14,17 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const Schedule = require('./_googleAdsSchedule');
 
 const RESEARCH_VERSION = 1;
 const CAP = { headline: 140, summary: 420, note: 160, evidence: 160, marketRead: 300, caution: 200, reason: 140, keywordReason: 100, keyword: 80, angle: 90, limit: 160, title: 120, label: 60, sourceTitle: 120 };
 const MAX = { timing: 4, evidence: 5, listing: 8, keywords: 12, angles: 4, sources: 8, limits: 6, heroes: 2 };
 const KINDS = ['product', 'occasion', 'recipient', 'material', 'style'];
 const COMPETITION = ['low', 'medium', 'high'];
-const BUFFER_DAYS = 7;   // ad review, ramp-up and shipping room kept between the end of learning and the date
 const DAY = 86400000;
 const NO_WEB_LIMIT = "This read uses the store's own orders and the calendar only; no outside web research was done.";
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const WEEK_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 
 // ---------------------------------------------------------------------------------------------------------------
 // small helpers
@@ -94,27 +93,78 @@ const numTokens = s => (String(s == null ? '' : s).match(/\d[\d,]*(?:\.\d+)?%?/g
 
 // ---------------------------------------------------------------------------------------------------------------
 // timing windows: which dated occasions can a campaign started today still reach in time?
+// Every start date, verdict and learning date comes from buildSchedule() (kind "pmax"), the same call that draws the
+// schedule on the idea's card, so this list and that schedule can never disagree. "main" is the nearest date whose
+// schedule is not too short, nearer dates are "too-late" (the schedule is too short to learn and still sell), later
+// ones are "also". startBy is the schedule's start.
 // ---------------------------------------------------------------------------------------------------------------
-// Timing entries as the engine hands them back (or as they were saved): only well-formed ones, with every field present.
-function cleanTiming(list) {
-  return arr(list).filter(e => isObj(e) && ymdOk(e.date) && Number.isInteger(e.daysAway) && ['main', 'also', 'too-late'].includes(e.role) && cleanText(e.label) && (e.role === 'too-late' || ymdOk(e.startBy))).slice(0, MAX.timing)
-    .map(e => ({ label: clamp(e.label, CAP.label), date: e.date, daysAway: e.daysAway, market: cleanText(e.market) || 'all', role: e.role, startBy: e.role === 'too-late' ? null : e.startBy, note: clamp(e.note, CAP.note) || fmtDate(e.date) + (e.daysAway === 0 ? ' is today.' : ' is ' + many(e.daysAway, 'day') + ' away.') }));
+const PMAX = Schedule.LEARNING.pmax;   // about 3 weeks of learning, a fair verdict after about 6
+
+// A main date needs a comfortable fit (a "good" schedule). A "tight" one (only 5 to 9 selling days after learning) can still be run,
+// so it stays in the list as "also" with its own note, but it is not the date the card is built around.
+const MAIN_VERDICTS = ['good'];
+
+const cutoffOf = v => Math.max(0, Math.min(30, nonNeg(v, 0)));   // the same 0 to 30 days buildSchedule accepts
+
+// One occasion through buildSchedule, with the dates a sentence needs. Null when the schedule cannot be built.
+function planOf(o, today, cutoff) {
+  if (!ymdOk(today) || !isObj(o) || !ymdOk(o.date)) return null;
+  const cut = cutoffOf(cutoff);
+  let s = null;
+  try { s = Schedule.buildSchedule({ kind: 'pmax', today, event: { label: o.label, date: o.date, market: o.market && o.market !== 'all' ? o.market : null }, orderCutoffDays: cut }); } catch (e) { s = null; }
+  if (!s || !s.event) return null;
+  const selling = arr(s.phases).find(p => p.key === 'selling');
+  return { verdict: s.verdict, start: s.start, end: s.end, closed: s.days === 0, daysAway: s.event.daysAway, learnEnds: s.learning.endsOn, judge: s.judgeAfter,
+    last: Schedule.addDays(s.event.date, -cut), sellDays: selling ? selling.days : 0 };
 }
 
-function learnText(learnDays) {
-  const w = learnDays / 7;
-  return Number.isInteger(w) && WEEK_WORDS[w] ? WEEK_WORDS[w] + '-week' : learnDays + '-day';
+// The sentence beside a timing entry. The card already shows the date, the days away and "Start by <date>", so this gives the rest:
+// when learning ends, how many selling days follow, the last orders and, when it falls inside the run, when a verdict is fair.
+function timingNote(role, p, today, approx) {
+  const d = x => fmtDate(x, today), lead = approx ? 'The date is approximate. ' : '';
+  let note;
+  if (role === 'too-late') {
+    note = p.closed ? 'The last orders that can arrive were due ' + d(p.last) + '.'
+      : 'Started today, Google would finish learning ' + d(p.learnEnds) + (p.sellDays > 0 ? ', only ' + many(p.sellDays, 'day') + ' before the last orders on ' + d(p.last) + '.' : p.learnEnds > p.last ? ', after the last orders on ' + d(p.last) + '.' : ', the day of the last orders.');
+  } else if (p.verdict === 'tight') {
+    note = 'Tight fit: Google finishes learning ' + d(p.learnEnds) + ', leaving only ' + many(p.sellDays, 'day') + ' to sell before the last orders on ' + d(p.last) + '.';
+  } else {
+    note = 'Google finishes learning ' + d(p.learnEnds) + ', then ' + many(p.sellDays, 'day') + ' of selling run to the last orders on ' + d(p.last) + '.' + (p.judge <= Schedule.addDays(p.end, 1) ? ' A fair verdict comes from ' + d(p.judge) + '.' : '');
+  }
+  return clamp(lead + note, CAP.note);
 }
 
-// "six weeks" for a whole number of weeks, else the days.
-function learnSpan(learnDays) {
-  const w = learnDays / 7;
-  return Number.isInteger(w) && WEEK_WORDS[w] ? WEEK_WORDS[w] + ' weeks' : learnDays + ' days';
+// Timing entries from date-ordered occasions {label, date, market, approx}: the role follows the schedule's verdict.
+function planEntries(list, today, cutoff) {
+  const out = []; let seenMain = false;
+  list.forEach(o => {
+    const p = planOf(o, today, cutoff); if (!p) return;
+    const role = p.verdict === 'too_short' ? 'too-late' : !seenMain && MAIN_VERDICTS.includes(p.verdict) ? 'main' : 'also';
+    if (role === 'main') seenMain = true;
+    out.push({ label: o.label, date: o.date, daysAway: p.daysAway, market: o.market || 'all', role, startBy: role === 'too-late' ? null : p.start, note: timingNote(role, p, today, o.approx) });
+  });
+  return out;
 }
 
-function timingWindows({ today, occasions = [], markets = [], learningDays = 42, orderCutoffDays = 0 } = {}) {
+// Timing entries as the engine hands them back (or as they were saved): well-formed ones only, worked out again through the schedule for
+// this day and order cutoff. An entry that still agrees keeps its own note; one that does not (a stale day, another cutoff) is replaced.
+function cleanTiming(list, today, cutoff) {
   if (!ymdOk(today)) return [];
-  const learn = posInt(learningDays, 42), cutoff = nonNeg(orderCutoffDays, 0), need = learn + cutoff + BUFFER_DAYS;
+  const given = arr(list).filter(e => isObj(e) && ymdOk(e.date) && cleanText(e.label)).slice(0, MAX.timing * 2)
+    .map(e => ({ label: clamp(e.label, CAP.label), date: e.date, market: cleanText(e.market) || 'all', role: e.role, startBy: e.startBy, note: cleanText(e.note) }))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label));
+  const fresh = planEntries(given, today, cutoff);
+  const kept = fresh.map(f => {
+    const g = given.find(x => x.label === f.label && x.date === f.date);
+    return g && g.role === f.role && (g.startBy || null) === f.startBy && g.note ? { ...f, note: clamp(g.note, CAP.note) } : f;
+  });
+  return kept.filter(e => e.role === 'main').concat(kept.filter(e => e.role !== 'main')).slice(0, MAX.timing);   // the main date first, like timingWindows
+}
+
+// timingWindows({ today, occasions:[{ label, date, markets, approx }], markets, orderCutoffDays }) -> timing[]. (learningDays is no
+// longer read: Product ads always use the schedule's own learning period.)
+function timingWindows({ today, occasions = [], markets = [], orderCutoffDays = 0 } = {}) {
+  if (!ymdOk(today)) return [];
   const mk = uniq(arr(markets).map(m => String(m || '').trim().toUpperCase()).filter(Boolean));
   const t0 = toMs(today), found = new Map();
   for (const o of arr(occasions)) {
@@ -130,28 +180,17 @@ function timingWindows({ today, occasions = [], markets = [], learningDays = 42,
     cur.approx = cur.approx || !!o.approx;
     found.set(key, cur);
   }
-  const list = Array.from(found.values()).sort((a, b) => a.daysAway - b.daysAway || a.label.localeCompare(b.label));
-  const main = list.find(o => o.daysAway >= need) || null, lt = learnText(learn);
-  const entry = o => {
-    const role = o === main ? 'main' : o.daysAway < need ? 'too-late' : 'also';
-    const dateStr = fmtDate(o.date, today), d = o.daysAway;
-    const startBy = role === 'too-late' ? null : toYmd(toMs(o.date) - need * DAY);
-    const away = d === 0 ? 'is today' : 'is ' + many(d, 'day') + ' away';
-    const when = o.approx ? 'Falls around ' + dateStr + (d === 0 ? ', today.' : ', ' + many(d, 'day') + ' away.') : dateStr + ' ' + away + '.';
-    let note;
-    if (role === 'main') note = when + ' Start by ' + fmtDate(startBy, today) + ' so the ' + lt + ' learning period ends about a week before ' + (cutoff > 0 ? 'the last day to order.' : 'the date.');
-    else if (role === 'also') note = when + ' Ads started by ' + fmtDate(startBy, today) + ' have the full ' + lt + ' learning period before it.';
-    else note = when + ' A campaign started now would still be learning when it passes.';
-    return { label: o.label, date: o.date, daysAway: d, market: o.observed.length ? o.observed.join('/') : 'all', role, startBy, note: clamp(note, CAP.note) };
-  };
+  const list = Array.from(found.values()).sort((a, b) => a.daysAway - b.daysAway || a.label.localeCompare(b.label))
+    .map(o => ({ label: o.label, date: o.date, market: o.observed.length ? o.observed.join('/') : 'all', approx: o.approx }));
+  const entries = planEntries(list, today, orderCutoffDays);
   // Main first, then the nearest others. Slots go to: the next date that is not a few days after one already shown (Cyber Monday
   // adds nothing beside Black Friday), the two nearest near misses, then whatever else is left, so a run of near misses never hides Christmas.
-  const later = list.filter(o => main && o !== main && o.daysAway >= need), missed = list.filter(o => o.daysAway < need);
+  const main = entries.find(e => e.role === 'main') || null, missed = entries.filter(e => e.role === 'too-late');
   const spaced = [], rest = [];
-  later.forEach(o => { (spaced.every(p => o.daysAway - p.daysAway >= 14) && o.daysAway - main.daysAway >= 14 ? spaced : rest).push(o); });
+  entries.filter(e => e.role === 'also').forEach(e => { (spaced.every(p => e.daysAway - p.daysAway >= 14) && (!main || Math.abs(e.daysAway - main.daysAway) >= 14) ? spaced : rest).push(e); });
   const order = [spaced[0], missed[0], missed[1], spaced[1], spaced[2]].concat(rest, missed.slice(2)).filter(Boolean);
-  const picked = order.slice(0, MAX.timing - (main ? 1 : 0)).sort((a, b) => a.daysAway - b.daysAway);
-  return (main ? [main] : []).concat(picked).map(entry);
+  const picked = order.slice(0, MAX.timing - (main ? 1 : 0)).sort((a, b) => a.daysAway - b.daysAway || a.label.localeCompare(b.label));
+  return (main ? [main] : []).concat(picked);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -391,7 +430,7 @@ function cautionOf(c, groups, timing) {
   const p = isObj(c.paidPerformance) ? c.paidPerformance : {}, t = evidenceTotals(c), tr = trendOf(c), ccy = p.currency || 'USD';
   if (p.available === true && p.monetaryComplete !== false && num(p.cost) > 0 && num(p.conversions) === 0) return clamp('Paid ads on these products spent ' + money(p.cost, ccy) + ' with no purchase yet, so keep the first budget small and check early results.', CAP.caution);
   if (tr && tr.direction === 'falling') return clamp('Buying has slowed lately (' + tr.recent + ' orders in the last 30 days against ' + tr.prior + ' in the 60 days before), so keep the first budget small.', CAP.caution);
-  if (arr(timing).length && !arr(timing).some(x => x.role === 'main')) return clamp("Every date on the calendar is too close for Google's learning period, so do not count on a seasonal lift.", CAP.caution);
+  if (arr(timing).length && arr(timing).every(x => x.role === 'too-late')) return clamp("Every date on the calendar is too close for Google to finish learning before the last orders, so do not count on a seasonal lift.", CAP.caution);
   if (t && t.orders > 0 && t.orders < 5) return clamp('Only ' + many(t.orders, 'order') + ' back this idea, a small sample, so treat the first weeks as a test.', CAP.caution);
   return null;
 }
@@ -411,18 +450,20 @@ function nameVariants(groups) {
 
 function computedResearch(candidate, ctx = {}) {
   const c = isObj(candidate) ? candidate : {}, x = isObj(ctx) ? ctx : {};
-  const today = ymdOk(x.today) ? x.today : toYmd(Date.now()), timing = cleanTiming(x.timing), learn = posInt(x.learningDays, 42), lt = learnText(learn);
+  const today = ymdOk(x.today) ? x.today : toYmd(Date.now()), cutoff = cutoffOf(x.orderCutoffDays), timing = cleanTiming(x.timing, today, cutoff);
   const days = evidenceDays(c), t = evidenceTotals(c), groups = productGroups(c), roles = assignRoles(groups);
-  const main = timing.find(e => e.role === 'main') || null, missed = timing.filter(e => e.role === 'too-late'), later = timing.filter(e => e.role === 'also');
-  const dateOf = e => fmtDate(e.date, today);
+  const main = timing.find(e => e.role === 'main') || timing.find(e => e.role === 'also') || null, missed = timing.filter(e => e.role === 'too-late'), later = timing.filter(e => e.role === 'also' && main && e !== main && e.date > main.date);
+  const dateOf = e => fmtDate(e.date, today), day = ymd => fmtDate(ymd, today);
   const away = e => (e.daysAway === 0 ? 'today' : many(e.daysAway, 'day') + ' away');
+  const startText = e => (e.startBy === today ? 'Start today' : 'Start by ' + day(e.startBy));
+  const mainPlan = main ? planOf(main, today, cutoff) : null;
   const tr = trendOf(c), orders = t ? t.orders : 0, variants = nameVariants(groups);
 
   // headline: one sentence with the date and the product names
   const demand = (nm) => orders > 0 ? 'buyers ordered ' + nm + ' ' + many(orders, 'time') + ' in ' + days + ' days' : num(c.freePerformance && c.freePerformance.days30 && c.freePerformance.days30.conversions) > 0 ? nm + ' already sell through Google free listings' : 'a test for ' + nm;
   const headlines = nm => main
-    ? ['Start by ' + dateOf({ date: main.startBy }) + ' for ' + main.label + ', ' + away(main) + ': ' + demand(nm) + '.', 'Start by ' + dateOf({ date: main.startBy }) + ' for ' + main.label + ': ' + demand(nm) + '.', 'Start by ' + dateOf({ date: main.startBy }) + ' for ' + main.label + '.']
-    : timing.length ? ['No date on the calendar leaves time to learn before it passes; ' + demand(nm) + '.', 'No date leaves time to learn; ' + demand(nm) + '.']
+    ? [startText(main) + ' for ' + main.label + ', ' + away(main) + ': ' + demand(nm) + '.', startText(main) + ' for ' + main.label + ': ' + demand(nm) + '.', startText(main) + ' for ' + main.label + '.']
+    : timing.length ? ['No date on the calendar leaves time to learn and sell; ' + demand(nm) + '.', 'No date leaves time to learn; ' + demand(nm) + '.']
       : [cap1(demand(nm)) + '; no dated occasion is on the calendar.', cap1(demand(nm)) + '.'];
   // Most detail first: every template is tried with the longest names down to the shortest before a plainer template is used.
   let headline = '';
@@ -430,23 +471,30 @@ function computedResearch(candidate, ctx = {}) {
   if (!headline) headline = clamp(headlines(variants[variants.length - 1]).slice(-1)[0], CAP.headline);
   headline = cap1(headline);
 
-  // summary: dated reasoning first, then the store's own numbers
+  // summary: dated reasoning first (all of it from the schedule), then the store's own numbers
+  let mainLong = '', mainShort = '';
+  if (main && mainPlan) {
+    const head = main.label + ' is ' + away(main) + ' (' + dateOf(main) + ')';
+    if (mainPlan.verdict === 'tight') mainShort = mainLong = head + ', a tight fit. ' + startText(main) + ': Google finishes learning ' + day(mainPlan.learnEnds) + ', leaving only ' + many(mainPlan.sellDays, 'day') + ' to sell before the last orders on ' + day(mainPlan.last) + '.';
+    else {
+      mainShort = head + '. ' + startText(main) + ': Google finishes learning ' + day(mainPlan.learnEnds) + ', then ' + many(mainPlan.sellDays, 'day') + ' of selling run to the last orders on ' + day(mainPlan.last) + '.';
+      mainLong = mainShort + (mainPlan.judge <= Schedule.addDays(mainPlan.end, 1) ? ' A fair verdict comes from ' + day(mainPlan.judge) + '.' : '');
+    }
+  } else if (timing.length) mainShort = mainLong = 'No date on the calendar leaves enough time: ' + timing[0].label + ' is only ' + away(timing[0]) + ', and Google needs about ' + PMAX.wait + ' to learn, so treat this as an ongoing test, not a seasonal push.';
+  else mainShort = mainLong = "No dated occasion is on the calendar for this store's markets, so this is judged on its own sales.";
   const S = {};
-  if (main) S.main = main.label + ' is ' + away(main) + ' (' + dateOf(main) + '), which leaves room for Google\'s ' + lt + ' learning period if this starts by ' + dateOf({ date: main.startBy }) + '.';
-  else if (timing.length) { const nx = timing[0]; S.main = 'No date on the calendar leaves room for Google\'s ' + lt + ' learning period: ' + nx.label + ' is only ' + away(nx) + ', so treat this as an ongoing test, not a seasonal push.'; }
-  else S.main = 'No dated occasion is on the calendar for this store\'s markets, so this is judged on its own sales.';
-  if (missed.length && main) { const m2 = missed.slice(0, 2); S.missed = m2.map(e => e.label + ' (' + dateOf(e) + ')').join(' and ') + (m2.length > 1 ? ' are' : ' is') + ' too close: a campaign started now would still be learning when ' + (m2.length > 1 ? 'they pass.' : 'it passes.'); }
-  if (later.length) S.later = later[0].label + ' (' + dateOf(later[0]) + ') follows, so the same ads can keep running toward it.';
+  if (missed.length && main) { const m2 = missed.slice(0, 2); S.missed = m2.map(e => e.label + ' (' + dateOf(e) + ')').join(' and ') + (m2.length > 1 ? ' come' : ' comes') + ' too soon for Google to finish learning and still sell.'; }
+  if (later.length) S.later = later[0].label + ' (' + dateOf(later[0]) + ') comes after that; a run for it would start ' + day(later[0].startBy) + '.';
   const storeSentence = nm => 'Buyers ordered ' + nm + ' ' + many(orders, 'time') + ' in the last ' + days + ' days' + (t && t.orders30d > 0 ? ', ' + t.orders30d + ' of them in the last 30' : '') + (tr && tr.direction === 'rising' ? ', and buying is picking up' : tr && tr.direction === 'falling' ? ', though buying has slowed' : '') + '.';
-  // Keep every sentence when they fit; else drop the later date, then the near misses, using shorter product names first.
-  const order = ['main', 'missed', 'store', 'later'], build = (ks, nm) => order.filter(k => ks.includes(k)).map(k => (k === 'store' ? storeSentence(nm) : S[k])).join(' ');
+  // Keep every sentence when they fit; else drop the verdict date, then the later date, then the near misses, using shorter product names first.
+  const order = ['main', 'missed', 'store', 'later'], build = (ks, nm, m) => order.filter(k => ks.includes(k)).map(k => (k === 'store' ? storeSentence(nm) : k === 'main' ? m : S[k])).join(' ');
   let summary = '';
-  for (const drops of [[], ['later'], ['later', 'missed']]) {
-    const ks = order.filter(k => !drops.includes(k) && (k === 'store' ? orders > 0 : S[k]));
-    summary = variants.map(nm => build(ks, nm)).find(x => x.length <= CAP.summary) || '';
+  for (const [long, drops] of [[true, []], [false, []], [false, ['later']], [false, ['later', 'missed']]]) {
+    const ks = order.filter(k => !drops.includes(k) && (k === 'store' ? orders > 0 : k === 'main' ? true : S[k]));
+    summary = (variants.length > 2 ? variants.slice(0, -1) : variants).map(nm => build(ks, nm, long ? mainLong : mainShort)).find(x => x.length <= CAP.summary) || '';
     if (summary) break;
   }
-  if (!summary) summary = clamp(build(order.filter(k => (k === 'store' ? orders > 0 : S[k]) && k !== 'later' && k !== 'missed'), variants[variants.length - 1]), CAP.summary);
+  if (!summary) summary = clamp(build(order.filter(k => (k === 'store' ? orders > 0 : k === 'main') ), variants[variants.length - 1], mainShort), CAP.summary);
 
   // listing fit: one entry per product, hero first
   const listingFit = groups.slice(0, MAX.listing).map((g, i) => ({ itemId: g.itemId, title: clamp(g.title, CAP.title), reason: groupReason(g, days), role: roles[i] }));
@@ -482,18 +530,27 @@ function cleanSources(list) {
 // ---------------------------------------------------------------------------------------------------------------
 function promptParts(candidate, ctx) {
   const c = isObj(candidate) ? candidate : {}, x = isObj(ctx) ? ctx : {};
-  const today = ymdOk(x.today) ? x.today : toYmd(Date.now()), markets = arr(x.markets).map(m => String(m).toUpperCase()).filter(Boolean), timing = cleanTiming(x.timing);
-  const groups = productGroups(c), days = evidenceDays(c), facts = evidenceFacts(c, { today, timing });
-  const timingLines = timing.map(e => '- ' + e.label + ': ' + e.date + ' (' + (e.daysAway === 0 ? 'today' : e.daysAway + ' days away') + ', ' + e.market + '), role ' + e.role + (e.startBy ? ', start ads by ' + e.startBy : ', too late for a campaign started today') + '. ' + e.note);
+  const today = ymdOk(x.today) ? x.today : toYmd(Date.now()), markets = arr(x.markets).map(m => String(m).toUpperCase()).filter(Boolean), cutoff = cutoffOf(x.orderCutoffDays), timing = cleanTiming(x.timing, today, cutoff);
+  const groups = productGroups(c), days = evidenceDays(c), facts = evidenceFacts(c, { today, timing }), dates = [today];
+  // Every date the model may state, all from the schedule: the start, when learning ends, the last orders and when a verdict is fair.
+  const timingLines = timing.map(e => {
+    const pl = planOf(e, today, cutoff), head = '- ' + e.label + ': ' + e.date + ' (' + (e.daysAway === 0 ? 'today' : e.daysAway + ' days away') + ', ' + e.market + '), ';
+    dates.push(e.date);
+    if (!pl) return head + 'role ' + e.role + '.';
+    dates.push(pl.learnEnds, pl.last);
+    if (e.role === 'too-late') return head + 'role too-late: a campaign started today would finish learning ' + pl.learnEnds + ' and the last orders that can arrive are ' + pl.last + ', so there is not enough time.';
+    dates.push(e.startBy, pl.judge);
+    return head + 'role ' + e.role + ': start by ' + e.startBy + '; Google finishes learning ' + pl.learnEnds + '; ' + many(pl.sellDays, 'day') + ' of selling; last orders that can arrive ' + pl.last + '; a fair verdict from ' + pl.judge + '.';
+  });
   const keywords = cleanKeywords(x.keywords).slice(0, 40);
   const keywordLines = keywords.map(k => '- "' + k.text + '" | ' + k.kind + ' | ' + (k.monthlySearches != null ? 'about ' + commas(k.monthlySearches) + ' searches a month' : 'search volume not available') + (k.competition ? ' | competition ' + k.competition : '') + (k.reason ? ' | ' + k.reason : ''));
   const offerLines = [];
   groups.forEach(g => g.offers.forEach(o => offerLines.push('- ' + JSON.stringify({ itemId: String(o.itemId), title: cleanText(o.title || o.productTitle), product: cleanText(o.productTitle || o.title), type: g.types.join(' / ') || null, tags: g.labels.slice(0, 5), ordersForThisProduct: g.known ? g.orders : null, ordersLast30Days: g.known ? g.orders30d : null }))));
-  return { c, today, markets, timing, timingLines, facts, keywords, keywordLines, offerLines, groups, days, header: [today, markets.join(', '), cleanText(c.collectionTitle), cleanText(c.feedLabel), String(days)].join(' ') };
+  return { c, today, markets, timing, timingLines, dates, facts, keywords, keywordLines, offerLines, groups, days, header: [today, markets.join(', '), cleanText(c.collectionTitle), cleanText(c.feedLabel), String(days)].join(' ') };
 }
 
 function researchPrompt(candidate, ctx = {}) {
-  const P = promptParts(candidate, ctx), c = P.c, learn = posInt(isObj(ctx) ? ctx.learningDays : null, 42);
+  const P = promptParts(candidate, ctx), c = P.c;
   const mk = P.markets.length ? P.markets.join(', ') : 'not stated';
   return [
     'You are the research analyst for Brites Jewelry, a small shop that sells personalized and made-to-order jewelry. The shop owner needs to decide whether to run a Google Performance Max test campaign (called Product ads) for the listings below, and why now. Write for the owner in plain words.',
@@ -501,7 +558,7 @@ function researchPrompt(candidate, ctx = {}) {
     '',
     'TODAY: ' + P.today + '. ACCOUNT MARKETS: ' + mk + '. This idea covers the "' + cleanText(c.collectionTitle || c.handle || 'collection') + '" collection' + (c.feedLabel ? ' in the ' + cleanText(c.feedLabel) + ' market' : '') + '.',
     '',
-    'DATES, already worked out; quote them exactly and do not recalculate. Google advises about ' + learnSpan(learn) + ' of learning before judging a Performance Max campaign, so a date nearer than that cannot be reached by a campaign started today:',
+    'DATES, already worked out by the shop\'s planner. Use ONLY these dates: never work out, guess or mention any other start date, learning date, verdict date or deadline. A Product ads (Performance Max) campaign needs about ' + PMAX.wait + ' (' + PMAX.days + ' days) to learn and about ' + PMAX.judgeWait + ' (' + PMAX.judgeAfter + ' days) of results before it is fair to judge. A date is too-late when a campaign started today could not finish learning and still sell before the last orders:',
     P.timingLines.length ? P.timingLines.join('\n') : '- No dated occasion is on the calendar for these markets.',
     '',
     "THE STORE'S OWN NUMBERS, for exactly these products:",
@@ -527,6 +584,7 @@ function researchPrompt(candidate, ctx = {}) {
     '',
     'RULES',
     '- Quote only numbers that appear above. Do not invent statistics, percentages, prices or search counts. A number from a web page belongs only in marketRead, with the page named.',
+    '- State a date only if it is listed in the DATES above, exactly as listed. If a date is not listed, do not state one.',
     '- Do not promise or predict sales or results. No discounts, sale wording, urgency or pressure.',
     '- Plain words for a shop owner. No emoji, no jargon, no internal field names or ids in the text you write (itemId is only used in the itemId field).',
     '- Jewelry brand rules: be gentle around memorial, sympathy or loss themes. No medical or health claims.',
@@ -539,13 +597,13 @@ function researchPrompt(candidate, ctx = {}) {
 
 // Every number the model was shown (plus small words-as-digits) may be quoted; anything else is invented.
 function allowedNumbers(candidate, ctx) {
-  const P = promptParts(candidate, ctx), learn = posInt(ctx && ctx.learningDays, 42), set = new Set();
+  const P = promptParts(candidate, ctx), set = new Set();
   const add = s => numTokens(s).forEach(t => set.add(t));
   add(P.header); add(P.timingLines.join(' ')); add(P.facts.join(' ')); add(P.keywordLines.join(' ')); add(P.offerLines.join(' '));
-  [learn, learn / 7, BUFFER_DAYS, nonNeg(ctx && ctx.orderCutoffDays, 0), P.groups.length, P.offerLines.length, 0, 1, 2, 3, 4, 5, 30, 60, 90, Number(P.today.slice(0, 4)) + 1, Number(P.today.slice(0, 4)) - 1].forEach(n => { if (Number.isFinite(n)) set.add(String(n)); });
+  [PMAX.days, PMAX.days / 7, PMAX.judgeAfter, PMAX.judgeAfter / 7, cutoffOf(ctx && ctx.orderCutoffDays), P.groups.length, P.offerLines.length, 0, 1, 2, 3, 4, 5, 30, 60, 90, Number(P.today.slice(0, 4)) + 1, Number(P.today.slice(0, 4)) - 1].forEach(n => { if (Number.isFinite(n)) set.add(String(n)); });
   // Calendar dates the model may name: today and the dates worked out above, nothing it computed itself.
-  set.dates = new Set([P.today].concat(P.timing.reduce((l, e) => l.concat([e.date, e.startBy]), [])).filter(ymdOk).map(d => Number(d.slice(5, 7)) + '-' + Number(d.slice(8, 10))));
-  set.iso = new Set([P.today].concat(P.timing.reduce((l, e) => l.concat([e.date, e.startBy]), [])).filter(ymdOk));
+  set.iso = new Set(P.dates.filter(ymdOk));
+  set.dates = new Set(Array.from(set.iso).map(d => Number(d.slice(5, 7)) + '-' + Number(d.slice(8, 10))));
   return set;
 }
 const MONTH_RE = '(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)';
