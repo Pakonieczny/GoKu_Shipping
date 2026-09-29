@@ -128,7 +128,8 @@ function fixture({ MAIN, CX, D }) {
       assert(comp.sw <= comp.cw + 1, `the composer does not run wider than its column: ${comp.sw} > ${comp.cw}`);
       const rail = await page.evaluate(() => ({ fs: getComputedStyle(document.querySelector('#owRail .tlStop>span')).fontSize, clipped: [...document.querySelectorAll('#owRail .tlStop>span')].filter(s => s.scrollWidth > s.clientWidth + 1).map(s => s.textContent) }));
       assert.equal(rail.fs, '8.5px', 'the header rail reads at 8.5px'); assert.deepEqual(rail.clipped, [], 'no step name is cut at 1280');
-      await page.waitForFunction(() => !!document.querySelector('#owNowCard .who i svg'), null, { timeout: 5000 });
+      await page.waitForFunction(() => !!document.querySelector('#owNowCard .tlNowSeal, #owNowCard .who i svg'), null, { timeout: 5000 });
+      assert(await page.evaluate(() => !(document.querySelector('#owNowCard .tlNowSeal') && document.querySelector('#owNowCard .who'))), 'with a seal, no who · time line beside it (the seal says it)');
       const purchased = await page.evaluate(() => { const m = [...document.querySelectorAll('#owMeta .m')].find(x => /Purchased/i.test(x.querySelector('i').textContent)); const s = m.querySelector('span'); return s.getClientRects().length === 1 ? s.getBoundingClientRect().height : 99; });
       assert(purchased < 22, 'the purchase date reads on one line: ' + purchased);
       // 2 · its Timeline: the one quiet chip in the tab row, no second Now and rail strip, day heads inside their columns

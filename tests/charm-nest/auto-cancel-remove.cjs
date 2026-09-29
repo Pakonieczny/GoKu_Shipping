@@ -126,9 +126,9 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     const recA = st.doc(SHEETS, 'gold-open-1');
     assert.deepStrictEqual(recA.charms.map(c => c.poolId).sort(), [pid(B, 2, 1), pid(C, 3, 1)], 'the saved sheet no longer lists it');
     for (const c of [1, 2]) { const p = st.doc(POOL, pid(A, 1, c)); assert(p.state === 'abandoned' && p.removedBy === 'Etsy' && p.removedReason === 'cancelled' && p.removedVerifiedAt > 0, 'its piece records: abandoned, removed by Etsy (cancelled), verified: ' + JSON.stringify(p)); }
-    // one "removed": the server stamps it from the piece records, the sorter's own says it in full under the same id
+    // one "removed" per sheet: the server stamps it from the piece records, the sorter's own says it in full under the same id
     const remA = st.doc(POOL, pid(A, 1, 1)).removedAt;
-    await until(() => { const e = st.doc(TL, `${A}~removed~${remA}`); return e && /^Taken off GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
+    await until(() => { const e = st.doc(TL, `${A}~removed~${remA}-gold-open-1`); return e && /^Removed from GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
     const evsA = st.list(TL).filter(x => x._id.startsWith(`${A}~removed~`)), evA = evsA[0];
     assert(evsA.length === 1 && evA.sheetId === 'gold-open-1' && evA.sheet === 'GF Sheet 1' && evA.data && evA.data.reason === 'cancelled on Etsy' && evA.by === 'Etsy', 'the timeline has one "removed" with its sheet and reason: ' + JSON.stringify(evsA));
     assert.deepStrictEqual(st.doc(CANCELLED, A).fates, [{ sheet: 'GF Sheet 1', fate: 'removed', text: 'taken off GF Sheet 1' }], 'its cancel record says what became of it (Orders › Cancelled reads it)');
@@ -169,9 +169,10 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     if (process.env.SHOTS) { await page.waitForTimeout(500); await page.screenshot({ path: path.join(process.env.SHOTS, 'auto-cancel-pill.png'), clip: { x: 700, y: 0, width: 800, height: 420 } }); }
     await page.click(`#runBanner [data-cxack="${D}"]`);
     await page.waitForFunction(() => document.getElementById('runBanner').classList.contains('hidden'), null, { timeout: 5000 });
-    await until(() => st.list(TL).some(x => x._id.startsWith(`${D}~note~autocancel-aside-ok-`)), 5000, 'the set-aside note');
-    const ack = st.list(TL).find(x => x._id.startsWith(`${D}~note~autocancel-aside-ok-`));
-    assert(/Pieces set aside by Tester/.test(ack.text), 'who set them aside is on the timeline: ' + ack.text);
+    // (the cut sheet's step on its timeline now says it was done, and by whom: the same step, never a second)
+    await until(() => st.list(TL).some(x => x._id.startsWith(`${D}~cancelStep~cx-`) && /set aside by Tester/.test(x.text || '')), 5000, 'the set-aside step');
+    const acks = st.list(TL).filter(x => x._id.startsWith(`${D}~cancelStep~cx-`)), ack = acks[0];
+    assert(acks.length === 1 && /^On a cut sheet: set aside by Tester \(SS Sheet 1\)/.test(ack.text), 'who set them aside is on the timeline: ' + ack.text);
     ok.push('cancelled on a cut sheet: nothing moves; the run pill and a note say to set the pieces aside, until Set aside; the timeline has both notes');
 
     /* 3 · a record taken back before the sorter acts: nothing moves */
@@ -209,7 +210,7 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
     assert(!st.doc(SHEETS, 'gold-open-1').charms.some(c => c.order === B), 'and saves it without the order');
     const pB = st.doc(POOL, pid(B, 2, 1));
     assert(pB.state === 'abandoned' && pB.removedBy === 'Tom' && pB.removedReason === 'cancelled' && pB.removedVerifiedAt > 0, 'its piece record: removed by Tom, verified: ' + JSON.stringify(pB));
-    await until(() => { const e = st.doc(TL, `${B}~removed~${pB.removedAt}`); return e && /^Taken off GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
+    await until(() => { const e = st.doc(TL, `${B}~removed~${pB.removedAt}-gold-open-1`); return e && /^Removed from GF Sheet 1/.test(e.text || ''); }, 8000, 'the removed event');
     const evB = st.list(TL).filter(x => x._id.startsWith(`${B}~removed~`));
     assert(evB.length === 1 && evB[0].data.reason === 'cancelled by Tom' && evB[0].by === 'Tom', 'one "removed" on its timeline: ' + JSON.stringify(evB));
     assert.deepStrictEqual(st.doc(CANCELLED, B).fates, [{ sheet: 'GF Sheet 1', fate: 'removed', text: 'taken off GF Sheet 1' }], 'and its record what became of it');

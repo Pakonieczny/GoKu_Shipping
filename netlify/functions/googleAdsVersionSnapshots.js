@@ -83,10 +83,10 @@ function buildRestoreOperations(current, target) {
     const imageLinks = components => {
       const groups = new Set([...components.searchAds, ...components.keywords].map(row => row.adGroup)), links = new Map();
       for (const row of components.searchImageLinks) {
-        if (row.fieldType !== "IMAGE") throw new Error("Only saved Search image assets can be restored by this version format.");
+        if (row.fieldType !== "AD_IMAGE") throw new Error("Only saved Search image assets can be restored by this version format.");
         if (!["ENABLED", "PAUSED"].includes(row.status)) throw new Error("Saved Search image status is missing or unsupported; it cannot be guessed during restoration.");
         const groupId = String(row.adGroup).match(/^customers\/\d+\/adGroups\/(\d+)$/), assetId = String(row.asset).match(/^customers\/\d+\/assets\/(\d+)$/);
-        if (!groupId || !assetId || row.resourceName !== `customers/${customer}/adGroupAssets/${groupId[1]}~${assetId[1]}~IMAGE`) throw new Error("Saved Search image link identity does not match its original ad group and asset.");
+        if (!groupId || !assetId || row.resourceName !== `customers/${customer}/adGroupAssets/${groupId[1]}~${assetId[1]}~AD_IMAGE`) throw new Error("Saved Search image link identity does not match its original ad group and asset.");
         if (!groups.has(row.adGroup)) throw new Error("A saved Search image belongs to an ad group whose original editable state is unavailable.");
         const key = imageKey(row);
         if (links.has(key)) throw new Error("Duplicate Search image links require reconciliation before restoration.");
@@ -97,7 +97,7 @@ function buildRestoreOperations(current, target) {
     const oldImages = imageLinks(c), wantedImages = imageLinks(t);
     for(const [key,row]of oldImages)if(!wantedImages.has(key))operations.push({adGroupAssetOperation:{remove:row.resourceName}});
     for(const [key,row]of wantedImages){
-      if(!oldImages.has(key))operations.push({adGroupAssetOperation:{create:{adGroup:row.adGroup,asset:row.asset,fieldType:"IMAGE",status:row.status}}});
+      if(!oldImages.has(key))operations.push({adGroupAssetOperation:{create:{adGroup:row.adGroup,asset:row.asset,fieldType:"AD_IMAGE",status:row.status}}});
       else if(oldImages.get(key).status!==row.status)operations.push({adGroupAssetOperation:{update:{resourceName:oldImages.get(key).resourceName,status:row.status},updateMask:"status"}});
     }
     if(operations.some(o=>o.adGroupAssetOperation))add("Search images",summary(c.searchImageLinks),summary(t.searchImageLinks),"Relink the saved square and landscape image assets to the same ad groups. Google controls whether an image is served.");
