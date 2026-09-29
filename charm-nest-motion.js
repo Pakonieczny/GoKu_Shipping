@@ -192,7 +192,9 @@
   function reconcile(host, nodes, opts = {}) {
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
-    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving && !isCarried(k)) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
+    // (a carried row the list holds where it stood: not glided, not copied as it leaves, and not new either)
+    const held = new Set();
+    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (!k) continue; if (isCarried(k)) held.add(k); else if (!n._mLeaving) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
     const keep = new Set(nodes);
     nodes.forEach((node, i) => { if (host.children[i] !== node) host.insertBefore(node, host.children[i] || null); });
     for (const n of [...host.children]) if (!keep.has(n)) n.remove();
@@ -225,7 +227,7 @@
     }
     // what is new: from where it came, or opening its own room
     for (const [k, n] of now) {
-      if (before.has(k)) continue;
+      if (before.has(k) || held.has(k)) continue;
       const spec = take(arrivals, k);
       if (spec && spec.from) flyIn(spec.from, n, spec); else if (seen(n.getBoundingClientRect())) grow(n, { delay: hold ? hold + 120 : 0, room: false });
     }
