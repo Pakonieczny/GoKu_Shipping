@@ -143,7 +143,7 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
     const m = item.payload.meta, camp = item.payload.mutateOperations.find(o => o.campaignOperation).campaignOperation.create;
     check(m.targetRoas === 0 && m.targetRoasLater === 2.5 && m.biddingMode === 'MAXIMIZE_CONVERSION_VALUE_LEARNING' && !camp.maximizeConversionValue.targetRoas, 'a new PMax campaign is built on Maximize conversion value without the requested or account target ROAS');
     check(/no target ROAS until it has about 6 weeks and 30 conversions in 30 days/.test(item.summary) && /30 days from enabling/.test(item.summary), 'the draft summary says which bidding applies and the planned run length');
-    check(m.runDays === 30 && m.plannedDays[camp.resourceName] === 30 && camp.endDateTime === plus(today, 29).replace(/-/g, '') + ' 23:59:59', 'the planned days are kept with the draft; its first end date covers exactly 30 days');
+    check(m.runDays === 30 && m.plannedDays[camp.resourceName] === 30 && camp.endDateTime === plus(today, 29) + ' 23:59:59', 'the planned days are kept with the draft; its first end date covers exactly 30 days, as "yyyy-MM-dd HH:mm:ss"');
     const ops = e.get('buildPmaxCampaignOps')({ handle: 'rings', title: 'Rings' }, { dailyBudget: 5, merchantId: 1, itemIds: ['shopify_CA_111_222'] }).ops;
     check(JSON.stringify(ops.find(o => o.campaignOperation).campaignOperation.create.maximizeConversionValue) === '{}', 'GADS_TARGET_ROAS is not applied to a new campaign by default');
   }
@@ -152,6 +152,7 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
   {
     const e = engine(), f = memory(), sent = [], muts = []; let start = null;
     const prepared = plus(today, -10);
+    // A draft saved before schedules were written as "yyyy-MM-dd HH:mm:ss" (its end date is "yyyyMMdd HH:mm:ss"): it still publishes.
     await f.db.collection(COL.approvals).doc('p1').set({ type: 'pmax', status: 'APPROVED', payload: { mutateOperations: [
       { campaignBudgetOperation: { create: { resourceName: 'customers/123/campaignBudgets/-1', amountMicros: 10e6 } } },
       { campaignOperation: { create: { resourceName: 'customers/123/campaigns/-2', name: 'BA · flight', status: 'PAUSED', campaignBudget: 'customers/123/campaignBudgets/-1', endDateTime: plus(prepared, 29).replace(/-/g, '') + ' 23:59:59' } } }],
@@ -163,12 +164,12 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
       mutate: async (service, ops) => { muts.push(clone(ops)); return {}; } });
     const ctrl = { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD' }, end = s => s.ops.find(o => o.campaignOperation).campaignOperation.create.endDateTime;
     await e.get('applyApproval')('p1', ctrl);
-    check(sent.length === 2 && sent.every(s => end(s) === plus(today, 29).replace(/-/g, '') + ' 23:59:59'), 'publishing sets the end date from the publish day, not the day the draft was prepared');
+    check(sent.length === 2 && sent.every(s => end(s) === plus(today, 29) + ' 23:59:59'), 'publishing sets the end date from the publish day, not the day the draft was prepared, as "yyyy-MM-dd HH:mm:ss"');
     const flight = f.docs.get(COL.state + '/plannedFlight_777');
     check(flight && flight.days === 30 && flight.approvalId === 'p1' && !flight.startedAt, 'the published campaign keeps its planned days until it is first enabled');
     const later = plus(today, 12); e.bind({ _acctDateYmd: () => later });
     let r = plain(await e.get('setCampaignStatus')('777', 'ENABLED', { ctrl }));
-    check(muts[0][0].updateMask === 'status,end_date_time' && muts[0][0].update.endDateTime === plus(later, 29).replace(/-/g, '') + ' 23:59:59' && r.endDate === plus(later, 29), 'the first enable moves the end date in the same update, so the full 30 days start that day');
+    check(muts[0][0].updateMask === 'status,end_date_time' && muts[0][0].update.endDateTime === plus(later, 29) + ' 23:59:59' && r.endDate === plus(later, 29), 'the first enable moves the end date in the same update ("yyyy-MM-dd HH:mm:ss"), so the full 30 days start that day');
     check(f.docs.get(COL.state + '/plannedFlight_777').startedAt > 0, 'the run is marked started');
     r = plain(await e.get('setCampaignStatus')('777', 'ENABLED', { ctrl }));
     check(muts[1][0].updateMask === 'status' && !r.endDate, 'a later enable (after a pause) leaves the end date alone');
@@ -180,6 +181,7 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
     e.bind({ gaql: async q => /FROM campaign WHERE campaign\.id = 778/.test(q) ? [{ campaign: { id: '778', name: 'C', status: 'PAUSED', startDateTime: '2026-09-01 00:00:00', endDateTime: endRead + ' 23:59:59', endDate: endRead } }] : [],
       mutate: async (service, ops) => { muts.push(clone(ops)); endRead = plus(later, 60); return {}; } });
     await e.get('setCampaignEndDate')('778', { endDate: plus(later, 60), ctrl });
+    check(muts[muts.length - 1][0].updateMask === 'end_date_time' && muts[muts.length - 1][0].update.endDateTime === plus(later, 60) + ' 23:59:59', 'an end date chosen in Campaigns is sent as "yyyy-MM-dd HH:mm:ss", the layout Google returns it in');
     check(f.docs.get(COL.state + '/plannedFlight_778').settledAt > 0, 'an end date chosen in Campaigns replaces the planned run length');
     r = plain(await e.get('setCampaignStatus')('778', 'ENABLED', { ctrl }));
     check(muts[muts.length - 1][0].updateMask === 'status' && !r.endDate, 'enabling after that keeps the chosen end date');

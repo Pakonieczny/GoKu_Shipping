@@ -73,7 +73,7 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   check(creates(ops, 'adGroupOperation').every(g => g.cpcBidMicros === 1240000), 'the max CPC is sent in whole cents');
   check(campaign.status === 'PAUSED' && campaign.advertisingChannelType === 'SEARCH' && campaign.containsEuPoliticalAdvertising === 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING', 'campaign starts paused with the required EU political declaration');
   check(campaign.networkSettings.targetGoogleSearch && !campaign.networkSettings.targetSearchNetwork && !campaign.networkSettings.targetContentNetwork && campaign.geoTargetTypeSetting.positiveGeoTargetType === 'PRESENCE', 'Google Search only, people located in the chosen countries');
-  check(/^\d{8} 00:00:00$/.test(campaign.startDateTime) && /^\d{8} 23:59:59$/.test(campaign.endDateTime) && campaign.manualCpc && campaign.manualCpc.enhancedCpcEnabled === false, 'future schedule and manual CPC are set');
+  check(campaign.startDateTime === ymd(5) + ' 00:00:00' && campaign.endDateTime === ymd(40) + ' 23:59:59' && campaign.manualCpc && campaign.manualCpc.enhancedCpcEnabled === false, 'future schedule (in "yyyy-MM-dd HH:mm:ss", the layout Google documents and returns) and manual CPC are set');
   const criteria = creates(ops, 'campaignCriterionOperation');
   check(criteria.filter(c => c.language).length === 1 && criteria.find(c => c.language).language.languageConstant === 'languageConstants/1000', 'one English language criterion matches the copy and the research');
   check(criteria.filter(c => c.location).map(c => c.location.geoTargetConstant).join() === 'geoTargetConstants/2124,geoTargetConstants/2840', 'the chosen countries are targeted');
@@ -194,7 +194,7 @@ const copy = { headlines: ['Celestial Charm Jewelry', 'Moon And Star Earrings', 
   vm.runInContext(`_tzCache = ${JSON.stringify(acctTz)}`, ctx);
   const acctToday = new Intl.DateTimeFormat('en-CA', { timeZone: acctTz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const acctTomorrow = new Date(Date.parse(acctToday) + 86400000).toISOString().slice(0, 10);
-  check(!ctx._campaignScheduleFields(acctToday, ymd(30)).startDateTime && ctx._campaignScheduleFields(acctTomorrow, ymd(30)).startDateTime === acctTomorrow.replace(/-/g, '') + ' 00:00:00', 'the account’s own today is never sent as a start time; its tomorrow is');
+  check(!ctx._campaignScheduleFields(acctToday, ymd(30)).startDateTime && ctx._campaignScheduleFields(acctTomorrow, ymd(30)).startDateTime === acctTomorrow + ' 00:00:00', 'the account’s own today is never sent as a start time; its tomorrow is');
   vm.runInContext('_tzCache = null', ctx);
 
   // Copy request: sitelinks and callouts come from real store pages, so the model is not asked for them.
