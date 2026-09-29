@@ -26,9 +26,12 @@ const HTML = '<HTML> <HEAD> <TITLE>Inactivity Timeout</TITLE> </HEAD> <BODY BGCO
   answer = () => res(504, HTML);
   let e = await fails();
   assert.equal(e.message, 'The cloud did not answer in time (HTTP 504)', 'the edge\'s page reads as plain words'); assert.equal(e.transient, true);
+  // a page with a good status is no answer either (audit, 25 Sep: returned as the result, a sheet counted as saved when
+  // nothing was): it fails, in plain words, as one that passes
   answer = () => res(200, HTML);
-  const odd = await net.api('charmNestLibrary', { op: 'poolPut' });
-  assert(!/</.test(odd.error), 'a page with a good status is not passed on as markup either');
+  e = await fails();
+  assert(!/</.test(e.message), 'a page with a good status is not passed on as markup either');
+  assert.equal(e.message, 'The cloud did not answer in time (HTTP 200)'); assert.equal(e.transient, true);
   answer = () => res(502, '');
   e = await fails(); assert.equal(e.message, 'The cloud is not answering right now (HTTP 502)'); assert.equal(e.transient, true);
   answer = () => res(400, JSON.stringify({ error: 'bad run id' }));
