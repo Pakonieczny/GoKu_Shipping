@@ -35,8 +35,9 @@
       recommendedDaily: 20, minimumSensibleDaily: 10, evaluationDays: 42,
       budgetNote: 'Google advises a daily budget of at least 3× your cost per conversion and 6 weeks before judging results. Smaller budgets still run but learn slowly.',
       autoSettings: [
-        'Created paused, so nothing spends before you review it.',
-        'Its own budget, never shared with another campaign.',
+        'A new campaign is created paused, so nothing spends before you review it. Added to one of your existing Performance Max campaigns, the product joins that campaign’s status, budget and bidding.',
+        'A new campaign has its own budget, never shared with another campaign.',
+        'A new campaign excludes searches that do not lead to jewellery sales (DIY, wholesale, jobs, digital files); the plan lists each one.',
         'Bids for the most conversion value (sales revenue); the plan shows any target ROAS.',
         'Advertises only this product’s Merchant Center offers, and every click lands on its product page.',
         'Google’s automatic text, image and video enhancements are off. Shopping ads still use your product feed, and without an attached video Google may make one from your images.'
@@ -136,6 +137,32 @@
     return 'Over your daily ceiling: these budgets total ' + c + want.toFixed(2) + ', but only ' + c + free.toFixed(2) + ' of your ' + c + limit.toFixed(2) + ' ceiling is free (enabled campaigns use ' + c + used.toFixed(2) + '). Lower a budget, or raise the ceiling in Controls.';
   }
 
-  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg, budgetCeilingMessage };
+  // Adding a product to a Performance Max campaign that is already learning pools budget and
+  // conversion data instead of splitting both. A campaign fits when it advertises the product's
+  // Merchant Center feed (a campaign without a feed label advertises every feed); it is the
+  // default when it also has the same feed label and exactly the same countries.
+  function pmaxTargetFits(target, draft) {
+    const d = draft || {};
+    if (!target || !target.merchantId || (d.merchantId && String(d.merchantId) !== String(target.merchantId))) return false;
+    const a = String(target.feedLabel || '').toUpperCase(), b = String(d.feedLabel || '').toUpperCase();
+    return !a || a === b;
+  }
+  function pmaxDefaultTarget(targets, draft) {
+    const d = draft || {}, list = v => [...new Set((v || []).map(x => String(x).toUpperCase()))].sort().join(),
+      want = String(d.feedLabel || '').toUpperCase(), countries = (d.countries || []).length ? ['countries', list(d.countries)] : ['countryCodes', list(d.countryCodes)];
+    if (!countries[1]) return null;
+    const hits = (targets || []).filter(t => pmaxTargetFits(t, d) && String(t.feedLabel || '').toUpperCase() === want && list(t[countries[0]]) === countries[1]);
+    hits.sort((a, b) => (a.status === 'ENABLED' ? 0 : 1) - (b.status === 'ENABLED' ? 0 : 1) || (Number(b.budget) || 0) - (Number(a.budget) || 0) || String(a.name).localeCompare(String(b.name)));
+    return hits[0] || null;
+  }
+  // The combined budget, in words, when a product joins an existing campaign; add is what the
+  // draft adds to that campaign's daily budget (0 keeps it unchanged).
+  function pmaxJoinText(target, add, currency) {
+    const c = currency ? currency + ' ' : '', now = Number(target.budget) || 0, plus = Math.max(0, Number(add) || 0), groups = (Number(target.assetGroups) || 0) + 1;
+    return (plus > 0 ? c + now.toFixed(2) + ' + ' + plus.toFixed(2) + ' = ' + (now + plus).toFixed(2) : c + now.toFixed(2)) + '/day combined, shared by ' + groups + ' product groups' +
+      (target.sharedBudget ? ' and every campaign using this shared budget' : '') + '.' + (target.status === 'ENABLED' ? '' : ' The campaign is paused; the product runs once you enable it.');
+  }
+
+  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg, budgetCeilingMessage, pmaxTargetFits, pmaxDefaultTarget, pmaxJoinText };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.BritesCampaignStyles = api;
 })(typeof window === 'object' ? window : globalThis);
