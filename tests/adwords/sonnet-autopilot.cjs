@@ -190,6 +190,16 @@ function memoryDb(seed = {}) {
   await rejects(() => review(Buffer.from('s'), [Buffer.from('f')], {}), err => err.verdict === true && /needs changes: Engraving changed/.test(err.message), 'failed verdict');
   e.net.queue.push({ status: 400 });
   await rejects(() => review(Buffer.from('s'), [Buffer.from('f')], {}), err => !err.verdict && /Visual review failed/.test(err.message), 'reviewer outage is not a verdict');
+  // A schema too large for Anthropic's output grammar (a 400, not billed): one more request with the schema in the instructions, remembered afterwards.
+  const reviewCalls = e.net.ai().length;
+  e.net.queue.push({ status: 400, message: 'The compiled grammar is too large, which would cause performance issues. Simplify your tool schemas or reduce the number of strict tools.' }, { text: 'Verdict:\n```json\n{"pass":true,"productFaithful":true,"mobileReadable":true,"issues":[],"score":91}\n```' }, { text: '{"pass":true,"productFaithful":true,"mobileReadable":true,"issues":[],"score":90}' });
+  eq((await review(Buffer.from('s'), [Buffer.from('f')], {})).score, 91, 'a grammar refusal gets one more request and the verdict is read');
+  call = e.net.ai().slice(reviewCalls);
+  ok(call.length === 2 && call[0].body.output_config.format && !call[1].body.output_config.format && /matches this JSON schema/.test(call[1].body.system), 'the review schema moves into the instructions for that one retry');
+  eq((await review(Buffer.from('s'), [Buffer.from('f')], {})).score, 90); ok(e.net.ai().length === reviewCalls + 3 && !e.net.ai()[reviewCalls + 2].body.output_config.format, 'the next review skips the refused attempt');
+  e.net.queue.push({ text: '{"pass":"yes","productFaithful":true,"mobileReadable":true,"issues":[],"score":95}' });
+  await rejects(() => review(Buffer.from('s'), [Buffer.from('f')], {}), err => !err.verdict && /Visual review failed: .*does not match the requested JSON schema/.test(err.message), 'an answer that strays from the schema fails closed');
+  realRequire('./_googleAdsClaude')._test.grammarLimited.clear();
 
   // 5. Creative production: keys are split, and paid images survive a reviewer outage.
   const group = { key: 'g0', ref: 'customers/123/assetGroups/-10', name: 'Duck', channel: 'pmax', url: 'https://britesjewelry.com/products/duck', keywords: ['duck necklace'], original: {} };
