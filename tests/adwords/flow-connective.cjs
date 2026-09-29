@@ -24,7 +24,8 @@ const within=(start,end,needle)=>{const a=html.indexOf(start),b=html.indexOf(end
  ['function oppSettle(','},1200);}','BritesFlow.leave(card)'],['function oppSettle(','},1200);}','BritesFlow.pulse(to.parentNode)'],
  ['function renderPmaxSection(','\n}',"BritesFlow.send(btn,'approvals',{id:st.approvalId,from:'Opportunities'})"],
  ['async function openAdDesignApproval(','\n',"BritesFlow.arrive(card,{from:'Design studio'})"],['async function publishDraft(','\n','BritesFlow.published(btn,id)'],
- ['function wireAdDesignSubmission(','\n}','BritesFlow.published(card,a.id,r)'],['function renderApprovals(','\n}',"BritesFlow.leave(b.closest('.draft'))"]].forEach(h=>within(...h));
+ ['function wireAdDesignSubmission(','\n}','BritesFlow.published(card,a.id,r)'],['function renderApprovals(','\n}',"BritesFlow.leave(b.closest('.draft'))"],
+ ['function approvalMark(','\n','BritesFlow.arrive(card,{from:from})']].forEach(h=>within(...h));
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(m[1].trim())new vm.Script(m[1]);
 new vm.Script(flow);assert(css.includes('@media (prefers-reduced-motion:reduce)'),'every motion has a still equivalent');
 
