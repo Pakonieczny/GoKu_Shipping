@@ -2060,7 +2060,8 @@ function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if
 function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
-  if (s && s > _todayUtc()) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  // Google reads the start in the account's time zone, so "future" means after the account's today (UTC is a day ahead of Toronto every evening).
+  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
   const e = _parseYmd(endDate);
   if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
   return out;
@@ -2932,6 +2933,8 @@ async function accountWasteNegatives() {
 
 const _KW_TYPES = ["necklace","necklaces","earring","earrings","bracelet","bracelets","charm","charms","pendant","pendants","anklet","anklets","locket","lockets","keychain","keychains","ring","rings","hoop","hoops","stud","studs"];
 const _KW_NOISE = new Set(["gift","gifts","present","presents","jewelry","jewellery","accessories","ideas","for","the","and","with","her","him","women","men","girls","boys","custom","personalized","personalised","handmade","dainty","tiny","small","cute"]);
+// Metals, finishes and stones: on their own with a product type they form generic heads ("gold necklace").
+const _KW_GENERIC_MATERIALS = new Set(["gold","silver","sterling","925","10k","14k","18k","22k","24k","karat","carat","filled","plated","vermeil","stainless","steel","titanium","platinum","brass","copper","tungsten","solid","real","pure","metal","pearl","pearls","diamond","diamonds","crystal","crystals","gemstone","gemstones"]);
 function _kwWords(x) { return String(x || "").toLowerCase().replace(/[^a-z0-9]+/g," ").trim().split(/\s+/).filter(Boolean); }
 // Text Google accepts as a keyword: at most 80 characters and 10 words, none of , ! @ % ^ * ( ) = { } ; ~ ` < > ? \ | [ ].
 // Returns null when the phrase cannot be sent (one invalid keyword fails the whole atomic campaign create).
@@ -2971,6 +2974,10 @@ function _keywordGrounding(text, profile, occasion) {
   if (!typeGrounded) return { ok:false, reason:`product type '${foundType}' not in collection` };
   const qualifierHits = words.filter(w => !_KW_TYPES.includes(w) && !_KW_NOISE.has(w) && (lex.qualifiers.has(w) || lex.materials.has(w) || lex.personalization.has(w) || _kwWords(occasion).includes(w)));
   if (!qualifierHits.length) return { ok:false, reason:"no inventory/recipient/material/occasion qualifier" };
+  // A material alone ("gold necklace", "14k gold hoop earrings") names no design of this collection: every jeweller bids on it.
+  const designWord = (w, i) => !_KW_GENERIC_MATERIALS.has(w) && !(/^(rose|white|yellow)$/.test(w) && words[i + 1] === "gold") &&
+    (lex.qualifiers.has(w) || lex.personalization.has(w) || _kwWords(occasion).includes(w));
+  if (!words.some((w, i) => qualifierHits.includes(w) && designWord(w, i))) return { ok:false, reason:"generic material + product type, nothing specific to this collection" };
   const intent = _keywordIntent(text, lex, occasion);
   if (intent === "low") return { ok:false, reason:"low purchase intent" };
   let groupLabel = null;
@@ -3011,7 +3018,7 @@ function groundKeywordPlan(keywordPlan, profile, occasion, { min=4, max=18 } = {
     const g=_keywordGrounding(text,profile,occasion);
     if(!g.ok){ rejected.push({text,reason:g.reason}); continue; }
     accepted.push(Object.assign({}, typeof raw==="object"?raw:{}, { text, intent:g.intent, grounding:g.evidence,
-      groupLabel:g.groupLabel, matchType:g.intent==="high"||_kwWords(text).length>=4?"EXACT":"PHRASE" }));
+      groupLabel:g.groupLabel, matchType:g.intent==="high"||_kwWords(text).length>=4?"EXACT":"PHRASE", measured:!!(raw&&raw.real&&Number(raw.searches)>0) }));
     if(accepted.length>=max)break;
   }
   const map={}; accepted.forEach(k=>{ const key=k.groupLabel||"Core products"; (map[key]=map[key]||[]).push(k); });
@@ -3022,10 +3029,11 @@ function groundKeywordPlan(keywordPlan, profile, occasion, { min=4, max=18 } = {
   if(groups.length && groups.reduce((n,g)=>n+g.keywords.length,0)<accepted.length){
     const used=new Set(groups.flatMap(g=>g.keywords.map(k=>k.text))); accepted.filter(k=>!used.has(k.text)).forEach(k=>groups[0].keywords.push(k));
   }
-  const real=accepted.filter(k=>k.real||k.source==="google_keyword_planner").length;
-  const conf=Math.max(20,Math.min(96,Math.round(34+accepted.length*3+real*4+(profile&&profile.sampled?Math.min(15,profile.sampled/3):0)-rejected.length)));
+  // Seeds and model estimates stay usable long-tail keywords but are unmeasured: they add no evidence.
+  const measured=accepted.filter(k=>k.measured).length, real=accepted.filter(k=>k.real||k.source==="google_keyword_planner").length;
+  const conf=Math.max(20,Math.min(96,Math.round(34+measured*3+real*4+(profile&&profile.sampled?Math.min(15,profile.sampled/3):0)-rejected.length)));
   return { ok:accepted.length>=min && groups.length>0, keywords:accepted, rejected, groups,
-    confidence:conf, evidence:{accepted:accepted.length,rejected:rejected.length,realKeywordData:real,profileListings:Number(profile&&profile.sampled)||0} };
+    confidence:conf, evidence:{accepted:accepted.length,measured,unmeasured:accepted.length-measured,rejected:rejected.length,realKeywordData:real,profileListings:Number(profile&&profile.sampled)||0} };
 }
 
 function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, endDate, countries, maxCpc, smartBidding, targetRoas, negatives, withAssets, assetExtras, keywordPlan, adGroups } = {}) {
@@ -3083,7 +3091,7 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n,matchType:"BROAD"}}}}));
   let assetSummary=null; if(withAssets!==false){const ca=buildCampaignAssets(coll,finalUrl,cRes,assetExtras);ops.push(...ca.ops);assetSummary=ca.summary;}
   return {ops,tag,finalUrl,negatives:negSet,assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
-    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:true,dropped,groups:groups.length,searchPartners:false}};
+    keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:all.length>0&&all.every(k=>k.measured),dropped,groups:groups.length,searchPartners:false}};
 }
 
 /* ============================ STAGES ============================ */
@@ -4681,7 +4689,7 @@ const _STUDIO_NEGATIVES = [
   "clipart", "printable", "tattoo", "crochet", "knitting", "bead kit", "jewelry supplies",
   "amazon", "temu", "shein", "aliexpress", "used jewelry", "second hand", "pandora replacement"
 ];
-const _STUDIO_CALLOUTS = ["Your Idea, Made Into Jewelry", "Design Your Own Charm", "Preview Your Design", "Made To Order"];
+const _STUDIO_CALLOUTS = ["Turn Ideas Into Jewelry", "Design Your Own Charm", "Preview Your Design", "Made To Order"]; // callouts: 25 characters at most
 const _STUDIO_SNIPPETS = ["Charm Templates", "Photo Upload", "Blank Canvas", "Visual Editor", "Metal Preview"];
 
 function _studioList(a, n) { return [...new Set((Array.isArray(a) ? a : []).map(x => String(x || "").replace(/\s+/g, " ").trim()).filter(Boolean))].slice(0, n); }
@@ -4915,7 +4923,8 @@ function buildDesignStudioCampaignAssets(cRes) {
     ops.push({ campaignAssetOperation: { create: { asset: a, campaign: cRes, fieldType: "CALLOUT" } } });
   });
   const ss = ASSET();
-  ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Types", values: _STUDIO_SNIPPETS.map(x => _clip(x, 25)) } } } });
+  // Studio tools and design modes are services, not product types: Google's "Service catalog" header fits them.
+  ops.push({ assetOperation: { create: { resourceName: ss, structuredSnippetAsset: { header: "Service catalog", values: _STUDIO_SNIPPETS.map(x => _clip(x, 25)) } } } });
   ops.push({ campaignAssetOperation: { create: { asset: ss, campaign: cRes, fieldType: "STRUCTURED_SNIPPET" } } });
   return { ops, summary: { sitelinks: 0, callouts: _STUDIO_CALLOUTS.length, structuredSnippets: 1, landingInvariant: true } };
 }
@@ -7093,8 +7102,6 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
     types: (mine && Array.isArray(mine.typesDetail)) ? mine.typesDetail.slice(0, 6).map(t => `${t.type}${(t.priceLow != null && t.priceHigh != null) ? ` $${t.priceLow}\u2013$${t.priceHigh}` : ""}`) : null,
     personalization: (mine && mine.personalization) || null
   };
-  const assets = await generateRSAAssets(coll, event, rsaContext);
-  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   // Research-grounded plan: gives a custom build the SAME costed treatment as a scanned one —
   // a learning-aware run length, a CPC cap, and a budget that fits the ceiling — even when the
   // console sends nothing but collection + occasion. Explicit values from the caller win.
@@ -7105,9 +7112,21 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const _geo = (countries && countries.length) ? countries : ((Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"]);
   const _seeds = [coll.title, `${coll.title} gift`, `${coll.title} necklace`, (event ? `${coll.title} ${event.label}` : null)].filter(Boolean);
   let _res = null; try { _res = await researchOpportunity(_seeds, _geo); } catch (e) {}
+  // Keywords first: both refusals below are free, so a draft that cannot be built never pays for copy.
+  const keywordPlan=(opp&&Array.isArray(opp.keywordData)&&opp.keywordData.length)?opp.keywordData
+                    :((_res&&_res.ok&&Array.isArray(_res.keywords))?_res.keywords:null);
+  const grounded=groundKeywordPlan(keywordPlan,mine,eventLabel,{min:4,max:18});
+  if(grounded.keywords.filter(k=>k.measured).length<4) return {ok:false,reason:"Fewer than four inventory-matched keywords have measured demand. Refresh keyword research before generating a campaign."};
+  if(!grounded.ok)return {ok:false,reason:`generation stopped safely — only ${grounded.keywords.length} inventory-grounded purchase-intent keywords survived; no broad fallback campaign was created`,keywordValidation:grounded};
+  const assets = await generateRSAAssets(coll, event, rsaContext);
+  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   let _aov = 0; try { const sig = await storeSignals({ days: 120 }); const rev = sig.totalRevenue!=null?sig.totalRevenue:(sig.adRevenue || 0) + (sig.organicRevenue || 0); if (sig.orders > 0) _aov = _r2(rev / sig.orders); } catch (e) {}
   let _cvrInfo = null; try { _cvrInfo = await accountCvr(); } catch (e) {}
-  const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: (_res && _res.ok ? _res : null), aov: _aov, cvrInfo: _cvrInfo });
+  // Forecast from the keywords this draft bids on (grounded, with Keyword Planner data), as the scan does:
+  // the seed research above also holds ideas the campaign never buys. Unmeasured keywords add no demand.
+  const _kp=grounded.keywords.filter(k=>k.real), _bh=_median(_kp.map(k=>k.high).filter(x=>x>0)), _bl=_median(_kp.map(k=>k.low).filter(x=>x>0)), _ci=_median(_kp.map(k=>k.competitionIndex).filter(x=>x!=null)), _band=_r2(0.55+(_ci!=null?_ci:45)/100*2.6);
+  const _planRes=_kp.length?{ok:true,source:"google_keyword_planner",realCount:_kp.length,keywords:grounded.keywords,searchVolume:Math.round(_windowSearches(_kp).monthly),competitionIndex:_ci,cpc:(_bh>0||_bl>0)?{low:_r2(_bl||_bh*.45),high:_r2(_bh||_bl*1.6)}:{low:_r2(_band*.45),high:_band}}:null;
+  const plan = planCampaign({ currency:ctrl.budgetCurrency,nativeToUsd:await _fxRateToUsd(_acctDateYmd(await _accountTz(),0)).catch(()=>null),title: coll.title, occasion: eventLabel, peakDate: peakDate || (opp && opp.peakDate) || null, ceiling, headroom: Math.max(0, ceiling - _enabled), smartBidding: smart, research: _planRes, aov: _aov, cvrInfo: _cvrInfo });
   const dailyBudget = _r2(Number(budget) > 0 ? Number(budget) : plan.budget.daily); // whole cents, as Google stores it
   const sDate = startDate || plan.duration.startDate;
   const eDate = endDate || plan.duration.endDate;
@@ -7135,11 +7154,6 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
     if (related.length) assetExtras.relatedCollections = related;
     else if (colls && colls.length) assetExtras.relatedCollections = colls.filter(c => c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
   } catch (e) {}
-  const keywordPlan=(opp&&Array.isArray(opp.keywordData)&&opp.keywordData.length)?opp.keywordData
-                    :((_res&&_res.ok&&Array.isArray(_res.keywords))?_res.keywords:null);
-  const grounded=groundKeywordPlan(keywordPlan,mine,eventLabel,{min:4,max:18});
-  if(grounded.keywords.filter(k=>k.real&&Number(k.searches)>0).length<4) return {ok:false,reason:"Fewer than four inventory-matched keywords have measured demand. Refresh keyword research before generating a campaign."};
-  if(!grounded.ok)return {ok:false,reason:`generation stopped safely — only ${grounded.keywords.length} inventory-grounded purchase-intent keywords survived; no broad fallback campaign was created`,keywordValidation:grounded};
   const groupAssets=await Promise.all(grounded.groups.map(async(g,i)=>{
     try{return (await generateRSAAssets(coll,event,Object.assign({},rsaContext,{intentGroup:{label:g.label,keywords:g.keywords.map(k=>k.text)}})))||assets;}catch(e){return assets;}
   }));
@@ -7152,13 +7166,17 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:Number(ctrl.targetRoas||0),assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
-  const win = (sDate && eDate) ? ` (${sDate} → ${eDate}, ${plan.duration.days}d)` : "";
+  // The run exactly as Google receives it (inclusive days); with no start time it serves from the day it is enabled.
+  const _cc = ops.find(o => o.campaignOperation).campaignOperation.create, _s = _dateOnly(_cc.startDateTime), _e = _dateOnly(_cc.endDateTime);
+  const _days = _e ? _daysBetween(_parseYmd(_s || _acctDateYmd(await _accountTz(), 0)), _parseYmd(_e)) + 1 : 0;
+  const win = _e ? (_s ? ` (${_s} → ${_e}, ${_days}d)` : ` (starts when enabled, ends ${_e}, up to ${_days}d)`) : (_s ? ` (from ${_s})` : "");
   const bidTxt = smart ? "Smart Bidding (no CPC cap)" : `Manual CPC ≤ ${ctrl.budgetCurrency || CURRENCY} ${capCpc.toFixed(2)}/click`;
-  const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts` : "";
+  const assetTxt = assetSummary ? `, ${assetSummary.sitelinks} sitelinks + ${assetSummary.callouts} callouts${assetSummary.structuredSnippets ? " + a structured snippet" : ""}` : "";
   const kwTxt = keywordSummary ? `, ${keywordSummary.count} keywords (${keywordSummary.measured} with measured Google demand${keywordSummary.exact ? `, ${keywordSummary.exact} exact` : ""})` : "";
   const id = await enqueueApproval({
     type: "creative", vetted: false,
-    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${assets.headlines.length} headlines${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
+    // Ad copy is written and checked per ad group in creative review, so the summary states no headline count.
+    summary: `NEW Search campaign “${tag}”${event ? ` for ${event.label}` : ""}${win} — ${bidTxt}, ${adGroupSummary.length} ad group${adGroupSummary.length === 1 ? "" : "s"} (copy set in creative review)${kwTxt}${assetTxt}, ${negatives.length} negatives, starts PAUSED (drafted on the Bench)`,
     payload:{meta:{buyer:rsaContext.audience,angle:rsaContext.angle,handle:coll.handle},mutateOperations:ops,finalCollection:coll.handle,event:event?event.label:null,startDate:sDate||null,endDate:eDate||null,countries:cty,maxCpc:capCpc,smartBidding:smart,negatives,assetSummary,keywordSummary,adGroupSummary,keywordValidation:{confidence:grounded.confidence,evidence:grounded.evidence,rejected:grounded.rejected.slice(0,12)},plan},
     experimentId: tag
   });
@@ -9171,10 +9189,9 @@ function _creativeGroups(item) {
   return groups;
 }
 function _putCreativeCopy(payload, groups) {
-  const rawOps=payload.mutateOperations||[];
-  const auxiliary=new Set(rawOps.filter(o=>o.assetOperation&&o.assetOperation.create&&(o.assetOperation.create.sitelinkAsset||o.assetOperation.create.calloutAsset||o.assetOperation.create.structuredSnippetAsset)).map(o=>o.assetOperation.create.resourceName));
-  const ops=rawOps.filter(o=>!(o.assetOperation&&o.assetOperation.create&&auxiliary.has(o.assetOperation.create.resourceName))&&!(o.campaignAssetOperation&&o.campaignAssetOperation.create&&auxiliary.has(o.campaignAssetOperation.create.asset)));
-  if(payload.assetSummary)payload.assetSummary={sitelinks:0,callouts:0,structuredSnippets:0};
+  // Only ad text is replaced. Sitelinks, callouts and structured snippets (real store pages and fixed brand text,
+  // covered by the reviewed payload hash) stay created and linked to the campaign, for Search and PMax alike.
+  const ops=payload.mutateOperations||[];
   if(payload.designStudioSpec) {
     payload.designStudioSpec.groups=payload.designStudioSpec.groups.map((g,i)=>({...g,...groups[i].copy}));
     payload.meta=payload.meta||{};payload.meta.textPreview=groups.map(g=>({name:g.name,...g.copy}));
