@@ -240,8 +240,14 @@ async function handleAction(body) {
   if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
   if (a === "approvalStatus") {
     const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
-    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data(),req=Number(d.publishRequestedAt)||0;
+    // Queued: handed to the worker, not started or checked since, while another publication holds the
+    // lease. The worker waits its turn (up to 8 minutes), so the console stops polling and says so.
+    let queued=false;
+    if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
+      try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
+    }
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
@@ -251,8 +257,12 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    // Server time of this request: the console tells this attempt's result from an earlier one by it,
+    // whatever its own clock says. The marker also clears an Approved draft's previous error.
+    const requestedAt = Date.now();
     try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
-    return await dispatchTask("publishApproval", { id:String(body.id) });
+    try { return { ...(await dispatchTask("publishApproval", { id:String(body.id) })), requestedAt }; }
+    catch (e) { try { await E.markPublishNotStarted(body.id, e.message); } catch (x) {} throw e; } // nothing started: the card must not read as queued
   }
   // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
   // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
@@ -347,8 +357,18 @@ async function handleAction(body) {
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "analyzeCampaign") {
-    try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
-    catch (e) { return { error: e.message }; }
+    // A fresh analysis is a paid high-effort AI call that can outlast the ~26 s gateway, so the background worker
+    // runs it and the console polls genStatus; a saved analysis (under 6 h) still returns at once. A request while
+    // that campaign's analysis is running (10 min) joins it instead of paying for a second one.
+    try {
+      const id = String(body.id || "").replace(/\D/g, ""); if (!id) return { error: "Campaign id missing." };
+      if (!body.force) { const saved = await E.analyzeCampaign(id, { cacheOnly: true }); if (saved) return saved; }
+      const genId = "analysis-" + id, run = await E.getGenStatus(genId).catch(() => null);
+      if (run && run.phase === "running" && Date.now() - Number(run.at || 0) < 10 * 60000) return { queued: true, genId, joined: true };
+      await E.setGenStatus(genId, { phase: "running", kind: "campaign-analysis", campaignId: id, startedAt: Date.now() });
+      try { return await dispatchTask("analyzeCampaign", { genId, campaignId: id, force: !!body.force }); }
+      catch (e) { await E.setGenStatus(genId, { phase: "done", ok: false, kind: "campaign-analysis", campaignId: id, error: e.message }).catch(() => {}); throw e; }
+    } catch (e) { return { error: e.message }; }
   }
   if (a === "campaignTimeline") {
     try { return await E.campaignTimeline({ id: body.id }); }
