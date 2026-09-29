@@ -2103,6 +2103,9 @@ function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|
   if(!el._ease)el._easeOv=el.style.overflow;el.style.overflow='clip';
   a=el._ease=el.animate([{height:from+'px'},{height:to+'px'}],{duration:Math.round(Math.min(400,150+Math.abs(to-from)/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a){el._ease=null;el.style.overflow=el._easeOv||'';}};}
 function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
+// Stops a block's ease at once (the browser reports the cancel a frame later): its own overflow is back and
+// its height reads as settled for what is measured next.
+function easeStop(x){var a=x._ease;if(!a)return;x._ease=null;a.cancel();x.style.overflow=x._easeOv||'';}
 // A block's style without its overflow: an ease setting or putting back its clip is not a change to follow.
 function easeBare(s){return String(s||'').replace(/overflow\s*:[^;]*;?/g,'').replace(/[\s;]/g,'');}
 // Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
@@ -2121,7 +2124,7 @@ function easeWatch(els,row){var top=els[els.length-1],H=new Map(),live=function(
     if(i===els.length){if(!run)mark();return;}
     for(j=i+1;j<els.length;j++)if(els[j]._ease&&live(els[j]))i=j;el=els[i];
     if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&live(els[j]))from-=els[j]._ease.to-easeNow(els[j]._ease);
-    els.forEach(function(x){if(x._ease)x._ease.cancel();});mark();easeHeight(el,from);});
+    els.forEach(easeStop);mark();easeHeight(el,from);});
   mo.observe(top,row?{attributes:true}:{attributes:true,attributeOldValue:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
 function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;
   row=document.getElementById(t.getAttribute('aria-controls')||'');if(row&&row.tagName==='TR'&&!row.getClientRects().length)return easeWatch([row],true);

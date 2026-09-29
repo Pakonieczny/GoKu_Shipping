@@ -53,7 +53,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
 
   await test('a panel a click opens or fills eases to its new height in 150–400 ms, and stands still when restored or under reduced motion', async () => {
     const p = page('<div class="card" id="card"><details id="d"><summary id="s">Why</summary><p>Because</p></details><button id="b">Load</button><div id="more"></div></div>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const d = p.document.getElementById('d'), card = p.document.getElementById('card');
     p.H.set(d, 40); p.document.getElementById('s').click(); p.H.set(d, 200); d.open = true; await settle();
     assert.equal(p.anims.length, 1); let a = p.anims[0];
@@ -73,7 +73,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   await test('the smallest block whose height changed eases (a status line elsewhere does not widen it), and an inline expander eases through the block that holds it', async () => {
     const p = page('<div class="card" id="card"><div id="act"><button id="gen">Create review draft</button><span id="msg"></span></div><p>Below</p>' +
       '<dl id="dl"><dd id="dd"><span>Canada</span> <details id="inl" style="display:inline"><summary id="inls">Edit</summary><form>Countries</form></details></dd></dl></div>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const act = p.document.getElementById('act'), dd = p.document.getElementById('dd');
     p.H.set(act, 30); p.H.set(p.document.getElementById('card'), 400); p.document.getElementById('gen').click();
     p.H.set(act, 66); p.H.set(p.document.getElementById('card'), 436); p.document.getElementById('msg').textContent = 'Generating the draft…'; await settle();
@@ -84,7 +84,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     // later status change neither widens nor stops that ease.
     const q = page('<div class="card" id="c2"><span id="meta">Ready</span><details id="set" open><summary>Search settings</summary>' +
       '<div id="body"><div id="row"><button id="kw">Test keyword research</button></div><div id="panel"></div></div></details></div>');
-    q.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    q.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $q = id => q.document.getElementById(id);
     q.H.set($q('row'), 30); q.H.set($q('body'), 80); q.H.set($q('set'), 100); q.H.set($q('c2'), 500); $q('kw').click();
     q.H.set($q('body'), 331); q.H.set($q('set'), 351); q.H.set($q('c2'), 751);
@@ -95,7 +95,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     // A panel its own button hides, or a question box its Cancel removes: the block that held it eases shut.
     const r = page('<div class="card" id="c3"><div id="tool"><div id="row"><button id="kw2">Test</button></div><div id="panel"><p>Results</p><button id="dis">Dismiss</button></div>' +
       '<div id="ask"><button id="no">Cancel</button></div></div></div>');
-    r.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    r.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $r = id => r.document.getElementById(id);
     r.H.set($r('panel'), 251); r.H.set($r('tool'), 400); r.H.set($r('c3'), 700); $r('dis').click();
     $r('panel').style.display = 'none'; r.H.set($r('panel'), 0); r.H.set($r('tool'), 149); r.H.set($r('c3'), 449); await settle();
@@ -105,7 +105,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     // A card that is all its panel holds (the keyword check's answer), hidden by its own Dismiss: what holds the panel eases shut.
     const s = page('<section class="view" id="v"><div id="tb"><div id="defs"><button id="kw3">Test</button></div><div id="kp"><div class="card pad" id="kc"><p>Answered</p>' +
       '<div id="kd"><button id="dis3">Dismiss</button></div></div></div><div id="pb">Advertising lessons</div></div></section>');
-    s.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    s.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $s = id => s.document.getElementById(id);
     s.H.set($s('kp'), 188); s.H.set($s('kc'), 188); s.H.set($s('tb'), 400); s.H.set($s('v'), 900); $s('dis3').click();
     $s('kp').style.display = 'none'; s.H.set($s('kp'), 0); s.H.set($s('kc'), 0); s.H.set($s('tb'), 212); s.H.set($s('v'), 712); await settle();
@@ -115,7 +115,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   await test('a dialog drawn again under the control that asked eases its content, so a centred dialog glides; the design studio is left alone', async () => {
     const p = page('<dialog id="perf" open><header id="hd"><button id="x">Close</button></header><div id="pbody"><div id="ctl"><button id="rf">Refresh</button></div><p>Chart</p></div></dialog>' +
       '<dialog id="adDesignDialog" open><div id="dbody"><div id="dctl"><button id="dt">Messaging</button></div></div></dialog>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $p = id => p.document.getElementById(id);
     p.H.set($p('ctl'), 40); p.H.set($p('pbody'), 800); $p('rf').click();
     p.H.set($p('pbody'), 300); $p('pbody').innerHTML = '<p>Loading the selected dates…</p>'; await settle();
@@ -126,7 +126,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
 
   await test('a campaign row opening under its control grows from nothing, and what loads into it later grows from where it stands', async () => {
     const p = page('<table><tbody><tr class="crow" id="r" aria-controls="det-1" role="button"><td>Campaign</td></tr><tr class="cdet" id="det-1" style="display:none"><td><div id="inner">Detail</div></td></tr></tbody></table>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const det = p.document.getElementById('det-1'), inner = p.document.getElementById('inner');
     p.document.getElementById('r').addEventListener('click', () => { det.style.display = ''; });
     p.H.set(inner, 320); p.document.getElementById('r').click(); await settle();
@@ -140,7 +140,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   // overflow clip for hit testing. The clip is now the block's own style, set for the ease and put back after it.
   await test('an easing block clips its overflow through its own style only while it eases, never inside the animation', async () => {
     const p = page('<div class="card" id="card"><details id="d" style="overflow:visible"><summary id="s">Why</summary><p id="t">Because</p></details></div>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const d = p.document.getElementById('d');
     p.H.set(d, 40); p.document.getElementById('s').click(); p.H.set(d, 200); d.open = true; await settle();
     const a = p.anims[0];
@@ -155,6 +155,22 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     b.finish(); assert.equal(d.style.overflow, 'visible', 'its own overflow is back');
     p.document.getElementById('s').click(); p.H.set(d, 40); d.open = false; await settle();
     assert.equal(p.anims.length, 3); p.anims[2].cancel(); assert.equal(d.style.overflow, 'visible', 'and after a cancelled ease');
+  });
+
+  // The walk saw an asset group grow to its loaded height, drop back to its loading height and grow again: the
+  // height noted when an ease restarted was the cancelled ease's end (the browser reports a cancel a frame late).
+  await test('a group that loads in two steps grows once to its full height: a later change that moves nothing starts no ease', async () => {
+    const p = page('<div class="card" id="card"><details id="g"><summary id="gs">Studio · photo to charm</summary><div id="gb">Loading…</div></details></div>');
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeStop', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const g = p.document.getElementById('g'), gb = p.document.getElementById('gb'), late = [];
+    p.window.Element.prototype.animate = (animate => function () { const a = animate.apply(this, arguments); a.cancel = function () { this.cancelled = true; late.push(this); }; return a; })(p.window.Element.prototype.animate);
+    p.H.set(g, 74); p.document.getElementById('gs').click(); p.H.set(g, 94); g.open = true; await settle();
+    assert.equal(p.anims.length, 1); assert.equal(p.anims[0].frames[1].height, '94px');
+    p.H.set(g, 224); gb.innerHTML = '<p>Listings and assets</p>'; await settle();
+    assert.equal(p.anims.length, 2); assert(p.anims[0].cancelled); assert.equal(p.anims[1].frames[1].height, '224px');
+    p.anims[1].finish(); gb.querySelector('p').textContent = 'Listings and assets (2)'; await settle();
+    assert.equal(p.anims.length, 2, 'no ease back from the loading height');
+    late.forEach(a => a.oncancel && a.oncancel()); assert.equal(g.style.overflow, '');
   });
 
   await test('Tab and Shift+Tab stay inside the country sheet; Escape closes it and returns focus', async () => {
