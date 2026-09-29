@@ -106,7 +106,7 @@ const J=x=>JSON.stringify(x);
   {collectionTitle:'celestial',occasion:'National Daughters Day',peakDate:'2026-09-27',dateSource:'nationaltoday.com',priority:'high',market:{},rationale:'Passed',keywords:kw4('daughter')},
   {collectionTitle:'celestial',occasion:'World Animal Day',peakDate:'2026-10-04',dateSource:'worldanimalday.org.uk',priority:'test',market:{},rationale:'Too soon',keywords:kw4('animal lover')},
   {collectionTitle:'celestial',occasion:'Fire Prevention Week',peakDate:'2026-10-10',dateSource:'',priority:'test',market:{},rationale:'Unverified',keywords:kw4('firefighter')},
-  {collectionTitle:'celestial',occasion:'Christmas',peakDate:'2026-12-25',dateSource:'calendar',priority:'test',market:{},rationale:'Too far',keywords:kw4('christmas')},
+  {collectionTitle:'celestial',occasion:"Valentine's Day",peakDate:'2027-02-14',dateSource:'calendar',priority:'test',market:{},rationale:'Too far',keywords:kw4('valentine')}, // its campaign would launch Jan 18, more than 75 days out
   {collectionTitle:'celestial',occasion:'Evergreen gifting',peakDate:null,dateSource:'',priority:'test',market:{},rationale:'Always on',keywords:['sparkle']}
  ];
  const fakes={fb:()=>null,
@@ -123,18 +123,18 @@ const J=x=>JSON.stringify(x);
  const scan=engine(fakes);
  const r=await scan.scanOpportunities({force:true});
  assert.equal(J(calls.opts.webSearch),J({maxUses:5,userLocation:{country:'US'}}),'the scan call alone asks for web verification, in the targeted market');
- assert(/between 2026-10-06 and 2026-11-13/.test(calls.prompt));assert(/Verify every date/.test(calls.prompt));assert(/AU, CA, GB, US/.test(calls.prompt));
+ assert(/between 2026-10-10 and 2027-01-10/.test(calls.prompt),'the window opens when a run can still finish 1 week of learning plus selling days, and closes 75 days before the latest launch');assert(/Verify every date/.test(calls.prompt));assert(/AU, CA, GB, US/.test(calls.prompt));
  assert(!/recommendedDailyBudget|"cpcLow"|"searches":|startDate \(|proven \(bool/.test(calls.prompt),'the prompt no longer asks for fields the code discards');
- assert(!calls.seeds.some(s=>/daughter|animal lover|firefighter|christmas/.test(s)),'dropped occasions spend no Keyword Planner quota');
+ assert(!calls.seeds.some(s=>/daughter|animal lover|firefighter|valentine/.test(s)),'dropped occasions spend no Keyword Planner quota');
  const list=r.opportunities;assert.equal(J(list.map(o=>o.occasion).sort()),J(['Canadian Thanksgiving','Halloween']),J(r.scanAudit&&r.scanAudit.checks.filter(c=>/dates|grounding_summary/.test(c.id))));
  const h=list.find(o=>o.occasion==='Halloween'),c=list.find(o=>o.occasion==='Canadian Thanksgiving');
  assert.equal(h.peakDate,'2026-10-31');assert.equal(h.dateCheck.source,'calendar rule');assert.equal(h.dateCheck.proposedDate,'2026-10-30');
- assert.equal(h.endDate,'2026-10-31');assert.equal(h.startDate,'2026-10-14');assert.equal(h.proven,false,'memory has no success for this occasion');
+ assert.equal(h.endDate,'2026-10-31');assert.equal(h.startDate,'2026-10-04','manual bids: a week of learning then three weeks of selling, counted back from the gift day');assert.equal(h.proven,false,'memory has no success for this occasion');
  assert.equal(J(c.markets),'["CA"]');assert.equal(J(c.countries),'["2124"]');assert.equal(c.endDate,'2026-10-12');
  assert.equal(h.research.realCount,6);assert.equal(h.research.searchVolume,5*1200,'close variants of one phrase are counted once');
  assert(h.plan.expected.windowSearches>h.research.searchVolume,'October searches exceed the 12-month average');
  assert(list.every(o=>o.eligibility&&typeof o.eligibility.reason==='string'));
- const dates=r.scanAudit.checks.find(x=>x.id==='opportunity_dates');assert(dates&&/1 already passed, 1 under 7 days away, 1 too far ahead, 1 without a verified date/.test(dates.detail),dates&&dates.detail);
+ const dates=r.scanAudit.checks.find(x=>x.id==='opportunity_dates');assert(dates&&/1 already passed, 1 too late, 1 too early \(timing check\), 1 without a verified date/.test(dates.detail),dates&&dates.detail);
  // ---- Serve time: a passed occasion disappears even when its saved end date runs later ----
  const saved=[Object.assign({},h,{peakDate:'2026-09-27',endDate:'2026-10-09',occasion:'National Daughters Day'}),
   {occasion:'Halloween',collectionHandle:'celestial',startDate:'2026-09-20',endDate:'2026-11-05',durationDays:20,estTotalSpend:200,plan:{duration:{days:20},expected:{spendTotal:200,conversions:2}},eligibility:{ready:true}}];
@@ -215,11 +215,11 @@ const J=x=>JSON.stringify(x);
   let prompt='';
   const e=engine(Object.assign({},fakes,{control:async()=>Object.assign({},await fakes.control(),{orderCutoffDays:7}),openaiJSON:async(p,opts)=>{prompt=p;return fakes.openaiJSON(p,opts);}}));
   const rc=await e.scanOpportunities({force:true});
-  assert.match(prompt,/between 2026-10-13 and 2026-11-20/);assert.match(prompt,/ends 7 days before the occasion's date, the last day an order can still arrive in time/);
+  assert.match(prompt,/between 2026-10-17 and 2027-01-17/);assert.match(prompt,/ends 7 days before the occasion's date, the last day an order can still arrive in time/);
   const hc=rc.opportunities.find(o=>o.occasion==='Halloween');
-  assert.equal(J([hc.startDate,hc.endDate,hc.durationDays,hc.plan.duration.lastOrderDate]),J(['2026-10-07','2026-10-24',18,'2026-10-24']));
-  assert(!rc.opportunities.some(o=>o.occasion==='Canadian Thanksgiving'),'Oct 12 is 13 days away: its last order day is under a week out');
-  assert.match(rc.scanAudit.checks.find(x=>x.id==='opportunity_dates').detail,/2 under 14 days away \(7-day order cutoff\)/);
+  assert.equal(J([hc.startDate,hc.endDate,hc.durationDays,hc.plan.duration.lastOrderDate]),J(['2026-09-29','2026-10-24',26,'2026-10-24']),'the run starts as early as the learning period needs (today here) and ends at the last order day');
+  assert(!rc.opportunities.some(o=>o.occasion==='Canadian Thanksgiving'),'Oct 12 less the cutoff is Oct 5: a week of learning cannot finish before the last order');
+  assert.match(rc.scanAudit.checks.find(x=>x.id==='opportunity_dates').detail,/2 too late, 1 too early \(timing check, 7-day order cutoff\)/);
  });
  await check('order cutoff at draft time: no draft once the last order day has passed, and nothing is paid for',async()=>{
   const {e,out}=drafting({now:Date.parse('2026-10-26T15:00:00Z')});
@@ -227,7 +227,7 @@ const J=x=>JSON.stringify(x);
   assert.equal(g.ok,false);assert.equal(g.reason,'The last day to order in time for Halloween (2026-10-24, 7 days before 2026-10-31) has passed. No draft was created.');
   assert.equal(J([out.rsa,out.kp,out.approvals.length]),J([0,0,0]));
   const d=drafting(),g2=await d.e.generateForCollection('celestial','Halloween',0,{ctrl:Object.assign({},ctrlG,{orderCutoffDays:7}),countries:['2124']});
-  assert.equal(g2.ok,true,g2.reason);assert.equal(J([g2.startDate,g2.endDate]),J(['2026-10-07','2026-10-24']),'a draft without chosen dates ends at the order cutoff');
+  assert.equal(g2.ok,true,g2.reason);assert.equal(J([g2.startDate,g2.endDate]),J(['2026-09-29','2026-10-24']),'a draft without chosen dates uses the same window as the card: learning first, ending at the order cutoff');
  });
  // Item 3: one Keyword Planner pool per country set.
  await check('Keyword Planner measures each occasion only in the countries where it is observed',async()=>{
@@ -274,7 +274,7 @@ const J=x=>JSON.stringify(x);
   const e=engine(Object.assign({},fakes,{storeSignals:async()=>({orders:10,totalRevenue:90,productRows:[]})}));
   const low=(await e.scanOpportunities({force:true})).opportunities.find(o=>o.occasion==='Halloween');
   assert.equal(J([low.eligibility.ready,low.eligibility.label,low.eligibility.projectedRoas,low.eligibility.breakEvenRoas]),J([false,'Forecast below break-even',0.27,1.54]));
-  assert.match(low.eligibility.reason,/^Projected ROAS 0\.27x \(0\.2–0\.4x with conversion uncertainty\) is below the 1\.54x break-even at a 65% margin: this plan is forecast to lose CAD 118 over the run\.$/);
+  assert.match(low.eligibility.reason,/^Projected ROAS 0\.27x \(0\.2–0\.4x with conversion uncertainty\) is below the 1\.54x break-even at a 65% margin: this plan is forecast to lose CAD 184 over the run\.$/,'the loss covers the 28-day run (learning included), not the old 18-day one');
   assert.equal(h.eligibility.ready,true,'a profitable forecast stays ready');
  });
  // Coordinator: budget room is judged on the budget Paul chooses.

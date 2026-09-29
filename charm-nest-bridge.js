@@ -1080,27 +1080,49 @@ const Orders = window.Orders = (() => {
     renderCard(sh);
   }
   /* An order that left Etsy (cancelled, refunded) is dropped from its set (§10.3). Its pieces come off every sheet that is
-     still filling, so they are not cut and their room goes to the next order; the rest of that sheet stays as placed. A
-     piece on a sheet that is released, cut, or fixed inside a saved Rose Gold green line stays where it is: it is cut with
-     its sheet and set aside. Nothing took these pieces off before, and a cancelled order's piece held its sheet back for good.
+     uncut, so they are not cut and their room goes to the next order; the rest of that sheet stays as placed. Every sheet
+     the laser has not cut and whose set was not sent to the station gives them up: one still filling, a full one
+     released for cutting, a held one, a Rose Gold one (inside a saved green line or outside every line: the lines the
+     pieces were inside go with them when nothing is left inside them, the ones that keep a piece stay as saved; the server
+     edits them first, roseTakeOff). Only a piece on a cut sheet stays where it is, cut with its sheet and set aside
+     (Paul, 29 Sep: "I cancelled the 2 orders ... none of them disappears from the sheet"; a Rose Gold sheet behind a green
+     line, or a released one, kept a cancelled order's pieces for good, with no word said).
      A cancel the sorter finds by itself (AutoCancel, charm-nest-sheetwin.js) comes off the same way, with opt: keep(sh)
      leaves a page alone, before(sh, pieces) sees the pieces while they are still placed (their flight), after(sh) runs as
      each page is left (in the same task), patch goes on the piece records, why says why in the log, strict throws a piece
-     record that could not be written. Returns the pages taken from, each with the pieces it gave up. */
+     record that could not be written; by, at and cancel go with the Rose Gold lines' edit (who, when and that it is a
+     cancel's), and failed, when given, is filled with each Rose Gold page whose lines could not be edited (its pieces stay,
+     to be taken off at the next check; nothing else is changed on it). Returns the pages taken from, each with the pieces it
+     gave up and the Rose Gold lines that went with them (roseLines). */
   async function takeOffGone(rows, opt = {}) {
-    const filling = sh => !(window.LiveNest && LiveNest.closed(sh)) && !(sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) &&
+    // the laser has cut it, or its set went to the station: the pieces are cut with it. Nothing else keeps them on a sheet.
+    const cutOrSent = sh => !!sh.roseCutAt || !!sh.recalled || !!sh.laserDoneAt || (window.Sets?.ofRun?.(sh.runId) || []).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId));
+    const filling = sh => !cutOrSent(sh) && !window.Gate?.holding?.(sh) &&
       !["nesting", "finishing", "queued"].includes(sh.status) && !(sh.persisted && !sh.persistedDone) && !(opt.keep && opt.keep(sh));
     const out = [];
     for (const row of rows) {
       // only the pages that hold its pieces are looked at: a gone order's pieces on a cut sheet stay there for good, and
       // every check used to search every charm of every sheet for them again
-      const ids = new Set(row.poolIds), off = [], on = Pool.holding?.(ids);
-      for (const sh of allSheets()) {
-        if (on && !on.has(sh)) continue;
+      const ids = new Set(row.poolIds), off = [], on = Pool.holding?.(ids), lines = new Map(), skip = new Set();
+      const pages = allSheets().filter(sh => (!on || on.has(sh)) && sh.charms.some(c => ids.has(c.poolId)));
+      // a Rose Gold page's saved green lines give up the pieces first (the server edits them; putSheet would refuse the
+      // sheet otherwise). When that fails the page is left as it is, its pieces on it: told, and taken off at the next check
+      for (const sh of pages) {
+        if (sh.metal !== "rose" || !filling(sh) || !(window.RoseStock && RoseStock.takeOff)) continue;
+        try {
+          const r = await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: opt.by, at: opt.at, cancel: !!opt.cancel });
+          if (r && r.changed) lines.set(sh, r.removedLines || []);
+        } catch (e) {
+          skip.add(sh); if (opt.failed) opt.failed.push(sh);
+          agent({ metal: sh.metal, run: sh.runId }, "warn", `${row.order.receiptId}: the green lines of ${sheetName(sh)} could not give up its pieces yet (${e.message}); they come off at the next check`);
+        }
+      }
+      for (const sh of pages) {
+        if (skip.has(sh)) continue;
         const mine = sh.charms.filter(c => ids.has(c.poolId)); if (!mine.length || !filling(sh)) continue;
         if (opt.before) try { opt.before(sh, mine); } catch (_) { /* a flight never stops the change */ }
         sh.charms = sh.charms.filter(c => !ids.has(c.poolId)); sh.placements = sh.placements.filter(p => sh.charms.some(c => c.id === p.id)); keepRest(sh);
-        off.push(...mine.map(c => c.poolId)); out.push({ sh, poolIds: mine.map(c => c.poolId) });
+        off.push(...mine.map(c => c.poolId)); out.push({ sh, poolIds: mine.map(c => c.poolId), roseLines: lines.get(sh) || [] });
         if (opt.after) opt.after(sh, mine);
         agent({ metal: sh.metal, run: sh.runId }, "POOL", `${row.order.receiptId} ${opt.why ? "was " + opt.why : `is no longer open on Etsy (${row.reason || "gone"})`}: ${mine.length} piece${mine.length === 1 ? "" : "s"} taken off ${sheetName(sh)}; the rest stay where they are`);
       }
