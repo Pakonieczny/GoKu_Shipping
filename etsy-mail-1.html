@@ -6762,6 +6762,8 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
 
   <div class="em-toast" id="emToast"></div>
 
+  <!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
+  <script src="station-session.js?v=20260928-ss-k"></script>
   <script>
   (function(){
     "use strict";
@@ -11394,6 +11396,7 @@ body.em-mobile .em-smart-pop-acts button { height: 36px; padding: 0 14px; font-s
         } catch (e) {
           console.warn("Couldn't persist session to localStorage:", e.message);
         }
+        try { EtsyMailAuth.stationSignedIn(res); } catch (_) {}
         state.currentUser = {
           username   : res.username,
           displayName: res.displayName,
@@ -27291,7 +27294,7 @@ const EtsyMailAuth=(()=>{
     try{
       const res=await transport("etsyMailAuth",{body:{op:"login",username:u,password:p,userAgent:navigator.userAgent||null}});
       if(!res||!res.ok||!res.sessionToken) throw new Error("Login response missing token");
-      persist(res,remember); enter(res); return {ok:true};
+      persist(res,remember); enter(res); stationSignedIn(res); return {ok:true};
     }catch(e){ ui.conn(null,"");
       if(e.reason&&NOTICE[e.reason]) return {ok:false,reason:e.reason,msg:NOTICE[e.reason]};
       if(e.kind==="network") return {ok:false,msg:NOTICE.network};
@@ -27310,7 +27313,7 @@ const EtsyMailAuth=(()=>{
     try{
       const res=await transport("etsyMailAuth",{body:{op:"signup",displayName,username:u,password,invite}});
       if(!res||!res.ok||!res.sessionToken) throw new Error("Sign-up failed");
-      persist(res,remember); enter(res,{welcome:true}); return {ok:true};
+      persist(res,remember); enter(res,{welcome:true}); stationSignedIn(res); return {ok:true};
     }catch(e){ ui.conn(null,"");
       if(e.reason&&NOTICE[e.reason]) return {ok:false,reason:e.reason,msg:NOTICE[e.reason]};
       return {ok:false,msg:e.message||"Sign-up failed."};
@@ -27318,6 +27321,7 @@ const EtsyMailAuth=(()=>{
   }
 
   async function signOut(){
+    try{if(window.StationSession)StationSession.signedOut("signOut");}catch(_){}
     try{await transport("etsyMailAuth",{body:{op:"logout"}});}catch{}
     emClearSessionToken();
     try{localStorage.removeItem(LS.user);}catch{}
@@ -27354,11 +27358,13 @@ const EtsyMailAuth=(()=>{
     checkUsername:(username)=>transport("etsyMailAuth",{body:{op:"checkUsername",username}}),
   };
 
+  /** Sign-in time: the account signed in on this computer (never blocks or throws into the sign-in). */
+  function stationSignedIn(res){ try{ if(window.StationSession&&res&&res.username) StationSession.signedIn({name:String(res.displayName||res.username),id:String(res.username)}); }catch(_){} }
   function lock(){ try{document.body.classList.remove("authed");}catch(_){} if(ui&&ui.show){ try{ui.conn&&ui.conn(null,"");}catch(_){} ui.show("signin"); } }
   function emit(n,d){window.dispatchEvent(new CustomEvent(n,{detail:d}));}
   const hooks={onAuthed:null,onSignedOut:null,applyRole:null};
   let ui=null; const bindUI=u=>ui=u;
-  return {boot,signIn,signUp,signOut,validateInvite,onApiError,team,auth,bindUI,hooks,transport,lock,CAPS,ROLE_CAPS,ROLE_LABEL,NOTICE};
+  return {boot,signIn,signUp,signOut,validateInvite,onApiError,team,auth,bindUI,hooks,transport,lock,stationSignedIn,CAPS,ROLE_CAPS,ROLE_LABEL,NOTICE};
 })();
 
 (function(){
@@ -27685,6 +27691,28 @@ const EtsyMailAuth=(()=>{
     try{ closeTeam(); }catch(_){}
     if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} try{window.mNotifyThreadsChanged&&window.mNotifyThreadsChanged();}catch(_){} try{window.mNotifyMessagesChanged&&window.mNotifyMessagesChanged();}catch(_){} }
   };
+
+  /* Sign-in time per person and computer. The person is the operator account this browser holds a session for. At
+     midnight (New York) the session token and its cached identity go, the server session is ended best-effort, and the
+     sign-in screen covers the inbox. The thread list, the open thread and a reply being typed stay underneath, and
+     the next sign-in picks up where they are. */
+  function stationPerson(){
+    try{
+      if(!emReadSessionToken()) return null;
+      var u=A.auth.user||emReadSessionProfile();
+      return u&&u.username?{name:String(u.displayName||u.username),id:String(u.username)}:null;
+    }catch(_){ return null; }
+  }
+  function stationSignOut(reason){
+    try{ A.transport("etsyMailAuth",{body:{op:"logout"}}).catch(function(){}); }catch(_){}   // sends the token still held here
+    try{ emClearSessionToken(); }catch(_){}
+    try{ localStorage.removeItem("etsymail_session_user"); }catch(_){}
+    try{ A.auth.user=null; A.auth.phase="signin"; state.currentUser=null; state.isOwner=false; applyRoleVisibility(); }catch(_){}
+    try{ A.lock(); }catch(_){}
+    if(reason==="midnight"){ try{ ui.banner("signin","warn","Signed out at midnight. Sign in again to open the inbox."); }catch(_){} }
+    if(window.IS_MOBILE){ try{window.mNotifyAuthChanged&&window.mNotifyAuthChanged();}catch(_){} }
+  }
+  try{ if(window.StationSession) StationSession.init({station:"inbox",device:"etsy-mail-1",person:stationPerson,signOut:stationSignOut}); }catch(_){}
 
   /* deep-link invites (#invite=CODE) are handled by boot(); boot() itself
      is kicked off by bootstrapSession() during the app's DOMContentLoaded. */

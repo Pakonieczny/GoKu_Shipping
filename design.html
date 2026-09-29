@@ -4778,6 +4778,8 @@ const BritesChat = (() => {
     const commit = () => {
       const v = (inp.value || "").trim();
       if (v) { try { localStorage.setItem(LS.employee, v); } catch (_) {} }
+      // sign-in time: a name set here is the person signed in on this computer (the station has no PIN)
+      if (v && v !== cur) { try { if (window.StationSession) StationSession.signedIn({ name: v, id: "" }); } catch (_) {} }
       el.who.dataset.editing = "0";
       el.who.replaceChildren();
       const av = document.createElement("span"); av.className = "bcAv"; av.id = "bcWhoAv";
@@ -5247,6 +5249,8 @@ const BritesChat = (() => {
       if (el.send)   el.send.disabled = true;
       if (el.lb)     closeDlg(el.lb);
     },
+    /** The name was cleared (the midnight sign-out): the chat shows "Set your name" again. */
+    whoChanged() { if (wired) { try { paintWho(); render(); } catch (_) {} } },
     _state: S,
   };
 })();
@@ -6769,6 +6773,31 @@ window.DesignStation = {
   } catch (e) {
     console.warn("Storage uploader unavailable — image attachments disabled.", e);
   }
+</script>
+<!-- Sign-in time per person and computer, and the midnight sign-out (New York time) -->
+<script src="station-session.js?v=20260928-ss-k"></script>
+<script>
+(function () {
+  const framed = (() => { try { return window.self !== window.top; } catch (_) { return true; } })();
+  /* The Design Station has no PIN. The operator passcode is shared, so it names nobody: the person signed in is the
+     name set in the chat's "Set your name" field (employee_name). */
+  function person() {
+    try { const n = (localStorage.getItem("employee_name") || "").trim(); return n ? { name: n, id: "" } : null; } catch (_) { return null; }
+  }
+  /* At midnight the name goes, and a station on its own also drops this tab's passcode, so its own sign-in box asks
+     again (when a passcode is set). Framed in the sorter, the passcode is the sorter's and stays. Orders, selections,
+     drafts, Etsy's connection and anything typed stay on screen. */
+  function signOut(reason) {
+    try { localStorage.removeItem("employee_name"); } catch (_) {}
+    try { BritesChat.whoChanged(); } catch (_) {}
+    if (!framed) {
+      try { Passcode.set(""); } catch (_) {}
+      if (document.readyState !== "loading") { try { Passcode.gate().catch(() => {}); } catch (_) {} }   // while loading, boot asks
+    }
+    try { if (reason === "midnight") toast("Signed out at midnight. Sign back in and set your name in the chat.", "", 8000); } catch (_) {}
+  }
+  try { if (window.StationSession) StationSession.init({ station: "design", device: "design", person, signOut }); } catch (_) {}
+})();
 </script>
 </body>
 </html>
