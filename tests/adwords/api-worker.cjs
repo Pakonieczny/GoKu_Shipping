@@ -57,5 +57,11 @@ function load(file){const mod={exports:{}};const env={EDIT_PASSCODE:'test-pass',
  E.runAdDesign=async data=>{calls.push(['designRun',data]);return {ok:true,paused:true,dispatch:true,...data}};
  calls.length=0;await bg.handler({httpMethod:'POST',body:JSON.stringify({tasks:['adDesign'],workspaceId:'workspace-1',jobId:'job-1',token:'test-pass'})});assert.deepEqual(calls.map(x=>x[0]),['designRun','dispatch']);assert.equal(calls[1][1].jobId,'job-1');assert.equal(calls[1][1].tasks[0],'adDesign');count++;
  upstream=503;calls.length=0;r=await bg.handler({httpMethod:'POST',body:JSON.stringify({tasks:['adDesign'],workspaceId:'workspace-1',jobId:'job-1',token:'test-pass'})});assert.match(JSON.parse(r.body).log.join(' '),/Completed work is saved/);assert.equal(calls.filter(x=>x[0]==='dispatch').length,1);count++;
+ // Overview's Google serving check: a read behind the passcode like the rest, passing only the campaign ID.
+ E.servingCheck=async data=>{calls.push(['servingCheck',data]);return {serving:{ok:true,verdict:'ready'}};};
+ const servingEvent=(headers,data={})=>({httpMethod:'POST',headers,body:JSON.stringify({action:'servingCheck',id:'77',...data})});
+ calls.length=0;r=await api.httpHandler(servingEvent({'x-edit-passcode':'test-pass'},{start:'2026-09-01',force:true}));assert.equal(r.statusCode,200);assert.deepEqual(JSON.parse(r.body),{serving:{ok:true,verdict:'ready'}});assert.equal(JSON.stringify(calls),'[["servingCheck",{"id":"77"}]]');count++;
+ for(const h of [{},{'x-edit-passcode':'wrong'}]){calls.length=0;r=await api.httpHandler(servingEvent(h));assert.equal(r.statusCode,401);assert.equal(calls.length,0);}count++;
+ assert(ctx.isReadAction('servingCheck',{})&&!ctx.isReadAction('campaignTimeline',{}));r=await api.handleAction({action:'campaignTimeline',id:'77'});assert.match(String(r.error),/unknown action/);count++;
  console.log('PASS',count,'API / worker checks (authentication, approval gate, dispatch, status IDs, automation-off behavior)');
 })();
