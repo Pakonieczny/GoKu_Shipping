@@ -1,0 +1,568 @@
+{
+  "about": "Invented sample of what a Product ads (Performance Max) research run saves, in the shape of plans/pmax-research-contract-2026-09-29.md. Dates are relative to research.today (2026-09-29), so a test that prints days away must fix its clock to that day. opportunity is the fresh case (source ai; set research.source to computed and null whyNow.marketRead and whyNow.caution for the deterministic fallback), legacyOpportunity a suggestion saved before research existed, researchStatus the partial banner, scanAudit the checks behind its tiles, funnel and funnelNone the saved scan funnel with ideas and with none.",
+  "today": "2026-09-29",
+  "opportunity": {
+    "tag": "pmax|birthstone-charms|US",
+    "handle": "birthstone-charms",
+    "feedLabel": "US",
+    "collectionTitle": "Birthstone Charms",
+    "recommendationSchema": 1,
+    "itemIds": [
+      "shopify_US_7301_9001",
+      "shopify_US_7302_9002",
+      "shopify_US_7303_9003"
+    ],
+    "productTitles": [
+      "Personalised Birth Flower Charm Necklace, Sterling Silver",
+      "Dainty Initial Charm Necklace with Birthstone",
+      "Gold Filled Paperclip Chain Bracelet with Heart Charm"
+    ],
+    "dailyBudget": 12,
+    "days": 30,
+    "budgetCurrency": "USD",
+    "budgetCurrencyVerified": true,
+    "salesCurrency": "USD",
+    "evidenceDays": 90,
+    "paidPerformance": {
+      "available": true,
+      "monetaryComplete": true,
+      "currency": "USD",
+      "days": 90
+    },
+    "demandCoverage": {
+      "days30": true,
+      "days90": true,
+      "monetaryComplete": true
+    },
+    "seasonalityCoverage": {
+      "complete": true,
+      "startAt": 1762041600000
+    },
+    "rankingContext": {
+      "rank": 1,
+      "candidateCount": 9
+    },
+    "demandEvidence": [
+      {
+        "evidenceId": "birth-flower",
+        "title": "Personalised Birth Flower Charm Necklace, Sterling Silver",
+        "orders": 31,
+        "orders30d": 9,
+        "revenue": 1395,
+        "revenue30d": 405,
+        "monthly": [
+          {
+            "month": "2026-07",
+            "orders": 6,
+            "revenue": 270
+          },
+          {
+            "month": "2026-08",
+            "orders": 14,
+            "revenue": 630
+          }
+        ]
+      },
+      {
+        "evidenceId": "initial",
+        "title": "Dainty Initial Charm Necklace with Birthstone",
+        "orders": 22,
+        "orders30d": 7,
+        "revenue": 924,
+        "revenue30d": 294,
+        "monthly": [
+          {
+            "month": "2026-07",
+            "orders": 4,
+            "revenue": 168
+          },
+          {
+            "month": "2026-08",
+            "orders": 8,
+            "revenue": 336
+          }
+        ]
+      },
+      {
+        "evidenceId": "paperclip",
+        "title": "Gold Filled Paperclip Chain Bracelet with Heart Charm",
+        "orders": 9,
+        "orders30d": 2,
+        "revenue": 351,
+        "revenue30d": 78,
+        "monthly": [
+          {
+            "month": "2026-08",
+            "orders": 2,
+            "revenue": 78
+          }
+        ]
+      }
+    ],
+    "offerDetails": [
+      {
+        "itemId": "shopify_US_7301_9001",
+        "title": "Personalised Birth Flower Charm Necklace, Sterling Silver",
+        "evidenceIds": [
+          "birth-flower"
+        ],
+        "paidPerformance": {
+          "available": true,
+          "monetaryComplete": true,
+          "currency": "USD",
+          "days": 90,
+          "impressions": 6400,
+          "clicks": 96,
+          "conversions": 3,
+          "cost": 61.2,
+          "value": 135
+        },
+        "freePerformance": {
+          "days30": {
+            "available": true,
+            "impressions": 900,
+            "clicks": 41,
+            "conversions": 17,
+            "value": 765
+          }
+        }
+      },
+      {
+        "itemId": "shopify_US_7302_9002",
+        "title": "Dainty Initial Charm Necklace with Birthstone",
+        "evidenceIds": [
+          "initial"
+        ],
+        "paidPerformance": {
+          "available": true,
+          "monetaryComplete": true,
+          "currency": "USD",
+          "days": 90,
+          "impressions": 2100,
+          "clicks": 31,
+          "conversions": 1,
+          "cost": 35,
+          "value": 42
+        },
+        "freePerformance": {
+          "days30": {
+            "available": true,
+            "impressions": 500,
+            "clicks": 22,
+            "conversions": 11,
+            "value": 462
+          }
+        }
+      },
+      {
+        "itemId": "shopify_US_7303_9003",
+        "title": "Gold Filled Paperclip Chain Bracelet with Heart Charm",
+        "evidenceIds": [
+          "paperclip"
+        ],
+        "paidPerformance": {
+          "available": true,
+          "monetaryComplete": true,
+          "currency": "USD",
+          "days": 90,
+          "impressions": 0,
+          "clicks": 0,
+          "conversions": 0,
+          "cost": 0,
+          "value": 0
+        },
+        "freePerformance": {
+          "days30": {
+            "available": true,
+            "impressions": 210,
+            "clicks": 6,
+            "conversions": 3,
+            "value": 117
+          }
+        }
+      }
+    ],
+    "research": {
+      "version": 1,
+      "at": 1790700600000,
+      "today": "2026-09-29",
+      "source": "ai",
+      "model": "Sonnet 5.5",
+      "headline": "Birth flower and birthstone charms fit the Christmas gift window: 87 days out, and 62 recent orders show buyers already choose them.",
+      "whyNow": {
+        "summary": "Christmas is 87 days away, which leaves room for the six weeks a product campaign needs to learn and still finish before the last gift orders. Your buyers chose these listings 62 times in the last 90 days, and free listings are already converting.",
+        "timing": [
+          {
+            "label": "Christmas",
+            "date": "2026-12-25",
+            "daysAway": 87,
+            "market": "US",
+            "role": "main",
+            "startBy": "2026-11-13",
+            "note": "Gift shoppers search for personalised jewellery from early November; learning has to finish before then."
+          },
+          {
+            "label": "Canadian Thanksgiving",
+            "date": "2026-10-12",
+            "daysAway": 13,
+            "market": "CA",
+            "role": "too-late",
+            "startBy": "2026-08-31",
+            "note": "Only 13 days out, not enough time for a new campaign to learn before the weekend."
+          },
+          {
+            "label": "Valentine's Day",
+            "date": "2027-02-14",
+            "daysAway": 138,
+            "market": "US",
+            "role": "also",
+            "startBy": "2027-01-03",
+            "note": "A second window for the same gift buyers; the campaign can carry on into it."
+          }
+        ],
+        "evidence": [
+          "62 orders matched these three listings in the last 90 days, 18 of them in the last 30.",
+          "The best complete month so far was August, with 24 orders.",
+          "Free Merchant Center listings converted 31 times in 30 days.",
+          "Paid product ads have reported 4 conversions from USD 96.20 of spend.",
+          "All three listings are in stock and approved in Merchant Center for the US feed."
+        ],
+        "marketRead": "Searches for birth flower and birthstone gifts usually start climbing in early November and peak in the two weeks before Christmas. Personalised pieces sell out of shipping slots earlier than ready-made ones.",
+        "caution": "Birth flower necklaces are widely advertised, so click costs may be high before the season peaks."
+      },
+      "listingFit": [
+        {
+          "itemId": "shopify_US_7301_9001",
+          "title": "Personalised Birth Flower Charm Necklace, Sterling Silver",
+          "reason": "Best seller with 31 orders; the birth flower is the most searched gift theme in the set.",
+          "role": "hero"
+        },
+        {
+          "itemId": "shopify_US_7302_9002",
+          "title": "Dainty Initial Charm Necklace with Birthstone",
+          "reason": "22 orders and a strong free-listing conversion rate; pairs with the birth flower piece as a set.",
+          "role": "support"
+        },
+        {
+          "itemId": "shopify_US_7303_9003",
+          "title": "Gold Filled Paperclip Chain Bracelet with Heart Charm",
+          "reason": "Lower price point that suits stocking-filler searches; only 9 orders so far.",
+          "role": "support"
+        }
+      ],
+      "keywords": [
+        {
+          "text": "birth flower necklace",
+          "reason": "Names the lead listing's product type exactly.",
+          "kind": "product",
+          "monthlySearches": 4400,
+          "competition": "medium"
+        },
+        {
+          "text": "christmas gift for her jewelry",
+          "reason": "The occasion shoppers use in the weeks before Christmas.",
+          "kind": "occasion",
+          "monthlySearches": 2900,
+          "competition": "high"
+        },
+        {
+          "text": "personalised necklace for mom",
+          "reason": "A recipient search that matches the personalised listings.",
+          "kind": "recipient",
+          "monthlySearches": 1600,
+          "competition": "medium"
+        },
+        {
+          "text": "sterling silver charm necklace",
+          "reason": "The material buyers filter on for the lead listing.",
+          "kind": "material",
+          "monthlySearches": 880,
+          "competition": "low"
+        },
+        {
+          "text": "birthstone charm gift",
+          "reason": "Fits the initial and birthstone pieces; no volume was returned.",
+          "kind": "style",
+          "monthlySearches": null,
+          "competition": null
+        }
+      ],
+      "creativeAngles": [
+        "A birth flower for every family member",
+        "Ready to gift: packaged, personalised, ships before Christmas",
+        "Wear the month she was born"
+      ],
+      "sources": [
+        {
+          "title": "Holiday gift shopping outlook",
+          "url": "https://retail.example.com/holiday-gift-outlook"
+        },
+        {
+          "title": "Trends for birth flower jewellery",
+          "url": "https://trends.example.org/explore?q=birth%20flower%20necklace&geo=US"
+        }
+      ],
+      "limits": [
+        "Order history only reaches back to November 2025, so last year's Christmas season cannot be checked.",
+        "Keyword volumes are for US searches; Canadian volumes were not returned."
+      ]
+    }
+  },
+  "legacyOpportunity": {
+    "tag": "pmax|pet-charms|US",
+    "handle": "pet-charms",
+    "feedLabel": "US",
+    "collectionTitle": "Pet Charms",
+    "recommendationSchema": 1,
+    "itemIds": [
+      "shopify_US_7401_9101",
+      "shopify_US_7402_9102"
+    ],
+    "productTitles": [
+      "Corgi Charm Necklace",
+      "Fox Charm Necklace"
+    ],
+    "dailyBudget": 10,
+    "days": 30,
+    "budgetCurrency": "USD",
+    "budgetCurrencyVerified": true,
+    "evidenceDays": 90,
+    "rationale": "Saved before the research existed.",
+    "demandCoverage": {
+      "days30": true,
+      "days90": true,
+      "monetaryComplete": true
+    },
+    "demandEvidence": [
+      {
+        "evidenceId": "corgi",
+        "title": "Corgi Charm Necklace",
+        "orders": 12,
+        "orders30d": 4,
+        "revenue": 528,
+        "revenue30d": 176,
+        "monthly": [
+          {
+            "month": "2026-08",
+            "orders": 5,
+            "revenue": 220
+          }
+        ]
+      },
+      {
+        "evidenceId": "fox",
+        "title": "Fox Charm Necklace",
+        "orders": 6,
+        "orders30d": 1,
+        "revenue": 264,
+        "revenue30d": 44
+      }
+    ],
+    "offerDetails": [
+      {
+        "itemId": "shopify_US_7401_9101",
+        "title": "Corgi Charm Necklace",
+        "evidenceIds": [
+          "corgi"
+        ]
+      },
+      {
+        "itemId": "shopify_US_7402_9102",
+        "title": "Fox Charm Necklace",
+        "evidenceIds": [
+          "fox"
+        ]
+      }
+    ]
+  },
+  "researchStatus": {
+    "pmax": {
+      "status": "partial",
+      "checkedAt": 1790700600000,
+      "message": "Research refreshed. Partial data from: Paid product history (Google returned no spend for these products); Keyword volumes (planner rate-limited). The ideas use what was available.",
+      "unavailable": [
+        {
+          "id": "pmax_paid_product_reporting",
+          "label": "Paid product history",
+          "reason": "Google returned no spend for these products"
+        },
+        {
+          "id": "keyword_volumes",
+          "label": "Keyword volumes",
+          "reason": "planner rate-limited"
+        }
+      ]
+    },
+    "search": {
+      "status": "ready",
+      "checkedAt": 1790700600000,
+      "message": "Research results are saved.",
+      "unavailable": []
+    }
+  },
+  "scanAudit": {
+    "engineVersion": "14.0.0",
+    "status": "completed",
+    "checks": [
+      {
+        "id": "pmax_merchant_catalogue",
+        "channel": "pmax",
+        "category": "Merchant Center",
+        "label": "Product availability",
+        "status": "ok",
+        "detail": "9 live offers read."
+      },
+      {
+        "id": "pmax_store_signals",
+        "channel": "pmax",
+        "category": "Store",
+        "label": "Store sales",
+        "status": "ok",
+        "detail": "90 days of orders read."
+      },
+      {
+        "id": "pmax_merchant_organic_30d",
+        "channel": "pmax",
+        "category": "Merchant Center",
+        "label": "Free listing sales, 30 days",
+        "status": "ok",
+        "detail": "Report returned."
+      },
+      {
+        "id": "pmax_merchant_organic_90d",
+        "channel": "pmax",
+        "category": "Merchant Center",
+        "label": "Free listing sales, 90 days",
+        "status": "ok",
+        "detail": "Report returned."
+      },
+      {
+        "id": "pmax_paid_product_reporting",
+        "channel": "pmax",
+        "category": "Google Ads API",
+        "label": "Paid product history",
+        "status": "ok",
+        "detail": "Report returned."
+      }
+    ]
+  },
+  "reconciliation": { "ok": true },
+  "funnel": {
+    "at": 1790700600000,
+    "verdict": "2 ideas shown from 9 collections.",
+    "stages": [
+      {
+        "key": "collections",
+        "label": "Collections looked at",
+        "count": 9,
+        "note": "Every collection with a saved product profile."
+      },
+      {
+        "key": "sales",
+        "label": "With store sales in 90 days",
+        "count": 6,
+        "note": "3 collections had no recent sales."
+      },
+      {
+        "key": "feed",
+        "label": "Matched to a live product",
+        "count": 4,
+        "note": "2 had no in-stock, approved product in the feed."
+      },
+      {
+        "key": "campaign",
+        "label": "Without a campaign or draft",
+        "count": 3,
+        "note": "1 already has a campaign or review draft."
+      },
+      {
+        "key": "overlap",
+        "label": "After removing overlaps",
+        "count": 2,
+        "note": "1 overlapped a stronger idea."
+      },
+      {
+        "key": "shown",
+        "label": "Shown",
+        "count": 2,
+        "note": ""
+      }
+    ],
+    "skipped": [
+      {
+        "title": "Bracelets",
+        "feedLabel": "US",
+        "reason": "overlaps the stronger idea 'Birthstone Charms' (same products)"
+      },
+      {
+        "title": "Anklets",
+        "feedLabel": "CA",
+        "reason": "no sales in the last 90 days matched a product in the feed"
+      },
+      {
+        "title": "Keychains",
+        "feedLabel": "US",
+        "reason": "its feed products are out of stock or not approved"
+      },
+      {
+        "title": "Zodiac Charms",
+        "feedLabel": "US",
+        "reason": "already has a campaign or review draft"
+      }
+    ]
+  },
+  "funnelNone": {
+    "at": 1790700600000,
+    "verdict": "None qualified: the Merchant Center product list could not be read (Google Ads returned a quota limit).",
+    "stages": [
+      {
+        "key": "collections",
+        "label": "Collections looked at",
+        "count": 9,
+        "note": ""
+      },
+      {
+        "key": "sales",
+        "label": "With store sales in 90 days",
+        "count": 6,
+        "note": ""
+      },
+      {
+        "key": "feed",
+        "label": "Matched to a live product",
+        "count": 0,
+        "note": "The product list was unavailable."
+      },
+      {
+        "key": "campaign",
+        "label": "Without a campaign or draft",
+        "count": 0,
+        "note": ""
+      },
+      {
+        "key": "overlap",
+        "label": "After removing overlaps",
+        "count": 0,
+        "note": ""
+      },
+      {
+        "key": "shown",
+        "label": "Shown",
+        "count": 0,
+        "note": ""
+      }
+    ],
+    "skipped": [
+      {
+        "title": "Birthstone Charms",
+        "feedLabel": "US",
+        "reason": "its feed products could not be checked because the Merchant Center product list was unavailable"
+      },
+      {
+        "title": "Pet Charms",
+        "feedLabel": "US",
+        "reason": "its feed products could not be checked because the Merchant Center product list was unavailable"
+      }
+    ]
+  }
+}
