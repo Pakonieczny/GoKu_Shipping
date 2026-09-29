@@ -112,7 +112,6 @@
     "googleAdsAutopilotApi.js",
     "googleAdsAutopilotKick.js",
     "googleAdsDiag.js",
-    "googleAdsRepair.js",
     "googleAttributes-background.js",
     "googleAttributes.js",
     "googleConnectionsCheck.js",

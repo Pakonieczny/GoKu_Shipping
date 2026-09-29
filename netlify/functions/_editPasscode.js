@@ -1,7 +1,7 @@
 // netlify/functions/_editPasscode.js
 // ─────────────────────────────────────────────────────────────────────────────
 // The passcode for the Brites Adwords console (googleAdsAutopilotApi → Kick), its
-// background worker, its check pages (_adsCheckGate.js) and googleAdsRepair.
+// background worker and its check pages (_adsCheckGate.js).
 // Kept in Firestore beside the site's other runtime settings, because Netlify
 // environment variables are a limited resource on this site:
 //

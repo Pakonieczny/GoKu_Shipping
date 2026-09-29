@@ -17,7 +17,7 @@
 //
 // Only GAQL searches are issued (the caller's gaql function); nothing here can change
 // the account. Every read is isolated: a failing query becomes a warning in the result,
-// never an error, so the campaign timeline that shows this can never break because of it.
+// never an error, so the Overview check and the daily pass that show it never break.
 //
 // Levels:  block — Google will not serve it (or its core part) until this is fixed.
 //          risk  — it serves, but not the way Paul intends, or it can waste money.

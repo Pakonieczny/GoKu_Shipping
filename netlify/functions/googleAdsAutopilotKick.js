@@ -69,7 +69,7 @@ function workerToken() { return internalToken() || EP.envPasscode() || undefined
 const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)";
 // Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
 // change. Every other action — including any action not listed here — is treated as a change.
-const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
+const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "servingCheck", "countries", "designStudioStatus", "collections", "genStatus"]);
 READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
@@ -376,8 +376,9 @@ async function handleAction(body) {
       catch (e) { await E.setGenStatus(genId, { phase: "done", ok: false, kind: "campaign-analysis", campaignId: id, error: e.message }).catch(() => {}); throw e; }
     } catch (e) { return { error: e.message }; }
   }
-  if (a === "campaignTimeline") {
-    try { return await E.campaignTimeline({ id: body.id }); }
+  // Overview's Google serving check: the serving check alone (read-only; kept for the badge).
+  if (a === "servingCheck") {
+    try { return await E.servingCheck({ id: body.id }); }
     catch (e) { return { error: e.message }; }
   }
   if (a === "setStatus") {
