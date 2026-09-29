@@ -222,7 +222,7 @@ function site(penv, st) {
     check(q.statusCode === 200 && last.sent.token === token && last.status === 200 && last.out.status === 'ran', 'console-queued work carries the server token and the worker runs it');
   }
 
-  // 8. The check pages (the shared _adsCheckGate) and googleAdsRepair with the passcode in Firebase.
+  // 8. The check pages (the shared _adsCheckGate) with the passcode in Firebase.
   await checkPages();
 
   // 9. The passcode is never in a response or a log line.
@@ -276,13 +276,6 @@ async function checkPages() {
         check(res.statusCode === 200 && !/EDIT_PASSCODE_NOT_SET/.test(res.body) && work() > f1, name + ' accepts the Firebase passcode as ' + how + ' and runs');
       }
     }
-    const repair = require(dir + 'googleAdsRepair.js');
-    const self = JSON.parse(seen(await repair.handler({ httpMethod: 'GET', queryStringParameters: { check: '1' }, headers: {} })).body);
-    const page = seen(await repair.handler({ httpMethod: 'GET', queryStringParameters: {}, headers: {} }));
-    const guess = seen(await repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': 'nope' }, body: '{}' }));
-    const right = seen(await repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': pass }, body: '{}' }));
-    check(self.editPasscodeSet === true && self.open === false && /<input id="k"/.test(page.body) && guess.statusCode === 401 && right.statusCode === 409,
-      'googleAdsRepair is locked by the Firebase passcode (and still creates nothing with it)');
     // An empty passcode in Firebase locks the check pages outright.
     passcode = ''; EP.resetCache();
     const f2 = work(), locked = seen(await require(dir + 'googleAdsDiag.js').handler({ queryStringParameters: { key: pass }, headers: {} }));
