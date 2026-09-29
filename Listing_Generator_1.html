@@ -5143,6 +5143,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
       } catch (_) {}
 
       const isViewing = (CURRENT_SET?.outputBasePath === ctxSetPath);
+      // The slot's picture before "Working…" replaced it, and whether an image
+      // request has been sent yet. A Redo that stops BEFORE any request (for
+      // example: the set's own charm cannot be confirmed) changed nothing, so
+      // the picture is put back instead of being replaced by "Error".
+      let priorPreview = null;
+      let requestSent = false;
       
       if (isViewing) {
           const targetGrid = prefix === 'gen' ? generateGrid : reviewGrid;
@@ -5152,6 +5158,7 @@ html.gs-locked body > *:not(#gate){display:none!important}
           
           if (redoBtn) redoBtn.disabled = true;
           if (prevBox) {
+              priorPreview = { html: prevBox.innerHTML, ok: prevBox.classList.contains("success-border") };
               prevBox.innerHTML = `<div class="slotRefEmpty">Working…</div>`;
               prevBox.classList.remove("success-border"); 
           }
@@ -5183,8 +5190,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
       // because every charm has been moved to the Used pool) is pure
       // waste and a real failure point in that mode. Charm files may be
       // moved out of New_Charms/ once they have been used, so resolveOriginalCharm
-      // reads the manifest written at alloc time and falls back through
-      // several layers before it ever resorts to "latest in folder".
+      // reads the manifest written at alloc time and finds that charm's file
+      // by name. It never substitutes another charm: if the set's own charm
+      // cannot be confirmed it throws and this Redo stops before any image
+      // is requested.
       // A targeted Charm_Types correction still needs the master charm as
       // image 2; otherwise Gemini has no pixel-truth source from which to
       // restore missing or distorted engraving detail.
@@ -5192,11 +5201,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
         const isEarring = ["Stud_Earrings", "Hoop_Earrings"].includes(ctxCategory);
         const charmFolderPath = isEarring ? newCharmsEarringsPath() : newCharmsPath();
         charmLatest = await resolveOriginalCharm(ctxSetPath, slotIndex, charmFolderPath);
-        if (!charmLatest) throw new Error(`No charm available for redo (manifest sourceCharm missing and no files in ${charmFolderPath}/)`);
+        if (!charmLatest) throw new Error("this set's own charm could not be found, so Redo stopped. Nothing was changed and no image was made.");
       }
       
 
           if (spec.type === "copy") {
+            requestSent = true;
             const r = await postJson(GEMINI_FN, {
               kind: "copy_to_slot",
               activeCategory: ctxCategory,
@@ -5306,6 +5316,7 @@ The output must look like the input image with ONLY the user's requested change 
             };
             if (charmPath) editsBody.input_charm_storage_path = charmPath;
 
+            requestSent = true;
             await postImageGeneration(editsBody, undefined, redoModel);
 
               waitedResult = await waitForSlotPngUrl(ctxSetPath, slotIndex, {
@@ -5358,7 +5369,10 @@ The output must look like the input image with ONLY the user's requested change 
           updateApproveButtonState(); 
           if (CURRENT_SET?.outputBasePath === ctxSetPath) {
              const prevBox = document.getElementById(`${prefix}_slotPrev_${slotIndex}`);
-             if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
+             if (prevBox && priorPreview && !requestSent) {
+               prevBox.innerHTML = priorPreview.html;
+               if (priorPreview.ok) prevBox.classList.add("success-border");
+             } else if (prevBox) prevBox.innerHTML = `<div class="slotRefEmpty">Error</div>`;
              const redoBtn = document.getElementById(`${prefix}_redo_${slotIndex}`);
              if (redoBtn) redoBtn.disabled = false;
              setStatus("Redo failed: " + err.message);
@@ -5634,29 +5648,39 @@ The output must look like the input image with ONLY the user's requested change 
 
     /**
      * Resolves the original charm allocated to a listing, no matter where the
-     * charm file currently lives. Resolution priority:
-     *   1. manifest.sourceCharm (path locked in at allocation time)
-     *   2. If that path 404s, search by manifest.sourceCharmName across the
-     *      known charm folders and one level of subfolders. This handles the
-     *      "charms get moved out of New_Charms once used" workflow.
-     *   3. Per-slot newCharm field on the slot record (set during a previous
-     *      successful gen/redo).
-     *   4. Last-resort legacy fallback: listLatestFile(folder). This preserves
-     *      pre-fix behavior for old listings whose manifests were written
-     *      before sourceCharm existed.
-     * Returns the same shape as listLatestFile: { fullPath, name, url } or null.
+     * charm file currently lives. A set has exactly ONE charm and Redo must
+     * only ever use that one, so the answer comes from the set's own record:
+     *   1. manifest.sourceCharm (locked in at allocation / batch collection)
+     *   2. otherwise the charm most of the set's slots were built with
+     *      (per-slot newCharm, by file name; a tie is refused, never guessed)
+     * Then the charm FILE is found by that file name: the recorded path first,
+     * then the charm pools (a used charm moves from New_Charms/ to the Used
+     * pool once its batch is collected).
+     * There is deliberately NO "latest file in New_Charms" fallback. A set with
+     * no manifest yet (a stalled batch still being finished) or with a charm
+     * that can no longer be found stops Redo with a message instead of
+     * composing the slot with an unrelated charm.
+     * Returns { fullPath, name, url }, or throws with a message for the operator.
      */
     async function resolveOriginalCharm(setPath, slotIndex, fallbackFolderPath) {
       await ensureStorageSignedIn();
 
-      // Read the listing manifest
+      // Read the listing manifest. A missing or unreadable manifest means the
+      // set's charm cannot be confirmed, so Redo stops.
       let manifest = null;
+      let manifestError = null;
       try {
         const buf = await getBytes(ref(storage, `${setPath}/manifest.json`));
         manifest = JSON.parse(new TextDecoder().decode(buf));
-      } catch (_) { /* manifest missing / unreadable — handled below */ }
+      } catch (e) { manifestError = e; }
+      if (!manifest) {
+        const notFound = /object-not-found|not found|does not exist/i.test(String(manifestError?.code || "") + " " + String(manifestError?.message || ""));
+        throw new Error(notFound
+          ? "this set has no record of its charm yet (its batch is still being finished), so Redo is off for it until that is done. Nothing was changed and no image was made."
+          : "the set's charm record could not be read just now. Try again in a moment. Nothing was changed and no image was made.");
+      }
 
-      // Helper: shape result like listLatestFile (fullPath, name, url)
+      // Helper: shape result (fullPath, name, url)
       const toResolved = async (fullPath) => {
         const r = ref(storage, fullPath);
         const url = await getDownloadURL(r);
@@ -5713,57 +5737,58 @@ The output must look like the input image with ONLY the user's requested change 
         return null;
       };
 
-      // Build the list of "candidate paths to try" from the manifest, in
-      // priority order. Then try each verbatim, then by filename. This
-      // structure handles both flavors of manifest:
-      //   • Standard-mode (writes top-level sourceCharm + per-slot newCharm)
-      //   • Batch-collect (writes per-slot newCharm only — sourceCharm
-      //     absent on existing batch-generated listings)
-      const candidatePaths = [];
-      if (manifest?.sourceCharm) candidatePaths.push(manifest.sourceCharm);
-      if (Array.isArray(manifest?.slots)) {
-        // This slot's recorded charm comes first.
-        const thisSlot = manifest.slots.find(s => s?.slot === slotIndex + 1);
-        if (thisSlot?.newCharm) candidatePaths.push(thisSlot.newCharm);
-        // Then every other slot's charm (in batch mode all gen slots in
-        // a set share the same charm, so any slot's record can rescue us
-        // even if THIS slot's record is incomplete).
+      // Which charm is this set's? Recorded paths are grouped by charm FILE
+      // NAME (the folder part goes stale as the charm moves between pools).
+      const nameOf = (p) => String(p || "").split("/").pop();
+      const recorded = new Map(); // charm file name -> recorded paths, in manifest order
+      const note = (p) => {
+        const n = nameOf(p);
+        if (!n) return;
+        if (!recorded.has(n)) recorded.set(n, []);
+        if (!recorded.get(n).includes(p)) recorded.get(n).push(p);
+      };
+      let charmName = null;
+      if (manifest.sourceCharm || manifest.sourceCharmName) {
+        // Locked in when the set was allocated / collected: the set's charm.
+        charmName = String(manifest.sourceCharmName || nameOf(manifest.sourceCharm));
+        if (manifest.sourceCharm) note(manifest.sourceCharm);
+      }
+      // Every slot's recorded charm supplies paths to try (and, when no
+      // sourceCharm was recorded, the vote for which charm the set has).
+      const votes = new Map();
+      if (Array.isArray(manifest.slots)) {
         for (const s of manifest.slots) {
-          if (s?.newCharm && !candidatePaths.includes(s.newCharm)) {
-            candidatePaths.push(s.newCharm);
-          }
+          if (!s?.newCharm) continue;
+          note(s.newCharm);
+          const n = nameOf(s.newCharm);
+          votes.set(n, (votes.get(n) || 0) + 1);
         }
       }
-
-      // Step 1: try each candidate path verbatim. Quick path for
-      // listings whose charms haven't been moved out of the original
-      // location yet.
-      for (const p of candidatePaths) {
-        if (await fileExists(p)) {
-          return await toResolved(p);
+      if (!charmName) {
+        const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+        if (!ranked.length) {
+          throw new Error("this set has no record of its charm, so Redo cannot tell which charm to use. Nothing was changed and no image was made.");
         }
+        if (ranked.length > 1 && ranked[0][1] === ranked[1][1]) {
+          throw new Error(`this set's slots were built with different charms (${ranked.map(([n, c]) => `${n} x${c}`).join(", ")}), so Redo cannot tell which one is its own. Nothing was changed and no image was made.`);
+        }
+        charmName = ranked[0][0];
       }
 
-      // Step 2: search by filename across known charm folders. This is
-      // what catches batch-generated listings whose charms have been
-      // moved to Used_*_Charm_Pool/ post-collection.
-      const candidateNames = new Set();
-      if (manifest?.sourceCharmName) candidateNames.add(manifest.sourceCharmName);
-      for (const p of candidatePaths) {
-        const n = p.split("/").pop();
-        if (n) candidateNames.add(n);
-      }
-      for (const name of candidateNames) {
-        const found = await findByName(name);
-        if (found) return await toResolved(found);
+      // Step 1: the recorded paths for THIS charm, verbatim. Quick path for
+      // listings whose charm has not been moved out of its folder yet.
+      for (const p of recorded.get(charmName) || []) {
+        if (await fileExists(p)) return await toResolved(p);
       }
 
-      // Step 3: legacy last resort. Only reached for listings with no
-      // manifest at all (extremely rare — would mean alloc_set ran but
-      // nothing else did) or with a manifest that has no charm refs of
-      // any kind.
-      console.warn(`[resolveOriginalCharm] No manifest reference resolved; falling back to listLatestFile("${fallbackFolderPath}").`);
-      return await listLatestFile(fallbackFolderPath);
+      // Step 2: the same file name across the known charm folders. This is
+      // what catches batch-generated listings whose charm has been moved to
+      // Used_*_Charm_Pool/ post-collection.
+      const found = await findByName(charmName);
+      if (found) return await toResolved(found);
+
+      // Step 3: nothing. Never a different charm.
+      throw new Error(`this set's own charm (${charmName}) could not be found in any charm folder, so Redo stopped. Nothing was changed and no image was made.`);
     }
 
     // Function to retrieve top N latest files from storage

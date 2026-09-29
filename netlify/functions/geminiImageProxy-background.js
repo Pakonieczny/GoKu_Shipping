@@ -283,6 +283,50 @@ async function findMovedCharmPoolFile(bucket, p) {
   return null;
 }
 
+// A set has exactly one charm. Redo of a slot of a saved set (and any other
+// edit into a set that already has a manifest) must be composed with THAT
+// charm. The page guards this too, but a browser tab opened before the guard
+// shipped can still send whatever charm it picked, so the server checks the
+// request against the set's own record. Only positive evidence stops a request:
+// no readable manifest, or no charm recorded in it, lets the request through.
+function charmNameOfSetManifest(m) {
+  const base = (p) => String(p || "").split("/").pop();
+  const named = base(m?.sourceCharmName) || base(m?.sourceCharm);
+  if (named) return named;
+  const votes = new Map();
+  for (const s of Array.isArray(m?.slots) ? m.slots : []) {
+    const n = base(s?.newCharm);
+    if (n) votes.set(n, (votes.get(n) || 0) + 1);
+  }
+  const ranked = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+  if (!ranked.length || (ranked.length > 1 && ranked[0][1] === ranked[1][1])) return null;
+  return ranked[0][0];
+}
+
+// The charm the page sends is the charm file or a derived copy of it (rotated or
+// hoop-repaired), whose path carries the charm's file name.
+function charmPathIsCharm(p, name) {
+  const s = String(p || "");
+  return s.includes(name) || s.includes(name.replace(/[^A-Za-z0-9._-]/g, "_"));
+}
+
+async function assertCharmBelongsToSet(category, outputBasePath, charmPath) {
+  const p = String(charmPath || "").trim();
+  if (!p || category === "Charms") return;
+  if (!/^listing-generator-1\/[^/]+\/Ready_To_List\/Set_\d+$/i.test(String(outputBasePath || ""))) return;
+  let manifest = null;
+  try {
+    const [buf] = await getBucket().file(`${outputBasePath}/manifest.json`).download();
+    manifest = JSON.parse(buf.toString("utf8"));
+  } catch {
+    return;
+  }
+  const name = charmNameOfSetManifest(manifest);
+  if (!name || charmPathIsCharm(p, name)) return;
+  console.warn(`[edits] refused: ${outputBasePath} belongs to ${name}, request carried ${p}`);
+  throw new Error(`this set's charm is ${name}, but the request carried a different charm (${p.split("/").pop()}). Nothing was changed and no image was made.`);
+}
+
 async function storagePathToBuffer(storagePath) {
   const p = String(storagePath || "").trim();
   if (!p) throw new Error("input_storage_path must be a non-empty string");
@@ -16281,6 +16325,7 @@ async function _handlerImpl(event) {
 
       const outputBasePath = assertAllowedOutputBase(output_base_path);
       const effectiveSlot = Number.isFinite(Number(slotIndex)) && Number(slotIndex) >= 0 ? Number(slotIndex) : 0;
+      await assertCharmBelongsToSet(cat, outputBasePath, basePath1);
 
       const img0 = await storagePathToBuffer(basePath0);
       const img1 = basePath1 ? await storagePathToBuffer(basePath1) : null;
@@ -16697,6 +16742,8 @@ async function _handlerImpl(event) {
       if (!input_image && !input_storage_path) {
         return json(400, { error: { message: "Missing input_image or input_storage_path" } });
       }
+
+      await assertCharmBelongsToSet(normalizeCategory(activeCategory), output_base_path, input_charm_storage_path);
 
       const ref = input_storage_path
         ? await storagePathToBuffer(input_storage_path)
