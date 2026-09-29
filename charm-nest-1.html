@@ -711,7 +711,11 @@ dialog.phv.layer.phvIn{background:transparent}
 #orderWin.owFull .owMain{grid-template-columns:var(--owPics) minmax(0,1fr);gap:22px;padding:18px 22px 28px 18px;overflow:auto}
 #orderWin.owFull .owChat{border-left:1px solid var(--line)}
 #orderWin.owFull .owVTime{display:flex;flex-direction:column;overflow:auto}
-#orderWin.owFull .owTimeline{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+/* the whole Timeline tab is one page: .owVTime is the only scroller, and the chart and the details under it keep their own
+   height (never squeezed to a sliver) and scroll together; the chart's own sideways scroll stays on .tlScroll */
+#orderWin.owFull .owTimeline{flex:1 0 auto;display:flex;flex-direction:column}
+#orderWin.owFull .owTimeline .tlUI:not(.compact){flex:1 0 auto;min-height:auto}
+#orderWin.owFull .owTimeline .tlUI:not(.compact) .tlDetail{flex:1 0 auto;min-height:auto;overflow:visible}
 /* one thin header and one tab row (spec §1, §5): the header's rail and pill already say where the order is, so the
    timeline's own Now and rail strip is not drawn a second time here, and its filters are in the tab row */
 #orderWin.owFull .owTimeline .tlUI:not(.compact)>.tlTop{display:none}
@@ -807,6 +811,8 @@ dialog.phv.layer.phvIn{background:transparent}
 .owSide>.owPanel{flex:none;border-left:0;overflow:visible}
 #orderWin.owFull .owSide>.owChat{flex:1 0 360px;min-height:360px;border-left:0;border-top:1px solid var(--line)}
 @media (max-width:900px){
+  #orderWin.owFull .owBox{grid-template-columns:minmax(0,1fr)}   /* the views take the screen's width; the header's own width no longer stretches them past it */
+  #orderWin.owFull .owId{flex:none}   /* (and the title keeps its room, as it had when the header was as wide as it wanted) */
   #orderWin.owFull .owRail{display:none}
   #orderWin.owFull .owVInfo,#orderWin.owFull .owVSheet{grid-template-columns:minmax(0,1fr);overflow:auto}
   #orderWin.owFull .owMain{grid-template-columns:minmax(0,1fr);overflow:visible}
