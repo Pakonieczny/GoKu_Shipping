@@ -1,9 +1,12 @@
 // Adversarial: a cancelled order on sheets that are cut, released or labelled (AutoCancel, charm-nest-sheetwin.js).
 // A Gold sheet released for cutting (orders A, B) and a Silver sheet already cut (orders D, E), over the local stand-in
 // for the site (bridge-server.cjs). Checks:
-//   1. A cancelled while its piece sits on the released sheet: the piece stays, nothing is nested again, and its line is
-//      kept as gone, so the set's readiness does not wait on an engraving decision for it for good (a dropped line left
-//      the piece "unidentified": CharmNestReadiness.decisions had no entry, and the set could never be released);
+//   1. A cancelled while its piece sits on the released sheet (released for cutting, not cut: Paul, 29 Sep, a cancelled
+//      order's pieces come off every sheet the laser has not cut): the piece comes off, the sheet is nested again and
+//      written, the order's line leaves Orders, and nothing is set aside;
+//   1b. F cancelled while its piece sits on a sheet that is cut: the piece stays, its line is kept as gone, so the set's
+//      readiness does not wait on an engraving decision for it for good (a dropped line left the piece "unidentified":
+//      CharmNestReadiness.decisions had no entry, and the set could never be released);
 //   2. D cancelled on the cut sheet, then restored here (Orders › Cancelled): the set-aside notice goes with it;
 //   3. E cancelled, then restored at another screen: the next check drops its notice;
 //   4. the notices survive a reload, and Set aside clears only its own order's.
@@ -12,12 +15,12 @@ const fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, Timestamp } = require('./bridge-server.cjs');
 
-const A = '4200000001', B = '4200000002', D = '4200000004', E = '4200000005';
+const A = '4200000001', B = '4200000002', D = '4200000004', E = '4200000005', F = '4200000006';
 const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
 const SHEETS = 'Charm_Nest_Sheets', POOL = 'Charm_Pool', CANCELLED = 'Charm_Nest_Cancelled';
-const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1]];
+const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1], [F, 6, 1]];
 
 (async () => {
   const srv = await start({ receipts: [] });
@@ -26,7 +29,7 @@ const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1]];
   saved('gold-rel-1', 'gold', GOLD); saved('silver-cut-1', 'silver', SILVER);
   for (const [r, t, c] of GOLD) st.put(POOL, pid(r, t, c), { poolId: pid(r, t, c), orderId: r, sheetId: 'gold-rel-1', state: 'written', material: 'gold' });
   for (const [r, t, c] of SILVER) st.put(POOL, pid(r, t, c), { poolId: pid(r, t, c), orderId: r, sheetId: 'silver-cut-1', state: 'committed', material: 'silver' });
-  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [] }, extra), false);
+  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [], createdAt: Timestamp.now() }, extra), false);
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
@@ -77,7 +80,7 @@ const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1]];
   try {
     await page.goto(`${sorterOrigin}/charm-nest-1.html`);
     await boot();
-    await page.evaluate(({ GOLD, SILVER, A, B: OB, D, E }) => {
+    await page.evaluate(({ GOLD, SILVER, A, B: OB, D, E, F }) => {
       const MM = 72 / 25.4;
       const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
       const fill = (metal, id, list, extra, state) => {
@@ -96,37 +99,49 @@ const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1]];
       const row = (rid, tx, n, material, state) => ({ key: `${rid}:${5000000000 + tx}`, order: { receiptId: rid, orderNumber: rid, createTs: 1790000000, updateTs: 1790000000, shipBy: 1790500000, buyer: { name: 'Buyer ' + rid.slice(-1) }, lines: [], messages: [] },
         line: { transactionId: String(5000000000 + tx), listingId: '', sku: 'TEST-' + tx, title: 'Test charm ' + tx, quantity: n, variations: [], personalization: [] }, spec: { designSku: 'TEST-' + tx, quantity: n, material, problems: [], engraveCandidate: false },
         problems: [], state, reason: null, poolIds: Array.from({ length: n }, (_, i) => pid(rid, tx, i + 1)), engrave: null, material, arrivedAt: Date.now() - 7200000 });
-      window.B.orders.rows = [row(A, 1, 1, 'gold', 'written'), row(OB, 2, 1, 'gold', 'written'), row(D, 4, 1, 'silver', 'committed'), row(E, 5, 1, 'silver', 'committed')];
+      window.B.orders.rows = [row(A, 1, 1, 'gold', 'written'), row(OB, 2, 1, 'gold', 'written'), row(D, 4, 1, 'silver', 'committed'), row(E, 5, 1, 'silver', 'committed'), row(F, 6, 1, 'silver', 'written')];
       window.B.orders.byKey = new Map(window.B.orders.rows.map(r => [r.key, r]));
       setMode('nest'); window.scrollTo(0, 0);
-    }, { GOLD, SILVER, A, B, D, E });
+    }, { GOLD, SILVER, A, B, D, E, F });
     await page.waitForTimeout(300);
     const settle = () => page.evaluate(async () => { const due = await AutoCancel.poll(); await AutoCancel.idle(); return due; });
-    const view = () => page.evaluate(A => ({ gold: CN.S.sheets.gold.pages[0].charms.map(c => c.poolId), nests: (window.__nests || []).length, notices: AutoCancel.notices().map(n => n.rid),
-      decision: CharmNestReadiness.decisions(Orders.rows())[`${A}_5000000001_1`] || null, visible: Orders.visibleRows().map(r => r.order.receiptId) }), A);
+    const view = () => page.evaluate(F => ({ gold: CN.S.sheets.gold.pages[0].charms.map(c => c.poolId), nests: (window.__nests || []).length, notices: AutoCancel.notices().map(n => n.rid),
+      decision: CharmNestReadiness.decisions(Orders.rows())[`${F}_5000000006_1`] || null, visible: Orders.visibleRows().map(r => r.order.receiptId) }), F);
 
-    /* 1 · cancelled on a released sheet: the piece stays, and the set does not wait on it for good */
+    /* 1 · cancelled on a released sheet: the piece comes off, the sheet is written again, nothing is set aside */
     cancel(A, 'Etsy', { source: 'etsy', at: Date.now() });
     assert.deepStrictEqual(await settle(), [A], 'the order is looked at');
     let v = await view();
-    assert.deepStrictEqual(v.gold, [pid(A, 1, 1), pid(B, 2, 1)], 'the released sheet is not changed: ' + JSON.stringify(v.gold));
-    assert.strictEqual(v.nests, 0, 'nothing is nested again');
-    assert.strictEqual(st.doc(POOL, pid(A, 1, 1)).state, 'written', 'its piece record is left as it is');
-    assert(v.notices.includes(A), 'the pill says to set it aside once cut: ' + JSON.stringify(v.notices));
+    assert.deepStrictEqual(v.gold, [pid(B, 2, 1)], 'the released sheet gives the piece up: ' + JSON.stringify(v.gold));
+    assert.strictEqual(v.nests, 1, 'the sheet is nested again, once');
+    const pa = st.doc(POOL, pid(A, 1, 1));
+    assert(pa.state === 'abandoned' && pa.removedBy === 'Etsy' && pa.removedReason === 'cancelled' && pa.removedAt > 0, 'its piece record says who, why and when: ' + JSON.stringify(pa));
+    assert(!v.notices.includes(A), 'nothing is set aside: ' + JSON.stringify(v.notices));
     assert(!v.visible.includes(A), 'its line leaves the Orders list: ' + JSON.stringify(v.visible));
-    assert(v.decision && v.decision.approved === true && v.decision.needed === false, 'the set does not wait on an engraving decision for the piece left on the released sheet: ' + JSON.stringify(v.decision));
+    assert.deepStrictEqual(await settle(), [], 'checked again: nothing to do');
+    ok.push('released sheet: the piece comes off, the sheet is nested again and saved, its line leaves Orders, no notice, no repeat job');
+
+    /* 1b · cancelled on a sheet already cut: the piece stays, and the set does not wait on it for good */
+    cancel(F, 'Etsy', { source: 'etsy', at: Date.now() });
+    assert.deepStrictEqual(await settle(), [F], 'the cut order is looked at');
+    v = await view();
+    assert.strictEqual(v.nests, 1, 'the cut sheet is never nested');
+    assert.strictEqual(st.doc(POOL, pid(F, 6, 1)).state, 'committed', 'its piece record is left as it is');
+    assert(v.notices.includes(F), 'the pill says to set it aside: ' + JSON.stringify(v.notices));
+    assert(!v.visible.includes(F), 'its line leaves the Orders list: ' + JSON.stringify(v.visible));
+    assert(v.decision && v.decision.approved === true && v.decision.needed === false, 'the set does not wait on an engraving decision for the piece left on the cut sheet: ' + JSON.stringify(v.decision));
     assert.deepStrictEqual(await settle(), [], 'checked again: nothing to do (the kept line is not taken up again)');
-    ok.push('released sheet: the piece stays, the sheet is not re-nested, its line is kept as gone so the set can still be released; no repeat job');
+    ok.push('cut sheet: the piece stays, its line is kept as gone so the set can still be released; no repeat job');
 
     /* 2 · the cut sheet, then the order restored here: the notice goes */
     cancel(D, 'Anna', { at: Date.now() });
     assert.deepStrictEqual(await settle(), [D], 'the cut order is looked at');
     v = await view();
     assert(v.notices.includes(D), 'a set-aside notice for D: ' + JSON.stringify(v.notices));
-    assert.strictEqual(v.nests, 0, 'the cut sheet is never nested');
+    assert.strictEqual(v.nests, 1, 'the cut sheet is never nested (the one nest is the released sheet, step 1)');
     await page.evaluate(D => Cancelled.restore(D), D);
     v = await view();
-    assert(!v.notices.includes(D) && v.notices.includes(A), 'restored: its notice goes, the others stay: ' + JSON.stringify(v.notices));
+    assert(!v.notices.includes(D) && v.notices.includes(F), 'restored: its notice goes, the others stay: ' + JSON.stringify(v.notices));
     ok.push('restored here: the set-aside notice of that order goes (and only it)');
 
     /* 3 · restored at another screen: the next check drops the notice */
@@ -136,17 +151,17 @@ const GOLD = [[A, 1, 1], [B, 2, 1]], SILVER = [[D, 4, 1], [E, 5, 1]];
     st.docs.delete(`${CANCELLED}/${E}`);
     await settle();
     v = await view();
-    assert(!v.notices.includes(E) && v.notices.includes(A), 'restored elsewhere: its notice goes at the next check: ' + JSON.stringify(v.notices));
+    assert(!v.notices.includes(E) && v.notices.includes(F), 'restored elsewhere: its notice goes at the next check: ' + JSON.stringify(v.notices));
     ok.push('restored at another screen: the notice goes at the next check');
 
     /* 4 · a reload keeps the notices; Set aside clears only its own */
     cancel(E, 'Sam', { at: Date.now() + 5 });
     await settle();
-    assert.deepStrictEqual((await view()).notices.sort(), [A, E].sort(), 'two notices');
+    assert.deepStrictEqual((await view()).notices.sort(), [F, E].sort(), 'two notices');
     await page.evaluate(() => Session.flush(true));
     await page.reload(); await boot();
     await page.waitForFunction(() => document.querySelectorAll('#runBanner .rbCxItem').length === 2, null, { timeout: 8000 });
-    await page.evaluate(A => AutoCancel.ack(A), A);
+    await page.evaluate(F => AutoCancel.ack(F), F);
     v = await view();
     assert.deepStrictEqual(v.notices, [E], 'Set aside clears only its own order: ' + JSON.stringify(v.notices));
     assert.deepStrictEqual(await settle(), [], 'and it does not come back');

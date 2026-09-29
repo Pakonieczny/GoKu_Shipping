@@ -136,8 +136,6 @@ async function run(kind, browser) {
     check(true, `1 · ready (custom designs known: ${JSON.stringify(at0.sent)})`);
 
     // (the cancel record as the Etsy mirror writes it; createdAt is the server's time: cancelList reads what was written since)
-    const cancel = (rid, when) => st.put(CANCELLED, rid, { orderId: rid, by: 'Etsy', source: 'etsy', why: '', at: when, sheets: [], lines: [], createdAt: Timestamp.now() }, false);
-    const settle = () => page.evaluate(async () => { const due = await AutoCancel.poll(); await AutoCancel.idle(); return due; });
     /** What one cancelled order left behind, everywhere it is recorded. */
     async function gone(rid, n, when, sheetWords, what) {
       const ids = poolsOf(rid, n), pools = ids.map(id => st.doc(POOL, id));
@@ -155,6 +153,8 @@ async function run(kind, browser) {
     const sentOf = (rid) => page.evaluate(([rid]) => Object.values(B.customDesigns || {}).flatMap(e => Object.entries((e.sent && e.sent.lines) || {}).filter(([k]) => k.includes(rid)).map(([k, l]) => ({ k, removed: l.map(pc => !!pc.removed) }))), [rid]);
     // the workspace this browser keeps (IndexedDB, Session): every store as text, to look for a piece in it
     const kept = () => page.evaluate(() => new Promise(res => { const r = indexedDB.open('charm-nest-workspace'); r.onerror = () => res(null); r.onsuccess = () => { const db = r.result, names = [...db.objectStoreNames]; if (!names.length) { db.close(); return res(''); } const tx = db.transaction(names, 'readonly'); let out = '', n = names.length; for (const nm of names) { const q = tx.objectStore(nm).getAll(); q.onsuccess = () => { try { out += JSON.stringify(q.result); } catch (_) {} if (!--n) { db.close(); res(out); } }; q.onerror = () => { if (!--n) { db.close(); res(out); } }; } }; }));
+    const cancel = (rid, when) => st.put(CANCELLED, rid, { orderId: rid, by: 'Etsy', source: 'etsy', why: '', at: when, sheets: [], lines: [], createdAt: Timestamp.now() }, false);
+    const settle = () => page.evaluate(async () => { const due = await AutoCancel.poll(); await AutoCancel.idle(); return due; });
     const quiet = async what => { const z = await info(); check(!z.asked.length && !z.dialogs, `${what} · no question and no pop-up (${JSON.stringify(z.asked)})`); };
 
     if (kind === 'gold' || kind === 'rose') {
@@ -257,6 +257,26 @@ async function run(kind, browser) {
       const c = await until(() => { const c = st.doc(CANCELLED, L); return c && (c.removals || []).some(r => r.kind === 'sheet' && r.outcome === 'removed' && r.at > 0) && c; }, 15000, 'the cancel record with its removal');
       check(!!c && (c.removals || []).filter(r => r.kind === 'sheet').length >= 1, `2 · its cancel record keeps the removal with its time (${JSON.stringify((c.removals || []).map(r => [r.where, r.outcome, r.at]))})`);
       { const z = await info(); check(!z.asked.length && z.dialogs <= 1, `2 · no question, and no pop-up on the sheet window (${JSON.stringify({ asked: z.asked, dialogs: z.dialogs })})`); }
+      const shown = () => page.evaluate(() => ({ open: SheetWin.isOpen(), id: SheetWin.current(), pieces: (SheetWin._W.pieces || []).filter(x => !x.gone).map(x => x.poolId) }));
+      let w = await shown();
+      check(w.open && w.id === sheetId && sorted(w.pieces) === sorted([...poolsOf(A, 1), ...poolsOf(X, 1)]), `2 · the window itself no longer shows the lion (${JSON.stringify(w.pieces)})`);
+
+      /* 3 · the window stays open on a piece of the third design, and its order is cancelled elsewhere (a person's record, as the
+             sheet window's own Cancel wrote it before this fix, with the pieces left on the sheet: this browser marks it done) */
+      await page.evaluate(([id, sel]) => SheetWin.open(id, { select: sel }), [sheetId, poolsOf(X, 1)[0]]);
+      await until(() => page.evaluate(() => !!document.querySelector('[data-r2=off] .swOffBtn')), 30000, 'the Take off button (third design)');
+      const whenX = Date.now();
+      st.put(CANCELLED, X, { orderId: X, by: 'paul', why: '', at: whenX, sheets: [], lines: [], createdAt: Timestamp.now() }, false);
+      await page.evaluate(([x, at]) => AutoCancel.mine(x, at), [X, whenX]);
+      const due = await settle();
+      check(JSON.stringify(due) === JSON.stringify([X]), `3 · the cancel check takes up a cancel already made, though this browser marked it done (${JSON.stringify(due)})`);
+      await until(async () => { const z = await info(); return z && !z.charms.some(id => id.startsWith(X)) && z.saved && !z.dirty && z; }, 90000, 'the sheet without the third design');
+      const r3 = record(sheetId), px = st.doc(POOL, poolsOf(X, 1)[0]);
+      check(sorted((r3.charms || []).map(c => c.poolId)) === sorted(poolsOf(A, 1)) && r3.roseProtectedJson === guard1, `3 · the sheet keeps the first design alone, line 1 as saved (${JSON.stringify(r3.poolIds)})`);
+      check(px && px.state === 'abandoned' && px.removedBy === 'paul' && px.removedAt >= whenX && /cancel/i.test(px.removedReason || ''), `3 · its piece record says who, why and when (${JSON.stringify(px && [px.state, px.removedBy, px.removedReason, px.removedAt])})`);
+      w = await until(async () => { const z = await shown(); return z.open && z.id === sheetId && z.pieces.length > 0 && !z.pieces.includes(poolsOf(X, 1)[0]) && z; }, 30000, 'the open window without the third design');
+      check(sorted(w.pieces) === sorted(poolsOf(A, 1)), `3 · the window left open on the sheet shows the first design alone (${JSON.stringify(w.pieces)})`);
+      { const z = await info(); check(!z.asked.length && z.dialogs <= 1, `3 · no question, and no pop-up on the sheet window (${JSON.stringify({ asked: z.asked, dialogs: z.dialogs })})`); }
     }
     check(!errors.length, 'no page errors ' + errors.join(' | '));
   } catch (e) { fails.push(`${kind}: ${e.message}`); console.log(`  FAIL ${kind} · ${e.stack || e.message}`); }

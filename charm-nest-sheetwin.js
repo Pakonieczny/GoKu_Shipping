@@ -3274,15 +3274,17 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         save();
         const recs = new Map(Object.entries(st.pend).map(([id, a]) => [id, neu.get(id) || { orderId: id, at: a }]));
         if (window.Cancelled && Cancelled.absorb([...neu.keys()])) Orders.render();   // (the pull rule leaves them out at once)
+        // every cancelled order this workspace knows is looked at, not only the records written since the last read: one
+        // cancelled before this page opened (or before its copy of the workspace was saved), whose pieces that copy still
+        // holds on a sheet, comes off at the first read after the page opens (Paul, 29 Sep, "on my next reload"). The list
+        // is read afresh while a notice waits (an order restored at another screen must not stay "known cancelled" from an
+        // older read: its notice goes at this check)
+        if (window.Cancelled) await Cancelled.load(st.notices.length > 0).catch(() => null);
         // a notice whose order is not among the records read and not known cancelled may have been restored at another
         // screen: asked once (one read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is
         // set aside
         const ask = st.notices.filter(n => !recs.has(n.rid) && !(window.Cancelled && Cancelled.has(n.rid))).map(n => n.rid).slice(0, 60);
         if (ask.length) { const c = await api("charmNestLibrary", { op: "cancelCheck", orderIds: ask }, { quiet: true }).catch(() => null); if (c && c.cancelled) for (const id of ask) if (!c.cancelled[id]) forget(id); }
-        // every cancelled order this workspace knows is looked at, not only the records written since the last read: one
-        // cancelled before this page opened (or before its copy of the workspace was saved), whose pieces that copy still
-        // holds on a sheet, comes off at the first read after the page opens (Paul, 29 Sep, "on my next reload")
-        if (window.Cancelled) await Cancelled.load().catch(() => null);
         const have = held(), due = [], far = [];
         for (const id of new Set([...Object.keys(st.jobs), ...recs.keys(), ...(window.Cancelled ? Cancelled.ids() : [])])) {
           if (st.jobs[id]) { due.push(id); continue; }
