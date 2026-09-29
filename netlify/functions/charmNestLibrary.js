@@ -2079,6 +2079,41 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
   customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
 
+/* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
+   sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
+   ({session}, station-session.js). Read-only, behind this function's gate. One range on startAt, newest first: its
+   single-field index, no composite. Bounded: a span of 62 days at most and 1,000 sessions (`truncated` says more were
+   there). A session still open whose heartbeat stopped 15 minutes ago is closed here, when read, at its last heartbeat
+   (endReason "closed"); one still beating is `live`, its minutes counted to the server's `now`. The id a PIN login keeps
+   can be the PIN itself, so no employee id leaves this op. ── */
+const SESSIONS = "Station_Sessions", SESSION_GONE_MS = 15 * 60000, SESSION_SPAN_MS = 62 * 86400000;
+function sessionRow(id, d, now) {
+  const startAt = ms(d.startAt); if (!(startAt > 0)) return null;
+  const lastSeenAt = Math.max(startAt, ms(d.lastSeenAt) || startAt);
+  let endAt = ms(d.endAt) || null, endReason = endAt ? str(d.endReason, 20) || null : null, live = false, minutes;
+  if (endAt) minutes = Number.isFinite(+d.minutes) && d.minutes !== null && d.minutes !== "" ? +d.minutes : (endAt - startAt) / 60000;
+  else if (now - lastSeenAt > SESSION_GONE_MS) { endAt = lastSeenAt; endReason = "closed"; minutes = (lastSeenAt - startAt) / 60000; }
+  else { live = true; minutes = (now - startAt) / 60000; }
+  return { id: str(id, 120), person: str(d.person, 80), station: str(d.station, 20), device: str(d.device, 40), computerId: str(d.computerId, 64), computerLabel: str(d.computerLabel, 80),
+    startAt, lastSeenAt, endAt, endReason, minutes: Math.max(0, Math.round(minutes * 10) / 10), live };
+}
+async function op_sessionsList(b) {
+  const now = Date.now();
+  const until = Math.min(num(b.until) > 0 ? num(b.until) : now + 60000, now + 86400000);
+  const since = Math.max(num(b.since) > 0 ? num(b.since) : until - 7 * 86400000, until - SESSION_SPAN_MS);
+  if (!(since < until)) return { error: "since must be before until" };
+  const limit = Math.max(1, Math.min(1000, Math.floor(num(b.limit)) || 500));
+  // the server's times are kept as milliseconds or as Firestore times, and one range never matches the other kind: both are read
+  const TS = admin.firestore.Timestamp, ranges = [[since, until]];
+  if (TS && typeof TS.fromMillis === "function") ranges.push([TS.fromMillis(since), TS.fromMillis(until)]);
+  const snaps = await Promise.all(ranges.map(([a, z]) => db.collection(SESSIONS).where("startAt", ">=", a).where("startAt", "<", z).orderBy("startAt", "desc").limit(limit + 1).get()));
+  const seen = new Set(), rows = [];
+  for (const s of snaps) for (const d of s.docs) if (!seen.has(d.id)) { seen.add(d.id); const r = sessionRow(d.id, d.data() || {}, now); if (r) rows.push(r); }
+  rows.sort((x, y) => y.startAt - x.startAt || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+  return { sessions: rows.slice(0, limit), truncated: rows.length > limit, since, until, now, goneAfterMs: SESSION_GONE_MS };
+}
+OPS.sessionsList = op_sessionsList;
+
 exports.ops = OPS;   // the connections check runs the same queries the app runs
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 204, headers: require("./_charmNestAuth").CORS, body: "" };
