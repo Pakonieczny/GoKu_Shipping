@@ -152,7 +152,7 @@
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
   const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
-  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
+  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -354,6 +354,30 @@
   //  now, so there is nothing left to filter. The bar keeps one quiet "Stamps" chip — the legend of the seals.)
   const CANCEL_TYPES = new Set(["cancelled", "etsyCancelled"]);
 
+  /* ── Complete Order and Reopen (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the points for when an
+     order was manually completed by pressing the completed button in the Review tab") ──
+     Each press of Complete Order (a Review card, a Custom Orders card, the order window: charmNestLibrary customPut, a
+     sealCompleted whose data.how is "button") is a point of its own on the Office lane ("Operator"), with the green
+     scalloped "Order completed" seal the card is stamped with (Seal in charm-nest-motion.js: its ink, edge and check).
+     A Reopen or an Undo (customReopen: a note with data.reopened) is a point of its own, with its own seal: it never
+     takes the Complete point away (seals never disappear), and a later Complete adds another. The seal's rim says where
+     it was pressed (data.pressedIn; an older press: the sorter), its middle who and when. norm() dresses the event for
+     drawing and the host gets the record back as it came (pubOf). A completion by printing the label is the label's. */
+  KIND.sealCompleted = K("green", "m", "check", "office");   // (the Office lane's, not the sheet's)
+  KIND.reopened = K("velvet", "e", "undo", "office");
+  function opStepOf(x) {
+    if (!x) return "";
+    if (x.type === "sealCompleted") return x.data && x.data.how === "print" ? "" : "complete";
+    return x.type === "reopened" || (x.type === "note" && !!x.data && !!x.data.reopened) ? "reopen" : "";
+  }
+  /** A Complete press or a Reopen as it is drawn: its type, its words and where it was pressed; null for any other. */
+  function opDress(x) {
+    const k = opStepOf(x); if (!k) return null;
+    const d = x.data && typeof x.data === "object" && !Array.isArray(x.data) ? x.data : {}, where = str(d.pressedIn, 40);
+    const text = k === "complete" ? "Completed with Complete Order" : d.reopened === "undo" ? "Completion undone: back to Open" : "Reopened: back to Open";
+    return { type: k === "reopen" ? "reopened" : x.type, text: text + (where ? " · " + where : ""), data: Object.assign({}, d, where ? { foot: where } : {}) };
+  }
+
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
   const arc = (r, a0, a1, sw) => { const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1), span = sw ? (a1 - a0 + 360) % 360 : (a0 - a1 + 360) % 360; return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${span > 180 ? 1 : 0} ${sw} ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
   function scallops(n, rv, rc, sw) { let d = ""; const step = 360 / n; for (let i = 0; i < n; i++) { const a0 = i * step, [x0, y0] = pt(rv, a0), [xm, ym] = pt(rc, a0 + step / 2), [x1, y1] = pt(rv, a0 + step); d += (i ? "" : `M${x0.toFixed(2)} ${y0.toFixed(2)}`) + `Q${xm.toFixed(2)} ${ym.toFixed(2)} ${x1.toFixed(2)} ${y1.toFixed(2)}`; } return `<path d="${d}Z" stroke-width="${sw || 2.4}"/>`; }
@@ -438,6 +462,7 @@
   /* ════ one event, as the timeline reads it ════ */
   function norm(x) {
     if (!x || typeof x !== "object" || !x.type) return null;
+    const was = x, op = opDress(x); if (op) x = Object.assign({}, x, op);   // (a Complete press or a Reopen, drawn)
     const type = String(x.type), at = Number(x.at) || 0, rawId = String(x.id || `${at}-${type}`);
     const e = {
       // the server keeps `${orderId}~${type}~${key}`; the page's own record (live, or still in the outbox) is `key`
@@ -448,11 +473,12 @@
       milestone: x.milestone != null ? !!x.milestone : !!(typeInfo(type) || {}).milestone, pending: !!x.pending, derived: !!x.derived
     };
     e.lane = laneOf(e);
+    if (op) e.orig = Object.fromEntries(["type", "text", "data"].filter(k => was[k] != null).map(k => [k, was[k]]));
     return e;
   }
   // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
-  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return o; };
+  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return e.orig ? Object.assign(o, e.orig) : o; };
   const warn = (what, err) => { try { console.warn("[OrderTimelineUI] " + what + ":", err); } catch (_) {} };
   // oldest first, as the server's byTime: at the same moment the order's arrival leads (a step the server drew at the
   // arrival, from before it, keeps its own order after it: data.recordedAt)

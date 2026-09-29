@@ -248,6 +248,33 @@ function cancelStepOf(f) {
 }
 const stepId = (cancelAt, sheet) => `cx-${Math.round(n(cancelAt))}-${s(sheet, 80)}`;
 
+/* ── Complete Order and Reopen (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the points for when an
+   order was manually completed by pressing the completed button in the Review tab") ──
+   Each press is its own point: a Complete Order press is a sealCompleted (charmNestLibrary customPut, data.how
+   "button"), a Reopen or an Undo a note with data.reopened (customReopen). The custom record keeps the same presses
+   (its stamps, its completion and its history), so an order completed before its press was recorded still has them.
+   The record and the event recorded as it happened share one clock reading: the same press is the same moment
+   exactly, and two presses a minute apart stay two points. data.pressedIn: where it was pressed (older ones: none). */
+const pressOf = e => e.type === "sealCompleted" && !(e.data && e.data.how === "print");
+const reopenOf = e => e.type === "note" && !!(e.data && e.data.reopened);
+/** Whether two events are the same Complete press or the same Reopen; null when neither is one. */
+function sameOperatorStep(a, b) {
+  const k = x => (pressOf(x) ? "complete" : reopenOf(x) ? "reopen" : "");
+  if (!k(a) && !k(b)) return null;
+  return k(a) === k(b) && Math.abs(n(a.at) - n(b.at)) <= 1000 && !(a.lineKey && b.lineKey && a.lineKey !== b.lineKey);
+}
+// (a custom line's history: its reopens and undos)
+CUSTOM_FIELDS.push("history");
+/** A custom line's reopens and undos, as its record's history keeps them, each a point of its own. */
+function customReopensOf(id, c) {
+  const key = s(c.key || c._id, 80), tid = s(c.transactionId, 30) || key.split("_").pop(), what = s(c.sku || c.title || "custom line", 80);
+  return (Array.isArray(c.history) ? c.history : []).slice(-24).filter(h => h && msOf(h.at) > 1e12).map(h => {
+    const how = h.how === "undo" ? "undo" : "reopen", by = s(h.by, 80);
+    return { orderId: id, type: "note", at: msOf(h.at), id: `d-reopen-${key}-${msOf(h.at)}`, series: `reopen-${key}`, lineKey: key, transactionId: tid, by, source: "sorter", station: "sorter",
+      text: `Custom order ${how === "undo" ? "completion undone" : "reopened"}${by ? " by " + by : ""}: ${what} · back to Open`, data: Object.assign({ reopened: how, sku: s(c.sku, 60) }, h.from ? { pressedIn: s(h.from, 40) } : {}) };
+  });
+}
+
 /** Every event the order's existing records tell, each marked derived with a stable id. */
 async function deriveEvents(db, id, opts) {
   const P = opts.prefix || "", sandbox = !!P, SB = opts.sandboxed instanceof Set ? opts.sandboxed : SANDBOXED_DEFAULT;
@@ -399,6 +426,8 @@ async function deriveEvents(db, id, opts) {
     stamps.slice(-24).forEach(st => ev(st.how === "button" ? "sealCompleted" : "sealPrinted", msOf(st.at), { id: `d-seal-${key}-${msOf(st.at)}`, series: `seal-${key}`, lineKey: key, transactionId: tid, by: s(st.by, 80), source: "sorter", station: "sorter", text: st.how === "button" ? `Custom order completed: ${s(what, 80)}` : `Custom QR label printed: ${s(what, 80)}`, data: { how: st.how === "button" ? "button" : "print" } }));
     if (msOf(c.completedAt)) ev("sealCompleted", msOf(c.completedAt), { id: `d-seal-done-${key}`, lineKey: key, transactionId: tid, by: s(c.completedBy, 80), source: "sorter", station: "sorter", text: `Custom order completed: ${s(what, 80)}`, data: { how: c.how === "button" ? "button" : "print" } });
   }
+  // each Reopen and Undo, from the record's history (the Complete presses are its stamps, above)
+  for (const c of customs) for (const x of customReopensOf(id, c)) ev(x.type, x.at, x);
 
   // the Team's thread: its workflow stamps as their own events, the rest as messages
   for (const m of msgs) {
@@ -435,6 +464,7 @@ function sameEvent(a, b) {
     if (o.type !== "removed" || !(step.data && step.data.outcome === "removed")) return false;
     return place(o) ? place(o) === place(step) : /^cancel/i.test(String((o.data && o.data.reason) || ""));
   }
+  const op = sameOperatorStep(a, b); if (op !== null) return op;
   if (a.type !== b.type) return false;
   const approx = (a.data && a.data.approx) || (b.data && b.data.approx);
   if (!approx && Math.abs(a.at - b.at) > DEDUPE_MS) return false;
