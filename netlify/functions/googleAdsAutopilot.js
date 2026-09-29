@@ -1801,19 +1801,42 @@ async function applyApproval(id, ctrl) {
   } finally {await f.db.runTransaction(async tx=>{const lease=await tx.get(lock);if(lease.exists&&lease.data().owner===attempt)tx.delete(lock);});}
 }
 
-// Re-apply every approval stuck in APPROVED (approved but its apply errored). The sanitizer
-// above removes the dead field, so these now create cleanly. Honors dry-run.
-async function retryStuckApprovals(ctrl) {
-  ctrl = ctrl || (await control());
-  const f = fb(); if (!f) return { tried: 0, applied: 0, failed: [] };
-  const st = await f.db.collection(COL.approvals).where("status", "==", "APPROVED").limit(25).get();
-  const ids = []; st.forEach(d => ids.push(d.id));
-  let applied = 0; const failed = [];
-  for (const id of ids) {
-    try { await applyApproval(id, ctrl); if (!ctrl.dryRun) applied++; }
-    catch (e) { failed.push({ id, error: String((e && e.message) || e).slice(0, 300) }); }
-  }
-  return { tried: ids.length, applied, failed, dryRun: !!ctrl.dryRun };
+// A worker that stops mid-publication leaves its draft APPLYING. After 15 minutes without a live
+// lease held by that attempt, Google's result is unknown: the draft reads as APPLY_UNKNOWN so Paul
+// can check Google Ads and record what he found. Nothing is ever re-sent automatically.
+const APPLY_STALE_MS = 15 * 60 * 1000;
+const APPLY_STALE_NOTE = "Publishing stopped before Google's answer was recorded. Check Google Ads before doing anything else.";
+function _staleApplying(d, lease, now = Date.now()) {
+  if (!d || d.status !== "APPLYING") return false;
+  const started = Number(d.applyStartedAt) || 0;
+  if (started && now - started < APPLY_STALE_MS) return false;
+  return !(lease && Number(lease.until) > now && (!d.applyAttempt || lease.owner === d.applyAttempt));
+}
+// "published": Paul saw the change in Google Ads, so the draft is recorded as applied.
+// "not_published": it returns to Approved, from where it can be published again by hand or deleted.
+async function reconcileApproval({ id, outcome } = {}) {
+  if (!/^[a-zA-Z0-9_-]{1,150}$/.test(String(id || ""))) throw new Error("Invalid proposed ad.");
+  if (!["published", "not_published"].includes(outcome)) throw new Error("Choose whether Google Ads shows this change.");
+  const f = fb(); if (!f) throw new Error("Approval storage is unavailable.");
+  const ref = f.db.collection(COL.approvals).doc(String(id)), lock = f.db.collection(COL.state).doc("publicationLease");
+  const status = outcome === "published" ? "APPLIED" : "APPROVED";
+  await f.db.runTransaction(async tx => {
+    const s = await tx.get(ref); if (!s.exists) throw new Error("Draft not found.");
+    const d = s.data(), l = await tx.get(lock);
+    if (d.status !== "APPLY_UNKNOWN" && !_staleApplying(d, l.exists ? l.data() : null)) throw new Error(d.status === "APPLYING" ? "This draft is still publishing. Wait for its result." : "This draft has no unconfirmed publication to resolve.");
+    const reconciliation = { at: Date.now(), by: "authenticated operator", outcome, priorStatus: d.status, attempt: d.applyAttempt || null };
+    tx.update(ref, outcome === "published"
+      ? { status, appliedAt: f.FV.serverTimestamp(), applyAttempt: null, needsReconciliation: false, lastError: null, reconciliation }
+      : { status, applyAttempt: null, needsReconciliation: false, lastError: "You checked Google Ads and this change was not published. Publish it again or delete it.", reconciliation });
+  });
+  return { ok: true, id: String(id), status };
+}
+// Marks when an approved draft was handed to the worker, so its card can show that it is queued
+// behind another publication (the worker waits its turn) instead of offering to publish it again.
+async function markPublishRequested(id) {
+  const f = fb(); if (!f) return;
+  const ref = f.db.collection(COL.approvals).doc(String(id));
+  await f.db.runTransaction(async tx => { const s = await tx.get(ref); if (s.exists && s.data().status === "APPROVED") tx.update(ref, { publishRequestedAt: Date.now(), lastError: null }); });
 }
 
 /* ============================ Helpers ============================ */
@@ -8803,9 +8826,11 @@ async function dashboard() {
   } catch (e) {}
   out.stuck = [];
   try {
-    // APPROVED but not yet APPLIED = apply errored. Surface so the operator can retry.
+    // Approved but not yet applied: queued, refused, checked in dry run, publishing or unconfirmed.
+    // A draft left APPLYING by a stopped worker reads as unconfirmed so Paul can reconcile it.
     const st = await f.db.collection(COL.approvals).where("status", "in", ["APPROVED","APPLYING","APPLY_UNKNOWN"]).limit(25).get();
-    st.forEach(d => { const x = d.data(); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, status:x.status,lastError:x.lastError||null,creative:x.creative||null,vetted: x.vetted, payload: x.payload }); });
+    let lease = null; if (st.docs.some(d => d.data().status === "APPLYING")) try { const l = await f.db.collection(COL.state).doc("publicationLease").get(); lease = l.exists ? l.data() : null; } catch (e) {}
+    st.forEach(d => { const x = d.data(), stale = _staleApplying(x, lease); out.stuck.push({ id: d.id, type: x.type, summary: x.summary, status: stale ? "APPLY_UNKNOWN" : x.status, staleApplying: stale, lastError: stale ? APPLY_STALE_NOTE : x.lastError || null, creative: x.creative || null, vetted: x.vetted, payload: x.payload, validatedAt: x.validatedAt || null, publishRequestedAt: x.publishRequestedAt || null, applyStartedAt: x.applyStartedAt || null }); });
   } catch (e) {}
   try {
     const lg = await f.db.collection(COL.ledger).orderBy("at", "desc").limit(20).get();
@@ -9992,7 +10017,7 @@ module.exports = {
   control, mintToken, gaql, mutate, mutateAll,
   enqueueConversion, saveDataManagerConnection, uploadConversions, enqueueConversionAdjustment, uploadConversionAdjustments, recordRefund, conversionHealth, gAdsTime,
   recordOrderEvent, recentOrders, storeSignals, storeSalesEvidence, clearOrderLog, backfillOrders,
-  ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, retryStuckApprovals, sanitizeOps,
+  ledger, clearLedger, enqueueApproval, applyApproval, applyApprovalById: applyApproval, reconcileApproval, markPublishRequested, sanitizeOps,
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,

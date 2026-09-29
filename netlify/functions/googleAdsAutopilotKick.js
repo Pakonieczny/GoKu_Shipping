@@ -205,12 +205,13 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
     return await dispatchTask("publishApproval", { id:String(body.id) });
   }
-  if (a === "retryStuck") {
-    try { return await E.retryStuckApprovals(ctrl); }
-    catch (e) { return { error: e.message }; }
-  }
+  // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
+  // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
+  // limit and re-sent every approved draft at once. Each draft is published from its own card.)
+  if (a === "reconcileApproval") return await E.reconcileApproval({ id: body.id, outcome: body.outcome });
   if (a === "setBudget") {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }
