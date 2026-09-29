@@ -12,6 +12,11 @@ const old=w.document.querySelector('.bp-note').textContent;w.document.querySelec
 w.document.querySelector('progress').value=45;tick();assert.doesNotMatch(w.document.querySelector('.bp-note').textContent,/No new progress/);w.document.querySelector('progress').hidden=true;tick();assert.ok(w.document.querySelector('.bp-note').hidden);
 const reused=w.document.querySelector('progress');w.BritesProgress.reset(reused);reused.hidden=false;tick();now+=3000;tick();assert.match(reused.nextElementSibling.textContent,/^3s elapsed/,'new task resets the reused progress clock');reused.hidden=true;
 const local=w.document.createElement('progress');local.getClientRects=()=>[{width:100,height:8}];dialog.append(local);tick();assert.equal(dialog.querySelector('.bp-activity'),null,'local task progress suppresses duplicate request indicator');local.hidden=true;tick();assert(dialog.querySelector('.bp-activity'),'request feedback returns when the local task indicator is hidden');
+// A page that shows the wait on its own status line says so, and gets no second notice on top of it.
+w.BritesProgress.own(host=>!!host.querySelector('[data-own-wait]'));tick();assert(dialog.querySelector('.bp-activity'),'the check only answers for a line that is there');
+const line=w.document.createElement('p');line.setAttribute('data-own-wait','');dialog.append(line);tick();assert.equal(dialog.querySelector('.bp-activity'),null,'the page’s own status line owns the wait');
+line.remove();tick();assert(dialog.querySelector('.bp-activity'),'the shared notice returns when the line goes');
+w.BritesProgress.own(()=>{throw new Error('broken check');});tick();assert(dialog.querySelector('.bp-activity'),'a failing check never hides feedback');w.BritesProgress.own(null);
 end2();tick();assert.equal(w.document.querySelector('.bp-activity'),null);dom.window.close();
 const html=fs.readFileSync('brites-adwords.html','utf8');for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)){if(m[1].trim())new (require('node:vm').Script)(m[1]);}
 assert.match(html,/finally\{finishWait\(\);\}/);assert.match(fs.readFileSync('scripts/build-public.cjs','utf8'),/brites-progress.css/);

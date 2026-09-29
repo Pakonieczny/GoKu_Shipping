@@ -67,7 +67,7 @@ const ui={document,URL,Map,Set,Date:FixedDate,console,setTimeout,encodeURICompon
   BritesCampaignStyles:styles,campaignBadgeHtml:(x,o)=>styles.badge(x,o),campaignStyleIcon:(k,s)=>styles.iconSvg(styles.describe(k).icon,s),
   $:s=>document.querySelector(s),rangePicker:()=>'',wireRangePickers:()=>{},fmtDateTime:d=>d.toISOString(),fmtMon:x=>x};
 vm.createContext(ui);vm.runInContext(html.match(/var BASIS_NAMES=\{[^}]*\};/)[0]+html.match(/var feedRange=\{[^}]*\};/)[0]+html.match(/var FEED=\{[^\n]*\};/)[0],ui);
-vm.runInContext(html.slice(html.indexOf('function reportNumber('),html.indexOf('function renderTimeline(')),ui);
+vm.runInContext(html.slice(html.indexOf('function reportNumber('),html.indexOf('/* ---- Daily stats')),ui);
 for(const name of ['CV','basisName','basisLabel','rpYmd','rpParse','rpRangeFor','rpResolve','feedLabel','feedError','timeago','feedBounds','feedKey','feedAppend','feedAdopt','loadFeed','renderFeed'])vm.runInContext(pick(name),ui);
 const flush=async()=>{for(let i=0;i<20;i++)await new Promise(r=>setImmediate(r));};
 const num=el=>{const t=el.textContent.trim();return t==='—'?null:Number(t.replace(/[^0-9.\-]/g,''));};

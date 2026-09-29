@@ -70,6 +70,7 @@ const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase
 // Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
 // change. Every other action — including any action not listed here — is treated as a change.
 const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
+READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
 async function authed(event, body, resolved) {
@@ -104,6 +105,9 @@ async function decideTasks() {
     ["measure", "mine", "prune", "events", "designStudioLearn"].forEach(t => tasks.add(t));
     if (now.getUTCDay() === weeklyDow) tasks.add("budgets");
   }
+  // Read-only and after the daily and weekly work: Google's serving check of every ENABLED campaign
+  // for the Overview badge, in the time the others leave.
+  if (tasks.has("measure")) tasks.add("serving");
   return { tasks: [...tasks], ranDaily, ranWeekly };
 }
 
@@ -240,8 +244,14 @@ async function handleAction(body) {
   if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
   if (a === "approvalStatus") {
     const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
-    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data(),req=Number(d.publishRequestedAt)||0;
+    // Queued: handed to the worker, not started or checked since, while another publication holds the
+    // lease. The worker waits its turn (up to 8 minutes), so the console stops polling and says so.
+    let queued=false;
+    if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
+      try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
+    }
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
@@ -251,8 +261,12 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    // Server time of this request: the console tells this attempt's result from an earlier one by it,
+    // whatever its own clock says. The marker also clears an Approved draft's previous error.
+    const requestedAt = Date.now();
     try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
-    return await dispatchTask("publishApproval", { id:String(body.id) });
+    try { return { ...(await dispatchTask("publishApproval", { id:String(body.id) })), requestedAt }; }
+    catch (e) { try { await E.markPublishNotStarted(body.id, e.message); } catch (x) {} throw e; } // nothing started: the card must not read as queued
   }
   // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
   // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
@@ -407,6 +421,13 @@ async function handleAction(body) {
     try { return await E.setApprovalCountries(body.id, body.countries || []); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  // Campaign options: brand Search, sale-day bid adjustments, the new-customer goal and total budgets.
+  // Each draft waits in Approvals; nothing reaches Google until Paul approves it there.
+  if (a === "campaignOptions") { try { return await E.campaignOptionsStatus(); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftBrandSearch") { try { return await E.draftBrandSearch({ dailyBudget: body.dailyBudget, maxCpc: body.maxCpc }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftSeasonalityAdjustment") { try { return await E.draftSeasonalityAdjustment({ occasion: body.occasion, startDate: body.startDate, endDate: body.endDate, changePct: body.changePct, campaignIds: body.campaignIds }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftCustomerGoal") { try { return await E.draftCustomerGoal({ campaignId: body.campaignId, mode: body.mode, value: body.value }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "setApprovalTotalBudget") { try { return await E.setApprovalTotalBudget({ id: body.id, on: body.on === true }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "clearLedger") {
     try { return await E.clearLedger({}); }
     catch (e) { return { ok: false, error: e.message }; }

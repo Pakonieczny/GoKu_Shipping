@@ -1,8 +1,10 @@
 // Budget guards and paid-AI triggers. Every budget refusal gives its figures in the account currency;
 // the Controls ceiling cannot pass the site limit; a planned run length starts when the campaign is
-// enabled; new PMax campaigns launch without a target ROAS; a proposed negative is checked against
-// every converting search term; and no paid AI request starts without an explicit request (opening a
-// view, a reload or a scheduled run reads saved results). Synthetic data only; every live call fails.
+// enabled (unless it already served); new PMax and Search campaigns launch without a target ROAS, which
+// Ad Doctor offers later as a reviewed draft; a proposed negative is checked against every converting
+// search term (PMax: search categories); and no paid AI request starts without an explicit request
+// (opening a view, a reload or a scheduled run reads saved results; copy that failed brand safety is
+// not paid for again by the daily run). Synthetic data only; every live call fails.
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict'), path = require('path'), Module = require('module');
 const repo = path.resolve(__dirname, '../..'), dir = path.join(repo, 'netlify/functions') + '/', file = dir + 'googleAdsAutopilot.js', realRequire = Module.createRequire(file);
 const clone = x => x == null ? x : JSON.parse(JSON.stringify(x)), plain = x => JSON.parse(JSON.stringify(x));
@@ -27,7 +29,7 @@ function memory() {
     update: async v => { docs.set(p, { ...(docs.get(p) || {}), ...clone(v) }); }, collection: c => col(p + '/' + c) });
   const col = (p, fs = []) => ({ doc: id => doc(p + '/' + id), add: async v => { const r = doc(p + '/auto' + (++n)); await r.set(v); return r; },
     where: (k, op, v) => col(p, fs.concat([[k, v]])), orderBy: () => col(p, fs), limit: () => col(p, fs),
-    get: async () => { const list = [...docs].filter(([k, v]) => k.startsWith(p + '/') && !k.slice(p.length + 1).includes('/') && fs.every(([fk, fv]) => v[fk] === fv)).map(([k, v]) => ({ id: k.split('/').pop(), exists: true, data: () => clone(v), ref: doc(k) }));
+    get: async () => { const list = [...docs].filter(([k, v]) => k.startsWith(p + '/') && !k.slice(p.length + 1).includes('/') && fs.every(([fk, fv]) => fk.split('.').reduce((o, k) => o == null ? o : o[k], v) === fv)).map(([k, v]) => ({ id: k.split('/').pop(), exists: true, data: () => clone(v), ref: doc(k) }));
       return { docs: list, empty: !list.length, size: list.length, forEach: fn => list.forEach(fn) }; } });
   return { docs, db: { collection: c => col(c), runTransaction: async fn => fn({ get: r => r.get(), set: (r, v, o) => r.set(v, o), update: (r, v) => r.update(v), delete: r => docs.delete(r.path) }),
     batch: () => { const ops = []; return { set: (r, v, o) => ops.push(() => r.set(v, o)), commit: async () => { for (const op of ops) await op(); } }; } }, FV: { serverTimestamp: () => Date.now() } };
@@ -202,14 +204,14 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
 
     // Studio: the scheduled refresh keeps the last AI synthesis instead of paying for a new one.
     const e2 = engine({ ANTHROPIC_API_KEY: 'test' }), f2 = memory(); let studioPaid = 0;
-    await f2.db.collection(COL.state).doc('designStudioAcquisition').set({ learning: { synthesis: { summary: 'kept' } } });
+    await f2.db.collection(COL.state).doc('designStudioAcquisition').set({ learning: { generatedAt: 1000, synthesis: { summary: 'kept' } } });
     e2.bind({ fb: () => f2, control: async () => ({ targetRoas: 0 }), openaiJSON: async () => { studioPaid++; return { summary: 'fresh' }; },
       designStudioPerformance: async () => ({ readiness: { apiOk: true, purchaseReady: true, assistCoverage: 4 }, overall: { clicks: 80, cost: 100, impressions: 2000, ctr: 0.04 },
         purchase: { conversions: 4, value: 400, cpa: 25, roas: 4 }, funnel: { start: 0, design: 0, approve: 0 }, rates: {}, campaigns: [{ id: '1' }], assetGroups: [], searchInsights: [], start: '2026-09-01', end: '2026-09-28', days: 28 }) });
     let out = plain(await e2.get('refreshDesignStudioLearning')({ withAI: false }));
-    check(studioPaid === 0 && out.synthesis.summary === 'kept', 'the scheduled Studio refresh makes no AI request and keeps the last synthesis');
+    check(studioPaid === 0 && out.synthesis.summary === 'kept' && out.synthesis.at === 1000 && out.generatedAt > 1000, 'the scheduled Studio refresh makes no AI request and keeps the last synthesis, with the time it was made');
     out = plain(await e2.get('refreshDesignStudioLearning')({}));
-    check(studioPaid === 1 && out.synthesis.summary === 'fresh', 'the explicit Studio Analyze still asks the AI');
+    check(studioPaid === 1 && out.synthesis.summary === 'fresh' && out.synthesis.at >= out.generatedAt - 5000, 'the explicit Studio Analyze still asks the AI');
 
     // Scheduled events: a build stopped by the keyword checks pays for no copy.
     let copies = 0;
@@ -281,6 +283,193 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
     const ap = { money: v => 'CAD ' + v, DASH: {} }; vm.createContext(ap); for (const n of ['apCurrency', 'apMoney', 'apBidding']) vm.runInContext(pick(n), ap);
     check(ap.apBidding({ maximizeConversionValue: {} }, { meta: { biddingMode: 'MAXIMIZE_CONVERSION_VALUE_LEARNING', targetRoas: 0, targetRoasLater: 2.5 } }, {}) === 'Maximize conversion value · no target ROAS until it has about 6 weeks and 30 conversions in 30 days'
       && /\["Schedule",esc\(m\.runDays\?m\.runDays\+" days from the day you enable it":apSchedule\(psd,ped\)\)\]/.test(html), 'the PMax approval card says no target ROAS applies at launch and counts the run from enabling');
+  }
+
+  // ── 11. New Search campaigns launch without a target ROAS; the account target is kept for later ──
+  const K4 = ['bunny necklace', 'bunny charm necklace', 'easter bunny necklace', 'personalized bunny necklace'].map(t => ({ text: t, real: true, measured: true, searches: 90 }));
+  const COPY = { headlines: ['Bunny charm necklace', 'Handmade bunny gifts', 'Personalized charms'], descriptions: ['Handmade bunny charm necklaces.', 'Made to order.'] };
+  const sCtrl = { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD', defaultCountries: ['2124'], targetRoas: 3, smartBidding: true };
+  const searchFakes = (e, over) => e.bind({ _enabledBudgetTotal: async () => 0, collectionMeta: async h => ({ handle: h, title: 'Bunny Charms' }), collectionProfiles: async () => ({ list: [] }), getCollections: async () => [],
+    researchOpportunity: async () => ({ ok: false }), storeSignals: async () => { throw Error('offline'); }, accountCvr: async () => ({ cvr: 0.02, source: 'benchmark' }), searchClickShare: async () => null, _fxRateToUsd: async () => null,
+    groundKeywordPlan: () => ({ ok: true, keywords: clone(K4), groups: [{ label: 'Bunny', keywords: clone(K4) }], confidence: 90, evidence: { accepted: 4, rejected: 0 }, rejected: [] }),
+    _bestSearchLandingUrl: () => 'https://britesjewelry.com/collections/bunny', accountWasteNegatives: async () => [], recordOccasionUse: async () => {}, ...over });
+  {
+    const e = engine({ GADS_TARGET_ROAS: '3' }), approvals = [], built = [], realBuild = e.get('buildSearchCampaignOps');
+    searchFakes(e, { fb: () => null, generateRSAAssets: async () => clone(COPY), enqueueApproval: async a => { approvals.push(clone(a)); return 'd' + approvals.length; },
+      buildSearchCampaignOps: (...a) => { built.push(clone(a[3])); return realBuild(...a); } });
+    const r = plain(await e.get('generateForCollection')('bunny', 'Evergreen gifting', 12, { ctrl: sCtrl, maxCpc: 1.25, countries: ['2124'] }));
+    const camp = approvals[0].payload.mutateOperations.find(o => o.campaignOperation).campaignOperation.create, m = approvals[0].payload.meta;
+    check(r.ok && built[0].targetRoas === 0 && JSON.stringify(camp.maximizeConversionValue) === '{}', 'a new Search campaign launches on Maximize conversion value without the account target ROAS');
+    check(m.targetRoasLater === 3 && m.biddingMode === 'MAXIMIZE_CONVERSION_VALUE_LEARNING' && /no target ROAS until it has about 6 weeks and 30 conversions in 30 days/.test(approvals[0].summary), 'the account target is kept for later (meta.targetRoasLater) and the draft says which bidding applies');
+    const ops = realBuild({ handle: 'bunny', title: 'Bunny' }, null, COPY, { dailyBudget: 5, maxCpc: 1, withAssets: false, smartBidding: true,
+      adGroups: [{ name: 'Bunny', finalUrl: 'https://britesjewelry.com/collections/bunny', keywords: K4.map(k => k.text), assets: COPY }] }).ops;
+    check(JSON.stringify(ops.find(o => o.campaignOperation).campaignOperation.create.maximizeConversionValue) === '{}', 'GADS_TARGET_ROAS is no longer applied to a new Search campaign');
+  }
+
+  // ── 12. The daily events run does not pay again for copy that failed brand safety ─────────────
+  {
+    const e = engine(), f = memory(), approvals = []; let copies = 0, reply = null;
+    searchFakes(e, { fb: () => f, generateRSAAssets: async () => { copies++; return clone(reply); }, enqueueApproval: async a => { approvals.push(clone(a)); return 'd' + approvals.length; } });
+    const run = auto => e.get('generateForCollection')('bunny', 'Easter', 12, { ctrl: sCtrl, peakDate: plus(today, 30), countries: ['2124'], ...(auto ? { auto: true } : {}) });
+    const mark = () => (f.docs.get(COL.state + '/eventsCopyRejected') || {})['bunny-easter'];
+    let r = plain(await run(true));
+    check(!r.ok && copies === 1 && mark() && mark().date === today && mark().occasion === 'Easter', 'copy that fails brand safety marks the occasion');
+    r = plain(await run(true));
+    check(!r.ok && r.skipped && copies === 1 && /build it by hand/.test(r.reason), 'the next daily run skips that occasion without paying for copy again');
+    r = plain(await run(false));
+    check(!r.ok && copies === 2 && mark(), 'a build by hand retries it; copy that fails again keeps the mark');
+    reply = COPY; r = plain(await run(false));
+    check(r.ok && copies > 2 && !mark() && approvals.length === 1, 'a build by hand whose copy passes clears the mark');
+    const before = copies; r = plain(await run(true));
+    check(r.ok && copies > before, 'after that the daily run builds that occasion again');
+    reply = null; await run(true); const held = copies; r = plain(await run(true));
+    check(!r.ok && r.skipped && copies === held && mark().peak === plus(today, 30), 'the mark holds for that occasion date');
+    const season = copies; r = plain(await e.get('generateForCollection')('bunny', 'Easter', 12, { ctrl: sCtrl, peakDate: plus(today, 60), countries: ['2124'], auto: true }));
+    check(!r.skipped && copies > season, 'the next date of the same occasion is drafted again by the daily run');
+  }
+
+  // ── 13. The launch target ROAS is offered later by Ad Doctor, as a reviewed draft only ─────────
+  {
+    // Publishing keeps it for each new campaign that launched without one.
+    const e = engine(), f = memory(), camp = { resourceName: 'customers/123/campaigns/-2', name: 'BA · later', status: 'PAUSED', campaignBudget: 'customers/123/campaignBudgets/-1', maximizeConversionValue: {} };
+    const draft = (id, c) => f.db.collection(COL.approvals).doc(id).set({ type: 'pmax', status: 'APPROVED', payload: { mutateOperations: [
+      { campaignBudgetOperation: { create: { resourceName: 'customers/123/campaignBudgets/-1', amountMicros: 10e6 } } }, { campaignOperation: { create: c } }], meta: { targetRoasLater: 2.5 } } });
+    let cid = '901';
+    e.bind({ fb: () => f, assertCreativeReviewed: () => {}, materializeReviewedCreative: async it => clone(it.payload.mutateOperations), _deletedCampaignIds: async () => new Set(), gaql: async () => [], _enabledBudgetTotal: async () => 0,
+      mutateAll: async (ops, o) => o.validateOnly ? {} : { mutateOperationResponses: ops.map(x => x.campaignOperation ? { campaignResult: { resourceName: 'customers/123/campaigns/' + cid } } : {}) } });
+    await draft('t1', { ...camp }); await e.get('applyApproval')('t1', { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD' });
+    const kept = () => f.docs.get(COL.state + '/targetRoasLater') || {};
+    check(kept()['901'] && kept()['901'].targetRoas === 2.5 && kept()['901'].approvalId === 't1' && kept()['901'].publishedAt > 0, 'publishing keeps the launch target ROAS for later, per campaign');
+    cid = '902'; await draft('t2', { ...camp, name: 'BA · dry' }); await e.get('applyApproval')('t2', { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD', dryRun: true });
+    cid = '903'; await draft('t3', { ...camp, name: 'BA · set', maximizeConversionValue: { targetRoas: 3 } }); await e.get('applyApproval')('t3', { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD' });
+    check(!kept()['902'] && !kept()['903'], 'a dry run, or a campaign that launched with a target, keeps nothing');
+  }
+  {
+    // The diagnosis reads readiness: about 42 days of delivery, 30 conversions in 30 days, still no target.
+    const e = engine(), f = memory(), queries = []; let bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: {} }, firstDay = plus(today, -50), conv = 34;
+    await f.db.collection(COL.state).doc('targetRoasLater').set({ '42': { targetRoas: 2.5, approvalId: 't1', publishedAt: Date.parse(plus(today, -60) + 'T12:00:00Z') } });
+    e.bind({ fb: () => f, gaql: async q => { queries.push(q);
+      if (/campaign\.primary_status_reasons/.test(q)) return [{ campaign: { id: '42', name: 'Rings', status: 'ENABLED', primaryStatus: 'ELIGIBLE', primaryStatusReasons: [], advertisingChannelType: 'PERFORMANCE_MAX' }, campaignBudget: { amountMicros: '10000000' }, metrics: { conversions: conv, conversionsValue: 1054, costMicros: 340e6 } }];
+      if (/campaign\.bidding_strategy_type/.test(q)) return [{ campaign: { id: '42', ...bidding } }];
+      if (/metrics\.impressions > 0/.test(q)) return [{ campaign: { id: '42' }, segments: { date: firstDay }, metrics: { impressions: '40' } }];
+      if (/category_label, metrics\.conversions FROM campaign_search_term_insight/.test(q)) return [{ campaignSearchTermInsight: { categoryLabel: 'free charm patterns' }, metrics: { conversions: 0 } }, { campaignSearchTermInsight: { categoryLabel: 'charm bracelets' }, metrics: { conversions: 3 } }];
+      return []; } });
+    const ready = async () => (plain(await e.get('fetchDiagnostics')(null)).campaigns[0] || {}).targetRoasReady;
+    const t = await ready();
+    check(t && t.targetRoas === 2.5 && t.conversions30 === 34 && t.roas30 === 3.1 && t.servingDays === 50 && t.servingSince === firstDay, 'a campaign serving about 42 days with 30 conversions in 30 days is ready for the target kept at launch');
+    check(queries.some(q => /metrics\.impressions > 0/.test(q) && q.includes(`BETWEEN '${plus(today, -60)}' AND '${today}'`)), 'its serving days count from its first impression since publication');
+    conv = 29; const few = await ready(); conv = 34; firstDay = plus(today, -30); const young = await ready(); firstDay = plus(today, -50);
+    bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: { targetRoas: 3 } }; const set = await ready();
+    bidding = { biddingStrategyType: 'MANUAL_CPC' }; const manual = await ready();
+    check(!few && !young && !set && !manual, 'not yet with fewer conversions or fewer days, and never over an existing target or another bidding strategy');
+    bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: {} };
+    const d = plain(await e.get('fetchDiagnostics')(null)), cq = queries.filter(q => /category_label, metrics\.conversions FROM campaign_search_term_insight/.test(q)).pop();
+    check(JSON.stringify(d.negativeGuard['42'].categories) === JSON.stringify([{ label: 'free charm patterns', conv: 0 }, { label: 'charm bracelets', conv: 3 }]) && cq.includes(`BETWEEN '${plus(today, -364)}' AND '${today}'`) && /campaign_id = 42/.test(cq),
+      'a PMax campaign\'s search categories and their conversions over a year are read for the negative check');
+  }
+  {
+    // Ad Doctor's own remedy, even when the AI review fails; the model cannot set a target itself.
+    const e = engine(), f = memory(); let verdict = null;
+    const c = { id: '42', name: 'Rings', status: 'ENABLED', channel: 'PERFORMANCE_MAX', targetRoasReady: { targetRoas: 2.5, conversions30: 34, roas30: 3.1, servingDays: 50, servingSince: plus(today, -50) } };
+    e.bind({ fb: () => f, control: async () => ({ maxDailyBudgetTotal: 100, budgetCurrency: 'CAD' }), fetchDiagnostics: async () => ({ campaigns: [clone(c)], account: { recommendations: [] } }),
+      remedyHistory: async () => ({ items: [] }), _remedyOutcomes: async () => ({}), _enabledBudgetTotal: async () => 10,
+      analyzeDiagnostics: async () => { if (!verdict) throw Error('AI offline'); return clone(verdict); } });
+    let doc = plain(await e.get('runDiagnostics')({}));
+    const rem = (((doc.ai.campaigns.find(v => v.id === '42') || {}).remedies) || []).find(r => r.executable.kind === 'setTargetRoas');
+    check(rem && rem.executable.targetRoas === 2.5 && rem.issue === 'Ready for its target ROAS of 250%' && /Serving 50 days; last 30 days: 34 conversions, ROAS 310%/.test(rem.fix) && doc.aiError, 'Ad Doctor offers "Set target ROAS 250%" by its own rule, even when the AI review fails');
+    verdict = { campaigns: [{ id: '42', severity: 'healthy', remedies: [{ issue: 'x', fix: 'y', executable: { kind: 'setTargetRoas', targetRoas: 9 } }] }] };
+    doc = plain(await e.get('runDiagnostics')({}));
+    const rs = doc.ai.campaigns.find(v => v.id === '42').remedies.filter(r => r.executable.kind === 'setTargetRoas');
+    check(rs.length === 1 && rs[0].executable.targetRoas === 2.5, 'the model cannot set a target: only the one kept at launch is offered');
+  }
+  {
+    // Sending it: a draft in Approvals, never a change in Google Ads.
+    const e = engine(), f = memory(); let bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: {} };
+    const ready = { targetRoas: 2.5, conversions30: 34, roas30: 3.1, servingDays: 50, servingSince: plus(today, -50) }, remedy = plain(e.get('_targetRoasRemedy')(ready));
+    e.bind({ fb: () => f, _currentDiagnosis: async () => ({ id: '42', name: 'Rings', targetRoasReady: ready }), _campaignBaseline: async () => ({ name: 'Rings', conv: 60 }),
+      gaql: async q => /bidding_strategy_type/.test(q) ? [{ campaign: { id: '42', ...bidding } }] : [] });
+    const r = plain(await e.get('applyRemedy')('42', remedy, { ctrl: { maxDailyBudgetTotal: 100 } }));
+    const drafts = () => [...f.docs].filter(([k]) => k.startsWith(COL.approvals + '/')).map(([, v]) => v), a = drafts()[0];
+    check(r.ok && r.queued && drafts().length === 1 && a.status === 'PENDING' && a.type === 'bidding' && a.payload.service === 'campaigns' && a.payload.meta.targetRoasGuard === true, 'Set target ROAS goes to Approvals as a draft; nothing is sent to Google Ads');
+    check(JSON.stringify(a.payload.operations) === JSON.stringify([{ update: { resourceName: 'customers/123/campaigns/42', maximizeConversionValue: { targetRoas: 2.5 } }, updateMask: 'maximize_conversion_value.target_roas' }]) && a.payload.meta.evidence.conversions30 === 34 && a.summary === 'Target ROAS 250% · Rings',
+      'the draft holds exactly one bidding change, with its evidence');
+    const log = [...f.docs].filter(([k]) => k.startsWith(COL.remedies + '/')).map(([, v]) => v);
+    check(log.length === 1 && log[0].queued && log[0].approvalId === r.approvalId && log[0].kind === 'setTargetRoas', 'it is logged as waiting in Approvals, not as a live change');
+    const again = plain(await e.get('applyRemedy')('42', remedy, { ctrl: {} }));
+    check(again.reused && again.approvalId === r.approvalId && drafts().length === 1, 'a second click returns the draft already waiting');
+    bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: { targetRoas: 3 } };
+    await assert.rejects(() => e.get('applyRemedy')('43', remedy, { ctrl: {} }), /bidding changed since it was diagnosed/);
+    check(drafts().length === 1, 'a campaign whose bidding changed gets no draft');
+  }
+  {
+    // Approving it: only that change, only while the campaign still has no target.
+    const e = engine(), f = memory(), sent = []; let bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: {} };
+    const op = { update: { resourceName: 'customers/123/campaigns/42', maximizeConversionValue: { targetRoas: 2.5 } }, updateMask: 'maximize_conversion_value.target_roas' };
+    const draft = (id, ops) => f.db.collection(COL.approvals).doc(id).set({ type: 'bidding', status: 'APPROVED', payload: { service: 'campaigns', operations: ops, meta: { existingCampaignId: '42', targetRoas: 2.5, targetRoasGuard: true } } });
+    e.bind({ fb: () => f, _deletedCampaignIds: async () => new Set(), gaql: async q => /bidding_strategy_type/.test(q) ? [{ campaign: { id: '42', ...bidding } }] : [],
+      mutate: async (service, ops, o) => { sent.push([service, clone(ops), !!(o && o.validateOnly)]); return {}; } });
+    const ctrl = { maxDailyBudgetTotal: 100, budgetCurrency: 'CAD' };
+    await draft('b1', [op]); await e.get('applyApproval')('b1', ctrl);
+    check(sent.length === 1 && sent[0][0] === 'campaigns' && JSON.stringify(sent[0][1]) === JSON.stringify([op]) && f.docs.get(COL.approvals + '/b1').status === 'APPLIED', 'approving the draft sets the target ROAS, and only that');
+    await draft('b2', [{ update: { ...op.update, name: 'Renamed' }, updateMask: op.updateMask }]);
+    await assert.rejects(() => e.get('applyApproval')('b2', ctrl), /unexpected change/);
+    bidding = { biddingStrategyType: 'MAXIMIZE_CONVERSION_VALUE', maximizeConversionValue: { targetRoas: 3 } }; await draft('b3', [op]);
+    await assert.rejects(() => e.get('applyApproval')('b3', ctrl), /bidding changed after this draft was made/);
+    check(sent.length === 1 && f.docs.get(COL.approvals + '/b3').status === 'APPROVED', 'an unexpected operation or a bidding changed since publishes nothing');
+  }
+
+  // ── 14. A campaign that already served keeps its end date at the console's first enable ─────────
+  {
+    const e = engine(), f = memory(), muts = [], queries = []; let fail = true;
+    await f.db.collection(COL.state).doc('plannedFlight_779').set({ days: 30, approvalId: 'p9', publishedAt: Date.parse(plus(today, -20) + 'T12:00:00Z') });
+    e.bind({ fb: () => f, _assertCampaignNotDeleted: async () => {}, _assertSpendLimits: async () => 'x',
+      gaql: async q => { queries.push(q); if (/metrics\.impressions FROM campaign WHERE campaign\.id = 779/.test(q)) { if (fail) throw Error('read failed'); return [{ campaign: { id: '779' }, metrics: { impressions: '120' } }]; } return []; },
+      mutate: async (service, ops) => { muts.push(clone(ops)); return {}; } });
+    let r = plain(await e.get('setCampaignStatus')('779', 'ENABLED', { ctrl: { maxDailyBudgetTotal: 100 } }));
+    check(muts[0][0].updateMask === 'status' && !r.endDate && !f.docs.get(COL.state + '/plannedFlight_779').startedAt, 'when its delivery cannot be read, the end date stays and the run is not marked started');
+    fail = false; r = plain(await e.get('setCampaignStatus')('779', 'ENABLED', { ctrl: { maxDailyBudgetTotal: 100 } }));
+    const fl = f.docs.get(COL.state + '/plannedFlight_779');
+    check(muts[1][0].updateMask === 'status' && !r.endDate && r.alreadyServed && fl.startedAt > 0 && fl.servedBeforeEnable, 'a campaign that already served since publication keeps its end date and is marked started');
+    check(queries.some(q => q.includes(`BETWEEN '${plus(today, -20)}' AND '${today}'`)), 'its delivery is read from the publish day');
+  }
+
+  // ── 15. PMax negatives only inside a search category that never converted ──────────────────────
+  {
+    const san = engine().get('_diagSanitize'), neg = keywords => ({ campaigns: [{ id: '50', remedies: [{ issue: 'Waste', fix: 'Exclude', executable: { kind: 'addNegatives', keywords } }] }] });
+    const diag = cats => ({ campaigns: [{ id: '50', channel: 'PERFORMANCE_MAX', status: 'ENABLED' }], negativeGuard: { '50': { converting: [], keywords: [], ...(cats ? { categories: cats } : {}) } } });
+    const cats = [{ label: 'free charm patterns', conv: 0 }, { label: 'charm bracelets', conv: 3 }];
+    let ex = plain(san(neg(['free charm patterns', 'patterns', 'silver charm bracelets', 'wholesale']), diag(cats), { maxDailyBudgetTotal: 100 }, 10)).campaigns[0].remedies[0].executable;
+    check(ex.kind === 'addNegatives' && JSON.stringify(ex.keywords) === '["free charm patterns","patterns"]', 'a PMax negative is offered only inside a search category that never converted');
+    check(JSON.stringify(ex.skipped) === '["silver charm bracelets","wholesale"]' && /never converted/.test(ex.skippedWhy), 'one near a converting category, or in no reported category, is left out with the reason');
+    ex = plain(san(neg(['free charm patterns']), diag(null), {}, 10)).campaigns[0].remedies[0].executable;
+    check(ex.kind === 'none', 'without the category read no PMax negative is offered');
+  }
+
+  // ── Console: the Studio AI read, the target ROAS remedy and its Approvals card ─────────────────
+  {
+    const { JSDOM } = require('jsdom'), dom = new JSDOM('<div id="studioGrowth"></div>'), d = dom.window.document;
+    const ui = { document: d, $: s => d.querySelector(s), DASH: { control: { maxDailyBudgetTotal: 100 } }, cur: () => 'CAD', defCountries: () => ['2124'], ctyName: x => x, moneyIn: v => 'CAD ' + v,
+      studioGrowthBusy: null, studioGrowthCountries: null, studioGrowthDraft: null, studioGrowthRun: () => {}, go: () => {}, openCountryEditor: () => {},
+      STUDIO_GROWTH: { blueprint: { budget: { recommendedDaily: 10, countries: ['2124'] }, pmax: { groups: [] }, positioning: {} }, lanes: {}, learning: { phase: 'learning', generatedAt: Date.now() - 2 * 3600e3, recommendations: [],
+        synthesis: { summary: 'Designers stall before approval.', nextTest: { lane: 'landing', hypothesis: 'h', change: 'Show the metal preview first', successMetric: 'approval rate at least 25%', holdDays: 14 }, warnings: [] } } } };
+    vm.createContext(ui); for (const n of ['esc', 'timeago', 'sgMetric', 'sgLaneState', 'sgCountryText', 'renderDesignStudioGrowth']) vm.runInContext(pick(n), ui);
+    ui.renderDesignStudioGrowth();
+    const read = [...d.querySelectorAll('#studioGrowth .sgSection')].find(x => /AI read/.test(x.textContent));
+    check(read && !read.closest('details') && /Designers stall before approval\./.test(read.textContent) && /Next test · landing: Show the metal preview first · success: approval rate at least 25% · hold 14 days/.test(read.textContent) && /2h ago/.test(read.textContent),
+      'the Studio panel shows the AI read and next test that Analyze paid for, without opening anything');
+    ui.STUDIO_GROWTH.learning.synthesis.at = Date.now() - 3 * DAY; ui.renderDesignStudioGrowth();
+    check(/AI read · 3d ago/.test(d.querySelector('#studioGrowth').textContent), 'its age is the time of the AI read, not of a later scheduled refresh');
+    ui.STUDIO_GROWTH.learning.synthesis = { error: 'model offline' }; ui.renderDesignStudioGrowth();
+    check(![...d.querySelectorAll('#studioGrowth .sgLabel')].some(x => /AI read/.test(x.textContent)), 'no AI read is shown when there is none');
+
+    const ad = { REMHIST: [{ id: 'h1', campaignId: '42', kind: 'setTargetRoas', issue: 'Ready for its target ROAS of 250%', executable: { kind: 'setTargetRoas', targetRoas: 2.5 }, queued: true, approvalState: 'PENDING' }], diagMoney: v => 'CAD ' + v, apCampaignName: () => 'Rings' };
+    vm.createContext(ad); for (const n of ['remKey', 'histFor', 'queuedTag', 'remedyParams', 'approvalAction']) vm.runInContext(pick(n), ad);
+    const rm = { issue: 'Ready for its target ROAS of 300%', executable: { kind: 'setTargetRoas', targetRoas: 3 } };
+    check(ad.histFor('42', rm) && !ad.histFor('43', rm), 'a target ROAS already waiting in Approvals is not offered again');
+    check(/live bidding changes only after you approve/.test(ad.queuedTag(ad.REMHIST[0])[2]) && ad.remedyParams(ad.REMHIST[0]) === 'Target ROAS 250%', 'the fix history names the bidding change');
+    const act = ad.approvalAction({ type: 'bidding', payload: { service: 'campaigns', operations: [{}], meta: { existingCampaignId: '42', targetRoas: 2.5 } } }, false);
+    check(act.publish === 'Set target ROAS' && act.from === 'Ad Doctor' && /else if\(pl\.service==="campaigns"&&\(pl\.meta\|\|\{\}\)\.targetRoas\)\{var tm=pl\.meta/.test(html) && /ex\.kind==="setTargetRoas"\?\("Send a target ROAS of "/.test(html),
+      'the Approvals card names the change it publishes, and Ad Doctor asks before sending it');
   }
 
   console.log(passed + ' spend and paid-AI guard checks passed.');

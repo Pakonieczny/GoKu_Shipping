@@ -11,7 +11,8 @@ const ctx={console,Number,String,Object,Array,Math,JSON,Set,Map,isFinite,URL,
   campDates:c=>({s:c.startDate||'',e:c.endDate||''}),statusBadge:c=>'<span class="st">'+c.status+'</span>',campaignBadgeHtml:()=>'',
   historicalBudget:()=>'recorded budget',historicalSchedule:()=>'recorded schedule',fmtMon:x=>x};
 vm.createContext(ctx);vm.runInContext(html.match(/var BASIS_NAMES=\{[^}]*\};/)[0],ctx);
-for(const name of ['basisName','basisLabel','CV','totals','reportNumber','cmdAttr','cmdMoney','campaignWhy','campaignIdle','idleToggleText','campaignTable','groupReportMetrics','lcStep','lcTicks','feedLabel','feedError'])vm.runInContext(pick(name),ctx);
+for(const name of ['basisName','basisLabel','CV','totals','reportNumber','cmdAttr','cmdMoney','campaignWhy','campaignIdle','idleToggleText','campaignTable','groupReportMetrics','lcStep','lcTicks','feedLabel','feedError',
+  'servingOf','servingClass','servingLabel','servingWhen','servingSourceText','servingChanged','servingBadgeAttrs','servingBadgeHtml','servingStoredHtml','servingBoxHtml'])vm.runInContext(pick(name),ctx);
 let passed=0;function test(name,fn){fn();passed++;console.log('PASS',name);}
 const plain=x=>JSON.parse(JSON.stringify(x));
 
@@ -65,5 +66,27 @@ test('activity entries read in plain words with the campaign name',()=>{
 
 test('the daily chart subtitle sums unrounded daily figures, so it matches the tiles',()=>{
   const body=pick('renderDailyCharts');assert.match(body,/spend=ser\.map\(function\(r\)\{return \+r\.cost\|\|0;\}\)/);assert.match(body,/money\(tSpend\)/);});
+
+test('each campaign row carries Google\'s last serving verdict as a badge that opens the check in its details',()=>{
+  ctx.DASH.servingChecks={
+    '3':{verdict:'blocked',headline:'Will not serve as intended: End <img src=x> passed',counts:{block:2,risk:1,note:4},top:[{level:'block',area:'Dates',text:'Ended <b>early</b>'},{level:'risk',area:'Locations',text:'Presence or interest'}],source:'publication',settling:true,checkedAt:'2026-09-28T10:00:00Z'},
+    '2':{verdict:'attention',headline:'3 settings to fix before enabling.',counts:{block:0,risk:3,note:0},top:[],source:'daily',checkedAt:'2026-09-28T08:50:00Z'},
+    '5':{verdict:'ready',headline:'Google reports nothing that would stop it serving as intended.',counts:{block:0,risk:0,note:1},top:[],source:'console',checkedAt:'2026-09-28T09:00:00Z',changedAt:'2026-09-28T09:03:00Z'},
+    '4':{verdict:'blocked',headline:'x',counts:{block:1},top:[],source:'daily',checkedAt:'2026-09-28T08:00:00Z'}};
+  const t=ctx.campaignTable(camps),row=id=>(t.match(new RegExp('<tr class="crow"[^>]*data-cid="'+id+'"[\\s\\S]*?</tr>'))||[''])[0],det=id=>(t.match(new RegExp('<tr class="cdet"[^>]*data-cid="'+id+'"[\\s\\S]*?</tr>'))||[''])[0];
+  assert.match(row('3'),/<span class="badge2 servBadge b-bad" data-serv="3" title="[^"]*">Google: won’t serve \(2\)<\/span>/);
+  assert.match(row('2'),/servBadge b-warn" data-serv="2"[^>]*>Google: 3 to fix</);
+  assert.match(row('5'),/servBadge b-none" data-serv="5" title="The campaign changed after Google’s last check[^"]*">Google: changed, check again</,'a publication after the check makes the verdict an old one');
+  assert.match(row('1'),/servBadge b-none" data-serv="1" title="Google serving check has not run[^"]*">Google: not checked</);
+  assert.doesNotMatch(row('4'),/servBadge/,'a deleted campaign has no serving badge');assert.doesNotMatch(det('4'),/servbox/);
+  for(const id of ['1','2','3','5'])assert.doesNotMatch(row(id),/<button/,'the row stays the one control: the badge is not a button');
+  assert.match(row('3'),/title="Will not serve as intended: End &lt;img src=x&gt; passed \(Checked after publishing, [^"]+\)"/,'the verdict headline is escaped into the badge title');
+  const box=det('3');assert.match(box,/<div class="servbox" data-sc="3">/);assert.match(box,/<button type="button" class="btn ghost sm servRun">Check again with Google<\/button>/);
+  assert.match(box,/Stops it<\/span><b>Dates:<\/b> Ended &lt;b&gt;early&lt;\/b&gt;/);assert.match(box,/Google was still processing the change/);assert.doesNotMatch(box,/<img|<b>early/);
+  assert.match(det('5'),/the campaign changed after this check/);assert.match(det('1'),/Not run for this campaign yet\.[\s\S]*Check with Google/);
+  assert.doesNotMatch(t,/Timeline/,'the serving check needs no Timeline to be reached');
+  ctx.DASH.servingChecks={'1':{verdict:null,lastAttempt:{at:'2026-09-28T10:00:00Z',error:'Google Ads request <quota>'}}};
+  assert.match(ctx.servingBoxHtml(camps[0]),/The last check could not read this campaign: Google Ads request &lt;quota&gt;/);
+  delete ctx.DASH.servingChecks;});
 
 console.log(passed+' Overview checks passed.');

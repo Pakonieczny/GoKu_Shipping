@@ -1,6 +1,6 @@
-// What the browser walk (tests/adwords/browser) found, checked offline: toasts never take taps, phone date
-// pickers stack with thumb-sized controls, a desktop picker near the edge opens leftward, dialogs and sheets
-// ease in (not under reduced motion), panels ease to their new height in 150–400 ms, the country sheet keeps
+// What the browser walk (tests/adwords/browser) found, checked offline: toasts never take taps, phone controls
+// are thumb-sized, dialogs and sheets ease in (not under reduced motion), panels ease to their new height in
+// 150–400 ms, the country sheet keeps
 // Tab inside it, the sales bar tooltip flips below near the top, image alt text reads as words, the re-image
 // progress line uses what the engine sends, and the sign-in page neither scrolls sideways nor replaces the
 // console with the shop. Synthetic data only.
@@ -35,30 +35,13 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.doesNotMatch(pick('toast'), /<button|<a\s/);
   });
 
-  await test('on phones a date picker stacks its presets over the calendar and scrolls within the screen, and controls are 32 px', () => {
-    const phone = block('@media(max-width:760px){', '/* Phones: date pickers stack');
-    assert.match(rule('.rpBody', phone), /flex-direction:column/);
-    assert.match(rule('.rpPop', phone), /max-height:calc\(100dvh[^;]*\);overflow-y:auto/);
+  // (The date picker's phone layout and leftward opening are checked in console-inline-actions.cjs.)
+  await test('on phones picker controls, breadcrumbs, listing links and the Approvals edit links are at least 32 px', () => {
+    const phone = block('@media(max-width:760px){', '/* Phones: controls are at least 32 px');
     assert.match(phone, /\.rpPreset,\.rpNav,[^{]*,#groupContext \.bg-back\{min-height:32px\}/);
     assert.match(phone, /\.rpNav,[^{]*\{min-width:32px;min-height:32px\}/);
     assert.match(phone, /\.draft \.apEdit>summary,\.draft \.apLink\{display:inline-block;min-width:32px;min-height:32px;/);
     assert.match(phone, /\.reportListing a,\.reportListings>a,\.bg-products a\{display:inline-block;min-height:32px;/);
-    const draw = pick('rpDraw');
-    for (const cls of ['rpBody', 'rpPresets', 'rpMain']) assert.match(draw, new RegExp('class="' + cls + '"'), cls);
-  });
-
-  await test('a picker that would open past the right edge opens leftward, and reopens from the left', () => {
-    const p = page('<div style="position:relative"><div class="rpPop" id="rpPop-x" style="display:none;position:absolute;left:0"></div></div>');
-    Object.defineProperty(p.document.documentElement, 'clientWidth', { value: 1440 });
-    p.ctx.RP = { x: { value: { preset: '30d' } } };
-    p.run(pick('rpToggle') + ';var rpDraw=function(){},rpParse=function(s){return new Date(s)};');
-    const pop = p.document.getElementById('rpPop-x');
-    let right = 1500; pop.getBoundingClientRect = () => ({ top: 0, left: right - 540, right, bottom: 300, width: 540, height: 300 });
-    p.ctx.rpToggle('x');
-    assert.equal(pop.style.display, 'block'); assert.equal(pop.style.left, 'auto'); assert.equal(pop.style.right, '0px');
-    p.ctx.rpToggle('x'); assert.equal(pop.style.display, 'none');
-    right = 900; p.ctx.rpToggle('x');
-    assert.equal(pop.style.left, '0px'); assert.equal(pop.style.right, 'auto');
   });
 
   await test('every dialog and sheet that eases in stands still under reduced motion', () => {
