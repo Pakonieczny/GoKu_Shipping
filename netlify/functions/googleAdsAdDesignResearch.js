@@ -325,6 +325,12 @@ function copyGaps(copy,pmax){
   return gaps;
 }
 const plural=(n,w)=>n+' '+w+(n===1?'':'s');
+// A measurement in a line (for example 9.4mm) must appear on the product's own page; otherwise the line is set aside.
+function figureChecker(evidence){
+  const depicted=(evidence.composition===true?evidence.products:[evidence.primaryProduct]).filter(Boolean),{sources}=researchCitations(evidence);
+  const page=norm(depicted.map(p=>p.title+' '+p.description+' '+JSON.stringify((sources.get('product:'+p.id)||{}).data||{})).join(' ')).replace(/ /g,'');
+  return t=>{for(const m of String(t).matchAll(/\b\d+(?:\.\d+)?\s*(?:mm|cm|inch(?:es)?|carats?)\b/gi))if(!page.includes(norm(m[0]).replace(/ /g,'')))return false;return true;};
+}
 function createAdDesignResearch(D){
   const clock=()=>D.now?D.now():Date.now();
   async function collect({campaignId,sourceVersion,snapshot,range,group,selectedProducts=[],selectedSources,settings={},deadlineMs=60000}={}){
@@ -431,7 +437,7 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
   function validateResult({output,evidence,channel,group,mode='full'}={}){
     if(!output||!output.brief||!output.copy||!evidence)throw new Error('The AI did not return a complete product-bound concept.');
     if(channel!==evidence.channel||String(group&&group.ref)!==String(evidence.group.ref))throw new Error('The copy belongs to a different ad group.');
-    const pmax=channel==='pmax',tidy=tidyCopy(output.copy,pmax,D.copyLineValid),copy=tidy.copy,shortfall=copyGaps(copy,pmax);
+    const pmax=channel==='pmax',tidy=tidyCopy(output.copy,pmax,lineChecker(evidence)),copy=tidy.copy,shortfall=copyGaps(copy,pmax);
     // A full set is checked whole here. A set with empty slots is not thrown away: the run asks for just the missing lines
     // (completeCopy) and applies the same checks to the finished set.
     if(!shortfall.total&&!D.copyValid(copy,pmax))checkCopy(copy,pmax,tidy.dropped);
@@ -446,22 +452,21 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
     const unavailable=ids.filter(id=>!allowedIds.has(id)),missing=requiredSources.filter(id=>!ids.includes(id));
     if(unavailable.length)throw new Error('The concept must cite only available sources. Unavailable: '+unavailable.join(', ').slice(0,220)+'. Saved messaging is retained.');
     if(!ids.length||missing.length)throw new Error('The concept must cite every selected product. Missing: '+missing.map(id=>sources.get(id)?.label||id).join(', ').slice(0,220)+'. Saved messaging is retained.');
-    const rows=[...copy.headlines,...(copy.longHeadlines||[]),...copy.descriptions],combined=norm(rows.join(' '));
-    if(rows.some(v=>UNSUPPORTED_CLAIMS.test(v)))throw new Error('The copy contains generic, awkward or unsupported selling claims.');
+    // A line with an unsupported claim, an unverified material or a measurement the page lacks was set aside above, not thrown.
+    // The headlines of a full set must still name the product; a set with empty slots is checked once the top-up has merged.
     const depicted=multi?evidence.products:[evidence.primaryProduct];
-    const productText=norm(depicted.map(p=>p.title+' '+p.description+' '+JSON.stringify((sources.get('product:'+p.id)||{}).data||{})).join(' '));
-    for(const phrase of UNVERIFIED_ATTRIBUTES)if(combined.includes(phrase)&&!productText.includes(phrase))throw new Error('The copy claims an unverified product attribute: '+phrase+'.');
-    const generic=new Set(['jewelry','jewellery','brites','gift','gifts','handmade','handcrafted','personalized','personalised','with','for','the','and','gold','silver','filled','sterling']);
-    const nouns=norm(depicted.map(p=>p.title).join(' ')).split(' ').filter(w=>w.length>3&&!generic.has(w));
-    if(nouns.length&&!copy.headlines.some(h=>nouns.some(w=>norm(h).includes(w))))throw new Error('The headlines do not identify the selected product clearly enough.');
+    if(!shortfall.total)assertProductNamed(copy,evidence);
     // The source establishes ownership. Shopify's short ID and its Product GID
     // identify the same product; an omitted duplicate ID is not a claim transfer.
     const productIdFor=id=>{const raw=String(id||'');const matches=depicted.filter(p=>String(p.id)===raw||/^\d+$/.test(raw)&&String(p.id)==='gid://shopify/Product/'+raw||/^gid:\/\/shopify\/Product\/\d+$/.test(raw)&&String(p.id)===raw.split('/').pop());return matches.length===1?String(matches[0].id):null;};
     const pageKey=url=>{try{const u=new URL(url);return u.origin+u.pathname.replace(/\/$/,'');}catch{return null;}};
+    // A claim its source does not back is left out (and named in the limitations) instead of costing the whole paid answer;
+    // only when no claim survives is the first refusal raised.
+    const rejectedClaims=[],rejectClaim=message=>{rejectedClaims.push(message);return null;};
     const factClaims=(multi?(output.factClaims||[]):(output.factClaims||[]).slice(0,12)).map(f=>{
       let sourceId=citations.canonical(f.sourceId),source=sources.get(sourceId);const quote=str(f.quote,450),claim=str(f.claim,250);
       if(!source&&sourceId.startsWith('product:')){const pid=productIdFor(sourceId.slice(8));if(pid){sourceId='product:'+pid;source=sources.get(sourceId);}}
-      if(!source||!quote||!claim)throw new Error('A factual claim is missing its verified source quote. Saved messaging is retained.');
+      if(!source||!quote||!claim)return rejectClaim('A factual claim is missing its verified source quote. Saved messaging is retained.');
       // Older receipts mixed research observations and art direction into facts.
       // Retain their raw audit evidence without treating operational metrics or
       // operator instructions as claims about the advertised product.
@@ -472,18 +477,24 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
         if(sourceId.startsWith('product:'))pid=productIdFor(sourceId.slice(8));
         else if(sourceId==='landing'&&declaredId){const p=depicted.find(p=>String(p.id)===declaredId);if(p&&pageKey(p.url)&&pageKey(p.url)===pageKey(source.data&&source.data.url))pid=declaredId;}
         if(sourceId==='landing'&&declaredId&&!pid){const exactId='product:'+declaredId,exact=sources.get(exactId),corpus=exact&&norm(JSON.stringify(exact.data));if(corpus&&corpus.includes(norm(quote))&&corpus.includes(norm(claim))){sourceId=exactId;source=exact;pid=declaredId;}}
-        if(sourceId!=='landing'&&!pid||declared&&(!declaredId||declaredId!==pid))throw new Error('The claim “'+claim.slice(0,100)+'” is not bound to the pictured product’s verified page. Saved messaging is retained; no replacement AI request was sent.');
+        if(sourceId!=='landing'&&!pid||declared&&(!declaredId||declaredId!==pid))return rejectClaim('The claim “'+claim.slice(0,100)+'” is not bound to the pictured product’s verified page. Saved messaging is retained; no replacement AI request was sent.');
       }
-      if(!quotedClaimSupported(claim,quote,source.data))throw new Error('The claim “'+claim.slice(0,100)+'” is not supported by its cited source. Saved messaging is retained.');
+      if(!quotedClaimSupported(claim,quote,source.data))return rejectClaim('The claim “'+claim.slice(0,100)+'” is not supported by its cited source. Saved messaging is retained.');
       return {claim,sourceId,quote,...(multi?{productId:pid||''}:{})};
     }).filter(Boolean);
-    if(!factClaims.length&&(!multi||depicted.length))throw new Error('The AI must substantiate the specific product facts used in the concept.');
+    if(!factClaims.length&&(!multi||depicted.length))throw new Error(rejectedClaims[0]||'The AI must substantiate the specific product facts used in the concept.');
     const lessons=((sources.get('learning')||{}).data||{}).lessons||[],original=group.original||{},existingStrings=field=>(original[field]||[]).map(x=>typeof x==='string'?x:x.text).filter(Boolean);
-    const applications=(output.learningApplications||[]).slice(0,10).map(a=>{a={...a,evidenceId:citations.canonical(a.evidenceId)};const lesson=lessons.find(l=>l.id===a.lessonId&&l.evidenceVerified),field=a.field,before=str(a.before,250),after=str(a.after,250);if(!lesson||!allowedIds.has(a.evidenceId)||!str(a.why)||(field==='images'?!((output.imageDirections||[]).flatMap(d=>[d.concept,d.composition,d.lighting,d.background])).includes(after):!(copy[field]||[]).includes(after))||before&&!existingStrings(field).includes(before)||before===after)throw new Error('A claimed learning application does not match an exact supported copy change.');return {lessonId:lesson.id,lessonSnapshot:{id:lesson.id,rule:lesson.rule,category:lesson.category,scope:lesson.scope||'global'},evidenceId:a.evidenceId,field,before,after,why:str(a.why,700)};});
+    let leftOutApplications=0;const rejectApplication=()=>{leftOutApplications++;return null;};const applications=(output.learningApplications||[]).slice(0,10).map(a=>{a={...a,evidenceId:citations.canonical(a.evidenceId)};const lesson=lessons.find(l=>l.id===a.lessonId&&l.evidenceVerified),field=a.field,before=str(a.before,250),after=str(a.after,250);if(!lesson||!allowedIds.has(a.evidenceId)||!str(a.why)||(field==='images'?!((output.imageDirections||[]).flatMap(d=>[d.concept,d.composition,d.lighting,d.background])).includes(after):!(copy[field]||[]).includes(after))||before&&!existingStrings(field).includes(before)||before===after)return rejectApplication();return {lessonId:lesson.id,lessonSnapshot:{id:lesson.id,rule:lesson.rule,category:lesson.category,scope:lesson.scope||'global'},evidenceId:a.evidenceId,field,before,after,why:str(a.why,700)};}).filter(Boolean);
     const imageDirections=(output.imageDirections||[]).slice(0,3).map(d=>{d={...d,sourceIds:citations.list(d.sourceIds)};if(!str(d.concept)||!str(d.composition)||!(d.preserveProduct||[]).length||requiredSources.some(id=>!(d.sourceIds||[]).includes(id))||(d.sourceIds||[]).some(id=>!allowedIds.has(id)))throw new Error('The image direction is not tied to every selected product and source.');return {concept:str(d.concept,300),composition:str(d.composition,multi?4000:600),lighting:str(d.lighting,300),background:str(d.background,300),preserveProduct:d.preserveProduct.map(t=>str(t,200)),avoid:(d.avoid||[]).map(t=>str(t,200)),sourceIds:d.sourceIds,productId:evidence.sourceBindings.primaryProductId,sourceImageId:evidence.sourceImage.id,...(multi?{productIds:evidence.sourceBindings.productIds,sourceImageIds:evidence.sourceBindings.sourceImageIds}:{})};});
     if(mode!=='copy'&&imageDirections.length<2)throw new Error('Two coherent product-specific photographic directions are required.');
     if(output.brief.successMetric!==evidence.decisionRules.primaryKpi&&!(evidence.decisionRules.primaryKpi==='purchase_conversions'&&output.brief.successMetric==='conversion_value'))throw new Error('The primary KPI exceeds the available measurement evidence.');
-    return {brief:{...output.brief,sourceIds:citations.list(output.brief.sourceIds),causal:false,researchedAt:evidence.researchedAt,researchHash:evidence.hash,measurementWindowDays:14,reportingLagDays:3},copy,shortfall,dropped:tidy.dropped,factClaims,learningApplications:applications,imageDirections,sourceIds:ids,limitations:[...new Set([...evidence.warnings,...(output.limitations||[]).map(v=>str(v,500))])]};
+    return {brief:{...output.brief,sourceIds:citations.list(output.brief.sourceIds),causal:false,researchedAt:evidence.researchedAt,researchHash:evidence.hash,measurementWindowDays:14,reportingLagDays:3},copy,shortfall,dropped:tidy.dropped,factClaims,learningApplications:applications,imageDirections,sourceIds:ids,limitations:[...new Set([...evidence.warnings,...(output.limitations||[]).map(v=>str(v,500)),...rejectedClaims.map(m=>'Left out: '+m.replace(/ Saved messaging is retained.*$/,'').slice(0,300)),...(leftOutApplications?['Left out: '+leftOutApplications+' claimed learning application(s) that did not match a copy line.']:[])])]};
+  }
+  function assertProductNamed(copy,evidence){
+    const depicted=(evidence.composition===true?evidence.products:[evidence.primaryProduct]).filter(Boolean);
+    const generic=new Set(['jewelry','jewellery','brites','gift','gifts','handmade','handcrafted','personalized','personalised','with','for','the','and','gold','silver','filled','sterling']);
+    const nouns=norm(depicted.map(p=>p.title).join(' ')).split(' ').filter(w=>w.length>3&&!generic.has(w));
+    if(nouns.length&&!copy.headlines.some(h=>nouns.some(w=>norm(h).includes(w))))throw new Error('The headlines do not identify the selected product clearly enough.');
   }
   // The platform floor and brand rules for a finished set, with the reason a set fails in plain words.
   function checkCopy(copy,pmax,dropped=[]){
@@ -500,7 +511,8 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
   function lineChecker(evidence){
     const depicted=evidence.composition===true?evidence.products:[evidence.primaryProduct],{sources}=researchCitations(evidence);
     const productText=norm(depicted.map(p=>p.title+' '+p.description+' '+JSON.stringify((sources.get('product:'+p.id)||{}).data||{})).join(' '));
-    return t=>!UNSUPPORTED_CLAIMS.test(t)&&!UNVERIFIED_ATTRIBUTES.some(ph=>norm(t).includes(ph)&&!productText.includes(ph))&&(!D.copyLineValid||D.copyLineValid(t));
+    const figuresOk=figureChecker(evidence);
+    return t=>!UNSUPPORTED_CLAIMS.test(t)&&!UNVERIFIED_ATTRIBUTES.some(ph=>norm(t).includes(ph)&&!productText.includes(ph))&&figuresOk(t)&&(!D.copyLineValid||D.copyLineValid(t));
   }
   // A short, text-only request for just the missing lines. The accepted lines are listed so nothing repeats.
   function buildFillRequest({evidence,copy,pmax,feedback='',style='product-led'}={}){
@@ -526,7 +538,7 @@ FRESH RESEARCH PACKAGE: ${JSON.stringify(requestEvidence)}`;
   function completeCopy({evidence,copy,fill,channel}={}){
     const pmax=channel==='pmax',source=fill&&typeof fill==='object'?fill:{},lineOk=lineChecker(evidence);
     const merged=tidyCopy(Object.fromEntries(COPY_FIELDS.map(f=>[f,[...(copy[f]||[]),...(Array.isArray(source[f])?source[f]:[])]])),pmax,lineOk);
-    checkCopy(merged.copy,pmax,merged.dropped);
+    checkCopy(merged.copy,pmax,merged.dropped);assertProductNamed(merged.copy,evidence);
     const slots=COPY_SLOTS[pmax?'pmax':'search'],gaps=copyGaps(merged.copy,pmax),label={headlines:'headlines',longHeadlines:'long headlines',descriptions:'descriptions'},notes=[];
     for(const f of COPY_FIELDS)if(gaps[f])notes.push('Only '+merged.copy[f].length+' of '+slots[f]+' '+label[f]+' passed the platform and brand checks; add the rest by hand.');
     return {copy:merged.copy,gaps,notes};

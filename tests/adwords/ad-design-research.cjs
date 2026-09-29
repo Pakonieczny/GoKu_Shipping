@@ -52,6 +52,12 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
   eq(kept.dropped.map(d=>d.why),['wording the ad rules do not allow','over 30 characters','repeated'],'each set-aside line names its reason');
   eq(kept.shortfall.headlines,6,'the set reports how many headline slots are still empty');
   eq(kept.shortfall.descriptions,1,'and how many description slots');
+  // Paul's Bunny ad: one fact the page does not state ("measures 9.4mm x 8.7mm") must not cost the whole paid answer.
+  let sized=result();sized.factClaims.push({claim:'The monogram necklace measures 9.4mm x 8.7mm.',sourceId:'product:10',quote:'The monogram necklace measures 9.4mm x 8.7mm.'});sized.copy.headlines.push('A 9.4mm Monogram Necklace');
+  const sizedOut=api.validateResult({output:sized,evidence:we,channel:'search',group});
+  eq(sizedOut.factClaims.length,1,'the claim the page does not back is left out, the supported one stays');ok(sizedOut.limitations.some(l=>/^Left out: The claim .*9\.4mm/.test(l)),'and it is named in the limitations');
+  ok(!sizedOut.copy.headlines.some(t=>/9\.4mm/.test(t))&&sizedOut.dropped.some(d=>/9\.4mm/.test(d.text)),'a headline stating a measurement the page does not give is set aside');
+  const onlyBad=result();onlyBad.factClaims=[sized.factClaims[1]];assert.throws(()=>api.validateResult({output:onlyBad,evidence:we,channel:'search',group}),/not supported by its cited source/);checks++;
   const full=result();full.copy.headlines=Array.from({length:15},(_,n)=>'Monogram Necklace Idea '+String.fromCharCode(65+n));full.copy.descriptions=['Discover a monogram necklace.','Explore a meaningful monogram necklace.','Find a personal necklace gift with a monogram.','Choose your monogram necklace at Brites.'];
   eq(api.validateResult({output:full,evidence:we,channel:'search',group}).shortfall.total,0,'a full Search set (15 headlines, 4 descriptions) has no gaps');
   const first=api.validateResult({output:result(),evidence:we,channel:'search',group}).copy,req=api.buildFillRequest({evidence:we,copy:first,pmax:false});
@@ -70,12 +76,12 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
  await f.api.collect(input);eq(f.calls(),2,'fresh destination read every generation');
  const pinnedGroup={...group,original:{headlines:[{text:'Pinned Monogram Necklace',pinnedField:'HEADLINE_1'}]}};assert.throws(()=>f.api.validateResult({output:result(),evidence:e,channel:'search',group:pinnedGroup}),/pinned/);checks++;
  let bad=result();bad.brief.productId='999';assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/switched/);checks++;
- bad=result();bad.copy.headlines[0]='Milestone Jewelry';assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/generic/);checks++;
- bad=result();bad.copy.descriptions[0]='Discover a hypoallergenic monogram necklace from Brites.';assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/unverified/);checks++;
+ bad=result();bad.copy.headlines[0]='Milestone Jewelry';{const out=f.api.validateResult({output:bad,evidence:e,channel:'search',group});ok(!out.copy.headlines.includes('Milestone Jewelry')&&out.dropped.some(d=>d.text==='Milestone Jewelry'),'a generic or unsupported line is set aside, not thrown');}
+ bad=result();bad.copy.descriptions[0]='Discover a hypoallergenic monogram necklace from Brites.';{const out=f.api.validateResult({output:bad,evidence:e,channel:'search',group});ok(!out.copy.descriptions.some(t=>/hypoallergenic/.test(t))&&out.dropped.some(d=>/hypoallergenic/.test(d.text)),'a line claiming an unverified material is set aside, not thrown');}
  bad=result();bad.factClaims[0].quote='Made from guaranteed solid gold';assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/not supported/);checks++;
  bad=result();bad.sourceIds.push('invented');assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/only available/);checks++;
  bad=result();bad.factClaims=[];assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/substantiate/);checks++;
- bad=result();bad.learningApplications=[{lessonId:'invented',evidenceId:'landing',field:'headlines',before:'Old Monogram Necklace',after:bad.copy.headlines[0],why:'Made it clearer'}];assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/learning application/);checks++;
+ bad=result();bad.learningApplications=[{lessonId:'invented',evidenceId:'landing',field:'headlines',before:'Old Monogram Necklace',after:bad.copy.headlines[0],why:'Made it clearer'}];{const out=f.api.validateResult({output:bad,evidence:e,channel:'search',group});ok(out.learningApplications.length===0&&out.limitations.some(l=>/claimed learning application/.test(l)),'an invented learning application is left out and named, not thrown');}checks++;
  f.tick(11*60000);assert.throws(()=>f.api.buildRequest({evidence:e}),/stale/);checks++;
  f=fixture();await assert.rejects(()=>f.api.collect({...input,group:{...group,url:'https://evil.example/landing'}}),/verified Brites/);checks++;eq(f.calls(),0,'unowned source never fetched');
  await assert.rejects(()=>f.api.collect({...input,settings:{sourceImageId:'wrong-photo'}}),/belonging/);checks++;
@@ -128,7 +134,7 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
  const directed=result();Object.assign(directed.brief,{productIds:['10'],sourceImageIds:['photo-1']});directed.sourceIds.push('composition');directed.imageDirections.forEach(d=>d.sourceIds.push('composition'));directed.factClaims.push({claim:'Use the selected charm-only photo as the physical reference; leave calm negative space.',quote:'Use the selected charm-only photo as the physical reference; leave calm negative space.',sourceId:'composition',productId:'10'});
  eq(f.api.validateResult({output:directed,evidence:e,channel:'search',group}).factClaims.length,1,'exact non-copy operator directions are not treated as product claims');
  const observations=clone(directed);e.sources.push({id:'history',status:'available',data:{paid:0,organic:1,merchantOrganic:1,directOrUnknown:0,verifiedPurchaseOrders:1}});observations.factClaims.push({claim:'"paid":0,"organic":1,"merchantOrganic":1,"directOrUnknown":0,"verifiedPurchaseOrders":1',quote:'"paid":0,"organic":1,"merchantOrganic":1,"directOrUnknown":0,"verifiedPurchaseOrders":1',sourceId:'history',productId:'10'});eq(f.api.validateResult({output:observations,evidence:e,channel:'search',group}).factClaims.length,1,'verified operational metrics inform research without becoming advertising claims');
- directed.factClaims.at(-1).claim='Waterproof for life';directed.copy.descriptions[0]='A waterproof monogram necklace for your next gift.';assert.throws(()=>f.api.validateResult({output:directed,evidence:e,channel:'search',group}),/unverified/);checks++;
+ directed.factClaims.at(-1).claim='Waterproof for life';directed.copy.descriptions[0]='A waterproof monogram necklace for your next gift.';{const out=f.api.validateResult({output:directed,evidence:e,channel:'search',group});ok(!out.copy.descriptions.some(t=>/waterproof/.test(t)),'a waterproof claim without product evidence never reaches the copy');}
  console.log('Ad Design research checks passed: '+checks);
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1)});
