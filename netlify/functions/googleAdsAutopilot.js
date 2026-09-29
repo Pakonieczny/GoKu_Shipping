@@ -1687,7 +1687,7 @@ function sanitizeOps(ops, meta) {
           c.brandGuidelinesEnabled == null && c.brand_guidelines_enabled == null) {
         c.brandGuidelinesEnabled = false;
       }
-      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyyMMdd HH:MM:SS"),
+      // Legacy schedule fields: Campaign uses startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss"),
       // not startDate/endDate. Migrate any draft queued before this fix so it applies cleanly.
       if (c.startDate != null) { const v = _toGAdsDateTime(c.startDate, "00:00:00"); if (v) c.startDateTime = v; delete c.startDate; }
       if (c.endDate != null)   { const v = _toGAdsDateTime(c.endDate, "23:59:59"); if (v) c.endDateTime = v; delete c.endDate; }
@@ -2285,7 +2285,7 @@ async function dueEvents(now) {
 /* ===================== Build a Search campaign (atomic) ===================== */
 // Returns mutateOperations[] for googleAds:mutate. Creates budget→campaign→adgroup
 // →RSA in one transaction using temp resource names. Gated/queued by the worker.
-/* date helpers for campaign scheduling windows (YYYY-MM-DD ↔ Google's YYYYMMDD) */
+/* date helpers for campaign scheduling windows (YYYY-MM-DD; Google Ads date-times are "yyyy-MM-dd HH:mm:ss", see _toGAdsDateTime) */
 function _ymd(d) { return d.toISOString().slice(0, 10); }
 function _parseYmd(s) {
   // Accept a Date or epoch-ms number too (callers like the campaign builders pass
@@ -2298,6 +2298,7 @@ function _todayUtc() { const t = new Date(); return new Date(Date.UTC(t.getUTCFu
 // opportunity, plan and draft date counts from it: the server's UTC date runs a day ahead each evening.
 function _acctToday() { return _parseYmd(_acctDateYmd(_tzCache || "America/Toronto")); }
 function _daysBetween(a, b) { return Math.round((b.getTime() - a.getTime()) / 86400000); }
+// A date alone as YYYYMMDD (the old date-only form, not a date-time: date-times go through _toGAdsDateTime).
 function gAdsDate(s, clampToday) { let d = _parseYmd(s); if (!d) return null; if (clampToday) { const t = _acctToday(); if (d < t) d = t; } return _ymd(d).replace(/-/g, ""); }
 
 // Campaign schedule fields for a builder. Accepts Date, epoch ms, or YYYY[-]MM[-]DD.
@@ -2312,16 +2313,16 @@ function _campaignScheduleFields(startDate, endDate) {
   const out = {};
   const s = _parseYmd(startDate);
   // Google reads the start in the account's time zone, so "future" means after the account's today (UTC is a day ahead of Toronto every evening).
-  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _ymd(s).replace(/-/g, "") + " 00:00:00";
+  if (s && s > (_parseYmd(_acctDateYmd(_tzCache || "America/Toronto", 0)) || _todayUtc())) out.startDateTime = _toGAdsDateTime(_ymd(s), "00:00:00");
   const e = _parseYmd(endDate);
-  if (e) out.endDateTime = _ymd(e).replace(/-/g, "") + " 23:59:59";
+  if (e) out.endDateTime = _toGAdsDateTime(_ymd(e), "23:59:59");
   return out;
 }
 
 // Extract a clean YYYY-MM-DD from a Google Ads date/datetime string ("2026-06-29 00:00:00", "20260629 000000", "2026-06-29").
 function _dateOnly(s) { if (!s) return null; const m = String(s).match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
 
-// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYYMMDD — so scheduling
+// "Today" in the AD ACCOUNT's timezone (not the server's UTC), as YYYY-MM-DD — so scheduling
 // decisions match how Google Ads evaluates start dates. Falls back to UTC if the lookup fails.
 let _tzCache = null;
 async function _accountTz() {
@@ -2330,8 +2331,9 @@ async function _accountTz() {
         if (r[0] && r[0].customer && r[0].customer.timeZone) { _tzCache = r[0].customer.timeZone; return _tzCache; } } catch (e) {}
   return "America/Toronto";
 }
-// Current wall-clock in the account's timezone (+optional ms offset) as "yyyyMMdd HH:MM:SS".
-// Used for scheduling so Google Ads never sees a start_date_time in the past.
+// Current wall-clock in the account's timezone (+optional ms offset) as "yyyy-MM-dd HH:mm:ss", the layout
+// _toGAdsDateTime writes and Google Ads returns. Used for scheduling so Google Ads never sees a
+// start_date_time in the past.
 function _accountDateTime(tz, offsetMs) {
   const when = new Date(Date.now() + (offsetMs || 0)); const o = {};
   try {
@@ -2344,10 +2346,10 @@ function _accountDateTime(tz, offsetMs) {
     o.minute = String(when.getUTCMinutes()).padStart(2, "0"); o.second = String(when.getUTCSeconds()).padStart(2, "0");
   }
   const hh = (o.hour === "24") ? "00" : o.hour;   // some environments emit "24" for midnight
-  return `${o.year}${o.month}${o.day} ${hh}:${o.minute}:${o.second}`;
+  return `${o.year}-${o.month}-${o.day} ${hh}:${o.minute}:${o.second}`;
 }
 // Account-timezone calendar date (with optional ms offset) as "YYYY-MM-DD", for segments.date ranges.
-function _acctDateYmd(tz, offsetMs) { const s = _accountDateTime(tz, offsetMs || 0); return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; }
+function _acctDateYmd(tz, offsetMs) { return _accountDateTime(tz, offsetMs || 0).slice(0, 10); }
 
 // GAQL's DURING operator has no LAST_90_DAYS literal (that was the old
 // AdWords API) — 90-day windows must be an explicit BETWEEN on segments.date.
@@ -2356,16 +2358,19 @@ async function _last90Clause() {
   return `segments.date BETWEEN '${_acctDateYmd(tz, -89 * 86400000)}' AND '${_acctDateYmd(tz, 0)}'`;
 }
 
-// Google Ads campaign schedule fields are startDateTime/endDateTime in "yyyyMMdd HH:MM:SS".
-// Accepts a date (YYYY-MM-DD / YYYYMMDD) and appends a time, or passes through an existing datetime.
+// The one writer of a campaign's schedule fields, startDateTime/endDateTime. Google Ads API v24 documents
+// them as "yyyy-MM-dd HH:mm:ss" in the account's time zone (Campaign.start_date_time / end_date_time) and
+// returns that layout from GAQL, so every value sent uses it; _googleAdsCampaignOptions.gadsDateTime does
+// the formatting and is shared with the sale-day adjustments. Accepts a date (YYYY-MM-DD / YYYYMMDD) and
+// appends `time`, or a full date-time in either layout (drafts saved before this used yyyyMMdd HH:mm:ss).
+// A time in a layout it does not know passes through unchanged.
 function _toGAdsDateTime(val, time) {
   if (val == null) return null;
   const s = String(val).trim();
   if (!s) return null;
-  if (/\d{1,2}:\d{2}/.test(s)) return s;            // already has a time component
-  const ymd = s.replace(/-/g, "");
-  if (!/^\d{8}$/.test(ymd)) return null;
-  return ymd + " " + time;
+  const v = _campaignOptions().gadsDateTime(s, time);
+  if (v) return v;
+  return /\d{1,2}:\d{2}/.test(s) ? s : null;
 }
 
 /* ===================== Keyword research (Google Keyword Planner + AI) =====================
@@ -6566,7 +6571,7 @@ async function startCampaignNow(campaignId, { ctrl } = {}) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected start-now for campaign ${id}: ${msg}`);
   }
-  return { ok: true, id, startDate: `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}`, startDateTime: dt, dryRun: !!ctrl.dryRun };
+  return { ok: true, id, startDate: dt.slice(0, 10), startDateTime: dt, dryRun: !!ctrl.dryRun };
 }
 
 // "Run longer": push a campaign's END date out without rebuilding anything. A campaign that
@@ -6737,8 +6742,8 @@ async function setCampaignCountries(campaignId, countryIds, { ctrl } = {}) {
 // Rewrite the target countries on a PENDING approval draft (before it's applied), by swapping the
 // location criterion ops inside its stored payload. Lets the user choose countries at approval time.
 // Edit a pending draft's flight dates before approval. Campaign create ops
-// carry startDateTime/endDateTime ("yyyyMMdd HH:MM:SS") — same format the
-// sanitize/migrate path enforces.
+// carry startDateTime/endDateTime ("yyyy-MM-dd HH:mm:ss") — same format the
+// sanitize/migrate path enforces (both write it through _toGAdsDateTime).
 async function saveDraftPayload(ref,original,payload) {
   const f=fb();await f.db.runTransaction(async tx=>{const now=await tx.get(ref);if(!now.exists)throw new Error("Draft not found.");const it=now.data();
     if(it.status!=="PENDING"||(it.creativeLease&&it.creativeLease.until>Date.now()))throw new Error("Only an idle pending draft can be edited.");
@@ -11379,11 +11384,16 @@ async function _purchaseGoalCampaigns() {
   rows.forEach(r => { const id = String((r.campaign || {}).id || ""); if (/^\d+$/.test(id)) out.set(id, out.get(id) === true || (r.campaignConversionGoal || {}).biddable === true); });
   return out;
 }
-// Google's sale-day adjustments that have not ended.
+// Google's sale-day adjustments that have not ended: the exclusive end is after the start of today in the
+// account's time zone. Both times are read as "yyyy-MM-dd HH:mm:ss", so the end is compared with today's
+// midnight (a date-time with a date would keep an adjustment that ended at midnight today), and every
+// window handed on compares in one layout with a new window. One with no readable end is left out.
 async function _seasonalityAdjustments(today) {
+  const O = _campaignOptions(), from = O.gadsDateTime(today, "00:00:00");
   const rows = await gaql("SELECT bidding_seasonality_adjustment.resource_name, bidding_seasonality_adjustment.name, bidding_seasonality_adjustment.scope, bidding_seasonality_adjustment.campaigns, bidding_seasonality_adjustment.start_date_time, bidding_seasonality_adjustment.end_date_time, bidding_seasonality_adjustment.conversion_rate_modifier FROM bidding_seasonality_adjustment WHERE bidding_seasonality_adjustment.status = 'ENABLED'");
-  return rows.map(r => r.biddingSeasonalityAdjustment || {}).filter(a => String(a.endDateTime || "") > today).map(a => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
-    campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start: String(a.startDateTime || ""), endExclusive: String(a.endDateTime || ""), modifier: Number(a.conversionRateModifier) || null }));
+  return rows.map(r => r.biddingSeasonalityAdjustment || {}).map(a => ({ a, start: O.gadsDateTime(a.startDateTime) || "", end: O.gadsDateTime(a.endDateTime) || "" })).filter(x => x.end > from)
+    .map(({ a, start, end }) => ({ name: a.name || "Seasonality adjustment", scope: a.scope || null,
+      campaignIds: (a.campaigns || []).map(x => String(x).split("/").pop()), start, endExclusive: end, modifier: Number(a.conversionRateModifier) || null }));
 }
 // Option drafts not yet published or deleted.
 async function _openOptionDrafts() {
@@ -11421,7 +11431,7 @@ async function campaignOptionsStatus() {
       keywords: O.BRAND_SEARCH.keywords.map(k => (k.matchType === "EXACT" ? `[${k.text}]` : `"${k.text}"`)), ceiling: Number(ctrl.maxDailyBudgetTotal) || 0 },
     sale: { limits: O.SEASONALITY_LIMITS, occasions: windows.map(w => ({ key: w.key, label: w.label, start: w.start, end: w.end, days: w.days, peak: w.peak, estimate: _saleEstimate(w, history),
         campaigns: campaigns.filter(c => O.seasonalityEligible(c, w.start).ok).map(c => ({ id: c.id, name: c.name, status: c.status })) })),
-      upcoming: adjustments.map(a => ({ name: a.name, start: a.start.slice(0, 10), end: O._dates.addDays(a.endExclusive.slice(0, 10), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
+      upcoming: adjustments.map(a => ({ name: a.name, start: O._dates.dateOnly(a.start), end: O._dates.addDays(O._dates.dateOnly(a.endExclusive), -1), campaigns: a.campaignIds.length, modifier: a.modifier })),
       drafts: drafts.filter(d => d.type === "seasonality").map(d => ({ id: d.id, status: d.status, label: (d.payload.campaignOption || {}).label || null, start: (d.payload.campaignOption || {}).start || null, end: (d.payload.campaignOption || {}).end || null })) },
     customers: { modes: O.ACQUISITION_MODES, tradeoff: O.ACQUISITION_TRADEOFF, prerequisite: O.ACQUISITION_PREREQUISITE,
       campaigns: campaigns.filter(c => O.ACQUISITION_CHANNELS.includes(c.channel)).map(c => { const cur = goals.get(c.id) || null, pg = purchase.has(c.id) ? purchase.get(c.id) : null;
@@ -11464,7 +11474,7 @@ async function draftSeasonalityAdjustment({ occasion, startDate, endDate, change
   const facts = new Map((await _campaignFacts()).map(c => [c.id, c]));
   const bad = ids.map(id => [id, facts.get(id)]).map(([id, c]) => [id, c, O.seasonalityEligible(c, start)]).filter(x => !x[2].ok);
   if (bad.length) throw new Error(bad.map(([id, c, e]) => `${c ? "“" + c.name + "”" : "Campaign " + id}: ${e.reason}`).join("; ") + ". Sale-day adjustments apply only to smart-bidding campaigns. No draft was created.");
-  const win = { start: `${start} 00:00:00`, endExclusive: `${O._dates.addDays(end, 1)} 00:00:00` };
+  const win = O.seasonalityWindow(start, end);
   const [existing, drafts] = await Promise.all([_seasonalityAdjustments(today), _openOptionDrafts()]);
   const clash = existing.find(a => (a.scope !== "CAMPAIGN" || a.campaignIds.some(id => ids.includes(id))) && O.seasonalityOverlaps(win, a));
   if (clash) throw new Error(`Google already has the sale-day adjustment “${clash.name}” on these dates for these campaigns. No draft was created.`);

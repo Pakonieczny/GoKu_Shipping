@@ -7,6 +7,12 @@
 //
 // Google Ads API v24 facts relied on here (checked 2026-09-29 against the v24 reference, the
 // discovery document and the Google Ads Help Center):
+// - Date-times: Campaign.start_date_time / end_date_time and BiddingSeasonalityAdjustment
+//   .start_date_time / end_date_time are all "yyyy-MM-dd HH:mm:ss" in the account time zone (v24
+//   reference for Campaign and BiddingSeasonalityAdjustment, the "Create campaigns" guide, and
+//   DateError.INVALID_STRING_DATE_TIME_SECONDS), and GAQL returns that layout. Some of Google's
+//   client samples send "yyyyMMdd HH:mm:ss" and it works, but no reference documents it. gadsDateTime
+//   below is the one writer; every comparison of two date-times reads through it too.
 // - BiddingSeasonalityAdjustment (customers/{cid}/biddingSeasonalityAdjustments:mutate): scope
 //   CAMPAIGN with up to 2,000 campaigns; start_date_time is inclusive and end_date_time EXCLUSIVE,
 //   both "yyyy-MM-dd HH:mm:ss" in the account time zone; the interval must be within (0, 14 days]
@@ -49,6 +55,13 @@ function parseDay(s) {
 }
 // "2026-11-27 00:00:00", "20261127 23:59:59" or "2026-11-27" -> "2026-11-27".
 function dateOnly(s) { const m = String(s || "").match(/(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : null; }
+// The one writer of Google Ads date-times, always "yyyy-MM-dd HH:mm:ss". value: a date ("2026-11-27" or
+// "20261127", which takes `time`) or a date-time in either layout ("2026-11-27 23:59:59", "20261127 23:59:59",
+// "2026-11-27T23:59"; seconds optional). Anything else, a time zone offset included, is null.
+function gadsDateTime(value, time = "00:00:00") {
+  const m = /^(\d{4})-?(\d{2})-?(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(value == null ? "" : value).trim());
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4] == null ? time : `${m[4].padStart(2, "0")}:${m[5]}:${m[6] || "00"}`}` : null;
+}
 function addDays(day, n) { return ymd(new Date(parseDay(day).getTime() + n * DAY)); }
 function daysInclusive(a, b) { return Math.round((parseDay(b) - parseDay(a)) / DAY) + 1; }
 function amountIn(v, [min, max], label) {
@@ -212,6 +225,11 @@ function conversionRateEstimate(rows, { start, end, shiftDays, defaultPct }) {
   const change = Math.max(SEASONALITY_LIMITS.pct[0], Math.min(SEASONALITY_LIMITS.pct[1], Math.round((rate / baseRate - 1) * 100)));
   return { pct: change, measured: true, lastYear: { start: ls, end: le }, basis: `Estimate from last year: conversion rate ${pct(rate)} on ${ls} to ${le}, against ${pct(baseRate)} in the four weeks before.` };
 }
+// A sale's days as Google takes them: the start is the first day's midnight, the end EXCLUSIVE, the midnight
+// after the last day. The operation and the overlap checks both use this, so their strings always match.
+function seasonalityWindow(start, end) {
+  return { start: gadsDateTime(start, "00:00:00"), endExclusive: gadsDateTime(addDays(end, 1), "00:00:00") };
+}
 function seasonalityOperation({ cid, label, start, end, today, campaignIds, changePct, description }) {
   const days = checkSaleDates(start, end, today);
   const pct = typeof changePct === "string" && !changePct.trim() ? NaN : Number(changePct);
@@ -221,14 +239,20 @@ function seasonalityOperation({ cid, label, start, end, today, campaignIds, chan
   const ids = [...new Set((campaignIds || []).map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
   if (!ids.length) throw new Error("Choose at least one campaign.");
   if (ids.length > 2000) throw new Error("Google allows at most 2,000 campaigns in one adjustment.");
+  const win = seasonalityWindow(start, end);
   return { days, modifier, campaignIds: ids, operation: { create: {
     name: `Brites · ${label} · ${start} to ${end}`.slice(0, 255), description: String(description || "").slice(0, 2048), scope: "CAMPAIGN",
     campaigns: ids.map(id => `customers/${cid}/campaigns/${id}`),
     // Google's end is exclusive: midnight after the last day.
-    startDateTime: `${start} 00:00:00`, endDateTime: `${addDays(end, 1)} 00:00:00`, conversionRateModifier: modifier } } };
+    startDateTime: win.start, endDateTime: win.endExclusive, conversionRateModifier: modifier } } };
 }
-// Windows overlap when one starts before the other ends. Adjustment times are account-time strings.
-function seasonalityOverlaps(a, b) { return a.start < b.endExclusive && b.start < a.endExclusive; }
+// Windows overlap when one starts before the other ends. Adjustment times are account-time strings; both
+// windows are read as "yyyy-MM-dd HH:mm:ss" first, so one read from Google, one saved in a draft and one
+// built here compare in the same layout whichever way they were written (a date alone is its midnight).
+function seasonalityOverlaps(a, b) {
+  const t = v => gadsDateTime(v) || String(v == null ? "" : v);
+  return t(a.start) < t(b.endExclusive) && t(b.start) < t(a.endExclusive);
+}
 
 /* ===================== New-customer acquisition goal ===================== */
 const ACQUISITION_MODES = {
@@ -401,7 +425,7 @@ module.exports = {
   BRAND_SEARCH, SEARCH_URL_SUFFIX, SALE_OCCASIONS, SEASONALITY_LIMITS, ACQUISITION_MODES, ACQUISITION_TRADEOFF, ACQUISITION_PREREQUISITE,
   ACQUISITION_CHANNELS, TOTAL_BUDGET_BIDDING, TOTAL_BUDGET_MAX_DAYS,
   buildBrandSearchOps, isBrandSearchDraft,
-  saleOccasion, saleWindow, checkSaleDates, seasonalityEligible, conversionRateEstimate, seasonalityOperation, seasonalityOverlaps,
+  gadsDateTime, saleOccasion, saleWindow, checkSaleDates, seasonalityEligible, conversionRateEstimate, seasonalityWindow, seasonalityOperation, seasonalityOverlaps,
   acquisitionEligibility, lifecycleGoalRequest, lifecycleErrorText, purchaseOnlyGoalOps,
   isTotalBudget, budgetDailyEquivalent, totalBudgetFacts, setTotalBudget, draftBudgetDaily,
   _dates: { parseDay, dateOnly, addDays, daysInclusive }
