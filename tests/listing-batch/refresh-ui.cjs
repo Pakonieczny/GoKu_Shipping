@@ -8,6 +8,9 @@ const source = fs.readFileSync("Listing_Generator_1.html", "utf8");
 const start = source.indexOf("    function _showBatchCheck(message, error = false) {");
 const end = source.indexOf("    function _startBatchAutoPoll() {", start);
 assert(start > 0 && end > start, "provider refresh handler exists");
+const helperStart = source.indexOf("    function _awaitingStallRestart(b) {");
+const _awaitingStallRestart = vm.runInNewContext(`${source.slice(helperStart,
+  source.indexOf("    function _formatDuration(ms) {", helperStart))}; _awaitingStallRestart`, {});
 
 async function check({ queued = false, automatic = false } = {}) {
   const btn = { disabled: false, textContent: "↻ Refresh" };
@@ -31,6 +34,7 @@ async function check({ queued = false, automatic = false } = {}) {
     document: { getElementById: (id) => id === "batchJobsRefreshBtn" ? btn :
       id === "batchRefreshStatus" ? status : null },
     _normBatchState: (value) => value,
+    _awaitingStallRestart,
     refreshBatchJobsPanel: async () => {
       context._lastBatchList = jobs.map((job) => ({ ...job, state: serverState }));
       return { ok: true, batches: context._lastBatchList };
@@ -90,7 +94,7 @@ async function check({ queued = false, automatic = false } = {}) {
     sessionId: "sess_test", batches, earliest: Date.now() - 3 * 3600000, latest: Date.now()
   })`, {
     batches: jobs, Date, _batchRetryLimit: 30, _batchSweepInfo: sweep, _batchNextSweepAt: now + 600000,
-    _normBatchState: (x) => x, _batchSafeText: (x) => String(x),
+    _normBatchState: (x) => x, _awaitingStallRestart, _batchSafeText: (x) => String(x),
     _formatDuration: (ms) => `${Math.round(ms / 3600000)}h`,
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }),
     DEFAULT_IMAGE_MODEL: "sunburst",

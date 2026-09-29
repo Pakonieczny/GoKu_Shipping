@@ -227,6 +227,14 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     };
     require.cache['STUB:diag-fetch'] = { id: 'STUB:diag-fetch', filename: 'STUB:diag-fetch', loaded: true, exports: stubFetch };
     require.cache['STUB:diag-admin'] = { id: 'STUB:diag-admin', filename: 'STUB:diag-admin', loaded: true, exports: admin };
+    // Node caches "node-fetch"/"./firebaseAdmin" per directory once any sibling function has loaded
+    // them, which would bypass the resolver hook above; swap the cached modules too while the page runs.
+    const fnDir = path.join(repo, 'netlify/functions'), swapped = [];
+    for (const [request, exports] of [['node-fetch', stubFetch], ['./firebaseAdmin', admin]]) {
+      let file; try { file = require.resolve(request, { paths: [fnDir] }); } catch (e) { continue; }
+      swapped.push([file, require.cache[file]]); require.cache[file] = { id: file, filename: file, loaded: true, exports };
+    }
+    delete require.cache[require.resolve(path.join(fnDir, 'googleAdsDiag.js'))];
     Object.assign(process.env, { GADS_CUSTOMER_ID: '123', EDIT_PASSCODE: 'secret' });
     const diag = require(path.join(repo, 'netlify/functions/googleAdsDiag.js'));
     check((await diag.handler({ queryStringParameters: {}, headers: {} })).statusCode === 401, 'the diagnostic page refuses a request without the passcode');
@@ -234,6 +242,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const ok = await diag.handler({ queryStringParameters: { key: 'secret' }, headers: { accept: 'text/html' } });
     check(ok.statusCode === 200 && /5 CAD/.test(ok.body) && !/\$5/.test(ok.body), 'with the passcode it opens, showing budgets in the account currency');
     Module._resolveFilename = realResolve; delete process.env.EDIT_PASSCODE;
+    for (const [file, prev] of swapped) { if (prev) require.cache[file] = prev; else delete require.cache[file]; }
   }
 
   // ── The Ad Doctor card ───────────────────────────────────────────────────

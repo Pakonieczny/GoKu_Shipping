@@ -24,6 +24,7 @@ const cut = (src, from, to) => {
 const retryBranch = cut(server, '    if (kind === "batch_retry_missing") {', '    if (kind === "batch_status") {');
 const sweepBranch = cut(server, '  if (kind === "batch_sweep") {', '  if (kind === "job_status") {');
 const render = cut(page, "    function _renderSessionBlock(session) {", "    async function _cancelSession(sessionId) {");
+const _awaitingStallRestart = vm.runInNewContext(`${cut(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {")}; _awaitingStallRestart`, {});
 const poll = cut(page, "    function _startBatchAutoPoll() {", '    document.getElementById("batchJobsRefreshBtn")');
 const REFUSED = "Enqueued token limit reached for gpt-image in organization org-x. Limit: 1,000,000 enqueued tokens.";
 const EXPIRED = "Batch expired before all requests completed.";
@@ -124,7 +125,7 @@ async function retryOnce(record) {
   // The dashboard names the reason and offers no retry that cannot run.
   const html = vm.runInNewContext(`${render}; _renderSessionBlock({ sessionId: "sess_1", batches, earliest: Date.now(), latest: Date.now() })`, {
     batches: [listed], Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: null,
-    _normBatchState: (x) => x, _batchSafeText: (x) => String(x), _formatDuration: () => "1m",
+    _normBatchState: (x) => x, _awaitingStallRestart, _batchSafeText: (x) => String(x), _formatDuration: () => "1m",
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }), DEFAULT_IMAGE_MODEL: "m",
   });
   const summary = html.slice(0, html.indexOf('<details class="batch-details"'));
@@ -137,7 +138,7 @@ async function retryOnce(record) {
   // The page's automatic polling ends: nothing is left open.
   let cleared = false, tick = null;
   vm.runInNewContext(`let _batchPollTimer = null; ${poll}; _startBatchAutoPoll();`, {
-    _lastBatchList: [listed], _batchPollInFlight: false, BATCH_POLL_MS: 60000, _normBatchState: (x) => x,
+    _lastBatchList: [listed], _batchPollInFlight: false, BATCH_POLL_MS: 60000, _normBatchState: (x) => x, _awaitingStallRestart,
     setInterval: (fn) => { tick = fn; return 7; }, clearInterval: (id) => { cleared = id === 7; },
     _checkBatchJobsNow: () => { throw new Error("polled a stopped set"); },
     document: { getElementById: () => ({ style: { display: "" } }) },
