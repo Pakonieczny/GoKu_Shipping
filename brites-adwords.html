@@ -526,9 +526,6 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 
 /* ---- panel loading block (lists / selects-area / in-row) ---- */
 .lblock{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:9px;padding:32px 18px;color:var(--ink-45);min-height:120px}
-.lblock .lv{font-weight:600;color:var(--ink);font-size:14px}
-.lblock .ld{font-size:12.5px;color:var(--ink-70);max-width:380px;line-height:1.45}
-.lblock .leta{font-family:var(--mono);font-size:11px;color:var(--ink-45);background:var(--card-2);border:1px solid var(--line);padding:3px 11px;border-radius:999px;display:inline-flex;align-items:center;gap:6px}
 .lrow{display:flex;align-items:center;gap:9px;color:var(--ink-70);font-size:13px}
 
 /* ---- animated step list (long AI ops) ---- */
@@ -770,7 +767,11 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
 /* Overview: tiles, daily charts, a selected day, campaign → group → listing tree */
 #kpis>.gpPending,#kpis>.kpiNote{grid-column:1/-1}.kpiNote{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}.kpi .val.kpiTick{animation:kpiTick .45s ease-out}@keyframes kpiTick{from{opacity:.2;transform:translateY(5px)}to{opacity:1;transform:none}}
 .b-end{background:var(--paper-2);color:var(--ink-70)}.b-gone{background:transparent;color:var(--ink-45);box-shadow:inset 0 0 0 1px var(--line)}
-.cmdUpdating{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-70)}.cmdUpdating .btn{padding:2px 9px;font-size:11px}
+.cmdUpdating{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:var(--ink-70)}.cmdUpdating .btn{padding:2px 9px;font-size:11px}#cmdRangeBar .cmdUpdating[role=alert]{order:9;flex:1 1 100%;flex-wrap:wrap;line-height:1.5}
+/* Editors and yes/no questions open in place, under the control that raised them: no pop-up */
+.inlineEdit{margin:12px 0 2px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);font-size:12.5px;line-height:1.45;max-width:560px}.inlineEdit.opening{animation:cmdIn .24s ease-out}.inlineEdit:focus{outline:none}
+.inlineEdit .ieQ{display:block;margin:0 0 8px;font-weight:600;color:var(--ink)}.inlineEdit .ieNote{margin:-4px 0 8px;color:var(--ink-70)}.inlineEdit .ieHint{margin:8px 0 0;font-size:11.5px;color:var(--ink-45)}.inlineEdit .ieMsg{margin:8px 0 0;font-size:12px;color:var(--clay)}.inlineEdit .ieMsg:empty{display:none}
+.ieRow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ieRow input{flex:0 1 170px;min-width:0;font:13px var(--mono);padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink)}.btn.ghost.ieOn{background:var(--card-2)}
 #srChips{display:flex;flex-wrap:wrap}#srChips:empty{display:none}.srchip{display:inline-flex;align-items:center;gap:5px}.srchip .campaignBadge{gap:0}.srchip.gold .campaignBadge .campaignIcon{color:inherit}
 svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);outline-offset:3px;border-radius:6px}.legend .lcHint{margin-left:auto;color:var(--ink-45)}#ccHead[hidden]{display:none}
 .chartEmpty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:150px;padding:20px;border:1px dashed var(--line);border-radius:12px;color:var(--ink-70);font-size:12.5px;text-align:center}
@@ -1192,12 +1193,6 @@ function btnBusy(btn,label){if(!btn)return function(){};
   return function(finalHTML){
     if(finalHTML!=null){btn.classList.remove("is-busy");btn.innerHTML=finalHTML;btn.disabled=true;}
     else{btn.innerHTML=html;btn.disabled=dis;btn.className=cls;}};}
-
-/* --- panel loader: drop a labelled spinner block into a container --- */
-function loadBlock(el,key,over){if(!el)return;var i=loadInfo(key,over);
-  el.innerHTML='<div class="lblock"><progress aria-label="Loading"></progress><div class="lv">'+esc(i.verb)+'\u2026</div>'+
-    (i.detail?'<div class="ld">'+esc(i.detail)+'</div>':"")+
-    (i.eta?'<div class="leta"><span class="spin sm"></span>about '+esc(i.eta)+'</div>':"")+'</div>';}
 
 /* --- step runner: animated checklist for long AI waits --- */
 function runSteps(el,steps,opts){opts=opts||{};el.innerHTML='<div class="lblock"><b>'+esc(steps[0]||"Working")+'</b><progress aria-label="Operation in progress"></progress><span class="muted">Waiting for the server result</span></div>';return {stop:function(ok){var bar=el.querySelector('progress');if(bar){bar.max=1;bar.value=ok===false?0:1;}var note=el.querySelector('.muted');if(note)note.textContent=ok===false?'Needs attention':'Completed';}};}
@@ -2039,181 +2034,113 @@ function renderGroupListings(box,g,report,range){if(!box||box.dataset.loaded)ret
  var listed=owned?sumListingRows(owned).spend:null,gs=Number(g.metrics&&g.metrics.spend),offers=rows.filter(function(r){return r.offer;}),ocur=offers.length&&offers.every(function(r){return r.cur===offers[0].cur;})?offers[0].cur:null,ogs=!ocur?NaN:ocur===native?gs:g.report&&g.report.currency===ocur&&g.report.click?Number(g.report.click.spend):NaN,olisted=offers.reduce(function(v,r){return v+(Number(r.m.spend)||0);},0),ogap=Number.isFinite(ogs)&&ogs>olisted&&cmdGap(ogs,olisted)?' The other '+money(ogs-olisted)+' '+ocur+' of the group’s spend is not tied to a listed product.':'',note=g.channel!=='pmax'?'Listing figures are by ad-click date and cover ads with that exact product destination. A dash means unavailable.':!owned?'Listing figures are by ad-click date and cover exact Merchant offers within this asset group; they may not cover every placement.'+ogap+' A dash means unavailable.':'Listing figures are Google’s Shopping results for each product in this asset group, by ad-click date.'+(Number.isFinite(gs)&&cmdGap(gs,listed)?' The other '+money(gs-listed)+' '+(native||'')+' of the group’s spend is not reported by product.':'')+(complete?' A zero means the product had no activity in these dates.':' A dash means unavailable.');
  box.innerHTML=(rows.length?rows.map(function(r){return reportListingHtml(r.p,r.m,r.cur);}).join(''):'<p class="reportScope">'+esc(mapping.reason||'No individual listing is recorded for this group.')+'</p>')+'<p class="reportScope">'+esc(note)+'</p><a href="https://ads.google.com/aw/'+(g.channel==='pmax'?'assetgroups':'ads')+'?campaignId='+encodeURIComponent(g.campaignId)+(g.channel==='pmax'?'&assetGroupId=':'&adGroupId=')+encodeURIComponent(g.id)+'" target="_blank" rel="noopener">Inspect '+(g.channel==='pmax'?'group assets':'group ads')+' ↗</a>';
 }
-function wireCampRows(scope){scope.querySelectorAll(".crow").forEach(function(r){r.onkeydown=function(e){if(e.target===r&&(e.key==="Enter"||e.key===" ")){e.preventDefault();r.click();}};});Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d){var opening=d.style.display==="none";d.style.display=opening?"":"none";this.setAttribute("aria-expanded",String(opening));if(opening){if(!_cmdRestoring)cmdOpening(d);REPORT_CAMPAIGN_OPEN.add(this.dataset.cid);loadCampaignTree(d.querySelector(".adlvl"));}else REPORT_CAMPAIGN_OPEN.delete(this.dataset.cid);}};});
+function wireCampRows(scope){scope.querySelectorAll(".crow").forEach(function(r){r.onkeydown=function(e){if(e.target===r&&(e.key==="Enter"||e.key===" ")){e.preventDefault();r.click();}};});Array.prototype.forEach.call(scope.querySelectorAll(".crow"),function(r){r.onclick=function(){var i=this.getAttribute("data-i");var d=scope.querySelector('.cdet[data-d="'+i+'"]');if(d){var opening=d.style.display==="none",cid=this.dataset.cid;d.style.display=opening?"":"none";this.setAttribute("aria-expanded",String(opening));if(opening){if(!_cmdRestoring)cmdOpening(d);REPORT_CAMPAIGN_OPEN.add(cid);loadCampaignTree(d.querySelector(".adlvl"));if(CMD_EDIT&&CMD_EDIT.cid===cid)cmdEditPaint(false);}else{REPORT_CAMPAIGN_OPEN.delete(cid);if(CMD_EDIT&&CMD_EDIT.cid===cid&&!CMD_EDIT.busy)cmdEditClose(false);}}};});
   scope.querySelectorAll(".idleBtn").forEach(function(b){b.onclick=function(){var body=scope.querySelector("tbody.idleRows");if(!body)return;cmdShowIdle=body.hidden;body.hidden=!cmdShowIdle;b.setAttribute("aria-expanded",String(cmdShowIdle));b.textContent=idleToggleText(+b.getAttribute("data-n")||0,cmdShowIdle);if(cmdShowIdle)cmdOpening(body);};});
-  Array.prototype.forEach.call(scope.querySelectorAll(".bge"),function(b){b.onclick=async function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id"),cur=Number(this.getAttribute("data-b"))||0,res=this.getAttribute("data-res")||null,el=this;
-    var raw=prompt("New daily budget for this campaign ("+((cmdReport&&cmdReport.budgetCurrency)||DASH.budgetCurrency||"account currency")+"):",cur?String(cur):"");
-    if(raw===null)return;
-    var amt=Number(String(raw).replace(/[^0-9.]/g,""));
-    if(!(amt>0)){toast("Budget must be a positive number");return;}
-    if(amt===cur)return;
+  // Budget, schedule and pause/enable each open a small editor under the campaign's settings.
+  [["bge","budget"],["sce","schedule"],["cst","status"]].forEach(function(k){scope.querySelectorAll("."+k[0]).forEach(function(b){b.onclick=function(ev){ev.stopPropagation();cmdEditOpen(k[1],b);};});});}
+/* ---- Campaign settings, edited in place ----
+   The budget, schedule and pause/enable controls open under the campaign's settings row instead of
+   a browser pop-up, with the same wording, checks and server calls as before. What is typed lives in
+   CMD_EDIT, so a refresh that redraws the table puts the editor back with the text, caret and any
+   message as they were. Esc or Cancel closes it; while it saves, its button carries the spinner. */
+var CMD_EDIT=null,CMD_EDIT_BTN={budget:"bge",schedule:"sce",status:"cst"};
+function cmdEditRow(cid){var snap=document.getElementById("snapshot");return snap?Array.prototype.find.call(snap.querySelectorAll(".cdet"),function(r){return r.dataset.cid===String(cid);})||null:null;}
+function cmdEditMark(d,kind){if(!d)return;Object.keys(CMD_EDIT_BTN).forEach(function(k){var b=d.querySelector("."+CMD_EDIT_BTN[k]);if(!b)return;b.classList.toggle("ieOn",k===kind);if(k===kind)b.setAttribute("aria-expanded","true");else b.removeAttribute("aria-expanded");});}
+function cmdEditOpen(kind,b){var d=b.closest(".cdet");if(!d)return;var cid=d.dataset.cid,x=CMD_EDIT,s=b.dataset;
+  if(x&&x.cid===cid&&x.busy)return;
+  if(x&&x.cid===cid&&x.kind===kind){cmdEditClose(true);return;}
+  CMD_EDIT={cid:cid,kind:kind,id:s.id,name:s.name||"",cur:Number(s.b)||0,res:s.res||"",end:s.end||"",to:s.to||"",value:kind==="budget"?(Number(s.b)>0?String(Number(s.b)):""):"30",step:"",amount:0,msg:"",busy:"",focus:kind==="status"?"yes":"in",sel:null};
+  cmdEditPaint(true);}
+function cmdEditClose(refocus){var x=CMD_EDIT;CMD_EDIT=null;if(!x)return;var d=cmdEditRow(x.cid),box=d&&d.querySelector(".cmdEdit");if(box)box.remove();cmdEditMark(d,null);if(refocus&&d){var t=d.querySelector("."+CMD_EDIT_BTN[x.kind]);if(t)t.focus();}}
+function cmdEditPaint(opening){var x=CMD_EDIT,snap=document.getElementById("snapshot");if(!snap)return;
+  snap.querySelectorAll(".cmdEdit").forEach(function(el){if(!x||el.dataset.cid!==x.cid){cmdEditMark(el.closest(".cdet"),null);el.remove();}});
+  var d=x&&cmdEditRow(x.cid),set=d&&d.querySelector(".campaignSettings");if(!set||d.style.display==="none")return;
+  var box=d.querySelector(".cmdEdit"),fresh=!box,swap=!fresh&&box.dataset.kind!==x.kind;
+  if(fresh){box=document.createElement("div");box.className="inlineEdit cmdEdit";box.dataset.cid=x.cid;box.tabIndex=-1;box.setAttribute("role","group");set.after(box);
+    box.addEventListener("focusin",function(e){var y=CMD_EDIT;if(y&&y.cid===box.dataset.cid)y.focus=e.target===box?"box":(e.target.dataset&&e.target.dataset.k)||null;});
+    box.addEventListener("focusout",function(){setTimeout(function(){var y=CMD_EDIT;if(y&&y.cid===box.dataset.cid&&box.isConnected&&!box.contains(document.activeElement))y.focus=null;},0);});
+    box.addEventListener("keydown",function(e){var y=CMD_EDIT;if(e.key==="Escape"&&y&&!y.busy){e.preventDefault();e.stopPropagation();cmdEditClose(true);}});}
+  box.dataset.kind=x.kind;cmdEditMark(d,x.kind);
+  var h,input=function(extra){return '<input id="cmdEditIn" data-k="in" type="text" autocomplete="off" spellcheck="false" value="'+cmdAttr(x.value)+'"'+extra+'>';},
+      buttons='<button type="submit" class="btn sm" data-k="save">Save</button><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button>';
+  if(x.kind==="budget"&&x.step==="confirm"){box.setAttribute("aria-label","Confirm the budget change");
+    h='<p class="ieQ">That’s a '+Math.round(Math.abs(x.amount-x.cur)/x.cur*100)+'% change ('+esc(money(x.cur))+' → '+esc(money(x.amount))+'). Large budget jumps can reset a Smart Bidding campaign’s learning. Apply anyway?</p><div class="ieRow"><button type="button" class="btn sm" data-k="apply">Apply anyway</button><button type="button" class="btn ghost sm" data-k="back">Change amount</button></div>';}
+  else if(x.kind==="budget"){box.setAttribute("aria-label","Daily budget");
+    h='<form novalidate><label class="ieQ" for="cmdEditIn">New daily budget for this campaign ('+esc((cmdReport&&cmdReport.budgetCurrency)||DASH.budgetCurrency||"account currency")+')</label><div class="ieRow">'+input(' inputmode="decimal"')+buttons+'</div></form>';}
+  else if(x.kind==="schedule"){box.setAttribute("aria-label","Schedule");var todayY=rpYmd(new Date()),left=x.end?Math.round((rpParse(x.end)-rpParse(todayY))/86400000):null;
+    h='<form novalidate><label class="ieQ" for="cmdEditIn">How much longer should “'+esc(x.name)+'” run?</label><p class="ieNote">'+(x.end?"Ends "+esc(fmtMon(x.end))+(left!=null?(left>=0?" ("+left+" days left)":" (ended "+(-left)+" days ago)"):""):"No end date — runs until stopped")+'</p><div class="ieRow">'+input(' aria-describedby="cmdEditHint"')+buttons+'</div><p class="ieHint" id="cmdEditHint">Enter a number of days to add (e.g. 30), an exact end date (e.g. '+todayY.slice(0,4)+'-12-24), or the word open to remove the end date entirely.</p></form>';}
+  else{box.setAttribute("aria-label",x.to==="PAUSED"?"Pause campaign":"Enable campaign");
+    h='<p class="ieQ">'+(x.to==="PAUSED"?"Pause":"Enable")+' “'+esc(x.name)+'”?'+(x.to==="ENABLED"?" It will start spending its daily budget.":"")+'</p><div class="ieRow"><button type="button" class="btn sm" data-k="yes">'+(x.to==="PAUSED"?"Pause campaign":"Enable campaign")+'</button><button type="button" class="btn ghost sm" data-k="cancel">Cancel</button></div>';}
+  box.innerHTML=h+'<p class="ieMsg" role="alert">'+esc(x.msg)+'</p>';
+  var inp=box.querySelector("[data-k=in]"),form=box.querySelector("form"),keep=function(){if(CMD_EDIT===x){x.sel=[inp.selectionStart,inp.selectionEnd];}};
+  if(inp){inp.oninput=function(){if(CMD_EDIT!==x)return;x.value=inp.value;keep();if(x.msg){x.msg="";box.querySelector(".ieMsg").textContent="";}};inp.onkeyup=inp.onclick=inp.onselect=keep;}
+  if(form)form.onsubmit=function(e){e.preventDefault();if(x.kind==="budget")cmdEditBudget(false);else cmdEditSchedule();};
+  box.querySelectorAll("button[data-k]").forEach(function(b){var k=b.dataset.k;if(k==="save")return;b.onclick=function(){if(k==="cancel")cmdEditClose(true);else if(k==="apply")cmdEditBudget(true);else if(k==="back"){x.step="";x.msg="";x.focus="in";x.sel=null;cmdEditPaint(false);}else if(k==="yes")cmdEditStatus();};});
+  if(x.busy){box.querySelectorAll("button").forEach(function(b){b.disabled=true;});if(inp)inp.readOnly=true;var main=box.querySelector("[data-k=save],[data-k=apply],[data-k=yes]");if(main){main.classList.add("is-busy");main.innerHTML='<span class="spin bspin"></span>'+esc(x.busy);}}
+  if((fresh||swap)&&opening)cmdOpening(box);
+  var f=x.focus==="box"?box:x.focus?box.querySelector('[data-k="'+x.focus+'"]'):null;
+  if(f&&!f.disabled){f.focus({preventScroll:!opening});if(f===inp){if(x.sel)try{inp.setSelectionRange(x.sel[0],x.sel[1]);}catch(e){}else inp.select();}}
+  else if(x.busy&&x.focus)box.focus({preventScroll:true});}
+// A check or a failed save keeps the editor open with the message; a result for an editor that was
+// since closed or replaced is reported in a toast instead.
+function cmdEditFail(x,msg){x.busy="";x.msg=msg;if(x.focus){x.focus=x.step==="confirm"?"apply":x.kind==="status"?"yes":"in";x.sel=null;}
+  if(CMD_EDIT===x)cmdEditPaint(false);var d=CMD_EDIT===x&&cmdEditRow(x.cid);if(!d||d.style.display==="none")toast(msg);}
+// After a save the table is drawn again; the button that opened the editor keeps the focus.
+function cmdEditSaved(x,redraw){var had=CMD_EDIT===x&&!!x.focus;if(CMD_EDIT===x)cmdEditClose(false);if(redraw){try{renderCommand();}catch(e){}}var d=cmdEditRow(x.cid),t=d&&d.querySelector("."+CMD_EDIT_BTN[x.kind]);if(had&&t)t.focus();}
+async function cmdEditBudget(confirmed){var x=CMD_EDIT;if(!x||x.busy)return;var cur=x.cur,amt=x.amount;
+  if(!confirmed){amt=Number(String(x.value).replace(/[^0-9.]/g,""));
+    if(!(amt>0))return cmdEditFail(x,"Budget must be a positive number");
+    if(amt===cur)return cmdEditClose(true);
     // >30% jumps get one extra confirm — large budget changes are the classic accidental-overspend
     // path, and on Smart Bidding campaigns (PMax) they can also reset learning.
-    if(cur>0&&Math.abs(amt-cur)/cur>0.3&&!confirm("That\u2019s a "+Math.round(Math.abs(amt-cur)/cur*100)+"% change ("+money(cur)+" \u2192 "+money(amt)+").\n\nLarge budget jumps can reset a Smart Bidding campaign\u2019s learning. Apply anyway?"))return;
-    var prev=el.innerHTML;el.innerHTML='<span class="spin sm"></span>';
-    try{var r2=await api("setBudget",{id:id,budget:amt,budgetRes:res||undefined});
-      if(r2&&r2.error)throw new Error(r2.error);
-      el.setAttribute("data-b",String(amt));el.innerHTML=money(amt)+' <span style="font-size:10px;opacity:.55">\u270e</span>';
+    if(cur>0&&Math.abs(amt-cur)/cur>0.3){x.amount=amt;x.step="confirm";x.msg="";x.focus="apply";return cmdEditPaint(false);}}
+  x.amount=amt;x.busy="Saving…";x.msg="";cmdEditPaint(false);
+  try{var r2=await api("setBudget",{id:x.id,budget:amt,budgetRes:x.res||undefined});
+    if(r2&&r2.error)throw new Error(r2.error);
+    var dry=!!(r2&&r2.dryRun);
+    if(!dry){
       // The dashboard's campaign snapshot (lastMetrics) comes from the last measure() run, which
       // only refreshes on the daily cycle or a manual Refresh — so the auto-reload right after this
-      // edit would pull the STALE budget and overwrite this optimistic update. The override below
-      // survives reloads until the server snapshot reports the new value itself (see reload()).
-      BUDGET_OVERRIDES[String(id)]={budget:amt,at:Date.now()};
-      toast("Budget "+money(cur)+" \u2192 "+money(amt)+(r2&&r2.dryRun?" (dry-run \u2014 not applied to Google)":""),!(r2&&r2.dryRun));
-      var lm=(DASH.lastMetrics||[]).filter(function(x){return String(x.id)===String(id);})[0];if(lm)lm.budget=amt;
-    }catch(e){el.innerHTML=prev;toast("Budget change failed: "+(e.message||e));}
-  };});
-  // Extend how long a campaign runs, in place. Ending a campaign does NOT delete it — Google
-  // keeps the learning, history, keywords and assets and just stops serving. Pushing the end
-  // date out restarts the SAME campaign, which beats launching a replacement: a new campaign
-  // resets Smart Bidding's 1-2 week learning phase and discards every conversion signal.
-  Array.prototype.forEach.call(scope.querySelectorAll(".sce"),function(b){b.onclick=async function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id"),curEnd=this.getAttribute("data-end")||"",nm=this.getAttribute("data-name")||"",el=this;
-    var todayY=rpYmd(new Date());
-    var left=curEnd?Math.round((rpParse(curEnd)-rpParse(todayY))/86400000):null;
-    var raw=prompt(
-      "How much longer should “"+nm+"” run?\n\n"+
-      (curEnd?("Ends "+fmtMon(curEnd)+(left!=null?(left>=0?"  ("+left+" days left)":"  (ended "+(-left)+" days ago)"):"")):"No end date — runs until stopped")+"\n\n"+
-      "Enter one of:\n"+
-      "  • a number of days to ADD        e.g.  30\n"+
-      "  • an exact end date                  e.g.  "+todayY.slice(0,4)+"-12-24\n"+
-      "  • the word  open  to remove the end date entirely",
-      "30");
-    if(raw===null)return;
-    var s=String(raw).trim();
-    if(!s){toast("Nothing entered");return;}
-    var payload=null,human="";
-    if(/^(open|none|never)$/i.test(s)){payload={id:id,endDate:null};human="no end date";}
-    else if(/^\d{4}-\d{2}-\d{2}$/.test(s)){
-      if(s<todayY){toast("That date is in the past");return;}
-      payload={id:id,endDate:s};human=fmtMon(s);}
-    else if(/^\+?\d+$/.test(s.replace(/\s*days?$/i,""))){
-      var n=parseInt(s,10);
-      if(!(n>0)){toast("Enter a positive number of days");return;}
-      payload={id:id,addDays:n};human="+"+n+" days";}
-    else{toast("Didn’t understand “"+s+"” — use a number of days, a YYYY-MM-DD date, or ‘open’");return;}
-    var prev=el.innerHTML;el.innerHTML='<span class="spin sm"></span>';
-    try{
-      var r=await api("setEndDate",payload);
-      if(!r||r.error||r.ok===false)throw new Error((r&&r.error)||"failed");
-      END_DATE_OVERRIDES[String(id)]={endDate:r.endDate||null,at:Date.now()};
-      [(DASH.lastMetrics||[]),(cmdMetrics||[])].forEach(function(list){
-        list.forEach(function(c){if(String(c.id)===String(id))c.endDate=r.endDate||null;});});
-      try{renderCommand();}catch(e){el.innerHTML=prev;}
-      var verdict=r.verified===true?" ✓ verified in Google Ads":r.verified===false?" ⚠ not confirmed — re-check in Google Ads":"";
-      toast(r.cleared?("End date removed — "+nm+" runs until you stop it"+verdict)
-            :("Now runs to "+fmtMon(r.endDate)+" — "+nm+verdict)
-            +(r.dryRun?" (dry-run — not applied to Google)":""),!(r.dryRun)&&r.verified!==false);
-      if(r.note)setTimeout(function(){toast(r.note);},2600);
-    }catch(x){el.innerHTML=prev;toast("Couldn’t extend: "+(x.message||x));}
-  };});
-  Array.prototype.forEach.call(scope.querySelectorAll(".cst"),function(b){b.onclick=async function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id"),to=this.getAttribute("data-to"),nm=this.getAttribute("data-name"),btn=this;
-    if(to==="REMOVED"){
-      if(!confirm("Permanently delete \u201c"+nm+"\u201d?\n\nThis CANNOT be undone \u2014 Google Ads has no restore for a removed campaign. Its history stays in reporting, but it can never be re-enabled, re-paused, or edited again.\n\nIf you just want to stop spend, use Pause instead \u2014 Cancel this and pause it.")) return;
-      var typed=prompt("Type the campaign name exactly to confirm permanent deletion:\n\n"+nm);
-      if(typed===null)return;
-      if(typed.trim()!==nm){toast("Name didn\u2019t match \u2014 deletion cancelled.");return;}
-    } else {
-      if(!confirm((to==="PAUSED"?"Pause":"Enable")+" \u201c"+nm+"\u201d?"+(to==="ENABLED"?"\n\nIt will start spending its daily budget.":"")))return;
-    }
-    btn.disabled=true;btn.textContent=to==="PAUSED"?"Pausing\u2026":to==="REMOVED"?"Deleting\u2026":"Enabling\u2026";
-    try{
-      var r2=await api("setStatus",{id:id,status:to});
-      if(r2&&r2.error)throw new Error(r2.error);
-      // reflect immediately, then let the next sync confirm
-      (DASH.lastMetrics||[]).forEach(function(c){if(String(c.id)===String(id))c.status=to;});
-      if(typeof cmdMetrics!=="undefined"&&cmdMetrics)cmdMetrics.forEach(function(c){if(String(c.id)===String(id))c.status=to;});
-      try{renderCommand();}catch(e){}try{renderDiag();}catch(e){}
-      toast((to==="PAUSED"?"Paused \u2713":to==="REMOVED"?"Deleted \u2713":"Enabled \u2713")+" \u2014 "+nm);
-    }catch(x){btn.disabled=false;btn.textContent=to==="PAUSED"?"Pause":to==="REMOVED"?"Delete":"Enable";toast((to==="REMOVED"?"Delete failed: ":"Status change failed: ")+x.message);}
-  };});
-  Array.prototype.forEach.call(scope.querySelectorAll(".ctl"),function(b){b.onclick=async function(ev){ev.stopPropagation();
-    var id=this.getAttribute("data-id"),btn=this;
-    var row=scope.querySelector('.ctlrow[data-tl="'+id+'"]');if(!row)return;
-    if(row.style.display!=="none"&&row.getAttribute("data-loaded")==="1"){row.style.display="none";return;}
-    row.style.display="";var box=row.querySelector(".tlbox");
-    box.innerHTML='<span class="muted" style="font-size:12px">Loading live timeline\u2026</span>';
-    btn.disabled=true;
-    try{
-      var t=await api("campaignTimeline",{id:id});
-      if(t&&t.error)throw new Error(t.error);
-      box.innerHTML=renderTimeline(t);row.setAttribute("data-loaded","1");
-      Array.prototype.forEach.call(box.querySelectorAll(".tlact"),function(ab){ab.onclick=function(e){e.stopPropagation();
-        return runScopedPmaxJob(this.getAttribute("data-act"),this.getAttribute("data-id"),this.getAttribute("data-name"),this,box.querySelector(".tlactmsg"));};});
-    }catch(x){box.innerHTML='<span class="muted" style="font-size:12px;color:var(--clay)">Timeline failed: '+esc(String(x.message).slice(0,140))+'</span>';}
-    btn.disabled=false;
-  };});}
-function renderTimeline(t){
-  var ST={done:{c:"#3f7d4e",bg:"#e7f2e9",i:"\u2713"},active:{c:"#8a6d1a",bg:"#f7efd7",i:"\u25CC"},warn:{c:"#a4661f",bg:"#f9ecd9",i:"!"},pending:{c:"#8a857c",bg:"#efece6",i:"\u00B7"},error:{c:"#a03d2e",bg:"#f7e3de",i:"\u2715"}};
-  var steps=(t.steps||[]).map(function(s,i){var v=ST[s.state]||ST.pending;
-    return '<div style="flex:1;min-width:120px;position:relative">'
-      +(i>0?'<div style="position:absolute;left:-50%;right:50%;top:11px;height:2px;background:var(--line)"></div>':"")
-      +'<div style="position:relative;text-align:center">'
-      +'<span style="display:inline-flex;width:22px;height:22px;border-radius:50%;background:'+v.bg+';color:'+v.c+';font-size:12px;font-weight:700;align-items:center;justify-content:center;border:1.5px solid '+v.c+'">'+v.i+'</span>'
-      +'<div style="font-size:11.5px;font-weight:600;margin-top:4px">'+esc(s.label)+'</div>'
-      +(s.date?'<div class="muted" style="font-size:10.5px">'+esc(s.date)+'</div>':"")
-      +(s.detail?'<div class="muted" style="font-size:10.5px;max-width:150px;margin:2px auto 0">'+esc(s.detail)+'</div>':"")
-      +'</div></div>';}).join("");
-  var TGT={headlines:15,longHeadlines:5,descriptions:5,square:1,landscape:1,portrait:1,logo:1};
-  var strength=(t.adStrength||[]).map(function(a){
-    var m={EXCELLENT:["#3f7d4e","#e7f2e9"],GOOD:["#3f7d4e","#e7f2e9"],AVERAGE:["#8a6d1a","#f7efd7"],POOR:["#a03d2e","#f7e3de"],PENDING:["#8a857c","#efece6"]}[a.strength]||["#8a857c","#efece6"];
-    var as=a.assets||{};
-    var counts=as.headlines==null?"":[
-      "hl "+as.headlines+(as.headlines<TGT.headlines?"/"+TGT.headlines:""),
-      "lh "+as.longHeadlines+(as.longHeadlines<TGT.longHeadlines?"/"+TGT.longHeadlines:""),
-      "ds "+as.descriptions+(as.descriptions<TGT.descriptions?"/"+TGT.descriptions:""),
-      "img "+(as.square+as.landscape+as.portrait)+(as.square<1||as.landscape<1||as.portrait<1?" (missing "+["square","landscape","portrait"].filter(function(k){return !as[k];}).join("/")+")":"")
-    ].join(" \u00B7 ");
-    return '<div style="display:inline-block;margin:2px 10px 6px 0;vertical-align:top">'
-      +'<span style="display:inline-block;padding:3px 9px;border-radius:20px;background:'+m[1]+';color:'+m[0]+';font-size:11px;font-weight:600">'+esc(a.name)+' \u00B7 '+esc(String(a.strength).toLowerCase().replace(/_/g," "))+'</span>'
-      +(counts?'<div class="muted" style="font-size:10.5px;margin-top:3px;margin-left:2px">'+esc(counts)+'</div>':"")
-      +'</div>';}).join("");
-  var mx=Math.max.apply(null,(t.days||[]).map(function(d){return d.impressions;}).concat([1]));
-  var spark=(t.days||[]).map(function(d){var h=Math.max(2,Math.round(26*d.impressions/mx));
-    return '<div title="'+esc(d.date)+' \u00B7 '+d.impressions+' impr \u00B7 '+d.clicks+' clicks'+(d.conversions?' \u00B7 '+d.conversions.toFixed(1)+' conv. by ad-click date':'')+'" style="width:9px;height:'+h+'px;background:'+(d.conversions>0?'#3f7d4e':'var(--gold)')+';border-radius:2px 2px 0 0"></div>';}).join("");
-  return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--card-2)">'
-    +'<div style="display:flex;gap:0;align-items:flex-start;margin-bottom:'+((t.adStrength||[]).length||((t.days||[]).length)?'12px':'0')+'">'+steps+'</div>'
-    +((t.adStrength||[]).length?'<div style="margin-bottom:8px"><span class="muted" style="font-size:11px;margin-right:6px">Ad strength:</span>'+strength+'</div>':"")
-    +((t.days||[]).length?'<div style="display:flex;align-items:flex-end;gap:2px;height:28px" aria-label="14-day impressions">'+spark+'</div><div class="muted" style="font-size:10px;margin-top:2px">Last 14 days \u00B7 '+(t.totals?t.totals.impressions.toLocaleString()+' impr, '+t.totals.clicks.toLocaleString()+' clicks, '+(convBasis==='conversion'&&t.cdAvailable===true?(t.days||[]).reduce(function(a,d){return a+(+d.conversionsCd||0);},0).toFixed(1)+' conv. by conversion date, ':t.totals.conversions.toFixed(1)+' conv. by ad-click date, ')+money(t.totals.cost)+(t.currency?' '+esc(t.currency):'')+' spend'+(t.fxIncomplete?' (a daily exchange rate is missing, so every day is in '+esc(t.currency||'the account currency')+')':''):'')+'</div>':"")
-    +(String((t.campaign||{}).channel)==="PERFORMANCE_MAX"?'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">'
-      +'<span class="muted" style="font-size:11px;margin-right:8px">Improve this campaign (adds only \u2014 safe during Learning, never resets bidding):</span>'
-      +'<button class="btn ghost sm tlact" data-act="pmaxUpgradeAdStrength" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Upgrade copy + sitelinks</button> '
-      +'<button class="btn ghost sm tlact" data-act="pmaxBackfillImages" data-id="'+esc(String((t.campaign||{}).id||""))+'" data-name="'+esc((t.campaign||{}).name||"")+'" style="padding:3px 10px;font-size:11px">Re-image (AI)</button>'
-      +'<span class="tlactmsg muted" style="font-size:11px;margin-left:8px"></span></div>':"")
-    +'</div>';
-}
-// Scoped per-campaign creative job (upgrade copy/sitelinks or re-image) — same background
-// pipeline as the account-wide buttons, but limited to one campaign via campaignIds.
-// Everything lands in Approvals; nothing applies without review.
-async function runScopedPmaxJob(action,id,name,btn,msg){
-  var labels={pmaxUpgradeAdStrength:{doing:"Upgrading\u2026",confirmTxt:"Add headlines, long headlines, descriptions, and sitelinks to \u201C"+name+"\u201D where it's below the quality target?\n\nAdds only \u2014 nothing live is removed, bid-strategy learning is NOT reset. The change is queued to Approvals for review.",kind:"upgrade"},
-              pmaxBackfillImages:{doing:"Re-imaging\u2026",confirmTxt:"Re-image \u201C"+name+"\u201D with AI-selected shots (close-up product, close-up on-model, zoomed-out on-model)?\n\nNew images upload immediately; the swap is queued to Approvals for review. Safe during Learning.",kind:"re-image"}};
-  var L=labels[action];if(!L)return;
-  if(!confirm(L.confirmTxt))return;
-  var orig=btn.textContent;btn.disabled=true;btn.textContent=L.doing;
-  var aid=actStart(action,{detail:name});
-  try{
-    var genId=String(Date.now())+"-tl";
-    var r=await api(action,{genId:genId,campaignIds:[id]});
-    if(r&&r.error)throw new Error(r.error);
-    var t1=Date.now(),st=null;
-    while(Date.now()-t1<1200000){
-      st=await api("genStatus",{genId:genId}).catch(function(){return null;});
-      if(st&&st.phase==="running")msg.textContent=" working\u2026"+(st.assetGroup?" "+st.assetGroup:"");
-      if(st&&(st.ok===true||st.ok===false))break;
-      await new Promise(function(res){setTimeout(res,3000);});
-    }
-    if(st&&st.ok===true){
-      var skippedAll=!st.queued;
-      msg.textContent=skippedAll?" \u2713 already meets targets \u2014 nothing to add":" \u2713 "+st.queued+" change"+(st.queued===1?"":"s")+" queued to Approvals";
-      toast(skippedAll?("\u201C"+name+"\u201D already meets the "+L.kind+" targets"):("\u201C"+name+"\u201D "+L.kind+" queued to Approvals \u2014 review to apply"),true);
-    } else throw new Error((st&&st.error)||"timed out");
-  }catch(x){msg.textContent=" \u2715 "+String(x.message).slice(0,120);toast(L.kind+" failed: "+x.message,false);}
-  btn.disabled=false;btn.textContent=orig;
-  actEnd(aid);
-}
+      // edit would pull the STALE budget and overwrite this update. The override below survives
+      // reloads until the server snapshot reports the new value itself (see reload()).
+      BUDGET_OVERRIDES[String(x.id)]={budget:amt,at:Date.now()};
+      [(DASH.lastMetrics||[]),(cmdMetrics||[])].forEach(function(list){list.forEach(function(c){if(String(c.id)===String(x.id))c.budget=amt;});});}
+    toast("Budget "+money(cur)+" → "+money(amt)+(dry?" (dry-run — not applied to Google)":""),!dry);
+    cmdEditSaved(x,!dry);
+  }catch(e){cmdEditFail(x,"Budget change failed: "+(e.message||e));}}
+// Extend how long a campaign runs, in place. Ending a campaign does NOT delete it — Google
+// keeps the learning, history, keywords and assets and just stops serving. Pushing the end
+// date out restarts the SAME campaign, which beats launching a replacement: a new campaign
+// resets Smart Bidding's 1-2 week learning phase and discards every conversion signal.
+async function cmdEditSchedule(){var x=CMD_EDIT;if(!x||x.busy)return;
+  var id=x.id,nm=x.name,todayY=rpYmd(new Date()),s=String(x.value).trim(),payload=null;
+  if(!s)return cmdEditFail(x,"Nothing entered");
+  if(/^(open|none|never)$/i.test(s))payload={id:id,endDate:null};
+  else if(/^\d{4}-\d{2}-\d{2}$/.test(s)){if(s<todayY)return cmdEditFail(x,"That date is in the past");payload={id:id,endDate:s};}
+  else if(/^\+?\d+$/.test(s.replace(/\s*days?$/i,""))){var n=parseInt(s,10);if(!(n>0))return cmdEditFail(x,"Enter a positive number of days");payload={id:id,addDays:n};}
+  else return cmdEditFail(x,"Didn’t understand “"+s+"” — use a number of days, a YYYY-MM-DD date, or ‘open’");
+  x.busy="Saving…";x.msg="";cmdEditPaint(false);
+  try{var r=await api("setEndDate",payload);
+    if(!r||r.error||r.ok===false)throw new Error((r&&r.error)||"failed");
+    END_DATE_OVERRIDES[String(id)]={endDate:r.endDate||null,at:Date.now()};
+    [(DASH.lastMetrics||[]),(cmdMetrics||[])].forEach(function(list){list.forEach(function(c){if(String(c.id)===String(id))c.endDate=r.endDate||null;});});
+    cmdEditSaved(x,true);
+    var verdict=r.verified===true?" · verified in Google Ads":r.verified===false?" · not confirmed, re-check in Google Ads":"";
+    toast(r.cleared?("End date removed — "+nm+" runs until you stop it"+verdict)
+          :("Now runs to "+fmtMon(r.endDate)+" — "+nm+verdict)
+          +(r.dryRun?" (dry-run — not applied to Google)":""),!(r.dryRun)&&r.verified!==false);
+    if(r.note)setTimeout(function(){toast(r.note);},2600);
+  }catch(e){cmdEditFail(x,"Couldn’t extend: "+(e.message||e));}}
+async function cmdEditStatus(){var x=CMD_EDIT;if(!x||x.busy)return;var id=x.id,to=x.to,nm=x.name;
+  x.busy=to==="PAUSED"?"Pausing…":"Enabling…";x.msg="";cmdEditPaint(false);
+  try{var r2=await api("setStatus",{id:id,status:to});
+    if(r2&&r2.error)throw new Error(r2.error);
+    var dry=!!(r2&&r2.dryRun);
+    // reflect immediately, then let the next sync confirm
+    if(!dry)[(DASH.lastMetrics||[]),(cmdMetrics||[])].forEach(function(list){list.forEach(function(c){if(String(c.id)===String(id))c.status=to;});});
+    cmdEditSaved(x,!dry);if(!dry)try{renderDiag();}catch(e){}
+    toast(dry?(to==="PAUSED"?"Pause":"Enable")+" validated — "+nm+" (dry-run — not applied to Google)":(to==="PAUSED"?"Paused ✓":"Enabled ✓")+" — "+nm);
+  }catch(e){cmdEditFail(x,"Status change failed: "+(e.message||e));}}
 
 /* ---- Daily stats: per-campaign / per-ad live reporting (Google Ads parity) ---- */
 var DAILY=null,_dailyKey="",_dailyBusy=false,srFilter="all";
