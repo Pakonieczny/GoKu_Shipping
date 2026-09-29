@@ -567,6 +567,8 @@ function whereOf(events, cancelled, hint = {}) {
   const enter = (st, e) => { if (st !== stage) since = n(e.at); stage = st; };
   for (const e of list) {
     at = Math.max(at, n(e.at));
+    // a Complete Order press or a Reopen moves the order on no step (the page reads it as completed by hand)
+    if (pressOf(e) || reopenOf(e)) { if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by; continue; }
     if (stepOf(e) != null) step = Math.max(step, stepOf(e));
     else if (e.type === "note" && e.data && (e.data.stamp === "DESIGNED :)" || e.data.stamp === "designComplete")) step = Math.max(step, 1);
     // (a scan only says where the order was seen: "seen at sorting", never a step)

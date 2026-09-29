@@ -141,6 +141,71 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'timeline-complete.png') });
     console.log('  ✓ hover: ORDER COMPLETED / REOPENED, the time, who and where pressed on the seal, and in words under it');
 
+    /* ── 3 · completed by hand reads as completed everywhere in the order window; a Reopen puts it back; Complete again ── */
+    assert(srv.st.list('Order_Timeline').some(e => e.orderId === RID && e.type === 'needsDecision'), 'the order\'s question was recorded (the Now card used to keep saying it)');
+    const read = () => page.evaluate(() => {
+      const txt = s => { const x = document.querySelector(s); return x ? x.textContent.replace(/\s+/g, ' ').trim() : ''; };
+      return { pill: txt('#owNow'), stops: [...document.querySelectorAll('#owRail .tlStop')].map(b => [b.dataset.stage, b.className.replace(/^tlStop\s*/, ''), b.getAttribute('aria-label') || '']),
+        nowLine: txt('#owTimeline .tlNowLine span'), ghosts: document.querySelectorAll('#owTimeline .tlSt.ghost').length, next: txt('#owTimeline .tlStepReq'),
+        k: txt('#owNowCard .k'), t: txt('#owNowCard .t'), card: txt('#owNowCard'), seals: [...document.querySelectorAll('#owTimeline .tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]).filter(t => t === 'sealCompleted' || t === 'reopened') };
+    });
+    const WHEN = '[A-Z]{3} \\d{1,2}:\\d\\d [AP]M';
+    const completed = (s, why) => {
+      assert.equal(s.pill, 'Order completed', why + ': the header pill');
+      // (1) the step row: Order in done, every step after it skipped (not "next"), none owed
+      assert.deepEqual(s.stops.map(x => x[1]), ['d'].concat(Array(s.stops.length - 1).fill('f gone')), why + ': the step row ' + JSON.stringify(s.stops));
+      assert(s.stops.slice(1).every(x => /skipped, the order was completed by hand/.test(x[2])), why + ': each step after says skipped ' + JSON.stringify(s.stops));
+      // (2) the NOW line: completed, when and by whom; no dashed steps still owed
+      assert.match(s.nowLine, new RegExp(`^COMPLETED · ${WHEN} · TEST OPERATOR$`), why + ': the NOW line');
+      assert.equal(s.ghosts, 0, why + ': no dashed steps still to come');
+      // (3) the Overview's Now card: completed, by whom and when; no decision asked
+      assert.equal(s.k, 'Order completed', why + ': the Now card'); assert.match(s.t, /^Completed by Test Operator · \w{3},? \d{1,2}:\d\d/, why + ': ' + s.t);
+      assert(!/decision|unknown sku/i.test(s.card), why + ': no decision on the Now card: ' + s.card);
+      // (4) no "next" list under the timeline
+      assert.equal(s.next, '', why + ': no "Next for this order"');
+    };
+    let s = await read();
+    completed(s, 'completed in the order window');
+    // (4) the card under the Complete point says the order is done, not what it would need to move on
+    h = await hoverOn(keys[2]);
+    assert.match(h.exp, /Order completed by hand · nothing more to do/, 'the card under the Complete point: ' + h.exp);
+    assert(!/move on|Next|Needs a person/.test(h.exp), 'no "Then, for the order to move on" list: ' + h.exp);
+    // a step after it, hovered on the step row: skipped, by whom and when
+    await page.hover('#owRail .tlStop[data-stage="laser"]'); await page.waitForTimeout(450);
+    const railCard = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block' && x.textContent.trim()); return X ? X.textContent : ''; });
+    assert.match(railCard, /Laser cut\s*Skipped/); assert.match(railCard, /Not needed: the order was completed by hand/); assert.match(railCard, /Test Operator/); assert(!/Needs a person|Next/.test(railCard), 'skipped, nothing owed: ' + railCard);
+    await hoverOn(keys[2]);
+    if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'after-consistent.png') });
+    await page.mouse.move(700, 930); await page.waitForTimeout(300);
+    console.log(`  ✓ completed by hand: pill "${s.pill}", Order in then skipped steps, NOW "${s.nowLine}", no dashed steps, Now card "${s.k} · ${s.t}", no decision, no next list, the Complete point's card says it is done`);
+
+    // (5) Reopen in the order window: back to open everywhere, every seal kept (2 Complete, 2 Reopen)
+    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owCustom [data-cu-reopen]', { state: 'visible' });
+    await page.click('#owCustom [data-cu-reopen]');
+    await page.waitForFunction(k => !B.maps.customDone[k], K); await idle(); await calm();
+    await page.evaluate(() => OrderWin.setView('timeline'));
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="reopened~"]').length === 2 && document.getElementById('owNow').textContent !== 'Order completed', null, { timeout: 15000 });
+    await page.waitForTimeout(500);
+    s = await read();
+    assert.deepEqual(s.seals, ['sealCompleted', 'reopened', 'sealCompleted', 'reopened'], 'every seal stays: ' + s.seals);
+    assert.notEqual(s.pill, 'Order completed', 'the pill is open again');
+    assert(!s.stops.some(x => /gone/.test(x[1])) && s.stops.filter(x => x[1] === 'c').length === 1, 'the step row is open again, one step next: ' + JSON.stringify(s.stops));
+    assert(!/^COMPLETED/.test(s.nowLine) && s.ghosts > 0, 'the NOW line and the steps to come are back: ' + s.nowLine);
+    assert.notEqual(s.k, 'Order completed', 'the Now card is open again: ' + s.card);
+    console.log(`  ✓ reopened: pill "${s.pill}", step row open (next: ${s.stops.find(x => x[1] === 'c')[0]}), NOW "${s.nowLine}", ${s.ghosts} steps to come, Now card "${s.k}"; all 4 seals kept`);
+    // Complete again: completed again
+    await page.evaluate(() => OrderWin.setView('info')); await page.waitForSelector('#owCustom [data-cu-complete]', { state: 'visible' });
+    await page.click('#owCustom [data-cu-complete]');
+    await page.waitForFunction(k => B.maps.customDone[k], K); await idle(); await calm();
+    await page.evaluate(() => OrderWin.setView('timeline'));
+    await page.waitForFunction(() => document.querySelectorAll('#owTimeline .tlSt[data-key^="sealCompleted~"]').length === 3 && document.getElementById('owNow').textContent === 'Order completed', null, { timeout: 15000 });
+    await page.waitForTimeout(500);
+    s = await read();
+    completed(s, 'completed again');
+    assert.deepEqual(s.seals, ['sealCompleted', 'reopened', 'sealCompleted', 'reopened', 'sealCompleted'], 'a later Complete adds its seal');
+    if (SHOTS) { await page.evaluate(() => OrderWin.setView('info')); await page.waitForTimeout(500); await page.screenshot({ path: path.join(SHOTS, 'after-consistent-overview.png') }); await page.evaluate(() => OrderWin.setView('timeline')); }
+    console.log('  ✓ completed again: completed everywhere once more, 5 seals in press order');
+
     // the host is handed the records as they came (onEvents): a Reopen is still its note
     await page.evaluate(() => OrderWin.close());
     const mount = (rid, ans) => page.evaluate(({ rid, ans }) => {
@@ -151,9 +216,9 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
       window.__t = OrderTimelineUI.mount(window.__el, { orderId: rid, live: false, onEvents: l => { window.__ev = l; } });
     }, { rid, ans: ans || null });
     await mount(RID);
-    await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key^="reopened~"]').length === 1 && window.__ev, null, { timeout: 10000 });
+    await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key^="reopened~"]').length === 2 && window.__ev, null, { timeout: 10000 });
     const host = await page.evaluate(() => window.__ev.filter(e => e.data && e.data.reopened).map(e => [e.type, e.text]));
-    assert.deepEqual(host.map(x => x[0]), ['note'], 'type note'); assert.match(host[0][1], /^Custom order reopened by Test Operator/, 'its own words');
+    assert.deepEqual(host.map(x => x[0]), ['note', 'note'], 'type note (the Reopen under Completed, then the one in the order window)'); assert.match(host[0][1], /^Custom order reopened by Test Operator/, 'its own words');
     // Paul's order as its records keep it: its one completion drawn (the rim: the sorter, where older presses were made)
     await mount(P, await tl(P));
     await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length >= 2, null, { timeout: 10000 });

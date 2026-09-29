@@ -9416,7 +9416,7 @@ const OrderWin = window.OrderWin = (() => {
     const html = `<span class="fLabel">Its pieces · the order is where the slowest one is</span>` + sum.each.map(x => {
       const nx = x.steps.find(s => at(s) > x.D.step), slow = x.D.step === sum.step;
       return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece"><i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>` +
-        `<span class="nm"><b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}</span><span class="st">${esc((x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled ? " · next: " + esc(nx.l) : ""}</span>` +
+        `<span class="nm"><b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}</span><span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>` +
         `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span></button>`;
     }).join("");
     box.hidden = false;
@@ -9449,9 +9449,14 @@ const OrderWin = window.OrderWin = (() => {
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
     const restored = cx && evs && lastOf(evs, e => e.type === "cancelRestored" && e.at > cx.at);
     if (cx && !restored) return { tone: "bad", pill: "Cancelled", k: "Cancelled", t: cx.type === "etsyCancelled" ? "Cancelled on Etsy" : "Cancelled" + (cx.by ? " by " + cx.by : ""), ev: cx, cancelled: true };
+    // completed by hand (a Complete Order press no Reopen came after): completed, by whom and when, as the rail and the
+    // Timeline say; a Reopen takes the completion back (its seals stay), so it is where it was before
+    const UI = window.OrderTimelineUI, hand = evs && UI && UI.handOf ? tryDo(() => UI.handOf(slowestEvents() || evs)) : null;
+    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${new Date(hand.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, ev: hand }; }
+    const back = e => e.type === "sealCompleted" && evs.some(x => +x.at >= +e.at && UI && UI.opStepOf && UI.opStepOf(x) === "reopen" && (!x.lineKey || !e.lineKey || x.lineKey === e.lineKey));
     // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
-    const ms = evs && lastOf(slowestEvents() || evs, e => (T[e.type] && T[e.type].milestone) || e.milestone);
-    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage");
+    const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e));
+    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e));
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
       const g = GROUP_NOW[mt.group] || mt.label || "In progress";
