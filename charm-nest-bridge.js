@@ -7342,17 +7342,27 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The tour plays when the Review tab is in sight and motion is allowed (charm-nest-tour.js). */
   const tourOk = () => !!window.SendTour && !motionOff() && !document.hidden && S.mode === "review" && !!document.querySelector("#reviewView:not(.hidden)");
   /** Where the sent pieces went: each sheet holding any of them, in the sheets' own order (metal, then page), with the
-   *  pool ids on it; each metal with none on a sheet yet waits, and says why (no run open, its sheet busy, or held). */
+   *  pool ids on it (each piece on one sheet only); then whatever is not on a sheet yet waits, metal by metal, and says
+   *  why: its line held, no run open, or its sheet not free yet. It is read line by line: one line of a card held while
+   *  another is placed (on the same metal or not) used to say nothing of the held one, as its metal had a sheet. */
   function tourPlan(rows, e) {
-    const ids = new Set(rows.flatMap(r => r.poolIds || [])), legs = [];
+    const ids = new Set(rows.flatMap(r => r.poolIds || [])), legs = [], shown = new Set();
     const thumbOf = m => ((e.files.find(F => F.metal === m && F.thumb) || e.files.find(F => F.thumb)) || {}).thumb || null;
     for (const sh of allSheets()) {
-      const mine = [...new Set((sh.charms || []).filter(c => ids.has(c.poolId)).map(c => c.poolId))];
+      const mine = [...new Set((sh.charms || []).filter(c => ids.has(c.poolId) && !shown.has(c.poolId)).map(c => c.poolId))];
+      mine.forEach(id => shown.add(id));
       if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, label: `${labelOf(sh.metal)} · Sheet ${sh.page || 1}`, poolIds: mine, designUrl: thumbOf(sh.metal) });
     }
-    const on = new Set(legs.map(l => l.metal)), held = rows.find(r => r.state === "held" && r.reason), pooled = rows.some(r => r.state === "pooled");
-    const waiting = [...new Set(e.files.map(F => F.metal))].filter(m => m && !on.has(m)).map(m => ({ metal: m, label: labelOf(m), held: !!held, designUrl: thumbOf(m),
-      why: held ? `held — ${held.reason}` : pooled ? `its ${labelOf(m)} pieces join the sheet as soon as it is free` : `its ${labelOf(m)} pieces go on with the next run` }));
+    // (" — " parts the tour's caption into its name and its reason: a reason keeps to one part)
+    const metalOfPc = pc => ((e.files.find(F => F.id === pc.f) || {}).metal) || null, wait = new Map(), one = t => String(t || "").replace(/\s+—\s+/g, ", ");
+    const hold = (m, why, held) => { if (!m) return; const w = wait.get(m); if (!w || (held && !w.held)) wait.set(m, { why, held }); };
+    for (const r of rows) {
+      const pcs = (e.sent && e.sent.lines[r.key]) || [];
+      if (r.state === "pooled") (r.poolIds || []).forEach((id, i) => { if (!shown.has(id)) { const m = ((B.pool.rows.get(id) || {}).material) || (pcs[i] && metalOfPc(pcs[i])); hold(m, `its ${labelOf(m)} pieces join the sheet as soon as it is free`, false); } });
+      else if (r.state === "held") for (const pc of pcs) hold(metalOfPc(pc), `held: ${one(r.reason || r.hold || "waiting for a person")}`, true);
+      else if (r.state === "pulled") for (const pc of pcs) { const m = metalOfPc(pc); hold(m, r.reason ? `its ${labelOf(m)} pieces wait: ${one(r.reason)}` : `its ${labelOf(m)} pieces go on with the next run`, false); }
+    }
+    const waiting = METALS.filter(M => wait.has(M.key)).map(M => Object.assign({ metal: M.key, label: labelOf(M.key), designUrl: thumbOf(M.key) }, wait.get(M.key)));
     return { legs, waiting };
   }
   /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what
