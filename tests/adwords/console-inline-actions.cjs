@@ -41,7 +41,7 @@ Object.assign(w,{DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'77',budget:35,stat
   BUDGET_OVERRIDES:{},END_DATE_OVERRIDES:{},REPORT_CAMPAIGN_OPEN:new Set(),_cmdRestoring:false,_MON:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   api:async(action,body)=>{calls.push([action,JSON.parse(JSON.stringify(body))]);const r=reply[action];return typeof r==='function'?r(body):r||{ok:true};},
   toast:m=>toasts.push(String(m)),renderDiag(){},loadCampaignTree(){}});
-w.eval(['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireServing','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
+w.eval('var SERV_ASK={};\n'+['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireServing','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
 const camp=()=>w.cmdMetrics[0];
 w.renderCommand=function(){const c=camp(),snap=d.getElementById('snapshot');
   snap.innerHTML='<table><tbody><tr class="crow" data-i="0" data-cid="77"><td>Autumn necklaces</td></tr><tr class="cdet" data-d="0" data-cid="77" style="display:none"><td><div class="campaignSettings"><button class="btn ghost sm bge" data-id="77" data-b="'+c.budget+'" data-res="customers/1/campaignBudgets/5">'+c.budget+'</button><button class="btn ghost sm sce" data-id="77" data-end="'+(c.endDate||'')+'" data-name="Autumn necklaces">schedule</button><button class="btn ghost sm cst" data-id="77" data-name="Autumn necklaces" data-to="'+(c.status==='ENABLED'?'PAUSED':'ENABLED')+'">'+(c.status==='ENABLED'?'Pause campaign':'Enable campaign')+'</button></div><div class="adlvl"></div></td></tr></tbody></table>';
@@ -146,14 +146,23 @@ await test('a researched occasion date names its source; research lists the page
   channel='pmax';rw.renderScanAudit();assert.equal(rd.querySelector('.scanPages'),null,'product ads research does not claim the Search pages');r.window.close();
 });
 
-await test('asking Google for the serving check shows the standard spinner; a failure gives the button back',async()=>{
-  const v=new JSDOM('<!doctype html><body><div class="servbox" data-sc="5"><button type="button" class="btn ghost sm servRun">Check again with Google</button></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document;let answer;
-  vw.api=()=>new Promise((res,rej)=>{answer={res,rej};});vw.eval(['esc','btnBusy','loadServing'].map(pick).join('\n'));
-  const box=vd.querySelector('.servbox'),b=box.querySelector('.servRun'),run=vw.loadServing(box);
-  assert.equal(b.disabled,true);assert.equal(b.innerHTML,'<span class="spin bspin"></span>Asking Google…');
+await test('asking Google for the serving check shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
+  const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;
+  Object.assign(vw,{DASH:{},api:()=>new Promise((res,rej)=>{answer={res,rej};}),servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
+    servingStoredHtml:()=>'<div class="servHead"><b>Google serving check</b><button type="button" class="btn ghost sm servRun">Check with Google</button></div>'});
+  vw.eval([html.match(/^var SERV_ASK=\{\};$/m)[0]].concat(['esc','btnBusy','loadServing','wireServing'].map(pick)).join('\n'));
+  const draw=()=>{host.innerHTML='<div class="servbox" data-sc="5">'+vw.servingStoredHtml()+'</div>';vw.wireServing(host);},btn=()=>host.querySelector('.servRun'),spin='<span class="spin bspin"></span>Asking Google…';
+  draw();let b=btn(),run=vw.loadServing(host.querySelector('.servbox'));
+  assert.equal(b.disabled,true);assert.equal(b.innerHTML,spin);assert.equal(await vw.loadServing(host.querySelector('.servbox')),undefined,'one ask at a time');
   answer.rej(new Error('Google did not answer.'));await run;
-  assert.equal(b.disabled,false);assert.equal(b.textContent,'Check again with Google','the button keeps its own words');
-  assert.equal(box.querySelector('.servErr').textContent,'Google serving check failed: Google did not answer.');v.window.close();
+  assert.equal(b.disabled,false);assert.equal(b.textContent,'Check with Google','the button keeps its own words');
+  assert.equal(host.querySelector('.servErr').textContent,'Google serving check failed: Google did not answer.');
+  run=vw.loadServing(host.querySelector('.servbox'));draw();assert.notEqual(btn(),b);assert.equal(btn().disabled,true);assert.equal(btn().innerHTML,spin,'a redraw keeps the wait on the new button');
+  answer.res({ok:true,serving:{headline:'Ready to serve'}});await run;assert.equal(host.querySelector('.answer').textContent,'Ready to serve','the answer lands in the box on screen');
+  assert.equal(btn().textContent,'Check again with Google');assert.equal(btn().disabled,false);
+  draw();run=vw.loadServing(host.querySelector('.servbox'));draw();answer.rej(new Error('Timed out'));await run;
+  assert.equal(btn().disabled,false);assert.equal(btn().textContent,'Check with Google');assert.equal(host.querySelector('.servErr').textContent,'Google serving check failed: Timed out');
+  draw();assert.equal(btn().disabled,false,'nothing is left waiting');v.window.close();
 });
 
 await test('one indicator per wait, shell top bar, phone channel tabs and a shadow-free closed drawer',()=>{
