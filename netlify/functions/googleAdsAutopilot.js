@@ -3207,12 +3207,34 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
 
 // Default campaign-level negative keywords for a premium, made-to-order jewelry store: strip out
 // makers, bargain-hunters, repairs, jobs, and competitor-marketplace traffic that won't convert.
-// Broad-match negatives exclude the term in any query. Cuts wasted spend → better effective ROAS.
-const DEFAULT_NEGATIVES = ["free", "diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
-  "bulk", "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
+// Cuts wasted spend → better effective ROAS. Written like keywords: plain text is a broad-match negative
+// (its words in any order), { text, matchType: "PHRASE" } excludes only that phrase. Negatives never match
+// close variants, so plurals are listed where needed. Deliberately absent, as in Performance Max: a lone
+// "free" ("nickel free earrings" and "free shipping" are buying searches; the phrases keep freebie hunters
+// out) and "bulk" (team and wedding-party gifts are real orders; "wholesale" still excludes resellers).
+const DEFAULT_NEGATIVES = ["diy", "how to make", "tutorial", "pattern", "cheap", "wholesale",
+  "supplier", "manufacturer", "repair", "fix", "job", "jobs", "hiring", "salary", "fake",
   "replica", "knockoff", "amazon", "temu", "shein", "wish", "meaning", "definition", "clipart", "svg", "png",
   "printable", "template", "tattoo", "drawing", "coloring", "crochet", "knitting", "beads only",
-  "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora"];
+  "kit", "supplies", "aliexpress", "ebay", "etsy", "near me", "used", "second hand", "pandora",
+  ...["free pattern", "free patterns", "free download", "free downloads", "free printable", "free printables", "free svg", "for free"].map(text => ({ text, matchType: "PHRASE" }))];
+// Buying searches no negative may block through their buying words, whatever its source (these defaults, a
+// scanned idea's theme-conflict terms, an Ad Doctor fix): in jewelry searches "free" is usually a material or
+// delivery promise. A product word alone ("earrings" in a necklace campaign) can still be excluded.
+const _BUYING_SEARCHES = ["nickel free earrings", "tarnish free necklace", "lead free", "hypoallergenic nickel free", "free shipping"];
+const _BUYING_WORDS = new Set(["free", "nickel", "tarnish", "lead", "hypoallergenic", "shipping"]);
+// Whether a negative keyword stops a search: broad needs all its words in any order, phrase its words
+// together and in order, exact the whole search.
+function _negativeBlocks(neg, search) {
+  const n = _kwWords(neg && neg.text), q = _kwWords(search), m = String((neg && neg.matchType) || "BROAD").toUpperCase();
+  if (!n.length || !q.length) return false;
+  if (m === "EXACT") return n.join(" ") === q.join(" ");
+  if (m === "PHRASE") return (" " + q.join(" ") + " ").includes(" " + n.join(" ") + " ");
+  return n.every(w => q.includes(w));
+}
+function _blocksBuyingSearch(neg) {
+  return _kwWords(neg && neg.text).some(w => _BUYING_WORDS.has(w)) && _BUYING_SEARCHES.some(q => _negativeBlocks(neg, q));
+}
 // Brand callouts — descriptive (not promises), true for Brites, each ≤25 chars.
 // No origin-country callout: most buyers are in the US, and "Handmade in Canada" reads as
 // "imported / slower shipping" to them. Keep claims true and universally appealing.
@@ -3418,12 +3440,17 @@ function buildSearchCampaignOps(coll, event, assets, { dailyBudget, startDate, e
   // English, matching the ad copy and the Keyword Planner research (languageConstants/1000). Without a
   // language criterion Google serves to every language and the ad-design keyword evidence is unavailable.
   ops.push({campaignCriterionOperation:{create:{campaign:cRes,language:{languageConstant:"languageConstants/1000"}}}});
-  const all=groups.flatMap(g=>g.keywords), kwWords=all.map(k=>new Set(k.text.split(" ")));
-  // A broad negative whose words all sit inside one of our own keywords would block that keyword ("kit" vs "first aid kit charm").
-  const negSet=[...new Set((Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).map(_adsKeywordText).filter(Boolean))].filter(n=>!kwWords.some(s=>n.split(" ").every(w=>s.has(w))));
-  negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n,matchType:"BROAD"}}}}));
+  const all=groups.flatMap(g=>g.keywords), negSet=[];
+  // Negatives are written like keywords: plain text is broad match, {text,matchType} keeps its match type. One that would
+  // block our own keyword ("kit" vs "first aid kit charm") or a buying search ("free" vs "nickel free earrings") is left out.
+  (Array.isArray(negatives)?negatives:DEFAULT_NEGATIVES).forEach(n=>{
+    const m=String((n&&n.matchType)||"BROAD").toUpperCase(), neg={text:_adsKeywordText(n&&typeof n==="object"?n.text:n),matchType:m==="PHRASE"||m==="EXACT"?m:"BROAD"};
+    if(!neg.text||negSet.some(x=>x.text===neg.text)||all.some(k=>_negativeBlocks(neg,k.text))||_blocksBuyingSearch(neg))return;
+    negSet.push(neg);
+  });
+  negSet.forEach(n=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,negative:true,keyword:{text:n.text,matchType:n.matchType}}}}));
   let assetSummary=null; if(withAssets!==false){const ca=buildCampaignAssets(coll,finalUrl,cRes,assetExtras);ops.push(...ca.ops);assetSummary=ca.summary;}
-  return {ops,tag,finalUrl,negatives:negSet,assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
+  return {ops,tag,finalUrl,negatives:negSet.map(n=>n.text),assetSummary,adGroupSummary:groups.map(g=>({name:g.name,finalUrl:g.finalUrl,keywords:g.keywords.map(k=>k.text)})),
     keywordSummary:{count:all.length,exact:all.filter(k=>k.matchType==="EXACT").length,measured:all.filter(k=>k.measured).length,researched:all.length>0&&all.every(k=>k.measured),dropped,groups:groups.length,searchPartners:false}};
 }
 
@@ -7380,7 +7407,7 @@ Find the 8-12 best Search advertising OPPORTUNITIES: gift occasions whose date f
 - rationale (<=120 chars: why now, why this collection)
 - keywords: an array of 6-10 search phrases (strings). SPECIFICITY IS THE LAW: every keyword must contain a concrete jewelry product type (necklace, charm, bracelet, pendant, earrings...) AND at least one motif, style, material, or recipient qualifier drawn from the inventory. NEVER category-only or gifting-head terms ("nurse gifts", "summer jewelry", "gifts for her" are all FORBIDDEN — they buy browsers, not buyers). Every keyword is 3+ words phrased exactly as a ready-to-buy shopper types it (the validator rejects a two-word motif+type term such as "bunny necklace" as browsing intent). DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms — styles, recipients, occasions, materials — and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) — head terms from its high-frequency motifs, long-tail from mid-frequency motifs × product types × the occasion (a collection with bunny(31) and axolotl(6) earns both "gold bunny necklace" AND "axolotl charm gift") — phrased the way the audience below actually searches.
 - keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
-- negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (free/cheap/diy are already blocked account-wide).
+- negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (cheap, diy, wholesale and free downloads or patterns are already blocked account-wide), and never a lone "free": nickel free and tarnish free are buying searches.
 - keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
 INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fitWhy reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
@@ -7946,11 +7973,11 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   }));
   const adGroups=grounded.groups.map((g,i)=>({name:_wclip(`${g.label} · ${event?event.label:"Evergreen"}`,70),keywords:g.keywords,assets:groupAssets[i]||assets,finalUrl:_bestSearchLandingUrl(mine,g,handle)}));
   // Launch negatives: universal defaults + the opportunity model's theme-conflict
-  // list + terms that already wasted money account-wide. Deduped.
+  // list + terms that already wasted money account-wide. The builder dedupes them, keeps each
+  // match type and leaves out any that would block a keyword or a buying search.
   let launchNegs = DEFAULT_NEGATIVES.slice();
   if (opp && Array.isArray(opp.negatives) && opp.negatives.length) launchNegs = launchNegs.concat(opp.negatives);
   try { launchNegs = launchNegs.concat(await accountWasteNegatives({})); } catch (e) {}
-  launchNegs = [...new Set(launchNegs.map(n => String(n).trim().toLowerCase()).filter(Boolean))];
   const {ops,tag,negatives,assetSummary,keywordSummary,adGroupSummary}=buildSearchCampaignOps(coll,event,assets,{dailyBudget,startDate:sDate,endDate:eDate,countries:cty,maxCpc:capCpc,smartBidding:smart,targetRoas:0,assetExtras,keywordPlan:grounded.keywords,adGroups,negatives:launchNegs});
   await recordOccasionUse(event ? event.label : "Evergreen gifting", coll.handle, tag);
   // The run exactly as Google receives it (inclusive days); with no start time it serves from the day it is enabled.
@@ -9559,10 +9586,10 @@ For EACH campaign return an object:
 - Do NOT return fixReview: the console measures applied fixes itself (see "measured" above).
 - remedies: an array with ONE ENTRY PER ISSUE you flagged. NEVER re-recommend a fix that already appears in the applied or queued list unless it verifiably failed or clearly needs extension (say so explicitly if you do). Every issue MUST get a remedy specific enough to implement in the next 10 minutes. Use the evidence provided (keywords with QS components, live ad copy, search terms). Each remedy:
   {issue:"...", fix:"exact prescription", impact:"high|medium|low", executable:{kind:"addNegatives"|"pauseKeywords"|"addKeywords"|"rewriteAds"|"landingPage"|"setBudget"|"none", ...params}}
-  The console validates every executable against the evidence before it offers a button: ids that are not in the evidence, a setBudget equal to the current budget, a budget over the ceiling, or a negative that would block a converting search term or an active keyword become advice only (kind "none"). When the fix is to keep something as it is, or to do something the console cannot execute (for example re-enabling a campaign), use kind "none".
+  The console validates every executable against the evidence before it offers a button: ids that are not in the evidence, a setBudget equal to the current budget, a budget over the ceiling, or a negative that would block a converting search term, a buying search or an active keyword become advice only (kind "none"). When the fix is to keep something as it is, or to do something the console cannot execute (for example re-enabling a campaign), use kind "none".
   Rules for remedies:
   * Rank/QS problems: name the FAILING COMPONENT per keyword (expectedCtr BELOW_AVERAGE = weak ad-to-keyword match; adRelevance BELOW_AVERAGE = headlines don't contain the keyword; landingPage BELOW_AVERAGE = URL doesn't match intent). Prescribe per keyword: pause it (executable pauseKeywords with keywords:[{adGroupId,criterionId,text}]), tighten match type, or fix copy.
-  * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root).
+  * Wasted spend: scan searchTerms for terms with cost>0 and conv=0 that signal wrong intent (jobs, free downloads or patterns, DIY, wholesale, unrelated subjects) -> executable addNegatives with keywords:["..."] (exact terms or their common root; never a lone "free": nickel free and tarnish free are buying searches).
   * Ad copy: when adRelevance or expectedCtr is weak, WRITE 3-5 NEW headlines (max 30 chars each) and 1-2 NEW descriptions (max 90 chars) that include the top real keywords -> executable rewriteAds with {adId:"<the adId from the ads evidence>", headlines:[...], descriptions:[...]}. This creates a draft the owner reviews in Approvals; once approved, the copy is APPENDED to the live RSA (merged up to the 15-headline / 4-description limits) AND any asset Google has rated LOW (see assetPerformance evidence) is pruned in the same edit — GOOD/BEST/LEARNING assets are never touched. So: write additions targeting the gap, and call out LOW-rated assets in your findings when they exist.
   * Landing page: if the finalUrl doesn't match keyword intent, name the better britesjewelry.com collection URL -> executable landingPage with url:"...".
   * Dead weight: keywords with ~0 impressions after 7+ days, or unproven broad terms dragging a campaign -> executable pauseKeywords with the EXACT {adGroupId,criterionId,text} objects copied from the evidence. A keyword-level fix WITHOUT its executable payload is a defect — if the keyword appears in the evidence, include its ids.
@@ -9615,7 +9642,8 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
       if (ex.kind === "setBudget") { const budget = budgetFor(c, ex.budget); return budget ? { kind: "setBudget", budget } : none; }
       if (ex.kind === "pauseKeywords") { const keywords = [...new Map(list(ex.keywords).map(k => kw.get(text((k || {}).adGroupId) + "~" + text((k || {}).criterionId))).filter(Boolean).map(k => [k.adGroupId + "~" + k.criterionId, { adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text }])).values()].slice(0, 25); return keywords.length ? { kind: "pauseKeywords", keywords } : none; }
       if (ex.kind === "addNegatives") {
-        // A phrase negative blocks every query containing it: never one that would block a converting term or an active keyword.
+        // A phrase negative blocks every query containing it: never one that would block a converting term, a buying
+        // search ("free" vs "nickel free earrings") or an active keyword.
         if (!guard) return none;
         // Performance Max reports searches only as categories: a negative is offered there only when a category
         // that never converted in the last year contains it (or it that category) and no converting one does.
@@ -9623,10 +9651,13 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
         if (pmax && !Array.isArray(cats)) return none;
         const near = (t, w) => t.includes(w) || w.includes(t), label = conv => (cats || []).filter(x => (Number(x.conv) > 0) === conv).map(x => words(x.label)).filter(t => t.trim());
         const sold = label(true), quiet = label(false);
+        const buyer = k => _blocksBuyingSearch({ text: k, matchType: "PHRASE" });
         const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); if (w.trim() === "") return pmax;
-          return converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
-        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks);
-        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(pmax ? { skippedWhy: "no search category that never converted contains them, or one that converted does" } : {}) } : {}) };
+          return buyer(k) || converting.some(t => t.includes(w)) || active.some(t => t.includes(w)) || (pmax && (sold.some(t => near(t, w)) || !quiet.some(t => near(t, w)))); };
+        const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks), forBuyers = skipped.some(buyer);
+        // The card reads "Left out because <why>: …"; without a why it says they would block converting searches or active keywords.
+        const why = [forBuyers && "they would block buying searches such as “nickel free earrings”", pmax ? "no search category that never converted contains them, or one that converted does" : forBuyers && skipped.some(k => !buyer(k)) && "they would block converting searches or active keywords"].filter(Boolean).join(", or ");
+        return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped, ...(why ? { skippedWhy: why } : {}) } : {}) };
       }
       if (ex.kind === "addKeywords") {
         const adGroupId = text(ex.adGroupId).replace(/\D/g, ""); if (!groups.has(adGroupId)) return none;
