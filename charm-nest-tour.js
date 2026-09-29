@@ -80,9 +80,10 @@
       return a.finished.catch(() => {}).then(() => { t.anims.delete(a); });
     };
     t.node = (cls, html) => { const n = doc.createElement("div"); n.className = cls; if (html) n.innerHTML = html; layer().appendChild(n); t.nodes.add(n); return n; };
-    t.forward = () => { if (t.ff) return; t.ff = true; for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); };
-    // bounded: a promise from outside (NestFocus) that never settles never holds the tour
-    t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => setTimeout(() => res(null), t.ff ? Math.min(ms, 600) : ms))]);
+    // skipped: the sheet standing open (NestFocus) shows everything at once and eases back; no other sheet is opened
+    t.forward = () => { if (t.ff) return; t.ff = true; for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); tryDo(() => root.NestFocus && root.NestFocus.isOpen() && root.NestFocus.close()); };
+    // bounded: a promise from outside (NestFocus) that never settles never holds the tour, nor one still pending on a skip
+    t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => { if (t.ff) { setTimeout(() => res(null), Math.min(ms, 600)); return; } const w = () => { clearTimeout(h); t.wakes.delete(w); res(null); }, h = setTimeout(w, ms); t.wakes.add(w); })]);
     return t;
   }
   /** A click, a key or Esc anywhere: the rest lands at once and the tour goes home. A tab picked: the tour ends there. */
@@ -228,8 +229,9 @@
       // (skipped before the Nest tab was reached: it is never switched to, only to come straight back)
       if (!t.ff) await toNest(t);
       const there = () => !t.userTab && modeNow() === "nest";
-      for (const [i, leg] of legs.entries()) { if (!there()) break; await sheetBeat(t, leg, o, i === legs.length - 1 && !waiting.length); }
-      for (const w of waiting) { if (!there()) break; await waitBeat(t, w, o); }
+      // one sheet at a time, then what waits; a skip lands the rest at once (placed already, never held back) and goes home
+      for (const [i, leg] of legs.entries()) { if (!there() || t.ff) break; await sheetBeat(t, leg, o, i === legs.length - 1 && !waiting.length); }
+      for (const w of waiting) { if (!there() || t.ff) break; await waitBeat(t, w, o); }
       await coinAway(t);
       await goHome(t, home, o, s0);
     } catch (e) { tryDo(() => console.warn("send tour", e)); if (!t.userTab && modeNow() !== home.mode) setMode(home.mode); }
@@ -238,6 +240,9 @@
       for (const n of t.nodes) n.remove(); if (s0 && s0.ghost) s0.ghost.remove();
       for (const v of [viewOf("nest"), viewOf("review")]) if (v) for (const a of v.getAnimations()) if (a.id === "tour") a.cancel();
       for (const f of t.off) tryDo(f);
+      // each Nest card back on the sheet it showed before the tour (it switched them to the sheets it opened); home,
+      // this is out of sight
+      tryDo(() => { const NF = root.NestFocus; if (!NF) return; if (NF.isOpen && NF.isOpen() && NF.close) NF.close(); if (NF.restore) NF.restore(); });
       if (T === t) T = null; mark("end"); finish();
     }
   }
@@ -317,6 +322,8 @@
     if (o0 && onScreen({ left: o0.x, right: o0.x + 1, top: o0.y, bottom: o0.y + 1 }) && !t.ff) { const d = Math.hypot(o0.x - from.x, o0.y - from.y); if (d > 4) { going = t.anim(coin, path(from, o0, { bend: Math.min(70, d * .18) }), { duration: Math.max(420, Math.min(620, 260 + d * .45)), easing: "linear" }); from = o0; } }
     let f = null;
     if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption, metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
+    // (skipped while it opened: it is shown whole at once and eases back, with no flight onto it)
+    if (t.ff) { if (f) tryDo(() => f.close()); return; }
     if (!f) f = await openHere(t, leg, caption);
     if (!f) return;
     const card = f.card || card0, cr = rectOf(card) || { left: innerWidth / 2 - 100, top: innerHeight / 2 - 60, width: 200, height: 120 };
@@ -342,7 +349,7 @@
       return { id, s, r, el, i, placed };
     });
     const landAt = fl => { const r = fl.r || cvr; return at(r.left + r.width / 2, r.top + r.height / 2, 1, fl.placed ? +(fl.s && fl.s.rot) || 0 : 0); };
-    const many = flights.length, gap = many > 1 ? Math.max(90, Math.min(220, 900 / many)) : 0, dur = many > 6 ? 580 : 780;
+    const many = flights.length, gap = many > 1 ? Math.max(90, Math.min(220, 900 / many)) : 0, dur = many > 6 ? 580 : 740;
     const beats = flights.map((fl, i) => (async () => {
       await t.wait(i * gap);
       const w = parseFloat(fl.el.style.width) || fl.el.offsetWidth || 30, h = parseFloat(fl.el.style.height) || fl.el.offsetHeight || 30;
@@ -359,7 +366,8 @@
       t.anim(fl.el, [{ opacity: 0 }, { opacity: 0, offset: .42 }, { opacity: 1, offset: .86 }, { opacity: 1 }], { duration: dur, easing: "linear" });
       if (i === 0 || !t.ff) sparks(t, start, end, dur, 40);
       await go;
-      if (t.coin && many > 1) { const b = $("b", t.coin); if (b) b.textContent = many - i - 1 > 1 ? "×" + (many - i - 1) : ""; }
+      // (the coin counts down what it still carries, over every sheet: it said ×2 on the second of two sheets)
+      if (t.coin) { t.count = Math.max(0, (t.count || 0) - 1); const b = $("b", t.coin); if (b) b.textContent = t.count > 1 ? "×" + t.count : ""; }
       // it lands: the sheet draws it in, in full colour, as the copy that carried it goes
       mark("land"); const landing = t.within(tryDo(() => f.land(fl.id)), 900);
       if (f.here || !fl.placed) ring(t, fl.r || cvr);
@@ -378,12 +386,15 @@
       placeCap(t, cap, spot.x, spot.y); t.cap = cap;
       if (br) { ring(t, br, true); t.wait(560).then(() => ring(t, br, true)); }
       plus(t, `+${n} queued`, qr ? qr.left + 40 : cvr.left + cvr.width / 2, (qr || cvr).top - 4);
-      await t.wait(760);
+      await t.wait(last ? 520 : 480);
       fadeOut(t, cap, 300); t.cap = null;   // (it goes as the sheet eases back)
     } else {
       plus(t, `+${n} on ${caption}`, cvr.left + cvr.width / 2, cvr.top + 12);
-      await t.wait(400);
+      await t.wait(last ? 400 : 320);
     }
+    // another sheet (or a waiting place) follows: this one is let go and is well on its way back before the next is
+    // spotlit (only one sheet ever stands in focus), the coin already setting off for it
+    if (!last) { tryDo(() => f.close()); await t.wait(260); return; }
     await t.within(tryDo(() => f.close()), 1400);
     await t.wait(120);
   }
