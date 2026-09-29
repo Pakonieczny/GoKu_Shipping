@@ -143,6 +143,10 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
+  // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
+  if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {
+    try {const out=await E[a](body),m=out&&out.motionPublication;if(m&&m.queued)try{await dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef});}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}return out;} catch(e) { return {ok:false,error:e.message}; }
+  }
   if (["adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignSubmission", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
@@ -595,7 +599,7 @@ function render(d){
   var c=d.control||{};var bar=document.getElementById("ctrlbar");
   bar.innerHTML='<span class="pill '+(c.enabled?'on':'off')+'">'+(c.enabled?'LIVE':'STOPPED')+'</span>'+
     '<span class="pill '+(c.dryRun?'dry':'on')+'">'+(c.dryRun?'DRY-RUN':'APPLYING')+'</span>'+
-    '<span class="muted">ceiling $'+(c.maxDailyBudgetTotal)+'/day · step '+(c.maxBudgetStepPct)+'% · approve&gt;'+(c.budgetMoveApprovalPct)+'%</span>'+
+    '<span class="muted">ceiling '+(c.budgetCurrency?c.budgetCurrency+' ':'')+(c.maxDailyBudgetTotal)+'/day · step '+(c.maxBudgetStepPct)+'% · approve&gt;'+(c.budgetMoveApprovalPct)+'%</span>'+
     (c.enabled?'<button class="warn" onclick="act(\\'kill\\')">KILL</button>':'<button onclick="act(\\'resume\\')">Resume</button>')+
     '<button class="ghost" onclick="dry('+(!c.dryRun)+')">'+(c.dryRun?'Go live (apply)':'Switch to dry-run')+'</button>';
   var q=document.getElementById("queue");var p=d.pending||[];

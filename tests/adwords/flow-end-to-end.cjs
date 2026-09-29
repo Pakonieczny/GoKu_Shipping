@@ -310,6 +310,13 @@ const calls = [], background = []; let step = 'setup', worker = null;
 const reply = (status, body, headers = {}) => ({ ok: status < 400, status, statusText: String(status), headers: { get: k => headers[String(k).toLowerCase()] || null, raw: () => headers },
   json: async () => (typeof body === 'string' ? JSON.parse(body) : body), text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   buffer: async () => Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)) });
+// The shared Claude client streams (stream: true), so Claude answers as server-sent events.
+const streamReply = text => {
+  const events = [{ type: 'message_start', message: { id: 'msg_flow', type: 'message', role: 'assistant', model: 'claude-sonnet-5-5', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } }, { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } }, { type: 'message_stop' }];
+  return { ...reply(200, {}, { 'content-type': 'text/event-stream' }), body: require('stream').Readable.from([Buffer.from(events.map(e => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join(''), 'utf8')]) };
+};
 async function fakeFetch(url, opts = {}) {
   url = String(url); let body = null; try { body = opts.body ? JSON.parse(String(opts.body)) : null; } catch (e) { body = String(opts.body); }
   const call = { step, url, body, at: calls.length }; calls.push(call);
@@ -344,12 +351,8 @@ async function fakeFetch(url, opts = {}) {
     const [kind, answer] = aiAnswer(text.join('\n')); call.ai = kind; aiCalls.push({ step, kind });
     if (!answer) return reply(400, { error: { message: 'flow-end-to-end: unexpected AI prompt' } });
     const json = JSON.stringify(answer);
-    if (url.includes('openai')) return reply(200, { choices: [{ message: { content: json }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
-    // The Sonnet 5.5 client always streams, so answer as Anthropic's server-sent events.
-    const events = [{ type: 'message_start', message: { id: 'msg_flow', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } },
-      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: json } }, { type: 'content_block_stop', index: 0 },
-      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } }, { type: 'message_stop' }];
-    return Object.assign(reply(200, ''), { body: require('stream').Readable.from([Buffer.from(events.map(e => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join(''), 'utf8')]) });
+    return url.includes('openai') ? reply(200, { choices: [{ message: { content: json }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+      : body.stream ? streamReply(json) : reply(200, { content: [{ type: 'text', text: json }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
   }
   if (url === `https://${STORE}/admin/oauth/access_token`) return reply(200, { access_token: 'synthetic-shop-token', expires_in: 86399 });
   if (url.startsWith(`https://${STORE}/admin/api/`)) return reply(200, { data: { collections: { edges: [], pageInfo: { hasNextPage: false } }, products: { edges: [], pageInfo: { hasNextPage: false } }, orders: { edges: [], pageInfo: { hasNextPage: false } } } });
