@@ -403,7 +403,7 @@
     <span class="st-as-k">Sorting as:</span>
     <button type="button" class="st-as-name st-unset" title="Click to set who is sorting">Set your name</button>
     <input type="text" class="st-as-input browser-default" maxlength="40" autocomplete="off"
-           placeholder="Your name" aria-label="Who is sorting" hidden />
+           placeholder="Your name or employee #" aria-label="Who is sorting: your name or 6-digit employee number" hidden />
     <span class="st-wait" aria-live="polite"><span class="st-spin"></span><span class="st-wait-t"></span></span>
   </div>
 
@@ -1440,10 +1440,14 @@ async function startScannedSortingListener() {
  *  - every order of a scanned batch is recorded as scanned and checked for a cancel: the cancelled ones get ONE
  *    full-screen alert for the whole batch, and their tiles are marked "CANCELLED — DO NOT SORT"
  *  - a sticker is printed only after StationTimeline.guard(), and a printed sticker records the order as sorted
+ *  - who (Paul, 28 Sep 23:51): the chip also takes the 6-digit employee number of the login the other stations use
+ *    ("Employee Numbers"); it keeps the name that login knows, never the number. The sticker is this station's "done":
+ *    each printed one records `sorted` and `labelPrinted` (label "orderQR", station sorting) with that name, or with
+ *    by "" and data.signedIn false when nobody is set; never another page's login.
  * Every call goes through call(), which never throws: with station-timeline.js missing, nothing here changes the page.
  ********************************************************/
 window.SortTL = (function () {
-  const EMP_KEY = "sorting.employee";
+  const EMP_KEY = "sorting.employee", VIA_KEY = "sorting.employeeVia", DEVICE = "sorting-1";
   let inited = false;
   let cur = null;                      // the batch on screen
   const waiting = new Map();           // what the small spinner under the chip is waiting for
@@ -1454,14 +1458,15 @@ window.SortTL = (function () {
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
   const esc = v => String(v == null ? "" : v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const toast = html => { try { window.M && M.toast && M.toast({ html }); } catch (_) {} };
-  function getEmployee() { return lsGet(EMP_KEY).trim(); }
+  // (a number alone is never a name: an employee number typed here before is not recorded as who sorted)
+  function getEmployee() { const v = lsGet(EMP_KEY).trim(); return /^\d{4,}$/.test(v) ? "" : v; }
 
   function tl() {
     const S = window.StationTimeline;
     if (!S) return null;
     if (!inited) {
       inited = true;
-      try { S.init({ station: "sorting", device: "sorting-1", getEmployee }); } catch (e) { console.warn("StationTimeline.init failed:", e); }
+      try { S.init({ station: "sorting", device: DEVICE, getEmployee }); } catch (e) { console.warn("StationTimeline.init failed:", e); }
     }
     return S;
   }
@@ -1505,10 +1510,14 @@ window.SortTL = (function () {
     const close = save => {
       if (inp.hidden) return;
       const v = inp.value.replace(/\s+/g, " ").trim().slice(0, 40);
-      if (save && v) lsSet(EMP_KEY, v);
+      inp.value = ""; inp.style.webkitTextSecurity = "";
+      if (save && /^\d{6}$/.test(v)) signIn(v);
+      else if (save && v && !/^\d+$/.test(v)) { lsSet(EMP_KEY, v); lsSet(VIA_KEY, "name"); }
+      else if (save && v) toast("An employee number has 6 digits");
       inp.hidden = true; btn.hidden = false;
       renderChip();
     };
+    inp.addEventListener("input", () => { inp.style.webkitTextSecurity = /^\d+$/.test(inp.value.trim()) ? "disc" : ""; });
     btn.addEventListener("click", () => {
       inp.value = getEmployee();
       btn.hidden = true; inp.hidden = false;
@@ -1521,6 +1530,41 @@ window.SortTL = (function () {
     });
     inp.addEventListener("blur", () => close(true));
     renderChip();
+  }
+
+  // The 6-digit employee number of the stations' existing login (Brites_Orders/"Employee Numbers", read as weld,
+  // assembly and shipping read it): the chip keeps the name it knows. The number itself is never kept or recorded.
+  let signingIn = false;
+  async function signIn(num) {
+    if (signingIn) return;
+    signingIn = true;
+    busy("signin", "Checking the employee number…");
+    try {
+      const r = await fetch("/.netlify/functions/firebaseOrders?orderId=" + encodeURIComponent("Employee Numbers"));
+      const j = r.ok ? await r.json().catch(() => null) : null;
+      const name = j && j.success && j.data && typeof j.data[num] === "string" ? j.data[num].replace(/\s+/g, " ").trim().slice(0, 40) : "";
+      if (!j) toast("Could not check the employee number — try again");
+      else if (!name || /^\d+$/.test(name)) toast("That employee number is not on the list");
+      else { lsSet(EMP_KEY, name); lsSet(VIA_KEY, "employee number"); renderChip(); toast("Sorting as " + esc(name)); }
+    } catch (_) { toast("Could not check the employee number — try again"); }
+    finally { signingIn = false; idle("signin"); }
+  }
+
+  /* ---- what this station did with an order, with who did it (the chip's name only, never a guess) ---- */
+  function stamp(type, orderId, text, data) {
+    try {
+      const S = tl(), O = window.OrderTimeline, id = String(orderId || "").replace(/\D/g, "");
+      if (!S || !O || typeof O.record !== "function" || !id) return null;
+      const at = Date.now(), by = getEmployee(), d = Object.assign({}, data || {});
+      if (by) d.login = lsGet(VIA_KEY) === "employee number" ? "employee number" : "name";
+      else d.signedIn = false;
+      try { if (S.isCancelled && S.isCancelled(id)) d.despiteCancel = true; } catch (_) {}
+      // (by "" must stay "": the outbox would fill it in with the name it was set up with)
+      const c = O.config({ by });
+      if (c && c.mode !== "station") O.config({ mode: "station", station: "sorting", device: DEVICE });
+      return O.record({ orderId: id, type, at, by, station: "sorting", device: DEVICE, id: `${DEVICE}-${id}-${type}-${Math.floor(at / 60000)}`,
+                        text: String(text || "").slice(0, 200), data: d });
+    } catch (e) { console.warn("Timeline record failed:", e); return null; }
   }
 
   /* ---- the batch on screen ---- */
@@ -1697,10 +1741,15 @@ window.SortTL = (function () {
       .catch(e => console.warn("Print check failed:", e))
       .finally(() => printing.delete(id));
   }
+  // A printed sticker is the Sorting station's "done" for its order (it has no other Done step): the order is sorted,
+  // and its order QR sticker was printed here (QR Printer.html, the browser's print dialog: the printer is not known).
   function sorted(orderId, how) {
     if (!orderId || !tl()) return;
-    call("did", "sorted", String(orderId), how === "row" ? "Sticker printed (Print Row) at Sorting" : "Sticker printed at Sorting",
-      { batch: (cur && cur.batch) || "", how });
+    const by = getEmployee(), tail = by ? " by " + by : " (not signed in)";
+    const base = { batch: (cur && cur.batch) || "", how };
+    stamp("sorted", orderId, (how === "row" ? "Sorted (Print Row) at Sorting" : "Sorted at Sorting") + tail, base);
+    stamp("labelPrinted", orderId, "Order QR sticker printed at the Sorting station" + tail,
+      Object.assign({ label: "orderQR", via: "QR Printer" }, base));
   }
 
   function boot() { wireChip(); tl(); }
@@ -2418,10 +2467,10 @@ async function handlePrintRowClick() {
     }
 
     // Build a single batch and print ONCE via QR Printer.html
-    const batch = [];
+    const batch = [], inBatch = [];
     for (const cellIndex of printIndices) {
       const obj = buildQrDataForCell(cellIndex);
-      if (obj) batch.push(obj);
+      if (obj) { batch.push(obj); inBatch.push(cellIndex); }
     }
     if (batch.length) {
       localStorage.setItem("qrPrintBatch", JSON.stringify(batch));
@@ -2434,7 +2483,7 @@ async function handlePrintRowClick() {
       ifr.src = "QR Printer.html#batch";
       document.body.appendChild(ifr);
       // Order timeline: each printed sticker's order → sorted
-      try { printIndices.forEach(i => window.SortTL && window.SortTL.sorted(orderIdOfCell(i), "row")); } catch (_) {}
+      try { inBatch.forEach(i => window.SortTL && window.SortTL.sorted(orderIdOfCell(i), "row")); } catch (_) {}
     }
 
     // Advance to the next row (wraps to 0 after the last)
