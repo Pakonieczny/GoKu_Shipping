@@ -25,6 +25,9 @@
 #tourLayer>*{position:fixed;left:0;top:0;will-change:transform,opacity}
 #tourTop{position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;margin:0;border:0;padding:0;background:transparent;box-shadow:none;overflow:hidden;pointer-events:none;outline:none}
 #tourTop::backdrop{background:transparent}
+/* the flying design is never under a caption of its own tour (the captions sit over the card and the sheets) */
+#tourLayer>.tourCoin,#tourLayer>.tourPiece{z-index:3}
+#tourLayer>.tourCap,#tourLayer>.tourPlus{z-index:2}
 .tourCard{border-radius:14px}
 .tourLift{position:absolute!important;inset:0;border-radius:14px;box-shadow:0 22px 48px rgba(30,24,16,.24),0 0 0 1.5px rgba(202,168,97,.55);opacity:0}
 .tourCoin{width:72px;height:72px;margin:-36px 0 0 -36px}

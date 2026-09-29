@@ -9320,11 +9320,15 @@ const OrderWin = window.OrderWin = (() => {
     b.onclick = async () => {
       if (b._busy || !(employeeName() || askEmployee())) return;
       b._busy = true; b.disabled = true; b.innerHTML = '<span class="spin"></span>Sending…';
+      // (what the send says when it cannot go is a toast, under this window: said here, beside the button, instead)
+      const was = new Set(document.querySelectorAll("#toasts .toast.bad"));
       try { await CustomSheet.send(b._it, { from: b }); }
       finally {
         // (while the view is out of the way nothing in it is drawn: it is drawn as it comes back, tour:back)
         b._busy = false;
         if (!W.dlg._tourHeld) { b.disabled = false; b.textContent = "Send to Sheet"; const r2 = W.dlg.open && rowOf(W.key); if (r2) paintSend(r2); }
+        const said = [...document.querySelectorAll("#toasts .toast.bad")].filter(x => !was.has(x)).pop();
+        if (said && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? byId("owNow") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
       }
     };
   }

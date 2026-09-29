@@ -121,7 +121,8 @@ const STATE = () => {
     for (const [view, rid] of Object.entries(OW)) {
       await page.evaluate(sel => document.querySelector(sel).scrollIntoView({ block: 'center' }), card(rid));
       await page.waitForTimeout(250);
-      const rvScroll = await page.evaluate(() => document.querySelector('#reviewView .egPane.scroll')?.scrollTop ?? null);
+      const RV = () => page.evaluate(() => { const e = document.querySelector('#reviewView .egPane.scroll'); return e ? [Math.round(e.scrollTop), Math.round(e.scrollHeight - e.clientHeight)] : [null, null]; });
+      const rvScroll = await RV();
       await page.click(`${card(rid)} .purchaseSummary`);
       await page.waitForFunction(() => OrderWin.isOpen());
       await page.waitForTimeout(900);
@@ -153,7 +154,10 @@ const STATE = () => {
       await page.evaluate(() => { window.__backs = performance.getEntriesByName('tour:back').length; });
       if (view === 'info') await page.screenshot({ path: path.join(SHOTS, '6-back-as-it-was.png') });
       const w = await page.evaluate(() => __off()), s1 = await page.evaluate(STATE), sent = await sentOf(rid);
-      const rv1 = await page.evaluate(() => document.querySelector('#reviewView .egPane.scroll')?.scrollTop ?? null);
+      const rv1 = await RV();
+      // the cards above it stay where they are: the scroll moves only by however much shorter the sent card left the
+      // list (its Send to Sheet gone), and no further; a list that can no longer scroll that far sits at its foot
+      const shrink = Math.max(0, rvScroll[1] - rv1[1]), rvSame = Math.abs(rv1[0] - rvScroll[0]) <= shrink + 2 || (rvScroll[0] > rv1[1] && Math.abs(rv1[0] - rv1[1]) <= 1);
       console.log(`  ${view} (${how}, ${Date.now() - t0} ms): before ${JSON.stringify(s0)}\n      after  ${JSON.stringify(s1)}`);
       report(`${view} (${how})`, w);
       check(!w.extra.length, `${view}: no second window at any moment (${JSON.stringify(w.extra.slice(0, 3))})`);
@@ -163,7 +167,7 @@ const STATE = () => {
       check(JSON.stringify(s1.scroll) === JSON.stringify(s0.scroll), `${view}: every scroll in it where it was (${JSON.stringify(s1.scroll)})`);
       check(s1.input === typed && s1.note === s0.note, `${view}: the text typed is kept ("${s1.input}", note "${s1.note}")`);
       check(s1.drawn.vis === 'visible' && s1.drawn.op === '1' && s1.drawn.tf === 'none' && !s1.drawn.anims, `${view}: drawn whole again, nothing left on it (${JSON.stringify(s1.drawn)})`);
-      check(s1.layer === 'body' && !s1.top && s1.mode === 'review' && rv1 === rvScroll, `${view}: the tour's layer back on the page, the Review tab under it as it was (${s1.layer}, ${s1.mode}, scroll ${rvScroll} → ${rv1})`);
+      check(s1.layer === 'body' && !s1.top && s1.mode === 'review' && rvSame, `${view}: the tour's layer back on the page, the Review tab under it as it was (${s1.layer}, ${s1.mode}, scroll ${rvScroll[0]} → ${rv1[0]}${rv1[0] !== rvScroll[0] ? `, the list ${shrink} px shorter without its Send to Sheet` : ''})`);
       check(await page.evaluate(() => { const x = document.getElementById('owSendSheet'); return !x || x.hidden; }), `${view}: its Send to Sheet is gone (the designs are on the sheets)`);
       await page.click('#owClose'); await page.waitForFunction(() => !document.querySelector('#orderWin').open); await page.waitForTimeout(500);
     }
