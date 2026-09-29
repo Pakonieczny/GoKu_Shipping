@@ -2927,8 +2927,10 @@ function _windowSearches(keywords, start, end) {
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
 // today = the account's date (YYYY-MM-DD); startDate/endDate/dailyBudget/maxCpc = values chosen for a draft.
 function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market, economics, confidence, currency, nativeToUsd, today: todayYmd, orderCutoffDays, clickShare, startDate: winStart, endDate: winEnd, dailyBudget, maxCpc } = {}) {
-  const ccy = currency || "UNVERIFIED", usd = (currency || CURRENCY) === "USD"; // texts name an unverified currency as such; the math keeps its basis
-  if(!usd)aov=Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
+  const ccy = currency || "UNVERIFIED", basis = currency || CURRENCY, usd = basis === "USD"; // texts name an unverified currency as such; the math keeps its basis
+  // Order value is in the currency the store's orders are valued in (storeSignals: GADS_CURRENCY); it converts only from that, and only USD has a rate here.
+  const orderCcy = (economics && economics.currency) || CURRENCY;
+  if(orderCcy!==basis)aov=orderCcy==="USD"&&Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
   const tierLabel = _TIER_LABEL[tier];
   // CPC: REAL Keyword Planner top-of-page bids when we have them, tier heuristic otherwise.
@@ -4947,7 +4949,7 @@ function _studioCopy(group, fallback) {
   const descriptions = _studioList((group && group.descriptions || []).map(_studioSafeDescription).filter(Boolean).concat(fallback.descriptions), 5);
   return { headlines, longHeadlines, descriptions, businessName: "Brites Jewelry" };
 }
-function _studioDate(days) { const d = new Date(Date.now() + Number(days || 0) * 86400000); return d.toISOString().slice(0, 10); }
+async function _studioDate(days) { return _acctDateYmd(await _accountTz().catch(() => "America/Toronto"), Number(days || 0) * 86400000); } // the account's date: UTC runs a day ahead every Toronto evening
 
 function _designStudioBaseBlueprint() {
   const pmaxGroups = [
@@ -5255,7 +5257,7 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
   spec = spec || {}; ctrl = ctrl || (await control());
   const landingUrl = DESIGN_STUDIO_URL; // never trust a stored/client URL
   const dailyBudget = Math.max(1, Number(spec.dailyBudget) || 1);
-  const startDate = spec.startDate || _studioDate(0), endDate = spec.endDate || _studioDate(90);
+  const startDate = spec.startDate || await _studioDate(0), endDate = spec.endDate || await _studioDate(90);
   const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`;
   const tag = DESIGN_STUDIO_TAGS.pmax, schedule = _campaignScheduleFields(startDate, endDate);
   const groups = (Array.isArray(spec.groups) && spec.groups.length ? spec.groups : _designStudioBaseBlueprint().pmax.groups).slice(0, 3);

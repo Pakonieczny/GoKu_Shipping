@@ -93,6 +93,24 @@ async function engineChecks(){
   metricsRange:async()=>({ok:true,currency:'USD',snapshot:[{id:'11',name:'BA · design-studio-pmax',cost:30,clicks:20,impr:900,conv:1,value:60},{id:'22',name:'BA · design-studio-search',cost:20,clicks:15,impr:400,conv:0,value:0},{id:'33',name:'BA · bunny',cost:99,clicks:50,impr:5000,conv:2,value:120}]})});
  const perf=await studioPerformance({days:30});
  check(perf.campaigns.map(c=>c.lane).join()==='pmax,search'&&perf.overall.cost===50&&perf.overall.clicks===35&&perf.currency==='USD','Studio results include both Studio campaigns and nothing else ('+JSON.stringify(perf.overall)+')');
+
+ // 9. The store's order value converts only from the currency its orders are in (storeSignals: GADS_CURRENCY). CAD orders on a
+ //    CAD account keep their value (not ~37% more), USD orders convert, and a currency with no rate gives no revenue forecast.
+ const cadStore=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?async()=>{throw Error('Live network forbidden');}:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123',GADS_CURRENCY:'CAD'}},console,Buffer,Date,Intl,Map,Set,URL,setTimeout:fn=>setImmediate(fn),clearTimeout});
+ vm.runInContext(fs.readFileSync(dir+'googleAdsAutopilot.js','utf8'),cadStore);const planCad=vm.runInContext('planCampaign',cadStore);
+ const acct={...base,currency:'CAD',nativeToUsd:0.73,economics:{marginRate:0.5}},same=planCad(acct),fromUsd=planCad({...acct,economics:{marginRate:0.5,currency:'USD'}});
+ const usdStore=planCampaign(acct),noRate=planCad({...acct,economics:{marginRate:0.5,currency:'EUR'}});
+ check(same.expected.aov===60&&same.model.aov===60&&same.expected.breakEvenCpa===30&&Math.abs(same.expected.revenue-same.expected.conversions*60)<0.01&&/× CAD 60\.00 average order/.test(same.caveats.join(' ')),'CAD orders on a CAD account keep their order value ('+same.expected.aov+')');
+ check(Math.abs(fromUsd.expected.aov-60/0.73)<1e-9&&Math.abs(usdStore.expected.aov-60/0.73)<1e-9,'USD orders convert to the CAD account ('+fromUsd.expected.aov+', '+usdStore.expected.aov+')');
+ check(noRate.expected.aov===null&&noRate.expected.revenue===null&&noRate.expected.breakEvenCpa===null&&noRate.expectedRoas===null,'orders in a currency with no rate give no revenue forecast, not a wrong one ('+noRate.expected.aov+')');
+
+ // 10. A Studio PMax draft saved without dates starts and ends on the account's dates: at 23:30 in Toronto UTC is already tomorrow.
+ const realNow=Date.now;Date.now=()=>Date.parse('2026-09-30T03:30:00Z');
+ try{
+  bind({_creativeImageOps:async()=>({ops:[],groups:{'customers/123/assetGroups/-3':{square:['sq'],landscape:['ls'],portrait:[],logo:'lg'}}}),_buildPmaxTextAssetOps:()=>({ops:[],ids:{headlines:[],longHeadlines:[],descriptions:[],businessName:'bn'}})});
+  const b=await get('buildDesignStudioPmaxCampaignOps')({dailyBudget:5,groups:[{name:'Gifts',angle:'a',searchThemes:[],headlines:[],longHeadlines:[],descriptions:[]}],reviewedCreative:{}},{ctrl:clone(ctrl)}),c=b.ops.find(o=>o.campaignOperation).campaignOperation.create;
+  check(!c.startDateTime&&c.endDateTime==='20261228 23:59:59','Studio draft starts today and ends 90 days later on the account calendar ('+[c.startDateTime,c.endDateTime]+')');
+ }finally{Date.now=realNow;}
 }
 
 function modelChecks(){
