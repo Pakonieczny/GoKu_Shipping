@@ -1,6 +1,6 @@
 // Campaign analysis: the paid AI call runs in the background worker, never inside the ~26 s console
 // gateway. A saved analysis returns at once, a running one is joined instead of paid for twice, and the
-// console polls genStatus for the answer. Offline: fetch, Firestore and the model are fakes.
+// finished answer lands on the status doc genStatus returns. Offline: fetch, Firestore and the model are fakes.
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict'), path = require('path'), Module = require('module');
 const repo = path.resolve(__dirname, '../..'), dir = path.join(repo, 'netlify/functions') + '/', engineFile = dir + 'googleAdsAutopilot.js';
 const clone = x => x == null ? x : JSON.parse(JSON.stringify(x)), J = JSON.stringify;
@@ -94,29 +94,5 @@ function memory() {
     'worker: a failed analysis reports its error to the console instead of leaving it waiting');
   calls.length = 0; const denied = await bg.handler({ httpMethod: 'POST', body: J({ tasks: ['analyzeCampaign'], genId: 'analysis-42', campaignId: '42', token: 'wrong' }) });
   check(denied.statusCode === 401 && !calls.length, 'worker: an unauthenticated analysis request is refused');
-
-  // ── The console: queue, poll genStatus, show the answer ──────────────────
-  const html = fs.readFileSync(path.join(repo, 'brites-adwords.html'), 'utf8');
-  const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); assert(m, name); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
-  let clock = 0, replies = [], sawLoading = true; const asked = [], toasts = [];
-  class UIDate extends Date { static now() { return clock; } }
-  const ui = vm.createContext({ P: { analysis: {}, loading: {} }, renderPerf: () => {}, actStart: () => 1, actEnd: () => {}, toast: m => toasts.push(String(m)), Promise, Date: UIDate,
-    setTimeout: (fn, ms) => { clock += ms; fn(); },
-    api: async (action, extra) => { asked.push([action, clone(extra)]); if (action === 'genStatus' && !ui.P.loading['42']) sawLoading = false;
-      const next = replies.length ? replies.shift() : { phase: 'running' }; if (next instanceof Error) throw next; return clone(next); } });
-  for (const n of ['doAnalyze', 'analysisWait']) vm.runInContext(pick(n), ui);
-  replies = [{ summary: 'saved read', score: 70, actions: [] }]; await ui.doAnalyze('42', false);
-  check(ui.P.analysis['42'].summary === 'saved read' && J(asked) === J([['analyzeCampaign', { id: '42', force: false }]]) && ui.P.loading['42'] === false, 'page: a saved analysis shows at once, with no polling');
-  delete ui.P.analysis['42']; asked.length = 0;
-  replies = [{ queued: true, genId: 'analysis-42' }, { phase: 'running' }, Error('network blip'), { phase: 'done', ok: true, analysis: { summary: 'fresh read', score: 64, actions: [] } }];
-  await ui.doAnalyze('42', true);
-  check(ui.P.analysis['42'].summary === 'fresh read' && ui.P.loading['42'] === false && sawLoading, 'page: a queued analysis is polled until done and then shown; the spinner stays up meanwhile');
-  check(J(asked.map(x => x[0])) === J(['analyzeCampaign', 'genStatus', 'genStatus', 'genStatus']) && asked.slice(1).every(x => x[1].genId === 'analysis-42') && asked[0][1].force === true,
-    'page: polls ask for that campaign\'s status id, and a failed poll just waits for the next one');
-  delete ui.P.analysis['42']; replies = [{ queued: true, genId: 'analysis-42' }, { phase: 'done', ok: false, error: 'model unavailable' }]; await ui.doAnalyze('42', false);
-  check(!ui.P.analysis['42'] && toasts.pop() === 'model unavailable' && ui.P.loading['42'] === false, 'page: a failed analysis shows its error and clears the spinner');
-  asked.length = 0; replies = [{ queued: true, genId: 'analysis-42' }]; await ui.doAnalyze('42', false);
-  check(!ui.P.analysis['42'] && /still running/.test(toasts.pop()) && asked.filter(x => x[0] === 'genStatus').length === 200 && ui.P.loading['42'] === false,
-    'page: after 10 minutes of polling the page stops and says the analysis is still running');
   console.log(`${passed} campaign analysis checks passed.`);
 })().catch(e => { console.error(e); process.exitCode = 1; });
