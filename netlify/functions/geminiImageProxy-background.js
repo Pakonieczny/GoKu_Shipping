@@ -2357,14 +2357,16 @@ function listingImageSize(outputBasePath, slotIndex, fallback = "2048x2048") {
   return charmQuad && [2, 3].includes(Number(slotIndex)) ? "1024x1024" : fallback;
 }
 
-// Beady Necklace charms are drawn 10% smaller since 2026-09-28 (the size
-// rules at the top of the Beady prompts in Listing_Generator_1.html). Batch
-// sets queued before then, and batch runs, generations or Redos sent from a
-// tab opened before then, still carry the old wording, so it is swapped as
-// they are sent; otherwise the queue keeps producing the larger charm. Only
-// that exact wording on Beady slots 1, 3 and 5 changes (Regular necklaces
-// share it and keep it), and only until 2026-10-05, by when that queue has
-// long drained.
+// Beady Necklace charms are drawn 10% smaller since 2026-09-28, and another
+// 15% smaller on slots 1 to 5 since 2026-09-29 (the size rules at the top of
+// the Beady prompts in Listing_Generator_1.html). Batch sets queued before
+// then, and batch runs, generations or Redos sent from a tab opened before
+// then, still carry an older wording, so it is swapped as they are sent;
+// otherwise the queue keeps producing the larger charm. Each list runs in
+// order, so the oldest wording is carried through every step to the current
+// one. Only that exact wording on Beady slots 1 to 5 changes (Regular
+// necklaces share it and keep it), and only until 2026-10-05, by when that
+// queue has long drained.
 const BEADY_CHARM_SIZE_SWAPS_UNTIL = Date.parse("2026-10-05T00:00:00Z");
 const BEADY_MODEL_CHARM_SIZE_SWAPS = [
   ["REQUIRED 25% REDUCTION", "REQUIRED 32.5% REDUCTION"],
@@ -2373,9 +2375,34 @@ const BEADY_MODEL_CHARM_SIZE_SWAPS = [
    "× 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675)"],
   ["use 0.75 times the template placeholder", "use 0.675 times the template placeholder"],
   ["charm 100 pixels tall must now be 75 pixels tall", "charm 200 pixels tall must now be 135 pixels tall"],
+  // 2026-09-29: another 15% smaller (0.675 x 0.85 = 0.574)
+  ["REQUIRED 32.5% REDUCTION", "REQUIRED 42.6% REDUCTION"],
+  ["visibly 32.5% smaller", "visibly 42.6% smaller"],
+  ["× 0.675 / 7 (the previous distance / 7 baseline multiplied by 0.675)",
+   "× 0.574 / 7 (the previous distance / 7 baseline multiplied by 0.574)"],
+  ["use 0.675 times the template placeholder", "use 0.574 times the template placeholder"],
+  ["charm 200 pixels tall must now be 135 pixels tall", "charm 500 pixels tall must now be 287 pixels tall"],
+];
+// Slot 2 (background scene): 0.65 -> 0.5525 (0.65 x 0.85).
+const BEADY_SLOT2_CHARM_SIZE_SWAPS = [
+  ["REQUIRED 35% REDUCTION", "REQUIRED 44.75% REDUCTION"],
+  ["visibly 35% smaller", "visibly 44.75% smaller"],
+  ["× 0.65 / 7 (the previous distance / 7 baseline multiplied by 0.65)",
+   "× 0.5525 / 7 (the previous distance / 7 baseline multiplied by 0.5525)"],
+  ["use 0.65 times the template placeholder", "use 0.5525 times the template placeholder"],
+  ["charm 100 pixels tall must now be 65 pixels tall", "charm 400 pixels tall must now be 221 pixels tall"],
+];
+// Slot 4 (back-engraving guide): 65% -> 55.25% of the template charm.
+const BEADY_SLOT4_CHARM_SIZE_SWAPS = [
+  ["Render both charms at 65% of", "Render both charms at 55.25% of"],
+  ["This is a 30% increase in both width and height over the previous 50% target (50% × 1.30 = 65%). Apply the final 65% scaling once;",
+   "This is a further 15% reduction in both width and height from the previous 65% target (65% × 0.85 = 55.25%). Apply the final 55.25% scaling once;"],
+  ["(at the specified 65% linear size)", "(at the specified 55.25% linear size)"],
+  ["(must be 65% of the reference placeholder’s linear size)", "(must be 55.25% of the reference placeholder’s linear size)"],
 ];
 const BEADY_CHARM_SIZE_SWAPS = {
   0: BEADY_MODEL_CHARM_SIZE_SWAPS,
+  1: BEADY_SLOT2_CHARM_SIZE_SWAPS,
   2: [
     [`CHARM POSITION + SIZE MATCH (NON-NEGOTIABLE)
     • The new charm must sit in the EXACT same position as the original charm in the reference image.
@@ -2387,7 +2414,18 @@ const BEADY_CHARM_SIZE_SWAPS = {
     • Apply this reduction exactly ONCE. Never match or exceed the original charm’s size. Resize nothing else: the text, pencil, pointer line, layout and background stay exactly as they are.`],
     ["- Any charm size mismatch vs charm image.",
      "- Any charm that is not 10% smaller than the original charm in the reference image."],
+    // 2026-09-29: another 15% smaller (0.9 x 0.85 = 0.765)
+    ["REQUIRED 10% REDUCTION (NON-NEGOTIABLE)", "REQUIRED 23.5% REDUCTION (NON-NEGOTIABLE)"],
+    ["exactly 10% smaller than the original charm’s on-image size",
+     "exactly 23.5% smaller than the original charm’s on-image size"],
+    ["scale it to fit 0.9 × the original charm’s height and 0.9 × its width",
+     "scale it to fit 0.765 × the original charm’s height and 0.765 × its width"],
+    ["An original charm 400 pixels tall becomes a new charm 360 pixels tall.",
+     "An original charm 400 pixels tall becomes a new charm 306 pixels tall."],
+    ["- Any charm that is not 10% smaller than the original charm in the reference image.",
+     "- Any charm that is not 23.5% smaller than the original charm in the reference image."],
   ],
+  3: BEADY_SLOT4_CHARM_SIZE_SWAPS,
   4: BEADY_MODEL_CHARM_SIZE_SWAPS,
 };
 function withCurrentBeadyCharmSize(set, slotIndex, prompt) {
