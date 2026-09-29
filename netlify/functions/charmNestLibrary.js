@@ -1166,12 +1166,16 @@ async function op_backPut(b) {
     catch (e) { errors.push(...part.map(x => ({ row: x, error: e.message || String(e) }))); continue; }
     await archiveFiles(out.moved); moved.push(...out.moved); written += out.written; skipped += out.skipped; errors.push(...out.errors); labels.set(sheetId, out.sheet);
   }
-  // each approved back on its order's timeline, once per approval (a copy recorded again keeps its one event)
-  const refused = new Set(errors.map(x => x.row));
+  /* Each approved back on its order's timeline, one event a piece (its copy), once per approval: a copy recorded again
+     keeps its one event. The Engraved seal (station tracking, Paul 28 Sep 23:51): who approved it, as the sorter's own
+     sign-in knows them (approvedBy: an approval without a name is refused above, so it is a signed-in person),
+     where (the sorter, its page) and when (the approval, not the save). No employee id: the sorter's login has none. */
+  const refused = new Set(errors.map(x => x.row)), device = str(b.device, 40) || "charm-nest-1";
   await stamp(() => rows.filter(x => !refused.has(x)).map(x => {
-    const words = str(typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "", 180);
-    return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by: str(x.approvedBy, 80), station: "sorter", lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
-      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60) }, id: `${x.poolId}-${num(x.approvedAt)}` };
+    // (the caption is one line: the back's lines joined as the seal and the derived history show them)
+    const words = str((typeof x.text === "string" ? x.text : Array.isArray(x.lines) ? x.lines.join(" / ") : "").trim().replace(/\s*\n\s*/g, " / "), 180), by = str(x.approvedBy, 80).trim();
+    return { orderId: String(x.order || orderOfKey(x.poolId)), type: "engraveApproved", at: num(x.approvedAt), by, station: "sorter", device, lineKey: lineOfCopy(x.poolId), transactionId: str(x.transactionId || String(x.poolId).split("_")[1], 30),
+      sheetId: x.sheetId, sheet: labels.get(x.sheetId) || "", setId: str(x.setId, 100), text: words ? `“${words}”` : "", data: { text: str(x.text, 400), poolId: x.poolId, copy: num(x.copy) || null, sku: str(x.sku, 60), signedIn: !!by }, id: `${x.poolId}-${num(x.approvedAt)}` };
   }), "engraving approved");
   const done = { count: rows.length, written, skipped, superseded: moved.length };
   if (!errors.length) return Object.assign({ ok: true }, done);
