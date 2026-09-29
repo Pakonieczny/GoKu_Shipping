@@ -2820,7 +2820,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260929-tf"></script>
+<script src="charm-nest-motion.js?v=20260929-tf2"></script>
 <script src="charm-nest-timeline-ui.js?v=20260929-m7"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
@@ -4940,7 +4940,7 @@ function liftFromSheet(sh, c, to) {
    sheet again mid-flight), with the landing ring and the 1.08 pop. close(), a new open(), or a safety timeout always
    shows everything, so nothing is ever left hidden. */
 const NestFocus = window.NestFocus = (() => {
-  const GROW = "cubic-bezier(.3,0,.1,1)", OPEN_MS = 620, POP_MS = 440, SAFE_MS = 15000, RING = "#b8893a";
+  const GROW = "cubic-bezier(.3,0,.1,1)", OPEN_MS = 620, POP_MS = 440, SAFE_MS = 15000, PASS_MS = 120, RING = "#b8893a";
   let cur = null;
   const was = new Map();   // metal → the sheet its card showed before a flight switched it (restore() puts it back)
   const reduced = () => !!(window.Motion && Motion.reduced());
@@ -4955,14 +4955,21 @@ const NestFocus = window.NestFocus = (() => {
     for (let a = el && el.parentElement; a && a !== document.body; a = a.parentElement) { const o = getComputedStyle(a).overflowY; if ((o === "auto" || o === "scroll") && a.scrollHeight > a.clientHeight + 1) return a; }
     return document.scrollingElement || document.documentElement;
   }
-  /** The card brought into view (room for its caption above it, its picture whole), gliding its scroller there. */
-  function glide(card, ms, st) {
+  /** The card brought into view (room for its caption above it, its picture whole), gliding its scroller there. need:
+   *  what must stand whole in the window once it has glided, whatever the card's own size (where the pieces land: their
+   *  places on the sheet, the card's queue), clear of `foot` px at the window's foot (the tour's caption stands there). */
+  function glide(card, ms, st, need) {
     if (!laidOut(card)) return { d: 0, room: 99, done: Promise.resolve() };
     const sc = scrollerOf(card), page = sc === document.scrollingElement || sc === document.documentElement;
-    const box = page ? { top: 0, bottom: innerHeight } : sc.getBoundingClientRect();
+    const sb = page ? { top: 0, bottom: innerHeight } : sc.getBoundingClientRect(), box = { top: Math.max(0, sb.top), bottom: Math.min(innerHeight, sb.bottom) };
     const r = card.getBoundingClientRect(), pv = $(".shPreviewWrap", card), pr = pv ? pv.getBoundingClientRect() : r;
     const top = r.top - 30, bottom = Math.min(r.bottom, pr.bottom + 56) + 12;
     let d = top < box.top ? top - box.top : bottom > box.bottom ? Math.min(bottom - box.bottom, top - box.top) : 0;
+    // (a card lower in the second row, the Rose Gold one: its queue stood below the fold, and a piece came down out of sight)
+    if (need && need.bottom > need.top) {
+      const lo = need.bottom + 12 - (box.bottom - (need.foot || 0)), hi = need.top - 12 - box.top;
+      d = lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, d));
+    }
     const s0 = sc.scrollTop; d = Math.max(-s0, Math.min(sc.scrollHeight - sc.clientHeight - s0, d));
     const room = r.top - d - box.top;   // above the card once there: its caption stands over its edge only with room for it
     if (Math.abs(d) < 1) return { d: 0, room, done: Promise.resolve() };
@@ -5103,9 +5110,10 @@ const NestFocus = window.NestFocus = (() => {
     return st.closing;
   }
   /** opts: poolIds, caption (noCaption: the tour says it in its own caption), ms (the glide), instant (the Nest tab is
-   *  still out of sight: spotlit as it will stand, nothing left to move once it fades in). */
+   *  still out of sight: spotlit as it will stand, nothing left to move once it fades in), foot (px kept clear at the
+   *  window's foot for the landing: the tour's caption). */
   async function open(sheetId, opts = {}) {
-    const ids = (opts.poolIds || []).map(String);
+    const ids = (opts.poolIds || []).map(String), had = !!cur;
     if (cur) close(cur, true);
     const quick = reduced() || !!opts.instant, ms = quick ? 0 : +opts.ms || OPEN_MS;
     const pg = pageOf(sheetId, ids);
@@ -5128,6 +5136,9 @@ const NestFocus = window.NestFocus = (() => {
     arm(st);
     // the Nest tab may still be coming in: wait (a few frames at most) for the card to be laid out
     for (let i = 0; i < 12 && !laidOut(card) && !st.closed; i++) await frame();
+    // taking the light from another sheet: a beat with neither lit, then this one (the light is seen to move on, not to
+    // leap from card to card)
+    if (had && !quick && !st.closed) await sleep(PASS_MS);
     if (st.closed) return Object.assign(none, { card, page: pg });
     const host = $("#sheets");
     st.glow = document.createElement("i"); st.glow.className = "nfGlow"; st.glow.setAttribute("aria-hidden", "true"); card.appendChild(st.glow);
@@ -5136,7 +5147,12 @@ const NestFocus = window.NestFocus = (() => {
     if (host) { host.classList.add("nfOn"); if (opts.instant) host.classList.add("nfNow"); void host.offsetWidth; host.classList.add("nfDim"); }
     card.classList.add("nfFocus");
     if (opts.instant && host) { void host.offsetWidth; host.classList.remove("nfNow"); }
-    const g = glide(card, ms, st); if (st.cap && g.room < 20) st.cap.classList.add("in");   // (the first row: inside, over its head)
+    // where the pieces will land, whole in the window before any comes down: each one's place on the sheet, and the
+    // card's queue when one waits there (a Manual run)
+    const need = { top: Infinity, bottom: -Infinity, foot: +opts.foot || 0 }, add = b => { if (b && b.height > 0) { need.top = Math.min(need.top, b.top); need.bottom = Math.max(need.bottom, b.top + b.height); } };
+    for (const x of mine) add(spotOf(pg, x.c).box);
+    if (mine.some(x => !placeOf(pg, x.c))) { const q = $('[data-r="queue"]', card); if (laidOut(q) && q.getBoundingClientRect().height > 8) add(q.getBoundingClientRect()); }
+    const g = glide(card, ms, st, need); if (st.cap && g.room < 20) st.cap.classList.add("in");   // (the first row: inside, over its head)
     if (st.cap) setTimeout(() => { if (!st.closed) st.cap.classList.add("on"); }, quick ? 0 : 220);
     await Promise.all([g.done, sleep(ms)]);
     if (!reduced()) { const F = frameOf(pg); if (F) fullOf(st, F); }   // the finished picture is made before any flight, not during one
@@ -5149,6 +5165,8 @@ const NestFocus = window.NestFocus = (() => {
         const list = mine.filter(x => x.id === String(key) || x.c.id === key).map(x => x.c).filter(c => !pg._tourHide || pg._tourHide.has(c.id) || !placeOf(pg, c));
         return Promise.all(list.map((c, i) => sleep(i * 110).then(() => st.closed ? null : landOne(st, c)))).then(() => {});
       },
+      // where one piece stands now (read again after a resize: the tour re-aims a flight still coming down)
+      spot(poolId) { const x = mine.find(y => y.id === String(poolId) || y.c.id === poolId); return x ? Object.assign(spotOf(pg, x.c), { poolId: x.id }) : null; },
       close: () => close(st)
     };
   }
@@ -5157,7 +5175,8 @@ const NestFocus = window.NestFocus = (() => {
   function waiting(metal, opts = {}) {
     const prim = S.sheets[metal], card = prim && prim.cardEl; if (!card || !laidOut(card)) return { rect: null, card: card || null };
     const q = $('[data-r="queue"]', card), el = laidOut(q) && q.getBoundingClientRect().height > 8 ? q : $(".shHead .name", card) || card;
-    const g = glide(card, reduced() || opts.instant ? 0 : +opts.ms || OPEN_MS), r = el.getBoundingClientRect();
+    const r0 = el.getBoundingClientRect(), need = { top: r0.top, bottom: r0.bottom, foot: +opts.foot || 0 };   // (the place itself in the window, not only the card)
+    const g = glide(card, reduced() || opts.instant ? 0 : +opts.ms || OPEN_MS, null, need), r = el.getBoundingClientRect();
     return { rect: { left: r.left, top: r.top - g.d, width: r.width, height: r.height }, card, el, done: g.done };
   }
   /** Each card back on the sheet it showed before the flights switched it (the tour calls it once home, out of sight;
@@ -6436,9 +6455,9 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260929-tf"></script>
+<script src="charm-nest-bridge.js?v=20260929-t3"></script>
 <script src="charm-nest-sheetwin.js?v=20260929-m7"></script>
-<script src="charm-nest-tour.js?v=20260929-tf"></script>
+<script src="charm-nest-tour.js?v=20260929-t3"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-rw"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
