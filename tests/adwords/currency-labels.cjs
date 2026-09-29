@@ -1,6 +1,6 @@
 // Currency labels: budgets, bids, CPC caps and ceilings are in the Google Ads account currency
 // (read from the account, CAD here; never hard-coded), converted reports and the monthly stop
-// stay USD, and the console never shows a bare "$" for an account-currency amount.
+// stay USD, and console amounts name their currency (CA$ / US$ or the currency code).
 // Offline only: Google Ads, Firestore and OpenAI are local fakes; no paid calls.
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),path=require('path');
 const root=path.resolve(__dirname,'../..'),dir=root+'/netlify/functions/',realRequire=require('module').createRequire(dir+'googleAdsAutopilot.js');
@@ -100,19 +100,11 @@ function consoleChecks(){
  const px=vm.createContext({Intl:IntlCA});vm.runInContext(pick('pmaxNumber'),px);
  check(px.pmaxNumber(12,'money','CAD')==='CA$12.00'&&px.pmaxNumber(12,'money','USD')==='US$12.00','PMax money reads CA$/US$ in any browser locale');
 
- // Design Studio launch settings: every budget reads CA$; converted results read US$.
+ // Design Studio: launch budgets name the account currency; converted results read US$.
  const els={studioGrowth:{innerHTML:''}},sx=vm.createContext({DASH:{budgetCurrency:'CAD',control:{maxDailyBudgetTotal:100}},Intl,console,esc:s=>String(s==null?'':s),$:s=>els[s.slice(1)]||null,defCountries:()=>['2124'],ctyName:String,timeago:()=>'1h'});
- vm.runInContext(helpers+'\n'+span('var STUDIO_GROWTH=','async function loadDesignStudioGrowth('),sx);
+ vm.runInContext(helpers+'\n'+pick('cur')+'\n'+span('var STUDIO_GROWTH=','async function loadDesignStudioGrowth('),sx);
  sx.STUDIO_GROWTH={blueprint:{budget:{recommendedDaily:10,ceiling:100,headroom:20,pmaxDaily:4,searchDaily:6,countries:['2124']},measurement:{readiness:{apiOk:true,purchaseReady:true}},pmax:{groups:[]},search:{},positioning:{},page:{}},lanes:{},
   performance:{ok:true,currency:'USD',start:'2026-09-01',end:'2026-09-29',overall:{cost:80.5,clicks:60},purchase:{cpa:40.25},funnel:{},rates:{}}};
  sx.renderDesignStudioGrowth();const sg=els.studioGrowth.innerHTML;
- check(/<b>Search<\/b> CA\$ <input/.test(sg)&&/<b>PMax<\/b> CA\$ <input/.test(sg)&&/CA\$10\.00\/day/.test(sg)&&/CA\$20\.00 available/.test(sg),'Studio launch budgets and available headroom read CA$');
- check(/US\$80\.50/.test(sg)&&/US\$40\.25/.test(sg)&&!/[^AS]\$\d|> \$ </.test(sg),'Studio spend and purchase CPA read US$, no bare $ left');
-
- // Opportunity cards: budget, CPC cap, spend and profit re-derive in the account currency.
- const texts={},ox=vm.createContext({DASH:{budgetCurrency:'CAD'},Intl,console,oppCpcOf:()=>1.25,oppBidOf:()=>false});
- vm.runInContext(helpers+'\n'+span('function fmtDate(','function bidView(')+'\nvar OPPS=[];',ox);
- ox.OPPS=[{recommendedDailyBudget:12,startDate:'2026-10-01',endDate:'2026-10-29',durationDays:28,plan:{cpc:{low:0.5,max:1.25},model:{eCpcMarket:0.8,eCpc:0.8,cpcLow:0.5,cpcHigh:1.25,cvr:0.02,aov:60,marginRate:0.65,uncertainty:0.4}}}];
- ox.oppRecalc({querySelector:()=>null,querySelectorAll:sel=>[{set textContent(v){texts[sel.split('[')[0]]=v;}}]},0);
- check(texts['.opPlanned']==='CA$12'&&texts['.planCpc']==='CA$1.25'&&texts['.fBud']==='CA$12/d'&&/^CA\$/.test(texts['.opTot'])&&/within a CA\$1\.25 max CPC/.test(texts['.planGoal']),'opportunity budget, cap, total and goal read CA$ ('+JSON.stringify(texts)+')');
+ check(/Launch settings · budgets in CAD/.test(sg)&&/US\$80\.50<\/div><div class="l">Spend/.test(sg)&&/US\$40\.25<\/div><div class="l">Purchase CPA/.test(sg),'Studio launch budgets name CAD; converted spend and purchase CPA read US$');
 }

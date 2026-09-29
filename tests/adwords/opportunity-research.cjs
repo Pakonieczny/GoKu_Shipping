@@ -102,10 +102,11 @@ const J=x=>JSON.stringify(x);
   _enabledBudgetTotal:async()=>20,storeSignals:async()=>({orders:10,totalRevenue:900,excludedCurrencyOrders:1,productRows:[]}),collectionAdsPerformance:async()=>({}),
   accountCvr:async()=>({cvr:0.02,source:'benchmark'}),_fxRateToUsd:async()=>0.72,_accountTz:async()=>'America/Toronto',listCountries:async()=>[],
   keywordResearch:async s=>{calls.seeds.push(...s);return {ok:true,status:200,ideas:s.map(idea)};},
-  openaiJSON:async(prompt,opts)=>{calls.prompt=prompt;calls.opts=opts;return {opportunities:JSON.parse(JSON.stringify(proposals))};}};
+  // Like the real wrapper, the fake reports the pages its web search returned through opts.info.
+  openaiJSON:async(prompt,opts)=>{calls.prompt=prompt;calls.opts=opts;if(opts&&opts.info)opts.info.sources=['https://www.timeanddate.com/holidays/us/halloween','https://www.canada.ca/en/thanksgiving.html','https://nationaltoday.com/national-daughters-day/','https://www.worldanimalday.org.uk/'].map(url=>({url,title:''}));return {opportunities:JSON.parse(JSON.stringify(proposals))};}};
  const scan=engine(fakes);
  const r=await scan.scanOpportunities({force:true});
- assert.equal(calls.opts.webSearch,5,'the scan call alone asks for web verification');
+ assert.equal(J(calls.opts.webSearch),J({maxUses:5,userLocation:{country:'US'}}),'the scan call alone asks for web verification, in the targeted market');
  assert(/between 2026-10-06 and 2026-11-13/.test(calls.prompt));assert(/Verify every date/.test(calls.prompt));assert(/AU, CA, GB, US/.test(calls.prompt));
  assert(!/recommendedDailyBudget|"cpcLow"|"searches":|startDate \(|proven \(bool/.test(calls.prompt),'the prompt no longer asks for fields the code discards');
  assert(!calls.seeds.some(s=>/daughter|animal lover|firefighter|christmas/.test(s)),'dropped occasions spend no Keyword Planner quota');
