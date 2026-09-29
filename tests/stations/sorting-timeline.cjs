@@ -33,6 +33,7 @@ const materializeStub = `
   window.M = { AutoInit() {}, toast(o) { window.__toasts.push(o && o.html); }, Modal: { init() { return inst; }, getInstance() { return inst; } } };`;
 const stationStub = `
   window.__st = { init: null, scanned: [], did: [], guard: [] };
+  window.__rec = []; window.OrderTimeline && OrderTimeline.onRecord(ev => __rec.push(ev));   // sorted + labelPrinted go straight to the outbox
   const TL = new Set(${JSON.stringify([...TL_CANCELLED])});
   window.StationTimeline = {
     init(o) { __st.init = o; },
@@ -134,18 +135,18 @@ const stationStub = `
   await page.evaluate(i => openIframePrinterForListing(i), iB);
   await page.waitForFunction(b => __st.guard.includes(b), B);
   await page.waitForTimeout(200);
-  st = await page.evaluate(() => ({ frames: [...document.querySelectorAll('iframe')].length, sorted: __st.did.filter(d => d.type === 'sorted').map(d => d.id) }));
+  st = await page.evaluate(() => ({ frames: [...document.querySelectorAll('iframe')].length, sorted: __rec.filter(d => d.type === 'sorted').map(d => d.orderId) }));
   assert.strictEqual(await printerFrames(page), 0, 'the cancelled order\'s sticker is not printed');
   assert.deepStrictEqual(st.sorted, [], 'and it is not recorded as sorted');
   await page.evaluate(i => openIframePrinterForListing(i), iA);
   await page.waitForFunction(() => [...document.querySelectorAll('iframe')].some(f => /QR/.test(f.src)), null, { timeout: 5000 });
-  st = await page.evaluate(() => ({ printed: JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum, sorted: __st.did.filter(d => d.type === 'sorted').map(d => [d.id, d.data && d.data.how]) }));
+  st = await page.evaluate(() => ({ printed: JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum, sorted: __rec.filter(d => d.type === 'sorted').map(d => [d.orderId, d.data && d.data.how]) }));
   assert.strictEqual(st.printed, A);
   assert.deepStrictEqual(st.sorted, [[A, 'print']], 'a printed sticker records its order as sorted');
   await page.evaluate(() => { __st.guard.length = 0; return handlePrintRowClick(); });
   await page.waitForFunction(() => localStorage.getItem('qrPrintBatch'), null, { timeout: 5000 });
   st = await page.evaluate(() => ({ batch: JSON.parse(localStorage.getItem('qrPrintBatch')).map(o => o.userTypedOrderNum), guard: __st.guard.slice().sort(),
-    sorted: __st.did.filter(d => d.type === 'sorted' && d.data.how === 'row').map(d => d.id), toast: __toasts.join(' | ') }));
+    sorted: __rec.filter(d => d.type === 'sorted' && d.data.how === 'row').map(d => d.orderId), toast: __toasts.join(' | ') }));
   assert.deepStrictEqual(st.batch, [A, C], 'Print Row leaves the cancelled order out');
   assert.deepStrictEqual(st.guard, [A, C], 'and guards the others');
   assert.deepStrictEqual(st.sorted, [A, C], 'each printed sticker records sorted');

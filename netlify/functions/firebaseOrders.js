@@ -41,6 +41,75 @@ const flood = {
   }
 };
 
+/* The stations' sign-in sessions (station-session.js): one document per session in Station_Sessions, from sign-in to
+   sign-out, for one person on one computer at one station or page:
+     { id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes }
+   Times are ms. The server stamps them: a start and a beat are "now"; an end may say an earlier moment (an end sent late,
+   from a browser that was offline) but never before the last beat the server saw, never after now, and never past the
+   New York midnight after the start (everybody is signed out at midnight). A beat after 15 quiet minutes does not bring
+   a session back: it ended "closed" at its last beat, and the page starts a new one. A PIN is never kept. */
+const SESSION_COLL = "Station_Sessions";
+const SESSION_REASONS = new Set(["signOut", "midnight", "switched", "closed"]);
+const SESSION_CLOSED_MS = 15 * 60000;
+let nyFmt = null;
+try { nyFmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }); } catch (_) {}
+function nyParts(t) {
+  if (nyFmt) { const o = {}; for (const p of nyFmt.formatToParts(new Date(t))) o[p.type] = p.value; return { y: +o.year, m: +o.month, d: +o.day, h: +o.hour % 24, mi: +o.minute, s: +o.second }; }
+  const e = new Date(t - 5 * 3600e3);
+  return { y: e.getUTCFullYear(), m: e.getUTCMonth() + 1, d: e.getUTCDate(), h: e.getUTCHours(), mi: e.getUTCMinutes(), s: e.getUTCSeconds() };
+}
+/** the first New York midnight after t (ms) */
+function nyMidnightAfter(t) {
+  const off = x => { const p = nyParts(x); return Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi, p.s) - Math.floor(x / 1000) * 1000; };
+  const p = nyParts(t), wall = Date.UTC(p.y, p.m - 1, p.d + 1);
+  let u = wall - off(t); u = wall - off(u);
+  return u > t ? u : t + 86400e3;
+}
+async function sessionWrite(s) {
+  const str = (v, n) => String(v == null ? "" : v).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
+  const { STATIONS } = require("./_orderTimeline");
+  const id = typeof s.id === "string" && /^[\w.:-]{8,100}$/.test(s.id) ? s.id : "";
+  const ev = s.event === "start" || s.event === "beat" || s.event === "end" ? s.event : "";
+  const station = typeof s.station === "string" && STATIONS.has(s.station) ? s.station : "";
+  const computerId = typeof s.computerId === "string" && /^[\w-]{6,64}$/.test(s.computerId) ? s.computerId : "";
+  const person = str(s.person, 80);
+  if (!id || !ev || !station || !computerId || (ev !== "end" && !person)) return [400, { error: "not a session event" }];
+  const eid = str(s.employeeId, 60), employeeId = /^\d+$/.test(eid) ? "" : eid;   // a PIN is only digits: never kept
+  const device = str(s.device, 40).replace(/[^\w .:-]/g, "") || station;
+  const computerLabel = str(s.computerLabel, 80);
+  const reason = SESSION_REASONS.has(s.reason) ? s.reason : "signOut";
+  const clientAt = Number(s.at);
+  const ref = col(SESSION_COLL).doc(id);
+  return db.runTransaction(async tx => {
+    const now = Date.now();
+    const snap = await tx.get(ref), prev = snap.exists ? (snap.data() || {}) : null;
+    if (prev && prev.computerId && prev.computerId !== computerId) return [409, { error: "not this computer's session" }];
+    if (prev && prev.endAt != null) return [200, { success: true, id, ended: true, endReason: prev.endReason || null }];
+    if (!prev && ev === "end") return [200, { success: true, id, missing: true }];
+    const startAt = prev ? (Number(prev.startAt) || now) : now;
+    const lastSeen = prev ? (Number(prev.lastSeenAt) || startAt) : now;
+    const cap = nyMidnightAfter(startAt);
+    let endAt = null, endReason = null, lastSeenAt = now;
+    if (ev === "end") {
+      const want = Number.isFinite(clientAt) && clientAt > 0 ? Math.max(lastSeen, clientAt) : now;
+      endAt = Math.min(now, want); endReason = reason;
+      if (endAt > cap) { endAt = cap; endReason = "midnight"; }
+      lastSeenAt = Math.max(lastSeen, endAt);
+    } else if (prev && now - lastSeen >= SESSION_CLOSED_MS) {
+      endAt = Math.min(lastSeen, cap); endReason = lastSeen > cap ? "midnight" : "closed"; lastSeenAt = lastSeen;
+    } else if (now > cap) {
+      endAt = cap; endReason = "midnight"; lastSeenAt = Math.max(lastSeen, cap);
+    }
+    const minutes = Math.max(0, Math.round(((endAt != null ? endAt : lastSeenAt) - startAt) / 6000) / 10);
+    const doc = prev
+      ? { lastSeenAt, endAt, endReason, minutes }
+      : { id, person, employeeId, station, device, computerId, computerLabel, startAt, lastSeenAt, endAt, endReason, minutes };
+    if (prev && computerLabel && computerLabel !== prev.computerLabel) doc.computerLabel = computerLabel;
+    tx.set(ref, doc, { merge: true });
+    return [200, { success: true, id, startAt, lastSeenAt, endAt, endReason, minutes, ended: endAt != null }];
+  });
+}
+
 /* Global CORS headers */
 const CORS = {
   "Access-Control-Allow-Origin" : "*",
@@ -71,6 +140,13 @@ exports.handler = async (event) => {
         if (!flood.allow(event, events.length)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many timeline events, try again in a minute" }) };
         const out = await require("./_orderTimeline").add(db, admin.firestore.FieldValue, events, { prefix: PREFIX, source: "station", stationOnly: true });
         return { statusCode: 200, headers: CORS, body: JSON.stringify(Object.assign({ success: true }, out, events.length < body.timeline.length ? { refused: body.timeline.length - events.length } : {})) };
+      }
+      /* a station's sign-in session (station-session.js): start, beat or end; small, validated, the server's times */
+      if (body.session && typeof body.session === "object" && !Array.isArray(body.session)) {
+        if (String(event.body || "").length > 4096) return { statusCode: 413, headers: CORS, body: JSON.stringify({ error: "session event too large" }) };
+        if (!flood.allow(event, 1)) return { statusCode: 429, headers: CORS, body: JSON.stringify({ error: "too many requests, try again in a minute" }) };
+        const [statusCode, out] = await sessionWrite(body.session);
+        return { statusCode, headers: CORS, body: JSON.stringify(out) };
       }
       const {
         orderNumber,

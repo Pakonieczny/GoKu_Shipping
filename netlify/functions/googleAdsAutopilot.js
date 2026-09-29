@@ -142,8 +142,10 @@ async function control() {
       if (s.exists) c = { ...c, ...s.data() };
     } catch (e) {}
   }
-  // env hard ceiling always wins as an upper bound even if Firestore says higher
-  c.maxDailyBudgetTotal = Math.min(c.maxDailyBudgetTotal, Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL || c.maxDailyBudgetTotal));
+  // env hard ceiling always wins as an upper bound even if Firestore says higher. A missing or
+  // invalid stored value falls back to the default ceiling; it never reads as "no ceiling".
+  const envCeil = Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL), storedCeil = Number(c.maxDailyBudgetTotal), envOk = isFinite(envCeil) && envCeil > 0;
+  c.maxDailyBudgetTotal = Math.min(isFinite(storedCeil) && storedCeil > 0 ? storedCeil : (envOk ? envCeil : 100), envOk ? envCeil : Infinity);
   c.autoApproveVettedTemplates=false;
   try {c.budgetCurrency=await _accountCurrency();c.budgetCurrencyVerified=true;}catch(e){c.budgetCurrency=null;c.budgetCurrencyVerified=false;}
   return c;
@@ -1634,11 +1636,12 @@ function sanitizeOps(ops, meta) {
   return ops;
 }
 // Required aspect ratio (w/h) per image field type + Google's minimum pixel sizes.
+// Google accepts ±1% of the ratio; a 1–3% image passed here and then failed the whole link mutate.
 const _IMG_FIELD_SPECS = {
-  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.03, minW: 300, minH: 300 },
-  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.03, minW: 600, minH: 314 },
-  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.03, minW: 480, minH: 600 },
-  LOGO:                     { ratio: 1.0,      tol: 0.03, minW: 128, minH: 128 }
+  SQUARE_MARKETING_IMAGE:   { ratio: 1.0,      tol: 0.01, minW: 300, minH: 300 },
+  MARKETING_IMAGE:          { ratio: 1.91,     tol: 0.01, minW: 600, minH: 314 },
+  PORTRAIT_MARKETING_IMAGE: { ratio: 0.8,      tol: 0.01, minW: 480, minH: 600 },
+  LOGO:                     { ratio: 1.0,      tol: 0.01, minW: 128, minH: 128 }
 };
 // Drop image attach ops whose ALREADY-UPLOADED asset has a disallowed aspect ratio for
 // its field type (live failure: ASPECT_RATIO_NOT_ALLOWED on two pre-uploaded portraits —
@@ -1742,14 +1745,17 @@ function _learningPublication(item, result, operations) {
   return { schema:1, at:Date.now(), campaignIds:[...campaignIds], campaignChannels,
     meaning:"Reviewed creative containing this guidance was sent to Google; this does not confirm serving or improvement." };
 }
-async function applyApproval(id, ctrl) {
+async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
   const f=fb();if(!f)throw new Error("No Firestore connection.");
   const ref=f.db.collection(COL.approvals).doc(String(id)),attempt=require("crypto").randomUUID(),lock=f.db.collection(COL.state).doc("publicationLease");let it;
   ctrl=ctrl||await control();
-  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw new Error("Another publication is still running. Its result must finish before this draft can be sent.");
+  // Drafts approved together publish one at a time: the worker waits up to waitForLeaseMs for the
+  // running one. Still busy after that: this draft stays APPROVED with the reason shown, to retry.
+  for(const giveUp=Date.now()+(Number(waitForLeaseMs)||0);;){try{
+  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
     if(it.status!=="APPROVED")throw new Error(it.status==="APPLIED"?"This draft was already published.":"Draft is not available for publication; another attempt may be running.");
     assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
-  });
+  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update({lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
   let dispatched=false, publicationResult=null;
   try {
     const p=it.payload||{};
@@ -1763,6 +1769,8 @@ async function applyApproval(id, ctrl) {
     let ops=await materializeReviewedCreative(it);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
     if(newNames.length){const live=await gaql("SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'");if(live.some(r=>newNames.includes((r.campaign||{}).name)))throw new Error("A campaign with this draft's name already exists. Review the existing campaign instead of creating a duplicate.");}
+    // Campaigns are only ever enabled from Campaigns, where the ceiling and monthly stop are checked.
+    if([...(ops||[]).map(o=>o.campaignOperation&&(o.campaignOperation.create||o.campaignOperation.update)),...(p.service==="campaigns"?(p.operations||[]).map(o=>o&&(o.create||o.update)):[])].some(c=>c&&c.status==="ENABLED"))throw new Error("Drafts publish campaigns paused. Enable the campaign from Campaigns, where the daily ceiling and monthly stop are checked.");
     const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
     if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
       const want=budgetOps.reduce((n,o)=>n+fromMicros(o.campaignBudgetOperation.create.amountMicros),0);
@@ -1779,9 +1787,14 @@ async function applyApproval(id, ctrl) {
       if(p.groupSplitGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-split:"+id});await _guardProductGroupSplit(it);}
       publicationResult=await mutateAll(ops,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});
     } else if(p.service&&p.operations){if(p.service==="campaignBudgets"){
-        const rows=await gaql("SELECT campaign_budget.resource_name,campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'"),budgets=new Map();rows.forEach(r=>{const a=r.campaignBudget||{};budgets.set(a.resourceName,fromMicros(a.amountMicros));});
+        // Each reviewed move reads "from X to Y". A budget that no longer reads X was edited since,
+        // so the reviewed change no longer describes what would happen: refuse, never re-base it.
+        const res=p.operations.map(o=>o&&o.update&&o.update.resourceName);if(!res.length||res.some(r=>!/^customers\/\d+\/campaignBudgets\/\d+$/.test(String(r||""))))throw new Error("This budget proposal contains an unexpected operation. Nothing was changed.");
+        const baseline=new Map(((p.meta||{}).baseline||[]).map(m=>[m.budgetRes,Number(m.from)])),nowRows=await gaql(`SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign_budget WHERE campaign_budget.resource_name IN (${res.map(r=>`'${r}'`).join(", ")})`),now=new Map(nowRows.map(r=>[(r.campaignBudget||{}).resourceName,fromMicros((r.campaignBudget||{}).amountMicros)]));
+        if(res.some(r=>!baseline.has(r)||!now.has(r)||Math.abs(now.get(r)-baseline.get(r))>=0.01))throw new Error("A budget changed after this proposal was made, so its reviewed amounts no longer apply. Nothing was changed. Delete this draft; the next weekly review proposes fresh amounts.");
+        const budgets=(await _enabledBudgets()).budgets; // spendable only: ENDED excluded, shared budgets once
         p.operations.forEach(o=>{if(o.update&&budgets.has(o.update.resourceName))budgets.set(o.update.resourceName,fromMicros(o.update.amountMicros));});
-        if([...budgets.values()].reduce((a,b)=>a+b,0)>Number(ctrl.maxDailyBudgetTotal))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
+        if(!([...budgets.values()].reduce((a,b)=>a+b,0)<=Number(ctrl.maxDailyBudgetTotal)+0.001))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
       }
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
@@ -3099,32 +3112,37 @@ async function _accountCurrency() {
   if(!/^[A-Z]{3}$/.test(String(currency||"")))throw new Error("Google Ads account currency could not be verified.");
   _acctCurrencyCache=currency;return currency;
 }
-const _fxMemCache = new Map(); // per-invocation memo; Firestore doc persists the rate across invocations (historical rates never change, so caching indefinitely is correct)
+// Frankfurter answers a date the ECB has not published yet (today, before ~16:00 CET) with the
+// PREVIOUS business day's rate. Saving that under the requested date made every weekday keep the
+// prior day's rate forever. Only a rate published for exactly that date, or the answer for a date
+// old enough that nothing newer can be published for it (weekend/holiday), is final and saved.
+// The earlier "fxRates" document holds such lagged weekday rates, so final rates use a new one.
+const _fxMemCache = new Map(); // key -> { rate, until }: final rates never expire; provisional rates and failures do
 async function _fxRateToUsd(dateYmd) {
   const acct = await _accountCurrency();
   if (acct === "USD") return 1; // nothing to convert
-  const key = acct + ":" + dateYmd;
-  if (_fxMemCache.has(key)) return _fxMemCache.get(key);
+  const key = acct + ":" + dateYmd, now = Date.now(), memo = _fxMemCache.get(key);
+  if (memo && memo.until > now) return memo.rate;
   const f = fb();
   if (f) {
     try {
-      const doc = await f.db.collection(COL.state).doc("fxRates").get();
+      const doc = await f.db.collection(COL.state).doc("fxRatesFinal").get();
       const v = doc.exists ? (doc.data() || {})[key] : null;
-      if (v != null) { _fxMemCache.set(key, v); return v; }
+      if (v != null) { _fxMemCache.set(key, { rate: v, until: Infinity }); return v; }
     } catch (e) {}
   }
-  let rate = null;
+  let rate = null, final = false;
   try {
     // ECB-based daily rates (Frankfurter) — a very close proxy for Google's own "average daily FX
     // rate"; not guaranteed bit-identical to Google's internal number, but the same class of
     // real market rate for that specific date, not a rough approximation.
-    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`);
-    const data = await res.json();
+    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`, { timeout: 8000 });
+    const data = res.ok ? await res.json() : null;
     const v = data && data.rates && Number(data.rates.USD);
-    if (v && isFinite(v)) rate = v;
+    if (v && isFinite(v) && v > 0) { rate = v; final = data.date === dateYmd || dateYmd < new Date(now - 4 * 86400000).toISOString().slice(0, 10); }
   } catch (e) {}
-  if (rate != null && f) { try { await f.db.collection(COL.state).doc("fxRates").set({ [key]: rate }, { merge: true }); } catch (e) {} }
-  _fxMemCache.set(key, rate); // caches null too, so a bad date doesn't get refetched every call within this invocation
+  if (final && f) { try { await f.db.collection(COL.state).doc("fxRatesFinal").set({ [key]: rate }, { merge: true }); } catch (e) {} }
+  _fxMemCache.set(key, { rate, until: final ? Infinity : now + (rate == null ? 60000 : 1800000) });
   return rate;
 }
 
@@ -3257,8 +3275,11 @@ async function metricsRange({ start, end } = {}) {
   }
   if (!scheduleAvailable) warnings.push("Campaign schedules could not be refreshed. Performance dates remain the selected reporting range.");
   const activeInRange = new Set(report.rows.filter(r => { const m = r.metrics || {}; return [m.impressions, m.clicks, m.costMicros, m.conversions, m.conversionsValue, m.conversionsByConversionDate, m.conversionsValueByConversionDate].some(v => Number(v) !== 0 && Number.isFinite(Number(v))); }).map(r => String((r.campaign || {}).id)));
-  const deleted=await _deletedCampaignIds();
-  const snapshot = Object.values(byId).filter(c => !deleted.has(c.id)&&(c.status !== "REMOVED" || activeInRange.has(c.id))); snapshot.forEach(c => c.opportunityLane = _campaignOpportunityLane(c));
+  // A campaign deleted from the console is removed in Google, but its spend in these dates was
+  // real money. Keep it (flagged) whenever it has activity, so account totals still equal the
+  // daily series and Google's own account total; only inactive deleted campaigns are hidden.
+  const deleted=await _deletedCampaignIds().catch(()=>{warnings.push("Deleted-campaign labels could not be loaded. Totals still include every campaign with activity in these dates.");return new Set();});
+  const snapshot = Object.values(byId).filter(c => activeInRange.has(c.id) || (!deleted.has(c.id) && c.status !== "REMOVED")); snapshot.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); if (deleted.has(c.id)) { c.deleted = true; c.historicalOnly = true; } });
   await _attachCampaignVersions(snapshot);
   return { ok: true, snapshot, range, ...context, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: report.cd, scheduleAvailable, includesRemovedWithActivity: true, warnings };
 }
@@ -3274,6 +3295,10 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
        AND ad_group_ad_asset_view.field_type IN ('HEADLINE','DESCRIPTION')`);
   const weak = rows.filter(r => Number(r.metrics.impressions || 0) >= minImpr);
   if (!weak.length) return { flagged: 0, queued: 0 };
+  // Review note only (it removes nothing). One open note at a time, not a new one every day.
+  const f = fb(); let open = null;
+  if (f) (await f.db.collection(COL.approvals).where("status", "==", "PENDING").get()).forEach(d => { const a = d.data(); if (a.type === "creative" && (a.payload || {}).note === "operator-review") open = d.id; });
+  if (open) return { flagged: weak.length, queued: 0, approvalId: open, existing: true };
   // (replacement copy generation happens at the campaign/collection level on the
   //  next event refresh; here we just surface the weak assets for the operator)
   const byCampaign = {};
@@ -5273,33 +5298,47 @@ async function designStudioOpportunityStatus({ refreshMetrics = false } = {}) {
 }
 
 // MINE: converting search terms ⇒ exact keywords; expensive zero-conv terms ⇒ negatives.
-async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8 } = {}) {
+async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8, wasteClicks = 30 } = {}) {
   ctrl = ctrl || (await control());
   const rows = await gaql(
     `SELECT search_term_view.search_term, search_term_view.status, campaign.id, campaign.name,
             ad_group.resource_name, metrics.conversions, metrics.cost_micros, metrics.clicks
      FROM search_term_view WHERE ${await _last90Clause()}`);
-  const addKw = []; const addNeg = [];
+  // Never exclude a keyword the campaign targets, nor a term that converted anywhere in it: waste is
+  // judged per campaign (rows are per ad group) and needs wasteClicks clicks, not a few pricey ones.
+  const kwRows = await gaql(`SELECT campaign.id, ad_group_criterion.keyword.text FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status != 'REMOVED'`);
+  const targeted = new Set(kwRows.map(r => (r.campaign || {}).id + "|" + String(((r.adGroupCriterion || {}).keyword || {}).text || "").toLowerCase()));
+  // Terms already in a draft waiting for review or publication are not proposed again.
+  const waiting = new Set(), f = fb();
+  if (f) for (const s of ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"]) (await f.db.collection(COL.approvals).where("status", "==", s).get()).forEach(d => { const a = d.data();
+    if (a.type === "keywords" || a.type === "negatives") ((a.payload || {}).operations || []).forEach(o => { const c = o && o.create && (o.create.adGroupCriterion || o.create.campaignCriterion || o.create); if (c && c.keyword) waiting.add((c.adGroup || c.campaign) + "|" + String(c.keyword.text).toLowerCase()); }); });
+  const valid = t => t.length <= 80 && t.split(/\s+/).length <= 10;
+  const addKw = [], byCampaign = new Map();
   rows.forEach(r => {
     const term = r.searchTermView.search_term || r.searchTermView.searchTerm;
-    if (!term) return;
+    if (!term || !valid(term)) return;
     const conv = Number(r.metrics.conversions || 0);
-    const cost = fromMicros(r.metrics.costMicros);
-    const already = (r.searchTermView.status === "ADDED");
-    if (conv >= convMin && !already && r.adGroup) {
-      addKw.push({ adGroupCriterion: { adGroup: r.adGroup.resourceName, status: "ENABLED",
-        keyword: { text: term, matchType: "EXACT" } } });
-    } else if (conv === 0 && cost >= wasteCost && r.campaign) {
-      addNeg.push({ campaignCriterion: { campaign: `customers/${CID}/campaigns/${r.campaign.id}`,
-        negative: true, keyword: { text: term, matchType: "EXACT" } } });
+    const status = r.searchTermView.status || "NONE";
+    if (conv >= convMin && status === "NONE" && r.adGroup && !waiting.has(r.adGroup.resourceName + "|" + term.toLowerCase())) {
+      waiting.add(r.adGroup.resourceName + "|" + term.toLowerCase());
+      addKw.push({ adGroup: r.adGroup.resourceName, status: "ENABLED", keyword: { text: term, matchType: "EXACT" } });
     }
+    if (!r.campaign) return;
+    const k = r.campaign.id + "|" + term.toLowerCase(), x = byCampaign.get(k) || { campaignId: r.campaign.id, term, conv: 0, cost: 0, clicks: 0, status: new Set() };
+    x.conv += conv; x.cost += fromMicros(r.metrics.costMicros); x.clicks += Number(r.metrics.clicks || 0); x.status.add(status); byCampaign.set(k, x);
+  });
+  const addNeg = [];
+  byCampaign.forEach((x, k) => {
+    const campaign = `customers/${CID}/campaigns/${x.campaignId}`;
+    if (x.conv > 0 || x.cost < wasteCost || x.clicks < wasteClicks || [...x.status].some(s => s !== "NONE") || targeted.has(k) || waiting.has(campaign + "|" + x.term.toLowerCase())) return;
+    addNeg.push({ campaign, negative: true, keyword: { text: x.term, matchType: "EXACT" } });
   });
   let queued = 0;
   if (addKw.length) { await enqueueApproval({ type: "keywords", vetted: true,
     summary: `${addKw.length} converting search terms → add as exact keywords`,
     payload: { service: "adGroupCriteria", operations: addKw.map(create => ({ create })) } }); queued++; }
   if (addNeg.length) { await enqueueApproval({ type: "negatives", vetted: true,
-    summary: `${addNeg.length} wasteful zero-conversion terms → add as negatives`,
+    summary: `${addNeg.length} zero-conversion terms (${wasteClicks}+ clicks each, 90 days) → add as exact negatives`,
     payload: { service: "campaignCriteria", operations: addNeg.map(create => ({ create })) } }); queued++; }
   return { keywords: addKw.length, negatives: addNeg.length, queued };
 }
@@ -5337,20 +5376,24 @@ async function anomalyCheck({ ctrl } = {}) {
   const tz = await _accountTz();
   const today = _acctDateYmd(tz, 0);
   const y = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING YESTERDAY`);
-  const t = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_14_DAYS`);
+  const t = await gaql(`SELECT segments.date, metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${_acctDateYmd(tz, -15 * 86400000)}' AND '${_acctDateYmd(tz, -2 * 86400000)}'`);
   const yCostNative = fromMicros((y[0] && y[0].metrics.costMicros) || 0);
-  const tCostNative = fromMicros((t[0] && t[0].metrics.costMicros) || 0) / 14;
-  // The trip decision is a RATIO of two native-currency figures — currency-invariant, so it's computed
-  // on the native numbers directly and needs no conversion for correctness. Only the human-readable
-  // figures (the logged trip reason, and whatever this returns for display) are converted to USD below,
-  // so a person reading the reason later sees real dollars rather than an unlabeled CAD figure.
-  const tripped = tCostNative > 0 && yCostNative > tCostNative * ctrl.anomalySpendMultiple;
+  // Baseline: the 14 days BEFORE yesterday, averaged over the days that actually spent — so a launch
+  // after a quiet spell is not an "anomaly" and a spike does not dilute its own baseline. Under 7
+  // spending days there is no baseline yet; then only spend above twice the daily ceiling (beyond
+  // Google's up-to-2x daily delivery) trips. All figures are native (account) currency.
+  const spent = t.map(r => fromMicros((r.metrics || {}).costMicros)).filter(v => v > 0);
+  const tCostNative = spent.length ? spent.reduce((a, b) => a + b, 0) / spent.length : 0;
+  const multiple = Number(ctrl.anomalySpendMultiple) > 1 ? Number(ctrl.anomalySpendMultiple) : 2.5, ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
+  const spike = spent.length >= 7 && yCostNative > tCostNative * multiple, overCeiling = ceiling > 0 && yCostNative > ceiling * 2;
+  const tripped = spike || overCeiling;
   const rate = await _fxRateToUsd(today);
   const yCost = rate != null ? yCostNative * rate : yCostNative;
   const tCost = rate != null ? tCostNative * rate : tCostNative;
   if (tripped && f) {
+    const money = v => (ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : "") + Number(v).toFixed(2);
     await f.db.collection(COL.control).doc("control").set(
-      { enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `spend ${yCost.toFixed(2)} > ${ctrl.anomalySpendMultiple}× avg ${tCost.toFixed(2)}` },
+      { enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: spike ? `yesterday's spend ${money(yCostNative)} > ${multiple}× the recent daily average ${money(tCostNative)}` : `yesterday's spend ${money(yCostNative)} > twice the daily budget ceiling ${money(ceiling)}` },
       { merge: true });
   }
   return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped, fxIncomplete: rate == null };
@@ -5358,11 +5401,28 @@ async function anomalyCheck({ ctrl } = {}) {
 
 /* ===================== Spend-cap enforcement ===================== */
 
-// Sum of ENABLED campaigns' daily budgets (the budgets that can actually spend right now).
-async function _enabledBudgetTotal() {
-  const rows=await gaql("SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
-  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,fromMicros(b.amountMicros));});
-  return [...budgets.values()].reduce((a,b)=>a+b,0);
+// Daily budgets that can actually spend right now: ENABLED campaigns that have not ENDED, each
+// (shared) budget counted once. total is in the account currency. Every spend check uses this.
+async function _enabledBudgets() {
+  const rows=await gaql("SELECT campaign.id, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
+  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if((r.campaign||{}).servingStatus==="ENDED")return;if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,fromMicros(b.amountMicros));});
+  return {total:[...budgets.values()].reduce((a,b)=>a+b,0),budgets};
+}
+async function _enabledBudgetTotal() { return (await _enabledBudgets()).total; }
+// Refuses a change that would push the spendable daily budgets over the ceiling, or add spend once
+// month-to-date spend has reached the monthly stop. enabling: the campaign will be able to spend
+// after the change; amount: its new daily budget. Runs in dry-run too. Returns the budget resource.
+async function _assertSpendLimits(campaignId, { ctrl, amount = null, enabling = false } = {}) {
+  const id=String(campaignId).replace(/\D/g,""),row=id&&(await gaql(`SELECT campaign.id, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`))[0],b=(row&&row.campaignBudget)||{};
+  if(!b.resourceName)throw new Error("This campaign's budget could not be verified in Google Ads, so nothing was changed.");
+  const live=await _enabledBudgets(),counted=live.budgets.has(b.resourceName);if(!counted&&!enabling)return b.resourceName; // cannot spend yet; enabling it is checked then
+  const after=live.total-(counted?live.budgets.get(b.resourceName):0)+(amount==null?fromMicros(b.amountMicros):Number(amount)),ceiling=Number(ctrl.maxDailyBudgetTotal)||0,money=v=>(ctrl.budgetCurrency?ctrl.budgetCurrency+" ":"")+Number(v).toFixed(2);
+  if(after<=live.total+0.001)return b.resourceName; // no added spend
+  if(ceiling>0&&after>ceiling+0.001)throw new Error(`This would raise the daily budgets that can spend to ${money(after)}, over your daily ceiling of ${money(ceiling)}. Nothing was changed. Lower or pause another campaign first, or raise the ceiling in Controls.`);
+  const limit=Number(ctrl.maxMonthlySpend)||0;
+  if(limit>0){const m=await _mtdSpend();if(m.fxIncomplete)throw new Error("Month-to-date spend cannot be compared with your USD monthly stop threshold without an exchange rate, so nothing was changed. Try again later.");
+    if(m.mtd>=limit)throw new Error(`Month-to-date spend (USD ${m.mtd.toFixed(2)}) has reached your monthly stop threshold of USD ${limit}. Nothing was changed. Raise the threshold in Controls first.`);}
+  return b.resourceName;
 }
 
 // Keep the SUM of enabled campaigns' daily budgets at/under the ceiling by scaling them all down
@@ -5371,19 +5431,22 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   ctrl = ctrl || (await control());
   const ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
   if (!(ceiling > 0)) return { ok: true, skipped: "no ceiling set" };
+  // Same spendable set as every other check: ENDED campaigns cannot spend, and a shared budget is
+  // one daily amount (and one update) however many enabled campaigns use it.
   const rows = await gaql(
-    `SELECT campaign.id, campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros
      FROM campaign WHERE campaign.status = 'ENABLED'`);
-  const items = rows.map(r => ({ id: r.campaign.id, name: r.campaign.name,
-      res: r.campaignBudget && r.campaignBudget.resourceName,
-      budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros) }))
-    .filter(x => x.res && x.budget > 0);
+  const byRes = new Map();
+  rows.forEach(r => { const res = r.campaignBudget && r.campaignBudget.resourceName; if (!res || (r.campaign || {}).servingStatus === "ENDED") return;
+    const x = byRes.get(res); if (x) { x.name += " + " + r.campaign.name; return; }
+    byRes.set(res, { id: r.campaign.id, name: r.campaign.name, res, budget: fromMicros(r.campaignBudget.amountMicros) }); });
+  const items = [...byRes.values()].filter(x => x.budget > 0);
   const total = items.reduce((a, b) => a + b.budget, 0);
   if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
   const factor = ceiling / total, floor = 1;
   const ops = [], moves = [];
   items.forEach(x => {
-    const nb = Math.max(floor, +(x.budget * factor).toFixed(2));
+    const nb = Math.max(floor, Math.floor(x.budget * factor * 100) / 100); // round down: the trimmed sum never lands above the ceiling
     if (Math.abs(nb - x.budget) < 0.01) return;
     moves.push({ campaign: x.name, from: x.budget, to: nb });
     ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });
@@ -5405,7 +5468,11 @@ async function _mtdSpend() {
   const start = end.slice(0, 8) + "01"; // first day of the current month, YYYY-MM-01
   const r = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
   const nativeMicros = (r[0] && r[0].metrics && r[0].metrics.costMicros) || 0;
-  const rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
+  let rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
+  // Rate service unreachable: use the newest rate saved in the last 31 days rather than leaving the
+  // monthly stop unable to compare (and so switched off) until the service returns.
+  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = f ? ((await f.db.collection(COL.state).doc("fxRates").get()).data() || {}) : {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+    const k = Object.keys(saved).filter(k => k >= min && k <= acct + ":" + end && Number(saved[k]) > 0).sort().pop(); if (k) rate = Number(saved[k]); } catch (e) {} }
   const mtd = rate != null ? fromMicros(nativeMicros) * rate : fromMicros(nativeMicros);
   return { mtd, mtdNative: fromMicros(nativeMicros), fxIncomplete: rate == null, start, end };
 }
@@ -5421,19 +5488,22 @@ async function monthlySpendGuard({ ctrl } = {}) {
   if(fxIncomplete)throw new Error("Monthly USD threshold cannot be compared until the account exchange rate is available.");
   const pct = +(mtd / limit * 100).toFixed(1);
   if (mtd < limit) return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: false, window: { start, end } };
-  let paused = 0;
+  // A failed pause is recorded, never swallowed; the hourly check keeps retrying it (the kick runs
+  // this guard even while scheduled automation is off). Nothing left to pause: nothing to record.
+  let paused = 0, pauseError = null;
   try {
     const rows = await gaql(`SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`);
     const ops = rows.map(r => ({ update: { resourceName: (r.campaign && r.campaign.resourceName) || `customers/${CID}/campaigns/${r.campaign.id}`, status: "PAUSED" }, updateMask: "status" }));
-    if (ops.length && !ctrl.dryRun) await mutate("campaigns", ops, { ctrl, label: "monthlyCapPause" });
+    if (!ops.length) return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused: 0, alreadyPaused: true, dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) await mutate("campaigns", ops, { ctrl, label: "monthlyCapPause" });
     paused = ops.length;
-  } catch (e) {}
+  } catch (e) { pauseError = String((e && e.message) || e).slice(0, 300); }
   const f = fb();
   if (f && !ctrl.dryRun) {
-    try { await f.db.collection(COL.control).doc("control").set({ enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `monthly cap reached: ${CURRENCY}${mtd.toFixed(2)} \u2265 ${CURRENCY}${limit}` }, { merge: true }); } catch (e) {}
+    try { await f.db.collection(COL.control).doc("control").set({ enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `monthly cap reached: USD ${mtd.toFixed(2)} \u2265 USD ${limit}` + (pauseError ? ` \u2014 pausing campaigns FAILED and will be retried hourly: ${pauseError}` : "") }, { merge: true }); } catch (e) {}
   }
-  await ledger({ kind: "monthlySpendGuard", mtd: +mtd.toFixed(2), limit, paused, validateOnly: !!ctrl.dryRun });
-  return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused, dryRun: !!ctrl.dryRun };
+  await ledger({ kind: "monthlySpendGuard", mtd: +mtd.toFixed(2), limit, paused, ok: !pauseError, error: pauseError, validateOnly: !!ctrl.dryRun });
+  return { ok: !pauseError, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused, dryRun: !!ctrl.dryRun, ...(pauseError ? { pauseError, error: "Monthly stop reached but pausing campaigns failed: " + pauseError } : {}) };
 }
 
 /* ===================== Live Shopify collections ===================== */
@@ -6047,6 +6117,7 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
+  if (status === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true }); // daily ceiling + monthly stop
   const resourceName = `customers/${CID}/campaigns/${id}`;
   // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
   // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
@@ -6142,6 +6213,9 @@ async function setCampaignEndDate(campaignId, { endDate, addDays, ctrl } = {}) {
     if (cur.startDate && target < cur.startDate) throw new Error(`End date ${target} is before this campaign's start date (${cur.startDate}).`);
     if (cur.endDate === target) return { ok: true, id, unchanged: true, endDate: target, previousEndDate: cur.endDate, name: cur.name };
   }
+  // An ENABLED campaign that has ENDED starts spending again the moment its end date moves out:
+  // the same daily ceiling and monthly stop checks as enabling it. (A serving one adds nothing.)
+  if (String(cur.status).toUpperCase() === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true });
 
   // Write it. Same field-name fallback as the reads above.
   let applied = null, lastErr = null;
@@ -6327,9 +6401,12 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
   ctrl = ctrl || (await control());
   const amt = Number(dailyBudget);
   if (!(amt > 0)) throw new Error("budget must be a positive number");
+  const cur = ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""; // budgets are in the account currency
   if (ctrl.maxDailyBudgetTotal && amt > ctrl.maxDailyBudgetTotal)
-    throw new Error(`budget ${CURRENCY}${amt} exceeds your account ceiling ${CURRENCY}${ctrl.maxDailyBudgetTotal}`);
-  let res = budgetRes || await campaignBudgetRes(campaignId);
+    throw new Error(`budget ${cur}${amt} exceeds your account ceiling ${cur}${ctrl.maxDailyBudgetTotal}`);
+  // Resolved here, never from the browser's (possibly stale) budgetRes, and checked as a total: the
+  // new amount must keep every spendable budget under the ceiling (and the monthly stop unreached).
+  let res = await _assertSpendLimits(campaignId, { ctrl, amount: amt });
   if (!res) throw new Error("could not resolve this campaign's budget resource");
   const op = { update: { resourceName: res, amountMicros: micros(amt) }, updateMask: "amount_micros" };
   const mres = await mutate("campaignBudgets", [op], { ctrl, label: "setBudget:" + amt });
@@ -7202,12 +7279,12 @@ async function dailyStats({ start, end, campaignId } = {}) {
                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM ad_group_ad WHERE ${RANGE}`),
     optional("keywords", `SELECT campaign.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM keyword_view WHERE ${RANGE}`),
     // PMax equivalents. Asset groups are the closest thing PMax has to "ads" (each carries its own
     // creative set + ad strength); asset_group supports metrics + date segmentation in v24.
     optional("assetGroups", `SELECT campaign.id, asset_group.id, asset_group.name, asset_group.status, asset_group.ad_strength,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM asset_group WHERE ${RANGE}`),
     // Per-product performance (feed-based PMax serves from Merchant Center products) — the PMax
     // analog of the Search campaigns' "Top keywords" chips.
@@ -7223,7 +7300,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     // any product (text/display/video surfaces) — not everything, but a genuine breakdown instead
     // of an unexplained remainder.
     optional("channels", `SELECT campaign.id, segments.ad_network_type,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM campaign WHERE ${RANGE} AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'`)
   ]);
 
@@ -7282,7 +7359,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const kwRows = kws.map(r => {
     const m = r.metrics || {}, k = ((r.adGroupCriterion || {}).keyword) || {};
     return { campaignId: String((r.campaign || {}).id), text: k.text || "", match: k.matchType || "", status: (r.adGroupCriterion || {}).status || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).filter(k => k.impr > 0 || k.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   // PMax rows (same deliberate native-currency caveat as ads/keywords above — no per-day segment here)
@@ -7290,7 +7367,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const m = r.metrics || {}, g = r.assetGroup || {};
     return { campaignId: String((r.campaign || {}).id), agId: String(g.id || ""), name: g.name || "(asset group)",
              status: g.status || null, strength: g.adStrength || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   const productPurchaseAvailable = !!coverage.productPurchases.ok, productCdAvailable = !!productData.cd;
@@ -7337,7 +7414,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
   // an unexplained remainder. MIXED means the click predates the Jun-1-2025 v23 cutover.
+  // v24 AdNetworkType reports YouTube as YOUTUBE (plus GOOGLE_TV and, for older rows, GOOGLE_OWNED_CHANNELS).
   const CHANNEL_LABEL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+    YOUTUBE: "YouTube", GOOGLE_TV: "Google TV", GOOGLE_OWNED_CHANNELS: "Google-owned channels",
     YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
     GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
     MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
@@ -7347,10 +7426,10 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const raw = (r.segments || {}).adNetworkType || "UNKNOWN";
     const list = channelTotals[cid] || (channelTotals[cid] = []);
     let row = list.find(x => x.raw === raw);
-    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
-    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 }; list.push(row); }
+    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0; row.value += +m.conversionsValue || 0;
   });
-  Object.values(channelTotals).forEach(list => { list.forEach(r => r.cost = +r.cost.toFixed(2)); list.sort((a, b) => b.clicks - a.clicks); });
+  Object.values(channelTotals).forEach(list => { list.forEach(r => { r.cost = +r.cost.toFixed(2); r.value = +r.value.toFixed(2); }); list.sort((a, b) => b.clicks - a.clicks); });
   // Exact product population totals, before any UI search/sort/page. Google product
   // reports count advertised offers; a purchase attributed to an offer does not prove
   // that same offer was the item bought. Preserve that distinction in the response.
@@ -9051,18 +9130,19 @@ async function campaignTimeline({ id } = {}) {
       });
     } catch (e) {}
   }
-  const days = [];
+  // Same money rules as metricsRange: one currency for the whole strip (a day without an exchange
+  // rate keeps every day in the account currency), and no conversion-date figures when Google did
+  // not supply them, rather than click-date figures relabelled.
+  const fx = await _reportRates(dayRows, dayRows.length ? await _accountCurrency() : "USD"), days = [];
   for (const r of dayRows) {
-    const cv = _rowConv(r.metrics);
-    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = cv.value;
-    const rate = await _fxRateToUsd(r.segments.date);
-    days.push({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
+    const cv = _rowConv(r.metrics), date = _dateOnly(r.segments.date), rate = fx.rate(date);
+    days.push({ date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
       conversions: cv.conv,
-      conversionsCd: dayCd ? cv.convCd : cv.conv,
-      value: rate != null ? valueNative * rate : valueNative,
-      valueCd: dayCd ? (rate != null ? cv.valueCd * rate : cv.valueCd) : (rate != null ? valueNative * rate : valueNative),
-      cost: rate != null ? costNative * rate : costNative,
-      fxIncomplete: rate == null });
+      conversionsCd: dayCd ? cv.convCd : null,
+      value: cv.value * rate,
+      valueCd: dayCd ? cv.valueCd * rate : null,
+      cost: fromMicros(r.metrics.costMicros || 0) * rate,
+      fxIncomplete: fx.fxIncomplete });
   }
   const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
   const reasons = (c.primaryStatusReasons || []).map(String);
@@ -9079,12 +9159,12 @@ async function campaignTimeline({ id } = {}) {
     { key: "learning", label: "Bid strategy", state: learning ? "active" : (notServing ? "pending" : "done"),
       detail: learning ? "Learning — needs ~2-3 weeks or ~30 conversions to stabilize" : (notServing ? null : "Learned / stable") },
     { key: "conversions", label: "Conversion value", state: totals.conversions > 0 ? "done" : (totals.clicks > 10 ? "warn" : "pending"),
-      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · $${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
+      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · ${fx.currency} ${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
     { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
       detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
   ];
   return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
-    steps, adStrength, days, totals, fetchedAt: new Date().toISOString() };
+    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString() };
 }
 /* ====================== Reviewed creative production ======================
  * Drafts are immutable at approval: the review hashes the payload and every
@@ -9174,8 +9254,9 @@ function _putCreativeCopy(payload, groups) {
     }
   }
 }
-// Outlined brand lettering renders consistently on servers without installed fonts.
-function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><rect width="600" height="600" fill="#fffefb"/><path fill="#221f1b" d="M147.142578125 283.962890625H158.5302734375Q165.3857421875 283.962890625 168.546875 280.9921875Q171.7080078125 278.021484375 171.7080078125 271.546875Q171.7080078125 265.1103515625 168.56591796875 262.15869140625Q165.423828125 259.20703125 158.5302734375 259.20703125H147.142578125ZM147.142578125 255.169921875H156.81640625Q163.0625 255.169921875 165.93798828125 252.7705078125Q168.8134765625 250.37109375 168.8134765625 245.19140625Q168.8134765625 239.9736328125 165.93798828125 237.59326171875Q163.0625 235.212890625 156.81640625 235.212890625H147.142578125ZM132.1748046875 288.0V283.962890625H139.4111328125V235.212890625H132.1748046875V231.1376953125H160.244140625Q168.8515625 231.1376953125 173.21240234375 234.66064453125Q177.5732421875 238.18359375 177.5732421875 245.19140625Q177.5732421875 250.2568359375 174.54541015625 253.265625Q171.517578125 256.2744140625 165.6904296875 256.9599609375Q172.9267578125 257.8740234375 176.67822265625 261.58740234375Q180.4296875 265.30078125 180.4296875 271.546875Q180.4296875 280.001953125 175.09765625 284.0009765625Q169.765625 288.0 158.4541015625 288.0ZM229.552734375 259.7783203125Q232.21875 260.501953125 234.14208984375 262.23486328125Q236.0654296875 263.9677734375 237.5888671875 267.0908203125L245.853515625 283.962890625H252.78515625V288.0H239.37890625L230.5048828125 269.9091796875Q227.953125 264.6533203125 225.8203125 263.11083984375Q223.6875 261.568359375 219.955078125 261.568359375H211.4619140625V283.962890625H219.498046875V288.0H196.494140625V283.962890625H203.73046875V235.212890625H196.494140625V231.1376953125H225.3251953125Q233.6279296875 231.1376953125 238.14111328125 235.0986328125Q242.654296875 239.0595703125 242.654296875 246.333984375Q242.654296875 252.19921875 239.35986328125 255.56982421875Q236.0654296875 258.9404296875 229.552734375 259.7783203125ZM211.4619140625 257.4931640625H222.697265625Q228.4482421875 257.4931640625 231.1904296875 254.77001953125Q233.9326171875 252.046875 233.9326171875 246.333984375Q233.9326171875 240.62109375 231.1904296875 237.9169921875Q228.4482421875 235.212890625 222.697265625 235.212890625H211.4619140625ZM277.1904296875 283.962890625H284.4267578125V288.0H262.22265625V283.962890625H269.458984375V235.212890625H262.22265625V231.1376953125H284.4267578125V235.212890625H277.1904296875ZM310.6220703125 288.0V283.962890625H317.896484375V235.669921875H301.1767578125V244.5439453125H296.4921875V231.1376953125H346.994140625V244.5439453125H342.3095703125V235.669921875H325.58984375V283.962890625H332.8642578125V288.0ZM359.0595703125 288.0V283.962890625H366.2958984375V235.212890625H359.0595703125V231.1376953125H404.8388671875V243.7822265625H400.154296875V235.822265625H374.02734375V254.865234375H392.6513671875V247.7431640625H397.3359375V266.6337890625H392.6513671875V259.51171875H374.02734375V283.3154296875H400.763671875V275.35546875H405.4482421875V288.0ZM425.9306640625 285.2578125V272.30859375L430.310546875 272.3466796875Q430.5009765625 278.8212890625 434.06201171875 281.92529296875Q437.623046875 285.029296875 444.8974609375 285.029296875Q451.6767578125 285.029296875 455.23779296875 282.34423828125Q458.798828125 279.6591796875 458.798828125 274.517578125Q458.798828125 270.404296875 456.64697265625 268.1953125Q454.4951171875 265.986328125 447.5634765625 263.8916015625L440.060546875 261.64453125Q431.91015625 259.1689453125 428.57763671875 255.474609375Q425.2451171875 251.7802734375 425.2451171875 245.34375Q425.2451171875 238.107421875 430.38671875 234.1083984375Q435.5283203125 230.109375 444.8212890625 230.109375Q448.7822265625 230.109375 453.5048828125 230.96630859375Q458.2275390625 231.8232421875 463.5595703125 233.4609375V245.572265625H459.255859375Q458.6083984375 239.5546875 455.23779296875 236.86962890625Q451.8671875 234.1845703125 444.9736328125 234.1845703125Q438.9560546875 234.1845703125 435.81396484375 236.64111328125Q432.671875 239.09765625 432.671875 243.7822265625Q432.671875 247.857421875 435.033203125 250.1806640625Q437.39453125 252.50390625 445.0498046875 254.7890625L452.095703125 256.8837890625Q459.8271484375 259.20703125 463.12158203125 262.80615234375Q466.416015625 266.4052734375 466.416015625 272.4609375Q466.416015625 280.7255859375 461.1220703125 284.9150390625Q455.828125 289.1044921875 445.3544921875 289.1044921875Q440.669921875 289.1044921875 435.81396484375 288.15234375Q430.9580078125 287.2001953125 425.9306640625 285.2578125Z"/><path fill="#69563b" d="M216.11279296875 325.31689453125H218.77587890625V343.62890625Q218.77587890625 347.1884765625 217.424560546875 348.796875Q216.0732421875 350.4052734375 213.08056640625 350.4052734375H212.0654296875V348.1640625H212.89599609375Q214.66259765625 348.1640625 215.3876953125 347.17529296875Q216.11279296875 346.1865234375 216.11279296875 343.62890625ZM233.07568359375 325.31689453125H245.52099609375V327.55810546875H235.73876953125V333.38525390625H245.1123046875V335.62646484375H235.73876953125V342.7587890625H245.75830078125V345.0H233.07568359375ZM257.3818359375 325.31689453125H260.0712890625L264.2109375 341.95458984375L268.33740234375 325.31689453125H271.330078125L275.4697265625 341.95458984375L279.59619140625 325.31689453125H282.298828125L277.35498046875 345.0H274.00634765625L269.853515625 327.9140625L265.6611328125 345.0H262.3125ZM294.83203125 325.31689453125H307.27734375V327.55810546875H297.4951171875V333.38525390625H306.86865234375V335.62646484375H297.4951171875V342.7587890625H307.5146484375V345.0H294.83203125ZM320.8916015625 325.31689453125H323.5546875V342.7587890625H333.13916015625V345.0H320.8916015625ZM354.26806640625 335.771484375Q355.125 336.0615234375 355.935791015625 337.0107421875Q356.74658203125 337.9599609375 357.56396484375 339.62109375L360.2666015625 345.0H357.40576171875L354.8876953125 339.95068359375Q353.912109375 337.97314453125 352.995849609375 337.3271484375Q352.07958984375 336.68115234375 350.49755859375 336.68115234375H347.59716796875V345.0H344.93408203125V325.31689453125H350.94580078125Q354.32080078125 325.31689453125 355.98193359375 326.7275390625Q357.64306640625 328.13818359375 357.64306640625 330.98583984375Q357.64306640625 332.8447265625 356.779541015625 334.07080078125Q355.916015625 335.296875 354.26806640625 335.771484375ZM347.59716796875 327.50537109375V334.49267578125H350.94580078125Q352.87060546875 334.49267578125 353.852783203125 333.602783203125Q354.8349609375 332.712890625 354.8349609375 330.98583984375Q354.8349609375 329.2587890625 353.852783203125 328.382080078125Q352.87060546875 327.50537109375 350.94580078125 327.50537109375ZM369.99169921875 325.31689453125H372.8525390625L378.310546875 333.41162109375L383.72900390625 325.31689453125H386.58984375L379.62890625 335.62646484375V345.0H376.95263671875V335.62646484375Z"/></svg>';}
+// Google’s LOGO slot shows the official Brites square logo, never redrawn lettering (brites-brand-assets).
+// White canvas keeps the black script visible on dark placements; 600x600 matches every caller’s saved size.
+function _brandWordmarkSvg(){return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="600" height="600" viewBox="0 0 1024 1024"><rect width="1024" height="1024" fill="#ffffff"/><image width="1024" height="1024" xlink:href="'+require('../../brites-brand-assets').dataUrl('brites_brand_square')+'"/></svg>';}
 async function _saveCreativeAsset(id, bytes, kind, info={}) {
   const f=fb();if(!f)throw new Error("Creative storage is unavailable.");
   const bucket=f.admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);
@@ -9393,17 +9474,17 @@ async function materializeReviewedCreative(it) {
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
   const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
-  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&o.adGroupAssetOperation.create.fieldType==="IMAGE"));
+  const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&["AD_IMAGE","IMAGE"].includes(o.adGroupAssetOperation.create.fieldType)));
   clean.unshift(...imageBuild.ops);
   for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
-  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"IMAGE"}}}));
+  for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"AD_IMAGE"}}}));
   return clean;
 }
 
 let _groupsService=null;
 function _groupService(){
   _designEngine();
-  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
   return _groupsService;
 }
 async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
@@ -9898,7 +9979,7 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   }
   return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,shapeRows,shapeError,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,..._assetShape(a),status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
-    shapeNote:'Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
+    shapeScope:'campaign',shapeNote:'Covers the whole campaign, not only this group: the shape report is read per campaign. Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result,id,sourceHash}){
   if(!_copyValid(result.copy,true))throw new Error('Complete the headlines and descriptions before publication.');
