@@ -130,12 +130,13 @@ async function sweep(jobs, retryAnswers) {
 
   // The dashboard names the reason and does not offer a retry that cannot run.
   const render = cut(page, "    function _renderSessionBlock(session) {", "    async function _cancelSession(sessionId) {");
+const _awaitingStallRestart = vm.runInNewContext(`${cut(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {")}; _awaitingStallRestart`, {});
   const html = vm.runInNewContext(`${render}; _renderSessionBlock({ sessionId: "sess_1", batches, earliest: Date.now(), latest: Date.now() })`, {
     batches: [{ batchName: "batch_limit", displayName: "lg1-Beady_Necklace-1sets-x-part1of1", state: "JOB_STATE_FAILED",
       setsCount: 1, collected: false, retryRequested: false, retryStatus: "capacity_refused",
       providerError: REFUSED, retryError: "Stopped after 12 token-limit refusals from OpenAI; this set will not retry automatically." }],
     Date, _batchRetryLimit: 30, _batchSweepInfo: null, _batchNextSweepAt: null,
-    _normBatchState: (x) => x, _batchSafeText: (x) => String(x), _formatDuration: () => "1m",
+    _normBatchState: (x) => x, _awaitingStallRestart, _batchSafeText: (x) => String(x), _formatDuration: () => "1m",
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }), DEFAULT_IMAGE_MODEL: "m",
   });
   const summary = html.slice(0, html.indexOf('<details class="batch-details"'));

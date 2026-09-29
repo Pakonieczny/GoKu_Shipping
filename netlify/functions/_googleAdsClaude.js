@@ -21,6 +21,7 @@ const PRICE = Object.freeze({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const RETRY_STATUS = [429, 500, 502, 503, 504, 529];
 const RETRY_BASE_MS = 1250, RETRY_MAX_MS = 12000;
+const MIN_ATTEMPT_MS = 1000; // a retry or continuation needs at least this long before timeoutMs ends
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const MAX_IMAGE_BASE64 = 5 * 1024 * 1024;
 
@@ -224,13 +225,18 @@ function parseJsonText(text) {
   }
   return undefined;
 }
+// Web pages behind an answer: the pages it cites first (cited: true), then the
+// other search results, so the cap never drops a page the answer relied on.
 function sourcesOf(message) {
-  const seen = new Map();
-  for (const b of (message && message.content) || []) {
-    if (b && b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (r && r.url && !seen.has(r.url)) seen.set(r.url, { url: r.url, title: r.title || '', pageAge: r.page_age || null });
-    if (b && b.type === 'text' && Array.isArray(b.citations)) for (const c of b.citations) if (c && c.url && !seen.has(c.url)) seen.set(c.url, { url: c.url, title: c.title || '', pageAge: null });
+  const seen = new Map(), blocks = (message && message.content) || [];
+  for (const b of blocks) if (b && b.type === 'text' && Array.isArray(b.citations)) for (const c of b.citations) if (c && c.url && !seen.has(c.url)) seen.set(c.url, { url: c.url, title: c.title || '', pageAge: null, cited: true });
+  for (const b of blocks) if (b && b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) {
+    if (!r || !r.url) continue;
+    const s = seen.get(r.url);
+    if (!s) seen.set(r.url, { url: r.url, title: r.title || '', pageAge: r.page_age || null });
+    else if (!s.pageAge && r.page_age) s.pageAge = r.page_age;
   }
-  return [...seen.values()].slice(0, 40);
+  return [...seen.values()].slice(0, 60);
 }
 
 // ---------------------------------------------------------------- client
@@ -269,7 +275,8 @@ function createClaudeClient(deps) {
           break;
         }
         case 'message_delta':
-          if (message) { Object.assign(message, evt.delta || {}); if (evt.usage) message.usage = { ...message.usage, ...evt.usage }; }
+          // Whole-message totals; a null counter means "not reported", never zero.
+          if (message) { Object.assign(message, evt.delta || {}); for (const [k, v] of Object.entries(evt.usage || {})) if (v != null) message.usage[k] = v; }
           break;
         case 'message_stop': done = true; break;
         case 'error': {
@@ -308,6 +315,9 @@ function createClaudeClient(deps) {
 
   // One request, streamed and retried on overload, rate limits and dropped
   // connections. pause_turn (a long server-side search) is resumed until done.
+  // retryUnknown:false is for paid requests that must not run twice: only an
+  // error status (rejected: nothing generated) is retried; a dropped or failed
+  // stream may already be billed, so it is thrown for the caller to settle.
   async function message(body, opts) {
     const o = opts || {};
     const apiKey = env.ANTHROPIC_API_KEY;
@@ -320,15 +330,18 @@ function createClaudeClient(deps) {
     const headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': API_VERSION };
     const total = zeroUsage(), prior = [];
     let messages = (payload.messages || []).slice(), last = null;
+    // timeoutMs bounds the whole call: its retries and pause_turn continuations share it.
+    const deadline = o.timeoutMs ? Date.now() + Number(o.timeoutMs) : 0;
     for (let turn = 0; turn <= maxContinuations; turn++) {
       let attempt = 0, result = null;
       while (!result) {
         attempt++;
-        const deadline = o.timeoutMs ? Date.now() + Number(o.timeoutMs) : 0;
         const controller = typeof AbortController === 'function' ? new AbortController() : null;
-        const timer = deadline && controller ? setTimeout(() => controller.abort(), Number(o.timeoutMs)) : null;
+        const timer = deadline && controller ? setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now())) : null;
         try {
-          const res = await fetch(API_URL, { method: 'POST', headers, body: JSON.stringify({ ...payload, messages }), ...(controller ? { signal: controller.signal } : {}) });
+          // No response headers within idleMs is a stall too, handled like one mid-stream.
+          const waiting = idleMs && controller ? setTimeout(() => controller.abort(), idleMs) : null;
+          let res; try { res = await fetch(API_URL, { method: 'POST', headers, body: JSON.stringify({ ...payload, messages }), ...(controller ? { signal: controller.signal } : {}) }); } finally { clearTimeout(waiting); }
           if (!res.ok) {
             const raw = await res.text().catch(() => '');
             let data = null; try { data = JSON.parse(raw); } catch (_) { /* keep the raw text */ }
@@ -336,7 +349,7 @@ function createClaudeClient(deps) {
             throw claudeError('Claude request failed (' + res.status + '): ' + String(err.message || raw || res.statusText || '').slice(0, 400), {
               status: res.status, type: err.type || null, requestId: res.headers && res.headers.get ? res.headers.get('request-id') : null,
               retryAfter: res.headers && res.headers.get ? res.headers.get('retry-after') : null,
-              retryable: isRetryable(res.status, err.message || raw), definiteResponse: res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429
+              retryable: isRetryable(res.status, err.message || raw), definiteResponse: res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429, rejected: true
             });
           }
           result = await readStream(res, { idleMs, deadline, controller });
@@ -345,8 +358,10 @@ function createClaudeClient(deps) {
           const timedOut = aborted && deadline && Date.now() >= deadline - 50;
           if (timedOut || (error && error.code === 'CLAUDE_TIMEOUT')) throw claudeError('Claude did not finish within ' + Math.round(Number(o.timeoutMs) / 1000) + ' seconds.', { code: 'CLAUDE_TIMEOUT', cause: error });
           const retryable = aborted || (error && error.retryable) || (error && error.status == null && isRetryable(null, error.message));
-          if (!retryable || attempt > retries) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
+          const mayBeBilled = o.retryUnknown === false && !(error && error.rejected);
+          if (!retryable || attempt > retries || mayBeBilled) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
           const wait = retryDelayMs(attempt, error && error.retryAfter);
+          if (deadline && Date.now() + wait + MIN_ATTEMPT_MS > deadline) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
           log(`[claude] retry ${attempt}/${retries} after ${error && (error.status || error.code || error.message)}; waiting ${wait}ms`);
           await sleep(wait);
         } finally { if (timer) clearTimeout(timer); }
@@ -354,6 +369,7 @@ function createClaudeClient(deps) {
       addUsage(total, result.usage);
       last = result;
       if (result.stop_reason !== 'pause_turn' || turn === maxContinuations) break;
+      if (deadline && Date.now() + MIN_ATTEMPT_MS > deadline) throw claudeError('Claude did not finish within ' + Math.round(Number(o.timeoutMs) / 1000) + ' seconds.', { code: 'CLAUDE_TIMEOUT', usage: total, costUsd: estimateCostUsd(total) });
       prior.push(...result.content);
       messages = messages.concat([{ role: 'assistant', content: result.content }]);
     }
@@ -390,17 +406,18 @@ function createClaudeClient(deps) {
     if (msg.stop_reason === 'refusal') throw claudeError('Claude declined this request' + (msg.stop_details && msg.stop_details.category ? ' (' + msg.stop_details.category + ')' : '') + '.', { code: 'CLAUDE_REFUSAL', definiteResponse: true, usage: msg.usage, costUsd: msg.costUsd });
     let text = finalText(msg), data = parseJsonText(text);
     if (data === undefined && msg.stop_reason === 'max_tokens' && o.retryOnTruncation !== false && body.max_tokens < 64000) {
-      const firstCost = msg.costUsd || 0;
+      const firstCost = msg.costUsd || 0, firstUsage = msg.usage;
       body.max_tokens = clampTokens(Math.min(64000, body.max_tokens * 2));
       body.output_config = { ...body.output_config, effort: lowerEffort(body.output_config.effort) };
       msg = await message(body, o);
       msg.costUsd = Math.round(((msg.costUsd || 0) + firstCost) * 1e6) / 1e6;
+      msg.usage = addUsage(addUsage(zeroUsage(), firstUsage), msg.usage); // both passes are billed, searches included
       if (msg.stop_reason === 'refusal') throw claudeError('Claude declined this request.', { code: 'CLAUDE_REFUSAL', definiteResponse: true });
       text = finalText(msg); data = parseJsonText(text);
     }
     if (data === undefined) {
       const u = msg.usage || {};
-      throw claudeError(`Claude returned unparseable JSON (stop: ${msg.stop_reason || '?'}, ${text.length} chars; input ${u.input_tokens || 0} tok, output ${u.output_tokens || 0} tok, effort ${body.output_config.effort}).`, { code: 'CLAUDE_BAD_JSON', text, stopReason: msg.stop_reason, usage: msg.usage, costUsd: msg.costUsd });
+      throw claudeError(`Claude returned unparseable JSON (stop: ${msg.stop_reason || '?'}, ${text.length} chars; input ${u.input_tokens || 0} tok, output ${u.output_tokens || 0} tok, effort ${body.output_config.effort}).`, { code: 'CLAUDE_BAD_JSON', text, stopReason: msg.stop_reason, usage: msg.usage, costUsd: msg.costUsd, sources: sourcesOf(msg) });
     }
     return { data, text, message: msg, usage: msg.usage, costUsd: msg.costUsd, model: msg.model || MODEL, sources: sourcesOf(msg) };
   }

@@ -54,9 +54,12 @@ function aggregateOrderEvidence({ rows = [], days = 30, startAt, endAt, complete
     const src=text(order.source||"unknown")+" / "+text(order.medium||"unknown"),so=sources.get(src)||{source:src,orders:0,revenue:0,merchantOrganic:0};so.orders++;so.revenue+=value;so.merchantOrganic+=Number(traffic==="merchant_organic");sources.set(src,so);
     const rawItems=(Array.isArray(order.items)&&order.items.length?order.items:(order.products||[]).map(title=>({title,qty:1}))).map(normalizeItem).filter(Boolean);
     const knownRevenue=rawItems.reduce((n,it)=>n+(it.lineRevenue==null?0:Math.max(0,Number(it.lineRevenue)-(Number(it.refundedRevenue)||0))),0),unknownUnits=Math.max(1,rawItems.filter(it=>it.lineRevenue==null).reduce((n,it)=>n+Math.max(0,qtyOf(it)-(Number(it.refundedQty)||0)),0));
+    // Lines stored before they carried order-level discounts can add up to more than the
+    // order brought in; no order credits its products with more than that.
+    const lineScale=knownRevenue>value&&knownRevenue>0?value/knownRevenue:1;
     // One order may carry the same variant in multiple lines. Count it once for
     // that product, while retaining the sum of quantities and line revenue.
-    const items=new Map();for(const item of rawItems){const units=Math.max(0,qtyOf(item)-(Number(item.refundedQty)||0));const itemValue=!currencyMatches?0:item.lineRevenue!=null?Math.max(0,Number(item.lineRevenue)-(Number(item.refundedRevenue)||0)):Math.max(0,value-knownRevenue)*units/unknownUnits;if(units<=0&&itemValue<=0)continue;const key=keyOf(item);if(items.has(key)){const old=items.get(key);old.units+=units;old.value+=itemValue;}else items.set(key,{item,units,value:itemValue});}
+    const items=new Map();for(const item of rawItems){const units=Math.max(0,qtyOf(item)-(Number(item.refundedQty)||0));const itemValue=!currencyMatches?0:item.lineRevenue!=null?Math.max(0,Number(item.lineRevenue)-(Number(item.refundedRevenue)||0))*lineScale:Math.max(0,value-knownRevenue)*units/unknownUnits;if(units<=0&&itemValue<=0)continue;const key=keyOf(item);if(items.has(key)){const old=items.get(key);old.units+=units;old.value+=itemValue;}else items.set(key,{item,units,value:itemValue});}
     for(const {item,units,value:itemValue} of items.values()){addProduct(all,item,itemValue,traffic,purchaseKnown,month,units);if(traffic==="organic"||traffic==="merchant_organic")addProduct(byChannel.organic,item,itemValue,traffic,purchaseKnown,month,units);if(traffic==="merchant_organic")addProduct(byChannel.merchant,item,itemValue,traffic,purchaseKnown,month,units);if(traffic==="google_paid"||traffic==="other_paid")addProduct(byChannel.paid,item,itemValue,traffic,purchaseKnown,month,units);if(traffic==="direct_or_unknown"||traffic==="other_nonpaid_or_unknown")addProduct(byChannel.unknown,item,itemValue,traffic,purchaseKnown,month,units);}
   }
   const rank=map=>[...map.values()].map(p=>({...p,revenue:round(p.revenue),estimatedProfit:round(p.estimatedProfit),monthly:Object.values(p.monthly).map(m=>({...m,revenue:round(m.revenue)})).sort((a,b)=>a.month.localeCompare(b.month))})).sort((a,b)=>b.orders-a.orders||b.units-a.units||b.revenue-a.revenue);
@@ -86,4 +89,16 @@ function exactProductMatches(offer,row){
   if(productId&&row.productId)return normalize(productId)===normalize(row.productId);
   return false;
 }
-module.exports={aggregateOrderEvidence,compactPeriod,exactProductMatches,classifyTraffic};
+// Google appends gad_campaignid to every ad click, and this app's own final-URL
+// suffixes put the campaign (Studio PMax) or ad group (Search) in utm_content when
+// utm_campaign is not an ID. A Shopping feed link keeps its own utm_* ahead of the
+// suffix, so the suffix's value is the last one. Fills only IDs still empty.
+function clickAttribution(url,attributes,base){
+  let query;try{query=new URL(url||"","https://invalid.example").searchParams;}catch(_){query=new URLSearchParams();}
+  const list=Array.isArray(attributes)?attributes:[],get=k=>text((list.find(a=>a&&text(a.key||a.name).toLowerCase()===k)||{}).value||query.getAll(k).pop());
+  const id=v=>/^\d{5,}$/.test(v)?v:null,google=get("utm_source").toLowerCase()==="google",medium=get("utm_medium").toLowerCase(),content=id(get("utm_content")),out=Object.assign({},base);
+  if(!out.campaignId)out.campaignId=(google?id(get("utm_campaign")):null)||id(get("gad_campaignid"))||(google&&medium==="paid_pmax"?content:null);
+  if(!out.adGroupId)out.adGroupId=google&&medium==="paid_search"?content:null;
+  return out;
+}
+module.exports={aggregateOrderEvidence,compactPeriod,exactProductMatches,classifyTraffic,clickAttribution};

@@ -78,6 +78,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     kind: "batch_sweep", getDb: () => db,
     admissionControl: () => ({ reconcile: async () => {} }),
     quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
+    neverStarted: require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" },
       FieldValue: { serverTimestamp: () => clock } } },

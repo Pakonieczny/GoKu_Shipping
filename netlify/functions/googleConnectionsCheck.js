@@ -3,14 +3,14 @@
 // Verifies EVERY Google connection this application depends on, in one read-only
 // pass, against the live account:
 //
-//   https://goldenspike.app/.netlify/functions/googleConnectionsCheck?key=<EDIT_PASSCODE>
+//   https://goldenspike.app/.netlify/functions/googleConnectionsCheck?key=<passcode>
 //   …&format=json                     machine-readable
 //   …&write=1                         adds a validateOnly mutate probe (Google
 //                                     documents validateOnly as non-mutating;
 //                                     it is still opt-in, so the default run
 //                                     cannot touch the account at all)
 // It shows account IDs and credential shapes and spends API quota, so it needs
-// the passcode, and refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
+// the passcode, and refuses outright while no passcode is set (_adsCheckGate.js).
 //
 // What it proves, and what it deliberately does not:
 //   · A green row means Google answered. It does not mean an ad is serving.
@@ -472,8 +472,8 @@ function html(result) {
 }
 
 exports.handler = async (event) => {
-  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while EDIT_PASSCODE is unset.
-  const refused = refuse(event, "the Google connections check");
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, "the Google connections check");
   if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
   let result;

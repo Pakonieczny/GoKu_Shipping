@@ -22,6 +22,21 @@ const UNDIAGNOSED_ERROR = /^\s*There was a problem with the request\.?\s*$/i;
 // request the application no longer sends.
 const CORRECTED_REFUSALS = [{ pattern: /event_source: Required field is missing/i, supplied: event => !!event.eventSource }];
 const CHECK_DELAY = 30 * 60 * 1000;
+// Google: diagnostics "may take up to 24 hours". A receipt older than this that
+// is still unconfirmed is stuck, not slow.
+const PROCESSING_WINDOW = 24 * 3600 * 1000;
+// Data Manager's ConsentStatus is CONSENT_GRANTED/CONSENT_DENIED; the Google Ads
+// API spells it GRANTED/DENIED. Either stored form is sent in Data Manager's.
+// https://developers.google.com/data-manager/api/reference/rest/v1/Consent
+const DM_CONSENT = { GRANTED: 'CONSENT_GRANTED', DENIED: 'CONSENT_DENIED', CONSENT_GRANTED: 'CONSENT_GRANTED', CONSENT_DENIED: 'CONSENT_DENIED' };
+// Google's EU user consent policy covers the EEA, the UK and Switzerland: a
+// conversion from those buyers without ad_user_data consent is not reported.
+const CONSENT_REGION = new Set('AT BE BG HR CY CZ DK EE FI FR DE GR HU IE IT LV LT LU MT NL PL PT RO SK SI ES SE IS LI NO GB CH'.split(' '));
+const needsConsent = row => CONSENT_REGION.has(String(row.buyerCountry || '').toUpperCase()) && !DM_CONSENT[String(row.consent?.adUserData || '').toUpperCase()];
+// The value Google should hold is the sale net of refunds already recorded when
+// it is sent; later refunds are conversion adjustments.
+const netValue = row => Math.round(Math.max(0, Number(row.value) - Math.max(0, Number(row.refundedTotal) || 0)) * 100) / 100;
+const fullyRefunded = row => Number(row.value) > 0 && netValue(row) <= 0.005;
 
 function destination(action, login) {
   const match = String(action || '').match(/^customers\/(\d+)\/conversionActions\/(\d+)$/);
@@ -48,11 +63,12 @@ function eventFor(row) {
   // An endpoint restriction is not evidence that a different click should win.
   const kind = ['gclid', 'gbraid', 'wbraid'].find(k => row[k]);
   if (!kind) throw Error('No Google click identifier was captured for this order.');
-  const event = { transactionId, eventTimestamp: new Date(raw).toISOString(), conversionValue: value,
+  const event = { transactionId, eventTimestamp: new Date(raw).toISOString(), conversionValue: netValue(row),
     currency, eventSource: 'WEB', adIdentifiers: { [kind]: String(row[kind]) } };
   const consent = {};
   for (const key of ['adUserData', 'adPersonalization']) {
-    if (['GRANTED', 'DENIED'].includes(row.consent?.[key])) consent[key] = row.consent[key];
+    const status = DM_CONSENT[String(row.consent?.[key] || '').toUpperCase()];
+    if (status) consent[key] = status;
   }
   if (Object.keys(consent).length) event.consent = consent;
   return event;
@@ -60,16 +76,27 @@ function eventFor(row) {
 
 function summarizeDiagnostics(data, target) {
   const rows = data?.requestStatusPerDestination || [];
-  const found = rows.filter(r => r.destination?.operatingAccount?.accountType === 'GOOGLE_ADS' &&
+  // accountType replaced the deprecated `product`; Google accepts either.
+  const type = d => d?.operatingAccount?.accountType || d?.operatingAccount?.product;
+  const exact = r => type(r.destination) === 'GOOGLE_ADS' &&
     String(r.destination.operatingAccount.accountId) === target.operatingAccount.accountId &&
-    String(r.destination.productDestinationId) === target.productDestinationId);
-  if (found.length !== 1) return { state: 'processing', error: 'Diagnostics have not confirmed the exact conversion destination.' };
+    String(r.destination.productDestinationId) === target.productDestinationId;
+  // Statuses come back in the order of the request's destinations, and every
+  // request here has exactly one. A lone status whose echo names no other
+  // account or action is that destination's, however sparsely it is echoed.
+  const compatible = r => { const d = r.destination || {}, a = d.operatingAccount || {};
+    return (!type(d) || type(d) === 'GOOGLE_ADS') && (a.accountId == null || String(a.accountId) === target.operatingAccount.accountId) &&
+      (d.productDestinationId == null || String(d.productDestinationId) === target.productDestinationId); };
+  let found = rows.filter(exact);
+  if (!found.length && rows.length === 1 && compatible(rows[0])) found = rows;
+  if (found.length !== 1) return { state: 'processing', status: rows.length ? 'DESTINATION_UNCONFIRMED' : 'NO_STATUS', error: 'Diagnostics have not confirmed the exact conversion destination.' };
   const row = found[0], state = row.requestStatus;
   const errors = (row.errorInfo?.errorCounts || []).map(e => `${e.reason || 'Processing error'} (${e.recordCount || e.count || '?'})`).join('; ');
   const warnings = (row.warningInfo?.warningCounts || []).map(e => String(e.reason || 'Processing warning'));
-  if (state === 'SUCCESS' && !errors && Number(row.eventsIngestionStatus?.recordCount) === 1) return { state: 'success', warnings };
-  if (['FAILED', 'PARTIAL_SUCCESS'].includes(state)) return { state: 'failed', error: errors || 'Google did not process this conversion successfully.', warnings };
-  return { state: 'processing', error: errors || null, warnings };
+  if (state === 'SUCCESS' && !errors && Number(row.eventsIngestionStatus?.recordCount) === 1) return { state: 'success', status: state, warnings };
+  // The enum is FAILED; the diagnostics guide's prose calls it FAILURE.
+  if (['FAILED', 'FAILURE', 'PARTIAL_SUCCESS'].includes(state)) return { state: 'failed', status: state, error: errors || 'Google did not process this conversion successfully.', warnings };
+  return { state: 'processing', status: state === 'SUCCESS' ? 'SUCCESS with ' + (row.eventsIngestionStatus?.recordCount ?? 'no') + ' event count' : (state || null), error: errors || null, warnings };
 }
 
 function createDataManager({ env, fetch, fb, COL, ledger, now = Date.now }) {
@@ -174,13 +201,22 @@ function errorDetail(data, status) {
         result.processing++;
         if (ctrl.dryRun || now() < Number(row.dmNextCheckAt || 0)) continue;
         handled++;
+        const attempt = Number(row.dmChecks || 0) + 1, nextCheck = now() + Math.min(3600000, CHECK_DELAY * Math.pow(1.3, attempt));
+        let data;
         try {
-          const savedTarget = row.dmDestination;
-          if (!savedTarget) throw Error('This receipt is missing its original conversion destination.');
-          const data = await request('/requestStatus:retrieve?requestId=' + encodeURIComponent(row.dmRequestId), null, auth);
-          const state = summarizeDiagnostics(data, savedTarget), attempt = Number(row.dmChecks || 0) + 1;
-          const patch = { dmChecks: attempt, dmCheckedAt: now(), dmWarnings: state.warnings || [],
-            dmNextCheckAt: now() + Math.min(3600000, CHECK_DELAY * Math.pow(1.3, attempt)), uploadError: state.error || null };
+          if (!row.dmDestination) throw Error('This receipt is missing its original conversion destination.');
+          data = await request('/requestStatus:retrieve?requestId=' + encodeURIComponent(row.dmRequestId), null, auth);
+        } catch (error) {
+          // Keep the receipt, but record why Google's answer could not be read,
+          // so a confirmation that never arrives says why instead of "pending".
+          result.errors.push({ orderId: row.orderId, error: error.message });
+          try { await doc.ref.update({ dmChecks: attempt, dmCheckedAt: now(), dmNextCheckAt: nextCheck, dmCheckError: String(error.message || error).slice(0, 300) }); } catch (_) {}
+          continue;
+        }
+        try {
+          const state = summarizeDiagnostics(data, row.dmDestination);
+          const patch = { dmChecks: attempt, dmCheckedAt: now(), dmWarnings: state.warnings || [], dmLastStatus: state.status || null, dmCheckError: null,
+            dmNextCheckAt: nextCheck, uploadError: state.error || null };
           if (state.state === 'success') {
             Object.assign(patch, { uploaded: true, failed: false, uploadedAt: f.FV.serverTimestamp(), dmState: 'success' });
             result.uploaded++; result.processing--;
@@ -194,6 +230,21 @@ function errorDetail(data, status) {
       }
       if (row.uploaded && !eligibleLegacyFailure(row)) continue;
       if (row.failed && !eligibleLegacyFailure(row) && !accountLevelRejection(row) && !(retryRejected && retryable(row))) continue;
+      // Refunded in full before it was ever sent: there is no sale for Google
+      // to count, and nothing sent means nothing to retract later.
+      if (fullyRefunded(row)) {
+        if (ctrl.dryRun) continue;
+        try {
+          const closed = await f.db.runTransaction(async tx => {
+            const current = await tx.get(doc.ref), latest = current.exists ? current.data() : null;
+            if (!latest || latest.dmRequestId || ['submitting', 'submission_unknown', 'processing', 'success'].includes(latest.dmState) || !fullyRefunded(latest)) return false;
+            tx.update(doc.ref, { uploaded: true, failed: false, dmState: 'not_sent_refunded', uploadError: null, dmClosedAt: now() });
+            return true;
+          });
+          if (closed) result.refundedBeforeUpload = (result.refundedBeforeUpload || 0) + 1;
+        } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); }
+        continue;
+      }
       let event;
       try { event = eventFor(row); } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); continue; }
       handled++;
@@ -203,23 +254,26 @@ function errorDetail(data, status) {
         catch (error) { result.rejected++; result.errors.push({ orderId: row.orderId, error: error.message }); }
         continue;
       }
-      const claimed = await f.db.runTransaction(async tx => {
+      let claimed = false;
+      // A contended or failed claim leaves this order untouched; it must not end
+      // the run for every order behind it.
+      try { claimed = await f.db.runTransaction(async tx => {
         const current = await tx.get(doc.ref); if (!current.exists) return false;
         const latest = current.data();
         if ((latest.dmState && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) || latest.dmRequestId || (latest.uploaded && !eligibleLegacyFailure(latest))) return false;
         if (latest.failed && !eligibleLegacyFailure(latest) && !accountLevelRejection(latest) && !(retryRejected && retryable(latest))) return false;
-        // Guard changes to original financial data between read and claim.
+        // Guard changes to original financial data (a refund included) between read and claim.
         if (JSON.stringify(eventFor(latest)) !== JSON.stringify(event)) return false;
         tx.update(doc.ref, { dmState: 'submitting', dmStartedAt: now(), dmDestination: target, uploaded: false });
         return true;
-      });
+      }); } catch (error) { result.errors.push({ orderId: row.orderId, error: error.message }); continue; }
       if (!claimed) continue;
       try {
         const response = await request('/events:ingest', body, auth);
         if (!response.requestId || typeof response.requestId !== 'string') throw Error('Google returned no request receipt; reconcile this order before retrying.');
         await doc.ref.update({ dmState: 'processing', dmRequestId: response.requestId, dmSubmittedAt: now(),
           dmNextCheckAt: now() + CHECK_DELAY, dmChecks: 0, dmFieldWarnings: response.fieldWarnings || [],
-          failed: false, uploadError: null, uploaded: false });
+          dmValue: event.conversionValue, failed: false, uploadError: null, uploaded: false });
         result.submitted++; result.processing++;
         // The durable receipt is authoritative even if auxiliary audit logging
         // fails. Never turn a confirmed receipt into an unknown submission.
@@ -244,16 +298,37 @@ function errorDetail(data, status) {
     const f = fb(); if (!f) return info;
     const queue = f.db.collection(COL.convQueue);
     const rows = await queue.where('uploaded', '==', false).limit(500).get();
-    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) { if (correctedRefusal(x)) info.awaitingRetry++; else info.awaitingAccess++; } });
+    Object.assign(info, { staleProcessing: 0, oldestProcessingAt: null, latestSubmittedAt: null, staleReasons: {}, consentMissing: 0, unsent: 0, oldestUnsentAt: null, unsendable: 0, unsendableReasons: {} });
+    rows.forEach(d => { const x = d.data(); if (x.dmRequestId && x.dmState === 'processing') info.processing++; if (['submitting', 'submission_unknown'].includes(x.dmState)) info.unknown++; if (retryable(x)) info.retryable++; if (accountLevelRejection(x)) { if (correctedRefusal(x)) info.awaitingRetry++; else info.awaitingAccess++; }
+      if (x.dmRequestId && x.dmState === 'processing') {
+        const at = Number(x.dmSubmittedAt) || 0;
+        if (at && (!info.oldestProcessingAt || at < info.oldestProcessingAt)) info.oldestProcessingAt = at;
+        if (at > (info.latestSubmittedAt || 0)) info.latestSubmittedAt = at;
+        if (at && now() - at > PROCESSING_WINDOW) {
+          info.staleProcessing++;
+          const why = String(x.dmCheckError ? 'the status request failed: ' + x.dmCheckError : x.uploadError ? x.uploadError : x.dmLastStatus ? 'Google still answers ' + x.dmLastStatus : Number(x.dmChecks) ? 'checked ' + x.dmChecks + ' time(s); Google has not finished' : 'its status has never been checked').slice(0, 200);
+          info.staleReasons[why] = (info.staleReasons[why] || 0) + 1;
+        }
+      }
+      // Queued and never sent: waiting for the next sync, or unsendable as stored (the run
+      // skips those without a trace, so the queue would grow with no stated cause).
+      if (!x.dmRequestId && !x.dmState && !x.failed) {
+        let bad = null; try { eventFor(x); } catch (error) { bad = String(error.message).slice(0, 200); }
+        if (bad) { info.unsendable++; info.unsendableReasons[bad] = (info.unsendableReasons[bad] || 0) + 1; }
+        else { info.unsent++; const created = x.createdAt && typeof x.createdAt.toMillis === 'function' ? x.createdAt.toMillis() : Number(x.createdAt) || 0; if (created && (!info.oldestUnsentAt || created < info.oldestUnsentAt)) info.oldestUnsentAt = created; }
+      }
+      if (needsConsent(x)) info.consentMissing++; });
     if (!env.GADS_CONVERSION_ACTION) return { ...info, blocked: true };
-    const confirmed = await queue.where('dmState', '==', 'success').limit(50).get();
+    const confirmed = await queue.where('dmState', '==', 'success').limit(500).get();
     const target = destination(env.GADS_CONVERSION_ACTION, env.GADS_LOGIN_CUSTOMER_ID);
     info.confirmed = confirmed.docs.filter(d => {
       const original = d.data().dmDestination;
       return original?.operatingAccount?.accountId === target.operatingAccount.accountId && original?.productDestinationId === target.productDestinationId;
     }).length;
+    // A capped read is a lower bound, never a total.
+    info.confirmedComplete = confirmed.docs.length < 500;
     return info;
   }
   return { run, health, configured, saveCredentials };
 }
-module.exports = { sealCredentials, openCredentials, createDataManager, destination, eventFor, summarizeDiagnostics, MIGRATION_ERROR };
+module.exports = { sealCredentials, openCredentials, createDataManager, destination, eventFor, summarizeDiagnostics, MIGRATION_ERROR, netValue, fullyRefunded, needsConsent, CONSENT_REGION };
