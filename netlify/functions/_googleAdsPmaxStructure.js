@@ -18,7 +18,7 @@ const PMAX_DEFAULT_NEGATIVES = Object.freeze([
 const MAX_WASTE_TERMS = 50; // per campaign and draft, so a draft stays readable
 
 // The brand these exclusions protect, and the words that mark a search for it.
-const BRAND = Object.freeze({ name: 'Brites', domain: 'britesjewelry.com', listName: 'Brites · brand exclusions', words: ['brites'] });
+const BRAND = Object.freeze({ name: 'Brites', domain: 'britesjewelry.com', listName: 'Brites · brand exclusions', words: ['brites', 'britesjewelry'] });
 const MAX_ASSET_GROUPS = 100; // Google's limit per Performance Max campaign
 
 const lower = s => String(s == null ? '' : s).trim().toLowerCase();
@@ -147,10 +147,11 @@ function pickBrand(suggestions) {
 
 // The operations for a reviewed brand exclusion: reuse (or create) one BRANDS list holding the
 // brand, then exclude that list in each Performance Max campaign (CampaignCriterion brand_list,
-// negative = true). Temporary ID -1 is the only one used, so it cannot collide.
-function brandExclusionOps({ customerId, list, brand, campaignIds }) {
+// negative = true). Temporary ID -1 is the only one used, so it cannot collide. listName names a new list
+// (shared set names are unique in an account).
+function brandExclusionOps({ customerId, list, brand, campaignIds, listName = BRAND.listName }) {
   const ops = []; let listRes = list && list.resourceName;
-  if (!listRes) { listRes = `customers/${customerId}/sharedSets/-1`; ops.push({ sharedSetOperation: { create: { resourceName: listRes, name: BRAND.listName, type: 'BRANDS' } } }); }
+  if (!listRes) { listRes = `customers/${customerId}/sharedSets/-1`; ops.push({ sharedSetOperation: { create: { resourceName: listRes, name: listName, type: 'BRANDS' } } }); }
   if (!(list && list.hasBrand)) ops.push({ sharedCriterionOperation: { create: { sharedSet: listRes, brand: { entityId: brand.entityId } } } });
   (campaignIds || []).forEach(id => ops.push({ campaignCriterionOperation: { create: { campaign: `customers/${customerId}/campaigns/${id}`, negative: true, brandList: { sharedSet: listRes } } } }));
   return ops;
