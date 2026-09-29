@@ -2012,21 +2012,28 @@ async function loadCalendar() {
   return out;
 }
 
-// Which (collection, peak) pairs are within their lead window right now?
+// Which (collection, peak) pairs are within their lead window right now? Moving occasions use
+// their real date for the year (Mother's Day is not always 05-11), and a peak whose tag already
+// holds a draft or campaign is skipped: the daily task would otherwise prepare a duplicate draft
+// on every day of the window, and Google rejects a second campaign with the same name.
 async function dueEvents(now = new Date()) {
   const cal = await loadCalendar();
-  const due = [];
-  Object.values(cal).forEach(coll => {
+  const due = [], today = _parseYmd(now) || _todayUtc();
+  Object.entries(cal).forEach(([key, coll]) => {
     (coll.peaks || []).forEach(pk => {
-      if (!pk.date) return;
-      const dleft = daysUntil(pk.date, now);
+      const rule = _occasionRule(pk.label, _ymd(today));
+      if (!pk.date && !rule) return;
+      const peakYmd = rule && !(rule.approx && pk.date) ? _ymd(rule.date) : _ymd(new Date(today.getTime() + daysUntil(pk.date, today) * 86400000));
+      const dleft = _daysBetween(today, _parseYmd(peakYmd));
       if (pk.leadDays > 0 && dleft <= pk.leadDays && dleft >= Math.max(0, pk.leadDays - 3)) {
-        due.push({ coll: { handle: coll.handle, title: coll.title, heroProducts: coll.heroProducts, reviewProof: coll.reviewProof },
-                   event: { label: pk.label, angle: pk.angle, daysLeft: dleft } });
+        due.push({ coll: { handle: coll.handle || key, title: coll.title, heroProducts: coll.heroProducts, reviewProof: coll.reviewProof },
+                   event: { label: pk.label, angle: pk.angle, daysLeft: dleft, peakDate: peakYmd } });
       }
     });
   });
-  return due;
+  if (!due.length) return due;
+  const taken = await takenTags().catch(() => ({}));
+  return due.filter(d => { const t = taken[oppTag(d.coll.handle, d.event.label)]; return !t || (t.where === "campaign" && t.status === "REMOVED"); });
 }
 
 /* ===================== Build a Search campaign (atomic) ===================== */
@@ -2166,7 +2173,7 @@ async function keywordResearch(keywords, geoIds, { langId = "1000" } = {}) {
           return { text: r.text, searches: Number(m.avgMonthlySearches) || 0,
                    competition: m.competition || "UNKNOWN", competitionIndex: m.competitionIndex != null ? Number(m.competitionIndex) : null,
                    low: fromMicros(m.lowTopOfPageBidMicros), high: fromMicros(m.highTopOfPageBidMicros),
-                   monthly: (monthly && monthly.length >= 6) ? monthly : null };
+                   monthly: (monthly && monthly.length >= 6) ? monthly : null, monthlyEnd: _kpMonthEnd(m.monthlySearchVolumes) };
         });
         return { ok: true, ideas, status: res.status, authMode: at.key };
       }
@@ -2303,14 +2310,16 @@ async function researchOpportunity(seeds, geoIds) {
    Returns { ok, ideasByText:{lowercased text -> idea}, status, error, cached }. Callers pull each
    opportunity's own seeds out of the shared pool; seeds not reached (e.g. a mid-batch 429) simply
    fall back to AI estimates for that opportunity. */
-function _kwCacheKey(seeds, geoKey) {
-  const raw = seeds.slice().sort().join("|") + "@" + geoKey;
-  return "kw_" + Buffer.from(raw).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 100);
+// The key hashes the WHOLE seed set, geography and language. The previous key kept only the first
+// 100 base64 characters, so any two scans whose alphabetically-first seeds matched (and every geo,
+// which sat at the truncated end) shared one cache entry and served another scan's keyword data.
+function _kwCacheKey(seeds, geoKey, langId = "1000") {
+  return "kw_" + require("crypto").createHash("sha256").update(JSON.stringify({ seeds: seeds.slice().sort(), geo: String(geoKey), lang: String(langId), network: "GOOGLE_SEARCH" })).digest("hex");
 }
-async function _kwCacheGet(key) {
+async function _kwCacheGet(key, meta) {
   const f = fb(); if (!f) return null;
   try { const d = await f.db.collection(COL.kwCache).doc(key).get();
-    if (d.exists) { const x = d.data() || {}; if (x.at && (Date.now() - x.at) < 14 * 86400000) return x.ideasByText || null; } } catch (e) {}
+    if (d.exists) { const x = d.data() || {}; if (x.at && (Date.now() - x.at) < 14 * 86400000) { if (meta) meta.at = x.at; return x.ideasByText || null; } } } catch (e) {}
   return null;
 }
 async function _kwCacheSet(key, ideasByText) {
@@ -2496,16 +2505,18 @@ async function _auditFinish(a, status, detail) {
   else await _auditPersist(a);
 }
 async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = null, onChunkResult = null } = {}) {
-  const uniq = [...new Set((seeds || []).map(s => String(s).trim().toLowerCase()).filter(Boolean))];
+  // A keyword can hold at most 10 words / 80 characters; a longer seed can never become a keyword and
+  // an invalid seed can fail its whole 20-seed request, so it is not sent.
+  const uniq = [...new Set((seeds || []).map(s => String(s).trim().toLowerCase().replace(/\s+/g, " ")).filter(s => s && s.length <= 80 && s.split(" ").length <= 10))];
   if (!uniq.length) return { ok: false, error: "no seeds", status: null, ideasByText: {} };
   const geoKey = ((geoIds && geoIds.length) ? geoIds : ["2124"]).map(g => String(g).replace(/\D/g, "")).sort().join(",");
-  const cacheKey = _kwCacheKey(uniq, geoKey);
-  const cached = await _kwCacheGet(cacheKey);
+  const cacheKey = _kwCacheKey(uniq, geoKey, langId), cacheMeta = {};
+  const cached = await _kwCacheGet(cacheKey, cacheMeta);
   if (cached && Object.keys(cached).length) {
     if (onChunkResult) { try { await onChunkResult(0, 0, { ok: true, cached: true, status: 200, attempts: 0, seeds: uniq.length, ideas: Object.keys(cached).length, totalIdeas: Object.keys(cached).length }); } catch (e) {} }
-    return { ok: true, ideasByText: cached, status: 200, cached: true, seedCount: uniq.length, chunkCount: 0 };
+    return { ok: true, ideasByText: cached, status: 200, cached: true, at: cacheMeta.at || null, seedCount: uniq.length, chunkCount: 0 };
   }
-  const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null, brokeEarly = false;
+  const ideasByText = {}; let anyOk = false, lastErr = null, lastStatus = null, brokeEarly = false, failedChunks = 0;
   // Keyword Planner is rate-limited to ~1 request/sec (a SEPARATE limit from Basic/Standard access,
   // and NOT lifted by either). A transient 429 must NOT wipe keyword data for the whole scan, so each
   // chunk is retried with growing backoff before we give up. Only a PERSISTENT 429 (still limited after
@@ -2526,7 +2537,7 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = n
       if (r.ok || r.status !== 429) break; // success, or a non-rate-limit failure → stop retrying this chunk
     }
     if (r.ok) { anyOk = true; (r.ideas || []).forEach(idea => { const k = String(idea.text || "").toLowerCase(); if (k && !ideasByText[k]) ideasByText[k] = idea; }); }
-    else { lastErr = r.error; lastStatus = r.status; if (r.status === 429) brokeEarly = true; }
+    else { failedChunks++; lastErr = r.error; lastStatus = r.status; if (r.status === 429) brokeEarly = true; }
     if (onChunkResult) { try { await onChunkResult(Math.floor(i / 20) + 1, Math.ceil(uniq.length / 20), {
       ok: !!(r && r.ok), cached: false, status: r && r.status, error: r && r.error, attempts,
       seeds: chunk.length, ideas: ((r && r.ideas) || []).length, totalIdeas: Object.keys(ideasByText).length,
@@ -2534,8 +2545,10 @@ async function keywordResearchPool(seeds, geoIds, { langId = "1000", onChunk = n
     }); } catch (e) {} }
     if (brokeEarly) break; // still limited after retries → stop, keep what we have
   }
-  if (anyOk && !brokeEarly) await _kwCacheSet(cacheKey, ideasByText); // never cache a partial (rate-limited) pool
-  return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false, seedCount: uniq.length, chunkCount: Math.ceil(uniq.length / 20), partial: brokeEarly };
+  // Never cache a partial pool (rate-limited OR any failed batch): the gap would be served as
+  // "no Keyword Planner data" for 14 days instead of being re-queried by the next scan.
+  if (anyOk && !failedChunks) await _kwCacheSet(cacheKey, ideasByText);
+  return { ok: anyOk, error: anyOk ? null : lastErr, status: lastStatus, ideasByText, cached: false, at: Date.now(), seedCount: uniq.length, chunkCount: Math.ceil(uniq.length / 20), partial: failedChunks > 0 };
 }
 
 /* ===================== Campaign planner (research-grounded) =====================
@@ -2577,8 +2590,11 @@ async function accountCvr() {
   if (tracked) {
     try {
       const tz = await _accountTz();
-      const rows = await metricsRange({ start: _acctDateYmd(tz, -119 * 86400000), end: _acctDateYmd(tz, 0) });
-      (rows || []).forEach(c => { clicks += Number(c.clicks) || 0; conv += Number(c.conv) || 0; });
+      // metricsRange returns { snapshot:[campaign rows] }; iterating the object itself threw inside
+      // this try, so account history was silently never used and the benchmark always applied.
+      const report = await metricsRange({ start: _acctDateYmd(tz, -119 * 86400000), end: _acctDateYmd(tz, 0) });
+      const rows = Array.isArray(report) ? report : ((report && report.snapshot) || []);
+      rows.forEach(c => { clicks += Number(c.clicks) || 0; conv += Number(c.conv) || 0; });
     } catch (e) {}
   }
   const cvr = Math.max(_CVR_MIN, Math.min(_CVR_MAX,
@@ -2595,9 +2611,7 @@ async function accountCvr() {
 /* ---- AI market read (bounded) ----
    The scan model contributes brand/market judgment the raw Google numbers can't: how strongly THIS
    collection × occasion converts for a personalized-charm store, demand direction into the window,
-   and the best ad angle. It is applied as a BOUNDED multiplier on the computed CVR (0.75–1.25×) with
-   its reasoning surfaced — never as free-form numbers, so it can tilt projections but not fabricate
-   them. */
+   and the best ad angle. It is qualitative only: fit is pinned at 1, so it never changes a forecast. */
 function _mktNorm(m) {
   if (!m || typeof m !== "object") return null;
   let fit = Number(m.fit);
@@ -2620,19 +2634,85 @@ function _nthWeekdayOfMonth(year, month, weekday, n) {
   const day = 1 + ((weekday - first.getUTCDay() + 7) % 7) + (n - 1) * 7;
   return new Date(Date.UTC(year, month, day));
 }
-// Next upcoming peak date (YYYY-MM-DD) for a known annual occasion, else null (evergreen).
-function _nextOccasionPeak(label) {
-  const s = String(label || "").toLowerCase(); const now = _todayUtc();
-  function pick(make) { let d = make(now.getUTCFullYear()); if (d < now) d = make(now.getUTCFullYear() + 1); return d; }
-  if (/mother/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 4, 0, 2)));   // 2nd Sun May
-  if (/father/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 5, 0, 3)));   // 3rd Sun Jun
-  if (/valentine/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 1, 14))));
-  if (/christmas/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 11, 25))));
-  if (/graduation/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 5, 10))));
-  if (/back to school/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 8, 1))));
-  if (/teacher/.test(s)) return _ymd(pick(y => _nthWeekdayOfMonth(y, 4, 2, 1)));  // ~1st Tue May
-  if (/nurse/.test(s)) return _ymd(pick(y => new Date(Date.UTC(y, 4, 12))));      // May 12
-  return null;
+// Recurring occasions whose date follows an undisputed calendar rule. `at` gives the gift day for a
+// year (the FINAL day of a multi-day observance); `markets` lists the countries that observe it on
+// that day (absent = all). Specific names come first. Anything else needs a verified research date:
+// a bare word such as "teacher" or "nurse" no longer turns World Teachers' Day (Oct 5) into May.
+const _D = (y, m, d) => new Date(Date.UTC(y, m, d)), _usThanksgiving = y => _nthWeekdayOfMonth(y, 10, 4, 4);
+const _OCCASION_RULES = [
+  // Australia keeps World Teachers' Day on the last Friday of October; elsewhere it is October 5.
+  { re: /\baustralia\w*\b.*\bworld teachers?'? day\b|\bworld teachers?'? day\b.*\baustralia/, at: y => { const d = _D(y, 9, 31); return new Date(d.getTime() - ((d.getUTCDay() + 2) % 7) * 86400000); }, markets: ["AU"] },
+  { re: /^(?!.*\baustralia).*\bworld teachers?'? day\b/, at: y => _D(y, 9, 5), markets: ["CA", "GB", "US"] },
+  { re: /\bteachers?'? appreciation\b/, at: y => new Date(_nthWeekdayOfMonth(y, 4, 0, 1).getTime() + 5 * 86400000), markets: ["US"] }, // Friday of the first full week of May
+  { re: /\bnurs(es|ing)'? week\b/, at: y => _D(y, 4, 12) },
+  { re: /\bdoctors?'? day\b/, at: y => _D(y, 2, 30), markets: ["US"] },
+  // A national variant on another date (UK Mothering Sunday, Australian Father's Day, Canadian
+  // Thanksgiving) is excluded from the generic rule, so its own rule or verified date applies.
+  { re: /^(?!.*\b(uk|british|britain|england|ireland|irish|mothering)\b).*\bmother'?s?'? day\b/, at: y => _nthWeekdayOfMonth(y, 4, 0, 2), markets: ["US", "CA", "AU"] },
+  { re: /^(?!.*\b(australia\w*|aussie|new zealand)\b).*\bfather'?s?'? day\b/, at: y => _nthWeekdayOfMonth(y, 5, 0, 3), markets: ["US", "CA", "GB"] },
+  { re: /\bgalentine/, at: y => _D(y, 1, 13) },
+  { re: /\bvalentine/, at: y => _D(y, 1, 14) },
+  { re: /\bhalloween\b/, at: y => _D(y, 9, 31) },
+  { re: /\bcanad\w* thanksgiving\b|\bthanksgiving\b.*\bcanad/, at: y => _nthWeekdayOfMonth(y, 9, 1, 2), markets: ["CA"] },
+  { re: /\bblack friday\b/, at: y => new Date(_usThanksgiving(y).getTime() + 86400000) },
+  { re: /\bcyber monday\b/, at: y => new Date(_usThanksgiving(y).getTime() + 4 * 86400000) },
+  { re: /^(?!.*\bcanad).*\bthanksgiving\b/, at: _usThanksgiving, markets: ["US"] },
+  { re: /\b(christmas|xmas)\b/, at: y => _D(y, 11, 25) },
+  { re: /\bst\.? patrick|\bsaint patrick/, at: y => _D(y, 2, 17) },
+  { re: /\binternational women'?s'? day\b/, at: y => _D(y, 2, 8) },
+  { re: /\bearth day\b/, at: y => _D(y, 3, 22) },
+  // Seasons without one day keep the planner's long-standing approximate anchors; a verified or
+  // curated date for them wins over the anchor (approx).
+  { re: /\bgraduation\b/, at: y => _D(y, 5, 10), approx: true },
+  { re: /\bback[ -]to[ -]school\b/, at: y => _D(y, 8, 1), approx: true }
+];
+function _occasionRule(label, from) {
+  const s = String(label || "").toLowerCase().replace(/[‘’`]/g, "'"), base = from ? _parseYmd(from) : _todayUtc();
+  if (!base) return null;
+  let best = null;
+  _OCCASION_RULES.forEach(r => { if (!r.re.test(s)) return; let d = r.at(base.getUTCFullYear()); if (d < base) d = r.at(base.getUTCFullYear() + 1);
+    if (!best || d > best.date) best = { date: d, markets: r.markets || null, approx: !!r.approx }; }); // combined labels end on their last day
+  return best;
+}
+// Next peak (YYYY-MM-DD) on or after `from` (default today) for an occasion with a calendar rule, else null.
+function _nextOccasionPeak(label, from) { const r = _occasionRule(label, from); return r ? _ymd(r.date) : null; }
+// Country codes of the account's usual geo targets (the scan adds any others from the country list).
+const _GEO_ISO = { "2036": "AU", "2124": "CA", "2826": "GB", "2840": "US" };
+// A dated occasion is proposed only when it is at least this many days away: a shorter run, after
+// Google's ad review, leaves too little time to ramp and for an order to arrive before the gift date.
+const _OPP_MIN_LEAD_DAYS = 7;
+// "YYYY-MM" of the last entry of Keyword Planner's monthly series when its last 12 entries are
+// consecutive months, oldest first (the order `monthly` is kept in); else null, never a guess.
+const _KP_MONTHS = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+function _kpMonthEnd(vols) {
+  if (!Array.isArray(vols) || vols.length < 12) return null;
+  const ym = vols.slice(-12).map(v => { const m = typeof (v && v.month) === "number" ? v.month - 2 : _KP_MONTHS.indexOf(String((v && v.month) || "").toUpperCase()), y = Number(v && v.year);
+    return y > 0 && m >= 0 && m < 12 ? y * 12 + m : NaN; });
+  if (!ym.every((x, i) => isFinite(x) && (i === 0 || x === ym[i - 1] + 1))) return null;
+  return `${Math.floor(ym[11] / 12)}-${String(ym[11] % 12 + 1).padStart(2, "0")}`;
+}
+// Share of measured monthly searches a new Search ad can expect to win as clicks: impression share
+// well below 100% for a new advertiser × a top-of-page CTR of ~5-8%, with some phrase-match reach
+// beyond the exact keywords. An ad can only be clicked when someone searches; budget cannot buy more.
+const _SEARCH_CLICK_SHARE = 0.05;
+// Measured monthly searches during a run window: each keyword's same calendar month(s) in Keyword
+// Planner's dated 12-month series (seasonality), else its 12-month average. Close variants that
+// Keyword Planner reports together (plurals, word order) are counted once.
+function _windowSearches(keywords, start, end) {
+  const w = {}; let days = 0;
+  if (start && end) for (let t = start.getTime(); t <= end.getTime() && days < 400; t += 86400000) { const m = new Date(t).getUTCMonth(); w[m] = (w[m] || 0) + 1; days++; }
+  const byVariant = {}; let seasonal = 0;
+  (keywords || []).forEach(k => {
+    const avg = Number(k && k.searches) || 0; if (!(avg > 0)) return;
+    let v = avg;
+    if (days && Array.isArray(k.monthly) && k.monthly.length === 12 && /^\d{4}-\d{2}$/.test(k.monthlyEnd || "")) {
+      const endM = Number(k.monthlyEnd.slice(5, 7)) - 1;
+      v = Object.keys(w).reduce((a, m) => a + (Number(k.monthly[11 - ((endM - Number(m) + 12) % 12)]) || 0) * w[m], 0) / days; seasonal++;
+    }
+    const key = String(k.text || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map(x => x.replace(/s$/, "")).sort().join(" ");
+    byVariant[key] = Math.max(byVariant[key] || 0, v);
+  });
+  return { monthly: _r1(Object.values(byVariant).reduce((a, b) => a + b, 0)), seasonal, keywords: Object.keys(byVariant).length };
 }
 // The whole research output for one campaign: CPC cap, daily budget, run window, expected
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
@@ -2642,14 +2722,21 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   const tier = _cpcTier(title, occasion);
   const tierLabel = _TIER_LABEL[tier];
   // CPC: REAL Keyword Planner top-of-page bids when we have them, tier heuristic otherwise.
-  const R = (research && research.ok && (research.cpc.high > 0 || research.cpc.low > 0)) ? research : null;
+  // Research counts only when Keyword Planner returned at least one keyword: with none, the merged band
+  // is a default guess, and the tier estimate below is the honest fallback.
+  const R = (research && research.ok && Number(research.realCount) > 0 && research.cpc && (research.cpc.high > 0 || research.cpc.low > 0)) ? research : null;
+  // Google's bids only when a researched keyword actually returned top-of-page bids; otherwise the
+  // band was derived from competition and must not be presented as Keyword Planner data.
+  const bidKws = R ? (R.keywords || []).filter(k => k && k.real && (Number(k.low) > 0 || Number(k.high) > 0)).length : 0, bidsMeasured = bidKws > 0;
   let cpc, cpcSource;
   if (R) {
     const hi = R.cpc.high || (R.cpc.low * 1.6), lo = R.cpc.low || (hi * 0.45);
     cpc = { low: _r2(lo), max: _r2(hi) };
-    cpcSource = research.source || "google_keyword_planner";
+    cpcSource = bidsMeasured ? (research.source || "google_keyword_planner") : "competition_estimate";
   } else {
-    const t = CPC_TIERS[tier]; cpc = { low: t.low, max: t.max }; cpcSource = "estimate";
+    // Tier benchmarks are US-dollar figures; express them in the account currency.
+    const t = CPC_TIERS[tier], fx = ccy !== "USD" && Number(nativeToUsd) > 0 ? 1 / Number(nativeToUsd) : 1;
+    cpc = { low: _r2(t.low * fx), max: _r2(t.max * fx) }; cpcSource = "estimate";
   }
   // ---- ONE projection chain. Every number on the card derives from these three inputs. ----
   // (1) Expected PAID cost per click. Top-of-page low/high are the 20th/80th-percentile bids; real
@@ -2667,35 +2754,50 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   const cvrSourceText = (cvrInfo && cvrInfo.source) || `${Math.round(PLAN_CVR * 100)}% jewelry benchmark`;
   // (3) Average order value — real store data (passed in), null-safe below.
   const today = _todayUtc();
-  const FLOOR = 21, DEFAULT = 28, MAX = 45, LEAD = 17, TAIL = 5;
+  const FLOOR = 21, DEFAULT = 28, MAX = 45, LEAD = 17;
   const peak = peakDate ? _parseYmd(peakDate) : (occasion ? _parseYmd(_nextOccasionPeak(occasion)) : null);
-  let start, end, durBasis;
-  if (peak && peak > today) {
-    start = new Date(Math.max(today.getTime(), peak.getTime() - LEAD * 86400000));
-    end = new Date(Math.max(start.getTime() + FLOOR * 86400000, peak.getTime() + TAIL * 86400000));
-    durBasis = `Starts ~${Math.round((peak - start) / 86400000)} days before the ${occasion || "occasion"} peak to ramp and clear Google's 1\u20132 week learning window, then runs through it.`;
+  // Days are inclusive: Google serves from the start date through 23:59:59 on the end date.
+  let start, end, durBasis; const dated = !!(peak && peak >= today);
+  if (dated) {
+    // A dated gift occasion ends ON its date: searches after it no longer buy for it, so no floor or
+    // competition extension may push spend past the peak (the old +5-day tail and 21-day floor did).
+    start = new Date(Math.max(today.getTime(), peak.getTime() - LEAD * 86400000)); end = peak;
+    const n = _daysBetween(start, end) + 1;
+    durBasis = `Runs ${n} day${n === 1 ? "" : "s"} and ends on the ${occasion || "occasion"} date (${_ymd(peak)}): gift searches stop converting once it has passed.${n < FLOOR ? ` Shorter than the ${FLOOR} days a reliable read needs, so treat the result as directional.` : ""}`;
   } else {
-    start = today; end = new Date(today.getTime() + DEFAULT * 86400000);
+    start = today; end = new Date(today.getTime() + (DEFAULT - 1) * 86400000);
     durBasis = `Runs ${DEFAULT} days \u2014 at the modeled ~${(cvrUsed * 100).toFixed(1)}% conversion rate a shorter test produces too few sales to read reliably.`;
   }
-  let durationDays = Math.max(FLOOR, Math.min(MAX, _daysBetween(start, end)));
-  // Real competition nudges the run length: hotter auctions need more days to gather data.
-  if (R && R.competitionIndex != null) {
+  let durationDays = _daysBetween(start, end) + 1;
+  // Real competition nudges an undated test's length: hotter auctions need more days to gather data.
+  if (!dated && R && R.competitionIndex != null) {
     const adj = R.competitionIndex > 66 ? 5 : (R.competitionIndex < 33 ? -3 : 0);
     if (adj) { durationDays = Math.max(FLOOR, Math.min(MAX, durationDays + adj)); durBasis += ` Extended for high keyword competition (${Math.round(R.competitionIndex)}/100).`.replace(" Extended", R.competitionIndex > 66 ? " Extended" : " Trimmed"); }
   }
-  end = new Date(start.getTime() + durationDays * 86400000);
+  end = new Date(start.getTime() + (durationDays - 1) * 86400000);
   const room = headroom != null ? headroom : (ceiling != null ? ceiling : 25);
   const PACE = 9; // target clicks/day for a readable test
   const minDaily = Math.max(5, Math.ceil(4 * eCpc));
   const capDaily = Math.max(minDaily, Math.min(room > 0 ? room : 25, 25));
   let daily = Math.max(minDaily, Math.min(capDaily, Math.round(PACE * eCpc)));
-  const noRoom = !(room >= minDaily);
+  // (4) Demand ceiling. Clicks cannot exceed what measured searches supply: Keyword Planner volume
+  //     for the run month(s) \u00d7 the share a new ad can win. Without it every card assumed the whole
+  //     budget was spent, e.g. 244 clicks forecast from keywords searched ~10 times a month.
+  const measuredKw = R ? (R.keywords || []).filter(k => k && k.real && Number(k.searches) > 0) : [];
+  const demand = measuredKw.length ? _windowSearches(measuredKw, start, end) : null;
+  const demandCpd = demand ? demand.monthly / 30.4 * _SEARCH_CLICK_SHARE : null;
+  // Measured seasonality replaces the model’s demand word: run-month searches vs their 12-month average.
+  if (mkt && demand && demand.seasonal) { const avg = _windowSearches(measuredKw).monthly, r = avg > 0 ? demand.monthly / avg : 1;
+    mkt.demand = r >= 1.15 ? "rising" : (r <= 0.85 ? "fading" : "steady"); mkt.demandSource = "measured"; mkt.demandSlopePct = Math.round((r - 1) * 100); }
+  // Budget sized to buy the clicks demand can supply (+25%), never below one capped click a day.
+  if (demandCpd != null) daily = Math.max(1, Math.min(daily, Math.ceil(Math.max(demandCpd * eCpc * 1.25, cpc.max))));
+  const noRoom = !(room >= daily);
   // ---- projections (all from the same chain) ----
-  const clicksPerDay = _r2(daily / eCpc);
+  const demandLimited = demandCpd != null && demandCpd < daily / eCpc;
+  const clicksPerDay = _r2(demandLimited ? demandCpd : daily / eCpc);
   const clicksTotal = Math.round(clicksPerDay * durationDays);
   const conversions = _r2(clicksTotal * cvrUsed);
-  const spendTotal = Math.round(daily * durationDays);
+  const spendTotal = Math.round(Math.min(daily, clicksPerDay * eCpc) * durationDays);
   const revenue = (aov && aov > 0) ? _r2(conversions * aov) : null;
   // Uncertainty is evidence-weighted: high-confidence opportunities get a tighter range;
   // speculative tests stay visibly wide. This prevents false precision.
@@ -2721,41 +2823,45 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
   // ---- strategy-aware framing (every string below quotes the SAME chain) ----
   const caveats = [];
   let cpcBasis, budgetBasis, goal, strategy, strategyLabel;
-  const _srcName = R ? (cpcSource === "google_keyword_planner" ? "Google Keyword Planner" : "AI keyword research") : "";
-  const realNote = R ? `${_srcName}: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across ${(R.keywords ? R.keywords.length : "your")} keywords` + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
+  const realNote = R ? (bidsMeasured ? `Google Keyword Planner: top-of-page bids ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} across ${bidKws} measured keyword${bidKws === 1 ? "" : "s"}` : `No Keyword Planner bids for these keywords: ${ccy} ${cpc.low.toFixed(2)}\u2013${cpc.max.toFixed(2)} is estimated from their competition`) + (R.searchVolume ? ` (~${R.searchVolume.toLocaleString()} searches/mo` : "") + (R.competitionIndex != null ? `${R.searchVolume ? ", " : " ("}competition ${Math.round(R.competitionIndex)}/100)` : (R.searchVolume ? ")" : "")) + "." : "";
+  const demandNote = demandLimited ? ` Measured demand limits this: ~${demand.monthly.toLocaleString()} searches/mo for these keywords${demand.seasonal ? " in the run month(s) last year" : ""} \u00d7 ~${Math.round(_SEARCH_CLICK_SHARE * 100)}% won as clicks \u2248 ${clicksPerDay} clicks/day, so the budget is sized to buy those (+25%).`
+    : (demandCpd == null ? " No measured search volume: clicks assume the whole budget is spent, an upper bound rather than a forecast." : "");
   const eCpcNote = `Projections use a modeled expected paid CPC of ~${ccy} ${eCpc.toFixed(2)} (geometric mid of the bid band \u2014 real clicks clear between the 20th and 80th percentile bids${smart ? "" : ", and you rarely pay your cap"}).`;
   if (smart) {
     strategy = "SMART_BIDDING"; strategyLabel = "Smart Bidding";
     goal = `Maximize conversion value automatically \u2014 no per-click cap`;
     cpcBasis = (R ? realNote + " " : "") + `Smart Bidding sets each bid itself, so the ${ccy} ${cpc.max.toFixed(2)} figure is a reference, NOT a cap \u2014 clicks can cost more, especially while learning. ${eCpcNote}`;
-    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC. Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
+    budgetBasis = `\u2248${clicksPerDay} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC.${demandNote} Smart Bidding spends close to the full daily budget; keep it steady (no \u00b1>20% swings) so it doesn't restart learning.`;
     caveats.push(`Smart Bidding chases conversions by setting bids per auction \u2014 great when you have volume, but there is NO max-CPC cap, so cost per click can spike (most during the 1\u20132 week learning phase).`);
     if (conversions < 15) caveats.push(`This budget yields ~${conversions} sales over the run \u2014 below the ~15\u201330/month Google needs to exit learning, so it may keep spending unpredictably. Manual CPC gives a hard cap until volume grows.`);
   } else {
     strategy = "MANUAL_CPC"; strategyLabel = "Manual CPC";
     goal = `Maximize sales within a ${ccy} ${cpc.max.toFixed(2)} max CPC`;
-    cpcBasis = R ? `${realNote} Hard cap at the 80th-percentile bid (${ccy} ${cpc.max.toFixed(2)}) so your ad reliably reaches the top without overpaying. ${eCpcNote}`
-                 : `${tierLabel} terms (no live Keyword Planner data \u2014 estimate). Retail search clicks run ~$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)}. ${eCpcNote}`;
-    budgetBasis = `\u2248${Math.round(clicksPerDay)} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC \u2014 enough traffic to read without burning the ceiling.`;
+    cpcBasis = R ? `${realNote} ${bidsMeasured ? `Hard cap at the 80th-percentile top-of-page bid (${ccy} ${cpc.max.toFixed(2)}) so your ad can reach the top without overpaying.` : `Capped at ${ccy} ${cpc.max.toFixed(2)} until Google reports bids for these keywords.`} ${eCpcNote}`
+                 : `${tierLabel} terms (no live Keyword Planner data \u2014 estimate). Retail search clicks run ~US$1\u20133; capped at ${ccy} ${cpc.max.toFixed(2)}. ${eCpcNote}`;
+    budgetBasis = `\u2248${clicksPerDay} clicks/day at the modeled ~${ccy} ${eCpc.toFixed(2)} expected CPC.${demandNote || " Enough traffic to read without burning the ceiling."}`;
     caveats.push(`Manual CPC: you never pay more than ${ccy} ${cpc.max.toFixed(2)} per click, and average daily budgets pace spend across the month. Google can bill up to twice that daily amount for most campaigns. No learning phase \u2014 but Google won't auto-raise bids to chase a likely sale.`);
     if (conversions < 15) caveats.push(`At this budget you'll gather directional data (~${conversions} sales over the run), short of the ~15\u201330/month Smart Bidding would need \u2014 which is exactly why a hard CPC cap is the safer default here.`);
   }
   caveats.push(`Conversion rate \u2014 modeled at ${(cvrUsed * 100).toFixed(1)}%: ${cvrSourceText}${mkt && mkt.fit !== 1 ? `, tilted \u00d7${mkt.fit} by the AI market read below` : ""}.`);
-  if (mkt && (mkt.fitWhy || mkt.fit !== 1)) caveats.push(`AI market read \u2014 \u00d7${mkt.fit} conversion fit${mkt.fitWhy ? `: ${mkt.fitWhy}` : ""}${mkt.demand ? ` (demand ${mkt.demand})` : ""}. Bounded 0.75\u20131.25\u00d7 and applied to the conversion rate \u2014 it tilts the projection, it can't fabricate it.`);
-  if (revenue != null) caveats.push(`Projected revenue ~${ccy} ${revenue.toLocaleString()} = ~${conversions} sales \u00d7 ${ccy} ${_r2(aov).toFixed(2)} average order (your real store data). With \u00b1${Math.round(UNC * 100)}% conversion uncertainty: ${ccy} ${revenueLow.toLocaleString()}\u2013${revenueHigh.toLocaleString()}, hence the ${expectedRoas ? expectedRoas.band : ""} expected ROAS (revenue \u00f7 ${ccy} ${spendTotal} spend).`);
-  if (noRoom) caveats.push(`Ceiling headroom (${ccy} ${_r2(room)}) is below the ${ccy} ${minDaily} a campaign needs to gather data \u2014 raise the daily ceiling or pause a campaign first.`);
+  if (mkt && mkt.fitWhy) caveats.push(`AI market read (qualitative; it never changes these numbers): ${mkt.fitWhy}${mkt.demand ? ` \u2014 demand ${mkt.demand}${mkt.demandSource === "measured" ? ` (Keyword Planner: run-month searches ${mkt.demandSlopePct >= 0 ? "+" : ""}${mkt.demandSlopePct}% vs their 12-month average)` : " (model opinion)"}` : ""}.`);
+  if (revenue != null) caveats.push(`Projected revenue ~${ccy} ${revenue.toLocaleString()} = ~${conversions} sales from ~${clicksTotal} clicks${demandLimited ? ` (the most measured demand supplies: ~${demand.monthly.toLocaleString()} searches/mo \u00d7 ~${Math.round(_SEARCH_CLICK_SHARE * 100)}% won as clicks)` : (demandCpd == null ? " (no measured search volume: assumes the whole budget is spent)" : "")} \u00d7 ${ccy} ${_r2(aov).toFixed(2)} average order (your real store data). With \u00b1${Math.round(UNC * 100)}% conversion uncertainty: ${ccy} ${revenueLow.toLocaleString()}\u2013${revenueHigh.toLocaleString()}, hence the ${expectedRoas ? expectedRoas.band : ""} expected ROAS (revenue \u00f7 ${ccy} ${spendTotal} spend).`);
+  if (noRoom) caveats.push(`Ceiling headroom (${ccy} ${_r2(room)}) is below this plan's ${ccy} ${daily}/day \u2014 raise the daily ceiling or pause a campaign first.`);
   return {
     currency: ccy, tier, tierLabel, cvr: cvrUsed, smartBidding: smart, capApplies: !smart, researched: !!R, cpcSource,
     cpc: { low: cpc.low, target: eCpc, max: cpc.max, source: cpcSource, basis: cpcBasis },
     duration: { days: durationDays, startDate: _ymd(start), endDate: _ymd(end), basis: durBasis },
     budget: { daily, basis: budgetBasis },
-    expected: { clicksPerDay: Math.round(clicksPerDay), clicksTotal, conversions, spendTotal, revenue, revenueLow, revenueHigh,
+    expected: { clicksPerDay: clicksPerDay < 10 ? _r1(clicksPerDay) : Math.round(clicksPerDay), clicksTotal, conversions, spendTotal, revenue, revenueLow, revenueHigh,
       contribution, contributionLow, contributionHigh, profit, profitLow, profitHigh,
       aov: aov || null, marginRate, breakEvenRoas, breakEvenCpa,
-      searchVolume: R ? R.searchVolume : null, competitionIndex: R ? R.competitionIndex : null },
+      searchVolume: R ? R.searchVolume : null, competitionIndex: R ? R.competitionIndex : null,
+      windowSearches: demand ? demand.monthly : null, demandLimited },
     expectedRoas,
     // The frontend recomputes on budget/CPC/date edits using EXACTLY these inputs — one engine, two runtimes.
-    model: { eCpcMarket, eCpc, cpcLow: cpc.low, cpcHigh: cpc.max, cvrBase, cvrFit, cvr: cvrUsed, cvrSource: cvrSourceText, aov: aov || 0, marginRate, uncertainty: UNC },
+    // maxClicksPerDay (null = unmeasured) caps clicks at what measured searches can supply, whatever the budget.
+    model: { eCpcMarket, eCpc, cpcLow: cpc.low, cpcHigh: cpc.max, cvrBase, cvrFit, cvr: cvrUsed, cvrSource: cvrSourceText, aov: aov || 0, marginRate, uncertainty: UNC,
+      maxClicksPerDay: demandCpd != null ? _r2(demandCpd) : null, clickShare: _SEARCH_CLICK_SHARE },
     economics: { marginRate, marginSource: (economics && economics.marginSource) || "configurable catalog estimate",
       evidenceOrders: Number(economics && economics.orders) || 0, evidenceRevenue: _r2(Number(economics && economics.revenue) || 0),
       evidenceProfit: _r2(Number(economics && economics.estimatedProfit) || 0), breakEvenRoas, breakEvenCpa },
@@ -5802,7 +5908,9 @@ async function attributeOccasionsFromSnapshot(snapshot) {
     snap.forEach(doc => {
       const x = doc.data(); const tags = x.tags || []; let cost = 0, conv = 0, value = 0;
       tags.forEach(t => { if (live[t]) { cost += live[t].cost; conv += live[t].conv; value += live[t].value; } });
-      if (cost > 0) {
+      // measure() passes a trailing 14-day window: after a run ends, each later window holds less of it
+      // (at last only its final day), so the fullest observation is kept instead of being overwritten.
+      if (cost > 0 && cost >= (Number(x.agg && x.agg.spend) || 0)) {
         const roas = value / cost;
         const outcome = roas >= target ? "success" : (cost >= 20 ? "fail" : "untested");
         batch.set(doc.ref, { agg: { spend: +cost.toFixed(2), conv, value: +value.toFixed(2), roas: +roas.toFixed(2) }, outcome, attributedAt: f.FV.serverTimestamp() }, { merge: true });
@@ -5844,6 +5952,10 @@ Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"pu
   let list = null;
   try { const j = await openaiJSON(prompt, { maxTokens: 4000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
   if (!list || !list.length) list = OCCASIONS.map(o => ({ label: o, daysOut: null, recommendation: "test", proven: false, why: "" }));
+  // The star and the day count come from records, not the model: proven means memory marks the occasion
+  // a success, and an occasion with a calendar rule is counted to its real date.
+  list.forEach(o => { const m = memory.find(x => String(x.occasion || "").toLowerCase() === String(o.label).toLowerCase()), pk = _nextOccasionPeak(o.label, dateStr);
+    o.proven = !!(m && m.outcome === "success"); if (pk) o.daysOut = _daysBetween(_parseYmd(dateStr), _parseYmd(pk)); });
   if (!list.some(o => /evergreen/i.test(o.label))) list.unshift({ label: "Evergreen gifting", daysOut: 0, recommendation: "test", proven: false, why: "always-on baseline" });
   if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ list, at: Date.now() }); } catch (e) {} }
   return list;
@@ -6338,10 +6450,10 @@ function _profileMatchesProduct(profile, productName) {
 }
 function collectionEconomics(profile, sig) {
   const rows=(sig&&(sig.productRows||sig.topProducts))||[]; let orders=0,revenue=0,profit=0,units=0,matched=0;
-  rows.forEach(x=>{const catalog=(profile&&profile.topProducts)||[];const known=catalog.some(p=>_pmaxShopifyProductMatch(p,x)),m=known?1:catalog.some(p=>p.productId)&&x.productId?0:_profileMatchesProduct(profile,x.name);if(m<.45)return;matched++;orders+=Number(x.orders)||0;units+=Number(x.units)||0;revenue+=(Number(x.revenue)||0)*m;profit+=(Number(x.estimatedProfit)||0)*m;});
+  rows.forEach(x=>{const catalog=(profile&&profile.topProducts)||[];const known=catalog.some(p=>_pmaxShopifyProductMatch(p,x)),m=known?1:catalog.some(p=>p.productId)&&x.productId?0:_profileMatchesProduct(profile,x.name);if(m<.45)return;matched++;orders+=(Number(x.orders)||0)*m;units+=(Number(x.units)||0)*m;revenue+=(Number(x.revenue)||0)*m;profit+=(Number(x.estimatedProfit)||0)*m;}); // orders share the match weight, else a partial match lowers AOV
   const marginRate=revenue>0?Math.max(.1,Math.min(.95,profit/revenue)):MARGIN_RATES.default;
   return {orders:Math.round(orders),units:Math.round(units),revenue:_r2(revenue),estimatedProfit:_r2(profit),marginRate,
-    aov:orders>0?_r2(revenue/orders):null,matchedProducts:matched,attributionBasis:"All-channel observed Shopify product orders; not assumed organic or attributable to this ad",currency:sig&&sig.currency||CURRENCY,days:sig&&sig.days||null,complete:!!(sig&&sig.complete),marginSource:revenue>0?"matched Shopify line-item economics":"configurable catalog estimate"};
+    aov:orders>0?_r2(revenue/orders):null,matchedProducts:matched,attributionBasis:"All-channel observed Shopify product orders; not assumed organic or attributable to this ad",currency:sig&&sig.currency||CURRENCY,days:sig&&sig.days||null,complete:!!(sig&&sig.complete),marginSource:revenue>0?"configured catalog margins, weighted by matched Shopify sales":"configurable catalog estimate"};
 }
 async function collectionAdsPerformance({days=120}={}) {
   const out={};
@@ -6367,7 +6479,7 @@ function _performanceForHandle(perf,handle){
 function opportunityClass(o){
   const profit=Number(o&&o.plan&&o.plan.expected&&o.plan.expected.profit)||0, conf=Number(o&&o.confidence&&o.confidence.score)||0;
   if(o.proven&&profit>0&&conf>=70)return "scale_proven_winner";
-  if(o.daysOut<=10&&conf>=60)return "seasonal_high_confidence";
+  if(o.peakDate&&o.daysOut<=10&&conf>=60)return "seasonal_high_confidence"; // dated occasions only: daysOut alone is 0 for any undated idea
   if(/evergreen/i.test(String(o.occasion||""))&&conf>=55)return "evergreen_expansion";
   return "controlled_experiment";
 }
@@ -6375,12 +6487,13 @@ function _oppScore(o) {
   const p=(o.plan&&o.plan.expected)||{}, conf=Number((o.confidence&&o.confidence.score)||(o.plan&&o.plan.confidence&&o.plan.confidence.score)||45);
   const profitMid=Number(p.profit)||0, profitLow=Number(p.profitLow)||profitMid;
   const volume=Math.log10(1+Number((o.research&&o.research.searchVolume)||0))*8;
-  const evidence=Math.min(18,Number((o.economics&&o.economics.orders)||0)*2 + Number((o.research&&o.research.realCount)||0));
+  // Only keywords with measured searches count as evidence; Planner echoes with zero volume do not.
+  const evidence=Math.min(18,Number((o.economics&&o.economics.orders)||0)*2 + (o.keywordData||[]).filter(k=>k&&k.real&&Number(k.searches)>0).length);
   const fit=((o.market&&Number(o.market.fit))||1);
   const downside=profitLow<0?Math.min(24,Math.abs(profitLow)/20):0;
   const economic=Math.max(-15,Math.min(35,profitMid/20));
   const score=Math.max(5,Math.min(99,Math.round(18+conf*.38+economic+volume+evidence+(fit-1)*18-downside)));
-  const urgency=o.daysOut<=3?1.08:(o.daysOut<=10?1.04:1);
+  const urgency=!o.peakDate?1:(o.daysOut<=3?1.08:(o.daysOut<=10?1.04:1)); // an undated idea has no deadline to be urgent about
   return {score,rank:_r1(score*urgency)};
 }
 
@@ -6433,7 +6546,7 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   // scanning:true and stale opportunities on screen forever with no signal as to the cause.
   audit = await _auditBegin(runId);
   await _auditEvent(audit,{id:"control_config",category:"Configuration",label:"Autopilot controls and guardrails",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
-    detail:`Daily ceiling ${CURRENCY} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
+    detail:`Daily ceiling ${ctrl.budgetCurrency||CURRENCY} ${ctrl.maxDailyBudgetTotal||100}; bidding ${ctrl.smartBidding?"Smart":"Manual CPC"}; countries ${(ctrl.defaultCountries||[]).join(",")||"default"}.`,source:"Firestore control document"});
   try {
   await _scanProg(3, "Reading catalog & memory");
   const collections = await _auditCall(audit,{id:"shopify_collections",category:"Shopify",label:"Shopify collections",detail:"Loading the live collection catalogue or its bounded cache.",source:"Shopify Admin GraphQL / Firestore cache",result:v=>({detail:`${(v||[]).length} collections available to the strategist.`,meta:{collections:(v||[]).length}})},()=>getCollections({}));
@@ -6458,8 +6571,13 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   await _auditEvent(audit,{id:"conversion_health",category:"Google Ads API",label:"Conversion tracking health",status:_convH.validated?"ok":"warning",startedAt:convT,endedAt:Date.now(),tookMs:Date.now()-convT,
     detail:_convH.validated?"Purchase conversion tracking is active and can support outcome-based ranking.":"Validated purchase conversions were not confirmed; opportunity budgets remain conservative.",source:"Google Ads conversion actions",error:_convH.error||null,fallback:_convH.validated?null:"Use Shopify economics and conservative priors."});
   const convDirective = _convH.validated
-    ? "CONVERSION TRACKING: LIVE and recording sales — ROAS/outcome history is reliable. Weight proven occasions heavily; you may recommend scaling winners."
-    : "CONVERSION TRACKING: NOT YET RECORDING SALES — you have NO validated ROAS data. Do NOT label any occasion 'proven'; keep market.fit conservative (0.9-1.1 unless you have a strong product-level reason), keep recommendedDailyBudget at modest test levels, and favor low-risk bets over aggressive spend until conversions flow.";
+    ? "CONVERSION TRACKING: LIVE and recording sales — outcome history in memory is reliable. Weight occasions memory marks success."
+    : "CONVERSION TRACKING: NOT YET RECORDING SALES — outcomes in memory are unverified, so treat no occasion as proven and favor low-risk bets until conversions flow.";
+  // Markets the account targets, as country codes, so the strategist can say where an occasion applies.
+  const geoIds0 = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries.map(String) : ["2124"];
+  const isoByGeo = Object.assign({}, _GEO_ISO); try { (await listCountries()).forEach(c => { if (c && c.id && c.code) isoByGeo[String(c.id)] = String(c.code).toUpperCase(); }); } catch (e) {}
+  const marketCodes = geoIds0.map(g => isoByGeo[g.replace(/\D/g, "")]).filter(Boolean);
+  const peakMin = _acctDateYmd(accountTz, _OPP_MIN_LEAD_DAYS * 86400000), peakMax = _acctDateYmd(accountTz, 45 * 86400000);
   // Scan several REAL listings per collection so keywords/audience/fit are grounded in actual
   // products, not collection names. Cached 7d; degrades to titles-only if Shopify is unreachable.
   let profiles = null, profiledAt = null, salesBasis = null;
@@ -6492,50 +6610,42 @@ async function scanOpportunities({ force, cacheOnly, runId } = {}) {
   const briefPeriod=x=>x?{days:x.days,at:x.at,currency:x.currency,orders:x.orders,verifiedPurchaseOrders:x.verifiedPurchaseOrders,purchaseStatusUnknownOrders:x.purchaseStatusUnknownOrders,organicOrders:x.organicOrders,merchantOrganicOrders:x.merchantOrganicOrders,paidOrders:x.paidOrders,directOrUnknownOrders:x.directOrUnknownOrders,otherNonpaidOrUnknownOrders:x.otherNonpaidOrUnknownOrders,totalRevenue:x.totalRevenue,valuesByCurrency:x.valuesByCurrency,complete:x.complete,historyCoverage:x.historyCoverage,topProducts:(x.topProducts||[]).slice(0,15).map(p=>({name:p.name,productId:p.productId,variantId:p.variantId,orders:p.orders,units:p.units,revenue:p.revenue,organic:p.organic,paid:p.paid,directOrUnknown:p.directOrUnknown}))}:null;
   const searchSalesBrief={days30:briefPeriod(mandatorySales.periods.days30),days90:briefPeriod(mandatorySales.periods.days90),seasonality:mandatorySales.seasonality,merchant:mandatorySales.merchant,warnings:mandatorySales.warnings};
   const prompt =
-`Today: ${dateStr}. You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Currency ${ccy}. Total daily ad ceiling ${ccy} ${ceiling}.
+`Today: ${dateStr} (${accountTz}). You are the campaign strategist for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Search ads target these countries: ${marketCodes.join(", ") || geoIds0.join(", ")}.
 ${convDirective}
 ${collBlock}
 TOP-SELLING PRODUCTS: ${prodText}
 MANDATORY HISTORICAL SALES EVIDENCE: ${JSON.stringify(searchSalesBrief)}
 Use actual all-channel store demand to choose products even when they have no prior advertising sales. Explicit organic attribution, unknown/direct attribution, and other paid sources must stay separate. Merchant clicks/impressions are interest, not sales; Merchant conversion totals may overlap Shopify orders and must not be added to them. Use repeated purchases and recent-versus-longer history to prioritize demand. Partial monthly history is not proof of recurring seasonality. Explain buyer motivations as hypotheses supported by product details or research, never as measured facts.
 PAST OCCASION PERFORMANCE (memory): ${memText}
-Find the 8-12 best advertising OPPORTUNITIES to act on within the NEXT ~30 DAYS. Do NOT suggest anything whose run window starts more than ~30 days from today — near-term relevance only. Cross-reference upcoming calendar / seasonal gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
+Find the 8-12 best Search advertising OPPORTUNITIES: gift occasions whose date falls between ${peakMin} and ${peakMax}, or timely themes with no single gift day. A dated campaign runs for up to 18 days and ends on the occasion's date. Verify every date for its year with web search: moving observances change date every year, and many "national days" are disputed or differ by country. Skip any occasion whose date has passed, falls outside that range, or cannot be verified. Cross-reference upcoming gifting moments with the collections and best-sellers that fit them and with past performance. For EACH opportunity return:
 - collectionTitle (MUST be exactly one of the collections listed above)
-- occasion (the event/emotion to lead with)
-- startDate (YYYY-MM-DD: when the campaign should START — a sensible lead time before the occasion's peak so it can ramp; today or later, and within ~30 days)
-- endDate (YYYY-MM-DD: when it should STOP — at or shortly after the peak; for "Evergreen gifting" use a ~30-day rolling window from startDate)
-- daysOut (int: days from today until startDate; 0 if it should start now)
-- priority: "high" (timely + strong fit, or proven winner), "medium" (solid), "test" (speculative)
-- recommendedDailyBudget (number in ${ccy}; scale to importance — larger for major gifting events, smaller for niche/evergreen; keep realistic vs the ${ceiling} ceiling)
-- market: {"fit": number 0.75-1.25 (multiplier on the store's measured conversion rate for THIS collection \u00d7 occasion: >1.0 when the pairing is gift-urgent, emotionally loaded, or matches proven best-sellers; <1.0 when it's browsy, generic, or a stretch fit; 1.0 when neutral \u2014 be honest, most should sit 0.9-1.1), "fitWhy": <=110 chars grounding the multiplier in THIS store's products/buyers, "demand": "rising"|"steady"|"fading" (search & gifting demand heading into the run window), "angle": <=90 chars the single best-converting ad angle}
-  (Do NOT estimate ROAS \u2014 it is computed from real CPC, budget, and store data. Your job is the market judgment the raw numbers can't see.)
-- proven (bool: true ONLY if memory shows success for this occasion)
+- occasion (the occasion's common name, e.g. "Halloween" or "World Teachers' Day", or the theme; "Evergreen gifting" for always-on gifting)
+- peakDate (YYYY-MM-DD: the verified date buyers shop for — the occasion's day, or the last day of a multi-day observance; null for evergreen gifting or a theme with no single gift day)
+- dateSource (<=100 chars: where you verified peakDate; "" when peakDate is null)
+- markets (array: the countries above where buyers shop for this occasion on peakDate; all of them for evergreen gifting or a theme)
+- priority: "high" (timely + strong fit), "medium" (solid), "test" (speculative)
+- market: {"fitWhy": <=110 chars why THIS collection fits THIS occasion's buyers, grounded in its products, "demand": "rising"|"steady"|"fading" (gifting demand heading into the run window), "angle": <=90 chars the single best-converting ad angle}
+  (Do NOT estimate searches, bids, budgets, run dates, sales or ROAS: they are measured by Google Keyword Planner and computed from the store's own data and the verified peakDate.)
 - rationale (<=120 chars: why now, why this collection)
-- keywords: an array of 6-10 RESEARCHED keyword objects. SPECIFICITY IS THE LAW: every keyword must contain a concrete jewelry product type (necklace, charm, bracelet, pendant, earrings...) AND at least one motif, style, material, or recipient qualifier drawn from the inventory. NEVER category-only or gifting-head terms ("nurse gifts", "summer jewelry", "gifts for her" are all FORBIDDEN — they buy browsers, not buyers). At most ONE 2-word motif+type term per opportunity ("bunny necklace"); everything else 3+ words phrased exactly as a ready-to-buy shopper types it. DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms \u2014 styles, recipients, occasions, materials \u2014 and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) \u2014 head terms from its high-frequency motifs, long-tail from mid-frequency motifs \u00d7 product types \u00d7 the occasion (a collection with bunny(31) and axolotl(6) earns both "bunny necklace" AND "axolotl charm gift") \u2014 phrased the way the audience below actually searches. DIFFERENTIATE the numbers per keyword and per opportunity (do not reuse the same figures). Each object:
-    {"text": phrase a shopper would search,
-     "searches": realistic estimated AVERAGE MONTHLY Google searches in the target countries (broad head terms in the hundreds-to-thousands; niche/long-tail 10-300; reflect how popular THIS exact phrase really is),
-     "competition": "LOW" | "MEDIUM" | "HIGH" (long-tail/niche usually LOW; broad jewelry/gift terms HIGH),
-     "cpcLow": realistic LOW top-of-page CPC in ${ccy}, "cpcHigh": realistic HIGH top-of-page CPC in ${ccy} (2025-26 retail-jewelry search runs ~$0.30-$3.50; long-tail cheaper, broad or gifting-peak terms pricier),
-     "intent": "high" (ready to buy) | "medium" | "low",
-     "tail": "HEAD" (1-2 words) | "MID" (3 words) | "LONG" (4+ words, specific)}
+- keywords: an array of 6-10 search phrases (strings). SPECIFICITY IS THE LAW: every keyword must contain a concrete jewelry product type (necklace, charm, bracelet, pendant, earrings...) AND at least one motif, style, material, or recipient qualifier drawn from the inventory. NEVER category-only or gifting-head terms ("nurse gifts", "summer jewelry", "gifts for her" are all FORBIDDEN — they buy browsers, not buyers). Every keyword is 3+ words phrased exactly as a ready-to-buy shopper types it (the validator rejects a two-word motif+type term such as "bunny necklace" as browsing intent). DRAWN FROM the collection's motif inventory AND ITS LISTING TAGS (the tags are the merchant's own search terms — styles, recipients, occasions, materials — and often ARE the phrases shoppers type; fold the relevant ones for this occasion into keyword texts) — head terms from its high-frequency motifs, long-tail from mid-frequency motifs × product types × the occasion (a collection with bunny(31) and axolotl(6) earns both "gold bunny necklace" AND "axolotl charm gift") — phrased the way the audience below actually searches.
 - keywordStrategy: <=180 chars explaining why THIS keyword mix for THIS collection+occasion (the head vs long-tail balance, buyer intent, and why more or fewer terms)
 - negatives: 8-15 lowercase phrases that LOOK related to this theme but carry the WRONG intent — the searches this campaign must never pay for. Think per theme: adjacent product categories the motif implies (apparel, decor, toys, party supplies, costumes), information/fandom queries (rules, schedule, scores, care, breed, team names), profession-adjacent (school, certification, jobs), and craft/media (font, logo, cake, sticker). NO match-type syntax, no duplicates of obvious universals (free/cheap/diy are already blocked account-wide).
 - keyPhrases (3-4 short emotional ad phrases speaking directly to the audience's motivation)
 - audience: {"buyer": <=70 chars WHO is typing the search and paying \u2014 usually the gift-giver, be specific (e.g. "team parents at season end", "moms of teen daughters"), "recipient": <=50 chars who receives it, "motivation": <=90 chars the emotional driver of the purchase, "searchStyle": <=80 chars how THIS buyer actually phrases searches}
-INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fit reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
-${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportunities and their keyword mixes MUST honor the playbook above — only channel-appropriate, evidence-backed observations; if you propose something a lesson advises against, you must have newer, stronger evidence and say so in the rationale. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
+INTERPLAY (critical): audience \u00d7 occasion timing \u00d7 motif inventory must agree \u2014 keywords are what THIS buyer types in THIS window for the motifs/types/price band this collection actually contains; market.fitWhy reflects inventory-level fit (price point, motif breadth, giftability), never the collection name alone. If the window is short, weight urgent/ready-to-buy phrasing; if the listings skew premium, weight quality/keepsake phrasing.
+${pbBlock}Only include opportunities genuinely relevant in that window. Opportunities and their keyword mixes MUST honor the playbook above — only channel-appropriate, evidence-backed observations; if you propose something a lesson advises against, you must have newer, stronger evidence and say so in the rationale. Rank best-first (soonest + strongest first). Avoid out-of-season occasions and any memory marks as fail. Return ONLY JSON: {"opportunities":[ ... ]}`;
   let list = null, llmErr = null;
   // Reasoning models spend hidden reasoning tokens FROM max_completion_tokens before emitting any
   // JSON — at effort "high" on this large a prompt, a 9k budget was fully consumed by reasoning
   // alone ("finish_reason: length, 0 chars"). So: a much bigger budget, and if high effort still
   // starves the output, retry once at medium effort (far less reasoning burn) instead of failing.
-  const _llmLadder = [{ maxTokens: 24000, effort: "high" }, { maxTokens: 24000, effort: "medium" }];
+  const _llmLadder = [{ maxTokens: 24000, effort: "high", webSearch: 5 }, { maxTokens: 24000, effort: "medium", webSearch: 5 }]; // web search verifies each occasion date
   let _rungNo = 0;
   for (const _rung of _llmLadder) {
     _rungNo++;
     const llmId="search_ai_strategy_"+_rungNo, llmT=Date.now();
     await _scanProg(_rungNo === 1 ? 38 : 46, "AI strategist reasoning", _rungNo === 1 ? "deep pass (high effort) \u2014 the long step" : "retry at standard effort");
-    await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:"running",startedAt:llmT,detail:`Reasoning effort ${_rung.effort}; output budget ${_rung.maxTokens} tokens.`});
+    await _auditEvent(audit,{id:llmId,category:"OpenAI",label:`Search strategy attempt ${_rungNo}`,status:"running",startedAt:llmT,detail:`Reasoning effort ${_rung.effort}; output budget ${_rung.maxTokens} tokens; up to ${_rung.webSearch} web searches to verify dates.`});
     try {
       const j = await openaiJSON(prompt, _rung);
       if (j && Array.isArray(j.opportunities)) { list = j.opportunities.filter(o => o && o.collectionTitle && o.occasion); llmErr = null;
@@ -6563,15 +6673,41 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
   const byTitle0 = {}; collections.forEach(c => byTitle0[c.title.toLowerCase()] = c.handle);
   // PMax opportunities were built independently above from live GMC offers + order signals.
   const byTitle = byTitle0; const today0 = _todayUtc();
-  let _enabled = ceiling; const budgetT=Date.now(); try { _enabled = await _enabledBudgetTotal(); await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"ok",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,detail:`Enabled budgets ${CURRENCY} ${_r2(_enabled)}/day against ceiling ${CURRENCY} ${ceiling}/day.`,source:"Google Ads campaign budgets"}); } catch (e) { await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"warning",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,error:e&&e.message,fallback:"Headroom unavailable; hold new spending until it is verified."}); }
+  let _enabled = ceiling; const budgetT=Date.now(); try { _enabled = await _enabledBudgetTotal(); await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"ok",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,detail:`Enabled budgets ${ccy} ${_r2(_enabled)}/day against ceiling ${ccy} ${ceiling}/day.`,source:"Google Ads campaign budgets"}); } catch (e) { await _auditEvent(audit,{id:"ads_budget_headroom",category:"Google Ads API",label:"Enabled campaign budget headroom",status:"warning",startedAt:budgetT,endedAt:Date.now(),tookMs:Date.now()-budgetT,error:e&&e.message,fallback:"Headroom unavailable; hold new spending until it is verified."}); }
   const headroom = Math.max(0, ceiling - _enabled);
   // Real store AOV (from logged Shopify orders) so projected revenue uses YOUR numbers, not a guess.
-  let sig120=null,aov=0; const econT=Date.now(); try { sig120=await storeSignals({days:120}); const rev=sig120.totalRevenue!=null?sig120.totalRevenue:(sig120.adRevenue||0)+(sig120.organicRevenue||0); if(sig120.orders>0)aov=_r2(rev/sig120.orders); await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:sig120?"ok":"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,detail:sig120?`${sig120.orders} orders; measured AOV ${CURRENCY} ${aov||0}.`:"No 120-day order economics available.",source:"Firestore Shopify order log",fallback:sig120?null:"Use conservative account priors."}); } catch(e) { await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,error:e&&e.message,fallback:"Use conservative account priors."}); }
+  let sig120=null,aov=0; const econT=Date.now(); try { sig120=await storeSignals({days:120}); const rev=sig120.totalRevenue!=null?sig120.totalRevenue:(sig120.adRevenue||0)+(sig120.organicRevenue||0); const valued=sig120.orders-(Number(sig120.excludedCurrencyOrders)||0); /* orders in another currency carry no value in rev */ if(valued>0)aov=_r2(rev/valued); await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:sig120?"ok":"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,detail:sig120?`${sig120.orders} orders; measured AOV ${CURRENCY} ${aov||0}.`:"No 120-day order economics available.",source:"Firestore Shopify order log",fallback:sig120?null:"Use conservative account priors."}); } catch(e) { await _auditEvent(audit,{id:"store_economics_120d",category:"Store data",label:"120-day store economics",status:"warning",startedAt:econT,endedAt:Date.now(),tookMs:Date.now()-econT,error:e&&e.message,fallback:"Use conservative account priors."}); }
   let perfByTag={}; const perfT=Date.now(); try { perfByTag=await collectionAdsPerformance({days:120}); await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"ok",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,detail:`Performance history mapped to ${Object.keys(perfByTag).length} campaign tag(s).`,source:"Google Ads campaign metrics"}); } catch(e) { await _auditEvent(audit,{id:"collection_ads_performance",category:"Google Ads API",label:"120-day campaign performance by collection",status:"warning",startedAt:perfT,endedAt:Date.now(),tookMs:Date.now()-perfT,error:e&&e.message,fallback:"Rank without collection-specific paid history."}); }
   const profileByHandle={}; ((profiles&&profiles.list)||profiles||[]).forEach(p=>{if(p&&p.handle)profileByHandle[p.handle]=p;});
   // Computed conversion rate (account history shrunk toward the benchmark) — one fetch, used by every plan.
   let cvrInfo = null; const cvrT=Date.now(); try { cvrInfo = await accountCvr(); await _auditEvent(audit,{id:"account_cvr_model",category:"Forecasting",label:"Account conversion-rate model",status:"ok",startedAt:cvrT,endedAt:Date.now(),tookMs:Date.now()-cvrT,detail:`Planning CVR ${_r2(((cvrInfo&&cvrInfo.cvr)||PLAN_CVR)*100)}%; ${cvrInfo&&cvrInfo.source||"benchmark prior"}.`,source:"Google Ads history + jewelry prior"}); } catch (e) { await _auditEvent(audit,{id:"account_cvr_model",category:"Forecasting",label:"Account conversion-rate model",status:"warning",startedAt:cvrT,endedAt:Date.now(),tookMs:Date.now()-cvrT,error:e&&e.message,fallback:`Use ${(PLAN_CVR*100).toFixed(1)}% jewelry prior.`}); }
   const geoIds = (Array.isArray(ctrl.defaultCountries) && ctrl.defaultCountries.length) ? ctrl.defaultCountries : ["2124"];
+  // Occasion dates, fixed before any keyword research is spent on them. A calendar rule sets a known
+  // occasion's date (the model's date is only cross-checked); otherwise the model's web-verified
+  // peakDate is used, and an unverifiable date is dropped. The run was previously planned from the
+  // model's campaign END date, so it ended days after the occasion and passed occasions stayed listed.
+  const datesT = Date.now(), dateAudit = { rule: 0, research: 0, undated: 0, corrected: 0, passed: 0, tooSoon: 0, tooFar: 0, unverified: 0, noMarket: 0 };
+  list = list.filter(o => {
+    const evergreen = /evergreen/i.test(String(o.occasion || "")), rule = evergreen ? null : _occasionRule(o.occasion, dateStr);
+    const raw = String(o.peakDate || "").trim(), d = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? _parseYmd(raw) : null, aiPeak = d && _ymd(d) === raw ? raw : null;
+    const verified = typeof o.dateSource === "string" && !!o.dateSource.trim(), firm = rule && !(rule.approx && verified && aiPeak); // a season anchor yields to a verified date
+    const peak = evergreen ? null : (firm ? _ymd(rule.date) : (verified ? aiPeak : null));
+    if (!evergreen && !firm && aiPeak && !verified) { dateAudit.unverified++; return false; }
+    const lead = peak ? _daysBetween(_parseYmd(dateStr), _parseYmd(peak)) : null;
+    if (lead != null && lead < 0) { dateAudit.passed++; return false; }
+    if (lead != null && lead < _OPP_MIN_LEAD_DAYS) { dateAudit.tooSoon++; return false; }
+    if (lead != null && lead > 32 + 17) { dateAudit.tooFar++; return false; } // its 17-day run would start after the 32-day horizon
+    const aiMarkets = (Array.isArray(o.markets) ? o.markets : []).map(x => String(x).toUpperCase()).filter(x => marketCodes.includes(x));
+    const markets = rule && rule.markets ? marketCodes.filter(x => rule.markets.includes(x)) : (aiMarkets.length ? aiMarkets : marketCodes);
+    if (!markets.length && marketCodes.length) { dateAudit.noMarket++; return false; } // e.g. Canadian Thanksgiving when Canada is not targeted
+    if (firm && aiPeak && aiPeak !== peak) dateAudit.corrected++;
+    dateAudit[peak ? (firm ? "rule" : "research") : "undated"]++;
+    o._dates = { peakDate: peak, check: peak ? { source: firm ? "calendar rule" : "web-verified research", proposedDate: aiPeak, reference: firm ? null : String(o.dateSource).trim().slice(0, 120) } : null,
+      markets, countries: geoIds.map(String).filter(g => !isoByGeo[g.replace(/\D/g, "")] || markets.includes(isoByGeo[g.replace(/\D/g, "")])) };
+    return true;
+  });
+  await _auditEvent(audit,{id:"opportunity_dates",category:"Ranking",label:"Occasion dates and markets",status:"ok",startedAt:datesT,endedAt:Date.now(),tookMs:Date.now()-datesT,
+    detail:`${list.length} with valid dates: ${dateAudit.rule} dated by calendar rule (${dateAudit.corrected} proposed date(s) corrected), ${dateAudit.research} by web-verified research, ${dateAudit.undated} undated. Dropped: ${dateAudit.passed} already passed, ${dateAudit.tooSoon} under ${_OPP_MIN_LEAD_DAYS} days away, ${dateAudit.tooFar} too far ahead, ${dateAudit.unverified} without a verified date, ${dateAudit.noMarket} not observed in the targeted countries.`,source:"Calendar rules + strategist date checks",meta:dateAudit});
   // Real Keyword Planner data — but Keyword Planner is rate-limited to ~1 req/sec, so we do NOT
   // fire one call per opportunity. We collect every opportunity's unique seeds, run ONE batched +
   // cached pool (serial chunks, backoff, stops on 429), then hand each opportunity its own slice.
@@ -6619,6 +6755,14 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     if(!grounded.ok){groundingAudit.push({i,title:o.collectionTitle,occasion:o.occasion,ok:false,accepted:grounded.evidence&&grounded.evidence.accepted||0,rejected:(grounded.rejected||[]).length,groups:(grounded.groups||[]).length,reason:"Fewer than 4 inventory-grounded purchase-intent keywords survived."});return null;} // fail closed: no broad fallback opportunity
     groundingAudit.push({i,title:o.collectionTitle,occasion:o.occasion,ok:true,accepted:grounded.evidence&&grounded.evidence.accepted||grounded.keywords.length,rejected:(grounded.rejected||[]).length,groups:grounded.groups.length,real:grounded.evidence&&grounded.evidence.real||0,source:merged.source});
     merged.keywords=grounded.keywords;
+    // Research figures describe the keywords that will actually be bought. They were computed before
+    // grounding, so bids, volume and competition also counted Planner ideas the inventory check had
+    // just rejected, and plural/word-order variants twice.
+    const realKw=merged.keywords.filter(k=>k.real); realKw.forEach(k=>{const idea=(pool.ideasByText||{})[String(k.text).toLowerCase()];if(idea&&idea.monthlyEnd)k.monthlyEnd=idea.monthlyEnd;});
+    const bidHi=_median(realKw.map(k=>k.high).filter(x=>x>0)), bidLo=_median(realKw.map(k=>k.low).filter(x=>x>0));
+    Object.assign(merged,{realCount:realKw.length,source:realKw.length?"google_keyword_planner":"ai_estimate",searchVolume:realKw.length?Math.round(_windowSearches(realKw).monthly):null,competitionIndex:_median(realKw.map(k=>k.competitionIndex).filter(x=>x!=null))});
+    const ciBand=_r2(0.55+(merged.competitionIndex!=null?merged.competitionIndex:45)/100*2.6); // same competition-derived band as mergeKeywordResearch
+    merged.cpc=(bidHi>0||bidLo>0)?{low:_r2(bidLo||bidHi*.45),high:_r2(bidHi||bidLo*1.6)}:{low:_r2(ciBand*.45),high:ciBand};
     const econ=collectionEconomics(prof,sig120);
     const perf=_performanceForHandle(perfByTag,handle);
     const baseCvr=(cvrInfo&&cvrInfo.cvr)||PLAN_CVR;
@@ -6626,14 +6770,11 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     const collCvrInfo=collClicks>0?{cvr:Math.max(_CVR_MIN,Math.min(_CVR_MAX,(collConv+baseCvr*100)/(collClicks+100))),source:`collection Search history (${collClicks} clicks, ${_r2(collConv)} conversions) shrunk to account baseline`}:cvrInfo;
     const evidenceScore=Math.max(20,Math.min(96,Math.round(grounded.confidence + Math.min(12,econ.orders*2) + Math.min(10,collConv*3))));
     const confidence={score:evidenceScore,evidence:{keywords:grounded.evidence,storeProductOrders:econ.orders,salesAttributionBasis:econ.attributionBasis,matchedProducts:econ.matchedProducts,searchClicks:collClicks,searchConversions:collConv}};
-    const peakDate = o.endDate || o.startDate || _nextOccasionPeak(o.occasion);
+    const peakDate = o._dates.peakDate;
     const mkt = _mktNorm(o.market);
-    // Measured demand (12-mo Keyword Planner series) OVERRIDES the model\u2019s guess; the source
-    // is recorded so the card can say which one it is.
-    if (mkt) {
-      if (merged.demandMeasured) { mkt.demand = merged.demandMeasured; mkt.demandSource = "measured"; mkt.demandSlopePct = merged.demandSlopePct; }
-      else if (mkt.demand) mkt.demandSource = "model";
-    }
+    // The model\u2019s demand word is labelled as opinion; planCampaign replaces it with Keyword Planner\u2019s
+    // run-month searches vs their 12-month average when that seasonality is measured.
+    if (mkt && mkt.demand) mkt.demandSource = "model";
     const plan = planCampaign({ currency:ccy,nativeToUsd,title:o.collectionTitle,occasion:o.occasion,peakDate,ceiling,headroom,smartBidding:!!ctrl.smartBidding,research:merged,aov:econ.aov||aov,cvrInfo:collCvrInfo,market:mkt,economics:econ,confidence });
     const startDate = plan.duration.startDate, endDate = plan.duration.endDate, durationDays = plan.duration.days;
     const bud = plan.budget.daily, maxCpc = plan.cpc.max;
@@ -6645,17 +6786,18 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
       priority: (["high", "medium", "test"].indexOf(o.priority) >= 0 ? o.priority : "test"),
       recommendedDailyBudget: bud, estTotalSpend: plan.expected.spendTotal,
       expectedRoasBand: plan.expectedRoas ? plan.expectedRoas.band : null, expectedRoas: plan.expectedRoas || null,
-      market:mkt,audience:_audNorm(o.audience),proven:!!o.proven,confidence,economics:econ,landingRelevance:{score:grounded.confidence,evidence:`${grounded.evidence.accepted} inventory-grounded keywords across ${grounded.groups.length} intent groups`},intentGroups:grounded.groups.map(g=>({label:g.label,keywords:g.keywords})),
+      market:mkt,audience:_audNorm(o.audience),proven:!!(mem&&mem.outcome==="success"&&_convH.validated),confidence,economics:econ,landingRelevance:{score:grounded.confidence,evidence:`${grounded.evidence.accepted} inventory-grounded keywords across ${grounded.groups.length} intent groups`},intentGroups:grounded.groups.map(g=>({label:g.label,keywords:g.keywords})),
       rationale: o.rationale || "", keywords: kws, keywordData: merged.keywords,
       negatives: (Array.isArray(o.negatives) ? o.negatives.map(n => String(n).trim().toLowerCase()).filter(Boolean).slice(0, 15) : []),
       research: { source: merged.source, error: merged.error, realCount: merged.realCount,
         searchVolume: merged.searchVolume, competitionIndex: merged.competitionIndex, cpc: merged.cpc,
         longTailRatio: merged.longTailRatio, headCount: merged.headCount, longCount: merged.longCount,
-        strategy:merged.strategy,keywordCount:merged.keywords.length,rejectedKeywords:grounded.rejected.slice(0,12),intentGroups:grounded.groups.length },
+        strategy:merged.strategy,keywordCount:merged.keywords.length,rejectedKeywords:grounded.rejected.slice(0,12),intentGroups:grounded.groups.length, dataAt: pool.ok ? (pool.at || null) : null },
       keyPhrases: Array.isArray(o.keyPhrases) ? o.keyPhrases.slice(0, 4) : [],
-      pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy
+      pastStats: mem && mem.roas ? { roas: mem.roas, outcome: mem.outcome } : null, currency: ccy,
+      peakDate, dateCheck: o._dates.check, markets: o._dates.markets, countries: o._dates.countries
     };
-  }).filter(o => o.collectionHandle)
+  }).filter(o => o && o.collectionHandle) // grounding failures are null
     .filter(o => o.daysOut <= 32)   // ~30-day forward window: drop anything that starts too far out
     .map(o=>{o.opportunityClass=opportunityClass(o);const sc=_oppScore(o);o.score=sc.score;o.rank=sc.rank;return o;})
     // Default order = the blend the console shows: conversion likelihood boosted by urgency.
@@ -6667,7 +6809,16 @@ ${pbBlock}Only include opportunities genuinely relevant within ~30 days. Opportu
     detail:`${list.length}/${proposedBeforeGrounding} AI proposals survived strict product-type, qualifier and purchase-intent checks.`,source:"Deterministic validator",meta:{proposed:proposedBeforeGrounding,survived:list.length,rejected:proposedBeforeGrounding-list.length}});
   // Suppress lower-ranked ideas that would split the same demand across parallel
   // campaigns. The surviving list is intentionally smaller and commercially cleaner.
-  list.forEach(o=>{const real=(o.keywordData||[]).filter(k=>k.real&&Number(k.searches)>0).length;const ready=real>=4&&headroom>=o.recommendedDailyBudget&&ctrl.budgetCurrencyVerified;o.eligibility={ready,measuredKeywords:real,label:ready?"Evidence supports a test":"Needs research or budget",reason:ready?"Inventory and measured demand support a controlled test; outcomes remain uncertain.":"Verify at least four inventory-matched keywords and available account budget."};});
+  // Ready means every gate passes, including enough measured demand for at least one expected sale
+  // over the run; the reason names each gate that failed. Ready ideas rank first, so a higher-scored
+  // idea that cannot launch never suppresses an overlapping one that can.
+  list.forEach(o=>{const real=(o.keywordData||[]).filter(k=>k.real&&Number(k.searches)>0).length,sales=Number(o.plan&&o.plan.expected&&o.plan.expected.conversions)||0,why=[];
+    if(real<4)why.push(`Only ${real} inventory-matched keyword${real===1?" has":"s have"} measured Google searches; 4 are needed.`);
+    else if(sales<1)why.push(`Measured demand supports ~${sales} expected sale${sales===1?"":"s"} over the run, too few for a test.`);
+    if(!(headroom>=o.recommendedDailyBudget))why.push(`Daily ceiling headroom (${ccy} ${_r2(headroom)}) is below this plan\u2019s ${ccy} ${o.recommendedDailyBudget}/day.`);
+    if(!ctrl.budgetCurrencyVerified)why.push("The ad account currency is not verified.");
+    const ready=!why.length;o.eligibility={ready,measuredKeywords:real,expectedSales:sales,label:ready?"Evidence supports a test":"Needs research or budget",reason:ready?"Inventory and measured demand support a controlled test; outcomes remain uncertain.":why.join(" ")};});
+  list.sort((a,b)=>(b.eligibility.ready?1:0)-(a.eligibility.ready?1:0)||b.rank-a.rank);
   const beforeConflicts=list.length; list=resolveOpportunityConflicts(list);
   await _auditEvent(audit,{id:"opportunity_conflicts",category:"Ranking",label:"Duplicate and cannibalization resolution",status:"ok",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
     detail:`${beforeConflicts-list.length} overlapping opportunity/opportunities suppressed; ${list.length} commercially distinct Search opportunities remain.`,source:"Deterministic overlap scoring",meta:{before:beforeConflicts,after:list.length,suppressed:beforeConflicts-list.length}});
@@ -6745,7 +6896,9 @@ async function takenTags() {
   if (!f) errors.push("Approval history unavailable.");
   if (f) {
     try {
-      const ap = await f.db.collection(COL.approvals).limit(300).get();
+      // Only statuses that hold a tag are read: an unfiltered 300-document sample of every approval type
+      // (designs, budgets, analyses...) could omit a pending draft and let the scan re-suggest it.
+      const ap = await f.db.collection(COL.approvals).where("status", "in", ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN", "APPLIED"]).limit(500).get();
       ap.forEach(d => {
         const x = d.data(); const tag = approvalTag(x); if (!tag) return;
         if (x.status === "REJECTED") return; // rejected/released drafts don\u2019t hold the tag \u2014 the scan may re-suggest it
@@ -6782,25 +6935,37 @@ async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
   // a stale list kept after a failed re-scan), so clamp startDate to today, recompute daysOut, and
   // drop anything whose whole window has passed — the console must never suggest starting a
   // campaign in the past.
-  const today0 = _todayUtc();
   const todayYmd = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
+  const today0 = _parseYmd(todayYmd) || _todayUtc(); // the account’s date: the same day a clamped start is set to
+  const researchStatus = _opportunityResearchStatus(r), staleSearch = !!(researchStatus.search && researchStatus.search.stale);
+  const scanYmd = r.scannedAt ? _ymd(new Date(Number(r.scannedAt))) : todayYmd;
   const opportunities = (r.opportunities || []).map(o => {
     const tag = oppTag(o.collectionHandle, o.occasion);
     const out = Object.assign({}, o, { tag, acted: taken[tag] || null });
     const endD = _parseYmd(out.endDate);
-    if (endD && endD < today0) { out._expired = true; return out; }
+    // A dated idea is dead once its occasion has passed. Lists saved before peakDate existed use the
+    // calendar rule from their scan date: their end dates could run days past the occasion.
+    const peakD = _parseYmd(("peakDate" in o) ? o.peakDate : _nextOccasionPeak(o.occasion, scanYmd));
+    if ((endD && endD < today0) || (peakD && peakD < today0)) { out._expired = true; return out; }
     const startD = _parseYmd(out.startDate);
     if (startD && startD < today0) {
       out.startDate = todayYmd;
       out.daysOut = 0;
       const days = endD ? (_daysBetween(today0, endD) + 1) : out.durationDays;
       out.durationDays = Math.max(1, days || 1);
+      // Every total is a daily figure times the days run, so a shorter run scales them all.
+      const k = Number(o.durationDays) > 0 ? out.durationDays / Number(o.durationDays) : 1;
+      if (out.estTotalSpend != null) out.estTotalSpend = Math.round(out.estTotalSpend * k);
       if (out.plan && out.plan.duration) {
-        out.plan = Object.assign({}, out.plan, { duration: Object.assign({}, out.plan.duration, { startDate: todayYmd, days: out.durationDays }) });
+        const ex = Object.assign({}, out.plan.expected || {});
+        ["clicksTotal", "spendTotal"].forEach(f => { if (ex[f] != null) ex[f] = Math.round(ex[f] * k); });
+        ["conversions", "revenue", "revenueLow", "revenueHigh", "contribution", "contributionLow", "contributionHigh", "profit", "profitLow", "profitHigh"].forEach(f => { if (ex[f] != null) ex[f] = _r2(ex[f] * k); });
+        out.plan = Object.assign({}, out.plan, { duration: Object.assign({}, out.plan.duration, { startDate: todayYmd, days: out.durationDays }), expected: ex });
       }
     } else if (startD) {
       out.daysOut = Math.max(0, _daysBetween(today0, startD));
     }
+    if (staleSearch && out.eligibility && out.eligibility.ready) out.eligibility = Object.assign({}, out.eligibility, { ready: false, label: "Needs research or budget", reason: "This research is more than 12 hours old. Refresh it before creating a draft." });
     return out;
   })
   // Expired windows are dead; archived campaigns are terminal: drop both from every list
@@ -6812,7 +6977,7 @@ async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
     const tag = _pmaxTag(o.handle,o.feedLabel), legacyTag = _pmaxTag(o.handle,null);
     return Object.assign({}, o, { tag, acted: taken[tag] || taken[legacyTag] || null });
   }).filter(o => !deleted.has('pmax|'+o.tag)&&!(o.acted && o.acted.where === "campaign" && o.acted.status === "REMOVED"));
-  return { researchStatus: _opportunityResearchStatus(r), opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
+  return { researchStatus, opportunities, pmaxList, pmaxError: r.pmaxError || null, pmaxAt: r.pmaxAt || null,
     scannedAt: r.scannedAt, scanning: !!r.scanning, taken, lastError: r.lastError || r.error || null,
     lastErrorAt: r.lastErrorAt || null, progress: r.progress || null, scanAudit:r.scanAudit||null,
     reconciliation:{ok:!takenError,takenCount:Object.keys(taken).length,error:takenError}, engineVersion: OPPORTUNITY_ENGINE_VERSION };
@@ -6835,7 +7000,7 @@ async function releaseOpportunity({ tag } = {}) {
   const f = fb(); if (!f) throw new Error("no firestore");
   let released = 0;
   try {
-    const ap = await f.db.collection(COL.approvals).limit(300).get();
+    const ap = await f.db.collection(COL.approvals).where("status", "in", ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"]).limit(500).get();
     for(const d of ap.docs){
       await f.db.runTransaction(async tx=>{const snap=await tx.get(d.ref),x=snap.data();if(approvalTag(x)!==tag)return;
         if(["APPLYING","APPLY_UNKNOWN"].includes(x.status)||(x.creativeLease&&x.creativeLease.until>Date.now()))throw new Error("The draft is busy or its result is unconfirmed.");
