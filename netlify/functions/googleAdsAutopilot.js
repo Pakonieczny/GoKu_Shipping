@@ -2160,8 +2160,14 @@ async function dueEvents(now = new Date()) {
     });
   });
   if (!due.length) return due;
-  const taken = await takenTags().catch(() => ({}));
-  return due.filter(d => { const t = taken[oppTag(d.coll.handle, d.event.label)]; return !t || (t.where === "campaign" && t.status === "REMOVED"); });
+  // Each draft pays for research and copy. History that cannot be read drafts nothing today (the
+  // next daily run retries), and an occasion Paul rejected in the last 30 days is not drafted again.
+  const taken = await takenTags().catch(e => ({ _errors: [String((e && e.message) || e)] }));
+  if ((taken._errors || []).length) return [];
+  const rejected = new Set(), f = fb();
+  if (f) { try { (await f.db.collection(COL.approvals).where("status", "==", "REJECTED").limit(500).get()).forEach(d => { const x = d.data() || {}, tag = approvalTag(x);
+    if (tag && Date.now() - Number(x.deletedAt || 0) < 30 * 86400000) rejected.add(tag); }); } catch (e) { return []; } } // deletedAt: rejected in Approvals (a release frees the tag)
+  return due.filter(d => { const tag = oppTag(d.coll.handle, d.event.label), t = taken[tag]; return !rejected.has(tag) && (!t || (t.where === "campaign" && t.status === "REMOVED")); });
 }
 
 /* ===================== Build a Search campaign (atomic) ===================== */
@@ -5599,10 +5605,13 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   const items = [...byRes.values()].filter(x => x.budget > 0);
   const total = items.reduce((a, b) => a + b.budget, 0);
   if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
-  const factor = ceiling / total, floor = 1;
+  // A trim never raises a budget: those at or under the 1-a-day floor stay as they are, and the
+  // larger budgets are scaled into the room that leaves.
+  const floor = 1, low = items.filter(x => x.budget <= floor), high = items.filter(x => x.budget > floor);
+  const highTotal = high.reduce((a, b) => a + b.budget, 0), factor = highTotal > 0 ? Math.max(0, ceiling - low.reduce((a, b) => a + b.budget, 0)) / highTotal : 0;
   const ops = [], moves = [];
-  items.forEach(x => {
-    const nb = Math.max(floor, Math.floor(x.budget * factor * 100) / 100); // round down: the trimmed sum never lands above the ceiling
+  high.forEach(x => {
+    const nb = Math.min(x.budget, Math.max(floor, Math.floor(x.budget * factor * 100) / 100)); // round down: the trimmed sum never lands above the ceiling
     if (Math.abs(nb - x.budget) < 0.01) return;
     moves.push({ campaign: x.name, from: x.budget, to: nb });
     ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });
@@ -5626,8 +5635,10 @@ async function _mtdSpend() {
   const nativeMicros = (r[0] && r[0].metrics && r[0].metrics.costMicros) || 0;
   let rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
   // Rate service unreachable: use the newest rate saved in the last 31 days rather than leaving the
-  // monthly stop unable to compare (and so switched off) until the service returns.
-  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = f ? ((await f.db.collection(COL.state).doc("fxRates").get()).data() || {}) : {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+  // monthly stop unable to compare (and so switched off) until the service returns. _fxRateToUsd
+  // saves final daily rates in fxRatesFinal; the retired fxRates document still holds older ones.
+  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+    if (f) for (const doc of ["fxRates", "fxRatesFinal"]) { try { Object.assign(saved, (await f.db.collection(COL.state).doc(doc).get()).data() || {}); } catch (e) {} }
     const k = Object.keys(saved).filter(k => k >= min && k <= acct + ":" + end && Number(saved[k]) > 0).sort().pop(); if (k) rate = Number(saved[k]); } catch (e) {} }
   const mtd = rate != null ? fromMicros(nativeMicros) * rate : fromMicros(nativeMicros);
   return { mtd, mtdNative: fromMicros(nativeMicros), fxIncomplete: rate == null, start, end };

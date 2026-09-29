@@ -126,5 +126,14 @@ const J=x=>JSON.stringify(x);
  const s=await serve.opportunitiesWithStatus({});
  assert.equal(s.opportunities.length,1,'past occasion dropped');const legacy=s.opportunities[0];
  assert.equal(legacy.startDate,'2026-09-29');assert.equal(legacy.durationDays,38);assert.equal(legacy.estTotalSpend,380);assert.equal(legacy.plan.expected.conversions,3.8);
+ // ---- Due calendar events: the daily task pays for a draft only when history says it is not already taken or refused ----
+ {const rejected=[];const due=taken=>engine({loadCalendar:async()=>({celestial:{handle:'celestial',title:'Celestial',peaks:[{label:'Halloween',leadDays:32,angle:''}]}}),takenTags:async()=>taken,_accountTz:async()=>'America/Toronto',
+   fb:()=>({db:{collection:()=>({where:(k,op,v)=>({limit:()=>({get:async()=>({forEach:fn=>rejected.filter(d=>d[k]===v).forEach(d=>fn({id:'r',data:()=>d}))})})})})}})}).dueEvents('2026-09-29');
+  assert.equal(J((await due({})).map(d=>d.event.peakDate)),'["2026-10-31"]','Halloween is due 32 days out');
+  const unreadable={};Object.defineProperty(unreadable,'_errors',{value:['Approval history could not be checked.'],enumerable:false});
+  assert.equal((await due(unreadable)).length,0,'history that cannot be read drafts nothing today (tomorrow retries) instead of paying for duplicates');
+  rejected.push({status:'REJECTED',tag:'celestial-halloween',deletedAt:NOW-86400000});
+  assert.equal((await due({})).length,0,'an occasion Paul rejected yesterday is not drafted again in the same window');
+  rejected[0].deletedAt=NOW-340*86400000;assert.equal((await due({})).length,1,'last year’s rejection does not block this year');}
  console.log('opportunity-research: ok');
 })().catch(e=>{console.error(e);process.exit(1);});
