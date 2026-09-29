@@ -799,6 +799,12 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPieces li.on em::before{background:var(--gold2)}
 .owPanel .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .owPanel .why{font:11px var(--sans);color:#8a3a26}
+/* the Sheet view's side (Paul, 29 Sep 01:04): its panel, then the order's two conversations under it, the very column
+   the Overview shows (moved here while the Sheet is in front, never copied), filling the rest; the side scrolls when
+   the panel is tall, the threads inside it */
+.owSide{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:auto;border-left:1px solid var(--line);background:var(--card)}
+.owSide>.owPanel{flex:none;border-left:0;overflow:visible}
+#orderWin.owFull .owSide>.owChat{flex:1 0 360px;min-height:360px;border-left:0;border-top:1px solid var(--line)}
 @media (max-width:900px){
   #orderWin.owFull .owRail{display:none}
   #orderWin.owFull .owVInfo,#orderWin.owFull .owVSheet{grid-template-columns:minmax(0,1fr);overflow:auto}
@@ -806,6 +812,9 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owChat{border-left:0;border-top:1px solid var(--line);min-height:420px}
   #orderWin.owFull .owPlateWrap{min-height:320px}
   #orderWin.owFull .owPanel{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #orderWin.owFull .owSide{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #orderWin.owFull .owSide>.owPanel{border-top:0}
+  #orderWin.owFull .owSide>.owChat{flex:none;min-height:420px}
   .owNowCard,.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:minmax(0,1fr)}
   .owSkip .soft{display:none}
 }
@@ -6391,7 +6400,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-tp2"></script>
-<script src="charm-nest-bridge.js?v=20260929-tp2"></script>
+<script src="charm-nest-bridge.js?v=20260929-om"></script>
 <script src="charm-nest-sheetwin.js?v=20260929-tp2"></script>
 <script src="charm-nest-tour.js?v=20260929-tp2"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
@@ -6474,7 +6483,7 @@ boot();
           <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
-        <aside class="owPanel" id="owSheetPanel"></aside>
+        <div class="owSide" id="owSheetSide"><aside class="owPanel" id="owSheetPanel"></aside></div>
       </section>
     </div>
   </div>
