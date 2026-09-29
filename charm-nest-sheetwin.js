@@ -2238,7 +2238,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      charms stay exactly where they are (never arranged again), each sheet is rewritten, verified and saved under its
      own name, and its QR label is remade (Sets.onSheetSaved). The order is held in Orders so the run does not place it
      again; releasing it there nests it again. A piece stays where it is when its sheet was cut, its set was sent to
-     the station, it sits inside a saved Rose Gold cut line, or its sheet is not held by this sorter. */
+     the station, or its sheet is not held by this sorter. A Rose Gold sheet not cut yet gives its pieces up inside a green
+     line or outside every line: the lines with nothing left inside them go with the pieces, the ones that keep a piece
+     stay as saved (RoseStock.takeOff, on the server). */
   const BUSY = ["nesting", "finishing", "queued"];
   const busy = sh => BUSY.includes(sh.status) || !!sh._operationStarting || !!(sh.persisted && !sh.persistedDone && !sh.problem);
   const sentToStation = sh => window.Sets && Sets.ofRun(sh.runId).some(set => set.committedAt && (set.sheetIds || []).includes(sh.sheetId));
@@ -2279,7 +2281,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (sh.roseCutAt) stay.push({ id, sku, where, why: "that sheet was already cut" });
       else if (sh.laserDoneAt) stay.push({ id, sku, where, why: "that sheet was marked completed" });
       else if (sentToStation(sh)) stay.push({ id, sku, where, why: "its set was already sent to the station" });
-      else if (sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) stay.push({ id, sku, where, why: "it is inside the saved Rose Gold cut line" });
+      // (a Rose Gold sheet not cut yet gives its pieces up too, inside a green line or outside every line: the lines with
+      //  nothing left inside them go with the pieces, the ones that keep a piece stay as saved. Paul, 29 Sep: a cancelled
+      //  order's lions stayed on the sheet for good, "inside the saved Rose Gold cut line")
       else ok.push({ id, sku, sh, where });
     }
     // a sheet is not emptied here: with nothing left on it there are no files to rewrite, so it is deleted from its menu
@@ -2494,6 +2498,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const now = allSheets().filter(sh => sh.charms.some(c => c.poolId === o.id));
         if (o.sh ? now.length !== 1 || now[0] !== o.sh : now.length) throw new Error("the sheets changed while this waited, so nothing was taken off; open the charm and try again");
       }
+      // a Rose Gold sheet's saved green lines give up the pieces inside them first, on the server (a line with nothing left
+      // inside it goes with them, one that keeps a piece stays as saved): nothing has changed yet if that cannot be done
+      for (const sh of pages) if (sh.metal === "rose" && window.RoseStock && RoseStock.takeOff) await RoseStock.takeOff(sh, sh.charms.filter(c => ids.has(c.poolId)).map(c => c.id), { by: who, cancel });
       changed = true;
       holdRelease(pages);
       off.state = "now"; paint();
@@ -2954,12 +2961,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
      another station comes off every sheet of this sorter that is not cut yet, by itself. The newest cancel records are
      read every 2 minutes and at each orders check (cancelList: no Etsy call). For an order this sorter holds, its record
      is read once more just before anything moves (an order that is not cancelled is never touched); its lines are marked
-     gone and leave Orders and the run, as a cancel made here does (dropOrder); its pieces come off each page still filling
-     (Orders.takeOffGone: LiveNest.closed's rules, so never a cut, released, held, committed or Rose Gold cut sheet; a page
-     nesting or saving is waited for); each page is nested again as a removal does (rewritePage), its QR label remade
-     (remakeLabels) and what was saved read back (verifySaved). A piece already cut stays where it is, and a notice in the
+     gone and leave Orders and the run, as a cancel made here does (dropOrder); its pieces come off every page not cut yet
+     (Orders.takeOffGone: still filling, full and released, held, Rose Gold inside or outside its green lines; a Rose Gold
+     line with nothing left inside it goes with the pieces, roseTakeOff; a page nesting or saving is waited for); each page
+     is nested again as a removal does (rewritePage), its QR label remade (remakeLabels) and what was saved read back
+     (verifySaved). A piece already cut (laser done, or its set sent to the station) stays where it is, and a notice in the
      run pill says to set it aside until someone does. Each order is one job, written down before anything moves, so a
-     reload in the middle finishes it; one tab works at a time (a lock), one order at a time. */
+     reload in the middle finishes it; one tab works at a time (a lock), one order at a time. Every order the cancel list
+     holds is looked at at each read (poll), so one cancelled before this page opened, whose pieces its saved copy of the
+     workspace still shows on a sheet, comes off at the first read after it opens (Paul, 29 Sep). */
   const AutoCancel = window.AutoCancel = (() => {
     const KEY = () => "cn.autoCancel.v1:" + (typeof WORKSPACE_SANDBOX !== "undefined" && WORKSPACE_SANDBOX ? "sandbox" : "production");
     const EVERY = 120000, GONE = ["abandoned", "superseded"], queue = new Set(), noop = () => {};
@@ -3021,12 +3031,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
     /** Why a page holding the order's pieces is left as it is; null when it is still filling and they come off. */
     function leftWhy(sh, ids) {
+      // only a sheet the laser has cut (or whose set went to the station) keeps a cancelled order's pieces: they are cut with
+      // it and set aside. Every other sheet gives them up, whatever else is true of it: still filling, full and released
+      // for cutting, held, a Rose Gold one inside or outside its green lines (Paul, 29 Sep: "none of them disappears from
+      // the sheet after being cancelled"; each of those used to keep them, and the sheet window's own Cancel did the same)
       if (sh.roseCutAt || sh.laserDoneAt || sh.recalled || sentToStation(sh)) return { cut: true, why: "already cut" };
-      if (sh.metal === "rose" && (sh.rosePlan || sh.roseProtected)) return { why: "inside its saved Rose Gold cut line" };
       if (window.Gate?.holding?.(sh)) return { wait: true };                  // being changed in the sheet window just now
-      if (sh.releaseFull) return { why: "released for cutting" };
-      if (sh.runHold || sh.intakeFinalized) return { why: "held for cutting" };
-      if (window.LiveNest && LiveNest.closed(sh)) return { why: "closed to changes" };
       // all a saved sheet holds: its saved files would stay behind, so the sheet is deleted from its menu instead
       if (sh.sheetId && sh.charms.every(c => ids.has(c.poolId))) return { only: true, why: "the only order on it" };
       return null;
@@ -3146,12 +3156,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         const patch = { removedBy: by, removedReason: "cancelled", removedAt: j.removedAt }, flights = [];
         for (const r of plan.rows) { if (r.state !== "gone") { r.state = "gone"; r.reason = reason; } if (window.Motion) Motion.expect("ord:" + r.key, { to: target, plus: false }); }
         if (plan.rows.length || plan.off.length || plan.loose.length) say(plan.off.length ? `taking it off ${joinAnd(plan.off.map(whereOf))}` : "taking it off Orders");
-        const taking = plan.off.length ? Orders.takeOffGone([{ order: { receiptId: rid }, poolIds: [...plan.ids], reason }], { keep: sh => !offPages.has(sh), patch, why: reason,
+        // (a Rose Gold page's saved green lines give up its pieces first, on the server: their flight starts when they leave)
+        const failed = [], fly = () => { for (const f of flights.splice(0)) f(); };
+        const taking = plan.off.length ? Orders.takeOffGone([{ order: { receiptId: rid }, poolIds: [...plan.ids], reason }], { keep: sh => !offPages.has(sh), patch, why: reason, by, at: j.removedAt, cancel: true, failed,
           before: (sh, pieces) => { if (typeof liftFromSheet === "function") for (const c of pieces.slice(0, 8)) { const f = liftFromSheet(sh, c, target); if (f) flights.push(f); } },
           after: sh => holdRelease([sh]) }) : Promise.resolve([]);
-        for (const f of flights) f();
+        fly();
         if (plan.rows.length) Orders.render();
         const taken = await taking;
+        fly();
         // pieces never placed (pooled, waiting) are let go the same way
         const loose = plan.loose;
         if (loose.length) { await Pool.update(loose, Object.assign({ state: "abandoned", sheetId: null, setId: null }, patch)); for (const id of loose) B.pool.rows.delete(id); }
@@ -3261,6 +3274,12 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         save();
         const recs = new Map(Object.entries(st.pend).map(([id, a]) => [id, neu.get(id) || { orderId: id, at: a }]));
         if (window.Cancelled && Cancelled.absorb([...neu.keys()])) Orders.render();   // (the pull rule leaves them out at once)
+        // every cancelled order this workspace knows is looked at, not only the records written since the last read: one
+        // cancelled before this page opened (or before its copy of the workspace was saved), whose pieces that copy still
+        // holds on a sheet, comes off at the first read after the page opens (Paul, 29 Sep, "on my next reload"). The list
+        // is read afresh while a notice waits (an order restored at another screen must not stay "known cancelled" from an
+        // older read: its notice goes at this check)
+        if (window.Cancelled) await Cancelled.load(st.notices.length > 0).catch(() => null);
         // a notice whose order is not among the records read and not known cancelled may have been restored at another
         // screen: asked once (one read, no Etsy call), and one not cancelled any more goes, so no piece of a live order is
         // set aside

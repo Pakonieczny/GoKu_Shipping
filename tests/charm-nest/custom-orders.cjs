@@ -445,6 +445,10 @@ async function browserChecks() {
 
     // a reload: the workspace comes back (its lines, its decisions, the switch where it was) and what was completed with it
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
+    // (the Send tour above may still be playing: a press on the Review it comes home to is the person's own, it goes
+    // through, and the tour skips after it. Skipped at the press, the list was laid out anew under the finger and the
+    // click was lost: the switch stayed on Open, and the reload below came back on Open)
+    assert.equal(await page.evaluate(() => Review.view().cseg), 'done', 'the Completed press went through while the tour played');
     await page.evaluate(async () => { await Session.flush(); window.__oldPage = true; });
     await boot();
     await page.waitForFunction(() => B.orders.rows.length === 8 && document.querySelector('#rvList .reviewListRow.cuDone'), null, { timeout: 30000 });

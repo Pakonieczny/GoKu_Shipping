@@ -126,11 +126,18 @@
       return a.finished.catch(() => {}).then(() => { t.anims.delete(a); });
     };
     t.node = (cls, html) => { const n = doc.createElement("div"); n.className = cls; if (html) n.innerHTML = html; layer().appendChild(n); t.nodes.add(n); return n; };
-    // skipped: the sheet standing open (NestFocus) shows everything at once and eases back; no other sheet is opened
-    t.forward = () => { if (t.ff) return; t.ff = true; for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); tryDo(() => root.NestFocus && root.NestFocus.isOpen() && root.NestFocus.close()); };
+    // skipped: the nest of every piece still flying is let go at once (NestHold: nothing waits on a tour that is not going on),
+    // the sheet standing open (NestFocus) shows everything at once and eases back; no other sheet is opened
+    t.forward = () => { if (t.ff) return; t.ff = true; tryDo(() => t.nest && t.nest.releaseAll()); for (const a of [...t.anims]) tryDo(() => a.finish()); for (const w of [...t.wakes]) w(); tryDo(() => root.NestFocus && root.NestFocus.isOpen() && root.NestFocus.close()); };
     // bounded: a promise from outside (NestFocus) that never settles never holds the tour, nor one still pending on a skip
     t.within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => null), new Promise(res => { if (t.ff) { setTimeout(() => res(null), Math.min(ms, 600)); return; } const w = () => { clearTimeout(h); t.wakes.delete(w); res(null); }, h = setTimeout(w, ms); t.wakes.add(w); })]);
     return t;
+  }
+  /** The tour skipped when the press now down is over (its click has been dealt by then), never before. */
+  function afterPress(t) {
+    const evs = ["pointerup", "pointercancel"], off = () => evs.forEach(ev => removeEventListener(ev, up, true));
+    const up = () => { off(); setTimeout(() => t.forward(), 0); };
+    evs.forEach(ev => addEventListener(ev, up, true)); t.off.push(off);
   }
   /** A click, a key or Esc anywhere: the rest lands at once and the tour goes home. A tab picked: the tour ends there. */
   function listen(t, home) {
@@ -140,9 +147,11 @@
       if (tabOf(e)) { t.userTab = true; unpark(t); t.forward(); return; }
       if (t.ff) return;
       // a press on the view it goes home to, while that view is still in sight, is the person's own: it goes through
-      // (not while a window waits to come back over it: it would open a second one)
+      // (not while a window waits to come back over it: it would open a second one), and the tour skips once the press
+      // is over: skipped at the press itself, the list was laid out anew (settleList) before the button came up, and
+      // the click was lost (pressed on one button, released on its replacement: the Completed switch did nothing)
       const v = viewOf(home.mode);
-      if (!t.win && modeNow() === home.mode && v && e.target && v.contains(e.target)) { t.forward(); return; }
+      if (!t.win && modeNow() === home.mode && v && e.target && v.contains(e.target)) { afterPress(t); return; }
       swallow = Date.now() + 700; e.preventDefault(); e.stopPropagation(); t.forward();
     };
     const click = e => { if (Date.now() < swallow && !tabOf(e)) { e.preventDefault(); e.stopPropagation(); swallow = 0; } };
@@ -383,13 +392,19 @@
     setTimeout(() => { if (!g._claimed) g.remove(); }, 9000);
     return { ghost: g, rect: r, thumbs: rectOf(th), imgs, mkey: card.dataset.mkey || "", rid: card.dataset.rid || "", node: card, at: Date.now() };
   }
+  /** The longest the whole tour may take (ms): its watchdog goes home then, and a hold on the nest of its pieces (NestHold) is
+   *  kept a few seconds past it at most. */
+  function limit(o = {}, gentle = reduced()) {
+    const legs = (o.legs || []).filter(l => l && (l.poolIds || []).length), waiting = o.waiting || [], pieces = legs.reduce((k, l) => k + l.poolIds.length, 0);
+    return (o.delay || 0) + (gentle ? 4000 + (legs.length + waiting.length) * 2200 : 7000 + legs.length * 4600 + waiting.length * 4200 + pieces * 400);
+  }
   async function play(o = {}) {
     if (T) { T.forward(); await T.done.catch(() => {}); }
     const legs = (o.legs || []).filter(l => l && (l.poolIds || []).length), waiting = o.waiting || [];
     const s0 = o.from && o.from.ghost ? o.from : null; if (s0) s0.ghost._claimed = true;
     if (!root.Motion || (!legs.length && !waiting.length)) { if (s0) s0.ghost.remove(); if (o.note && root.Motion) tryDo(() => root.Motion.pulse(nestTab(), { note: o.note })); return; }
     sheet();
-    const t = T = make(); t.gentle = reduced(); t.legs = legs; t.waits = waiting;
+    const t = T = make(); t.gentle = reduced(); t.legs = legs; t.waits = waiting; t.nest = o.hold || null;   // (the nest of its pieces waits for their landing: NestHold)
     if (t.gentle && s0) s0.ghost.remove();
     let finish; t.done = new Promise(r => { finish = r; });
     // the card its list holds where it stood while the tour carries it (CustomSheet.send: Motion.carry), let go home
@@ -409,8 +424,7 @@
     if (s0 && o.delay) s0.ghost.style.visibility = "hidden";
     const tabs = $("#modeSeg"); if (tabs) { tabs.classList.add("tourTabs"); t.off.push(() => setTimeout(() => tabs.classList.remove("tourTabs"), 600)); }
     // a watchdog: never longer than the whole tour should take
-    const pieces = legs.reduce((k, l) => k + l.poolIds.length, 0);
-    const guard = setTimeout(() => t.forward(), (o.delay || 0) + (t.gentle ? 4000 + (legs.length + waiting.length) * 2200 : 7000 + legs.length * 4600 + waiting.length * 4200 + pieces * 400));
+    const guard = setTimeout(() => t.forward(), limit({ legs, waiting, delay: o.delay }, t.gentle));
     try {
       if (o.delay) await t.wait(o.delay);
       mark("start");
@@ -534,7 +548,8 @@
     if (t.ff || !f) return;
     await t.hold(TIME.beat);   // (its name read; it stands on through the flight, well past TIME.read)
     if (t.ff) return;
-    const queued = queuedLeg(leg), card = f.card || nestCard(leg.metal);
+    // (no place on the sheet yet, and its nest starts as it lands (Auto: NestHold): said as placed, not as waiting for Nest)
+    const queued = queuedLeg(leg), soon = queued && !!(t.nest && t.nest.nests()), card = f.card || nestCard(leg.metal);
     const cvr = rectOf(card && $('[data-r="canvas"]', card)) || rectOf(card) || { left: innerWidth / 2 - 100, top: innerHeight / 2 - 60, width: 200, height: 120 };
     const qr = queued ? rectOf(card && $('[data-r="queue"]', card)) : null;
     // each piece drawn before it flies, at the size it lands at: it leaves as the coin (the design's own picture) and,
@@ -557,11 +572,11 @@
     await Promise.all(flights.map((fl, j) => t.wait(j * gap).then(() => t.ff ? null : flyOnto(t, fl, f, cvr, last && j === many - 1, after))));
     if (t.ff) return;
     const k = leg.poolIds.length;
-    if (queued) {
+    if (queued && !soon) {
       // queued, not placed (a Manual run): said where it waits and what places it; the card's own Nest button answers
       say(t, `Queued on Sheet ${page}`, `press Nest to place ${k === 1 ? "it" : "them"}`, { metal: leg.metal, plus: `+${k}` });
       ring(t, rectOf(card && $('[data-r="nest"]', card)), true);
-    } else say(t, `Placed on Sheet ${page}`, [metalName(leg), of].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${k}` });
+    } else say(t, `Placed on Sheet ${page}`, [metalName(leg), of, soon ? "nesting now" : ""].filter(Boolean).join(" · "), { metal: leg.metal, plus: `+${k}` });
     await Promise.all([t.hold(), ...after]);
   }
   /** One piece from the Nest tab onto its place: a copy peels off the coin (the last is the coin itself), arcs down,
@@ -585,7 +600,8 @@
     // (re-aimed on a resize: its animation is swapped for one bending onto its new place, in the time it had left)
     for (let go = null; go !== fly.go;) { go = fly.go; await go; }
     t.flying.delete(fly);
-    mark("land"); const landing = t.within(tryDo(() => f.land(fl.id)), 1200);
+    // (the piece is set down: its sheet may nest it now, and draws it in its queue as the landing pops it: NestHold)
+    mark("land"); tryDo(() => t.nest && t.nest.release([fl.id])); const landing = t.within(tryDo(() => f.land(fl.id)), 1200);
     if (f.here || !fl.placed) ring(t, fly.r);
     after.push(t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: fl.placed ? 240 : 300, easing: "ease" }).then(() => { box.remove(); t.nodes.delete(box); }), landing);
   }
@@ -875,5 +891,5 @@
   // its styles are in from the start: put in on the first send, they were a sheet new to the page in the middle of it
   // (every style worked out again, and the designs window's closing copy built all the page's styles anew)
   tryDo(() => { if (doc && doc.head) sheet(); });
-  root.SendTour = { play, snap, playing: () => !!T, skip: () => { if (T) T.forward(); }, TIME, GENTLE };
+  root.SendTour = { play, snap, limit, playing: () => !!T, skip: () => { if (T) T.forward(); }, TIME, GENTLE };
 })(typeof window !== "undefined" ? window : globalThis);

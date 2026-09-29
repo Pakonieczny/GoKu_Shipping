@@ -60,6 +60,7 @@ const assets = [
   "brites-flow.js",
   "brites-flow.css",
   "brites-ad-responsive.js",
+  "brites-ad-placement.js",
   "brites-groups.js",
   "brites-groups.css",
   "12x12_Grid_Gld+Slvr+EXTRA.jpg",
