@@ -302,10 +302,17 @@ function createFixtures(opts = {}) {
   function campaignImprovement(body) {
     return { ok: true, campaignId: String(body && body.campaignId || ''), status: 'ready', report: { id: 'harness-improvement', createdAt: now - DAY, summary: 'Harness: raise the budget on the best asset group and add two headlines.', actions: [{ id: 'act-1', title: 'Add two headlines', detail: 'Two LOW-rated headlines replaced.', kind: 'copy', draftable: true }, { id: 'act-2', title: 'Raise budget to 16.47 CAD', detail: 'Budget-limited on weekends.', kind: 'budget', draftable: false }] }, facts: [] };
   }
-  function timeline(body) {
+  // servingCheck in googleAdsAutopilot.js: { serving } is the read-only check of _googleAdsServing.js, nothing else.
+  function servingCheck(body) {
     const id = String(body && body.id || ''), c = CAMPAIGNS.find(x => x.id === id) || CAMPAIGNS[0];
-    const days = daysBetween(addDays(today, -13), today).map(d => Object.assign({ date: d }, dayMetrics(c, d) || { impressions: 0, clicks: 0, conversions: 0, value: 0, cost: 0 }));
-    return { ok: true, id, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons: c.primaryStatusReasons, channel: c.channel, steps: [{ key: 'published', label: 'Campaign published', state: 'done', date: campaignDates(c).startDate }, { key: 'impressions', label: 'Impressions', state: 'done', date: addDays(today, -12), detail: '4,120 in 14d' }, { key: 'conversions', label: 'Conversions', state: 'pending', detail: 'None yet' }], days, adStrength: c.channel === 'PERFORMANCE_MAX' ? [{ name: 'Best sellers · necklaces', strength: 'AVERAGE', status: 'ELIGIBLE', assets: { headlines: 5, longHeadlines: 1, descriptions: 2, square: 1, landscape: 1, portrait: 0, logo: 1 } }] : [] };
+    const verdict = c.primaryStatus === 'NOT_ELIGIBLE' ? 'blocked' : c.primaryStatus === 'LIMITED' ? 'attention' : 'ready';
+    const findings = (verdict === 'blocked' ? [{ level: 'block', area: 'Ads', text: '1 ad disapproved in "Best sellers · necklaces".', reason: 'Trademarks in ad text', fix: 'Edit the ad text and send it for review again.' }]
+      : verdict === 'attention' ? [{ level: 'risk', area: 'Budget', text: 'The budget limits how often the ads show.', fix: 'Raise the daily budget or narrow the targeting.' }] : [])
+      .concat([{ level: 'note', area: 'Ads', text: '1 ad still under Google review.' }]);
+    const counts = { block: 0, risk: 0, note: 0 }; findings.forEach(f => { counts[f.level]++; });
+    return { serving: { ok: true, readOnly: true, campaignId: c.id, channel: c.channel, apiVersion: 'v24', checkedAt: new Date(now).toISOString(), partial: false, settling: false, quotaExhausted: false, warnings: [], verdict, counts, findings,
+      headline: verdict === 'blocked' ? 'Will not serve as intended: ' + findings[0].text : verdict === 'attention' ? '1 setting to fix before enabling.' : 'Google reports nothing that would stop it serving as intended.',
+      facts: [{ label: 'Status', value: c.status === 'ENABLED' ? 'enabled' : c.status === 'PAUSED' ? 'paused' : 'removed' }, { label: 'Networks', value: c.channel === 'SEARCH' ? 'Google Search' : 'all Google channels' }] } };
   }
   function adDesignWorkspace(body) {
     const g = GROUPS.find(x => x.ref === (body && body.groupRef)) || GROUPS[2], ps = (g.products.length ? g.products : [0]).map(k => PRODUCTS[k]);
@@ -375,7 +382,7 @@ function createFixtures(opts = {}) {
     campaignVersions,
     campaignVersionDetail: body => ({ ok: true, id: String(body && body.id || ''), version: Number(body && body.version) || 6, snapshot: { complete: true, campaign: { name: 'Harness snapshot', status: 'ENABLED' }, components: { searchAds: [], assetGroups: [], assetLinks: [] } }, restorable: Number(body && body.version) === 5, summary: 'Harness version detail' }),
     campaignImprovement,
-    campaignTimeline: timeline,
+    servingCheck,
     analyzeCampaign: body => ({ ok: true, id: String(body && body.id || ''), verdict: 'healthy', summary: 'Harness analysis: steady CPA, budget-limited on weekends.', moves: [{ title: 'Raise weekend budget', detail: 'Shift 10% to Sat/Sun.' }], generatedAt: now }),
     keywordDiag: () => ({ ok: true, source: 'keyword_planner', keyword: 'charm necklace', rows: [{ text: 'charm necklace', volume: 12100, competition: 'HIGH', cpcLow: 0.55, cpcHigh: 1.62 }], checks: [{ label: 'OAuth', ok: true }, { label: 'Keyword Planner access', ok: true }] }),
     genStatus,

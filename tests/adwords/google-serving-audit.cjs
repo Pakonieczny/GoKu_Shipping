@@ -238,24 +238,31 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   const tzOnly = await S.auditCampaign({ gaql: fakeGoogle(search).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH' });
   check(has(tzOnly, 'block', /end date \(2026-09-06\) has passed/), 'without a supplied date the account time zone gives today');
 
-  // ── 4. The engine returns the check with the timeline and never fails because of it ────
-  const enginePath = path.join(FN, 'googleAdsAutopilot.js');
-  const cx = { module: { exports: {} }, exports: {}, require: n => n === 'node-fetch' ? (async () => { throw Error('network forbidden'); }) : require('module').createRequire(enginePath)(n),
+  // ── 4. The console's servingCheck reads only what it shows, and never fails because of it ──
+  const enginePath = path.join(FN, 'googleAdsAutopilot.js'), fetched = [];
+  const cx = { module: { exports: {} }, exports: {}, require: n => n === 'node-fetch' ? (async url => { fetched.push(String(url)); throw Error('network forbidden'); }) : require('module').createRequire(enginePath)(n),
     process: { env: { GADS_CUSTOMER_ID: '123' } }, console, Buffer, Date, Intl, Map, Set, URL, setTimeout, clearTimeout };
   vm.createContext(cx);
   vm.runInContext(fs.readFileSync(enginePath, 'utf8') + '\nmodule.exports.__t={set:v=>{if(v.gaql)gaql=v.gaql;if(v.fb!==undefined)_fb=v.fb;}};', cx, { filename: enginePath });
   const E = cx.module.exports;
   const engineData = JSON.parse(JSON.stringify(search));
   engineData.campaign[0].campaign.startDateTime = '2026-08-20 00:00:00';
-  let engineQueries = [];
-  const engineGaql = fakeGoogle(engineData).gaql;
-  E.__t.set({ fb: false, gaql: async q => { engineQueries.push(q); if (/segments\.date/.test(q)) return []; return engineGaql(q); } });
-  let tl = await E.campaignTimeline({ id: '101' });
-  check(tl.campaign && tl.campaign.id === '101' && Array.isArray(tl.steps) && tl.serving && tl.serving.ok && tl.serving.verdict === 'blocked', 'campaignTimeline returns the serving check beside the timeline');
-  check(tl.serving.apiVersion === 'v24' && tl.serving.readOnly === true && engineQueries.every(q => /^\s*SELECT\s/.test(q)), 'the engine check reports its API version and only reads');
-  E.__t.set({ gaql: async q => { if (/campaign\.start_date_time/.test(q) && /FROM campaign WHERE campaign\.id = 101\s*$/.test(q.replace(/\s+/g, ' ').trim()) && !/serving_status/.test(q)) return engineGaql(q); if (/segments\.date/.test(q)) return []; throw new Error('[gads] search failed: queryError=INTERNAL'); } });
-  tl = await E.campaignTimeline({ id: '101' });
-  check(tl.campaign && tl.campaign.id === '101' && tl.serving && tl.serving.ok === false && tl.serving.verdict === 'unknown', 'a failing serving check leaves the timeline intact');
+  // Every Google read of one run, sorted; the account currency is cached per warm instance, so each run starts cold.
+  const readsOf = async (run, data) => { const qs = [], g = fakeGoogle(data).gaql; vm.runInContext('_acctCurrencyCache = null', cx);
+    E.__t.set({ fb: false, gaql: async q => { qs.push(q.replace(/\s+/g, ' ').trim()); return g(q); } }); return { out: await run(), qs: qs.sort() }; };
+  let own = await readsOf(() => cx._servingCheck('101', { source: 'console' }), engineData), asked = await readsOf(() => E.servingCheck({ id: '101' }), engineData);
+  check(JSON.stringify(Object.keys(asked.out)) === '["serving"]' && asked.out.serving.ok && asked.out.serving.verdict === 'blocked' && asked.out.serving.campaignId === '101', 'servingCheck returns the serving check and nothing else');
+  check(asked.out.serving.apiVersion === 'v24' && asked.out.serving.readOnly === true && asked.qs.every(q => /^SELECT\s/.test(q)), 'the engine check reports its API version and only reads');
+  check(asked.qs.length >= 10 && JSON.stringify(asked.qs) === JSON.stringify(own.qs), 'servingCheck runs the serving check\'s own ' + own.qs.length + ' Google reads and no other query');
+  check(!asked.qs.some(q => /segments\.date|metrics\.|by_conversion_date/.test(q)) && fetched.length === 0, 'no day series, second date basis or exchange rate is read');
+  own = await readsOf(() => cx._servingCheck('77', { source: 'console' }), pmax); asked = await readsOf(() => E.servingCheck({ id: '77' }), pmax);
+  check(asked.out.serving.channel === 'PERFORMANCE_MAX' && JSON.stringify(asked.qs) === JSON.stringify(own.qs) && !asked.qs.some(q => /field_type IN|segments\.date|metrics\./.test(q)) && fetched.length === 0, 'for Performance Max too: no ad strength count of its own, only the serving check\'s reads');
+  E.__t.set({ gaql: async () => { throw new Error('[gads] search failed: queryError=INTERNAL'); } });
+  const failed = await E.servingCheck({ id: '101' });
+  check(!failed.error && failed.serving && failed.serving.ok === false && failed.serving.verdict === 'unknown', 'a serving check Google cannot answer is an answer, not an error');
+  let reads = 0; E.__t.set({ gaql: async () => { reads++; return []; } });
+  for (const id of [undefined, '', ' ', 'abc', '101 OR 1=1']) { const r = await E.servingCheck({ id }); assert.ok(r.error && !r.serving, 'refused: ' + id); }
+  check(reads === 0 && (await E.servingCheck()).error, 'a missing or malformed campaign ID is refused before any Google read');
 
   // ── 5. Guard: asset link views are filtered only by fields they also select ────────────
   // campaign and ad_group are SEGMENTING resources of campaign_asset and ad_group_asset;

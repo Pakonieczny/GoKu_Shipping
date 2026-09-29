@@ -3582,7 +3582,7 @@ async function metricsRange({ start, end } = {}) {
   if (!report.cd) warnings.push("Google did not provide conversion-date metrics. Select click date to see reported conversions.");
   base.forEach(r => { const c = r.campaign || {}; byId[c.id] = {
     id: String(c.id), name: c.name, status: c.status, primaryStatus: c.primaryStatus || null, primaryStatusReasons: c.primaryStatusReasons || [],
-    channel: c.advertisingChannelType || null, budget: budgetOf(r), budgetRes: (r.campaignBudget || {}).resourceName || null,
+    channel: c.advertisingChannelType || null, budget: budgetOf(r), ..._budgetKind(r.campaignBudget), budgetRes: (r.campaignBudget || {}).resourceName || null,
     cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, convCd: report.cd ? 0 : null, valueCd: report.cd ? 0 : null,
     costNative: 0, valueNative: 0, valueCdNative: report.cd ? 0 : null, cdUnavailable: !report.cd, fxIncomplete: fx.fxIncomplete, currency: fx.currency,
     metricsUnavailable: false, historicalOnly: c.status === "REMOVED", metricsRange: range }; });
@@ -9950,7 +9950,7 @@ async function dashboard(input = {}) {
       const c = r.campaign || {}, old = prior.get(String(c.id));
       return Object.assign({}, old || { metricsUnavailable: true }, { id: c.id, name: c.name, status: c.status,
         channel: c.advertisingChannelType || null, primaryStatus: c.primaryStatus || null,
-        primaryStatusReasons: c.primaryStatusReasons || [], budget: budgetOf(r),
+        primaryStatusReasons: c.primaryStatusReasons || [], budget: budgetOf(r), ..._budgetKind(r.campaignBudget),
         budgetRes: (r.campaignBudget || {}).resourceName || null });
     });
     out.lastMetrics.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); c.metricsRange = out.lastMetricsRange || null; });
@@ -10037,83 +10037,12 @@ async function servingSweep({ limit = 25, budgetMs = 180000, freshMs = 6 * 36000
   return out;
 }
 
-// Real-time campaign timeline for the console: mirrors Google's "Performance diagnostics"
-// strip (Published → Impressions → Learning → Conversions → Eligibility) from live API
-// data — campaign primary status + reasons, per-asset-group ad strength (PMax), and a
-// 14-day serving sparkline. Read-only; three GAQL calls plus the serving check above.
-async function campaignTimeline({ id } = {}) {
-  if (!id) return { error: "id required" };
-  const cid = String(id).replace(/\D/g, "");
-  const servingP = _servingCheck(cid, { source: "console" });   // started first so its reads overlap the timeline's own
-  const [cRows, dayRes] = await Promise.all([
-    gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.primary_status, campaign.primary_status_reasons,
-                 campaign.start_date_time, campaign.end_date_time, campaign.advertising_channel_type, campaign.bidding_strategy_type
-          FROM campaign WHERE campaign.id = ${cid}`),
-    _gaqlBothBases(extra =>
-      `SELECT segments.date, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.cost_micros${extra}
-          FROM campaign WHERE campaign.id = ${cid} AND segments.date DURING LAST_14_DAYS ORDER BY segments.date`)
-  ]);
-  const dayRows = dayRes.rows || [];
-  const dayCd = !!dayRes.cd;
-  const c = (cRows[0] || {}).campaign;
-  if (!c) return { error: "campaign not found" };
-  const isPmax = String(c.advertisingChannelType) === "PERFORMANCE_MAX";
-  let adStrength = [];
-  if (isPmax) {
-    try {
-      const [agRows, assetRows] = await Promise.all([
-        gaql(`SELECT asset_group.id, asset_group.resource_name, asset_group.name, asset_group.ad_strength, asset_group.primary_status
-              FROM asset_group WHERE campaign.id = ${cid}`),
-        gaql(`SELECT asset_group_asset.asset_group, asset_group_asset.field_type
-              FROM asset_group_asset WHERE campaign.id = ${cid}
-              AND asset_group_asset.field_type IN ('HEADLINE','LONG_HEADLINE','DESCRIPTION','SQUARE_MARKETING_IMAGE','MARKETING_IMAGE','PORTRAIT_MARKETING_IMAGE','LOGO')`)
-      ]);
-      const countFor = (agRes, ft) => assetRows.filter(r => r.assetGroupAsset && r.assetGroupAsset.assetGroup === agRes && r.assetGroupAsset.fieldType === ft).length;
-      // Ad Strength is scored from THESE counts (per asset group) — never from campaign-
-      // level sitelinks/callouts, which is why adding those alone never moves this number.
-      adStrength = agRows.map(r => {
-        const agRes = r.assetGroup.resourceName;
-        return { name: r.assetGroup.name, strength: r.assetGroup.adStrength || "UNSPECIFIED", status: r.assetGroup.primaryStatus || "",
-          assets: { headlines: countFor(agRes, "HEADLINE"), longHeadlines: countFor(agRes, "LONG_HEADLINE"), descriptions: countFor(agRes, "DESCRIPTION"),
-            square: countFor(agRes, "SQUARE_MARKETING_IMAGE"), landscape: countFor(agRes, "MARKETING_IMAGE"), portrait: countFor(agRes, "PORTRAIT_MARKETING_IMAGE"), logo: countFor(agRes, "LOGO") } };
-      });
-    } catch (e) {}
-  }
-  // Same money rules as metricsRange: one currency for the whole strip (a day without an exchange
-  // rate keeps every day in the account currency), and no conversion-date figures when Google did
-  // not supply them, rather than click-date figures relabelled.
-  const fx = await _reportRates(dayRows, dayRows.length ? await _accountCurrency() : "USD"), days = [];
-  for (const r of dayRows) {
-    const cv = _rowConv(r.metrics), date = _dateOnly(r.segments.date), rate = fx.rate(date);
-    days.push({ date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
-      conversions: cv.conv,
-      conversionsCd: dayCd ? cv.convCd : null,
-      value: cv.value * rate,
-      valueCd: dayCd ? cv.valueCd * rate : null,
-      cost: fromMicros(r.metrics.costMicros || 0) * rate,
-      fxIncomplete: fx.fxIncomplete });
-  }
-  const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
-  const reasons = (c.primaryStatusReasons || []).map(String);
-  const learning = reasons.some(r => r.includes("LEARNING"));
-  const limited = String(c.primaryStatus) === "LIMITED";
-  const notServing = ["NOT_ELIGIBLE", "REMOVED", "PAUSED", "ENDED"].includes(String(c.primaryStatus));
-  const totals = days.reduce((a, d) => ({ impressions: a.impressions + d.impressions, clicks: a.clicks + d.clicks, conversions: a.conversions + d.conversions, value: a.value + d.value, cost: a.cost + d.cost }), { impressions: 0, clicks: 0, conversions: 0, value: 0, cost: 0 });
-  const steps = [
-    { key: "published", label: "Campaign published", state: "done", date: _dateOnly(c.startDateTime) || null },
-    { key: "impressions", label: "Impressions", state: totals.impressions > 0 ? "done" : "pending",
-      date: firstOf("impressions"), detail: totals.impressions > 0 ? `${totals.impressions.toLocaleString()} in 14d` : "None yet — feed/review can take 24-48h" },
-    { key: "clicks", label: "Clicks", state: totals.clicks > 0 ? "done" : "pending", date: firstOf("clicks"),
-      detail: totals.clicks > 0 ? `${totals.clicks.toLocaleString()} in 14d` : null },
-    { key: "learning", label: "Bid strategy", state: learning ? "active" : (notServing ? "pending" : "done"),
-      detail: learning ? "Learning — needs ~2-3 weeks or ~30 conversions to stabilize" : (notServing ? null : "Learned / stable") },
-    { key: "conversions", label: "Conversion value", state: totals.conversions > 0 ? "done" : (totals.clicks > 10 ? "warn" : "pending"),
-      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · ${fx.currency} ${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
-    { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
-      detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
-  ];
-  return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
-    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString(), serving: await servingP };
+// Overview's "Google serving check" (a campaign's details): the serving check above and nothing
+// else, kept for the badge as a console check. Read-only: only the serving check's own GAQL reads.
+async function servingCheck({ id } = {}) {
+  const cid = String(id == null ? "" : id).trim();
+  if (!/^\d+$/.test(cid)) return { error: "A campaign ID is required." };
+  return { serving: await _servingCheck(cid, { source: "console" }) };
 }
 /* ====================== Reviewed creative production ======================
  * Drafts are immutable at approval: the review hashes the payload and every
@@ -11361,6 +11290,9 @@ async function _campaignBudgetDaily(rows) {
     return r => dailyOf(row(r));
   } catch (e) { return plain; }
 }
+// The budget's period and, for a campaign total budget (fixed dates), its total, from the same
+// campaign_budget fields: Overview shows that total in place of a daily budget it cannot edit.
+function _budgetKind(b) { b = b || {}; return { budgetPeriod: b.period || null, budgetTotal: _campaignOptions().isTotalBudget(b) ? fromMicros(b.totalAmountMicros) : null }; }
 
 async function _campaignFacts() {
   const rows = await gaql("SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas, campaign.maximize_conversions.target_cpa_micros, campaign.end_date_time FROM campaign WHERE campaign.status != 'REMOVED'");
@@ -11584,7 +11516,7 @@ module.exports = {
   getCollections, suggestOccasions, recordOccasionUse,
   deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
-  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, campaignTimeline, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, reallocateBudgets, anomalyCheck,

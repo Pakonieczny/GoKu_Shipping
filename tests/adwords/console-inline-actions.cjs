@@ -6,7 +6,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {JSDOM}=require(process.env.BRITES_EDITOR_DOM_RUNTIME?path.join(process.env.BRITES_EDITOR_DOM_RUNTIME,'jsdom'):'jsdom');
 const ROOT=path.resolve(__dirname,'../..'),read=f=>fs.readFileSync(path.join(ROOT,f),'utf8');
-const html=read('brites-adwords.html'),server=read('netlify/functions/googleAdsAutopilot.js'),repair=read('netlify/functions/googleAdsRepair.js');
+const html=read('brites-adwords.html'),server=read('netlify/functions/googleAdsAutopilot.js');
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(m[1].trim())new vm.Script(m[1]);
 function pick(name){const m=new RegExp('^(?:async )?function '+name+'\\(','m').exec(html);assert(m,'the page defines '+name);const rest=html.slice(m.index),next=/\n(?:async )?function \w+\(/.exec(rest.slice(1));return next?rest.slice(0,next.index+1):rest;}
 const tick=()=>new Promise(r=>setTimeout(r,0));
@@ -17,6 +17,8 @@ await test('no browser pop-ups for campaign edits, the activity log, deleting a 
   for(const name of ['wireCampRows','cmdEditOpen','cmdEditPaint','cmdEditBudget','cmdEditSchedule','cmdEditStatus','deleteCampaignCard','releaseOpp','bindControlsOnce','askInline'])
     assert.doesNotMatch(pick(name),/\b(?:prompt|confirm|alert)\(/,name+' asks in the page');
   assert.doesNotMatch(html,/function renderTimeline\(|function loadBlock\(|querySelectorAll\(["']\.ctl["']\)/,'unreachable timeline, .ctl handler and loadBlock are gone');
+  assert.doesNotMatch(html,/function (?:renderPerf|rowHtml|detailHtml|analysisHtml|actIcon|optDot|fieldVal|wirePerf|doAnalyze|analysisWait|setBudget|campStatus|campStartNow|campSetCountries|schedHtml|schedHint)\(|#ptable|var P=\{sortKey|tr\.prow|tr\.pdetail|renderPerf\(\)/,
+    'the unreachable old performance view (its slider, confirm pop-ups, emoji action icons, state and styles) is gone; Overview edits campaigns in place');
 });
 
 await test('plain words: current tab names, no decorative emoji in working UI, readable date mismatch',()=>{
@@ -25,7 +27,7 @@ await test('plain words: current tab names, no decorative emoji in working UI, r
   assert.match(html,/Overview and the campaign window use the same product report\./);
   assert.doesNotMatch(server,/Enable the campaign from Campaigns|Edit them from Campaigns|in Command Center/);
   assert.match(server,/Enable the campaign in Overview, where the daily ceiling and monthly stop are checked\./);
-  assert.match(server,/Delete it from the campaign list in Opportunities first/);assert.doesNotMatch(repair,/console Performance tab/);
+  assert.match(server,/Delete it from the campaign list in Opportunities first/);
   assert.doesNotMatch(html,/report dates do not match/i);
   assert.match(html,/Google sent figures for different dates than the ones you chose\./);assert.match(html,/Google sent daily figures for different dates than the ones you chose\./);
   const empty=pick('renderCommand');assert.match(empty,/researchNotice kpiNote" role="alert"/,'the mismatch reads across the whole row');
@@ -146,14 +148,15 @@ await test('a researched occasion date names its source; research lists the page
   channel='pmax';rw.renderScanAudit();assert.equal(rd.querySelector('.scanPages'),null,'product ads research does not claim the Search pages');r.window.close();
 });
 
-await test('asking Google for the serving check shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
-  const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;
-  Object.assign(vw,{DASH:{},api:()=>new Promise((res,rej)=>{answer={res,rej};}),servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
+await test('asking Google for the serving check asks for servingCheck alone and shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
+  const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;const asked=[];
+  Object.assign(vw,{DASH:{},api:(action,body)=>{asked.push([action,JSON.parse(JSON.stringify(body))]);return new Promise((res,rej)=>{answer={res,rej};});},servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
     servingStoredHtml:()=>'<div class="servHead"><b>Google serving check</b><button type="button" class="btn ghost sm servRun">Check with Google</button></div>'});
   vw.eval([html.match(/^var SERV_ASK=\{\};$/m)[0]].concat(['esc','btnBusy','loadServing','wireServing'].map(pick)).join('\n'));
   const draw=()=>{host.innerHTML='<div class="servbox" data-sc="5">'+vw.servingStoredHtml()+'</div>';vw.wireServing(host);},btn=()=>host.querySelector('.servRun'),spin='<span class="spin bspin"></span>Asking Google…';
   draw();let b=btn(),run=vw.loadServing(host.querySelector('.servbox'));
   assert.equal(b.disabled,true);assert.equal(b.innerHTML,spin);assert.equal(await vw.loadServing(host.querySelector('.servbox')),undefined,'one ask at a time');
+  assert.deepEqual(asked,[['servingCheck',{id:'5'}]],'the check asks the server for the serving check alone');assert.doesNotMatch(html,/campaignTimeline/,'nothing on the page asks for the old timeline');
   answer.rej(new Error('Google did not answer.'));await run;
   assert.equal(b.disabled,false);assert.equal(b.textContent,'Check with Google','the button keeps its own words');
   assert.equal(host.querySelector('.servErr').textContent,'Google serving check failed: Google did not answer.');
