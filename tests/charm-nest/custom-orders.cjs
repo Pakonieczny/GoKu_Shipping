@@ -134,13 +134,17 @@ async function library() {
     // the sandbox keeps its own records
     await call({ op: 'customPut', key: '1_2', by: 'x', sandbox: true });
     assert(srv.st.doc('Sandbox_Charm_Custom_Orders', '1_2') && !srv.st.doc('Charm_Custom_Orders', '1_2'), 'sandboxed');
-    assert.equal((await call({ op: 'customDelete', key })).ok, true); assert.equal((await call({ op: 'customGet' })).records[key], undefined, 'reopened');
+    // reopened (29 Sep): the record stays, open, with every seal; an older page's customDelete reopens the same way
+    const ro = await call({ op: 'customDelete', key, by: 'Eve' }); assert.equal(ro.ok, true); assert.equal(ro.record.state, 'open');
+    const kept = (await call({ op: 'customGet' })).records[key]; assert.equal(kept.state, 'open', 'reopened, kept'); assert.equal(kept.stamps.length, 2, 'its seals stay'); assert.deepEqual(kept.history.map(h => [h.how, h.by]), [['reopen', 'Eve']]);
     // Complete Order (27 Sep): completed with no label printed, so no print is counted; a print afterwards keeps who completed it
     const c = await call({ op: 'customPut', how: 'button', key, by: 'Cy', label, receiptId: '4176744752', sku: 'CHAIN_8941' });
     assert.equal(c.record.state, 'completed'); assert.equal(c.record.completedBy, 'Cy'); assert.equal(c.record.how, 'button'); assert(c.record.completedAt > 0);
-    assert.equal(c.record.prints, undefined, 'no print counted'); assert.equal(c.record.lastPrintedAt, undefined); assert.equal(c.record.hasLabel, true, 'its sticker is kept to print later');
+    // (on the reopened record: no print counted, the two before the reopen kept, the Complete Order seal after them)
+    assert.equal(c.record.prints, 2, 'no print counted'); assert.equal(c.record.lastPrintedBy, 'Bob'); assert.equal(c.record.hasLabel, true, 'its sticker is kept to print later');
+    assert.equal(c.record.stamps.map(x => x.how).join(), 'print,print,button', 'every seal kept');
     const d = await call({ op: 'customPut', key, by: 'Di', label, receiptId: '4176744752' });
-    assert.equal(d.record.prints, 1); assert.equal(d.record.completedBy, 'Cy', 'printed later: still completed by Cy'); assert.equal(d.record.how, 'button');
+    assert.equal(d.record.prints, 3); assert.equal(d.record.completedBy, 'Cy', 'printed later: still completed by Cy'); assert.equal(d.record.how, 'button');
     assert.equal((await call({ op: 'customGet', keys: [key] })).records[key].completedBy, 'Cy', 'the lists carry who completed it');
     console.log('  ✓ cloud records: put, print again, read, sandbox, reopen, Complete Order');
   } finally { srv.close(); }
@@ -318,7 +322,8 @@ async function browserChecks() {
     // reopened: back to Open, a decision again
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] [data-cu-reopen]');
     await page.waitForFunction(() => !B.maps.customDone['4174476673_41744766731'] && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731'), undefined, 'the record is gone');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731').state, 'open', 'the record is kept, open');
+    assert(srv.st.doc('Charm_Custom_Orders', '4174476673_41744766731').stamps.length >= 1, 'with its seals');
     assert.equal(await page.evaluate(() => Review.count()), before, 'its decision is back');
     // printed from Open with no name saved: the name is asked in the card (never a prompt over the page), then the card
     // says "Marked completed · Undo", and Undo takes the completion back
@@ -337,7 +342,7 @@ async function browserChecks() {
       .catch(async e => { throw new Error('undo: ' + await page.evaluate(k => JSON.stringify({ done: !!B.maps.customDone[k], stat: [...document.querySelectorAll('.cuStat, .btn.working')].map(n => n.outerHTML.slice(0, 200)), toasts: [...document.querySelectorAll('#toasts .toast')].map(n => n.textContent), notes: [...document.querySelectorAll('.mNote')].map(n => n.textContent) }), hKey)); });
     // it flies back into Open from the Completed switch
     await page.waitForFunction(() => document.querySelector('#rvList .reviewListRow[data-rid="4177425406"]') && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey), undefined, 'Undo deletes the record');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).state, 'open', 'Undo keeps the record, open'); assert.equal(srv.st.doc('Charm_Custom_Orders', hKey).stamps.length, 1, 'and its seal');
     assert.equal(await page.evaluate(() => Review.count()), before, 'and its decision is back');
     assert.equal(await page.evaluate(() => !!window.__prompted), false, 'no prompt was opened');
     // a printer that fails marks nothing, and its card says so
@@ -345,7 +350,7 @@ async function browserChecks() {
     await page.click('#rvList .reviewListRow[data-rid="4176576272"] [data-cu-print]');
     await page.waitForFunction(() => /^Not printed/.test(document.querySelector('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')?.textContent || '') && !document.querySelector('.cuStat, .btn.working'), null, { timeout: 30000 })
       .catch(async e => { throw new Error('the card says it was not printed: ' + await page.textContent('#rvList .reviewListRow[data-rid="4176576272"] .rowActions')); });
-    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing');
+    assert.equal(srv.st.doc('Charm_Custom_Orders', '4176576272_41765762721'), undefined, 'a label that did not print completes nothing'); assert.equal(await page.evaluate(() => document.querySelectorAll('#rvList .reviewListRow[data-rid="4176576272"] .sealRow .seal.seal-print').length), 1, 'its seal stays on the button');
     await page.evaluate(() => { window.__failPrint = false; });
 
     // the order window: everything about the order, its conversations and its notes
@@ -354,7 +359,7 @@ async function browserChecks() {
     const win = await page.evaluate(() => ({ title: document.getElementById('owTitle').textContent, custom: document.getElementById('owCustom').hidden ? null : document.getElementById('owCustom').textContent,
       meta: [...document.querySelectorAll('#owMeta .m')].map(m => m.querySelector('i').textContent + ': ' + m.querySelector('span').textContent), fix: !!document.querySelector('#owFix .rvItem[data-kind=customOrder]'),
       note: document.querySelector('label[for=owNote]').textContent, tabs: [...document.querySelectorAll('#orderWin [data-ow-tab]')].map(b => [...b.children].map(c => c.textContent.trim()).filter(Boolean).join(' ')), dialogs: document.querySelectorAll('dialog[open]').length }));
-    assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Print QR label/);
+    assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep)");
     for (const want of ['Order: 4176576272', 'Buyer: Buyer 6272', 'Price: 144', 'Custom order: Rework · SKU RE_5460', 'Title: MODIFICATION REWORK FREE SHIPPING']) assert(win.meta.includes(want), want + ' in ' + JSON.stringify(win.meta));
     assert(win.meta.some(m => /^Purchased: Sep 27, 2026/.test(m)), 'when it was bought: ' + JSON.stringify(win.meta));
     assert(win.fix, 'its decision, answered in the window'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
@@ -378,11 +383,12 @@ async function browserChecks() {
     if (shots) { await page.waitForTimeout(1100); await page.screenshot({ path: path.join(shots, 'seal-complete.png') }); }
     await page.waitForFunction(() => /moved to Completed · completed by Test Operator with no label printed$/.test(document.querySelector('.mNote .mNoteT')?.textContent || ''), null, { timeout: 8000 });
     const byButton = srv.st.doc('Charm_Custom_Orders', hKey);
-    assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && !byButton.prints, 'completed without a print: ' + JSON.stringify(byButton));
+    // (its print before the Undo is kept: that label was printed, and its seal stays with the order)
+    assert(byButton && byButton.how === 'button' && byButton.completedBy === 'Test Operator' && byButton.prints === 1 && byButton.stamps.map(x => x.how).join() === 'print,button', 'completed without a new print: ' + JSON.stringify(byButton));
     await page.evaluate(() => document.querySelectorAll('.mNote').forEach(n => n.close()));
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
     assert.match(await page.textContent('#rvList .reviewListRow[data-rid="4177425406"] .reviewReason'), /^Completed by Test Operator · /, 'who completed it and when');
-    assert.deepEqual(await page.evaluate(() => { const n = document.querySelector('#rvList .reviewListRow[data-rid="4177425406"]'); return [[...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), n.querySelector('[data-cu-print]').textContent]; }), [[true], 'Print QR label'], 'a Complete Order seal; its label not printed yet');
+    assert.deepEqual(await page.evaluate(() => { const n = document.querySelector('#rvList .reviewListRow[data-rid="4177425406"]'); return [[...n.querySelectorAll('.seal')].map(x => x.classList.contains('seal-button')), n.querySelector('[data-cu-print]').textContent]; }), [[false, true], 'Print again'], 'the kept print seal, then the Complete Order seal');
     await page.click('#rvList .reviewListRow[data-rid="4177425406"] [data-cu-reopen]');
     await page.waitForFunction(k => !B.maps.customDone[k] && !document.querySelector('.cuStat, .btn.working'), hKey, { timeout: 30000 });
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
