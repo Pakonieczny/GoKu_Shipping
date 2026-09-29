@@ -171,6 +171,7 @@
   ],
   "modules": [
     "_adsCheckGate.js",
+    "_editPasscode.js",
     "_charmNestAgent.js",
     "_charmNestAsset.js",
     "_charmNestAuth.js",

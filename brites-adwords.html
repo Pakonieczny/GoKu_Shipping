@@ -1220,8 +1220,8 @@ async function api(action, extra){
   }
   if(res.status===401){ const e=new Error("401 — wrong passcode"); e.status=401; throw e; }
   if(!res.ok){ const t=await res.text().catch(()=> "");
-    /* A JSON refusal carries its own sentence (e.g. "Set EDIT_PASSCODE in Netlify to enable
-       changes"); show that, not raw JSON. The code travels with the error for the callers below. */
+    /* A JSON refusal carries its own sentence (e.g. "Changes are locked until a passcode is saved
+       in Firebase (Firestore config/editPasscode)"); show that, not raw JSON. The code travels with the error for the callers below. */
     let j=null; try{ j=JSON.parse(t); }catch(_){}
     const said=j&&typeof j.error==="string"&&j.error?j.error:"";
     const e=new Error(said?(j.code==="EDIT_PASSCODE_NOT_SET"?said:"HTTP "+res.status+" · "+said):"HTTP "+res.status+(t?" "+t.slice(0,140):"")); e.status=res.status; e.bodyText=t; if(j&&j.code)e.code=j.code; throw e; }
@@ -1284,7 +1284,7 @@ function syncOk(){
   if(d)d.style.background="var(--sage)"; if(t)t.textContent="Connected";
 }
 function syncFailed(x){
-  /* Changes are locked because EDIT_PASSCODE is not configured: say so; reads keep refreshing. */
+  /* Changes are locked because no passcode is configured (Firebase config/editPasscode): say so; reads keep refreshing. */
   if(x&&x.code==="EDIT_PASSCODE_NOT_SET"){ lastSync=Date.now(); toast(x.message,false); return; }
   var code=(x&&x.status)||0;
   var permanent=!!SYNC_PERMANENT[code];
@@ -4147,7 +4147,7 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
     if(!_rem || _rem.checked) sessSave(PASS); else sessClear();
     $("#gate").style.display="none";$("#app").style.display="grid";
     buildNav();bindControlsOnce();renderAll();go("groups");loadDiagnostics();lastSync=Date.now();lastLivePull=Date.now();
-    if(DASH&&DASH.editPasscodeSet===false)toast("Set EDIT_PASSCODE in Netlify to enable changes. Until then this console is view-only.",false);
+    if(DASH&&DASH.editPasscodeSet===false)toast("Changes are locked until a passcode is saved in Firebase (Firestore \u2192 config \u2192 editPasscode \u2192 passcode). Until then this console is view-only.",false);
     try{var _r7=rpRangeFor("7d");cmdApplyRange(_r7,{preset:"7d"});}catch(e){}
     if(timer)clearInterval(timer);timer=setInterval(async ()=>{
       var since=Math.floor((Date.now()-lastSync)/1000);
@@ -4175,8 +4175,8 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
         // Fire input so the submit button re-disables — a programmatic value
         // change does not raise the event on its own.
         _p.dispatchEvent(new Event("input",{bubbles:true}));}}catch(_e){}
-    if(x.code==="EDIT_PASSCODE_NOT_SET"){$("#gateErr").textContent=x.message+". No passcode is configured on the server, so changes are switched off.";}
-    else if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=(e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"That passcode was not accepted.";}
+    if(x.code==="EDIT_PASSCODE_NOT_SET"){$("#gateErr").textContent=x.message+". The passcode is kept in Firebase (Firestore \u2192 config \u2192 editPasscode \u2192 passcode); until one is saved there, changes are switched off.";}
+    else if(x.message.indexOf("401")>=0){sessClear();$("#gateErr").textContent=((e&&e.__cachedPass)?"Saved sign-in expired \u2014 enter the passcode once to refresh it.":"That passcode was not accepted.")+" It is kept in Firebase (Firestore \u2192 config \u2192 editPasscode \u2192 passcode).";}
     /*  A bare "HTTP 403" on the passcode screen reads as "wrong passcode",
         which it never is. Say what it actually means. */
     else if(x.status===403){ $("#gateErr").innerHTML="<b>Not a passcode problem.</b> Netlify refused the request (403). "+

@@ -1,4 +1,5 @@
-// Server-to-server paths keep working whether or not EDIT_PASSCODE is set: the hourly scheduled
+// Server-to-server paths keep working whether the passcode is unset, in EDIT_PASSCODE or in Firebase
+// (config/editPasscode): the hourly scheduled
 // kick reaches the background worker, console actions queue work the worker accepts, the worker's
 // own continuations are accepted, and the Shopify order webhook (Shopify HMAC, never the passcode)
 // still records sales and refunds. Everything is local: the kick's fetch is delivered straight to
@@ -28,9 +29,10 @@ function fakeEngine(calls, ctrl) {
     return (...args) => { calls.push([k, ...args]); return impl ? impl(...args) : Promise.resolve({ ok: true }); };
   } });
 }
-function memoryAdmin() {
-  const docs = new Map();
-  const doc = p => ({ get: async () => ({ exists: docs.has(p), data: () => docs.get(p) }), set: async (v, o) => { docs.set(p, o && o.merge ? { ...docs.get(p), ...v } : v); } });
+function memoryAdmin(seed = {}) {
+  const docs = new Map(Object.entries(seed));
+  const doc = p => ({ get: async () => ({ exists: docs.has(p), data: () => docs.get(p) }), set: async (v, o) => { docs.set(p, o && o.merge ? { ...docs.get(p), ...v } : v); },
+    create: async v => { if (docs.has(p)) { const e = Error('6 ALREADY_EXISTS: Document already exists'); e.code = 6; throw e; } docs.set(p, v); } });
   const admin = { firestore: () => ({ collection: c => ({ doc: d => doc(c + '/' + d) }) }) };
   admin.firestore.FieldValue = { serverTimestamp: () => Date.now() };
   return admin;
@@ -44,8 +46,10 @@ function load(file, env, mods) {
 }
 // The kick, the console API and the worker, wired together: every fetch the kick or the worker
 // makes is delivered to the worker's own handler, and its answer is what the caller sees.
-function site(env, ctrl) {
-  const calls = [], trail = [], E = fakeEngine(calls, ctrl), admin = memoryAdmin();
+// Each function gets its own copy of the passcode helper (its own warm-lambda cache) over the same
+// env and the same fake Firestore, where config/editPasscode is whatever the scenario seeded.
+function site(env, ctrl, seed) {
+  const calls = [], trail = [], E = fakeEngine(calls, ctrl), admin = memoryAdmin(seed);
   let worker = null;
   const deliver = async (url, opts) => {
     assert(WORKER_URL.test(url), 'server-to-server calls go only to the worker: ' + url);
@@ -53,9 +57,10 @@ function site(env, ctrl) {
     trail.push({ sent: JSON.parse(opts.body), status: res.statusCode, out: JSON.parse(res.body) });
     return { ok: res.statusCode < 400, status: res.statusCode };
   };
-  const mods = { 'node-fetch': deliver, './googleAdsAutopilot': E, './firebaseAdmin': admin };
-  worker = load('googleAdsAutopilot-background.js', env, mods).api;
-  const kick = load('googleAdsAutopilotKick.js', env, mods);
+  const mods = () => ({ 'node-fetch': deliver, './googleAdsAutopilot': E, './firebaseAdmin': admin,
+    './_editPasscode': load('_editPasscode.js', env, { './firebaseAdmin': admin }).api });
+  worker = load('googleAdsAutopilot-background.js', env, mods()).api;
+  const kick = load('googleAdsAutopilotKick.js', env, mods());
   return { calls, trail, worker, kick: kick.api, ctx: kick.ctx };
 }
 const post = (body, headers = {}) => ({ httpMethod: 'POST', headers, body: JSON.stringify(body) });
@@ -84,12 +89,16 @@ function workerCallsCarryToken(file) {
     check(calls.length > 0 && calls.every(c => /token:\s*workerToken\(\)/.test(c)), file + ': all ' + calls.length + ' calls to the worker send workerToken()');
   }
 
-  for (const [label, passcode] of [['EDIT_PASSCODE unset', undefined], ['EDIT_PASSCODE set', '"s3cret-pass" ']]) {
+  // passcode: what EDIT_PASSCODE holds · seed: config/editPasscode in Firestore · secret: the passcode in force
+  for (const { label, passcode, seed, secret } of [
+    { label: 'no passcode (EDIT_PASSCODE unset, config/editPasscode empty)', seed: { 'config/editPasscode': { passcode: '' } }, secret: null },
+    { label: 'EDIT_PASSCODE set', passcode: '"s3cret-pass" ', seed: { 'config/editPasscode': { passcode: 'ignored-while-env-set' } }, secret: 's3cret-pass' },
+    { label: 'passcode in Firebase', seed: { 'config/editPasscode': { passcode: 'fb7q-pass-2345' } }, secret: 'fb7q-pass-2345' }]) {
     const env = { URL: 'https://example.invalid', GADS_DAILY_HOUR: '99', ...SECRETS };
     if (passcode !== undefined) env.EDIT_PASSCODE = passcode;
     let ctrl = { enabled: true, dryRun: false };
-    const s = site(env, () => ctrl), token = s.ctx.workerToken();
-    check(passcode === undefined ? /^internal-[a-f0-9]{64}$/.test(token) : token === 's3cret-pass', label + ': the kick holds a worker credential');
+    const s = site(env, () => ctrl, seed), token = s.ctx.workerToken();
+    check(/^internal-[a-f0-9]{64}$/.test(token), label + ': the kick holds the server-only worker credential');
 
     // 1. The hourly schedule, exactly as Netlify invokes it.
     let r = await s.kick.handler({ headers: { 'x-nf-event': 'schedule' }, body: '' });
@@ -104,7 +113,7 @@ function workerCallsCarryToken(file) {
     ctrl = { enabled: true, dryRun: false };
 
     // 2. Console actions that queue work for the worker, and the worker's own continuations.
-    const auth = passcode === undefined ? {} : { 'x-edit-passcode': 's3cret-pass' };
+    const auth = secret ? { 'x-edit-passcode': secret } : {};
     const before = s.trail.length; s.calls.length = 0;
     const approve = await s.kick.httpHandler(post({ action: 'approve', id: 'd1' }, auth));
     const design = await s.kick.httpHandler(post({ action: 'startAdDesign', workspaceId: 'w1' }, auth));
@@ -112,7 +121,7 @@ function workerCallsCarryToken(file) {
     const run = await s.kick.httpHandler(post({ action: 'runNow', tasks: ['conversions'] }, auth));
     const dash = await s.kick.httpHandler(post({ action: 'dashboard' }, auth));
     check(dash.statusCode === 200, label + ': the dashboard read answers');
-    if (passcode === undefined) {
+    if (!secret) {
       check([approve, design, motion, run].every(x => x.statusCode === 403 && JSON.parse(x.body).code === 'EDIT_PASSCODE_NOT_SET') && s.trail.length === before && !s.calls.some(c => c[0] !== 'control' && c[0] !== 'dashboard'),
         label + ': console changes are refused before anything is queued (the schedule above is unaffected)');
     } else {
@@ -128,7 +137,7 @@ function workerCallsCarryToken(file) {
     const n = s.trail.length; s.calls.length = 0;
     for (const t of [undefined, 'guess', 'internal-' + '0'.repeat(64)]) {
       const w = await s.worker.handler(post({ tasks: ['publishApproval'], id: 'd1', token: t }));
-      assert(w.statusCode === (passcode === undefined ? 403 : 401), label + ' worker refuses token ' + t);
+      assert(w.statusCode === (secret ? 401 : 403), label + ' worker refuses token ' + t);
     }
     check(!s.calls.some(c => c[0] !== 'control') && s.trail.length === n, label + ': the worker refuses anonymous and guessed tokens without doing anything');
 
@@ -160,6 +169,6 @@ function workerCallsCarryToken(file) {
     for (const e of forged) assert.equal((await hook.handler(e)).statusCode, 401);
     check(hookCalls.length === 0, label + ': unsigned, wrongly signed, passcode-only and tampered webhooks are refused before any work');
   }
-  check(!/EDIT_PASSCODE/.test(fs.readFileSync(dir + 'shopifyOrderWebhook.js', 'utf8')), 'the webhook never depends on EDIT_PASSCODE');
-  console.log('PASS ' + passed + ' server-to-server checks (scheduled kick, console-queued work, worker continuations, Shopify webhook; EDIT_PASSCODE unset and set)');
+  check(!/EDIT_PASSCODE|_editPasscode/.test(fs.readFileSync(dir + 'shopifyOrderWebhook.js', 'utf8')), 'the webhook never depends on the console passcode');
+  console.log('PASS ' + passed + ' server-to-server checks (scheduled kick, console-queued work, worker continuations, Shopify webhook; no passcode, EDIT_PASSCODE, passcode in Firebase)');
 })().catch(e => { console.error(e); process.exit(1); });
