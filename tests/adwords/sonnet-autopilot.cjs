@@ -114,14 +114,14 @@ function memoryDb(seed = {}) {
   // 2. Opportunity scan: web search is on, localized, its pages are kept, and a researched
   //    date survives only when its dateSource names a page the search returned.
   const NOW = Date.parse('2026-09-29T15:00:00Z'), months = ['SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER', 'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST'];
-  const motifs = { celestial: ['moon', 'star'], maple: ['maple', 'leaf'] }, seeds = [];
+  const motifs = { celestial: ['moon', 'star'], maple: ['maple', 'leaf'], garden: ['fern', 'rose'] }, seeds = []; // one collection per idea, so no overlap suppression
   const kw4 = (tag, coll = 'celestial') => motifs[coll].flatMap(m => ['gold ' + m + ' necklace ' + tag, 'engraved ' + m + ' necklace ' + tag]);
   const profile = h => ({ handle: h, title: h, sampled: 30, count: 30, typesDetail: [{ type: 'Necklace', n: 30 }], motifs: [{ t: motifs[h][0], n: 20 }, { t: motifs[h][1], n: 10 }], mats: [{ t: 'gold', n: 10 }], personalization: ['engraved'], topProducts: [{ title: motifs[h][0] + ' necklace' }] });
   const scanMocks = {
     control: async () => ({ maxDailyBudgetTotal: 100, defaultCountries: ['2124'], budgetCurrency: 'CAD', budgetCurrencyVerified: true, smartBidding: false }),
-    getCollections: async () => [{ title: 'celestial', handle: 'celestial' }, { title: 'maple', handle: 'maple' }], fetchTopProducts: async () => [], listCountries: async () => [],
+    getCollections: async () => Object.keys(motifs).map(h => ({ title: h, handle: h })), fetchTopProducts: async () => [], listCountries: async () => [],
     _accountTz: async () => 'America/Toronto', _fxRateToUsd: async () => 0.73, conversionHealth: async () => ({ validated: false, healthy: false }),
-    collectionProfiles: async () => ({ list: [profile('celestial'), profile('maple')], at: NOW, salesBasis: 'fixture' }),
+    collectionProfiles: async () => ({ list: Object.keys(motifs).map(profile), at: NOW, salesBasis: 'fixture' }),
     proposePmaxOpportunities: async () => ({ list: [], error: null, at: NOW }), playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
     storeSalesEvidence: async () => ({ available: false, periods: { days30: null, days90: null }, seasonality: { months: [] }, merchant: {}, warnings: [] }),
     _enabledBudgetTotal: async () => 0, storeSignals: async () => ({ orders: 10, totalRevenue: 900 }), collectionAdsPerformance: async () => ({}),
@@ -134,7 +134,7 @@ function memoryDb(seed = {}) {
     proposal('Sweetest Day', '2026-10-17', 'Holiday Calendar', 'sweetest day', 'maple'), // cited by site name
     proposal('National Cat Day', '2026-10-29', 'catday.example.net', 'cat lover'), // no search returned this page
     proposal('Diwali', '2026-11-8', 'diwali.example.org', 'diwali'), // malformed date
-    proposal('Evergreen gifting', null, '', 'gift')
+    proposal('Evergreen gifting', null, '', 'gift', 'garden')
   ] };
   e = engine({ mocks: scanMocks, now: NOW });
   e.net.queue.push({ searches: [

@@ -344,8 +344,12 @@ async function fakeFetch(url, opts = {}) {
     const [kind, answer] = aiAnswer(text.join('\n')); call.ai = kind; aiCalls.push({ step, kind });
     if (!answer) return reply(400, { error: { message: 'flow-end-to-end: unexpected AI prompt' } });
     const json = JSON.stringify(answer);
-    return url.includes('openai') ? reply(200, { choices: [{ message: { content: json }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
-      : reply(200, { content: [{ type: 'text', text: json }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } });
+    if (url.includes('openai')) return reply(200, { choices: [{ message: { content: json }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    // The Sonnet 5.5 client always streams, so answer as Anthropic's server-sent events.
+    const events = [{ type: 'message_start', message: { id: 'msg_flow', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: json } }, { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } }, { type: 'message_stop' }];
+    return Object.assign(reply(200, ''), { body: require('stream').Readable.from([Buffer.from(events.map(e => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join(''), 'utf8')]) });
   }
   if (url === `https://${STORE}/admin/oauth/access_token`) return reply(200, { access_token: 'synthetic-shop-token', expires_in: 86399 });
   if (url.startsWith(`https://${STORE}/admin/api/`)) return reply(200, { data: { collections: { edges: [], pageInfo: { hasNextPage: false } }, products: { edges: [], pageInfo: { hasNextPage: false } }, orders: { edges: [], pageInfo: { hasNextPage: false } } } });
