@@ -13,7 +13,7 @@ const dom=new JSDOM('<body><main><div id="oppList"></div></main></body>'),d=dom.
 const requests=[],toasts=[];let answer=null;
 const c={window:{BritesPmaxRecommendation:model},document:d,Intl,Date,Math,JSON,console,Promise,setTimeout,clearTimeout,setInterval,clearInterval,
   esc:v=>String(v==null?'':v).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])),apvEnc:encodeURIComponent,friendlyResearchError:String,researchNeedsRefresh:()=>false,
-  toast:m=>toasts.push(String(m)),acctMoney:v=>'$'+v,wireOpportunityDeletion:()=>{},reload:async()=>{},PMAXAT:Date.now(),PMAXERR:null,
+  toast:m=>toasts.push(String(m)),acctMoney:v=>'$'+v,wireOpportunityDeletion:()=>{},reload:async()=>{},setOppMeta:()=>{},PMAXAT:Date.now(),PMAXERR:null,
   api:async(action,payload)=>{requests.push(action);if(action==='generatePmax')return {queued:true,genId:payload.genId};if(action==='genStatus')return await new Promise(r=>{answer=r;});throw Error('Unexpected '+action);}};
 c.renderOpportunities=()=>c.renderPmaxSection(d.getElementById('oppList'));
 vm.createContext(c);vm.runInContext(src,c);
@@ -40,7 +40,9 @@ const button=()=>d.querySelector('#pmaxSec .pmx-gen[data-i="0"]'),tick=ms=>new P
   const ui=c.pmaxUi(c.PMAXOPPS[0]);check(!ui.working,'the working flag is cleared');
   // A later success marks this opportunity done, even after a redraw.
   b.click();await tick(20);c.renderOpportunities();answer({ok:true,approvalId:'a1',itemIds:[offers[0]]});await tick(20);
-  check(requests.filter(a=>a==='generatePmax').length===2&&c.PMAXOPPS[0].acted&&!button()&&!c.pmaxUi(c.PMAXOPPS[0]).working,'a finished draft moves the opportunity to Approvals and clears the flag');
+  b=button();check(b&&b.disabled&&b.textContent==='In Approvals ✓'&&c.PMAXOPPS[0].acted&&!c.pmaxUi(c.PMAXOPPS[0]).working,'the finished draft\'s card (redrawn meanwhile) pauses on its confirmation and offers nothing');
+  b.onclick.call(b);await tick(20);check(requests.filter(a=>a==='generatePmax').length===2,'a click during that pause sends nothing');
+  await tick(1600);check(!button()&&d.querySelector('#pmaxSec .oppChannelEmpty'),'then the card folds away and the list is drawn again');
   check(toasts.some(t=>/PMax draft ready/.test(t)),'the ready draft is announced');
   console.log('PASS '+n+' one-generation-per-PMax-opportunity checks');
 })().catch(e=>{console.error(e);process.exit(1);});
