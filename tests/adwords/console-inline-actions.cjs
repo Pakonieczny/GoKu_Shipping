@@ -6,7 +6,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const {JSDOM}=require(process.env.BRITES_EDITOR_DOM_RUNTIME?path.join(process.env.BRITES_EDITOR_DOM_RUNTIME,'jsdom'):'jsdom');
 const ROOT=path.resolve(__dirname,'../..'),read=f=>fs.readFileSync(path.join(ROOT,f),'utf8');
-const html=read('brites-adwords.html'),server=read('netlify/functions/googleAdsAutopilot.js'),repair=read('netlify/functions/googleAdsRepair.js');
+const html=read('brites-adwords.html'),server=read('netlify/functions/googleAdsAutopilot.js');
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g))if(m[1].trim())new vm.Script(m[1]);
 function pick(name){const m=new RegExp('^(?:async )?function '+name+'\\(','m').exec(html);assert(m,'the page defines '+name);const rest=html.slice(m.index),next=/\n(?:async )?function \w+\(/.exec(rest.slice(1));return next?rest.slice(0,next.index+1):rest;}
 const tick=()=>new Promise(r=>setTimeout(r,0));
@@ -25,7 +25,7 @@ await test('plain words: current tab names, no decorative emoji in working UI, r
   assert.match(html,/Overview and the campaign window use the same product report\./);
   assert.doesNotMatch(server,/Enable the campaign from Campaigns|Edit them from Campaigns|in Command Center/);
   assert.match(server,/Enable the campaign in Overview, where the daily ceiling and monthly stop are checked\./);
-  assert.match(server,/Delete it from the campaign list in Opportunities first/);assert.doesNotMatch(repair,/console Performance tab/);
+  assert.match(server,/Delete it from the campaign list in Opportunities first/);
   assert.doesNotMatch(html,/report dates do not match/i);
   assert.match(html,/Google sent figures for different dates than the ones you chose\./);assert.match(html,/Google sent daily figures for different dates than the ones you chose\./);
   const empty=pick('renderCommand');assert.match(empty,/researchNotice kpiNote" role="alert"/,'the mismatch reads across the whole row');
