@@ -237,6 +237,7 @@ select,input[type=text]{width:100%;font:inherit;font-size:13px;padding:9px 11px;
 #v-controls .fhint{margin:6px 0 0;font-size:12px;line-height:1.45;color:var(--ink-45)}
 #v-controls .frow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #v-controls .fmsg{font-size:12px;color:var(--ink-70)}
+#v-controls .trip{margin-top:6px;font-size:12px;line-height:1.45;color:var(--clay)}
 #v-controls input[type=number]{width:110px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13px;background:var(--paper);color:var(--ink)}
 #v-controls .runbtns{display:flex;gap:8px;flex-wrap:wrap}
 #v-controls .runmsg span{display:block;font-size:12px;line-height:1.45;color:var(--ink-70)}#v-controls .runmsg span:not(:empty){margin-top:8px}
@@ -918,10 +919,10 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
         <summary><span><b>Build a campaign manually</b><small>Choose any collection and occasion when you already know what you want to promote.</small></span><span class="oppOptional">Optional</span></summary>
         <div class="grid bench" style="margin-top:14px">
           <div style="align-self:start">
-            <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u21bb refresh</button></label><select id="bColl"></select></div>
-            <div class="field"><label>Occasion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">\u2728 suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
+            <div class="field"><label>Collection <button type="button" id="bCollRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">Refresh</button></label><select id="bColl"></select></div>
+            <div class="field"><label>Occasion <button type="button" id="bOccRefresh" style="background:none;border:none;color:var(--gold);cursor:pointer;font-size:11px;font-weight:600;padding:0 0 0 6px">Suggest</button></label><select id="bEvent"></select><div id="bOccWhy" class="muted" style="font-size:11px;margin-top:5px;min-height:14px"></div></div>
             <div class="field"><label>Daily budget <span id="curLab" class="muted"></span></label><div class="range"><input type="range" id="bBudget" min="4" max="40" value="8"><span class="rngval" id="bBudgetV">$8</span></div></div>
-            <div class="field"><label>Countries <span class="muted" style="font-weight:400">\u00b7 where it runs</span></label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="bCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="bCtyEdit" style="padding:3px 9px;font-size:11px">Edit</button></div></div>
+            <div class="field"><label>Countries</label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="bCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="bCtyEdit" style="padding:3px 9px;font-size:11px">Edit</button></div></div>
             <button class="btn ghost" id="bGen" style="width:100%">Generate draft</button>
           </div>
           <div class="card pad benchout" id="benchOut"><div class="empty"><div class="ring"></div><div>Pick a collection and occasion, then generate.</div></div></div>
@@ -935,7 +936,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
       <div class="grid ctrlgrid">
         <div class="card pad">
           <div class="card__h"><h3>Operation</h3></div>
-          <div class="toggle"><div class="info"><div class="t" id="swLiveT">Scheduled automation</div><div class="d" id="swLiveD">Hourly spend checks and conversion uploads; daily drafts for Approvals. When off, running ads keep serving and nothing changes on its own.</div></div><button type="button" class="sw" id="swLive" role="switch" aria-checked="false" aria-labelledby="swLiveT" aria-describedby="swLiveD"><i></i></button></div>
+          <div class="toggle"><div class="info"><div class="t" id="swLiveT">Scheduled automation</div><div class="d" id="swLiveD">Hourly spend checks and conversion uploads; daily drafts for Approvals. When off, running ads keep serving and only the monthly stop still acts.</div><div class="trip" id="swLiveTrip" hidden></div></div><button type="button" class="sw" id="swLive" role="switch" aria-checked="false" aria-labelledby="swLiveT" aria-describedby="swLiveD swLiveTrip"><i></i></button></div>
           <div class="toggle"><div class="info"><div class="t" id="swDryT">Dry-run</div><div class="d" id="swDryD">Changes are validated and queued, never applied in Google Ads.</div></div><button type="button" class="sw" id="swDry" role="switch" aria-checked="false" aria-labelledby="swDryT" aria-describedby="swDryD"><i></i></button></div>
           <div class="toggle"><div class="info"><div class="t">Creative review</div><div class="d">Every new or changed ad waits for your approval.</div></div><span class="badge2 b-on">Always on</span></div>
           <div class="toggle"><div class="info"><div class="t" id="swSmartT">Smart Bidding</div><div class="d" id="swSmartD">For new Search campaigns. Off: Manual CPC with a per-click cap. On: Google sets bids with no cap; best from about 15–30 sales a month.</div></div><button type="button" class="sw" id="swSmart" role="switch" aria-checked="false" aria-labelledby="swSmartT" aria-describedby="swSmartD"><i></i></button></div>
@@ -944,7 +945,7 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
         <div class="card pad">
           <div class="card__h"><h3>Spend &amp; targets</h3></div>
           <div class="field"><label for="cCeil">Daily budget ceiling <span id="curLab2"></span></label><div class="range"><input type="range" id="cCeil" min="40" max="500" step="10"><span class="rngval" id="cCeilV"></span></div><p class="fhint">Limits the sum of campaign daily budgets. Google can bill up to twice a daily budget on one day.</p><div class="frow" style="margin-top:8px"><button type="button" class="btn ghost sm" id="cTrim">Trim budgets to ceiling</button><span id="cTrimMsg" class="fmsg"></span></div></div>
-          <div class="field"><label for="cMonthly">Monthly stop threshold · USD</label><div class="frow"><input type="number" id="cMonthly" min="0" step="10" placeholder="Off"><button type="button" class="btn ghost sm" id="cMonthlySave">Save</button></div><p class="fhint">Checked hourly while scheduled automation is on. Campaigns pause once month-to-date spend reaches it, so spend can pass it slightly.</p></div>
+          <div class="field"><label for="cMonthly">Monthly stop threshold · USD</label><div class="frow"><input type="number" id="cMonthly" min="0" step="10" placeholder="Off"><button type="button" class="btn ghost sm" id="cMonthlySave">Save</button></div><p class="fhint">Checked hourly, even with scheduled automation off. Campaigns pause once month-to-date spend reaches it, so spend can pass it slightly.</p></div>
           <div class="field"><label for="cStep">Max budget move per cycle</label><div class="range"><input type="range" id="cStep" min="5" max="20" step="5"><span class="rngval" id="cStepV"></span></div><p class="fhint">Each budget move waits for you in Approvals.</p></div>
           <div class="field"><label for="cRoas">Target ROAS</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div><p class="fhint">Used by Smart Bidding and budget moves. Auto maximises conversion value without a target.</p></div>
           <div class="field"><label for="creativeBudget">Image allowance per draft · USD</label><div class="frow"><input type="number" id="creativeBudget" min="1" max="30" step="1"><button type="button" class="btn ghost sm" id="creativeBudgetSave">Save</button></div><p class="fhint">Estimated image cost. Copy and quality reviews are billed separately.</p></div>
@@ -1012,7 +1013,8 @@ let PASS=""; let DASH=null; let lastSync=0; let timer=null; let lastLivePull=0; 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const elFrom=h=>{const t=document.createElement("template");t.innerHTML=h.trim();return t.content.firstChild;};
 function cur(){ return (DASH&&DASH.budgetCurrency)||"currency unverified"; }
-function money(n){ n=Number(n)||0; return "$"+(Math.round(n*100)/100).toLocaleString(undefined,{minimumFractionDigits:n%1?2:0,maximumFractionDigits:2}); }
+// A negative amount reads "−$25", not "$-25".
+function money(n){ n=Number(n)||0; var r=Math.round(n*100)/100; return (r<0?"\u2212":"")+"$"+Math.abs(r).toLocaleString(undefined,{minimumFractionDigits:n%1?2:0,maximumFractionDigits:2}); }
 function pctTxt(n){ return (n>0?"+":"")+(Number(n)||0).toFixed(0)+"%"; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 // Long messages stay up long enough to read; ok===false marks a failure.
@@ -1020,9 +1022,13 @@ function toast(msg,ok){const t=elFrom('<div class="toast '+(ok?"ok":ok===false?"
 /* ---- country / location targeting ---- */
 var COUNTRIES=[];var countriesLoaded=false;
 async function ensureCountries(){ if(countriesLoaded&&COUNTRIES.length)return COUNTRIES; try{var r=await api("countries",{});if(r&&r.ok&&r.list&&r.list.length){COUNTRIES=r.list;countriesLoaded=true;}}catch(e){} return COUNTRIES; }
-// Names for the usual targets, so chips read correctly before the full list loads.
-var CTY_KNOWN={"2036":"Australia","2124":"Canada","2826":"United Kingdom","2840":"United States"};
-function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(String(COUNTRIES[i].id)===s)return COUNTRIES[i].name;}return CTY_KNOWN[s]||"#"+s;}
+// Names for common targets before the full list loads (a Google country id is 2000 + its ISO number);
+// any other id asks for the list once and repaints when it arrives.
+var CTY_KNOWN={};"36AU 124CA 826GB 840US 554NZ 372IE 276DE 250FR 380IT 724ES 528NL 56BE 756CH 40AT 752SE 578NO 208DK 246FI 620PT 616PL 392JP 410KR 702SG 484MX 76BR 356IN 784AE 710ZA".split(" ").forEach(function(p){var n=parseInt(p,10);CTY_KNOWN[String(2000+n)]=p.slice(String(n).length);});
+function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(String(COUNTRIES[i].id)===s)return COUNTRIES[i].name;}
+  var a=CTY_KNOWN[s];if(a){try{ctyName.dn=ctyName.dn||new Intl.DisplayNames(["en"],{type:"region"});return ctyName.dn.of(a)||a;}catch(e){return a;}}
+  if(!countriesLoaded&&!ctyName.loading){ctyName.loading=true;ensureCountries().then(function(){ctyName.loading=false;if(COUNTRIES.length)renderAll();});}
+  return "#"+s;}
 function ctyChips(ids){ if(!ids||!ids.length)return '<span class="muted" style="font-size:12px">All countries &amp; territories \u2014 no restriction set</span>'; return ids.map(function(id){return '<span class="chip on">'+esc(ctyName(id))+'</span>';}).join(""); }
 function openCountryEditor(o){
   o=o||{};var sel={};(o.selected||[]).forEach(function(id){sel[String(id)]=true;});var opener=document.activeElement;
@@ -1540,7 +1546,7 @@ function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(c
 /* ---- render: command ---- */
 function renderControlBar(){var c=DASH.control||{};
   // "Stopped" read as if the ads had stopped; only the scheduled automation has.
-  $("#pillLive").className="pill "+(c.enabled?"live":"stop");$("#pillLive").innerHTML='<span class="d"></span>'+(c.enabled?"AUTOPILOT ON":"AUTOPILOT OFF");$("#pillLive").title=c.enabled?"Scheduled automation is on":"Scheduled automation is off. Running ads keep serving.";
+  $("#pillLive").className="pill "+(c.enabled?"live":"stop");$("#pillLive").innerHTML='<span class="d"></span>'+(c.enabled?"AUTOPILOT ON":"AUTOPILOT OFF");$("#pillLive").title=c.enabled?"Scheduled automation is on":c.tripReason?"Switched off automatically: "+c.tripReason:"Scheduled automation is off. Running ads keep serving.";
   $("#pillDry").style.display=c.dryRun?"inline-flex":"none";}
 var convOpen=false;
 var salesRange={preset:"7d"}; var salesFilter="all";
@@ -3456,6 +3462,10 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; if(researchNeedsRe
 /* ---- render: controls ---- */
 function setSw(id,on){var s=$("#"+id);if(!s)return;s.classList.toggle("on",!!on);s.setAttribute("aria-checked",on?"true":"false");}
 function roasTxt(v){v=Number(v)||0;return v>0?(Math.round(v*100)/100)+"x":"Auto";}
+// Budget amounts carry the account currency (CA$100), so they never read as USD.
+function ccyMoney(n){var c=DASH&&DASH.budgetCurrency;n=Number(n)||0;if(!c||!/^[A-Z]{3}$/.test(c))return money(n);
+  try{return new Intl.NumberFormat("en-US",{style:"currency",currency:c,minimumFractionDigits:n%1?2:0,maximumFractionDigits:2}).format(n).replace("-","−");}catch(e){return money(n)+" "+c;}}
+function tsMs(t){if(!t)return 0;if(typeof t==="number")return t;if(typeof t==="string")return Date.parse(t)||0;var s=t._seconds!=null?t._seconds:t.seconds;return s!=null?s*1000:0;}
 // A value typed but not saved survives re-renders; its Save button stays marked until saved.
 function ctrlDirty(el){var b=el&&$("#"+el.id+"Save");if(b&&!b.classList.contains("is-busy"))b.classList.toggle("dirty",el.dataset.saved!=null&&el.value!==el.dataset.saved);}
 function ctrlField(el,saved){if(!el)return;saved=String(saved);
@@ -3466,7 +3476,10 @@ function renderControls(){var c=DASH.control||{};$("#growthCurrency").textConten
   // A switch that is still saving keeps the position the operator chose.
   [["swLive",c.enabled],["swDry",c.dryRun],["swSmart",c.smartBidding]].forEach(function(p){var s=$("#"+p[0]);if(s&&s.getAttribute("aria-busy")!=="true")setSw(p[0],p[1]);});
   var ceil=c.maxDailyBudgetTotal||100,step=Math.min(20,c.maxBudgetStepPct||20);
-  $("#cCeil").value=ceil;$("#cCeilV").textContent=money(ceil);
+  $("#cCeil").value=ceil;$("#cCeilV").textContent=ccyMoney(ceil);
+  // An automatic switch-off says why and when, so it is not mistaken for a manual one.
+  var tr=$("#swLiveTrip"),why=!c.enabled&&c.tripReason?String(c.tripReason):"",at=tsMs(c.trippedAt);
+  if(tr){tr.hidden=!why;tr.textContent=why?"Switched off automatically"+(at?" "+new Date(at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):"")+": "+why:"";}
   $("#cStep").value=step;$("#cStepV").textContent=step+"%";
   $("#cRoas").value=Math.round((c.targetRoas||0)*100);$("#cRoasV").textContent=roasTxt(c.targetRoas);
   $("#curLab2").textContent="· "+cur();$("#curLab").textContent="("+cur()+")";
@@ -3486,7 +3499,7 @@ function bindControlsOnce(){
     actEnd(aid);done();};
   // One save at a time per control, each with its line in the activity strip.
   async function saving(key,over,fn){var aid=actStart(key,over);try{return await fn();}finally{actEnd(aid);}}
-  function ccy(n){var c=DASH&&DASH.budgetCurrency;return money(n)+(c?" "+c:"");}
+  var ccy=ccyMoney;
   // A switch flips at once, ignores clicks while it saves and flips back if the save fails.
   function swBind(id,run,msg){var s=$("#"+id);if(!s)return;s.onclick=async function(){if(s.getAttribute("aria-busy")==="true")return;var on=!s.classList.contains("on");setSw(id,on);s.setAttribute("aria-busy","true");
     try{var r=await run(on);if(r&&r.error)throw new Error(r.error);toast(msg(on),true);}catch(x){setSw(id,!on);toast(x.message,false);}
@@ -3513,7 +3526,7 @@ function bindControlsOnce(){
     try{var r=await saving("enforceCeiling",null,function(){return api("enforceCeiling",{});});if(!r||!r.ok)throw new Error((r&&r.error)||"no answer from the server");
       var n=r.trimmed||0,b=n+" budget"+(n===1?"":"s");
       if(r.skipped)msg.textContent="No ceiling is set.";
-      else if(r.withinCeiling)msg.textContent="Within the ceiling: "+money(r.total||0)+" of "+ccy(r.ceiling||0)+".";
+      else if(r.withinCeiling)msg.textContent="Within the ceiling: "+ccy(r.total||0)+" of "+ccy(r.ceiling||0)+".";
       else if(!n)msg.textContent="Nothing to trim: budgets are at the minimum.";
       else if(r.dryRun)msg.textContent="Dry-run: "+b+" would be trimmed to fit "+ccy(r.ceiling)+".";
       else{msg.textContent="Trimmed "+b+" to fit "+ccy(r.ceiling)+".";toast(msg.textContent,true);}}
@@ -3528,7 +3541,7 @@ function bindControlsOnce(){
         if(cap<want)toast(name+" saved, but the site limits it to "+ccy(cap));else toast(name+" set to "+said,true);}
       catch(e){toast(name+" not saved: "+e.message,false);renderControls();}
       actEnd(aid);};}
-  slider("cCeil","cCeilV",function(v){return money(v);},"maxDailyBudgetTotal",function(v){return +v;},"Daily budget ceiling");
+  slider("cCeil","cCeilV",function(v){return ccyMoney(v);},"maxDailyBudgetTotal",function(v){return +v;},"Daily budget ceiling");
   slider("cStep","cStepV",function(v){return v+"%";},"maxBudgetStepPct",function(v){return +v;},"Max budget move");
   slider("cRoas","cRoasV",function(v){return roasTxt(v/100);},"targetRoas",function(v){return +v/100;},"Target ROAS");
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
@@ -3540,8 +3553,6 @@ function bindControlsOnce(){
     try{var r=await saving("measureNow",null,function(){return api("measureNow");});if(r&&r.ok===false)toast("Live pull failed: "+(r.error||"no details"),false);else toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"from Google Ads",true);}
     catch(x){toast("Live pull failed: "+x.message,false);}
     await saving("dashboard",null,reload);done();};
-  // Names for uncommon default countries come with the full list.
-  if(defCountries().some(function(id){return !CTY_KNOWN[String(id)];}))ensureCountries().then(function(){var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());});
 }
 // What each task is called and where its results appear.
 var RUN_TASKS={conversions:["Conversion upload","the activity log"],"mine,prune":["Search-term mining","Approvals"],budgets:["Budget reallocation","Approvals"],events:["Event drafting","Approvals"]};
@@ -3609,12 +3620,19 @@ async function pmaxBackfillImages(){
 }
 
 /* ---- load / reload ---- */
+var monthlyNote="";                   // last standing monthly-stop warning, so it is not repeated every 10 minutes
 async function livePull(){
   if(livePulling)return; livePulling=true; lastLivePull=Date.now();
   try{
     try{ await api("measureNow"); }catch(e){}
-    try{ await api("enforceCeiling",{}); }catch(e){}
-    try{ var mg=await api("monthlyGuard",{}); if(mg&&mg.tripped){toast("Monthly cap reached \u2014 all campaigns paused",false);} }catch(e){}
+    // The ceiling trim follows the automation switch, like the hourly job; the monthly stop always runs.
+    if(DASH&&DASH.control&&DASH.control.enabled){ try{ await api("enforceCeiling",{}); }catch(e){} }
+    try{ var mg=await api("monthlyGuard",{}),note="",n=(mg&&mg.paused)||0,camps=n+" campaign"+(n===1?"":"s");
+      if(mg&&mg.ok===false)note=mg.error||"The monthly stop check failed.";
+      else if(mg&&mg.tripped&&n&&mg.dryRun)note="Monthly stop reached. Dry-run: "+camps+" would be paused.";
+      else if(mg&&mg.tripped&&n)toast("Monthly stop reached: "+camps+" paused.",false);
+      if(note&&note!==monthlyNote)toast(note,false);
+      monthlyNote=note; }catch(e){}
     DASH=await api("dashboard");applyBudgetOverrides();applyEndDateOverrides();renderAll();
     syncOk();
   }catch(x){ syncFailed(x); }
