@@ -1177,8 +1177,10 @@ function createAdDesignService(deps) {
     if (!value.context.campaignId && !value.context.approvalId && !(value.context.itemIds || []).length) throw new Error("Choose a current product opportunity with exact eligible Merchant offers before generating a new campaign draft.");
     const checked = settingsFor(value.settings, await productsFor(ref, value), value.context.groups || [], value.references || [], formats(), creativeFor(value));
     const selectedPlacements=chosenPlacements(value),placementCount=new Set(selectedPlacements.map(p=>p.imageId)).size;
-    if (!checked.selectedImages.length && !checked.referenceIds.length && !checked.currentAssetIds.length && !placementCount) throw new Error("Select at least one product photo or uploaded reference before generating.");
-    if (!checked.selectedImages.length && !selectedPlacements.some(p=>(p.productIds||[]).length) && !checked.referenceIds.some(id=>(value.references||[]).some(r=>r.id===id&&r.role==="product"))) throw new Error("Select a listing photo or product-detail upload to preserve the jewelry's identity. Current ad images and style references guide the composition.");
+    // Messaging research only reads the product, so it never needs a photo picked (a saved design may be the only thing selected);
+    // the run falls back to the product's main listing photo. Image work still requires the choice.
+    if (mode !== "copy" && !checked.selectedImages.length && !checked.referenceIds.length && !checked.currentAssetIds.length && !placementCount) throw new Error("Select at least one product photo or uploaded reference before generating.");
+    if (mode !== "copy" && !checked.selectedImages.length && !selectedPlacements.some(p=>(p.productIds||[]).length) && !checked.referenceIds.some(id=>(value.references||[]).some(r=>r.id===id&&r.role==="product"))) throw new Error("Select a listing photo or product-detail upload to preserve the jewelry's identity. Current ad images and style references guide the composition.");
     if (checked.selectedImages.length + checked.referenceIds.length + checked.currentAssetIds.length + placementCount > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Reduce this selection or split it into designs; no generation was charged.");
     let jobId, cached = false;
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists) throw new Error("Workspace was not found."); const current = s.data();let previous = current.job;
@@ -1257,6 +1259,10 @@ function createAdDesignService(deps) {
         const ordered = [...(job.inputCoverage.sourceImageIds || []), ...(job.inputCoverage.referenceIds || [])];
         if (!ordered.length || ordered.some(id=>!job.inputAssets.some(a=>a.id===id))) throw new Error("The saved legacy source set is incomplete. Its paid outputs were preserved; save a new design revision to continue.");
         inputs = ordered.map((id,index)=>{const a=job.inputAssets.find(a=>a.id===id);return {id,label:"P"+(index+1),productId:a.role==="product"?String(product.id):null,role:a.role,origin:"saved",title:product.title,asset:a.asset};});
+      }
+      if (!inputs.length && job.mode === "copy") {
+        const photo = (product.images || []).find(i => i && i.id != null && i.url);
+        if (photo) inputs = [{ id: String(product.id) + ":" + photo.id, label: "P1", productId: String(product.id), imageId: photo.id, role: "product", origin: (product.eligibleGroupRefs || []).includes(group.ref) ? "catalog" : "related", title: product.title, url: photo.url }];
       }
       if (!inputs.length) throw new Error("Select at least one product photo or uploaded reference before generating.");
       if (!legacyPinned && inputs.length > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Split this selection; no generation was charged.");
