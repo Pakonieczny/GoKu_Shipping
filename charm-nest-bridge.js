@@ -6829,7 +6829,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
-    let flying = false;
+    let flying = false, snap = null;
     try {
       // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
       for (const F of e.files) {
@@ -6839,6 +6839,9 @@ const CustomSheet = window.CustomSheet = (() => {
       // the pieces: every copy of every design; with more than one line on the card, the copies are shared out over them
       const lines = {}; for (const r of rows) lines[r.key] = [];
       for (const F of e.files) for (let q = 0; q < F.qty; q++) { const r = rows[q % rows.length]; const { charms } = await read(F); for (let i = 0; i < charms.length; i++) lines[r.key].push({ f: F.id, i }); }
+      // the Send to Sheet tour (charm-nest-tour.js, Paul 29 Sep 00:25) keeps where the order started: a lifted copy of
+      // its card, made before the list is redrawn without it
+      const touring = tourOk(); if (touring) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
@@ -6859,11 +6862,18 @@ const CustomSheet = window.CustomSheet = (() => {
       const held = rows.find(r => r.state === "held" && r.reason);
       const sheets = `the ${metals} sheet${new Set(e.files.map(F => F.metal)).size > 1 ? "s" : ""}`;
       const words = placed.length ? `Order ${e.rid}: ${plural(n, "custom piece")} on ${sheets}` : `Order ${e.rid} is sent: ${n === 1 ? "its piece goes" : "its pieces go"} on ${sheets} with the next run`;
-      if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
-      else if (toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;
-      else toast(words, "ok", 6000);
+      // the tour: the order seen leaving the Review list for the Nest tab, onto each sheet it is on, one at a time, and
+      // back home; the placement above is done already, the tour only shows it. toSheets stays the quiet way.
+      const plan = touring && tourOk() ? tourPlan(rows, e) : null;
+      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: snap || cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
+      else {
+        if (snap && snap.ghost) snap.ghost.remove();
+        if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
+        else if (toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;
+        else toast(words, "ok", 6000);
+      }
     } catch (err) {
-      busy.delete(ck); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
+      busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
     } finally { if (!flying) redraw(); }
   }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
@@ -7287,6 +7297,22 @@ const CustomSheet = window.CustomSheet = (() => {
     if (!window.Motion || !Motion.dialogClose) { d.close(); return; }
     Motion.dialogClose(d, { to: home, arrive: false });
     if (!motionOff()) setTimeout(() => lit(cardNode(ck)?.querySelector(".cuDesigns"), "cuGot", 1200), 400);
+  }
+  /** The tour plays when the Review tab is in sight and motion is allowed (charm-nest-tour.js). */
+  const tourOk = () => !!window.SendTour && !motionOff() && !document.hidden && S.mode === "review" && !!document.querySelector("#reviewView:not(.hidden)");
+  /** Where the sent pieces went: each sheet holding any of them, in the sheets' own order (metal, then page), with the
+   *  pool ids on it; each metal with none on a sheet yet waits, and says why (no run open, its sheet busy, or held). */
+  function tourPlan(rows, e) {
+    const ids = new Set(rows.flatMap(r => r.poolIds || [])), legs = [];
+    const thumbOf = m => ((e.files.find(F => F.metal === m && F.thumb) || e.files.find(F => F.thumb)) || {}).thumb || null;
+    for (const sh of allSheets()) {
+      const mine = [...new Set((sh.charms || []).filter(c => ids.has(c.poolId)).map(c => c.poolId))];
+      if (mine.length) legs.push({ sheetId: sh.sheetId || null, metal: sh.metal, page: sh.page || 1, label: `${labelOf(sh.metal)} · Sheet ${sh.page || 1}`, poolIds: mine, designUrl: thumbOf(sh.metal) });
+    }
+    const on = new Set(legs.map(l => l.metal)), held = rows.find(r => r.state === "held" && r.reason), pooled = rows.some(r => r.state === "pooled");
+    const waiting = [...new Set(e.files.map(F => F.metal))].filter(m => m && !on.has(m)).map(m => ({ metal: m, label: labelOf(m), held: !!held, designUrl: thumbOf(m),
+      why: held ? `held — ${held.reason}` : pooled ? `its ${labelOf(m)} pieces join the sheet as soon as it is free` : `its ${labelOf(m)} pieces go on with the next run` }));
+    return { legs, waiting };
   }
   /** The designs just sent, seen going to the sheets: a copy of the card's pictures flies to the Nest tab, which says what
    *  came, with Show. false when that cannot be seen (the caller says it in a toast instead). */
