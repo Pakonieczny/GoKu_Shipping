@@ -77,5 +77,20 @@ await test('a research start failure keeps saved results and never polls',async(
   assert.equal(ctx.OPPS.length,1);assert.equal(ctx.OPP_SCANNING,false);assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start.*Saved results are unchanged/);
   ctx.api=async()=>({opportunities:[base()],scannedAt:1,scanning:false,started:false,dispatchError:'background dispatch HTTP 502',lastError:'background dispatch HTTP 502'});await ctx.loadOpportunities(true);
   assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start/);assert.equal(node('oppScan').disabled,false);});
+await test('a draft being written survives a re-render: its card stays busy and a second click starts no second paid generation',async()=>{today='2026-10-01';
+  Object.assign(ctx,{OPP_SCANNING:false,OPP_LAST_ERROR:null,OPP_RECONCILIATION:null,RESEARCH_STATUS:{},OPPSAT:Date.now(),reload:()=>{},btnBusy:(b,l)=>{b.disabled=true;b.innerHTML=l;return()=>{};}});
+  const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
+  const els={},el=s=>els[s]||(els[s]={value:'',innerHTML:'',textContent:''});nodes.oppCards={querySelector:s=>el(s.replace(/\[data-i="\d+"\]/,''))};el('.opBud').value='10';
+  let gens=0,finish;ctx.generateAndWait=()=>{gens++;return new Promise(r=>{finish=r;});};
+  const button=()=>({disabled:false,innerHTML:'',isConnected:true,classList:{add(){},remove(){}}}),first=button();
+  const run=ctx.launchOpp('0',first);assert.equal(gens,1);
+  // Another card finishes, the sort changes or a suggestion is deleted: the list is drawn again mid-generation.
+  first.isConnected=false;const drawn=ctx.oppCard(o,0,100);
+  assert.match(drawn,/class="btn gold sm opGen is-busy"[^>]*disabled>(?:<span[^>]*><\/span>)?Generating/,'the redrawn card shows the draft is still being written');
+  await ctx.launchOpp('0',button());assert.equal(gens,1,'a click on the redrawn card starts no second paid generation');
+  calls.length=0;finish({ok:false,reason:'Fewer than four inventory-matched keywords have measured demand.'});await run;
+  assert.match(toasts.pop(),/Fewer than four/,'the outcome is shown although its card was redrawn');assert(calls.includes('render'),'the card is drawn again with the outcome');
+  assert.match(ctx.oppCard(o,0,100),/>Create review draft</,'once the attempt ends the card can be used again');
+  delete nodes.oppCards;delete ctx.generateAndWait;});
 console.log(`${passed} opportunity card checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
