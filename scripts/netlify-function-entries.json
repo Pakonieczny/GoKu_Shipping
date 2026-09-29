@@ -211,6 +211,7 @@
     "_googleAdsCampaignOptions.js",
     "_googleAdsClaude.js",
     "_googleAdsPmaxStructure.js",
+    "_googleAdsSchedule.js",
     "_googleAdsServing.js",
     "_googleApiKeys.js",
     "_googleConnections.js",
