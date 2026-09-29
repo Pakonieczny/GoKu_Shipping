@@ -8597,7 +8597,7 @@ const OrderWin = window.OrderWin = (() => {
     // state — the late event used to clear its line, so the next repaint closed it, and could save the note box's old
     // text onto the new order; open() saves the note of the order it leaves)
     W.dlg.addEventListener("close", () => {
-      if (W.dlg.open) return; clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
+      if (W.dlg.open) return; giveBack(0); clearTimeout(W.noteTimer); saveNote(); if (W.early) refreshNote({ order: { receiptId: W.early.rid } }); clearInterval(W.poll); W.poll = 0; W.key = null; stashTray();
       W.closing = false; stopMotion(); flightGone(); W.dlg.classList.remove("owGrow", "owBack"); endFind();
       unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
@@ -9724,6 +9724,7 @@ const OrderWin = window.OrderWin = (() => {
   function stopMotion() { for (const a of W.anims.splice(0)) { try { a.cancel(); } catch (_) {} } if (W.dlg) W.dlg.querySelectorAll(".owTint").forEach(n => n.remove()); }
   /** The origin found again: the very element, or the row of this order drawn anew while the view was open. */
   function origin() {
+    if (W.ret && rectOf(W.ret.from)) return W.ret.from;
     if (rectOf(W.from)) return W.from;
     const key = W.key, rid = W.rid;
     const q = [key && `[data-key="${CSS.escape(key)}"]`, rid && `[data-rid="${CSS.escape(rid)}"]`].filter(Boolean);
@@ -9795,6 +9796,7 @@ const OrderWin = window.OrderWin = (() => {
     const d = W.dlg; if (!d || !d.open || W.closing) return;
     W.closing = true; stopMotion();
     const from = still() ? null : origin(), r = rectOf(from), A = [];
+    giveBack(r ? 420 : still() ? 110 : 170);
     if (r) {
       d.classList.add("owBack");
       const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); A.push(t.animate([{ opacity: 0 }, { opacity: 0, offset: .3 }, { opacity: 1 }], { duration: 420, easing: "ease", fill: "forwards" })); }
@@ -9818,6 +9820,10 @@ const OrderWin = window.OrderWin = (() => {
     document.body.appendChild(g);
     g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 700, easing: "ease-out", fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
   }
+  /** openOrder's `back`: a window that handed its place to this view (never one over another, the sheet window's Open
+   *  order) is given it back once, as this view starts going back into it (ms: that flight), or at once (0) when the
+   *  view closes any other way. */
+  function giveBack(ms) { const ret = W.ret; W.ret = null; if (ret) tryDo(() => ret.fn({ ms })); }
   function closeNow() { if (!W.dlg || !W.dlg.open) return; W.closing = false; stopMotion(); try { W.dlg.close(); } catch (_) { W.dlg.removeAttribute("open"); } }
 
   /** Show a line in the view: opened, or in the view already open (another order, the next line, the same one again). */
@@ -9926,7 +9932,9 @@ const OrderWin = window.OrderWin = (() => {
   async function openOrder(rid, opts = {}) {
     wire(); if (!W.dlg) return;
     rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
-    const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from;
+    // (back: called once as this view goes back into `from`, which it does even after Previous or Next, giveBack)
+    if (typeof opts.back === "function") W.ret = { fn: opts.back, from: opts.from || null };
+    const o = Object.assign({ walk: false }, opts); if (opts.keepFrom) delete o.from; delete o.back;
     // (a search passes the line it found: that line of the pull, else the order's first; an order whose lines are all
     // gone from the pull, cancelled or no longer open, shows those lines as they are)
     const ofRid = (Orders.rows() || []).filter(r => String(r.order.receiptId) === rid), live = ofRid.filter(r => r.state !== "gone");

@@ -68,7 +68,8 @@
     hand: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v12M2 8h12M8 2 6.3 3.7M8 2l1.7 1.7M8 14l-1.7-1.7M8 14l1.7-1.7M2 8l1.7-1.7M2 8l1.7 1.7M14 8l-1.7-1.7M14 8l-1.7 1.7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     turnL: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2M3.5 2.8v2.4h2.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     turnR: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2M12.5 2.8v2.4h-2.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>'
+    search: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m10.3 10.3 3.2 3.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    expand: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M7 3.5H4.5a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
   };
 
   const STYLE = `
@@ -96,6 +97,11 @@ dialog.sheetWin.swFlying{background:transparent;box-shadow:none}
 .swSkel i{display:block;background:var(--paper2);border-radius:6px;animation:swBreathe 1.4s ease-in-out .5s infinite alternate}
 .swSkel .row{display:flex;align-items:center;gap:10px}
 @keyframes swBreathe{to{opacity:.55}}
+/* the order view in the window's place (Open order): the window stays open out of sight and its backdrop hands over to
+   the order view's, on its timings (owBdIn, owBdOut) */
+dialog.sheetWin.swAway::backdrop{animation:swFadeOut .42s ease both}
+dialog.sheetWin.swReturn::backdrop{animation:swFade .42s ease .04s both}
+dialog.sheetWin.swHidden{opacity:0}
 dialog.sheetWin.closing{animation:swOut .17s ease both}
 dialog.sheetWin.closing::backdrop{animation:swFadeOut .17s ease both}
 dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
@@ -222,6 +228,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swDetail{padding:14px 16px 18px;display:grid;gap:16px;align-content:start}
 .swOrderHead{display:grid;gap:3px}
 .swOrderHead .rid{font:600 22px var(--mono);letter-spacing:.01em;color:var(--ink)}
+.swOrdTop{display:flex;align-items:center;gap:10px;min-width:0}
+.swOrdTop .rid{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.swOrdTop .swOpenOrd{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:5px;padding:3px 8px 3px 9px}
+.swOrdTop .swOpenOrd svg{width:13px;height:13px}
 .swOrderHead .who{font:12px var(--sans);color:var(--ink45)}
 .swSaid{margin-top:6px;font:13px/1.45 var(--serif);color:var(--ink70);border-left:2px solid var(--goldLine);padding:1px 0 1px 9px;white-space:pre-wrap;overflow-wrap:anywhere}
 .swPiece{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:center}
@@ -413,7 +423,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         </div>
       </header>
       <div class="swBody">
-        <section class="swStage">
+        <section class="swStage" data-r="stage">
           <div class="swPlateBox" data-r="plateBox"><div class="swPlate" data-r="plate"><canvas class="swRule" data-r="rule"></canvas><img class="swPv" data-r="pv" alt="" crossorigin="anonymous"><canvas class="swBase" data-r="base"></canvas><canvas class="swFx" data-r="fx"></canvas><div class="swTip" data-r="tip"></div></div>
             <div class="swHand" data-r="hand" hidden></div><div class="swVeil" data-r="veil" hidden><span class="owSpin"></span><span data-r="veilText">Opening the sheet…</span></div></div>
           <footer class="swStrip" data-r="strip"></footer>
@@ -455,7 +465,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (W.hand) {
         const turn = { "[": -10, "]": 10, "{": -2, "}": 2, r: 10, R: -10 }[e.key];
         if (turn) { e.preventDefault(); return handTurn(turn); }
-        if (e.key === "Enter") { e.preventDefault(); return handDrop(); }
+        if (e.key === "Enter" && !e.target.closest(".swOpenOrd")) { e.preventDefault(); return handDrop(); }
       }
       if (W.view === "piece" && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); step(e.key === "ArrowLeft" ? -1 : 1); }
     });
@@ -469,7 +479,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }, { passive: false });
     E.addBtn.onclick = () => openAdd("");
     fx.addEventListener("click", e => { if (W.hand) { onMove(e); return handDrop(); } const p = hitAt(e); if (p) selectPiece(p, { from: "canvas" }); else if (W.view === "piece") showSheetPane(); });
-    W.ro = new ResizeObserver(() => { if (W.dlg.open) fitPlate(); });
+    // (not while the order view holds the window's place or it comes back: the plate is fitted once it is in place)
+    W.ro = new ResizeObserver(() => { if (!W.dlg.open) return; if (W.away || W.coming) { W.refit = true; return; } fitPlate(); });
     W.ro.observe(E.plateBox);
   }
 
@@ -1117,8 +1128,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   function cleanup() {
     stopFlip(); dropSnap(false); W.flying = false; W.fitLater = false; W.origin = null; W.pre = null;
-    W.dlg.classList.remove("closing", "swGrow", "swFlying", "swBack"); W.token++; stopHand(true); W.add = null;
-    for (const n of [W.el.plate, W.el.strip, W.el.headBar, W.el.rule, W.el.fx, W.el.skel]) n.getAnimations?.().forEach(a => a.cancel());
+    W.dlg.classList.remove("closing", "swGrow", "swFlying", "swBack", "swAway", "swReturn", "swHidden"); W.token++; stopHand(true); W.add = null;
+    W.away = null; W.coming = null; W.refit = false;
+    for (const n of [W.el.stage, W.el.headBar]) { n.style.willChange = ""; n.style.transformOrigin = ""; }
+    for (const n of [W.el.plate, W.el.strip, W.el.headBar, W.el.stage, W.el.rule, W.el.fx, W.el.skel]) n.getAnimations?.().forEach(a => a.cancel());
     W.el.side.getAnimations?.({ subtree: true }).forEach(a => a.cancel());
     W.landing = []; W.inbound.clear(); W.stay = 0; for (const n of [W.el.strip, W.el.foot, W.el.seg, W.el.orders]) n.inert = false;
     cancelAnimationFrame(W.raf); W.raf = 0; W.fx = [];
@@ -1311,7 +1324,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const E = W.el, st = W.st; if (!st) return;
     // (not while the sheet flies to it: it takes its new size once it has landed)
     if (W.flying && !force) { W.fitLater = true; return; }
-    const box = E.plateBox.getBoundingClientRect(); if (box.width < 40 || box.height < 40) return;
+    // (its laid-out size: a window still lifting in, or falling back under the order view, is scaled on screen)
+    const box = { width: E.plateBox.clientWidth, height: E.plateBox.clientHeight }; if (box.width < 40 || box.height < 40) return;
     const availW = box.width - 32, availH = box.height - 22;
     const R = Math.round(Math.max(14, Math.min(22, availW * 0.022)));
     // true scale (Paul, 28 Sep): the 100 × 50 mm frame fits the box, and the sheet is drawn at its own size in that scale
@@ -1910,12 +1924,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const words = (sp.personalization || []).filter(Boolean).join(" / ");
     const mm = mmOf(x);
     E.detail.innerHTML = `
-      <header class="swOrderHead"><span class="fLabel">Order</span><span class="rid">${esc(x.rid || "No order")}</span><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
+      <header class="swOrderHead"><span class="fLabel">Order</span><div class="swOrdTop"><span class="rid">${esc(x.rid || "No order")}</span>${x.rid && canView() ? `<button type="button" class="btn ghost xs swOpenOrd" data-r2="openOrd" title="Open order ${esc(x.rid)} in the order view">Open order${ICON.expand}</button>` : ""}</div><span class="who">${esc([buyer, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · ")) || "&nbsp;"}</span>${said ? `<div class="swSaid" title="From the buyer">${esc(said)}</div>` : ""}</header>
       <div class="swPiece"><canvas class="swThumb" width="184" height="184"></canvas><div class="facts"><b>${esc(x.sku || x.name)}</b><span data-r2="mm">${x.qty > 1 ? `Copy ${x.copy} of ${x.qty} · ` : ""}${mm}</span><span>${esc(labelOf(W.rec.metal))}${sp.size ? " · size " + esc(sp.size) : ""}</span>${words ? `<em title="${esc(words)}">${esc(words)}</em>` : ""}</div></div>
       <section class="swSection" data-r2="eng"></section>
       <section class="swSection"><span class="fLabel" data-r2="trailHead">This order</span><ul class="swTrail" data-r2="trail"></ul></section>
       <section class="swSection" data-r2="off"></section>
       <section class="swSection" data-r2="msgs"><span class="fLabel">Messages</span></section>`;
+    const ob = E.detail.querySelector("[data-r2=openOrd]"); if (ob) ob.onclick = () => toOrder(x, ob);
     drawThumb(E.detail.querySelector(".swThumb"), x);
     renderEng(x);
     renderTrail(x);
@@ -2047,6 +2062,87 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     };
     tabs.addEventListener("click", e => { const b = e.target.closest("[data-ow-tab]"); if (b) show(b.dataset.owTab, true); });
     show(msgTab, false);
+  }
+
+  /* ── the order view, in this window's place (Paul, 28 Sep 23:38: "There should be a button that allows me to open that
+     orders detailed view pop-up and there needs to be a beautiful and seamless animation that transitions from one to
+     the other"). Never one window over another: the order panel grows into the order view (OrderWin grows out of it)
+     while the plate and the header fall back towards it and fade underneath, in one motion. The window stays open out
+     of sight, so nothing in it is lost: a fill running, a name half typed, a Hold or Cancel being chosen, the charm, its
+     side, the scroll. When the order view goes back it shrinks into the panel as the window comes up again, as it was.
+     Only opacity and transform move here (the order view's own flight is its clip); the panel itself never moves, so
+     the order view goes back into exactly where it grew from. ── */
+  // (GROW and GROW_MS: the window's own opening, which the order view's grow shares)
+  const canView = () => !!(window.OrderWin && typeof OrderWin.openOrder === "function");
+  function toOrder(x, btn) {
+    const d = W.dlg, E = W.el;
+    if (!x || !x.rid || !canView() || !d || !d.open || W.away || W.leaving || W.folding || W.flying || (W.flip && !W.flip.landed)) return;
+    const row = rowOf(x);
+    // (the plate is still while the view flies: its rings and pulses end here, and its hover name goes)
+    cancelAnimationFrame(W.raf); W.raf = 0; W.fx = []; W.hover = null; tip(null); paintFx();
+    const A = W.away = { x, sel: W.sel, btn, scroll: E.pieceScroll.scrollTop, anims: [], focus: d.contains(document.activeElement) ? document.activeElement : null };
+    // (the order view gives the keyboard back, when it closes, to what had it: the window itself, so nothing scrolls, and
+    // this window puts it back where it was once it is in place)
+    const box = d.querySelector(".swBox"); if (A.focus && box) tryDo(() => box.focus({ preventScroll: true }));
+    try {
+      const p = OrderWin.openOrder(x.rid, { from: E.side, view: "info", row: row && row.key ? row : undefined, sheetId: W.id, poolId: x.poolId || undefined, back: how => comeBack(A, how) });
+      if (p && p.catch) p.catch(e => console.warn("sheet window: order view", e));
+    } catch (e) { W.away = null; toast(`Order ${x.rid} did not open: ${e.message}`, "bad", 6000); return; }
+    if (!OrderWin.isOpen()) { if (W.away === A) W.away = null; return; }
+    d.classList.add("swAway");
+    // (the messages here are the same threads the order view reads as it opens: while this window is out of sight what
+    // they draw is not rendered, at their own size, so nothing is laid out under the flight)
+    const msgs = E.detail.querySelector("[data-r2=msgs]");
+    if (msgs) { const r = msgs.getBoundingClientRect(); msgs.style.containIntrinsicSize = `${r.width}px ${r.height}px`; msgs.style.contentVisibility = "hidden"; A.msgs = msgs; }
+    // (once the view covers it all, the window is out of sight: nothing of it is drawn under the view)
+    const gone = () => { if (W.away === A) d.classList.add("swHidden"); };
+    if (still()) { setTimeout(gone, 140); return; }
+    // the plate and the header fall back towards the panel's middle and fade as the view grows over them (its 650 ms,
+    // its curve); the panel it grows out of stays where it is, under it
+    const sr = E.side.getBoundingClientRect(), cx = sr.left + sr.width / 2, cy = sr.top + sr.height / 2, parts = [E.stage, E.headBar];
+    for (const n of parts) {
+      const r = n.getBoundingClientRect(); n.style.transformOrigin = `${cx - r.left}px ${cy - r.top}px`; n.style.willChange = "transform, opacity";
+      A.anims.push(n.animate([{ transform: "none", opacity: 1 }, { transform: "scale(.94)", opacity: 0 }], { duration: GROW_MS, easing: GROW, fill: "forwards" }));
+    }
+    Promise.race([Promise.all(A.anims.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, GROW_MS + 400))]).then(() => { if (W.away !== A) return; for (const n of parts) n.style.willChange = ""; gone(); });
+  }
+  /** The order view going back (how.ms: its flight, 0 when it closed at once): the window comes up from where it is,
+   *  in step with it, as it was. */
+  function comeBack(A, how) {
+    if (W.away !== A) return;
+    W.away = null;
+    const d = W.dlg, E = W.el, ms0 = Math.max(0, +(how && how.ms) || 0), ms = still() ? 0 : ms0, parts = [E.stage, E.headBar];
+    if (!d || !d.open) return;
+    const C = W.coming = {};
+    // (from wherever it is: out of sight, or still going when the view was sent back mid-flight; the view covers the
+    // whole window as it starts back)
+    const t0 = parts.map(n => { const cs = getComputedStyle(n); return { transform: cs.transform, opacity: cs.opacity }; });
+    for (const a of A.anims.splice(0)) a.cancel();
+    d.classList.remove("swAway", "swHidden");
+    if (A.msgs) { A.msgs.style.contentVisibility = ""; A.msgs.style.containIntrinsicSize = ""; }
+    // (drawn again meanwhile, a change finishing: the panel is where it was left)
+    const place = () => { if (W.sel === A.sel && E.pieceScroll.scrollTop !== A.scroll) E.pieceScroll.scrollTop = A.scroll; };
+    place();
+    const done = () => {
+      if (W.coming === C) W.coming = null;
+      for (const n of parts) { n.style.willChange = ""; n.style.transformOrigin = ""; }
+      d.classList.remove("swReturn");
+      if (!d.open || W.away) return;
+      if (W.refit && !W.coming) { W.refit = false; fitPlate(); }
+      // the keyboard is where it was (the button, a name half typed), else in the window
+      const box = d.querySelector(".swBox"), at = document.activeElement;
+      if (!d.contains(at) || at === box) { const b = A.focus && A.focus.isConnected ? A.focus : A.btn && A.btn.isConnected ? A.btn : E.detail.querySelector("[data-r2=openOrd]"); if (b || !d.contains(at)) tryDo(() => (b || box).focus({ preventScroll: true })); }
+      place();
+      // a back approved in the order view shows here too (unless an approval of it here is still on its way)
+      const x = A.sel; if (x && W.sel === x && x.eng && !E.detail.querySelector("[data-r2=eng] button:disabled") && engOf(x).kind !== x.eng.kind) renderEng(x, true);
+    };
+    // (at once: with reduced motion the view fades over the window, which is put in order once it has gone)
+    if (!ms) { if (ms0) setTimeout(done, ms0 + 60); else done(); return; }
+    d.classList.add("swReturn");
+    const B = [];
+    parts.forEach((n, i) => { if (t0[i].transform !== "none" || +t0[i].opacity < 1) { n.style.willChange = "transform, opacity"; B.push(n.animate([t0[i], { transform: "none", opacity: 1 }], { duration: ms, easing: GROW })); } });
+    // (a hidden tab draws no frames: the window never waits on them)
+    Promise.race([Promise.all(B.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, ms + 400))]).then(() => setTimeout(done, 60));
   }
 
   /* ── to Engrave and back ── */
@@ -4147,7 +4243,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   const cardBack = { piece: backPiece, sheet: backSheet, ofPage: backsOfPage, list: backsFor, font: backFontReady, engOf: (x, rec) => engOf(x, rec), warmFont, arm: armBack };
 
-  window.SheetWin = { open, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
+  // (asked to open from outside while the order view holds this window's place, as its Sheet tab does: the window is
+  // back at once, under the order view closing)
+  window.SheetWin = { open: (id, opts) => { if (W.away) comeBack(W.away, { ms: 0 }); return open(id, opts); }, close, isOpen: () => !!(W.dlg && W.dlg.open), current: () => W.id, drawOrder, cardBack, armBack, _W: W };
 })();
 
 /* Charm Nest · the Library turned over (Paul, 28 Sep 21:22: "add the back engraving view … to all places where a sheet is
