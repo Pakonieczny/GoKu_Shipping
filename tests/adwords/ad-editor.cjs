@@ -1,6 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'../..'),editor=require(root+'/brites-ad-editor.js');
 let checks=0;const check=(v,m)=>{assert.ok(v,m);checks++};
+{const source=fs.readFileSync(root+'/brites-ad-editor.js','utf8');check(!/confirm\(/.test(source)&&!/[✦\u{1F512}]/u.test(source),'the editor asks in place (no confirm()) and shows no decorative star or lock glyphs');}
 const review=editor.reviewSummary({rubric:'complete-ad-v1',score:93.2,scores:{messaging:94,layout:89,relevance:95,visualAppeal:95,productRecognition:95},issues:['Tall formats leave empty margins.']});
 check(review.tone==='green'&&review.score===93.2&&review.complete,'saved set score remains exact and green at target');
 check(review.categories.length===5&&review.synopsis==='Focus on layout.'&&review.suggestions.length===1,'review provides concise category feedback and relevant suggestions');
@@ -124,6 +125,16 @@ assert.deepEqual(editor.cropResize(cropBox,'se',120,80,cropBounds),{x:200,y:200,
     await e.refreshReviewScore();check(e.q('[data-review-score]').textContent==='Set review · 93.2/100','overall set score is visible without opening the popup');
     e.busy=true;await e.action('review-summary');check(e.busy,'reading review does not interrupt an active design task');e.busy=false;const reviewPanel=w.document.querySelector('dialog[aria-label="Ad set review"]');check(reviewPanel&&reviewPanel.textContent.includes('Animated ads')&&reviewPanel.textContent.includes('94/100')&&reviewPanel.textContent.includes('Layout')&&reviewPanel.textContent.includes('Suggestions'),'review popup shows category scores and short suggestions');check(!reviewPanel.querySelector('img')&&reviewPanel.textContent.includes('Later edits'),'review safely escapes issue text and distinguishes later edits');reviewPanel.querySelector('[data-close]').click();e.options.request=reviewRequest;
     check(e.filename('json').endsWith('.json'),'recovery files have the correct editable JSON extension');
+    // Yes/no questions open in place under the control that asked; the browser's confirm() is never used.
+    const nativeConfirm=w.confirm,layerCount=e.canvas.getObjects().length;w.confirm=()=>{throw Error('The editor must ask in place, not with a browser pop-up');};e.canvas.discardActiveObject();e.renderInspector();
+    e.q('[data-template="blank"]').click();await tick();let asked=e.q('.askInline');
+    check(layerCount>0&&asked&&asked.querySelector('.ieQ').textContent==='Clear this artboard? Undo will restore its layers.'&&asked.querySelector('[data-ask="yes"]').textContent==='Clear artboard'&&asked.previousElementSibling===e.q('[data-template="blank"]').closest('.bae-tool-buttons')&&e.canvas.getObjects().length===layerCount&&!e.busy,'Blank asks in place under the composition buttons and changes nothing until answered');
+    asked.querySelector('[data-ask="no"]').click();await tick();check(!e.q('.askInline')&&e.canvas.getObjects().length===layerCount,'Cancel keeps every layer');
+    e.q('[data-template="editorial"]').click();await tick();asked=e.q('.askInline');check(asked&&asked.querySelector('.ieQ').textContent==='Apply this template to the current artboard? Undo will restore the previous design.'&&asked.querySelector('[data-ask="yes"]').textContent==='Apply template','a template over existing layers asks with the same wording');asked.querySelector('[data-ask="no"]').click();await tick();
+    e.status('The artwork could not be saved.','error');e.q('[data-close-unsaved]').click();await tick();asked=e.q('.bae-status>.askInline');
+    check(asked&&asked.querySelector('.ieQ').textContent==='Close without saving these editor changes?'&&asked.querySelector('.ieNote').textContent==='Previously saved designs stay available.'&&!e.disposed,'Close without saving asks inside the status bar');
+    asked.querySelector('[data-ask="no"]').click();await tick();check(!e.disposed&&!e.q('.askInline'),'Cancel keeps the editor open');e.q('[data-action="dismiss-status"]').click();
+    e.tab='layers';e.renderLeft();check(/^(Lock|Unlock)$/.test(e.q('[data-lock-layer]').textContent)&&/^(Hide|Show)$/.test(e.q('[data-visible-layer]').textContent),'layer controls say Hide or Show and Lock or Unlock in words');e.tab='photos';e.renderLeft();w.confirm=nativeConfirm;
     await e.openSavedDesign(firstCopy);check(e.canvas.getObjects().some(o=>o.type==='group'&&o.getObjects().some(x=>x.text==='Choose your charm')),'saved design reopens with editable button layers');await e.action('save');await e.dispose();dom.window.close();
   }
   console.log('PASS '+checks+' professional editor source, layout, save and export checks');
