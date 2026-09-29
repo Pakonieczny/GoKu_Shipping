@@ -115,12 +115,16 @@ async function main() {
       const ow = document.getElementById('orderWin'), sw = SheetWin._W, kf = a => a.effect.getKeyframes();
       const clipA = ow.getAnimations().find(a => kf(a).some(k => k.clipPath));
       const mine = [sw.dlg, sw.el.stage, sw.el.headBar].flatMap(n => n.getAnimations().filter(a => !a.animationName).map(a => ({ n: n === sw.dlg ? 'dlg' : n.dataset.r, ms: a.effect.getTiming().duration, props: [...new Set(kf(a).flatMap(k => Object.keys(k).filter(p => !['offset', 'easing', 'composite', 'computedOffset'].includes(p))))] })));
-      return { open: OrderWin.isOpen(), clip0: clipA ? kf(clipA)[0].clipPath : '', growMs: clipA ? clipA.effect.getTiming().duration : 0, mine, away: sw.dlg.classList.contains('swAway'), swOpen: sw.dlg.open };
+      return { open: OrderWin.isOpen(), clip0: clipA ? kf(clipA)[0].clipPath : '', tf0: clipA ? kf(clipA)[0].transform || '' : '', size: [ow.offsetWidth, ow.offsetHeight], growMs: clipA ? clipA.effect.getTiming().duration : 0, mine, away: sw.dlg.classList.contains('swAway'), swOpen: sw.dlg.open };
     });
     const insets = r => [r.top, 1500 - r.right, 900 - r.bottom, r.left].map(v => Math.round(Math.max(0, v)));
     assert(first.open && first.swOpen && first.away, 'the order view opens and the window stays open underneath, out of sight: ' + JSON.stringify(first));
-    const c0 = (first.clip0.match(/-?[\d.]+px/g) || []).slice(0, 4).map(v => Math.round(parseFloat(v)));
-    assert.deepEqual(c0, insets(before.side), 'the order view grows out of the order panel: ' + first.clip0);
+    // (the view flies drawn: laid over the panel, scaled and clipped to it, so its first frame on screen is the panel's box)
+    const c0 = (first.clip0.match(/-?[\d.]+px/g) || []).slice(0, 4).map(v => parseFloat(v));
+    const t0 = (first.tf0.match(/-?[\d.]+/g) || []).map(Number), [tx, ty, sc] = [t0[0] || 0, t0[1] || 0, t0[2] || 1];
+    const box0 = { left: tx + c0[3] * sc, top: ty + c0[0] * sc, right: tx + (first.size[0] - c0[1]) * sc, bottom: ty + (first.size[1] - c0[2]) * sc };
+    const off = ['left', 'top', 'right', 'bottom'].map(k => Math.abs(box0[k] - before.side[k]));
+    assert(Math.min(off[0], off[1]) < 2 && off.filter(v => v < 2).length >= 3, 'the order view grows out of the order panel: ' + JSON.stringify({ box0, side: before.side, clip: first.clip0, tf: first.tf0 }));
     assert(first.growMs === 650, 'over the view\'s 650 ms');
     assert(first.mine.length === 2 && first.mine.every(a => a.ms === 650 && a.n !== 'dlg'), 'the plate and header fall back in the same 650 ms: ' + JSON.stringify(first.mine));
     assert.deepEqual([...new Set(first.mine.flatMap(a => a.props))].sort(), ['opacity', 'transform'], 'only opacity and transform move in the window');
