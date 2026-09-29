@@ -4301,6 +4301,10 @@ async function uploadImageAssets(imgs, ctrl) {
   return { square, landscape, portrait, logo: null, complete: !!(square.length && landscape.length) };
 }
 
+// Performance Max structure helpers (join an existing campaign, negatives, brand exclusions).
+let _pmaxStructureLib = null;
+function _pmaxStructure() { return _pmaxStructureLib || (_pmaxStructureLib = require("./_googleAdsPmaxStructure")); }
+
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
@@ -4382,8 +4386,10 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: textAssets.ids.businessName, fieldType: "BUSINESS_NAME" } } });
   });
   [...new Set((countries||[]).map(x=>String(x).replace(/\D/g,"")).filter(Boolean))].forEach(id=>ops.push({campaignCriterionOperation:{create:{campaign:cRes,location:{geoTargetConstant:`geoTargetConstants/${id}`}}}}));
+  // Campaign negative keywords (Search and Shopping inventory): the short reviewed default list.
+  ops.push(..._pmaxStructure().negativeOps(cRes,_pmaxStructure().PMAX_DEFAULT_NEGATIVES));
   return {ops,tag,finalUrl,scopedTypes:[...new Set(groups.map(g=>g.label))],scopedItemIds:exact,assetMode:(imageAssets&&(imageAssets.square||[]).length)?"custom+merchant-auto":"merchant-auto",countries:[...new Set((countries||[]).map(String))],
-    assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null,
+    negatives:_pmaxStructure().PMAX_DEFAULT_NEGATIVES.map(n=>n.text),assetGroups:groups.map(g=>({name:g.label,itemIds:g.itemIds})),searchThemes:themes,audienceSignal:audienceResource||null,
     textAssets:{headlines:textCopy.headlines.length,longHeadlines:textCopy.longHeadlines.length,descriptions:textCopy.descriptions.length},campaignAssets:cla.summary};
 }
 
