@@ -149,7 +149,7 @@ const T = Date.now() - 3600e3;
     for (const k of [...store.keys()]) if (k.startsWith('Charm_Nest_Rose_Stock/')) store.delete(k);   // (a new sheet of stock each case)
     const claim = await ok({ op: 'roseClaim', sheetId: sid, wPt: 100, hPt: 50 });
     store.set('Charm_Nest_Sheets/' + sid, rose);
-    const plan = await ok({ op: 'rosePlan', sheetId: sid, stockId: claim.stock.id, revision: 0, fingerprint: create.fingerprint(rose), shapesJson: JSON.stringify([shape(pid, 2, 2, 10, 30)]), allowanceMm: 0.2 });
+    const plan = await ok({ op: 'rosePlan', sheetId: sid, stockId: claim.stock.id, revision: 0, fingerprint: create.fingerprint(rose), shapesJson: JSON.stringify([shape(pid, 2, 2, 10, 30)]), allowanceMm: 0.2, cut: true });
     assert(Readiness.sheet({ ...store.get('Charm_Nest_Sheets/' + sid), engraving: Readiness.decisions(Object.values(store.get('Charm_Nest_Runs/' + run).lines)) }).ready, 'the fixture passes the production checks');
     const args = { op: 'roseRecordCut', sheetId: sid, stockId: claim.stock.id, revision: 0, planHash: plan.planHash, by, device: 'charm-nest-1' };
     const rc = await ok(args); await ok(args);

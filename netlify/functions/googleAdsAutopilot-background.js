@@ -9,16 +9,25 @@
 // the hard safety check (kill switch ⇒ no-op).
 //
 // POST body: { tasks: ["conversions","measure","mine","prune","budgets","events","anomaly"], token }
-//   token must equal EDIT_PASSCODE (defence-in-depth; the kicker passes it).
+//   token must be the server-only worker token (the kicker passes it) or the console passcode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const E = require("./googleAdsAutopilot");
 const fetch = require("node-fetch");
+const EP = require("./_editPasscode");
 
+// Same credential rules as googleAdsAutopilotKick.js (internalToken(), workerToken()): a server-only
+// token derived from the Google Ads secrets, so the scheduled kick keeps working while no browser can
+// drive this worker; EDIT_PASSCODE from the environment only when those secrets are absent. The
+// console passcode (_editPasscode.js: EDIT_PASSCODE, else Firestore config/editPasscode) is accepted
+// too. Keep the two files in step.
+const sameSecret=EP.sameSecret;
+function internalToken(){const key=[process.env.GADS_REFRESH_TOKEN,process.env.GADS_CLIENT_SECRET,process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|");return key?"internal-"+require("crypto").createHmac("sha256",key).update("brites-gads-background-worker/v1").digest("hex"):undefined;}
+function workerToken(){return internalToken()||EP.envPasscode()||undefined;}
 
 async function continueMotion(next,task='adDesignMotion'){
  const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
- const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],workspaceId:next.workspaceId,jobId:next.jobId,token:process.env.EDIT_PASSCODE||undefined})});
+ const r=await fetch(base+'/.netlify/functions/googleAdsAutopilot-background',{method:'POST',timeout:15000,headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks:[task],workspaceId:next.workspaceId,jobId:next.jobId,token:workerToken()})});
  if(!r.ok)throw Error(task==='adDesignEditorAI'?'The scenes are saved; reopen AI Design to resume dispatch.':'Animation is saved; reopen Animated ads to resume dispatch.');
 }
 
@@ -30,7 +39,7 @@ async function runEvents(ctrl, log) {
   if (!due.length) { log.push("events: none due"); return; }
   for (const d of due) {
     try {
-      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl});
+      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl,peakDate:d.event.peakDate});
       log.push(`events: ${d.coll.handle} — ${out.ok ? "review draft prepared" : (out.reason||"no validated opportunity")}`);
     } catch (e) { log.push(`events: ${d.coll.handle} ERROR ${e.message}`); }
   }
@@ -56,11 +65,19 @@ exports.handler = async (event) => {
   const t0 = startedAt();
   const over = () => Date.now() - t0 > DEADLINE_MS;
 
-  // auth (defence-in-depth)
+  // auth (defence-in-depth). Fails closed: with no passcode configured only the server-side token
+  // (sent by the scheduled kick and the API) is accepted — never an anonymous request. The server
+  // token is checked first, so the scheduled path needs no Firestore read.
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
-  if ((process.env.EDIT_PASSCODE || "") && body.token !== process.env.EDIT_PASSCODE) {
-    return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
+  if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+  const internal = internalToken();
+  if (!(internal && sameSecret(body.token, internal))) {
+    const pass = (await EP.resolve()).value;
+    if (!(pass && sameSecret(body.token, pass))) {
+      if (pass) return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ ok: false, error: "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)", code: "EDIT_PASSCODE_NOT_SET" }) };
+    }
   }
 
   const ctrl = await E.control();
@@ -71,7 +88,9 @@ exports.handler = async (event) => {
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
   const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
-  const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t));
+  // The monthly stop is Paul's hard spending limit, not optimisation: it keeps checking with automation
+  // off (e.g. after the anomaly breaker trips) and can only pause campaigns once his threshold is reached.
+  const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t) || t === "monthly");
 
   // HARD KILL SWITCH — blocks anything that could mutate. Read-only analysis still runs.
   if (!ctrl.enabled && !allReadOnly) {
@@ -132,12 +151,12 @@ exports.handler = async (event) => {
           // The service releases its lease only at a saved stage boundary.
           // Continuing the same job reuses its receipts and completed images.
           const base=process.env.URL || ("https://"+(process.env.SITE_NAME||"goldenspike")+".netlify.app");
-          const next=await fetch(base+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:["adDesign"],workspaceId:body.workspaceId,jobId:body.jobId,token:process.env.EDIT_PASSCODE||undefined})});
+          const next=await fetch(base+"/.netlify/functions/googleAdsAutopilot-background",{method:"POST",timeout:15000,headers:{"Content-Type":"application/json"},body:JSON.stringify({tasks:["adDesign"],workspaceId:body.workspaceId,jobId:body.jobId,token:workerToken()})});
           if(!next.ok)throw new Error("Design continuation could not be dispatched (HTTP "+next.status+"). Completed work is saved; resume it from Ad Design.");
         }
       }
       else if (task === "creativePrepare") { result.creativePrepare=await E.prepareCreativeApproval(body.id,{retry:!!body.retry}); }
-      else if (task === "publishApproval") { result.publishApproval=await E.applyApproval(body.id,ctrl); }
+      else if (task === "publishApproval") { result.publishApproval=await E.applyApproval(body.id,ctrl,{waitForLeaseMs:8*60*1000}); } // drafts approved together publish in turn
       else if (task === "conversions") { result.conversions = await E.uploadConversions({ ctrl }); }
       else if (task === "scanOpportunities") { const sc = await E.opportunitiesWithStatus({ force: true, runId: body.scanRunId || null }); result.scanOpportunities = { n: (sc.opportunities || []).length, pmax: (sc.pmaxList || []).length, pmaxError: sc.pmaxError || null, runId: body.scanRunId || null, auditStatus: sc.scanAudit && sc.scanAudit.status || null }; }
       else if (task === "designStudioScan") {

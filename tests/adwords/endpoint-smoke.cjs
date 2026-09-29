@@ -14,7 +14,9 @@ const reply = (status, body, headers) => ({
   text: async () => JSON.stringify(body),
   headers: { get: k => (headers || {})[k] || null }
 });
+let fetchCalls = 0, dbCalls = 0; // a refused request must reach neither the network nor storage
 function stubFetch(url, options) {
+  fetchCalls++;
   const body = options && options.body ? String(options.body) : '';
   if (/oauth2\.googleapis\.com\/token/.test(url)) return Promise.resolve(reply(200, { access_token: 'tok', expires_in: 3600, scope: 'https://www.googleapis.com/auth/adwords https://www.googleapis.com/auth/datamanager https://www.googleapis.com/auth/cloud-platform' }));
   if (/tokeninfo/.test(url)) return Promise.resolve(reply(200, { scope: 'https://www.googleapis.com/auth/adwords' }));
@@ -39,7 +41,13 @@ function stubFetch(url, options) {
 
 const emptyQuery = { where() { return this; }, limit() { return this; }, orderBy() { return this; }, doc() { return this; },
   get: async () => ({ docs: [], forEach() {}, size: 0, empty: true, exists: false, data: () => ({}) }) };
-const stubAdmin = { firestore: () => ({ collection: () => emptyQuery, doc: () => emptyQuery, runTransaction: async fn => fn({ get: async () => ({ exists: false, data: () => ({}) }), update() {} }) }) };
+// config/editPasscode (the console passcode, see _editPasscode.js) is served on its own and not
+// counted: with EDIT_PASSCODE unset a check must look the passcode up before it can refuse, and a
+// refusal reads nothing else. Here it exists with an empty passcode: no passcode anywhere.
+const passcodeRef = { get: async () => ({ exists: true, data: () => ({ passcode: '' }) }), create: async () => { throw Error('the smoke test never creates a passcode'); } };
+const world = () => (dbCalls++, emptyQuery);
+const stubAdmin = { firestore: () => ({ collection: name => name === 'config' ? { doc: id => id === 'editPasscode' ? passcodeRef : world() } : world(), doc: () => world(),
+  runTransaction: async fn => (dbCalls++, fn({ get: async () => ({ exists: false, data: () => ({}) }), update() {} })) }) };
 
 // Intercept the two modules every endpoint reaches the world through.
 const realResolve = Module._resolveFilename;
@@ -59,18 +67,21 @@ Object.assign(process.env, {
   SHOPIFY_STORE: 'x.myshopify.com', SHOPIFY_CLIENT_ID: 'c', SHOPIFY_CLIENT_SECRET: 's',
   GEMINI_API_KEY: 'g', FIREBASE_PRIVATE_KEY: 'k', FIREBASE_PROJECT_ID: 'p'
 });
-delete process.env.EDIT_PASSCODE;
+// Every check needs the passcode (they refuse outright without one; see the end), so they run
+// here the way the owner opens them: ?key=<passcode>. EDIT_PASSCODE, when set, wins over Firebase.
+process.env.EDIT_PASSCODE = 'secret';
 delete process.env.GADS_CONVERSION_UPLOAD_API;
 
 const ENDPOINTS = [
-  ['googleConnectionsCheck.js', { format: 'json' }],
-  ['googleConnectionsCheck.js', { format: 'json', write: '1' }],
-  ['googleMerchantHealth.js', { format: 'json' }],
-  ['shopifyAttributionCheck.js', { format: 'json' }],
-  ['shopifyAttributionCheck.js', { format: 'json', diagnose: '1' }],
-  ['googleAdsAuthCheck.js', {}],
-  ['googleAdsDiag.js', {}]
+  ['googleConnectionsCheck.js', { format: 'json', key: 'secret' }],
+  ['googleConnectionsCheck.js', { format: 'json', write: '1', key: 'secret' }],
+  ['googleMerchantHealth.js', { format: 'json', key: 'secret' }],
+  ['shopifyAttributionCheck.js', { format: 'json', key: 'secret' }],
+  ['shopifyAttributionCheck.js', { format: 'json', diagnose: '1', key: 'secret' }],
+  ['googleAdsAuthCheck.js', { key: 'secret' }],
+  ['googleAdsDiag.js', { key: 'secret' }]
 ];
+const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js', 'googleAdsAuthCheck.js', 'googleAdsDiag.js'];
 
 (async () => {
   for (const [file, params] of ENDPOINTS) {
@@ -91,22 +102,56 @@ const ENDPOINTS = [
   }
 
   // The HTML views render too — they are what a person actually opens.
-  for (const file of ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js']) {
+  for (const file of CHECKS) {
     const mod = require(path.join(FN, file));
-    const res = await mod.handler({ queryStringParameters: {}, headers: { accept: 'text/html' } });
+    const res = await mod.handler({ queryStringParameters: { key: 'secret' }, headers: { accept: 'text/html' } });
     check(res.statusCode === 200 && /^<!doctype html/i.test(res.body), file.replace('.js', '') + ' renders its HTML view');
     check(!/undefined<\/td>|\[object Object\]/.test(res.body), file.replace('.js', '') + ' renders no undefined or raw objects');
   }
 
-  // A passcode, when set, is enforced on every one of them.
-  process.env.EDIT_PASSCODE = 'secret';
-  for (const file of ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopifyAttributionCheck.js']) {
-    const mod = require(path.join(FN, file));
-    const denied = await mod.handler({ queryStringParameters: {}, headers: {} });
-    check(denied.statusCode === 401, file.replace('.js', '') + ' refuses without the passcode');
-    const allowed = await mod.handler({ queryStringParameters: { key: 'secret', format: 'json' }, headers: {} });
-    check(allowed.statusCode === 200, file.replace('.js', '') + ' answers with the passcode');
+  // The passcode is enforced on every one of them — pasted in Netlify with quotes and a trailing
+  // space, as the console tolerates — and a refusal happens before any network or storage call.
+  process.env.EDIT_PASSCODE = '"secret" ';
+  const quiet = async (label, run) => { const f = fetchCalls, d = dbCalls; const res = await run(); check(fetchCalls === f && dbCalls === d, label + ': nothing fetched or read'); return res; };
+  for (const file of CHECKS) {
+    const mod = require(path.join(FN, file)), name = file.replace('.js', '');
+    const denied = await quiet(name + ' without the passcode', () => mod.handler({ queryStringParameters: {}, headers: {} }));
+    check(denied.statusCode === 401, name + ' refuses without the passcode');
+    const wrong = await quiet(name + ' with a wrong passcode', () => mod.handler({ httpMethod: 'POST', queryStringParameters: { key: 'secre' }, headers: { 'x-edit-passcode': 'secret2' }, body: JSON.stringify({ passcode: 'Secret' }) }));
+    check(wrong.statusCode === 401, name + ' refuses a wrong passcode in the query, header or body');
+    for (const [how, event] of [['?key=', { queryStringParameters: { key: 'secret', format: 'json' }, headers: {} }],
+      ['the X-Edit-Passcode header', { queryStringParameters: {}, headers: { 'X-Edit-Passcode': 'secret' } }],
+      ['a body passcode', { httpMethod: 'POST', queryStringParameters: {}, headers: {}, body: JSON.stringify({ passcode: 'secret' }) }]]) {
+      const allowed = await mod.handler(event);
+      check(allowed.statusCode === 200, name + ' answers with the passcode as ' + how);
+    }
   }
+
+  // No passcode (EDIT_PASSCODE unset, config/editPasscode empty): every check refuses with the
+  // console's own code, reveals nothing about the configuration, and spends no API quota — whatever
+  // passcode is guessed.
+  delete process.env.EDIT_PASSCODE;
+  const REVEALING = /1234567890|999|myshopify|GOCSPX|1\/\/|chars|googleusercontent|secret/;
+  for (const file of CHECKS) {
+    const mod = require(path.join(FN, file)), name = file.replace('.js', '');
+    for (const event of [{ queryStringParameters: {}, headers: {} }, { queryStringParameters: { key: 'secret', format: 'json' }, headers: { 'x-edit-passcode': 'secret', accept: 'text/html' } }]) {
+      const res = await quiet(name + ' with no passcode set', () => mod.handler(event));
+      const body = JSON.parse(res.body);
+      check(res.statusCode === 403 && body.code === 'EDIT_PASSCODE_NOT_SET' && body.error === 'Locked until a passcode is saved in Firebase (Firestore config/editPasscode)',
+        name + ' refuses with "Locked until a passcode is saved in Firebase…" while no passcode is configured');
+      check(!REVEALING.test(res.body), name + ' refusal reveals no ID or credential shape');
+    }
+  }
+
+  // googleAdsRepair stays open to GET, so its self-check must not reveal the account ID; its
+  // retired POST still compares the passcode, and neither reaches Google.
+  const repair = require(path.join(FN, 'googleAdsRepair.js'));
+  const self = await quiet('googleAdsRepair ?check=1', () => repair.handler({ httpMethod: 'GET', queryStringParameters: { check: '1' }, headers: {} }));
+  check(self.statusCode === 200 && JSON.parse(self.body).customerIdSet === true && !/1234567890/.test(self.body), 'googleAdsRepair self-check says an account is set without naming it');
+  process.env.EDIT_PASSCODE = 'secret';
+  const guess = await quiet('googleAdsRepair POST', () => repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': 'guess' }, body: '{}' }));
+  const retired = await quiet('googleAdsRepair POST', () => repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': 'secret' }, body: '{}' }));
+  check(guess.statusCode === 401 && retired.statusCode === 409, 'googleAdsRepair refuses a wrong passcode and creates nothing with the right one');
   delete process.env.EDIT_PASSCODE;
 
   console.log(passed + ' endpoint smoke checks passed.');

@@ -3,15 +3,17 @@
 // Verifies the Shopify half of revenue attribution, which is the only part of
 // the chain that can be broken right now with nothing turning red:
 //
-//   https://goldenspike.app/.netlify/functions/shopifyAttributionCheck
-//   …?format=json
+//   https://goldenspike.app/.netlify/functions/shopifyAttributionCheck?key=<passcode>
+//   …&format=json
 //
 // Read-only: theme assets and webhook registrations, plus the conversion upload
-// queue this application already keeps.
+// queue this application already keeps. It shows order IDs and values, so it needs
+// the passcode, and refuses outright while no passcode is set (_adsCheckGate.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
 const { shopifyAttribution } = require('./_shopifyAttribution');
+const { refuse } = require('./_adsCheckGate');
 const ENV = process.env;
 const TIMEOUT = 20000;
 const STORE = ENV.SHOPIFY_STORE || '';
@@ -204,11 +206,10 @@ function html(r) {
 }
 
 exports.handler = async (event) => {
-  const gate = (ENV.EDIT_PASSCODE || '').trim().replace(/^["']|["']$/g, '');
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, 'the Shopify attribution check');
+  if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
-  if (gate && String(params.key || '').trim() !== gate) {
-    return { statusCode: 401, headers: { 'Content-Type': 'text/plain' }, body: 'Add ?key=<EDIT_PASSCODE> to run the Shopify attribution check.' };
-  }
   let result;
   try { result = await run({ diagnose: String(params.diagnose || '') === '1', diagnoseLimit: Number(params.limit) || 25 }); }
   catch (e) { return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, error: String(e.message || e) }, null, 2) }; }

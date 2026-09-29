@@ -12,9 +12,15 @@ https://goldenspike.app/.netlify/functions/googleConnectionsCheck?format=json
 https://goldenspike.app/.netlify/functions/googleConnectionsCheck?write=1  # adds the validateOnly write probe
 ```
 
-If `EDIT_PASSCODE` is set, add `?key=<EDIT_PASSCODE>`. The default run is
-read-only: every probe is a `SELECT` or a `GET`. The write probe is opt-in and
-uses `validateOnly`, which Google documents as non-mutating.
+Add `?key=<passcode>` (or send the `X-Edit-Passcode` header). This check,
+`googleMerchantHealth`, `shopifyAttributionCheck`, `googleAdsAuthCheck` and
+`googleAdsDiag` show account IDs, credential shapes or order values, so they
+answer only with the passcode; while no passcode is set they refuse with
+"Locked until a passcode is saved in Firebase (Firestore config/editPasscode)".
+The default run is read-only: every probe is a `SELECT` or a `GET`. The write
+probe is opt-in and uses `validateOnly`, which Google documents as non-mutating.
+
+The passcode (the Adwords console's, shared by these checks) lives in Firebase: Firestore → `config/editPasscode` → field `passcode`, created with a generated passcode on first use and editable there (picked up within a minute); an `EDIT_PASSCODE` Netlify variable still wins when set.
 
 ## What a green row means
 

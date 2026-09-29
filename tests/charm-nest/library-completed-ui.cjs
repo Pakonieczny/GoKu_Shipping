@@ -54,6 +54,8 @@ function seed(st, blobUrl) {
   await ctx.route(/gstatic\.com\/firebasejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: /-compat\.js/.test(r.request().url()) ? '' : fbStub }));
   await ctx.route(/qrcodejs/, r => r.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'Cross-Origin-Resource-Policy': 'cross-origin' }, body: fs.readFileSync(path.join(root, 'lib/qrcode.min.js')) }));
   await ctx.addInitScript(() => { try { if (!localStorage.getItem('cn.employee')) localStorage.setItem('cn.employee', 'Tester'); } catch (_) { /* about:blank */ } window.confirm = () => true; window.prompt = () => 'Tester'; window.alert = () => {}; });
+  // what Current showed before anything was clicked: the Sheets list, or its loading line, would be a flash before Sets
+  await ctx.addInitScript(() => { window.__sheetsSeen = 0; document.addEventListener('DOMContentLoaded', () => { const b = document.getElementById('libBody'); if (!b) return; const look = () => { if (b.querySelector('[data-laser-card="sheet"]') || /Loading sheets|Cloud offline/.test(b.textContent)) window.__sheetsSeen++; }; look(); new MutationObserver(look).observe(b, { childList: true, subtree: true, characterData: true }); }); });
   const page = await ctx.newPage(), errors = [];
   page.on('pageerror', e => errors.push('page: ' + e.message));
   page.on('console', m => { if (m.type() === 'error' && !/firebase stub|Failed to load resource/.test(m.text())) errors.push('console: ' + m.text().slice(0, 300)); });
@@ -64,6 +66,20 @@ function seed(st, blobUrl) {
 
   await page.goto(`${sorterOrigin}/charm-nest-1.html#library`);
   await page.waitForFunction(() => window.CN && CN.S.cloud.ok === true && window.LibraryDone, null, { timeout: 60000 });
+  // the Library opens on Sets (Paul, 29 Sep), drawn first: nothing of the Sheets list before it; the count is of sets
+  await page.waitForSelector('#libBody .setCard', { timeout: 30000 });
+  assert.equal(await page.textContent('#libKind button.on'), 'Sets', 'the switch says Sets');
+  await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '40', null, { timeout: 10000 });
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => [CN.S.library.kind, window.__sheetsSeen]).then(x => x.join()), 'sets,0', 'no Sheets list or its loading line before the sets');
+  ok.push('a fresh load opens the Library on Sets: the sets drawn first, the switch on Sets, the Completed count in sets');
+  // Sheets, once chosen, stays while a person goes to another tab and back (tabs keep their state)
+  await page.click('#libKind button[data-k=sheets]');
+  await page.waitForSelector('#libBody [data-laser-card="sheet"] .libCard', { timeout: 15000 });
+  await page.evaluate(() => { CN.setMode('nest'); CN.setMode('library'); });
+  await page.waitForTimeout(200);
+  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, document.querySelector('#libKind button.on').textContent, !!document.querySelector('#libBody [data-laser-card="sheet"]'), !!document.querySelector('#libBody .setCard')]), ['sheets', 'Sheets', true, false], 'Sheets is kept across tabs');
+  ok.push('Sheets chosen stays Sheets across a tab change');
   await page.waitForSelector('#libBody .libCard', { timeout: 30000 });
   await page.waitForFunction(() => document.querySelector('#libDoneCount').textContent === '120', null, { timeout: 10000 });
   // one line of bar: the tabs no taller than the search, on its line, and nothing to scroll
@@ -249,8 +265,13 @@ function seed(st, blobUrl) {
   ok.push('1280 × 800: one line of bar in both tabs');
 
   // a reload opens the tab it was on; the page opened afresh on #library opens the tab last used; Back / Forward follow
+  // (Sheets | Sets is not carried over: Sheets chosen before the reload, the page opens on Sets again)
+  await page.click('#libKind button[data-k=sheets]');
+  await page.waitForSelector('#libDone .ldItem[data-kind=sheet]', { timeout: 10000 });
   await page.reload();
   await page.waitForFunction(() => window.LibraryDone && LibraryDone.tab() === 'done' && document.querySelector('#libDone .ldItem'), null, { timeout: 30000 });
+  assert.deepEqual(await page.evaluate(() => [CN.S.library.kind, document.querySelector('#libKind button.on').textContent]), ['sets', 'Sets'], 'a reload opens on Sets');
+  await page.waitForSelector('#libDone .ldItem[data-kind=set]', { timeout: 10000 });
   await page.goto('about:blank');
   await page.goto(`${sorterOrigin}/charm-nest-1.html#library`);
   await page.waitForFunction(() => window.LibraryDone && LibraryDone.tab() === 'done' && document.querySelector('#libDone .ldItem'), null, { timeout: 30000 });
@@ -259,7 +280,7 @@ function seed(st, blobUrl) {
   await page.waitForFunction(() => location.hash === '#nest');
   await page.goBack();
   await page.waitForFunction(() => CN.S.mode === 'library' && location.hash === '#library/completed' && !document.querySelector('#libDone').hidden, null, { timeout: 10000 });
-  ok.push('a reload, and a page opened afresh on #library, open the Completed tab again; Back returns to it');
+  ok.push('a reload, and a page opened afresh on #library, open the Completed tab again, on Sets; Back returns to it');
 
   assert.deepEqual(errors, [], 'no page errors: ' + errors.join(' | '));
   for (const line of ok) console.log('✓ ' + line);

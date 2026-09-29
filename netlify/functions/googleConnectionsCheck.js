@@ -3,12 +3,14 @@
 // Verifies EVERY Google connection this application depends on, in one read-only
 // pass, against the live account:
 //
-//   https://goldenspike.app/.netlify/functions/googleConnectionsCheck
-//   …?format=json                     machine-readable
-//   …?write=1                         adds a validateOnly mutate probe (Google
+//   https://goldenspike.app/.netlify/functions/googleConnectionsCheck?key=<passcode>
+//   …&format=json                     machine-readable
+//   …&write=1                         adds a validateOnly mutate probe (Google
 //                                     documents validateOnly as non-mutating;
 //                                     it is still opt-in, so the default run
 //                                     cannot touch the account at all)
+// It shows account IDs and credential shapes and spends API quota, so it needs
+// the passcode, and refuses outright while no passcode is set (_adsCheckGate.js).
 //
 // What it proves, and what it deliberately does not:
 //   · A green row means Google answered. It does not mean an ad is serving.
@@ -22,6 +24,7 @@
 
 const fetch = require("node-fetch");
 const C = require("./_googleConnections");
+const { refuse } = require("./_adsCheckGate");
 const ENV = process.env;
 
 const V = ENV.GADS_API_VERSION || "v24";
@@ -469,11 +472,10 @@ function html(result) {
 }
 
 exports.handler = async (event) => {
-  const gate = (ENV.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, "");
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, "the Google connections check");
+  if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
-  if (gate && String(params.key || "").trim() !== gate) {
-    return { statusCode: 401, headers: { "Content-Type": "text/plain" }, body: "Add ?key=<EDIT_PASSCODE> to run the Google connections check." };
-  }
   let result;
   try { result = await run({ write: String(params.write || "") === "1" }); }
   catch (e) { return { statusCode: 500, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: String(e.message || e) }) }; }

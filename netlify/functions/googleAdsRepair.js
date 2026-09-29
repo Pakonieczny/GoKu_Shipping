@@ -10,21 +10,23 @@
 // Then click a button. "Preview" validates without creating; "Create campaigns"
 // actually builds them (PAUSED).
 //
-// Gate matches the rest of the tooling: if EDIT_PASSCODE is set, it's required;
-// if it's unset, this tool is open (just like the console). GET only ever shows the
-// page — campaigns are created only when you click a button (a POST). Delete this
-// function once your campaigns exist.
+// Gate uses the console passcode (_editPasscode.js: EDIT_PASSCODE when set in Netlify,
+// otherwise Firestore config/editPasscode): when one is set it's required; when none
+// is, this tool is open. GET only ever shows the page — campaigns are created only
+// when you click a button (a POST). Delete this function once your campaigns exist.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
+const EP = require("./_editPasscode");
+const { sameSecret } = EP; // constant-time, like the console
 const ENV = process.env;
 const V = ENV.GADS_API_VERSION || "v24";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || "").replace(/\D/g, "");
 const APPROVALS = "Brites_GAds_Approvals";
 
-// trim + strip accidental surrounding quotes so a value pasted as "abc" still matches abc
-function gateVal() { return (ENV.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, ""); }
+// trimmed and unquoted by the helper, so a value pasted as "abc" still matches abc
+async function gateVal() { return (await EP.resolve()).value; }
 
 function db() {
   try { const admin = require("./firebaseAdmin"); return { d: admin.firestore(), admin }; }
@@ -199,10 +201,10 @@ async function run(dry) {
 
 function page(gateSet) {
   const auth = gateSet
-    ? `<input id="k" type="password" placeholder="Console passcode (EDIT_PASSCODE)" autocomplete="off"
+    ? `<input id="k" type="password" placeholder="Console passcode" autocomplete="off"
          style="flex:1;min-width:240px;padding:11px 13px;border:1px solid #ccc;border-radius:9px;font-size:14px"
          onkeydown="if(event.key==='Enter')go(true)">`
-    : `<div style="flex:1;min-width:200px;font-size:13px;color:#666;background:#f3f0e9;border:1px solid #e3ddcf;border-radius:9px;padding:10px 13px">No passcode is set on this site, so this tool is open. You can lock it later by adding <code>EDIT_PASSCODE</code> in Netlify.</div>`;
+    : `<div style="flex:1;min-width:200px;font-size:13px;color:#666;background:#f3f0e9;border:1px solid #e3ddcf;border-radius:9px;padding:10px 13px">No passcode is set on this site, so this tool is open. You can lock it by saving a passcode in Firebase (Firestore → config → editPasscode → passcode).</div>`;
   return htmlOut(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ad Autopilot · repair</title>
 <body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:760px;margin:40px auto;color:#1a1a1a;padding:0 18px">
 <h2 style="font-weight:600;margin-bottom:4px">Ad Autopilot — repair stuck approvals</h2>
@@ -230,7 +232,7 @@ async function go(dry){
   try{
     var res=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json','x-edit-passcode':key},body:JSON.stringify({dry:dry})});
     var d=await res.json();
-    if(res.status===401){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Passcode did not match. Check the EDIT_PASSCODE value in Netlify (watch for trailing spaces).</div>';return;}
+    if(res.status===401){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Passcode did not match. The passcode is kept in Firebase (Firestore → config → editPasscode → passcode).</div>';return;}
     if(d.fatal){out.innerHTML='<div style="background:#fbeae7;border:1px solid #e2b6ad;color:#b3402f;padding:11px 13px;border-radius:8px;font-size:13.5px">Could not run: '+esc(d.fatal)+'</div>';return;}
     var head='<div style="background:'+((!dry&&d.created)?'#eaf3e8':'#f6f3ec')+';border:1px solid #d9d2c2;padding:11px 13px;border-radius:8px;font-size:14px;margin-bottom:12px">Found <b>'+d.found+'</b> stuck approval(s). '+(dry?('Validated <b>'+d.validated+'</b> \u2014 dry run, nothing created.'):('Created <b>'+d.created+'</b> campaign(s) in Google Ads (PAUSED).'))+'</div>';
     var rows=(d.items||[]).map(row).join('')||'<tr><td colspan="4" style="padding:9px">Nothing stuck in APPROVED \u2014 nothing to repair.</td></tr>';
@@ -249,19 +251,19 @@ exports.handler = async (event) => {
 
   // self-check: confirm config WITHOUT revealing the passcode
   if (q.check === "1") {
-    const g = gateVal();
-    return json(200, { editPasscodeSet: !!g, passcodeLength: g.length, open: !g, customerId: CID || null, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) });
+    const g = await gateVal();
+    return json(200, { editPasscodeSet: !!g, open: !g, customerIdSet: !!CID, hasDevToken: !!ENV.GADS_DEVELOPER_TOKEN, ready: !!(CID && ENV.GADS_DEVELOPER_TOKEN) }); // never the passcode's length or the account ID: anyone can open this
   }
 
-  const gate = gateVal();
+  const gate = await gateVal();
 
   // GET only ever shows the page — it never creates anything. Creation happens on the
   // POST that a button fires.
   if (method !== "POST") return page(!!gate);
 
-  // POST: gate matches the console — required only if EDIT_PASSCODE is set.
+  // POST: gate matches the console — required whenever a passcode is set.
   const key = (headers["x-edit-passcode"] || headers["X-Edit-Passcode"] || body.key || "").trim();
-  if (gate && key !== gate) return json(401, { error: "wrong passcode", editPasscodeSet: true });
+  if (gate && !sameSecret(key, gate)) return json(401, { error: "wrong passcode", editPasscodeSet: true });
 
   return json(409, {error:"Legacy campaign creation is retired. Open brites-adwords.html, create a review draft, then review and publish its exact creative."});
 };
