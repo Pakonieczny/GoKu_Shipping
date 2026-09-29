@@ -189,8 +189,9 @@ async function handleAction(body) {
     try { const up = await E.uploadConversions({ ctrl, retryRejected: body.retryRejected === true }); const adj = await E.uploadConversionAdjustments({ ctrl }); const health = await E.conversionHealth({ force: true }); return { ok: true, uploaded: up, adjustments: adj, health }; }
     catch (e) { return { ok: false, error: e.message }; }
   }
-  if (a === "kill")   { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: false }, { merge: true }); return { enabled: false }; }
-  if (a === "resume") { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: true }, { merge: true });  return { enabled: true }; }
+  // A manual switch clears any automatic trip reason, so the console never shows a stale one.
+  if (a === "kill")   { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: false, tripReason: null, trippedAt: null }, { merge: true }); return { enabled: false }; }
+  if (a === "resume") { if (f) await f.db.collection(E.COL.control).doc("control").set({ enabled: true, tripReason: null, trippedAt: null }, { merge: true });  return { enabled: true }; }
   if (a === "dryRun") { if (f) await f.db.collection(E.COL.control).doc("control").set({ dryRun: !!body.on }, { merge: true }); return { dryRun: !!body.on }; }
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
