@@ -2674,9 +2674,9 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
           <button class="fchip" data-m="rose"><i class="sw"></i>RG<span class="lng"> 14/20</span></button>
           <button class="fchip" data-m="gold10k"><i class="sw"></i>10K<span class="lng"> Gold</span></button>
           <button class="fchip" data-m="gold14k"><i class="sw"></i>14K<span class="lng"> Gold</span></button></span>
-          <span class="seg" id="libKind"><button type="button" class="on" data-k="sheets">Sheets</button><button type="button" data-k="sets">Sets</button></span>
+          <span class="seg" id="libKind"><button type="button" data-k="sheets">Sheets</button><button type="button" class="on" data-k="sets">Sets</button></span>
         </div>
-        <div id="libBody" role="tabpanel"><div class="libEmpty">Loading sheets…</div></div>
+        <div id="libBody" role="tabpanel"><div class="libEmpty">Loading sets…</div></div>
         <div id="libDone" role="tabpanel" hidden></div>
       </div>
       <div class="lib hidden" id="charmsView">
@@ -2929,7 +2929,7 @@ function ding() {
 /* ═══ 2 · settings ══════════════════════════════════════════════════════ */
 const S = {
   settings: loadSettings(), passcode: sessionStorage.getItem("cn.passcode") || "", cloud: { ok: null, locked: false, msg: "", lib: { sheets: 0, charms: 0 } },
-  sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sheets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
+  sources: [], poolSources: {}, unassigned: [], sheets: {}, mode: "nest", calibration: [], library: { rows: [], metal: "all", q: "", kind: "sets" }, nestQueue: [], stockPreset: (v => STOCK_PRESETS.some(p => p.id === v) ? v : DEFAULT_STOCK)(localStorage.getItem("cn.stock"))
 };
 const WORKSPACE_SANDBOX = S.settings.sandbox === "on";
 /* The sandbox order stream plays the shop's day faster than real time: each check the sorter makes moves its clock ten
@@ -3099,6 +3099,7 @@ function recountLibrary() {
 let probeTimer = null, probeFails = 0;
 async function cloudProbe(retry) {
   clearTimeout(probeTimer); probeTimer = null;
+  const unknown = S.cloud.ok === null;   // the page's first check: a Library opened on it waits for its answer (loadLibrary)
   try {
     const r = await api("charmNestLibrary", { op: "ping" }, retry ? { quiet: true } : { label: "Checking cloud" });
     const first = S.cloud.ok !== true;
@@ -3110,6 +3111,7 @@ async function cloudProbe(retry) {
   } catch (e) {
     S.cloud.ok = false; S.cloud.locked = e.status === 401;
     S.cloud.msg = e.status === 401 ? "Sign-in required" : "Cloud offline — nesting works, nothing is saved";
+    if (unknown && S.mode === "library") loadLibrary().catch(() => {});
     if (!S.cloud.locked) probeTimer = setTimeout(() => cloudProbe(true), [5000, 15000, 30000][probeFails++] || 60000);
   }
   renderCloudStatus();
@@ -5968,12 +5970,15 @@ async function loadLibrary(context) {
   if (window.LibraryDone && LibraryDone.tab() === "done") return LibraryDone.show();
   if(window.CharmNestOperations && !context?.active) return window.CharmNestOperations.run({key:'library-refresh',label:'Refreshing Library',resources:['library-read'],latest:true},token=>loadLibrary(token));
   const loadId = ++libraryLoadId;
-  const body = $("#libBody"); if(!S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
+  // (Sets, the view the Library opens on, says "Loading sets…" itself and keeps the sets it shows while they are read
+  // again: this line put "Loading sheets…" over them each time the Library was opened)
+  const body = $("#libBody"); if (S.library.kind !== "sets" && !S.library.rows?.length) body.innerHTML = `<div class="libEmpty">Loading sheets…</div>`;
   // a refresh that fails keeps the list on screen, with its time and a Retry: it used to be replaced by "Could not load"
   // while the rows were still here (a click on Library just after a wake, the network not back yet)
   const kept = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
-  const stale = why => { if (!body.querySelector(".librarySheet")) renderLibrary(); libraryStale(why); };
-  if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
+  const stale = why => { if (!body.querySelector('[data-laser-card="sheet"]')) renderLibrary(); libraryStale(why); };   // (a set card's sheets are .librarySheet too)
+  // (the page's first check, not answered yet, is not offline: the loading line stays until it answers, cloudProbe)
+  if (!S.cloud.ok) { if (kept) stale("the cloud is offline"); else if (S.cloud.ok === false) body.innerHTML = `<div class="libEmpty">Cloud offline — the library needs the Netlify functions.</div>`; return; }
   if (S.library.kind === "sets" && window.Sets) return Sets.renderLibrary(body);
   try {
     const r = await api("charmNestLibrary", { op: "listSheets", metal: S.library.metal === "all" ? null : S.library.metal, limit: 300, excludeDone: true }, { label: "Loading library", all: "sheets" });
@@ -5994,8 +5999,8 @@ function libraryStale(why) {
 function showLibrary() {
   if (window.LibraryDone && LibraryDone.tab() === "done") return LibraryDone.show();
   const shown = S.library.kind !== "sets" && S.library.rows?.length && S.library.loadedFor === S.library.metal;
-  if (shown && !$("#libBody .librarySheet")) renderLibrary();
-  if (shown) libraryReturn(S.library.place);
+  if (shown && !$('#libBody [data-laser-card="sheet"]')) renderLibrary();
+  if (shown || S.library.kind === "sets" && $("#libBody .setCard")) libraryReturn(S.library.place);   // (sets shown stay, read again behind)
   if (shown && Date.now() - (S.library.loadedAt || 0) < 60000) return;
   loadLibrary().catch(() => {});
 }
@@ -6416,7 +6421,7 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260929-ro"></script>
+<script src="charm-nest-bridge.js?v=20260929-m2"></script>
 <script src="charm-nest-sheetwin.js?v=20260929-om"></script>
 <script src="charm-nest-tour.js?v=20260929-om"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
