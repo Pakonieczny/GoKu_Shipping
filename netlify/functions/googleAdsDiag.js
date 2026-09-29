@@ -102,12 +102,12 @@ exports.handler = async (event) => {
 
   const apRows = (r.approvals || []).map(a => a.error ? `<tr><td colspan="4" style="color:#b3402f">${esc(a.error)}</td></tr>` : `<tr>
       <td>${esc(a.type)}</td>
-      <td><b style="color:${a.status === "APPLIED" ? "#3c7a39" : a.status === "REJECTED" ? "#8a8a8a" : a.status === "APPROVED" ? "#b3402f" : "#7a5a1d"}">${esc(a.status)}</b>${a.status === "APPROVED" ? " ⚠ approved but not applied — apply likely errored" : ""}</td>
+      <td><b style="color:${a.status === "APPLIED" ? "#3c7a39" : a.status === "REJECTED" ? "#8a8a8a" : a.status === "APPROVED" ? "#b3402f" : "#7a5a1d"}">${a.status === "APPROVED" ? "Approved, not published" : esc(a.status)}</b></td>
       <td style="font-size:12px">${esc(a.summary)}</td>
       <td style="font-size:11px;color:#888">${tdiff(a.ts)}</td></tr>`).join("") || `<tr><td colspan="4">No approvals yet.</td></tr>`;
 
   const lgRows = (r.ledger || []).map(l => l.error && !l.kind ? `<tr><td colspan="4" style="color:#b3402f">${esc(l.error)}</td></tr>` : `<tr>
-      <td>${l.ok ? "🟢" : "🔴"}</td>
+      <td style="color:${l.ok ? "#3c7a39" : "#b3402f"}">${l.ok ? "OK" : "Failed"}</td>
       <td>${esc(l.label || l.service || l.kind || "")}${l.validateOnly ? " · dry-run" : ""}</td>
       <td style="font-size:11px;color:#b3402f">${esc(l.error || "")}</td>
       <td style="font-size:11px;color:#888">${tdiff(l.at)}</td></tr>`).join("") || `<tr><td colspan="4">No ledger entries.</td></tr>`;
@@ -120,6 +120,6 @@ exports.handler = async (event) => {
   ${tbl("Campaigns actually in your Google Ads account <span style='font-weight:400;font-size:12px;color:#888'>(BA · rows highlighted)</span>", "<th>ID</th><th>Name</th><th>Status</th><th style='text-align:right'>Budget</th>", campRows)}
   ${tbl("Approvals", "<th>Type</th><th>Status</th><th>Summary</th><th>When</th>", apRows)}
   ${tbl("Mutate ledger <span style='font-weight:400;font-size:12px;color:#888'>(every apply attempt + errors)</span>", "<th></th><th>Action</th><th>Error</th><th>When</th>", lgRows)}
-  <p style="color:#888;font-size:12px;margin-top:20px">Read-only. How to read this: if a <b>BA ·</b> campaign appears above, the pipeline created it (enable it in Google Ads to make it spend). If an approval shows <b>APPROVED</b> (not APPLIED) and the ledger has a 🔴 error, the apply failed — the error tells you why.</p></body>`;
+  <p style="color:#888;font-size:12px;margin-top:20px">Read-only. How to read this: if a <b>BA ·</b> campaign appears above, the pipeline created it; enable it in Overview, where the daily ceiling and monthly stop are checked, not in Google Ads. If an approval shows <b>Approved, not published</b> and the ledger shows <b>Failed</b>, the apply failed — the error tells you why.</p></body>`;
   return { statusCode: 200, headers: { "Content-Type": "text/html; charset=utf-8" }, body: html };
 };

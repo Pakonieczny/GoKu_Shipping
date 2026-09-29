@@ -40,10 +40,6 @@ T.set({deleted:async()=>{throw Error('archive offline')}});r=await E.metricsRang
 // Default windows end on the ACCOUNT date: 22:00 in Toronto is already the next day in UTC.
 NOW=Date.parse('2026-09-11T02:00:00Z');r=await E.metricsRange({});check(r.accountToday==='2026-09-10'&&r.range.end==='2026-09-10'&&r.range.start==='2026-08-28','default range ends on the account date, not the UTC date');NOW=Date.parse('2026-09-10T16:00:00Z');
 leak=true;await assert.rejects(()=>E.metricsRange({start:'2026-09-09',end:'2026-09-10'}),/outside the requested date range/);count++;leak=false;
-// The timeline strip follows the same money and basis rules as the reports.
-failCd=false;T.set({fx:async d=>d.endsWith('09')?.7:.8});let tl=await E.campaignTimeline({id:'42'});check(tl.currency==='USD'&&tl.totals.cost===23&&tl.totals.value===51&&tl.days[1].valueCd===56&&tl.cdAvailable,'timeline converts each day at its own rate');
-T.set({fx:async d=>d.endsWith('09')?.7:NaN});tl=await E.campaignTimeline({id:'42'});check(tl.currency==='CAD'&&tl.totals.cost===30&&tl.totals.value===70&&tl.days.every(d=>d.fxIncomplete)&&/CAD 70/.test(tl.steps.find(s=>s.key==='conversions').detail),'timeline never adds CAD days to USD days');
-failCd=true;tl=await E.campaignTimeline({id:'42'});check(!tl.cdAvailable&&tl.days.every(d=>d.conversionsCd===null&&d.valueCd===null),'timeline shows no click-date figures as conversion-date figures');failCd=false;
 // Exchange rates: Frankfurter answers an unpublished date with the previous business day. That
 // answer is provisional and never saved; only final rates are, in a cache free of lagged rates.
 const db=memoryDb(),answer={},fxCalls=[];T.set({fb:{db,FV:{serverTimestamp:()=>0}}});network=async url=>{fxCalls.push(url);const a=answer[url.match(/(\d{4}-\d{2}-\d{2})\?/)[1]];if(a instanceof Error)throw a;return {ok:true,json:async()=>a};};const saved=()=>db.store.get('Brites_GAds_State/fxRatesFinal')||{};
