@@ -232,9 +232,11 @@ function listControls(opts) {
     const tabLike = el.getAttribute('role') === 'tab' || el.matches('[data-growth-lane],[data-bg-tab],[data-pb-filter],.oppTab,.srchip,.cbasis,.rpPreset,[data-view]');
     // Controls that leave the current view or close it wait until the view has been exercised.
     const backLike = el.matches('[data-bg-home],[data-bg-history-back],[data-bg-campaign-back]') || /^(←|‹|back\b|close\b|cancel\b|done\b|hide\b)/i.test(text) || (tag === 'button' && /^view all\b|^open (groups|approvals|overview|sales|controls|opportunities)\b/i.test(text));
+    // Controls that delete or discard wait until the rest of the content has been exercised.
+    const destructive = !backLike && /^(delete|remove|discard|reject|clear|dismiss)\b/i.test(text);
     const id = 'h' + (++seq) + '-' + Date.now().toString(36);
     el.setAttribute('data-harness-id', id);
-    found.push({ id, tag, type, family, row, text, chart: !!chart, tabLike, backLike, inPopover: !!el.closest('.rpPop'), disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+    found.push({ id, tag, type, family, row, text, chart: !!chart, tabLike, backLike, destructive, inPopover: !!el.closest('.rpPop'), disabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
       href: tag === 'a' ? el.getAttribute('href') : null, target: tag === 'a' ? el.getAttribute('target') : null,
       inDialog: !!el.closest('dialog[open],.ovsheet,[role=dialog]'), w: Math.round(r.width), h: Math.round(r.height) });
   }));

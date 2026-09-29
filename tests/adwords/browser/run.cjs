@@ -291,7 +291,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
       if (c.chart) { C.charts++; await probeChartMark(tab, loc, c); return; }
       // A styled checkbox is operated through its label, as a person would.
       const target = c.tag === 'input' && /^(checkbox|radio)$/.test(c.type) && !(await loc.isVisible()) ? loc.locator('xpath=ancestor::label[1]') : loc;
-      if (vp.phone) await target.tap({ timeout: 3000 }); else await target.click({ timeout: 3000 });
+      const press = ms => vp.phone ? target.tap({ timeout: ms }) : target.click({ timeout: ms });
+      // Playwright's retries also line a control up with the top edge, under the sticky top bar, where no one
+      // would tap it; a control is reported as covered only when it is covered in the middle of the screen too.
+      try { await press(3000); } catch (e) {
+        if (!/intercepts pointer events/.test(String(e.message || e))) throw e;
+        await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'center' })); await press(4000);
+      }
       C.clicked++;
     } catch (e) {
       const msg = String(e.message || e).split('\n');
@@ -301,7 +307,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       return;
     }
     const motion = await measureMotion(t0, before);
-    const left = tab !== 'gate' && tab !== 'shell' && depth === 0 && (await activeView()) !== tab; // navigation, not expansion
+    const left = tab !== 'gate' && tab !== 'shell' && (await activeView()) !== tab; // navigation (from a dialog too), not expansion
     if (left || c.inPopover) { /* the popover and view changes are judged elsewhere */ }
     else if (motion.jumped) add('expands/collapses with no transition (jumps)', vp.name, tab, { control: c.text, tag: c.tag, heightChange: motion.delta, pageHeightChange: motion.docDelta, shift: Math.round(motion.shift * 1000) / 1000 }, c.family);
     else if (motion.shift > 0.05 && !motion.animated.length) add('content below shifts with no transition', vp.name, tab, { control: c.text, tag: c.tag, shift: Math.round(motion.shift * 1000) / 1000, moved: motion.sources }, c.family);
@@ -313,12 +319,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
   // large-change confirmation; it is saved and the change applied before another control replaces it.
   async function budgetEdit(tab, scopes, c, depth) {
     const box = page.locator('.cmdEdit[data-kind="budget"]'), press = l => vp.phone ? l.tap({ timeout: 3000 }) : l.click({ timeout: 3000 });
+    const say = what => { state.lastAction = what; if (process.env.HARNESS_DEBUG) console.error('[' + vp.name + '/' + tab + '] ' + what + (c.row ? ' (row ' + c.row + ')' : '')); };
     try {
-      state.lastAction = 'budget editor: 17.47, Save';
+      say('budget editor: 17.47, Save');
       await box.locator('#cmdEditIn').fill('17.47', { timeout: 2500 }); await press(box.locator('[data-k="save"]'));
       await afterAction(tab, scopes, c, depth);
       const apply = box.locator('[data-k="apply"]');
-      if (await apply.count()) { state.lastAction = 'budget editor: Apply anyway'; await press(apply); await afterAction(tab, scopes, c, depth); }
+      if (await apply.count()) { say('budget editor: Apply anyway'); await press(apply); await afterAction(tab, scopes, c, depth); }
     } catch (e) { add('control could not be operated', vp.name, tab, { control: 'budget editor', why: String(e.message || e).split('\n')[0].slice(0, 200) }, 'budget editor'); }
   }
 
@@ -412,11 +419,11 @@ async function runViewport(browser, vp, base, known, canShoot) {
     while (n < budget) {
       let controls; try { controls = await page.evaluate(listControls, { scopes }); } catch (e) { break; }
       if (!controls.length) break;
-      // Tabs and filters wait until the content they reveal has been exercised;
-      // back/close/leave controls go last.
+      // Deletes and discards wait until the rest of the content has been exercised, tabs and filters until
+      // the content they reveal has; back/close/leave controls go last.
       let next = null;
-      const passOf = c => c.backLike ? 2 : c.tabLike ? 1 : 0;
-      for (const pass of [0, 1, 2]) {
+      const passOf = c => c.backLike ? 3 : c.tabLike ? 2 : c.destructive ? 1 : 0;
+      for (const pass of [0, 1, 2, 3]) {
         for (const c of controls) {
           if (passOf(c) !== pass || (depth === 0 && c.inDialog)) continue;
           const sig = c.family + '#' + c.row;

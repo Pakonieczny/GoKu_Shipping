@@ -2086,27 +2086,33 @@ var REPORT_TREE_CACHE=new Map(),REPORT_TREE_OPEN=new Set(),REPORT_CAMPAIGN_OPEN=
 function reportCached(action,input){var key=action+'|'+JSON.stringify(input),cached=REPORT_TREE_CACHE.get(key);if(cached&&Date.now()-cached.at<600000)return cached.promise;var pending=api(action,input).then(function(r){if(!r||r.error||r.ok===false)throw Error(r&&r.error||'Reporting details are unavailable.');return r;});REPORT_TREE_CACHE.set(key,{at:Date.now(),promise:pending});pending.catch(function(){var now=REPORT_TREE_CACHE.get(key);if(now&&now.promise===pending)REPORT_TREE_CACHE.delete(key);});if(REPORT_TREE_CACHE.size>30)REPORT_TREE_CACHE.delete(REPORT_TREE_CACHE.keys().next().value);return pending;}
 // A panel the user opens eases in once; re-renders that restore an open panel do not animate.
 function cmdOpening(el){if(!el||!el.classList)return;el.classList.remove('opening');void el.offsetWidth;el.classList.add('opening');var done=function(){el.classList.remove('opening');el.removeEventListener('animationend',done);};el.addEventListener('animationend',done);}
-// Expanders, cards and lanes ease to their new height (150–400 ms, longer the further it moves) when a click opens, closes, swaps or loads
-// what they hold: the smallest block around the control that holds every change resizes smoothly, so what
-// follows glides instead of jumping; a table row opening under its control grows from nothing. Restored
-// re-renders and reduced motion do not animate.
+// Expanders, cards, lanes and dialog contents (not the design studio's) ease to their new height (150–400 ms,
+// longer the further it moves) when a click opens, closes, swaps or loads what they hold: the smallest block
+// around the control whose height changed resizes smoothly, so what follows (or a centred dialog) glides
+// instead of jumping; a table row opening under its control grows from nothing. Restored re-renders and
+// reduced motion do not animate.
 function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|scroll/.test(getComputedStyle(el).overflowY))return;var to=el.getBoundingClientRect().height,a;if(!(Math.abs(to-from)>=8))return;
   a=el._ease=el.animate([{height:from+'px',overflow:'clip'},{height:to+'px',overflow:'clip'}],{duration:Math.round(Math.min(400,150+Math.abs(to-from)/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a)el._ease=null;};}
 function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
 // Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
-// A change during a running ease continues from where the block stands.
+// The smallest block whose height changed eases, so a change elsewhere that moves nothing (a status line) does
+// not widen it. A change during a running ease continues from where the block stands.
 function easeWatch(els,row){var top=els[els.length-1],H=new Map(),mark=function(){els.forEach(function(x){H.set(x,x._ease?x._ease.to:x.getBoundingClientRect().height);});};
   if(top._easeMo)top._easeMo.disconnect();mark();
   var mo=top._easeMo=new MutationObserver(function(recs){
     if(row){if(!top.getClientRects().length)return;mo.disconnect();Array.prototype.forEach.call(top.querySelectorAll(':scope>td>*'),function(c){easeHeight(c,0);easeWatch([c]);});return;}
-    var i=els.findIndex(function(x){return recs.every(function(r){return x.contains(r.target);});}),j,el,from;if(i<0)i=els.length-1;
+    var i,j,el,from,run=null;
+    for(i=0;i<els.length;i++){el=els[i];if(!el.isConnected)continue;
+      if(el._ease){run=el;if(recs.some(function(r){return el.contains(r.target);}))break;continue;}
+      if(Math.abs(el.getBoundingClientRect().height+(run?run._ease.to-easeNow(run._ease):0)-H.get(el))>=8)break;}
+    if(i===els.length){if(!run)mark();return;}
     for(j=i+1;j<els.length;j++)if(els[j]._ease)i=j;el=els[i];
-    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease)from-=els[j]._ease.to-easeNow(els[j]._ease);
+    if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&els[j].isConnected)from-=els[j]._ease.to-easeNow(els[j]._ease);
     els.forEach(function(x){if(x._ease)x._ease.cancel();});mark();easeHeight(el,from);});
   mo.observe(top,row?{attributes:true}:{attributes:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
 function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;
   row=document.getElementById(t.getAttribute('aria-controls')||'');if(row&&row.tagName==='TR'&&!row.getClientRects().length)return easeWatch([row],true);
-  top=t.closest('.draft,.card,.view')||(t.tagName==='SUMMARY'?t.parentNode:t.closest('details'));if(!top)return;
+  top=t.closest('.draft,.card,.view,dialog:not(#adDesignDialog)>*')||(t.tagName==='SUMMARY'?t.parentNode:t.closest('details'));if(!top)return;
   // Height applies to blocks only: inline boxes, table parts and scrolling boxes are passed over.
   for(n=t.parentNode;n&&n!==top&&top.contains(n);n=n.parentNode){cs=getComputedStyle(n);if(/^(block|flex|grid|flow-root|list-item)$/.test(cs.display)&&!/auto|scroll/.test(cs.overflowY))els.push(n);}
   els.push(top);easeWatch(els);}

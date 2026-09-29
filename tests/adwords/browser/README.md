@@ -5,11 +5,12 @@ root on `127.0.0.1`, signs in with a fake passcode, and walks every tab at
 desktop (1440×900) and phone (390×844) sizes: buttons, `<details>`, selects,
 inputs, lane tabs, chart marks, dialogs and popovers.
 
-The walk exercises content first, then tabs and filters, then back/close
-controls. A control repeated across rows is operated in at most two rows
-(`--family-cap`). Each kind of dialog is crawled once per viewport (up to 30
-actions); later openings are audited only. Inputs are put back to their
-original value after each check so filters do not hide the rest of a view.
+The walk exercises content first (deletes and discards after the rest), then
+tabs and filters, then back/close controls. A control repeated across rows is
+operated in at most two rows (`--family-cap`). Each kind of dialog is crawled
+once per viewport (up to 30 actions); later openings are audited only. Inputs
+are put back to their original value after each check so filters do not hide
+the rest of a view.
 
     node tests/adwords/browser/run.cjs [--tabs=command,sales] [--viewports=desktop,phone] [--budget=100] [--family-cap=2] [--screenshots=0]
 
@@ -37,7 +38,8 @@ install anything.
 
 Console errors and page errors, unknown API actions, blocked requests, pages or
 elements wider than their container, overlapping or hard-clipped text,
-ellipsis without a tooltip, phone tap targets under 32 px, dialogs that do not
+ellipsis without a tooltip, phone tap targets under 32 px, controls that
+another element still covers in the middle of the screen, dialogs that do not
 take or trap focus or ignore Escape, dialogs and expanders that appear with no
 transition (a short entrance animation that has already finished when a dialog
 is inspected still counts), chart marks without a tooltip or click detail, charts that do not

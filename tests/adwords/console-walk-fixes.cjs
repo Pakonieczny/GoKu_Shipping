@@ -69,7 +69,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     p.ctx._cmdRestoring = false; p.setStill(true); p.H.set(d, 40); p.document.getElementById('s').click(); p.H.set(d, 200); d.open = true; await settle(); assert.equal(p.anims.length, 2);
   });
 
-  await test('the smallest block holding a change eases, and an inline expander eases through the block that holds it', async () => {
+  await test('the smallest block whose height changed eases (a status line elsewhere does not widen it), and an inline expander eases through the block that holds it', async () => {
     const p = page('<div class="card" id="card"><div id="act"><button id="gen">Create review draft</button><span id="msg"></span></div><p>Below</p>' +
       '<dl id="dl"><dd id="dd"><span>Canada</span> <details id="inl" style="display:inline"><summary id="inls">Edit</summary><form>Countries</form></details></dd></dl></div>');
     p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
@@ -79,6 +79,30 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.equal(p.anims.length, 1); assert.equal(p.anims[0].el, act); assert.equal(p.anims[0].frames[0].height, '30px'); assert.equal(p.anims[0].frames[1].height, '66px');
     p.H.set(dd, 20); p.document.getElementById('inls').click(); p.H.set(dd, 160); p.document.getElementById('inl').open = true; await settle();
     assert.equal(p.anims.length, 2); assert.equal(p.anims[1].el, dd); assert.equal(p.anims[1].frames[0].height, '20px'); assert.equal(p.anims[1].frames[1].height, '160px');
+    // A status line elsewhere in the card changes as a result lands: only the block that grew eases, and a
+    // later status change neither widens nor stops that ease.
+    const q = page('<div class="card" id="c2"><span id="meta">Ready</span><details id="set" open><summary>Search settings</summary>' +
+      '<div id="body"><div id="row"><button id="kw">Test keyword research</button></div><div id="panel"></div></div></details></div>');
+    q.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const $q = id => q.document.getElementById(id);
+    q.H.set($q('row'), 30); q.H.set($q('body'), 80); q.H.set($q('set'), 100); q.H.set($q('c2'), 500); $q('kw').click();
+    q.H.set($q('body'), 331); q.H.set($q('set'), 351); q.H.set($q('c2'), 751);
+    $q('panel').innerHTML = '<p>Keyword Planner answered</p>'; $q('meta').textContent = 'Tested'; await settle();
+    assert.equal(q.anims.length, 1); assert.equal(q.anims[0].el, $q('body')); assert.equal(q.anims[0].frames[0].height, '80px'); assert.equal(q.anims[0].frames[1].height, '331px');
+    $q('meta').textContent = 'Tested again'; await settle();
+    assert.equal(q.anims.length, 1); assert(!q.anims[0].cancelled, 'the ease keeps running');
+  });
+
+  await test('a dialog drawn again under the control that asked eases its content, so a centred dialog glides; the design studio is left alone', async () => {
+    const p = page('<dialog id="perf" open><header id="hd"><button id="x">Close</button></header><div id="pbody"><div id="ctl"><button id="rf">Refresh</button></div><p>Chart</p></div></dialog>' +
+      '<dialog id="adDesignDialog" open><div id="dbody"><div id="dctl"><button id="dt">Messaging</button></div></div></dialog>');
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const $p = id => p.document.getElementById(id);
+    p.H.set($p('ctl'), 40); p.H.set($p('pbody'), 800); $p('rf').click();
+    p.H.set($p('pbody'), 300); $p('pbody').innerHTML = '<p>Loading the selected dates…</p>'; await settle();
+    assert.equal(p.anims.length, 1); assert.equal(p.anims[0].el, $p('pbody')); assert.equal(p.anims[0].frames[0].height, '800px'); assert.equal(p.anims[0].frames[1].height, '300px');
+    p.H.set($p('dctl'), 40); p.H.set($p('dbody'), 600); $p('dt').click(); p.H.set($p('dbody'), 900); $p('dbody').innerHTML = '<p>Messaging</p>'; await settle();
+    assert.equal(p.anims.length, 1, 'the design studio keeps its own layout');
   });
 
   await test('a campaign row opening under its control grows from nothing, and what loads into it later grows from where it stands', async () => {
