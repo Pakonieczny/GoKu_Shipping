@@ -92,6 +92,16 @@ await test('a draft being written survives a re-render: its card stays busy and 
   assert.match(toasts.pop(),/Fewer than four/,'the outcome is shown although its card was redrawn');assert(calls.includes('render'),'the card is drawn again with the outcome');
   assert.match(ctx.oppCard(o,0,100),/>Create review draft</,'once the attempt ends the card can be used again');
   delete nodes.oppCards;delete ctx.generateAndWait;});
+await test('Delete waits while the draft is being written, on the card and on a redrawn card',async()=>{today='2026-10-01';
+  const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
+  const els={},el=s=>els[s]||(els[s]={value:'',innerHTML:'',textContent:''});nodes.oppCards={querySelector:s=>el(s.replace(/\[data-i="\d+"\]/,''))};el('.opBud').value='10';
+  let finish;ctx.generateAndWait=()=>new Promise(r=>{finish=r;});
+  const del={disabled:false},btn={disabled:false,innerHTML:'',isConnected:true,classList:{add(){},remove(){}},parentNode:{querySelector:s=>s==='[data-delete-opportunity]'?del:null}};
+  const run=ctx.launchOpp('0',btn);assert.equal(del.disabled,true,'the card’s Delete is disabled while its paid draft is written');
+  assert.match(ctx.oppCard(o,0,100),/data-delete-opportunity="search" data-i="0" disabled/,'a redrawn card keeps Delete disabled');
+  finish({ok:false,reason:'Keyword Planner is unavailable.'});await run;assert.equal(del.disabled,false,'Delete is back once the attempt ends');
+  assert.doesNotMatch(ctx.oppCard(o,0,100),/data-delete-opportunity="search" data-i="0" disabled/);
+  delete nodes.oppCards;delete ctx.generateAndWait;});
 await test('a demand-capped plan budget is the budget the draft gets: the slider can hold it',()=>{today='2026-09-29';
   // Thin demand on cheap keywords: the engine sizes the budget down to 1 a day. A slider floor above it would raise it at launch.
   const cheap=Object.assign(research(40),{cpc:{low:0.3,high:0.9}});cheap.keywords.forEach(k=>{k.low=0.3;k.high=0.9;});
