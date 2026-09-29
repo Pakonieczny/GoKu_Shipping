@@ -8135,25 +8135,6 @@ const Review = window.Review = (() => {
     // takes the print seal's colour once a label was printed (Paul, 27 Sep 20:09-20:18)
     const mk=mkeyOf(it),printed=cu&&it.done&&rec&&window.Seal&&Seal.hasPrint(rec);
     const seals=cu&&it.done&&rec&&window.Seal?Seal.row(rec,{pending:CustomPrint.freshOf(mk)}):'';
-<<<<<<< HEAD
-    const printBtn=cu&&printable(it)&&!cs?.busy?(it.done
-        ?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn')
-        :CustomPrint.keptButtonHtml(it,'print',sendFirst?'ghost':'gold','Print QR label',"print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed",'sm')):'';
-    // (another tab's card: "Review & resolve" first, the primary unless its own designs are ready to send, then the custom
-    // card's buttons in the custom card's order and sizes; no drop box, so it is no taller than it has to be: the card
-    // itself takes a drop, and Send to Sheet with no design yet opens its designs window)
-    const reviewBtn=decide?`<button class="btn ${sendFirst?'ghost':'gold'} sm" data-review-open aria-expanded="${open}">${open?'Close details':'Review & resolve'}</button>`:'';
-    const acts=busy?busy
-      :ax?CustomPrint.failNote(ax)+reviewBtn
-        +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'print','ghost','Print QR label',`print order ${ax.rid}'s 1 × 1 in QR sticker for the sorting station; its line is then completed by hand and moves to Completed`,'sm'):'')
-        +(printable(ax)&&!cs?.busy?CustomPrint.keptButtonHtml(ax,'complete','ghost','Complete Order',`mark order ${ax.rid}'s line completed now, made by hand, without printing its label; it moves to Completed`,'sm'):'')
-        +(cs?CustomSheet.buttonsHtml(ax,true,false):'')
-      :(cu?CustomPrint.failNote(it):'')+printBtn+seals
-      +(cu&&!it.done&&printable(it)&&!cs?.busy?CustomPrint.keptButtonHtml(it,'complete','ghost','Complete Order','mark this order completed now without printing its label; it moves to Completed','sm'):'')
-      +(cs?CustomSheet.buttonsHtml(it,true):'')
-      +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'')
-      +reviewBtn;
-=======
     // an open card of any tab (Paul, 29 Sep 00:38: "make all the buttons look the same as in the other tabs"): the custom
     // card's column, one code path for every tab, for what the card acts on (cx: the custom order, or the order another
     // tab's card shows): Print QR label, the primary until its designs are ready to send; Complete Order; Send to Sheet,
@@ -8161,15 +8142,15 @@ const Review = window.Review = (() => {
     // Its designs strip spans the card's foot once it has some.
     const ord=ax?`order ${ax.rid}'s`:"this order's";
     const column=x=>CustomPrint.failNote(x)
-      +(printable(x)&&!cs?.busy?CustomPrint.buttonHtml(x,'print',sendFirst?'ghost':'gold','Print QR label',`print ${ord} 1 × 1 in QR sticker for the sorting station; ${ax?'its line is then completed by hand and moves':'the order then moves'} to Completed`,'sm')
-        +CustomPrint.buttonHtml(x,'complete','ghost','Complete Order',ax?`mark ${ord} line completed now, made by hand, without printing its label; it moves to Completed`:'mark this order completed now without printing its label; it moves to Completed','sm'):'')
+      +(printable(x)&&!cs?.busy?CustomPrint.keptButtonHtml(x,'print',sendFirst?'ghost':'gold','Print QR label',`print ${ord} 1 × 1 in QR sticker for the sorting station; ${ax?'its line is then completed by hand and moves':'the order then moves'} to Completed`,'sm')
+        +CustomPrint.keptButtonHtml(x,'complete','ghost','Complete Order',ax?`mark ${ord} line completed now, made by hand, without printing its label; it moves to Completed`:'mark this order completed now without printing its label; it moves to Completed','sm'):'')
       +(cs?CustomSheet.buttonsHtml(x,true):'');
+    // (each button keeps the seals it made, for good: a reopened order's too, Paul 29 Sep 00:35)
     const acts=busy?busy
       :cx&&!cx.done?column(cx)
       :(cu?CustomPrint.failNote(it):'')
       +(cu&&printable(it)&&!cs?.busy?CustomPrint.buttonHtml(it,'print',printed?'sealedPrint':'ghost',printed?'Print again':'Print QR label',`print this order's 1 × 1 in QR sticker for the sorting station${printed?' again':''}`,'sm','data-seal-btn'):'')+seals
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'');
->>>>>>> worktree-agent-a0dd3f231db60c6e9
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
     node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(cx):''}<div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
@@ -8326,11 +8307,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-<<<<<<< HEAD
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, actFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
-=======
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, askFor, problemText, syncOrderItems, focus, showCard, repool, customItemFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
->>>>>>> worktree-agent-a0dd3f231db60c6e9
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, askFor, problemText, syncOrderItems, focus, showCard, repool, customItemFor, actFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
