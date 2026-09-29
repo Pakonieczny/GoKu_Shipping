@@ -190,6 +190,19 @@ await test('one indicator per wait, shell top bar, phone channel tabs and a shad
   assert.match(html,/\.rail\{[^}]*box-shadow:none[^}]*\}\s*body\.navOpen \.rail\{transform:none;box-shadow:14px 0 40px rgba\(0,0,0,\.25\)\}/);
   assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
   assert.match(html,/\.ieRow input\{flex:1 1 110px;max-width:170px;min-width:0;/,'on a phone the amount, Save and Cancel share one row');});
+
+// The browser walk found the view title and the activity line cut with an ellipsis and no tooltip.
+await test('the view title carries its full name as a tooltip and wraps on phones; the activity line wraps instead of being cut',()=>{
+  assert.match(html,/<h1 id="vtitle" title="Overview">Overview<\/h1>/);
+  const g=new JSDOM('<!doctype html><body><h1 id="vtitle" title="Overview">Overview</h1><div id="vsub"></div><section id="v-groups" class="view hidden"></section></body>',{runScripts:'outside-only'}),gw=g.window,t=g.window.document.getElementById('vtitle');
+  gw.eval('var $=function(s){return document.querySelector(s);},$$=function(s){return Array.from(document.querySelectorAll(s));};function navDrawer(){}window.scrollTo=function(){};\n'+/^var NAV=\[.*\];$/m.exec(html)[0]+'\n'+pick('go'));
+  gw.go('groups');assert.equal(t.textContent,'Products & groups');assert.equal(t.title,'Products & groups','the tooltip follows the tab');g.window.close();
+  assert(html.includes('.topbar #vtitle{font-size:19px!important;line-height:1.1;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}'),'a phone title takes a second line within the bar');
+  assert(html.includes('@media (max-width:429px){.topbar:has(#pillDry[style*="inline-flex"]) #vtitle{white-space:nowrap}}'),'beside the dry-run pill it keeps one line');
+  for(const cls of ['alabel','adetail'])assert.doesNotMatch(/\n\.actbar \.(?:alabel|adetail)\{[^}]*\}/g.exec(html.slice(html.indexOf('\n.actbar .'+cls+'{')))[0],/nowrap|ellipsis|overflow/,cls+' wraps');
+  assert.match(html,/\n\.actbar \.alabel\{[^}]*flex:none\}/,'on wide screens the detail, not the label, takes the second line');
+  assert(html.includes('#actbar .alabel{flex:0 1 auto;min-width:0}#actbar .aeta{max-width:18ch;white-space:normal}'),'on phones the label wraps and a long wait note takes two lines');
+});
 console.log(passed+' console inline action checks passed.');
 require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -358,11 +358,12 @@ svg{display:block}
   .toasts{left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));align-items:stretch}
   /* one thin header row on phones: title, status, refresh */
   .topbar{flex-wrap:nowrap;padding-left:10px;padding-right:10px}
-  .topbar #vtitle{font-size:19px!important}
+  /* a long view title takes a second line (within the bar's height) instead of being cut */
+  .topbar #vtitle{font-size:19px!important;line-height:1.1;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
   .topbar .sync{display:none}
   .topbar .pill{padding:4px 9px;letter-spacing:.02em}
   #btnRefresh .rf-ic{display:block}#btnRefresh .rf-t{display:none}#btnRefresh.is-busy{font-size:0}#btnRefresh .bspin{margin-right:0}
-  .actbar .adetail{display:none}
+  .actbar .adetail{display:none}#actbar .alabel{flex:0 1 auto;min-width:0}#actbar .aeta{max-width:18ch;white-space:normal}
   .rail__signout{min-height:36px}
   #v-controls .card__h .sub{margin-left:0}
   /* opportunity metric strips + draft internals wrap cleanly */
@@ -385,6 +386,8 @@ svg{display:block}
    dry-run pill leaves the view title no room, so the sliver of it left is not shown (screen readers still read it). */
 @media (max-width:379px){.topbar{gap:5px}.topbar .pill{font-size:10px;letter-spacing:0;padding:4px 7px;gap:4px}}
 @media (max-width:339px){.topbar:has(#pillDry[style*="inline-flex"]) .topbar__title{opacity:0}}
+/* With the dry-run pill a phone under 430 px has no room for a title word per line: one line, as before. */
+@media (max-width:429px){.topbar:has(#pillDry[style*="inline-flex"]) #vtitle{white-space:nowrap}}
 
 @media (min-width:761px) and (max-width:1020px){
   .view{padding-left:8px;padding-right:8px}
@@ -526,8 +529,9 @@ table.ptable td.r{text-align:right}table.ptable td.c{text-align:center}
 @keyframes actIn{from{opacity:0;transform:translate(-50%,-4px)}to{opacity:1;transform:translate(-50%,0)}}
 #actbar .spin{width:14px;height:14px;flex:0 0 14px}
 #actbar progress,#actbar .bp-meter{position:absolute;width:1px;height:1px;margin:0;opacity:0;overflow:hidden;pointer-events:none}
-.actbar .alabel{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.actbar .adetail{font-size:12px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* Nothing in the activity line is cut off: the detail wraps under itself (on phones, where it is hidden, the label wraps) */
+.actbar .alabel{font-weight:600;font-size:13px;line-height:1.35;flex:none}
+.actbar .adetail{font-size:12px;line-height:1.35;opacity:.72;min-width:0}
 .actbar .acount{font-family:var(--mono);font-size:11px;opacity:.6;white-space:nowrap}
 .actbar .aeta{font-family:var(--mono);font-size:11px;background:rgba(244,236,220,.13);padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
 
@@ -989,7 +993,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
   <div class="main">
     <header class="topbar">
       <button class="navburger" id="navBurger" aria-label="Menu" aria-controls="nav" aria-expanded="false"><span></span><span></span><span></span></button>
-      <div class="topbar__title"><h1 id="vtitle">Overview</h1><div class="sub" id="vsub"></div></div>
+      <div class="topbar__title"><h1 id="vtitle" title="Overview">Overview</h1><div class="sub" id="vsub"></div></div>
       <div class="spacer"></div>
       <span class="pill live" id="pillLive"><span class="d"></span>AUTOPILOT ON</span>
       <span class="pill dry" id="pillDry" title="Dry-run is on: changes are validated and queued, never applied"><span class="d"></span>DRY-RUN</span>
@@ -1700,7 +1704,7 @@ function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen")
   document.addEventListener("keydown",function(e){if(e.key==="Escape"&&document.body.classList.contains("navOpen"))navDrawer(false);});
   var nv=document.getElementById("nav");if(nv&&window.MutationObserver)new MutationObserver(function(){nv.querySelectorAll("button").forEach(function(x){if(x.classList.contains("active"))x.setAttribute("aria-current","page");else x.removeAttribute("aria-current");});}).observe(nv,{subtree:true,attributes:true,attributeFilter:["class"]});
   if(sc)sc.onclick=function(){navDrawer(false);};})();
-function go(k){if(k==="perf")k="command";if(!document.getElementById("v-"+k))return;navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(window.BritesGroups){BritesGroups.chrome(k);if(k==="groups")BritesGroups.show();}if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);loadGrowthPerformance(document.getElementById('v-bench').dataset.lane,false);}if(typeof BritesFlow!=="undefined")BritesFlow.go(k);}
+function go(k){if(k==="perf")k="command";if(!document.getElementById("v-"+k))return;navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k),vt=$("#vtitle");vt.textContent=vt.title=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(window.BritesGroups){BritesGroups.chrome(k);if(k==="groups")BritesGroups.show();}if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);loadGrowthPerformance(document.getElementById('v-bench').dataset.lane,false);}if(typeof BritesFlow!=="undefined")BritesFlow.go(k);}
 
 /* ---- attribution basis ----
    Google Ads files a conversion under the day the AD WAS CLICKED. Shopify (and the Sales
