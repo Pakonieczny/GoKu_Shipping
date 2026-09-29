@@ -784,7 +784,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260911-2">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-names">
 </head>
 <body>
 
@@ -1125,6 +1125,7 @@ function oppCty(i){var k=oppKey(i),o=OPPS[i]||{};return (oppCountries[k]&&oppCou
 /* ============================ loading subsystem ============================ */
 /* Central copy for every async action: what's happening, how long, what you get. */
 var LOADINFO={
+  adGroupDetail:{verb:"Opening the group",detail:"",eta:""},adDesignSavedWorkspaces:{verb:"Loading saved workspaces",detail:"",eta:""},draftAdGroupSplit:{verb:"Preparing the product split",detail:"",eta:""},draftAdGroupActivation:{verb:"Preparing the group switch",detail:"",eta:""},
   startAdDesign:{verb:"Creating researched ad designs",detail:"Each image format, the copy and quality review are saved",eta:"Progress saved in workspace"},
   uploadAdDesignReference:{verb:"Saving reference image",detail:"Adding it to this design workspace",eta:"A few seconds"},
   beginAnalyzeAd:{verb:"Analyzing this ad version",detail:"Checking results, creative, products and relevant research",eta:"Progress saved"},
@@ -1562,7 +1563,8 @@ function wireBigChart(id,points,o){o=o||{};var box=$("#bc-"+id);if(!box)return;v
   box.onpointerleave=function(e){if(e.pointerType==="mouse")hide();};box._show=show;box._hide=hide;}
 
 /* ---- nav ---- */
-var NAV=[["groups","Products & groups","","◈"],["command","Overview","Account performance","◆"],["sales","Sales","Where your money comes from","◷"],["approvals","Approvals","Drafts waiting for your call","✎"],["bench","Opportunities","AI-found campaigns to launch","⚒"],["controls","Controls","Guardrails & switches","⚙"]];
+// The top bar is one thin row: the page title alone, no subtitle line.
+var NAV=[["groups","Products & groups","","◈"],["command","Overview","","◆"],["sales","Sales","","◷"],["approvals","Approvals","","✎"],["bench","Opportunities","","⚒"],["controls","Controls","","⚙"]];
 function buildNav(){var n=$("#nav");n.innerHTML="";NAV.forEach(function(it){var b=elFrom('<button data-v="'+it[0]+'"><span class="ic" style="font-size:15px">'+it[3]+'</span><span>'+it[1]+'</span></button>');b.onclick=()=>go(it[0]);n.appendChild(b);});updateBadges();if(typeof BritesFlow!=="undefined")BritesFlow.nav(n);}
 // The badge counts exactly what the Approvals tab lists. Counting every
 // draft while the tab shows only the selected product group would have the
@@ -2021,7 +2023,7 @@ async function loadCampaignTree(box){if(!box||box.dataset.loaded)return;box.data
   // a listing shown under its own group (from the group's exact offer figures) is not repeated below
   var owned=[],offered={};groups.forEach(function(g){var r=groupProductRows(g,data,range),ids=(g.mapping&&g.mapping.productIds||[]).map(String);if(r)owned=owned.concat(r);(g.listingMetrics||[]).forEach(function(x){var id=String(x.itemId||'').split('_')[2];if(id&&ids.indexOf(id)>=0)offered[id]=1;});});var rest=(campaignProducts(cid,data,range)||[]).filter(function(p){return owned.indexOf(p)<0&&!offered[productIdOf(p)]&&(Number(p.cost)>0||Number(p.value)>0||Number(p.conv)>0);}).sort(function(a,b){return (Number(b.cost)||0)-(Number(a.cost)||0);});
   var html=!groups.length?'':'<p class="reportScope">'+groups.length+(groups.length===1?' group':' groups')+' · '+(native?esc(cur||'Currency unavailable')+' · by ad-click date, as Google reports groups'+(rowCur&&(rowCur!==cur||convBasis!=='click')?'. The campaign row above is '+esc(rowCur)+' '+esc(basisLabel())+'.':''):esc(gm[0].currency)+' · '+esc(basisLabel())+(gm.some(function(x){return x.click;})&&convBasis!=='click'?' · groups marked “by ad-click date” have no conversion-date figures from Google':''))+'</p>';
-  html+=groups.map(function(g,i){var key=scope+'|'+g.ref,x=gm[i];return '<details class="reportGroup" data-group-ref="'+cmdAttr(g.ref)+'"'+(REPORT_TREE_OPEN.has(key)?' open':'')+'><summary><span><b>'+esc(g.name)+'</b><small>'+esc(g.channel==='pmax'?'Asset group':g.channel==='display'?'Display ad group':'Ad group')+(!x.native&&x.click&&convBasis!=='click'?' · by ad-click date':'')+'</small></span>'+reportMetrics(x.m,x.currency)+'</summary><div class="reportListings"></div></details>';}).join('');
+  html+=groups.map(function(g,i){var key=scope+'|'+g.ref,x=gm[i];return '<details class="reportGroup" data-group-ref="'+cmdAttr(g.ref)+'"'+(REPORT_TREE_OPEN.has(key)?' open':'')+'><summary><span><b>'+esc(g.name)+'</b><small>'+esc(g.channel==='pmax'?'Asset group':g.channel==='display'?'Display ad group':'Ad group')+(g.historicalOnly?' · Removed':'')+(!x.native&&x.click&&convBasis!=='click'?' · by ad-click date':'')+'</small></span>'+reportMetrics(x.m,x.currency)+'</summary><div class="reportListings"></div></details>';}).join('');
   if(!groups.length)html+='<p class="reportScope">'+(c&&(c.deleted||c.status==='REMOVED')?'This campaign was removed, so Google no longer lists its groups.':'No ad groups were returned for this campaign.')+'</p>';
   if(gap)html+='<p class="reportScope">These groups account for '+esc(money(gap.sum))+' of the campaign’s '+esc(money(gap.total))+' '+esc(gap.currency)+'. The rest was spent by groups that have since been removed.</p>';
   if(rest.length)html+='<details class="reportGroup reportProducts"><summary><span><b>'+(!(owned.length||Object.keys(offered).length)?'Listing results for the whole campaign':groups.length===1?'Other listing results in this campaign':'Listing results not tied to one group')+'</b><small>'+rest.length+' listing'+(rest.length===1?'':'s')+' · by ad-click date'+(groups.length>1?' · Google does not split these by group':'')+'</small></span>'+reportMetrics(sumListingRows(rest),cur)+'</summary><div class="reportListings">'+rest.map(function(p){return reportListingHtml({title:p.title||(productIdOf(p)?'Product '+productIdOf(p):'Product not identified by Google'),url:p.productUrl||''},sumListingRows([p]),cur);}).join('')+'</div></details>';
@@ -4869,9 +4871,9 @@ setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);
 
 </script>
-<script src="/brites-groups.js?v=20260911-delete"></script>
+<script src="/brites-groups.js?v=20260929-back2"></script>
 <script>
-BritesGroups.init({api:api,dashboard:function(){return DASH;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
+BritesGroups.init({api:api,dashboard:function(){return DASH;},basis:function(){return convBasis;},design:openAdDesign,go:go,reload:reload,toast:toast,currentView:function(){return document.querySelector('.nav button.active')?.dataset.v||'groups';},changed:function(){if(DASH){renderApprovals();updateBadges();}}});
 </script>
 </body>
 </html>

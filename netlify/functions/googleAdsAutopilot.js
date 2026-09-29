@@ -386,10 +386,16 @@ function _campaignVersionDoc(ref, version) { return ref.collection("versions").d
 const _RESTORATION_SCOPE = "Saved Search copy, image links, landing links and keyword selection; Performance Max asset links and product filters. Existing campaign, Search ad and asset group IDs are preserved. Budgets, schedules, Merchant product data and Google's learned bidding state are not rolled back.";
 async function _captureCampaignEditableSnapshot(id) {
   id = String(id || ""); if (!/^\d+$/.test(id)) throw new Error("Invalid campaign ID.");
-  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type FROM campaign WHERE campaign.id = ${id}`);
+  // Brand guidelines keep BUSINESS_NAME/LOGO on the campaign, so new asset groups must not link them (group splits read this).
+  const head = "SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type";
+  let rows, brandKnown = true;
+  try { rows = await gaql(`${head}, campaign.brand_guidelines_enabled FROM campaign WHERE campaign.id = ${id}`); }
+  catch (error) { brandKnown = false; rows = await gaql(`${head} FROM campaign WHERE campaign.id = ${id}`); }
   if (!rows.length) throw new Error("Campaign was not found in this account.");
   const campaign = rows[0].campaign, channel = campaign.advertisingChannelType, components = Object.fromEntries(_versionSnapshots.COMPONENTS.map(key => [key, []])), warnings = [], completeComponents = {};
   const filter = `campaign.id = ${id}`, snapshot = { schema: 1, campaignId: id, channel, capturedAt: Date.now(), complete: true, components, warnings, completeComponents };
+  // Google omits false booleans; null means the setting could not be read. Not part of the snapshot hash.
+  if (channel === "PERFORMANCE_MAX") snapshot.brandGuidelinesEnabled = brandKnown ? campaign.brandGuidelinesEnabled === true : null;
   const read = async (key, query, map) => {
     try {
       const result = await gaql(query); if (result.length > 1000) throw new Error("More than 1,000 settings exceed the complete snapshot limit.");
@@ -9637,11 +9643,13 @@ function _putCreativeCopy(payload, groups) {
   const refs=new Set(groups.filter(g=>g.channel==="pmax").map(g=>g.ref));
   const oldText=new Set(ops.filter(o=>o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["HEADLINE","LONG_HEADLINE","DESCRIPTION","BUSINESS_NAME"].includes(o.assetGroupAssetOperation.create.fieldType)).map(o=>o.assetGroupAssetOperation.create.asset));
   payload.mutateOperations=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["HEADLINE","LONG_HEADLINE","DESCRIPTION","BUSINESS_NAME"].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.assetOperation&&o.assetOperation.create&&oldText.has(o.assetOperation.create.resourceName)));
+  // With brand guidelines the business name is a campaign asset; Google rejects it on an asset group.
+  const brand=!!(payload.meta&&payload.meta.brandGuidelinesEnabled);
   for(const g of groups) {
     if(g.channel==="pmax") {
-      const t=_buildPmaxTextAssetOps({...g.copy,businessName:"Brites Jewelry"},_tempIdFloor(payload.mutateOperations));payload.mutateOperations.unshift(...t.ops);
+      const t=_buildPmaxTextAssetOps({...g.copy,businessName:"Brites Jewelry"},_tempIdFloor(payload.mutateOperations));payload.mutateOperations.unshift(...(brand?t.ops.filter(o=>o.assetOperation.create.resourceName!==t.ids.businessName):t.ops));
       for(const [key,field] of [["headlines","HEADLINE"],["longHeadlines","LONG_HEADLINE"],["descriptions","DESCRIPTION"]]) t.ids[key].forEach(a=>payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:a,fieldType:field}}}));
-      payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:t.ids.businessName,fieldType:"BUSINESS_NAME"}}});
+      if(!brand)payload.mutateOperations.push({assetGroupAssetOperation:{create:{assetGroup:g.ref,asset:t.ids.businessName,fieldType:"BUSINESS_NAME"}}});
     } else {
       payload.mutateOperations.forEach(o=>{const a=o.adGroupAdOperation&&o.adGroupAdOperation.create;if(a&&a.adGroup===g.ref&&a.ad&&a.ad.responsiveSearchAd)a.ad.responsiveSearchAd={headlines:g.copy.headlines.map(text=>({text})),descriptions:g.copy.descriptions.slice(0,4).map(text=>({text}))};});
       (payload.operations||[]).forEach(o=>{const a=o.update||o.create;if(a&&a.resourceName===g.ref)a.responsiveSearchAd={headlines:g.copy.headlines.map(text=>({text})),descriptions:g.copy.descriptions.slice(0,4).map(text=>({text}))};});
@@ -9782,7 +9790,8 @@ Lead with the physical jewellery and its meaning. Premium, inviting, specific, c
     pkg.playbookVersions=[...new Set(pkg.groups.map(g=>(g.learning||{}).playbookVersion).filter(v=>v!=null))];
     delete pkg.playbookVersion;
     _putCreativeCopy(payload,pkg.groups);
-    if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo) {
+    // A brand-guidelines campaign already carries its logo; the review shows only what Google will receive.
+    if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo&&!(payload.meta||{}).brandGuidelinesEnabled) {
       const sharp=require("sharp");
       const svg=_brandWordmarkSvg();
       pkg.logo=await _saveCreativeAsset(id,await sharp(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_wordmark",{width:600,height:600,kind:"Brites wordmark"});
@@ -9867,10 +9876,12 @@ async function materializeReviewedCreative(it) {
   if(p.service||!p.mutateOperations)return null;
   const ops=JSON.parse(JSON.stringify(p.mutateOperations));
   if(!(c.groups||[]).some(g=>g.channel==="pmax"||g.channel==="search"&&Object.keys(g.assets||{}).length))return ops;
-  const imageBuild=await _creativeImageOps(c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
+  // Brand guidelines keep the logo on the campaign: no logo asset or asset-group LOGO link is sent.
+  const brand=!!(p.meta&&p.meta.brandGuidelinesEnabled);
+  const imageBuild=await _creativeImageOps(brand?{...c,logo:null}:c,ops),refs=new Set(Object.keys(imageBuild.groups)),searchRefs=new Set(Object.keys(imageBuild.searchGroups));
   const clean=ops.filter(o=>!(o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create&&refs.has(o.assetGroupAssetOperation.create.assetGroup)&&["LOGO",...Object.values(_SHAPE_FIELD)].includes(o.assetGroupAssetOperation.create.fieldType))&&!(o.adGroupAssetOperation&&o.adGroupAssetOperation.create&&searchRefs.has(o.adGroupAssetOperation.create.adGroup)&&["AD_IMAGE","IMAGE"].includes(o.adGroupAssetOperation.create.fieldType)));
   clean.unshift(...imageBuild.ops);
-  for(const [ref,a] of Object.entries(imageBuild.groups)) {clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
+  for(const [ref,a] of Object.entries(imageBuild.groups)) {if(a.logo)clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset:a.logo,fieldType:"LOGO"}}});for(const [shape,field] of Object.entries(_SHAPE_FIELD))a[shape].forEach(asset=>clean.push({assetGroupAssetOperation:{create:{assetGroup:ref,asset,fieldType:field}}}));}
   for(const [adGroup,a] of Object.entries(imageBuild.searchGroups))for(const shape of ["square","landscape"])a[shape].forEach(asset=>clean.push({adGroupAssetOperation:{create:{adGroup,asset,fieldType:"AD_IMAGE"}}}));
   return clean;
 }
@@ -9878,10 +9889,12 @@ async function materializeReviewedCreative(it) {
 let _groupsService=null;
 function _groupService(){
   _designEngine();
-  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
+  if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval,listingDetails:itemIds=>merchantProducts({itemIds})});
   return _groupsService;
 }
-async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
+// A deleted campaign's groups stay only as history: the reporting tree keeps those with activity in the
+// dates (historicalOnly), exactly as its Overview row keeps the spend.
+async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId))||g.historicalOnly);return out;}
 async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
 async function adDesignSavedWorkspaces(input={}){return require('./googleAdsGroups').savedWorkspaces({db:fb().db,stateCollection:COL.state,after:input.after,deletedCampaignIds:await _deletedCampaignIds()});}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
@@ -9890,7 +9903,10 @@ async function _guardProductGroupActivation(item){const p=item.payload||{},g=p.g
 async function _guardProductGroupSplit(item){
   const p=item.payload||{},guard=p.groupSplitGuard;if(!guard)return;
   const current=await _guardCampaignVersion(guard),groups=p.meta&&p.meta.assetGroups||[];
-  const search=guard.channel==='search';if(!(search?(current.snapshot.components.searchAds||[]).some(a=>a.adGroup===guard.sourceGroupRef):(current.snapshot.components.assetGroups||[]).some(g=>g.resourceName===guard.sourceGroupRef))||groups.length<2)throw new Error('The source group for this split is unavailable.');
+  const search=guard.channel==='search';
+  // A split drafted for the other brand-guidelines setting would link the business name and logo where Google refuses them.
+  if(!search&&typeof current.snapshot.brandGuidelinesEnabled==='boolean'&&current.snapshot.brandGuidelinesEnabled!==!!(p.meta&&p.meta.brandGuidelinesEnabled))throw new Error('This split was prepared for a different brand guidelines setting than the campaign now has. Delete this draft and prepare the split again.');
+  if(!(search?(current.snapshot.components.searchAds||[]).some(a=>a.adGroup===guard.sourceGroupRef):(current.snapshot.components.assetGroups||[]).some(g=>g.resourceName===guard.sourceGroupRef))||groups.length<2)throw new Error('The source group for this split is unavailable.');
   const sourceOffers=new Set((current.snapshot.components.listingGroups||[]).filter(f=>f.assetGroup===guard.sourceGroupRef&&f.type==='UNIT_INCLUDED').map(f=>f.caseValue&&f.caseValue.productItemId&&f.caseValue.productItemId.value).filter(Boolean));
   const selected=groups.flatMap(g=>g.itemIds||[]);if(new Set(selected).size!==selected.length||selected.length!==sourceOffers.size||selected.some(x=>!sourceOffers.has(x)))throw new Error('The split must preserve every exact product offer once.');
   const creates=(p.mutateOperations||[]).filter(o=>search?o.adGroupOperation:o.assetGroupOperation).map(o=>search?o.adGroupOperation:o.assetGroupOperation);
@@ -9972,7 +9988,7 @@ async function _finishAdDesign({workspaceId,jobId,owner,workspace,group,product,
   const completed={...target,copy:result.copy,brief:result.brief,assets:result.assets,placementAssets:result.placementAssets||null,review:result.quality,copyReview:{pass:true,provider:GEN_MODEL,researchHash:evidence.hash},productIds:result.productIds||selectedProducts.map(p=>String(p.id)),inputCoverage:result.inputCoverage||null,learningApplications:result.learningApplications||[],sourceTitle:product.title,sourceUrl:(product.images||[]).find(x=>x.id===workspace.settings.sourceImageId)?.url||product.url,learning:{schema:1,channel:target.channel,stage:"creative_guidance",includedAt:Date.now(),lessonIds:lessons.map(l=>String(l.id)),lessonSnapshots:lessons}};
   pkg.groups=(pkg.groups||[]).filter(g=>g.key!==target.key).concat(completed);pkg.groups=allGroups.map(g=>pkg.groups.find(x=>x.key===g.key)).filter(Boolean);
   const ready=pkg.groups.length===allGroups.length&&pkg.groups.every(g=>g.review&&g.review.pass===true);
-  if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo){
+  if(ready){_putCreativeCopy(payload,pkg.groups);if(pkg.groups.some(g=>g.channel==="pmax")&&!pkg.logo&&!(payload.meta||{}).brandGuidelinesEnabled){
     const svg=_brandWordmarkSvg();
     pkg.logo=await _saveCreativeAsset(workspaceId,await require("sharp")(Buffer.from(svg)).jpeg({quality:95}).toBuffer(),"brand_logo",{width:600,height:600,kind:"brand logo"});
   }}
