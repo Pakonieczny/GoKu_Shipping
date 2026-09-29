@@ -1,4 +1,4 @@
-.topbar{min-height:52px;padding-top:10px!important;padding-bottom:10px!important}.topbar h1{font-size:24px!important}.brand{padding-top:20px!important;padding-bottom:20px!important}.bg-global-note{font-size:11px;color:var(--ink-70)}
+.bg-global-note{font-size:11px;color:var(--ink-70)}
 /* Products & groups: campaign › group › listing, each with its own figures. Columns line up at every level. */
 /* The tree's room depends on the rail as much as the window, so layouts follow the view's own width. */
 #v-groups{container:bg-view/inline-size;--bg-cols:minmax(0,1fr) 112px minmax(84px,104px) minmax(54px,70px) minmax(48px,62px) minmax(84px,104px) 68px}

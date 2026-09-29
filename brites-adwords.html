@@ -65,8 +65,8 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 
 /* ---- topbar ---- */
 .main{display:flex;flex-direction:column;min-width:0}
-.topbar{position:sticky;top:0;z-index:20;background:rgba(243,240,234,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:13px 28px;display:flex;align-items:center;gap:16px}
-.topbar h1{font-family:var(--serif);font-size:20px;margin:0;font-weight:500}
+.topbar{position:sticky;top:0;z-index:20;background:rgba(243,240,234,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:10px 28px;min-height:52px;display:flex;align-items:center;gap:16px}
+.topbar h1{font-family:var(--serif);font-size:24px;margin:0;font-weight:500}
 .topbar .sub{font-size:12px;color:var(--ink-45);margin-top:1px}
 .topbar__title{min-width:0}.topbar #vtitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1}
@@ -315,7 +315,6 @@ svg{display:block}
   .nav button{min-height:46px;font-size:14px}
   .navburger{display:flex}
   .topbar{position:sticky;top:0;z-index:120;background:color-mix(in srgb,var(--paper) 88%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:10px 0;margin:-6px 0 10px;flex-wrap:wrap;gap:8px}
-  .topbar h1{font-size:19px}
   .topbar .sub{display:none}
   .main{padding:12px 14px calc(20px + env(safe-area-inset-bottom));min-width:0}
   .kpis{grid-template-columns:repeat(2,1fr)}
@@ -785,7 +784,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260929-names">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-shell">
 </head>
 <body>
 
@@ -1024,7 +1023,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 
 <dialog id="adDesignDialog" class="creative-dialog" aria-labelledby="adDesignTitle" oncancel="event.preventDefault();returnFromAdDesign(AD_DESIGN)"><header class="cr-head adDesignHead" id="adDesignHeader"><h2 id="adDesignTitle">Design an ad</h2><span id="adDesignSubtitle" hidden></span></header><div id="adDesignBody"></div></dialog>
 <link rel="stylesheet" href="/brites-progress.css?v=20260914-percent-bars">
-<script src="/brites-progress.js?v=20260914-percent-bars"></script>
+<script src="/brites-progress.js?v=20260929-owner"></script>
 <script src="/brites-ad-format-policy.js?v=20260917-shapes"></script>
 <script src="/brites-campaign-styles.js?v=20260929-styles"></script>
 <script src="/brites-brand-assets.js?v=20260914"></script>
@@ -1204,6 +1203,9 @@ function btnBusy(btn,label){if(!btn)return function(){};
 /* --- step runner: animated checklist for long AI waits --- */
 function runSteps(el,steps,opts){opts=opts||{};el.innerHTML='<div class="lblock"><b>'+esc(steps[0]||"Working")+'</b><progress aria-label="Operation in progress"></progress><span class="muted">Waiting for the server result</span></div>';return {stop:function(ok){var bar=el.querySelector('progress');if(bar){bar.max=1;bar.value=ok===false?0:1;}var note=el.querySelector('.muted');if(note)note.textContent=ok===false?'Needs attention':'Completed';}};}
 
+/* One wait, one indicator: while the open view (or dialog) shows a wait on its own status line, with
+   a spinner or a progress bar, the shared "elapsed" notice does not stack a second one on top. */
+if(window.BritesProgress&&BritesProgress.own)BritesProgress.own(function(host){var scope=host===document.body?document.querySelector(".view:not(.hidden)"):host;return !!scope&&Array.prototype.some.call(scope.querySelectorAll("[role=status]"),function(el){return el.getClientRects().length>0&&!!el.querySelector(".spin,.bg-spin,.bp-spinner,progress");});});
 async function api(action, extra){
   const finishWait=window.BritesProgress?.begin(loadInfo(action).verb === "Working" ? "Loading your request" : loadInfo(action).verb)||function(){};
   try{
