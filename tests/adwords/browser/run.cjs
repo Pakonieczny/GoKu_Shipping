@@ -151,8 +151,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
   page.on('pageerror', e => { const top = String(e.stack || '').split('\n').slice(0, 3).join(' | ').replace(new RegExp(base, 'g'), ''); add('page error', vp.name, state.tab, { message: String(e.message).slice(0, 240), stack: top.slice(0, 300), after: state.lastAction }, String(e.message).replace(/\d+/g, '#')); });
   page.on('dialog', async d => { const msg = d.message(); add('native ' + d.type() + '()', vp.name, state.tab, { message: msg.slice(0, 160), after: state.lastAction }, d.type() + '|' + msg.slice(0, 60)); state.nativeDialogs = (state.nativeDialogs || 0) + 1;
     for (const m of msg.matchAll(/(US|CA|C)?\$\s?([\d,]+(?:\.\d+)?)/g)) { const val = Number(m[2].replace(/,/g, '')); if (!m[1] && !/\b(CAD|USD)\b/.test(msg) && fx.cadTracers.some(t => Math.abs(t - val) < 0.006)) add('CAD amount shown with bare $', vp.name, state.tab, { amount: m[0], where: 'native ' + d.type() + '()', text: msg.replace(/\s+/g, ' ').slice(0, 110), after: state.lastAction }, 'native|' + msg.slice(0, 30).replace(/\d/g, '#')); }
-    // A budget prompt gets a CAD tracer amount far enough from the current budget to reach the large-change confirm.
-    const answer = d.type() === 'prompt' ? (/budget/i.test(msg) ? '17.47' : (d.defaultValue() || '12')) : undefined;
+    const answer = d.type() === 'prompt' ? (d.defaultValue() || '12') : undefined;
     try { if (d.type() === 'confirm' && /delete|remove|clear|permanent|discard/i.test(msg)) await d.dismiss(); else await d.accept(answer); } catch (e) {} });
   page.on('requestfailed', r => { const u = r.url(); if (u.startsWith(base) && !/\/\.netlify\//.test(u)) add('request failed', vp.name, state.tab, { url: u.replace(base, ''), error: r.failure() && r.failure().errorText }, u); });
 
@@ -276,6 +275,16 @@ async function runViewport(browser, vp, base, known, canShoot) {
       }
       if (c.tag === 'input' && /^(date|number|text|search|email|url|range|tel)$/.test(c.type || 'text') || c.tag === 'textarea') {
         C.inputs++;
+        // A campaign's budget editor gets a CAD tracer far enough from the budget to reach its
+        // large-change confirmation, and is saved; the confirmation's buttons are walked next.
+        if (await loc.evaluate(el => !!el.closest('.cmdEdit[data-kind="budget"]')).catch(() => false)) {
+          state.lastAction = 'budget editor: 17.47, Save';
+          await loc.fill('17.47', { timeout: 2500 });
+          const save = page.locator('.cmdEdit[data-kind="budget"] [data-k="save"]');
+          if (vp.phone) await save.tap({ timeout: 3000 }); else await save.click({ timeout: 3000 });
+          await afterAction(tab, scopes, c, depth);
+          return;
+        }
         const orig = await loc.inputValue().catch(() => null);
         if (c.type === 'date') await loc.fill(new Date(Date.now() + 12 * 86400000).toISOString().slice(0, 10), { timeout: 2500 });
         else if (c.type === 'range') { await loc.focus({ timeout: 2500 }); await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); }

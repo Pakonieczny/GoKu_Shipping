@@ -8,6 +8,10 @@
 // ending in 7 (13.37, 27.17, ...). Report amounts (USD) never end in 7. The
 // browser audit uses CAD_TRACERS to find a CAD amount printed with a bare "$".
 
+// The engine's own campaign-option rules (pure: no network, no store), so the Campaign options
+// answers keep its limits, wording and draft shapes.
+const OPT = require('../../../netlify/functions/_googleAdsCampaignOptions.js');
+
 const DAY = 86400000;
 const ACCOUNT_TZ = 'America/Toronto';
 const CID = '5550001111';
@@ -64,11 +68,23 @@ const COUNTRIES = [
   ['2554', 'New Zealand', 'NZ'], ['2372', 'Ireland', 'IE'], ['2276', 'Germany', 'DE'], ['2250', 'France', 'FR']
 ].map(([id, name, code]) => ({ id, name, code }));
 
+// What the Campaign options read from Google (campaignOptionsStatus in googleAdsAutopilot.js): each
+// campaign's bid strategy [type, target ROAS], its new-customer goal, and whether it bids toward a
+// purchase goal (absent: unknown).
+const BIDDING = { '9100000001': ['MAXIMIZE_CONVERSION_VALUE', 3.5], '9100000002': ['MAXIMIZE_CONVERSION_VALUE', 0], '9100000003': ['MAXIMIZE_CONVERSIONS', 0], '9100000004': ['MANUAL_CPC', 0], '9100000006': ['TARGET_ROAS', 0] };
+const NEW_CUSTOMER_VALUE = 3.07;
+const LIFECYCLE = { '9100000001': { mode: 'BID_HIGHER_FOR_NEW_CUSTOMER', value: NEW_CUSTOMER_VALUE, highLifetimeValue: null }, '9100000003': { mode: 'TARGET_NEW_CUSTOMER', value: null, highLifetimeValue: null } };
+const PURCHASE_GOAL = { '9100000001': true, '9100000002': true, '9100000006': false };
+// Brand Search starting amounts as CAD tracers (the engine's own defaults are round numbers).
+const BRAND_DEFAULTS = { dailyBudget: 5.17, maxCpc: 0.57 };
+// Each occasion's peak is this many days out and repeats every 364 days, so last year's dates exist.
+const PEAK_IN = { 'cyber monday': 45, "valentine's day": 125, "mother's day": 210 };
+
 // Every CAD amount the fixtures emit (budgets, ceilings and their sums).
 function cadTracers() {
   const live = CAMPAIGNS.filter(c => c.status !== 'REMOVED');
   const vals = new Set([...CAMPAIGNS.map(c => c.budget), r2(live.reduce((s, c) => s + c.budget, 0)), 11.27, 14.57, 16.47, 12.07, 7.47, 21.17, 170, 23.47, 410.47, 370.47, 330.47, 8.47, 12.77, 21.24, 99.17, 30.17, 41.27,
-    17.47 /* the walk's answer to budget prompts */]);
+    17.47 /* what the walk types into the budget editor */, BRAND_DEFAULTS.dailyBudget, BRAND_DEFAULTS.maxCpc, NEW_CUSTOMER_VALUE, r2(11.27 * 41) /* the Search draft's total budget */]);
   return [...vals];
 }
 
@@ -82,7 +98,8 @@ function createFixtures(opts = {}) {
     ledger: null,
     genPolls: new Map(),
     creative: new Map(),
-    diagRun: 0
+    diagRun: 0,
+    optionDrafts: 0
   };
 
   const campaignDates = c => ({ startDate: addDays(today, c.start), endDate: c.end == null ? null : addDays(today, c.end) });
@@ -149,8 +166,9 @@ function createFixtures(opts = {}) {
   }
   function searchPayload(extra) {
     const ops = [
-      { campaignBudgetOperation: { create: { amountMicros: String(11.27 * 1e6) } } },
-      { campaignOperation: { create: { name: 'Harness Search draft', startDateTime: addDays(today, 2).replace(/-/g, '') + ' 00:00:00', endDateTime: addDays(today, 46).replace(/-/g, '') + ' 23:59:59' } } },
+      // Linked, with a bid strategy, like the Search builder's: 41 days, so a total budget (11.27 x 41) is offered.
+      { campaignBudgetOperation: { create: { resourceName: 'customers/' + CID + '/campaignBudgets/-1', amountMicros: String(11.27 * 1e6) } } },
+      { campaignOperation: { create: { resourceName: 'customers/' + CID + '/campaigns/-2', name: 'Harness Search draft', advertisingChannelType: 'SEARCH', campaignBudget: 'customers/' + CID + '/campaignBudgets/-1', manualCpc: { enhancedCpcEnabled: false }, startDateTime: addDays(today, 2).replace(/-/g, '') + ' 00:00:00', endDateTime: addDays(today, 42).replace(/-/g, '') + ' 23:59:59' } } },
       { adGroupAdOperation: { create: { ad: { finalUrls: [productUrl(PRODUCTS[1])], responsiveSearchAd: { headlines: ['Fox Initial Necklace', 'Personalized Gift Idea', 'Handmade in Canada — Ships Fast', 'Engraved Initial Charm Jewelry For Her'].map(text => ({ text })), descriptions: ['Hand-finished initial necklaces in sterling silver and gold fill. Free gift wrap on every order.', 'Choose a letter, a chain length and a finish. Shipped from our studio within two business days.'].map(text => ({ text })) } } } } },
       ...['fox initial necklace', 'initial necklace gift', 'personalized letter necklace'].map((text, i) => ({ adGroupCriterionOperation: { create: { keyword: { text, matchType: i ? 'PHRASE' : 'EXACT' } } } })),
       { campaignCriterionOperation: { create: { negative: true, keyword: { text: 'free' } } } },
@@ -359,6 +377,104 @@ function createFixtures(opts = {}) {
     return { ok: true, id, status: a.status, summary: a.summary, creative, imageAccess: { ok: true }, leaseUntil: 0, current: true };
   }
 
+  // ---- Campaign options: campaignOptionsStatus and the draft actions in googleAdsAutopilot.js.
+  // A draft joins the pending approvals, as enqueueApproval would; a failed check answers
+  // { ok: false, error } as googleAdsAutopilotKick.js does.
+  const optionAnswer = fn => { try { return fn(); } catch (e) { return { ok: false, error: e.message }; } };
+  const optionFacts = () => CAMPAIGNS.filter(c => c.status !== 'REMOVED' && !state.deleted.has(c.id)).map(c => { const [bidding, targetRoas] = BIDDING[c.id] || ['MANUAL_CPC', 0];
+    return { id: c.id, name: c.name, status: c.status, servingStatus: null, channel: c.channel, bidding, targetRoas, targetCpaMicros: 0, endDate: campaignDates(c).endDate }; });
+  const openOptionDrafts = () => (state.pending || []).filter(a => ['brand', 'seasonality', 'acquisition'].includes(a.type) && a.status === 'PENDING');
+  function addOptionDraft(type, summary, payload) {
+    if (!state.pending) state.pending = pendingApprovals();
+    const id = 'harness-option-' + type + '-' + (++state.optionDrafts);
+    state.pending.push({ id, type, status: 'PENDING', summary, creative: null, vetted: false, payload });
+    return id;
+  }
+  const peakOf = (rule, from) => { let p = addDays(today, PEAK_IN[rule]); while (p < from) p = addDays(p, 364); while (addDays(p, -364) >= from) p = addDays(p, -364); return p; };
+  const saleWindow = key => OPT.saleWindow(key, { today, peakOf });
+  // One sale-day adjustment already in Google, on the product feed campaign.
+  const liveAdjustment = () => ({ name: 'Brites · Harness flash sale', scope: 'CAMPAIGN', campaignIds: ['9100000002'], start: addDays(today, 9) + ' 00:00:00', endExclusive: addDays(today, 12) + ' 00:00:00', modifier: 1.2 });
+  // Last year's account days: the Black Friday weekend converted better than the four weeks before
+  // it. The other occasions have no history there, so they keep the starting estimate.
+  function saleHistory() {
+    const w = saleWindow('bfcm'), ls = addDays(w.start, -364), le = addDays(w.end, -364), rows = [];
+    for (let d = addDays(ls, -28); d <= le; d = addDays(d, 1)) rows.push({ date: d, clicks: 40, conversions: d >= ls ? 1.3 : 1 });
+    return rows;
+  }
+  const saleEstimate = (start, end, defaultPct) => OPT.conversionRateEstimate(saleHistory(), { start, end, shiftDays: 364, defaultPct });
+  function campaignOptions() {
+    const B = OPT.BRAND_SEARCH, facts = optionFacts(), drafts = openOptionDrafts(), brandDraft = drafts.find(d => d.type === 'brand'), adj = liveAdjustment();
+    return { ok: true, today, currency: 'CAD', warnings: [],
+      brand: { campaign: null, draft: brandDraft ? { id: brandDraft.id, status: brandDraft.status } : null, defaults: BRAND_DEFAULTS, limits: B.limits, countries: state.control.defaultCountries.slice(), pairing: B.pairing,
+        keywords: B.keywords.map(k => (k.matchType === 'EXACT' ? '[' + k.text + ']' : '"' + k.text + '"')), ceiling: state.control.maxDailyBudgetTotal },
+      sale: { limits: OPT.SEASONALITY_LIMITS,
+        occasions: OPT.SALE_OCCASIONS.map(o => saleWindow(o.key)).map(w => ({ key: w.key, label: w.label, start: w.start, end: w.end, days: w.days, peak: w.peak, estimate: saleEstimate(w.start, w.end, w.defaultPct),
+          campaigns: facts.filter(c => OPT.seasonalityEligible(c, w.start).ok).map(c => ({ id: c.id, name: c.name, status: c.status })) })),
+        upcoming: [{ name: adj.name, start: adj.start.slice(0, 10), end: addDays(adj.endExclusive.slice(0, 10), -1), campaigns: adj.campaignIds.length, modifier: adj.modifier }],
+        drafts: drafts.filter(d => d.type === 'seasonality').map(d => { const o = d.payload.campaignOption || {}; return { id: d.id, status: d.status, label: o.label || null, start: o.start || null, end: o.end || null }; }) },
+      customers: { modes: OPT.ACQUISITION_MODES, tradeoff: OPT.ACQUISITION_TRADEOFF, prerequisite: OPT.ACQUISITION_PREREQUISITE,
+        campaigns: facts.filter(c => OPT.ACQUISITION_CHANNELS.includes(c.channel)).map(c => { const cur = LIFECYCLE[c.id] || null, pg = c.id in PURCHASE_GOAL ? PURCHASE_GOAL[c.id] : null;
+          return { id: c.id, name: c.name, status: c.status, channel: c.channel, mode: cur ? cur.mode : 'TARGET_ALL_EQUALLY', value: cur ? cur.value : null,
+            allowed: Object.fromEntries(Object.keys(OPT.ACQUISITION_MODES).map(m => { const e = OPT.acquisitionEligibility(c, m, { current: cur, purchaseGoal: pg }); return [m, e.ok ? true : e.reason]; })) }; }),
+        drafts: drafts.filter(d => d.type === 'acquisition').map(d => ({ id: d.id, status: d.status, campaignId: (d.payload.lifecycleGoal || {}).campaignId || null })) } };
+  }
+  function draftBrandSearch(body) {
+    const B = OPT.BRAND_SEARCH, money = v => 'CAD ' + Number(v).toFixed(2);
+    if (openOptionDrafts().some(d => d.type === 'brand')) throw new Error('A brand Search draft is already waiting in Approvals.');
+    const built = OPT.buildBrandSearchOps({ cid: CID, dailyBudget: body.dailyBudget == null ? BRAND_DEFAULTS.dailyBudget : body.dailyBudget, maxCpc: body.maxCpc == null ? BRAND_DEFAULTS.maxCpc : body.maxCpc, countries: state.control.defaultCountries, stamp: now });
+    const ceiling = Number(state.control.maxDailyBudgetTotal) || 0, used = r2(CAMPAIGNS.filter(c => c.status === 'ENABLED' && !state.deleted.has(c.id)).reduce((s, c) => s + c.budget, 0));
+    if (ceiling > 0 && used + built.dailyBudget > ceiling + 0.001) throw new Error(`A ${money(built.dailyBudget)}/day budget doesn't fit: enabled campaigns already use ${money(used)} of the ${money(ceiling)}/day ceiling. Lower it or raise the ceiling in Controls. No draft was created.`);
+    const approvalId = addOptionDraft('brand', `NEW brand Search campaign “${B.tag}” — ${built.adGroupSummary[0].keywords.join(', ')}; manual CPC up to ${money(built.maxCpc)} a click; ${money(built.dailyBudget)}/day; people in the target countries only; starts PAUSED. ${B.pairing}`,
+      { meta: { kind: 'brand', handle: 'brand', budgetCurrency: 'CAD' }, mutateOperations: built.ops, countries: built.countries, maxCpc: built.maxCpc, smartBidding: false, negatives: built.negatives,
+        assetSummary: built.assetSummary, keywordSummary: built.keywordSummary, adGroupSummary: built.adGroupSummary, campaignOption: { kind: 'brand', pairing: B.pairing } });
+    return { ok: true, approvalId, dailyBudget: built.dailyBudget, maxCpc: built.maxCpc, countries: built.countries, currency: 'CAD' };
+  }
+  function draftSeasonalityAdjustment(body) {
+    const o = OPT.saleOccasion(body.occasion), start = OPT._dates.dateOnly(body.startDate), end = OPT._dates.dateOnly(body.endDate);
+    OPT.checkSaleDates(start, end, today);
+    const ids = [...new Set((Array.isArray(body.campaignIds) ? body.campaignIds : []).map(x => String(x).replace(/\D/g, '')).filter(Boolean))];
+    if (!ids.length) throw new Error('Choose at least one campaign.');
+    const facts = new Map(optionFacts().map(c => [c.id, c]));
+    const bad = ids.map(id => [id, facts.get(id)]).map(([id, c]) => [id, c, OPT.seasonalityEligible(c, start)]).filter(x => !x[2].ok);
+    if (bad.length) throw new Error(bad.map(([id, c, e]) => (c ? '“' + c.name + '”' : 'Campaign ' + id) + ': ' + e.reason).join('; ') + '. Sale-day adjustments apply only to smart-bidding campaigns. No draft was created.');
+    const win = { start: start + ' 00:00:00', endExclusive: addDays(end, 1) + ' 00:00:00' }, adj = liveAdjustment();
+    if (adj.campaignIds.some(id => ids.includes(id)) && OPT.seasonalityOverlaps(win, adj)) throw new Error(`Google already has the sale-day adjustment “${adj.name}” on these dates for these campaigns. No draft was created.`);
+    if (openOptionDrafts().some(d => { const c = ((d.payload.seasonalityAdjustment || {}).operation || {}).create || {}; return d.type === 'seasonality' && (c.campaigns || []).some(r => ids.includes(String(r).split('/').pop())) && OPT.seasonalityOverlaps(win, { start: c.startDateTime, endExclusive: c.endDateTime }); }))
+      throw new Error('A sale-day draft for these dates and campaigns is already waiting in Approvals. No draft was created.');
+    const estimate = saleEstimate(start, end, o.defaultPct), pct = body.changePct == null || String(body.changePct).trim() === '' ? estimate.pct : Number(body.changePct), sign = v => (v > 0 ? '+' : '') + v + '%';
+    const built = OPT.seasonalityOperation({ cid: CID, label: o.label, start, end, today, campaignIds: ids, changePct: pct, description: `Brites console · ${o.label} · expected conversion rate ${sign(pct)} (estimate). ${estimate.basis}` });
+    const approvalId = addOptionDraft('seasonality', `Sale-day bid adjustment · ${o.label} · ${start} to ${end} — expected conversion rate ${sign(pct)} (estimate) for ${ids.length} smart-bidding campaign${ids.length === 1 ? '' : 's'}; bidding returns to normal after`,
+      { seasonalityAdjustment: { operation: built.operation }, campaignOption: { kind: 'seasonality', occasion: o.key, label: o.label, start, end, days: built.days, changePct: pct, modifier: built.modifier, estimate, campaigns: ids.map(id => ({ id, name: facts.get(id).name })) } });
+    return { ok: true, approvalId, start, end, days: built.days, changePct: pct, modifier: built.modifier, estimate };
+  }
+  function draftCustomerGoal(body) {
+    const id = String(body.campaignId == null ? '' : body.campaignId).replace(/\D/g, '');
+    if (!id) throw new Error('Choose a campaign.');
+    const c = optionFacts().find(x => x.id === id);
+    if (!c) throw new Error('This campaign is not in Google Ads.');
+    const current = LIFECYCLE[id] || null, e = OPT.acquisitionEligibility(c, body.mode, { current, purchaseGoal: id in PURCHASE_GOAL ? PURCHASE_GOAL[id] : null });
+    if (!e.ok) throw new Error(e.reason + ' No draft was created.');
+    if (openOptionDrafts().some(d => d.type === 'acquisition' && String((d.payload.lifecycleGoal || {}).campaignId) === id)) throw new Error('A new-customer draft for this campaign is already waiting in Approvals.');
+    const request = OPT.lifecycleGoalRequest({ cid: CID, campaignId: id, mode: body.mode, value: body.value, existing: current });
+    const settings = (request.operation.create || request.operation.update).customerAcquisitionGoalSettings, value = settings.valueSettings ? settings.valueSettings.value : null;
+    const approvalId = addOptionDraft('acquisition', `New-customer goal · ${c.name} — ${OPT.ACQUISITION_MODES[current ? current.mode : 'TARGET_ALL_EQUALLY']} → ${OPT.ACQUISITION_MODES[body.mode]}${value != null ? ` (+CAD ${value.toFixed(2)} per new customer)` : ''}`,
+      { meta: { existingCampaignId: id, budgetCurrency: 'CAD' }, lifecycleGoal: { campaignId: id, campaignName: c.name, channel: c.channel, mode: body.mode, value, previous: current, request },
+        campaignOption: { kind: 'acquisition', tradeoff: OPT.ACQUISITION_TRADEOFF, prerequisite: OPT.ACQUISITION_PREREQUISITE } });
+    return { ok: true, approvalId, campaignId: id, mode: body.mode, request };
+  }
+  // The approval card's switch between a daily and a total budget over the draft's dates.
+  function setApprovalTotalBudget(body) {
+    const a = (state.pending || []).find(x => x.id === String(body.id || ''));
+    if (!a) throw new Error('Draft not found.');
+    const p = a.payload || {};
+    if (a.status !== 'PENDING') throw new Error('Only a pending draft can change its budget type.');
+    if (p.designStudioSpec || ['studio', 'adDesignSubmission'].includes(a.type) || p.service || p.groupSplitGuard || p.groupActivationGuard) throw new Error('This draft keeps a daily budget.');
+    const r = OPT.setTotalBudget(p.mutateOperations, { on: body.on === true, today, prior: p.totalBudget || null });
+    a.payload = Object.assign({}, p, { mutateOperations: r.ops });
+    if (r.on) a.payload.totalBudget = { total: r.total, daily: r.daily, days: r.days, start: r.start, end: r.end }; else delete a.payload.totalBudget;
+    return { ok: true, id: a.id, on: r.on, total: r.total || null, daily: r.daily, days: r.days, start: r.start, end: r.end };
+  }
+
   const read = {
     dashboard,
     metricsRange: body => { const range = validRange(body, 7); return Object.assign({ ok: true, snapshot: rangeRows(range.start, range.end), range }, context(), { currency: 'USD', fxIncomplete: false, cdAvailable: true, scheduleAvailable: true, includesRemovedWithActivity: true, warnings: [] }); },
@@ -401,6 +517,7 @@ function createFixtures(opts = {}) {
     // editorState / editorAIStatus in googleAdsAdDesign.js: no saved board and no AI attempt yet.
     adDesignEditorState: () => ({ ok: true, savedDesigns: [], design: null, sources: [], exports: [], designs: [] }),
     adDesignEditorAIStatus: () => ({ ok: true, jobId: null, phase: 'idle', result: null }),
+    campaignOptions: () => optionAnswer(campaignOptions),
     monthlyGuard: () => ({ ok: true, tripped: false }),
     measureNow: () => ({ ok: true, campaigns: CAMPAIGNS.length - 1, at: Date.now() })
   };
@@ -442,6 +559,10 @@ function createFixtures(opts = {}) {
     releaseOpportunity: () => ({ ok: true }),
     draftAdGroupSplit: () => ({ ok: true, approvalId: 'harness-approval-split', groups: [], summary: 'New groups start paused.' }),
     draftAdGroupActivation: () => ({ ok: true, approvalId: 'harness-approval-activation', changes: [] }),
+    draftBrandSearch: body => optionAnswer(() => draftBrandSearch(body)),
+    draftSeasonalityAdjustment: body => optionAnswer(() => draftSeasonalityAdjustment(body)),
+    draftCustomerGoal: body => optionAnswer(() => draftCustomerGoal(body)),
+    setApprovalTotalBudget: body => optionAnswer(() => setApprovalTotalBudget(body)),
     resetAdDesignFailures: () => ({ ok: true, reset: 0, workspaces: 0 }),
     restorePlaybook: () => ({ ok: true }),
     applyRec: () => ({ ok: true, verified: true }),
