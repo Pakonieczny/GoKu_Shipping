@@ -82,7 +82,8 @@ function fromReceipt(r) {
 const personal = x => (x.source ? x.source !== "etsy" : x.by !== "Etsy");
 const etsyKnown = x => !!(x && (x.etsyStatus || !personal(x)));
 const etsyEvent = (rec, o) => ({ orderId: rec.orderId, type: "etsyCancelled", id: rec.orderId, at: rec.etsyAt || rec.at, by: "Etsy", source: "etsy", station: "",
-  text: `Cancelled on Etsy${rec.etsyStatus ? ` (${rec.etsyStatus})` : ""}`, data: { etsyStatus: rec.etsyStatus || "", detectedBy: o.detectedBy || "", notedBy: o.person && o.person !== "Etsy" ? o.person : "" } });
+  // (at: Etsy's own moment, the receipt's change; seenAt: when the mirror or the sorter saw it, Paul 29 Sep 00:26)
+  text: `Cancelled on Etsy${rec.etsyStatus ? ` (${rec.etsyStatus})` : ""}`, data: { etsyStatus: rec.etsyStatus || "", detectedBy: o.detectedBy || "", notedBy: o.person && o.person !== "Etsy" ? o.person : "", etsyAt: rec.etsyAt || rec.at, seenAt: Date.now() } });
 const personEvent = (rec, o) => ({ orderId: rec.orderId, type: "cancelled", id: s(o.eventId, 80) || String(rec.at), at: rec.at, by: rec.by, source: "sorter", station: "sorter",
   text: rec.why ? `Cancelled · ${rec.why}` : "Cancelled", data: { why: rec.why, sheets: rec.sheets } });
 /** What a record lacks that the new cancel knows: buyer, dates, lines when it has none, sheets it did not name. */
