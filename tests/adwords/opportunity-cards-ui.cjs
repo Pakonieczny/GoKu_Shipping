@@ -14,7 +14,7 @@ const ctx={console,Date,Math,Number,String,Object,Array,JSON,isFinite,Promise,se
   oppOverride:{},oppCountries:{},OPPS:[],PMAXOPPS:[],RESEARCH_STATUS:{},OPP_RECONCILIATION:null,SCAN_AUDIT:{engineVersion:'14.0.0'},OPPSAT:null,PMAXAT:null,OPP_LAST_ERROR:null,PMAXERR:null,OPP_SCANNING:false,OPP_PROGRESS:null,OPP_LEARNING:{},oppPollTimer:null};
 vm.createContext(ctx);
 for(const n of ['defCountries','oppCty','fmtDateTime','timeago'])vm.runInContext(line(n),ctx);
-for(const n of ['oppKey','oppBidOf','oppCpcOf','oppUi','oppWindow','oppExpiry','oppBlock','oppCpd','oppCpdLine','oppDemandNote','oppSigned','oppSalesTxt','oppModel','oppProj','oppRecalc','fmtDate','daysBtw','stratLine','compChip','tailChip','kwResearchPanel','planBlock','urgPill','oppBidSeg','oppCard','researchState','researchNeedsRefresh','updateOpportunityState','loadOpportunities','launchOpp'])vm.runInContext(pick(n),ctx);
+for(const n of ['oppKey','oppBidOf','oppCpcOf','oppUi','oppWindow','oppExpiry','oppBlock','oppCpd','oppCpdLine','oppDemandNote','oppSigned','oppSalesTxt','oppModel','oppProj','oppRecalc','fmtDate','daysBtw','stratLine','compChip','tailChip','kwResearchPanel','oppSourceUrl','oppSourceName','planBlock','urgPill','oppBidSeg','oppCard','researchState','researchNeedsRefresh','updateOpportunityState','loadOpportunities','launchOpp'])vm.runInContext(pick(n),ctx);
 // The research engine itself, offline, on the same fixed day as the console fixtures below.
 const engineFile=path.resolve(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),NOW=Date.parse('2026-09-29T15:00:00Z');
 class FixedDate extends Date{constructor(...a){if(a.length)super(...a);else super(NOW);}static now(){return NOW;}}

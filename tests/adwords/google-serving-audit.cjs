@@ -278,10 +278,10 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
 
   // ── 7. The console shows it ───────────────────────────────────────────────────────────
   const html = fs.readFileSync(path.join(REPO, 'brites-adwords.html'), 'utf8');
-  check(/\+renderServing\(t\.serving\)/.test(html), 'the campaign timeline renders the serving check');
+  check(/^function renderServing\(s\)\{/m.test(html) && /^async function loadServing\(box\)\{[^\n]*\n(?:[^\n]*\n){0,6}[^\n]*renderServing\(s\)/m.test(html), 'the campaign details render the serving check');
   const reasonLabels = html.match(/var REASON_LABEL=\{[^\n]*\};/)[0];
   check(/BUDGET_CONSTRAINED:/.test(reasonLabels) && /HAS_ASSET_GROUPS_DISAPPROVED:/.test(reasonLabels) && /MISSING_LOCATION_TARGETING:/.test(reasonLabels) && !/CAMPAIGN_BUDGET_LIMITED|BIDDING_STRATEGY_SUGGESTED/.test(reasonLabels), 'status reason labels use the reason names Google actually returns');
-  const escSrc = html.match(/function esc\(s\)\{[^\n]*\}/)[0], block = html.slice(html.indexOf('var SERV_LV='), html.indexOf('// Scoped per-campaign creative job'));
+  const escSrc = html.match(/function esc\(s\)\{[^\n]*\}/)[0], block = html.slice(html.indexOf('var SERV_LV='), html.indexOf('\n}\n', html.indexOf('function renderServing(')) + 3);
   const ui = vm.createContext({}); vm.runInContext(escSrc + '\n' + block, ui);
   const shown = ui.renderServing({ ok: true, verdict: 'blocked', headline: 'Will not serve as intended: <b>x</b>', apiVersion: 'v24', checkedAt: '2026-09-29T12:00:00Z',
     findings: [{ level: 'block', area: 'Dates', text: 'End <img src=x> passed', fix: 'Extend it' }, { level: 'note', area: 'Ads', text: 'Under review', reason: 'r' }], facts: [{ label: 'Budget', value: 'CAD 8.00 a day' }], warnings: ['Keywords could not be read'] });

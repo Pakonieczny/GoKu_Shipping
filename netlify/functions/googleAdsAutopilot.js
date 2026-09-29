@@ -1930,8 +1930,8 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     let ops=await materializeReviewedCreative(it);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
     if(newNames.length){const live=await gaql("SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'");if(live.some(r=>newNames.includes((r.campaign||{}).name)))throw new Error("A campaign with this draft's name already exists. Review the existing campaign instead of creating a duplicate.");}
-    // Campaigns are only ever enabled from Campaigns, where the ceiling and monthly stop are checked.
-    if([...(ops||[]).map(o=>o.campaignOperation&&(o.campaignOperation.create||o.campaignOperation.update)),...(p.service==="campaigns"?(p.operations||[]).map(o=>o&&(o.create||o.update)):[])].some(c=>c&&c.status==="ENABLED"))throw new Error("Drafts publish campaigns paused. Enable the campaign from Campaigns, where the daily ceiling and monthly stop are checked.");
+    // Campaigns are only ever enabled from Overview, where the ceiling and monthly stop are checked.
+    if([...(ops||[]).map(o=>o.campaignOperation&&(o.campaignOperation.create||o.campaignOperation.update)),...(p.service==="campaigns"?(p.operations||[]).map(o=>o&&(o.create||o.update)):[])].some(c=>c&&c.status==="ENABLED"))throw new Error("Drafts publish campaigns paused. Enable the campaign in Overview, where the daily ceiling and monthly stop are checked.");
     const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
     if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
       const want=budgetOps.reduce((n,o)=>n+fromMicros(o.campaignBudgetOperation.create.amountMicros),0);
@@ -6774,7 +6774,7 @@ async function setApprovalCountries(approvalId, countryIds) {
   const designStudioSpec = p.designStudioSpec ? { ...p.designStudioSpec, countries: want } : null;
   const meta = p.meta ? { ...p.meta, countries: want } : p.meta;
   if(!want.length)throw new Error("Select at least one target country.");
-  if(!campRes&&!designStudioSpec)throw new Error("This refresh retains the existing campaign countries. Edit them from Campaigns.");
+  if(!campRes&&!designStudioSpec)throw new Error("This refresh keeps the campaign's current countries. Change them in Google Ads.");
   await saveDraftPayload(ref,p,{ ...p, mutateOperations: ops, countries: want, ...(designStudioSpec ? { designStudioSpec } : {}), ...(meta ? { meta } : {}) });
   return { ok: true, id: approvalId, countries: want };
 }
@@ -7504,15 +7504,15 @@ async function opportunitiesWithStatus({ force, cacheOnly, runId } = {}) {
 // Frees an opportunity\u2019s tag so the scanner may re-suggest it: PENDING/APPROVED drafts with the
 // tag are marked REJECTED (kept for audit, no longer blocking). If the tag is held by a LIVE
 // campaign (or an APPLIED draft that created one), we refuse \u2014 releasing it would invite a
-// duplicate campaign; archive the campaign in Command Center first.
+// duplicate campaign; delete the campaign from its channel's campaign list in Opportunities first.
 async function releaseOpportunity({ tag } = {}) {
   if (!tag) throw new Error("missing tag");
   const taken = await takenTags();
   const cur = taken[tag];
   if (cur && cur.where === "campaign" && cur.status !== "REMOVED")
-    return { ok: false, reason: "A live campaign holds this (campaign " + (cur.campaignId || "?") + ", " + cur.status + "). Archive it in Command Center first \u2014 otherwise a re-scan could create a duplicate." };
+    return { ok: false, reason: "A live campaign holds this (campaign " + (cur.campaignId || "?") + ", " + cur.status + "). Delete it from the campaign list in Opportunities first \u2014 otherwise a re-scan could create a duplicate." };
   if (cur && cur.where === "approval" && cur.status === "APPLIED")
-    return { ok: false, reason: "This draft was already APPLIED \u2014 a campaign exists for it. Archive that campaign in Command Center to release this opportunity." };
+    return { ok: false, reason: "This draft was already APPLIED \u2014 a campaign exists for it. Delete that campaign from the campaign list in Opportunities to release this opportunity." };
   if(cur&&cur.where==="approval"&&["APPLYING","APPLY_UNKNOWN"].includes(cur.status))return {ok:false,reason:"Publication is running or unconfirmed. Reconcile it in Google Ads before releasing this opportunity."};
   const f = fb(); if (!f) throw new Error("no firestore");
   let released = 0;
