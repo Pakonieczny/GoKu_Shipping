@@ -92,7 +92,37 @@ check(!displayLane.some(o => o.adGroupCriterionOperation), 'the Display builder 
 check(!styles.byKey.pmax.autoSettings.some(l => /only the assets you approved/i.test(l)) && styles.byKey.pmax.autoSettings.some(l => /product feed/i.test(l) && /video/i.test(l)), 'Performance Max states that feed data and a generated video can still serve');
 check(!styles.STYLES.some(s => s.autoSettings.some(l => /standard delivery/i.test(l))), 'filler with no alternative (standard delivery) is not disclosed as a choice');
 
-// 7. The page still parses.
+// 7. Opportunities name the campaign they would become in plain words, from the same file the server reads.
+const thumbs = require(path.join(REPO, 'assets/ad-preview-thumbs.js'));
+for (const [key, name, channel] of [['search', 'Search text ad', 'SEARCH'], ['pmax', 'Product ad (Performance Max)', 'PERFORMANCE_MAX'], ['responsive_display', 'Responsive banner ad', null], ['fixed_display', 'Fixed banner ad', null]]) {
+  const k = styles.opportunityKind(key);
+  check(k && k.key === key && k.name === name, key + ' is called "' + name + '" wherever an opportunity is shown');
+  check([k.tagline, k.where, k.suits].every(l => typeof l === 'string' && l.length > 25 && l.length <= 100 && /[.]$/.test(l)), key + ' explains itself in three short sentences: what it is, where it shows, who it suits');
+  check(styles.ICONS[k.icon] && /^#[0-9a-f]{6}$/i.test(k.accent), key + ' wears an icon and colour of the campaign it becomes');
+  if (channel) check(k.icon === styles.describe(channel).icon && k.accent === styles.describe(channel).accent, key + ' wears the same mark as the live ' + channel + ' campaign');
+  const b = styles.opportunityBadge(key);
+  check(/<svg /.test(b) && /aria-hidden="true"/.test(b) && b.includes('<span>' + name + '</span>') && !/title=/.test(b), key + ' badge: decorative icon, the plain name, and no hover-only tooltip to repeat it');
+}
+check(styles.opportunityKind('product').key === 'pmax' && styles.opportunityKind('Performance-Max').key === 'pmax' && styles.opportunityKind(' SEARCH ').key === 'search', 'the words the console has used for a type all reach the same plain name');
+check(styles.opportunityKind('video') === null && styles.opportunityKind('') === null && styles.opportunityKind(null) === null && styles.opportunityKind('__proto__') === null && styles.opportunityKind('constructor') === null, 'an unknown type has no name rather than a guessed one');
+check(styles.opportunityBadge('video') === '' && styles.opportunityBadge(undefined) === '', 'and no badge');
+const hostileLabel = styles.opportunityBadge('search', { text: '<img src=x onerror=alert(1)>' });
+check(!/<img/.test(hostileLabel), 'a caller-supplied label is escaped');
+check(thumbs.KINDS.every(kind => styles.opportunityKind(kind) && styles.opportunityKind(kind).name), 'every ad-preview kind is a type an opportunity can name');
+check(publisher.includes("require('../../brites-campaign-styles')"), 'the publisher requires the very file the browser loads, so the two cannot describe a type differently');
+
+// 8. Every script and stylesheet the console loads from this site is in the public build list. A file missing there works
+//    on a developer machine and 404s on the live site, and the page then fails only for the operator.
+const manifest = fs.readFileSync(path.join(REPO, 'scripts/build-public.cjs'), 'utf8');
+const listed = new Set([...manifest.matchAll(/^\s*"([^"]+)",?\s*$/gm)].map(m => m[1]));
+const loaded = [...html.matchAll(/<script[^>]*\ssrc="([^"]+)"/g), ...html.matchAll(/<link[^>]*rel="stylesheet"[^>]*\shref="([^"]+)"/g)].map(m => m[1]).filter(u => u.startsWith('/') && !u.startsWith('//'));
+check(loaded.length >= 8 && loaded.some(u => u.startsWith('/assets/opportunity-timeline.js')) && loaded.some(u => u.startsWith('/assets/ad-preview-thumbs.js')), 'the console loads the timeline and the ad previews (' + loaded.length + ' local files)');
+for (const url of loaded) {
+  const file = decodeURIComponent(url.split(/[?#]/)[0].replace(/^\//, ''));
+  check(listed.has(file) && fs.existsSync(path.join(REPO, file)), file + ' exists and is in scripts/build-public.cjs, so it is published');
+}
+
+// 9. The page still parses.
 for (const [, js] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) if (js.trim()) new vm.Script(js);
 check(true, 'every inline script parses');
 

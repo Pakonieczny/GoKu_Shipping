@@ -90,7 +90,8 @@ test('the markup reader really catches an injected element, handler or link', ()
 });
 
 test('the card leads with the research headline, not the generic sentence', () => {
-  const markup = drawn([fresh(), legacy()], sample.funnel), head = cardHead(markup).split('<article class="pmxrow pmxOpportunity">')[1];
+  const markup = drawn([fresh(), legacy()], sample.funnel), head = cardHead(markup).split('<article class="pmxrow pmxOpportunity oppv"')[1];
+  assert(head && head.includes('data-pmx-summary="0"'), 'the first card head is found');
   const summary = /data-pmx-summary="0">([^<]*)</.exec(markup);
   assert.equal(summary[1], sample.opportunity.research.headline);
   assert(!/Test these products because buyers have already chosen them/.test(head), 'the first card no longer carries the fixed sentence');
@@ -168,8 +169,8 @@ test('the fold opens with the dated reasoning above the existing evidence and fo
   assert(!/no recurring seasonal uplift/.test(plain), 'the season is dated, so the no-uplift caveat is gone');
   // Why now: summary, each window with its date, days, role wording and start date.
   has(plain, sample.opportunity.research.whyNow.summary);
-  assert.match(plain, /Christmas US.* 87 days away best fit Start by Nov 13\./);
-  assert.match(plain, dayOf('Dec', 25)); assert.match(plain, dayOf('Nov', 13));
+  assert.match(plain, /Christmas US.* 87 days away best fit Start by Oct 31\./);
+  assert.match(plain, dayOf('Dec', 25)); assert.match(plain, dayOf('Oct', 31));
   assert.match(plain, /Canadian Thanksgiving CA.* 13 days away too soon to learn in time Ideal start was Aug 31\./);
   assert.match(plain, /Valentine's Day US.*138 days away later Start by Jan 3, 2027\./);
   for (const line of sample.opportunity.research.whyNow.evidence) assert(plain.includes(line), line);
@@ -352,6 +353,103 @@ test('candidates without research read exactly as before, so the selector prompt
   assert.deepEqual(Object.keys(before.seasonality).sort(), ['coverage', 'datedTiming', 'detail', 'months', 'status', 'title', 'totals', 'trend']);
   assert.equal(before.seasonality.datedTiming, false);
   assert(Array.isArray(before.reasons) && before.reasons.every(r => r.title && r.detail));
+});
+
+// ---- The visual half of the card: type badge, when it runs, the ads it would run. The shared modules load as plain scripts in the page. ----
+const lib = require('./lib/markup-safety.cjs');
+const visuals = { BritesCampaignStyles: require('../../brites-campaign-styles.js'), BritesOppTimeline: require('../../assets/opportunity-timeline.js'), BritesAdPreview: require('../../assets/ad-preview-thumbs.js') };
+function withVisuals(run) { Object.assign(ctx, visuals); try { run(); } finally { for (const k of Object.keys(visuals)) delete ctx[k]; } }
+const foldOf = markup => { const a = markup.indexOf('<details class="oppvFold"'); return a < 0 ? '' : markup.slice(a, markup.indexOf('</details>', a)); };
+const PIC = n => 'https://cdn.shopify.com/s/files/1/0000/0001/products/' + n + '.jpg';
+const strip = markup => { const a = markup.indexOf('data-pmx-ads="0"'); return a < 0 ? '' : markup.slice(a, markup.indexOf('data-pmx-facts="0"', a)); };
+
+test('a Product ads card reads: type and occasion, title and one sentence, when it runs, the ads, then fits and themes', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const markup = drawn([fresh(), legacy()], sample.funnel), k = visuals.BritesCampaignStyles.opportunityKind('pmax'), card = markup.split('<article ')[1];
+  lib.inOrder(card, ['class="pmxrow pmxOpportunity oppv" data-oppv-card data-i="0"', 'class="oppvHead"', '<span>Product ad (Performance Max)</span>', 'data-oppv-what="pmax"', 'class="oppvChip pmxOccasion"', 'data-oppv-help', 'class="pmxRationale is-headline"',
+    'data-oppv-when="0"', 'data-pmx-ads="0"', 'data-pmx-facts="0"', '<div class="pmxActions">'], 'Product ads card');
+  assert.equal(k.name, 'Product ad (Performance Max)');
+  assert.match(card, /<button type="button" class="oppvWhat" data-oppv-what="pmax" data-i="0" aria-label="What is this\?" aria-expanded="false" aria-controls="oppvHelp-pmax-0">/);
+  assert.match(card, /<div class="oppvHelp" id="oppvHelp-pmax-0" data-oppv-help hidden>/);
+  for (const w of [k.tagline, k.where, k.suits]) assert(card.includes(w), w);
+  assert.match(card, /<span class="oppvChip pmxOccasion" title="[^"]*\b25\b[^"]* · US">Christmas · 87 days<\/span>/);
+  has(markup, '<span class="oppChannelIcon" data-kind="pmax"');
+  lib.safeMarkup(markup, 'Product ads section');
+}));
+
+test('the timeline headline and verdict are on the card; the reasons are in a closed fold that opens and stays open', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const o = fresh(), markup = drawn([o]), fold = foldOf(markup);
+  has(markup, '<span class="oppvVerdict is-good">Good time to start</span>', 'class="oppTl__head">Runs Oct 31 to Dec 11 · 42 days</span>', '<span>When it runs</span>', 'data-verdict="good"');
+  assert.match(fold, /^<details class="oppvFold" data-pmx-panel="when" data-i="0"><summary>Why these dates<\/summary>/);
+  for (const w of o.schedule.why) assert(fold.includes(w), w);
+  assert(fold.includes('Learning period') && fold.includes(o.schedule.learning.note) && !markup.replace(fold, '').includes('Learning period'));
+  ctx.pmaxUi(o).open = { when: true }; assert.match(foldOf(drawn([o])), /^<details class="oppvFold" data-pmx-panel="when" data-i="0" open>/);
+  ctx.PMAX_UI = {};
+}));
+
+test('the ads strip shows the selected listings\' photos and prices, and follows the ticks', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const o = fresh(), markup = drawn([o]), ads = strip(markup);
+  has(ads, '<span>The ads this would run</span>', 'data-abp-kind="pmax"');
+  assert.equal((ads.match(/class="abp-thumb"/g) || []).length, 4, 'listing, website tile, feed card and video slot');
+  assert(ads.includes('birth-flower-charm-necklace.jpg') && ads.includes('$68'), 'the lead listing\'s own photo and price');
+  // Untick the lead listing: the strip is drawn again from the two that remain, through the same call as the rest of the card.
+  const nodes = {}, node = s => nodes[s] || (nodes[s] = { innerHTML: '', textContent: '', dataset: {}, disabled: false, setAttribute() {} }), sec = { querySelectorAll: () => [{ value: '7302' }, { value: '7303' }], querySelector: node };
+  ctx.PMAXOPPS = [o]; ctx.pmaxUpdateSelection(sec, 0); const after = node('[data-pmx-ads="0"]').innerHTML;
+  assert(!after.includes('birth-flower-charm-necklace.jpg') && after.includes('initial-charm-necklace.jpg') && after.includes('$54'), 'the strip follows the selection');
+  assert(after.includes('<span>The ads this would run</span>'), 'and keeps its label');
+  ctx.PMAX_UI = {};
+}));
+
+test('an idea saved before schedules and photos keeps its card: placeholders instead of photos, no bar, no empty box', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const markup = drawn([legacy()]), card = markup.split('<article ')[1];
+  assert(!/data-oppv-when|When it runs|oppTl|oppvFold/.test(card), 'no timeline of any kind');
+  has(card, 'data-pmx-ads="0"', 'data-abp-kind="pmax"', 'Saved suggestion');
+  assert(!/class="abp-photo"|<img/.test(strip(card)), 'no photo to show, so none is invented');
+  lib.safeMarkup(markup, 'legacy Product ads');
+}));
+
+test('a bad schedule or a photo from another host is dropped, not drawn', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const o = fresh(); o.schedule = { version: 1, start: 'later' };
+  o.offerDetails.forEach(d => { d.imageUrl = 'https://evil.example/' + d.itemId + '.jpg'; });
+  const markup = drawn([o]); assert(!/data-oppv-when|oppTl/.test(markup), 'no bar'); assert(strip(markup).includes('data-abp-kind="pmax"') && !strip(markup).includes('evil.example') && !/class="abp-photo"/.test(strip(markup)), 'the strip is drawn without the photo');
+  has(markup, 'Christmas · 87 days'); // the chip falls back to the research timing
+  lib.safeMarkup(markup, 'bad schedule');
+}));
+
+test('hostile text in the schedule, the photos and the themes stays text', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const bad = '<img src=x onerror=alert(1)>', quote = '" onmouseover="alert(1)" x="', o = fresh(), s = o.schedule;
+  Object.assign(s, { headline: bad + 'Runs', basis: bad, why: [bad + 'one', quote + 'two'] }); s.learning.note = bad; s.event.label = bad + 'Xmas'; s.event.market = quote; s.phases.forEach(p => { p.label = bad + p.key; });
+  o.collectionTitle = bad + 'Collection'; o.offerDetails[0].title = quote; o.offerDetails[0].price = '"><b>'; o.offerDetails[0].currency = quote;
+  const markup = drawn([o]); lib.safeMarkup(markup, 'hostile Product ads');
+  assert(!lib.tags(markup).some(t => 'onmouseover' in t.attrs || 'x' in t.attrs), 'no attribute was injected');
+  assert(lib.text(markup).includes(bad + 'Xmas') || !markup.includes('Xmas'), 'the label shows as words');
+  ctx.PMAX_UI = {};
+}));
+
+test('the "What is this?" button on this tab opens its panel and remembers it on the idea', () => withVisuals(() => {
+  ctx.PMAX_UI = {}; const o = fresh(), from = html.indexOf("if(typeof document!=='undefined'&&document&&typeof document.addEventListener==='function')document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-oppv-what]')"), endTok = 'ui.open.what=open;}});', to = html.indexOf(endTok, from);
+  assert(from > 0 && to > from); let handler = null; const real = ctx.document;
+  ctx.document = { addEventListener: (t, f) => { handler = f; } }; vm.runInContext(html.slice(from, to + endTok.length), ctx); ctx.document = real;
+  ctx.PMAXOPPS = [o]; const panel = { hidden: true }, card = { querySelector: s => s === '[data-oppv-help]' ? panel : null }, attrs = { 'data-oppv-what': 'pmax', 'data-i': '0', 'aria-expanded': 'false' },
+    button = { getAttribute: n => attrs[n], setAttribute: (n, v) => { attrs[n] = v; }, closest: s => s === '[data-oppv-card]' ? card : button }, click = () => handler({ target: { closest: s => s === '[data-oppv-what]' ? button : null } });
+  click(); assert.deepEqual([panel.hidden, attrs['aria-expanded'], ctx.pmaxUi(o).open.what], [false, 'true', true]);
+  assert.match(drawn([o]), /aria-expanded="true" aria-controls="oppvHelp-pmax-0"/);
+  click(); assert.deepEqual([panel.hidden, ctx.pmaxUi(o).open.what], [true, false]);
+  ctx.PMAX_UI = {};
+}));
+
+test('without the shared modules the card still draws, from what it knows; the section keeps its letters', () => {
+  ctx.PMAX_UI = {}; const markup = drawn([fresh()]);
+  assert(!/oppvType|data-oppv-when|data-pmx-ads/.test(markup) && /Christmas · 87 days/.test(markup) && /<span class="oppChannelIcon">P<\/span>/.test(markup));
+});
+
+test('the draft gets the researched search themes; an idea without research keeps the words from its products', () => {
+  const o = fresh(), pick = list => ctx.pmaxOpportunityPayload(list, ctx.pmaxRecommendation(list, ctx.pmaxChosenOffers(list, ['7301', '7302', '7303']), 12), 12).searchThemes;
+  assert.deepEqual(pick(o), o.searchThemes, 'the research keyword themes, not product titles');
+  const r = ctx.pmaxRecommendation(o, ctx.pmaxChosenOffers(o, ['7301', '7302', '7303']), 12); assert.notDeepEqual(pick(o), r.scope.searchThemes);
+  const junk = fresh(); junk.searchThemes = [' a ', 'a', '', 5, null, 'b', {}]; assert.deepEqual(pick(junk), ['a', 'b']);
+  const many = fresh(); many.searchThemes = Array.from({ length: 40 }, (_, n) => 'theme ' + n); assert.equal(pick(many).length, 25);
+  const empty = fresh(); empty.searchThemes = []; const re = ctx.pmaxRecommendation(empty, ctx.pmaxChosenOffers(empty, ['7301']), 12); assert.deepEqual(ctx.pmaxOpportunityPayload(empty, re, 12).searchThemes, re.scope.searchThemes || [], 'no themes: the product words');
+  const old = legacy(), ro = ctx.pmaxRecommendation(old, ctx.pmaxChosenOffers(old, old.itemIds.map(id => id.split('_')[2])), 10); assert.deepEqual(ctx.pmaxOpportunityPayload(old, ro, 10).searchThemes, ro.scope.searchThemes || []);
 });
 
 console.log(`${count} Product ads research UI checks passed.`);

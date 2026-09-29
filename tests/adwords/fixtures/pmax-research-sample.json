@@ -1,5 +1,5 @@
 {
-  "about": "Invented sample of what a Product ads (Performance Max) research run saves, in the shape of plans/pmax-research-contract-2026-09-29.md. Dates are relative to research.today (2026-09-29), so a test that prints days away must fix its clock to that day. opportunity is the fresh case (source ai; set research.source to computed and null whyNow.marketRead and whyNow.caution for the deterministic fallback), legacyOpportunity a suggestion saved before research existed, researchStatus the partial banner, scanAudit the checks behind its tiles, funnel and funnelNone the saved scan funnel with ideas and with none.",
+  "about": "Invented sample of what a Product ads (Performance Max) research run saves, in the shape of plans/pmax-research-contract-2026-09-29.md. Dates are relative to research.today (2026-09-29), so a test that prints days away must fix its clock to that day. opportunity is the fresh case (source ai; set research.source to computed and null whyNow.marketRead and whyNow.caution for the deterministic fallback), legacyOpportunity a suggestion saved before research existed, researchStatus the partial banner, scanAudit the checks behind its tiles, funnel and funnelNone the saved scan funnel with ideas and with none. The opportunity also carries the schedule and the image, price and currency of each offer that the engine adds (contract ADDENDUM 17:10); legacyOpportunity has none of them, as an older saved idea would not. opportunity.searchThemes holds the keyword themes the draft is given (the engine saves them beside the research).",
   "today": "2026-09-29",
   "opportunity": {
     "tag": "pmax|birthstone-charms|US",
@@ -18,7 +18,7 @@
       "Gold Filled Paperclip Chain Bracelet with Heart Charm"
     ],
     "dailyBudget": 12,
-    "days": 30,
+    "days": 42,
     "budgetCurrency": "USD",
     "budgetCurrencyVerified": true,
     "salesCurrency": "USD",
@@ -125,7 +125,10 @@
             "conversions": 17,
             "value": 765
           }
-        }
+        },
+        "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/birth-flower-charm-necklace.jpg?v=1",
+        "price": 68,
+        "currency": "USD"
       },
       {
         "itemId": "shopify_US_7302_9002",
@@ -152,7 +155,10 @@
             "conversions": 11,
             "value": 462
           }
-        }
+        },
+        "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/initial-charm-necklace.jpg?v=1",
+        "price": 54,
+        "currency": "USD"
       },
       {
         "itemId": "shopify_US_7303_9003",
@@ -179,7 +185,10 @@
             "conversions": 3,
             "value": 117
           }
-        }
+        },
+        "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/paperclip-heart-bracelet.jpg?v=1",
+        "price": 72,
+        "currency": "USD"
       }
     ],
     "research": {
@@ -198,7 +207,7 @@
             "daysAway": 87,
             "market": "US",
             "role": "main",
-            "startBy": "2026-11-13",
+            "startBy": "2026-10-31",
             "note": "Gift shoppers search for personalised jewellery from early November; learning has to finish before then."
           },
           {
@@ -306,7 +315,66 @@
         "Order history only reaches back to November 2025, so last year's Christmas season cannot be checked.",
         "Keyword volumes are for US searches; Canadian volumes were not returned."
       ]
-    }
+    },
+    "schedule": {
+      "version": 1,
+      "kind": "pmax",
+      "today": "2026-09-29",
+      "timeSensitive": true,
+      "event": {
+        "label": "Christmas",
+        "date": "2026-12-25",
+        "daysAway": 87,
+        "market": "US"
+      },
+      "start": "2026-10-31",
+      "end": "2026-12-11",
+      "days": 42,
+      "learning": {
+        "days": 21,
+        "endsOn": "2026-11-20",
+        "note": "Performance Max usually spends its first 2 to 3 weeks learning who buys, and Google suggests about 6 weeks before judging it."
+      },
+      "judgeAfter": "2026-12-12",
+      "phases": [
+        {
+          "key": "learning",
+          "from": "2026-10-31",
+          "to": "2026-11-20",
+          "days": 21,
+          "label": "Learning"
+        },
+        {
+          "key": "selling",
+          "from": "2026-11-21",
+          "to": "2026-12-11",
+          "days": 21,
+          "label": "Selling"
+        },
+        {
+          "key": "cutoff",
+          "from": "2026-12-12",
+          "to": "2026-12-25",
+          "days": 14,
+          "label": "Order cutoff"
+        }
+      ],
+      "verdict": "good",
+      "headline": "Runs Oct 31 to Dec 11 · 42 days",
+      "why": [
+        "Christmas is Dec 25, 87 days away.",
+        "Google needs about 3 weeks to learn a Performance Max campaign, and about 6 weeks before it is fair to judge; judge it from Dec 12.",
+        "Stops Dec 11 so gifts can still arrive by Dec 25."
+      ],
+      "basis": "Ends Dec 11 (Christmas Dec 25 less a 14-day order cutoff). Counted back from there: about 3 weeks of learning, then 21 days of selling."
+    },
+    "searchThemes": [
+      "birth flower necklace",
+      "christmas gift for her jewelry",
+      "personalised necklace for mom",
+      "sterling silver charm necklace",
+      "birthstone charm gift"
+    ]
   },
   "legacyOpportunity": {
     "tag": "pmax|pet-charms|US",
@@ -446,7 +514,9 @@
       }
     ]
   },
-  "reconciliation": { "ok": true },
+  "reconciliation": {
+    "ok": true
+  },
   "funnel": {
     "at": 1790700600000,
     "verdict": "2 ideas shown from 9 collections.",

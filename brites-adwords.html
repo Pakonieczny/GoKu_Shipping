@@ -931,6 +931,85 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 }
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
+/* ===== Opportunity cards · one anatomy on the Search and Product ads tabs =====
+   type and occasion, title, one sentence why, when it runs, the ads, the facts, the actions. */
+.oppChannelIcon svg{display:block}.oppChannelIcon[data-kind]{background:#f0e6cd;background:color-mix(in srgb,var(--campaign-accent,var(--gold)) 15%,var(--card));color:var(--campaign-accent,#7a5a1d)}
+.oppvHead{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;min-width:0}
+.oppvType{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%}
+.oppvType .campaignBadge{gap:7px;padding:4px 11px 4px 8px;border:1px solid var(--line);border-radius:999px;background:var(--card-2);color:var(--ink);font-size:12px;font-weight:650;line-height:1.3;white-space:normal;vertical-align:baseline}
+.oppvType .campaignBadge .campaignIcon{flex:none;color:var(--campaign-accent,var(--gold))}
+.oppvWhat{display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border-radius:7px;color:var(--ink-45);font-size:11.5px;line-height:1.2;cursor:pointer}
+.oppvWhat:hover{color:var(--ink)}
+.oppvWhatQ{display:grid;place-items:center;flex:none;width:15px;height:15px;border:1px solid currentColor;border-radius:50%;font:700 9.5px/1 var(--sans)}
+.oppvWhat[aria-expanded="true"]{color:var(--ink)}.oppvWhat[aria-expanded="true"] .oppvWhatQ{border-color:var(--ink);background:var(--ink);color:var(--card)}
+.oppvChip,.pmxOccasion{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 10px 3px 8px;border:1px solid var(--gold-line);border-radius:999px;background:var(--gold-soft);color:#7a5a1d;font-size:11.5px;font-weight:650;line-height:1.3}
+.oppvChip::before,.pmxOccasion::before{content:"";flex:none;width:12px;height:12px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='3.2' width='12' height='10.6' rx='2'/%3E%3Cpath d='M2 6.6h12M5.4 1.8v2.6M10.6 1.8v2.6'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='3.2' width='12' height='10.6' rx='2'/%3E%3Cpath d='M2 6.6h12M5.4 1.8v2.6M10.6 1.8v2.6'/%3E%3C/svg%3E") center/contain no-repeat}
+.oppvSide{margin-left:auto;display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px}
+.oppvHelp{display:grid;gap:7px;padding:12px 14px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2);color:var(--ink-70);font-size:12.5px;line-height:1.5}
+.oppvHelp[hidden]{display:none}
+.oppvHelp p{display:grid;grid-template-columns:74px minmax(0,1fr);gap:10px;align-items:baseline;margin:0}
+.oppvHelp p.oppvHelpLead{display:block;color:var(--ink);font-size:13px}
+.oppvHelp b{color:var(--ink-45);font-size:9.5px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.oppvSub{margin-top:2px;color:var(--ink-45);font-size:12.5px}
+.oppvBlock{min-width:0}
+.oppvLabel{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:2px 12px;margin:0 0 9px;color:var(--ink-45);font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}
+.oppvHint{font-size:11px;font-weight:500;letter-spacing:0;text-transform:none}
+.oppvVerdict{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;letter-spacing:.01em;text-transform:none}
+.oppvVerdict::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.oppvVerdict.is-good{color:#3c5a39}.oppvVerdict.is-tight{color:#7a5a1d}.oppvVerdict.is-too_short{color:var(--clay)}.oppvVerdict.is-evergreen{color:var(--ink-70)}
+.oppvWhen>.oppTl .oppTl__tag,.oppvWhen>.oppTl .oppTl__why,.oppvWhen>.oppTl .oppTl__dt{display:none}.oppvWhen>.oppTl .oppTl__legend{gap:4px 16px;margin-top:1px}.oppvWhen>.oppTl .oppTl__head{font-size:14px;font-weight:650}.oppvWhen>.oppTl{gap:9px}.oppvWhen .oppTl__ends{font-size:9.5px}
+.oppvFold{margin-top:9px}
+.oppvFold>summary{display:inline-flex;align-items:center;gap:7px;color:var(--ink-45);font-size:11.5px;font-weight:650;list-style:none;cursor:pointer;user-select:none}
+.oppvFold>summary::-webkit-details-marker{display:none}
+.oppvFold>summary::before{content:"+";display:grid;place-items:center;width:16px;height:16px;border:1px solid var(--line);border-radius:5px;color:var(--gold);font-size:12px;line-height:1}.oppvFold[open]>summary::before{content:"\2212"}
+.oppvFold>summary:hover{color:var(--ink)}
+.oppvFoldBody{display:grid;gap:11px;margin-top:9px;padding:13px 15px;border:1px solid var(--line-2);border-radius:11px;background:var(--card-2);color:var(--ink-70);font-size:12.5px;line-height:1.55}
+.oppvWhyList{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.oppvWhyList li{position:relative;padding-left:14px;overflow-wrap:anywhere}.oppvWhyList li::before{content:"";position:absolute;left:0;top:.8em;width:7px;height:1px;background:var(--gold)}
+.oppvLearn{margin:0}.oppvLearn b{margin-right:4px;color:var(--ink)}
+.oppvSources{margin:0}
+.oppvMine{margin-top:8px;color:var(--ink-70);font-size:11.5px}.oppvMine[hidden]{display:none}
+.oppvAds .abp{margin:0}.oppvAds .abp-row{padding-bottom:3px}.oppvAds .abp-thumb{--h:122px;width:clamp(116px,calc(var(--h) * var(--a)),260px)}
+/* Search card: a grid, so the gaps between its parts are one thing rather than eight margins. */
+#v-bench .oppCard.oppv{display:grid;align-content:start;gap:16px}
+#v-bench .oppCard.oppv>*{min-width:0;margin-top:0;margin-bottom:0}
+#v-bench .oppCard.oppv>.oppvTitle{margin-bottom:-9px}
+#v-bench .oppCard.oppv .oppvTitle h4{font-size:20px;font-weight:650;line-height:1.25;letter-spacing:-.005em}
+#v-bench .oppCard.oppv>.oppCardWhy{max-width:70ch;font-size:14px;line-height:1.6;color:var(--ink-70)}
+#v-bench .oppCard.oppv>.oppCardMeta{font-size:11.5px}
+#v-bench .oppCard.oppv .oppCardMetrics{gap:0 18px;padding-top:15px;border:0;border-top:1px solid var(--line-2);border-radius:0;background:transparent;overflow:visible;grid-template-columns:repeat(4,minmax(0,1fr))}
+#v-bench .oppCard.oppv .oppCardMetric{padding:0;background:transparent}
+#v-bench .oppCard.oppv .oppCardMetric small{display:none}
+#v-bench .oppCard.oppv .oppCardMetric small.fSales,#v-bench .oppCard.oppv .oppCardMetric small.fDemand.warn{display:block}
+#v-bench .oppCard.oppv .oppCardMetric b{font-size:15px}
+#v-bench .oppCard.oppv .oppCardMetric span{font-size:9px}
+#v-bench .oppCard.oppv .oppDetailsIntro .oppScore{float:right;margin:0 0 6px 10px}
+#v-bench .oppCard.oppv .oppCardActions{margin-top:0}
+/* Product ads card: the same rhythm, one column. */
+#v-bench .pmxList{gap:18px;padding:18px;background:var(--paper)}
+#v-bench .pmxList>.pmxOpportunity.oppv{grid-template-columns:minmax(0,1fr)!important;align-items:start!important;gap:16px 0!important;padding:22px!important;border:1px solid var(--line)!important;border-radius:12px;background:var(--card)}
+#v-bench .pmxOpportunity.oppv>*{min-width:0;margin-top:0;margin-bottom:0}
+#v-bench .pmxOpportunity.oppv .pmxTitle{gap:9px}#v-bench .pmxOpportunity.oppv .pmxTitle .chip{padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:.06em}
+#v-bench .pmxOpportunity.oppv .pmxTitle b{font-size:20px;font-weight:650;line-height:1.25;letter-spacing:-.005em}
+#v-bench .pmxOpportunity.oppv .pmxRationale{margin-top:8px;max-width:70ch;font-size:14px;line-height:1.6;color:var(--ink-70)}
+#v-bench .pmxOpportunity.oppv .pmxRationale.is-headline{color:var(--ink-70);font-size:14px}
+#v-bench .pmxOpportunity.oppv .pmxMainFacts .pmxFacts:empty{display:none}
+#v-bench .pmxOpportunity.oppv .pmxFacts{margin-top:0}
+#v-bench .pmxOpportunity.oppv .pmxMetrics{margin-top:10px}
+#v-bench .pmxOpportunity.oppv .pmxActions{justify-content:flex-start}
+#v-bench .pmxOpportunity.oppv .pmxJoinLine{text-align:left}
+#v-bench .pmxOpportunity.oppv .pmx-msg:empty{display:none}
+#v-bench .pmxOpportunity.oppv>.pmxEvidence+.pmxEvidence{margin-top:-6px}
+@media(max-width:760px){
+  #v-bench .oppCard.oppv .oppCardMetrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
+  #v-bench .oppCard.oppv .oppCardMetrics{padding-top:14px}
+  #v-bench .oppCard.oppv,#v-bench .pmxList>.pmxOpportunity.oppv{padding:17px!important}
+  #v-bench .pmxList,#v-bench .oppCardList{padding:12px;gap:14px}
+  .oppvWhatT{display:none}
+  .oppvHelp p{grid-template-columns:minmax(0,1fr);gap:1px}
+  .oppvWhat,.oppvFold>summary{min-height:32px}
+  #v-bench .oppCard.oppv .oppvTitle h4,#v-bench .pmxOpportunity.oppv .pmxTitle b{font-size:18px}
+}
 </style>
 <link rel="stylesheet" href="/brites-groups.css?v=20260929-narrow-dates">
 </head>
@@ -1178,9 +1257,11 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 <link rel="stylesheet" href="/brites-progress.css?v=20260914-percent-bars">
 <script src="/brites-progress.js?v=20260929-owner"></script>
 <script src="/brites-ad-format-policy.js?v=20260917-shapes"></script>
-<script src="/brites-campaign-styles.js?v=20260929-styles"></script>
+<script src="/brites-campaign-styles.js?v=20260929-oppkinds"></script>
 <script src="/brites-brand-assets.js?v=20260914"></script>
 <script src="/brites-ad-motion.js?v=20260929-chooser-view"></script>
+<script src="/assets/opportunity-timeline.js?v=20260929-visuals"></script>
+<script src="/assets/ad-preview-thumbs.js?v=20260929-visuals"></script>
 <script src="/assets/pmax-recommendation.js?v=20260929-research"></script>
 <script>
 
@@ -3918,6 +3999,68 @@ function pmaxForecastHtml(f){
   html+='<details class="pmxAssumptions"><summary>Evidence and calculation assumptions</summary>'+(base.label?'<p><b>Paid baseline:</b> '+esc(base.label)+(base.days?' · '+esc(base.days)+' days':'')+(baseFacts.length?'<br>'+baseFacts.map(esc).join(' · '):'')+'</p>':'<p>No usable paid baseline is available for this selection.</p>')+'<p>'+[['ctr','Measured CTR','percent'],['cpc','Cost per click','money'],['cvr','Conversion rate','percent'],['aov','Value per conversion','money']].map(function(r){return '<b>'+r[1]+':</b> '+esc(pmaxNumber(rates[r[0]],r[2],currency));}).join(' · ')+'</p>'+(f.methodology?'<p>'+esc(Array.isArray(f.methodology)?f.methodology.join(' '):f.methodology)+'</p>':'')+'</details></section>';
   return html;
 }
+// ---- Opportunity cards, Search and Product ads alike: what kind of campaign it is, when it runs, and the ads it would run. ----
+// Every card reads top to bottom the same way: type and occasion, title, one sentence why, when it runs, the ads, the facts, the actions.
+if(typeof BritesOppTimeline!=='undefined'&&BritesOppTimeline&&BritesOppTimeline.injectCss){try{BritesOppTimeline.injectCss(document);}catch(e){}}
+function oppvVerdict(v){return {good:'Good time to start',tight:'Tight timing',too_short:'Too late for this event',evergreen:'No deadline'}[v]||'';}
+function oppvStyles(){return typeof BritesCampaignStyles!=='undefined'&&BritesCampaignStyles&&typeof BritesCampaignStyles.opportunityKind==='function'?BritesCampaignStyles:null;}
+// The campaign type's own icon in a section header; the old letter stays where the shared vocabulary did not load.
+function oppvChannelIcon(kind,letter){var S=oppvStyles(),k=S&&S.opportunityKind(kind);return '<span class="oppChannelIcon"'+(k?' data-kind="'+esc(k.key)+'" style="--campaign-accent:'+esc(k.accent)+'"':'')+'>'+(k?S.iconSvg(k.icon,18):letter)+'</span>';}
+// The console's own date (the account's day), not the browser's, whenever the console knows it.
+function oppvToday(){var t='';try{t=typeof performanceToday==='function'?performanceToday():'';}catch(e){}var m=pmaxDayMs(t);return m==null?pmaxTodayMs():m;}
+function oppvYmd(ms){return new Date(ms).toISOString().slice(0,10);}
+// "Nov 14", as the bar writes it, whatever the browser's language; the year only when it is not this year's.
+function oppvDayText(ymd){var t=pmaxDayMs(ymd);if(t==null)return '';var d=new Date(t),y=new Date(oppvToday()).getUTCFullYear();return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()]+' '+d.getUTCDate()+(d.getUTCFullYear()===y?'':', '+d.getUTCFullYear());}
+// A saved schedule the timeline can actually draw; anything else (an older saved idea, a damaged one) draws nothing at all.
+function oppvSchedule(o){var s=o&&o.schedule;if(!s||typeof s!=='object'||typeof BritesOppTimeline==='undefined'||!BritesOppTimeline||typeof BritesOppTimeline.html!=='function')return null;try{return BritesOppTimeline.html(s,{compact:true})?s:null;}catch(e){return null;}}
+function oppvChip(label,n,dateIso,market,extra){return '<span class="oppvChip'+(extra?' '+extra:'')+'"'+(pmaxDateText(dateIso)?' title="'+pmaxAttr(pmaxDateText(dateIso)+(market?' · '+market:''))+'"':'')+'>'+esc(label)+' · '+esc(pmaxDaysText(n))+'</span>';}
+// The occasion beside the campaign type: the scheduled event while it is still ahead; failing that what the research or the calendar saved.
+function oppvChipHtml(o,kind){
+  var s=oppvSchedule(o),ev=s&&s.event&&typeof s.event==='object'?s.event:null,label=ev?String(ev.label||'').trim():'',d=ev?pmaxDayMs(ev.date):null;
+  if(label&&d!=null){var n=Math.round((d-oppvToday())/86400000);return n<0?'':oppvChip(label,n,ev.date,ev.market,kind==='pmax'?'pmxOccasion':'');}
+  if(kind==='pmax')return pmaxOccasionChip(o);
+  var pk=pmaxDayMs(o&&o.peakDate),oc=String(o&&o.occasion||'').trim();
+  if(pk!=null&&oc){var m=Math.round((pk-oppvToday())/86400000);if(m>=0)return oppvChip(oc,m,o.peakDate);}
+  return '';
+}
+// The badge with its small "What is this?" button, and the three plain lines it opens. The open state lives on the card's saved UI state.
+function oppvTypeHtml(kind,i,open){var S=oppvStyles(),k=S&&S.opportunityKind(kind);if(!k)return '';
+  return '<span class="oppvType">'+S.opportunityBadge(kind,{size:15})+'<button type="button" class="oppvWhat" data-oppv-what="'+esc(kind)+'" data-i="'+i+'" aria-label="What is this?" aria-expanded="'+(open?'true':'false')+'" aria-controls="oppvHelp-'+esc(kind)+'-'+i+'"><span class="oppvWhatQ" aria-hidden="true">?</span><span class="oppvWhatT">What is this?</span></button></span>';}
+function oppvHelpHtml(kind,i,open){var S=oppvStyles(),k=S&&S.opportunityKind(kind);if(!k)return '';
+  return '<div class="oppvHelp" id="oppvHelp-'+esc(kind)+'-'+i+'" data-oppv-help'+(open?'':' hidden')+'><p class="oppvHelpLead">'+esc(k.tagline)+'</p><p><b>Shows on</b><span>'+esc(k.where)+'</span></p><p><b>Suits</b><span>'+esc(k.suits)+'</span></p></div>';}
+function oppvHeadHtml(o,kind,i,open,side){return '<div class="oppvHead">'+oppvTypeHtml(kind,i,open)+oppvChipHtml(o,kind)+(side?'<span class="oppvSide">'+side+'</span>':'')+'</div>'+oppvHelpHtml(kind,i,open);}
+// Why the dates are what they are: the engine's own lines, how long Google needs to learn, and what each colour of the bar means.
+function oppvWhyHtml(s){
+  var why=(Array.isArray(s.why)?s.why:[]).filter(function(x){return typeof x==='string'&&x.trim();}).slice(0,3),L=s.learning&&typeof s.learning==='object'?s.learning:null,note=L&&typeof L.note==='string'?L.note.trim():'',judge=oppvDayText(s.judgeAfter),said=judge&&why.some(function(x){return x.indexOf(judge)>=0;}),
+    ph=(Array.isArray(s.phases)?s.phases:[]).filter(function(p){return p&&/^(learning|selling|cutoff)$/.test(String(p.key))&&pmaxDayMs(p.from)!=null&&pmaxDayMs(p.to)!=null;}),
+    words={learning:'Learning',selling:'Selling',cutoff:'Order cutoff'};
+  return (why.length?'<ul class="oppvWhyList">'+why.map(function(x){return '<li>'+esc(x.trim())+'</li>';}).join('')+'</ul>':'')
+    +(note?'<p class="oppvLearn"><b>Learning period</b> '+esc(note)+(judge&&!said?' It is fair to judge the results from '+esc(judge)+'.':'')+'</p>':'')
+    +(ph.length?'<div class="oppTl oppvLegend"><ul class="oppTl__legend">'+ph.map(function(p){var a=oppvDayText(p.from),b=oppvDayText(p.to);return '<li><i class="oppTl__sw oppTl__sw--'+p.key+'" aria-hidden="true"></i><span class="oppTl__lab">'+esc(String(p.label||words[p.key]).slice(0,24))+'</span> <span class="oppTl__dt">'+esc(a===b?a:a+' to '+b)+'</span></li>';}).join('')+'</ul></div>':'');
+}
+// The bar and its one-line headline always show; the reasons sit one tap away in the fold. extra is more for the fold (the Search card's date sources).
+function oppvWhenHtml(o,panelAttr,open,i,extra){
+  var s=oppvSchedule(o);if(!s)return '';
+  var v=oppvVerdict(s.verdict)?s.verdict:'evergreen',st=pmaxDayMs(s.today),today=oppvToday(),live=(st==null||today>st)?Object.assign({},s,{today:oppvYmd(today)}):s;
+  return '<div class="oppvBlock oppvWhen" data-oppv-when="'+i+'"><div class="oppvLabel"><span>When it runs</span><span class="oppvVerdict is-'+v+'">'+esc(oppvVerdict(v))+'</span></div>'+BritesOppTimeline.html(live)
+    +'<div class="oppvMine" data-oppv-mine data-i="'+i+'" hidden></div><details class="oppvFold" '+panelAttr+(open?' open':'')+'><summary>Why these dates</summary><div class="oppvFoldBody">'+oppvWhyHtml(s)+(extra||'')+'</div></details></div>';
+}
+// The ads this campaign type would run, as small pictures that open a larger view. Nothing is generated or paid for to draw them.
+function oppvAdsInner(o,kind,opts){
+  if(typeof BritesAdPreview==='undefined'||!BritesAdPreview||typeof BritesAdPreview.stripHtml!=='function')return '';
+  var strip='';try{strip=BritesAdPreview.stripHtml(o,kind,Object.assign({head:false,foot:false},opts||{}));}catch(e){strip='';}
+  return strip?'<div class="oppvLabel"><span>The ads this would run</span><span class="oppvHint">Examples · select one to enlarge</span></div>'+strip:'';
+}
+function oppvAdsHtml(o,kind,opts,attr){var inner=oppvAdsInner(o,kind,opts);return inner?'<div class="oppvBlock oppvAds" '+attr+'>'+inner+'</div>':'';}
+// One labelled line of short items, "+n more" for the rest; the Search card and the Product ads card draw their facts the same way.
+function oppvFactRow(kind,label,list,max,cut){if(!list.length)return '';var shown=list.slice(0,max),more=list.length-shown.length;return '<div class="pmxFact is-'+kind+'"><span class="pmxFactLabel">'+label+'</span><span class="pmxFactVal">'+shown.map(function(t){return '<span class="pmxFactItem" title="'+pmaxAttr(t)+'">'+esc(pmaxShort(t,cut))+'</span>';}).join('')+(more>0?'<span class="pmxFactMore" title="'+pmaxAttr(list.slice(max).join(' · '))+'">+'+more+' more</span>':'')+'</span></div>';}
+// The Search card's themes are the keywords its plan was sized on, the biggest searches first.
+function oppvSearchThemes(o){var seen={};return (Array.isArray(o&&o.keywordData)?o.keywordData:[]).map(function(k,n){return {t:String(k&&(k.text||k.keyword)||'').trim(),v:Number(k&&(k.searches!=null?k.searches:k.volume))||0,n:n};}).filter(function(k){var key=k.t.toLowerCase();if(!k.t||seen[key])return false;seen[key]=true;return true;}).sort(function(a,b){return b.v-a.v||a.n-b.n;}).map(function(k){return k.t;});}
+// The "What is this?" buttons on both tabs: one listener, so a redrawn card keeps working and remembers whether it was open.
+if(typeof document!=='undefined'&&document&&typeof document.addEventListener==='function')document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-oppv-what]'):null;if(!b)return;var card=b.closest('[data-oppv-card]'),panel=card&&card.querySelector('[data-oppv-help]');if(!panel)return;
+  var open=panel.hidden;panel.hidden=!open;b.setAttribute('aria-expanded',open?'true':'false');
+  var i=b.getAttribute('data-i'),ui=b.getAttribute('data-oppv-what')==='pmax'?(typeof PMAXOPPS!=='undefined'&&PMAXOPPS[i]?pmaxUi(PMAXOPPS[i]):null):(typeof OPPS!=='undefined'&&OPPS[i]?oppUi(i):null);
+  if(ui){ui.open=ui.open||{};ui.open.what=open;}});
 // ---- Product ads research: the reasoning the engine saved on each suggestion (o.research), drawn from data only. ----
 function pmaxAttr(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function pmaxSafeUrl(raw){raw=String(raw==null?'':raw);return /^https?:\/\/[^\s@\/?#]+(?:[\/?#]|$)/i.test(raw)&&!/[\s\u0000-\u001f]/.test(raw)?raw:null;}
@@ -3938,7 +4081,7 @@ function pmaxKeywordRows(o){var res=o&&o.research,list=res&&Array.isArray(res.ke
 // Two labelled lines under the card's summary: they follow the ticked products, so an unticked listing drops out.
 function pmaxFactsHtml(o,r){
   if(!o||!o.research||!((r&&r.scope&&r.scope.selectedItemIds)||[]).length)return '';
-  var row=function(kind,label,list,max,cut){if(!list.length)return '';var shown=list.slice(0,max),more=list.length-shown.length;return '<div class="pmxFact is-'+kind+'"><span class="pmxFactLabel">'+label+'</span><span class="pmxFactVal">'+shown.map(function(t){return '<span class="pmxFactItem" title="'+pmaxAttr(t)+'">'+esc(pmaxShort(t,cut))+'</span>';}).join('')+(more>0?'<span class="pmxFactMore" title="'+pmaxAttr(list.slice(max).join(' · '))+'">+'+more+' more</span>':'')+'</span></div>';};
+  var row=oppvFactRow;
   return row('fits','Fits',pmaxFitRows(o,r).map(function(x){return String(x.title).trim();}),3,140)+row('themes','Search themes',pmaxKeywordRows(o).map(function(k){return String(k.text).trim();}),5,80);
 }
 function pmaxBullets(items,cls){items=(items||[]).filter(function(x){return typeof x==='string'&&x.trim();});return items.length?'<ul'+(cls?' class="'+cls+'"':'')+'>'+items.map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>':'';}
@@ -3986,13 +4129,15 @@ function pmaxRecommendationHtml(o,r){
   // A suggestion with saved research leads with its reasoning (the card above already states the headline); an older one keeps the summary line.
   return (o&&o.research?pmaxResearchHtml(o,r):'<div class="pmxRecommendationIntro">'+esc(r.summary||'Review the evidence for this selection.')+'</div>')+(r.reasons||[]).map(function(reason){return '<section class="pmxReason"><h4>'+esc(reason.title||'Why it was selected')+'</h4><p>'+esc(reason.detail||'')+'</p></section>';}).join('')+'<section class="pmxReason"><h4>'+esc(season.title||'Timing and seasonality')+'</h4><p>'+esc(season.detail||'There is not enough date-matched history to establish a seasonal advantage for this selection.')+'</p></section>'+'<section class="pmxReason"><h4>Products this recommendation covers</h4>'+(products.length?'<ul class="pmxSelectedList">'+products.map(function(p){return '<li>'+esc(p.title||'Product '+(p.productId||p.id||''))+'</li>';}).join('')+'</ul>':'<p>Select a product above to review its recommendation.</p>')+'<p>'+esc((scope.selectedItemIds||[]).length)+' exact Merchant offer'+((scope.selectedItemIds||[]).length===1?'':'s')+(o.feedLabel?' · '+esc(String(o.feedLabel).toUpperCase())+' feed':'')+'.'+(scope.selectionChanged?' The evidence and forecast follow your current selection.':'')+'</p>'+((scope.searchThemes||[]).length?'<p><b>Matching search themes:</b> '+scope.searchThemes.map(esc).join(' · ')+'</p>':'')+((scope.excludedTitles||[]).length?'<details class="pmxAssumptions"><summary>Other products considered</summary><p>'+scope.excludedTitles.map(esc).join(' · ')+'</p><p>These are outside the selected offer scope. Their names and sales are not presented as selected-product evidence.</p></details>':'')+'</section>'+pmaxForecastHtml(r.forecast)+(limitations.length?'<section class="pmxReason"><h4>Risks and what would change this recommendation</h4><ul>'+limitations.map(function(x){return '<li>'+esc(typeof x==='string'?x:x.detail||x.title||'')+'</li>';}).join('')+'</ul></section>':'')+(o.merchantReportWarning?'<div class="researchNotice"><b>Merchant sales report unavailable.</b> '+esc(friendlyResearchError(o.merchantReportWarning))+'<details class="researchTechnical"><summary>Technical details</summary><pre>'+esc(String(o.merchantReportWarning).slice(0,10000))+'</pre></details></div>':'');
 }
-function pmaxOpportunityPayload(o,r,budget){var scope=r.scope||{},itemIds=scope.selectedItemIds||[],titles=(scope.products||[]).map(function(p){return p.title;});return {handle:o.handle,titles:titles,productTitles:titles,collectionTitle:o.collectionTitle||'',itemIds:itemIds,feedLabel:o.feedLabel||null,dailyBudget:budget,searchThemes:scope.searchThemes||[],countries:o.countries||[],offerDetails:(o.offerDetails||[]).filter(function(p){return itemIds.includes(p.itemId);})};}
+// The draft's search themes are the researched keyword themes the idea carries; only an idea without them falls back to words from the product titles.
+function pmaxDraftThemes(o,scope){var own=(o&&o.research&&Array.isArray(o.searchThemes)?o.searchThemes:[]).filter(function(t){return typeof t==='string'&&t.trim();}).map(function(t){return t.trim();}).filter(function(t,n,a){return a.indexOf(t)===n;});return own.length?own.slice(0,25):(scope&&scope.searchThemes)||[];}
+function pmaxOpportunityPayload(o,r,budget){var scope=r.scope||{},itemIds=scope.selectedItemIds||[],titles=(scope.products||[]).map(function(p){return p.title;});return {handle:o.handle,titles:titles,productTitles:titles,collectionTitle:o.collectionTitle||'',itemIds:itemIds,feedLabel:o.feedLabel||null,dailyBudget:budget,searchThemes:pmaxDraftThemes(o,scope),countries:o.countries||[],offerDetails:(o.offerDetails||[]).filter(function(p){return itemIds.includes(p.itemId);})};}
 function pmaxSelectionMetrics(r){var scope=r.scope||{},f=r.forecast||{},count=(scope.products||[]).length,offers=(scope.selectedItemIds||[]).length;return '<span class="pmxMetric"><b>'+count+'</b> selected product'+(count===1?'':'s')+'</span><span class="pmxMetric"><b>'+offers+'</b> exact Merchant offer'+(offers===1?'':'s')+'</span><span class="pmxMetric"><b>'+esc(pmaxNumber(f.spendCeiling,'money',f.currency))+'</b> planned spend · '+esc(f.days||30)+'d</span>';}
 function pmaxUpdateSelection(sec,i){
   var o=PMAXOPPS[i];if(!o)return;var ids=Array.from(sec.querySelectorAll('.pmx-product[data-i="'+i+'"]:checked')).map(function(x){return x.value;}),budInput=sec.querySelector('.pmx-bud[data-i="'+i+'"]'),budget=Number((budInput||{}).value)||o.dailyBudget||10,r=pmaxRecommendation(o,pmaxChosenOffers(o,ids),budget),find=function(k){return sec.querySelector('[data-pmx-'+k+'="'+i+'"]');};
   var ui=pmaxUi(o),dest=pmaxDest(o);ui.ids=ids;if(budInput&&budInput.value!=null&&budInput.value!==''){if(dest)ui.add=String(budInput.value);else ui.budget=String(budInput.value);}
   var joinLine=find('join');if(joinLine)joinLine.textContent=pmaxJoinLine(o,budInput?budInput.value:0);
-  if(find('why'))find('why').innerHTML=pmaxRecommendationHtml(o,r);if(find('summary'))find('summary').textContent=r.summary||'';if(find('facts'))find('facts').innerHTML=pmaxFactsHtml(o,r);if(find('metrics'))find('metrics').innerHTML=pmaxSelectionMetrics(r);var design=find('design');if(design){design.dataset.designOpportunity=apvEnc(JSON.stringify(pmaxOpportunityPayload(o,r,dest?(Number(ui.budget)||o.dailyBudget||10):budget)));design.disabled=!ids.length;}
+  if(find('why'))find('why').innerHTML=pmaxRecommendationHtml(o,r);if(find('summary'))find('summary').textContent=r.summary||'';if(find('facts'))find('facts').innerHTML=pmaxFactsHtml(o,r);if(find('ads'))find('ads').innerHTML=oppvAdsInner(o,'pmax',{selectedItemIds:(r.scope&&r.scope.selectedItemIds)||[]});if(find('metrics'))find('metrics').innerHTML=pmaxSelectionMetrics(r);var design=find('design');if(design){design.dataset.designOpportunity=apvEnc(JSON.stringify(pmaxOpportunityPayload(o,r,dest?(Number(ui.budget)||o.dailyBudget||10):budget)));design.disabled=!ids.length;}
   var gen=sec.querySelector('.pmx-gen[data-i="'+i+'"]');if(gen&&gen.dataset.working!=='true'&&!o.acted){gen.disabled=!ids.length||ids.length>4||researchNeedsRefresh('pmax');gen.setAttribute('aria-disabled',String(gen.disabled));}return r;
 }
 var PMAX_RECOMMENDATION_READS={};
@@ -4027,10 +4172,13 @@ function pmaxSettle(card){setTimeout(function(){setOppMeta();if(!card||!card.isC
   setTimeout(function(){if(!card.isConnected)return;if(document.querySelector('#oppCards .opGen.is-busy, #pmaxSec .pmx-gen[data-working="true"]'))card.remove();else renderOpportunities();},300);},1200);}
 function renderPmaxSection(host){
   var old=document.getElementById("pmaxSec");if(old)old.remove();if(!host||!host.parentNode)return;var insertTop=function(el){host.parentNode.insertBefore(el,host);},fresh=!researchNeedsRefresh("pmax"),available=PMAXOPPS.filter(function(o){return !o.acted;}).length;
-  if(!available){var sec0=document.createElement("div");sec0.id="pmaxSec";sec0.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Merchant Center products with enough evidence to test paid growth.</p></div><span class="oppChannelCount">0 new</span></header><div class="oppChannelEmpty">'+(PMAXOPPS.length?'All saved suggestions already have a campaign or review draft. See Product ads performance below, or open Approvals.':PMAXAT?(PMAXERR?('<b>Feed scan needs attention.</b><br>'+(pmaxFunnel()?pmaxNoIdeasHtml(pmaxFunnel()):esc(friendlyResearchError(PMAXERR)))):'<b>No eligible feed opportunities this time.</b><br>'+(pmaxFunnel()?pmaxNoIdeasHtml(pmaxFunnel()):'The latest scan found no Merchant Center products with enough evidence to recommend.')):'<b>No feed scan yet.</b><br>Refresh research to match recent sales with the live Merchant Center catalogue.')+'</div></section>';insertTop(sec0);return;}
-  var sec=document.createElement("div");sec.id="pmaxSec";var inner='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">P</span><div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Ranked from sales evidence, paid economics and product availability.</p></div><span class="oppChannelCount">'+available+' '+(fresh?'new':'saved')+'</span></header><div class="pmxList">';
+  if(!available){var sec0=document.createElement("div");sec0.id="pmaxSec";sec0.innerHTML='<section class="oppChannel"><header class="oppChannelHead">'+oppvChannelIcon('pmax','P')+'<div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Merchant Center products with enough evidence to test paid growth.</p></div><span class="oppChannelCount">0 new</span></header><div class="oppChannelEmpty">'+(PMAXOPPS.length?'All saved suggestions already have a campaign or review draft. See Product ads performance below, or open Approvals.':PMAXAT?(PMAXERR?('<b>Feed scan needs attention.</b><br>'+(pmaxFunnel()?pmaxNoIdeasHtml(pmaxFunnel()):esc(friendlyResearchError(PMAXERR)))):'<b>No eligible feed opportunities this time.</b><br>'+(pmaxFunnel()?pmaxNoIdeasHtml(pmaxFunnel()):'The latest scan found no Merchant Center products with enough evidence to recommend.')):'<b>No feed scan yet.</b><br>Refresh research to match recent sales with the live Merchant Center catalogue.')+'</div></section>';insertTop(sec0);return;}
+  var sec=document.createElement("div");sec.id="pmaxSec";var inner='<section class="oppChannel"><header class="oppChannelHead">'+oppvChannelIcon('pmax','P')+'<div class="oppChannelHeadText"><div class="eyebrow">Product-feed campaigns</div><h3>New product opportunities</h3><p>Ranked from sales evidence, paid economics and product availability.</p></div><span class="oppChannelCount">'+available+' '+(fresh?'new':'saved')+'</span></header><div class="pmxList">';
   PMAXOPPS.forEach(function(o,i){if(o.acted)return;var ui=pmaxUi(o),open=ui.open||{},choices=pmaxProductChoices(o),ids=ui.ids?ui.ids.filter(function(id){return choices.some(function(p){return p.id===id;});}):choices.slice(0,4).map(function(p){return p.id;}),dest=pmaxDest(o),budgetRaw=dest?(ui.add!=null?ui.add:(o.dailyBudget||10)):ui.budget!=null?ui.budget:(o.dailyBudget||10),budget=Number(budgetRaw)||o.dailyBudget||10,r=pmaxRecommendation(o,pmaxChosenOffers(o,ids),budget),working=!!ui.working,disabled=(working||!fresh||!ids.length)?' disabled aria-disabled="true"':'',buttonText=working?'Generating…':fresh?'Create review draft':'Refresh research first';
-    inner+='<article class="pmxrow pmxOpportunity"><div class="pmxMain"><div class="pmxTitle">'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b>'+pmaxOccasionChip(o)+(fresh?'':'<span class="researchHealthState stale">Saved suggestion</span>')+'</div><div class="pmxRationale'+(o.research?' is-headline':'')+'" data-pmx-summary="'+i+'">'+esc(r.summary||'')+'</div>'+(o.research?'':'<div class="pmxLegacyTag">Saved suggestion: refresh research for the reasoning.</div>')+'<div class="pmxFacts" data-pmx-facts="'+i+'">'+pmaxFactsHtml(o,r)+'</div><div class="pmxMetrics" data-pmx-metrics="'+i+'">'+pmaxSelectionMetrics(r)+'</div></div>'
+    inner+='<article class="pmxrow pmxOpportunity oppv" data-oppv-card data-i="'+i+'">'+oppvHeadHtml(o,'pmax',i,!!open.what,fresh?'':'<span class="researchHealthState stale">Saved suggestion</span>')
+      +'<div class="pmxMain"><div class="pmxTitle">'+(o.feedLabel?'<span class="chip">'+esc(String(o.feedLabel).toUpperCase())+' FEED</span>':'')+'<b>'+esc(o.collectionTitle)+'</b></div><div class="pmxRationale'+(o.research?' is-headline':'')+'" data-pmx-summary="'+i+'">'+esc(r.summary||'')+'</div>'+(o.research?'':'<div class="pmxLegacyTag">Saved suggestion: refresh research for the reasoning.</div>')+'</div>'
+      +oppvWhenHtml(o,'data-pmx-panel="when" data-i="'+i+'"',!!open.when,i)+oppvAdsHtml(o,'pmax',{selectedItemIds:(r.scope&&r.scope.selectedItemIds)||[]},'data-pmx-ads="'+i+'"')
+      +'<div class="pmxMain pmxMainFacts"><div class="pmxFacts" data-pmx-facts="'+i+'">'+pmaxFactsHtml(o,r)+'</div><div class="pmxMetrics" data-pmx-metrics="'+i+'">'+pmaxSelectionMetrics(r)+'</div></div>'
       +'<div class="pmxActions">'+pmaxDestinationHtml(o,i,working)+'<label class="pmxBudget">'+(dest?'Add ':'')+(o.budgetCurrency&&o.budgetCurrencyVerified!==false?esc(o.budgetCurrency)+' ':'')+'$<input type="number" class="pmx-bud" data-i="'+i+'" value="'+esc(budgetRaw)+'" min="'+(dest?0:3)+'" max="30" aria-label="'+(dest?'Added to the campaign’s daily budget':'PMax daily budget')+(o.budgetCurrency&&o.budgetCurrencyVerified!==false?' in '+esc(o.budgetCurrency):'')+'">/day'+(dest?' to its budget':' · '+(o.days||30)+'d')+'</label><button type="button" class="btn ghost sm" data-pmx-design="'+i+'" data-design-opportunity="'+apvEnc(JSON.stringify(pmaxOpportunityPayload(o,r,dest?(Number(ui.budget)||o.dailyBudget||10):budget)))+'"'+(!ids.length?' disabled':'')+'>Design ad</button><button class="btn gold sm pmx-gen" data-i="'+i+'"'+disabled+(working?' data-working="true"':'')+'>'+buttonText+'</button><button type="button" class="btn ghost sm" data-delete-opportunity="pmax" data-i="'+i+'">Delete</button>'+(dest?'<span class="pmxJoinLine" data-pmx-join="'+i+'">'+esc(pmaxJoinLine(o,budgetRaw))+'</span>':'')+'</div><span class="pmx-msg" data-i="'+i+'" role="status" aria-live="polite"></span>'
       +'<details class="pmxEvidence" data-pmx-panel="products" data-i="'+i+'"'+(open.products?' open':'')+'><summary>Products to feature · select up to 4</summary><div class="pmxEvidenceBody" data-pmx-choices="'+i+'">'+(choices.length?choices.map(function(p,n){return '<label class="pmxProductChoice"><input type="checkbox" class="pmx-product" data-i="'+i+'" value="'+esc(p.id)+'"'+(ids.includes(p.id)?' checked':'')+'> <span>'+esc(p.title)+'</span></label>';}).join(''):'<p>No exact product offers are available. Refresh research to check the feed.</p>')+'</div></details><details class="pmxEvidence" data-pmx-open="'+i+'" data-pmx-panel="why" data-i="'+i+'"'+(open.why?' open':'')+'><summary>Why this recommendation</summary><div class="pmxEvidenceBody"><div data-pmx-evidence-status="'+i+'" aria-live="polite"></div><div data-pmx-why="'+i+'">'+pmaxRecommendationHtml(o,r)+'</div></div></details></article>';
   });sec.innerHTML=inner+'</div>'+pmaxHowHtml()+'</section>';insertTop(sec);
@@ -4062,11 +4210,11 @@ function renderOpportunities(){
       er.innerHTML='<div class="card pad" style="border:1px solid #f0c8bc;background:#fdeee9;margin-bottom:14px;font-size:12.5px;color:#b3402a"><b>Feed section render error:</b> '+esc(String(e.message||e))+'</div>';
       if(box&&box.parentNode)box.parentNode.insertBefore(er,box);}catch(e2){}}
   },0);
-  if(!OPPS.length){box.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">S</span><div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">0 ready</span></header><div class="oppChannelEmpty"><b>No Search opportunities surfaced.</b><br>Try another scan, or use the optional manual builder below.</div></section>';return;}
+  if(!OPPS.length){box.innerHTML='<section class="oppChannel"><header class="oppChannelHead">'+oppvChannelIcon('search','S')+'<div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">0 ready</span></header><div class="oppChannelEmpty"><b>No Search opportunities surfaced.</b><br>Try another scan, or use the optional manual builder below.</div></section>';return;}
   var unused=[],inuse=[];
   OPPS.forEach(function(o,i){ (o.acted?inuse:unused).push({o:o,i:i}); });
   var tabs='<div class="oppResultsBar"><div class="oppTabs" role="tablist">'+oppTabBtn("unused","Recommended",unused.length)+oppTabBtn("inuse","Already in use",inuse.length)+'</div><label class="oppSortField">Sort by <select id="oppSortSelect"><option value="best"'+(oppSort==="best"?' selected':'')+'>Best match</option><option value="urgent"'+(oppSort==="urgent"?' selected':'')+'>Most urgent</option><option value="reach"'+(oppSort==="reach"?' selected':'')+'>Highest reach</option></select></label></div>';
-  box.innerHTML='<section class="oppChannel"><header class="oppChannelHead"><span class="oppChannelIcon">S</span><div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">'+(unused.length+inuse.length)+' found</span></header>'+tabs+'<div id="oppCards" class="oppCardList"></div></section>';
+  box.innerHTML='<section class="oppChannel"><header class="oppChannelHead">'+oppvChannelIcon('search','S')+'<div class="oppChannelHeadText"><div class="eyebrow">Intent-led campaigns</div><h3>Search opportunities</h3><p>Recommended from demand, timing and past campaign evidence.</p></div><span class="oppChannelCount">'+(unused.length+inuse.length)+' found</span></header>'+tabs+'<div id="oppCards" class="oppCardList"></div></section>';
   box.querySelectorAll(".oppTab").forEach(function(b){ b.onclick=function(){ oppView=b.dataset.view; renderOpportunities(); }; });
   var sortSelect=$("#oppSortSelect");if(sortSelect)sortSelect.onchange=function(){oppSort=this.value;renderOpportunities();};
   var cards=$("#oppCards"); var list=oppView==="inuse"?inuse:unused;
@@ -4141,6 +4289,8 @@ function oppRecalc(cards,i){
   set('.planRoas',pr.roas?pr.roas.band:(o.expectedRoasBand||"—")); set('.planRev2',pr.rev!=null?("~"+money(pr.rev)):"—");
   set('.planProfit',oppSigned(pr.profit)); set('.planProfitLow',oppSigned(pr.profitLow)); set('.planProfitHigh',oppSigned(pr.profitHigh));
   set('.planStratNote',stratLine(null,smart).note);
+  // The bar keeps showing the recommended run; dates changed under Review & adjust are named beside it.
+  cards.querySelectorAll('.oppvMine[data-i="'+i+'"]').forEach(function(el){var sc=o.schedule,diff=!!(sc&&w.start&&w.end&&(w.start!==sc.start||w.end!==sc.end));el.hidden=!diff;el.textContent=diff?'Your dates: '+fmtDate(w.start)+' to '+fmtDate(w.end)+' · '+days+' day'+(days===1?'':'s')+'. The bar shows the recommended run.':'';});
 }
 function bidView(){ return !!(typeof DASH!=="undefined"&&DASH&&DASH.control&&DASH.control.smartBidding); }
 function stratLine(p,smart){ var max=p?money(p.cpc.max):"\u2014";
@@ -4185,7 +4335,9 @@ function planBlock(o,i){ var p=o.plan; if(!p)return ""; var smart=oppBidOf(i); v
   if(p.cpc&&p.cpc.basis)basis.push("<b>CPC</b> — "+esc(p.cpc.basis));
   if(p.budget&&/Measured demand limits|No measured search volume/.test(p.budget.basis||''))basis.push("<b>Budget</b> — "+esc(p.budget.basis));
   if(o.peakDate){var dc=o.dateCheck||{};basis.push("<b>Occasion date</b> — "+esc(fmtDate(o.peakDate))+(dc.source==="calendar rule"?", set by the calendar rule"+(dc.proposedDate&&dc.proposedDate!==o.peakDate?" (research proposed "+esc(fmtDate(dc.proposedDate))+")":""):dc.source?", confirmed by web research"+(oppSourceName(dc)?": "+esc(oppSourceName(dc)):""):"")+"."+((o.markets||[]).length?" Observed in "+esc(o.markets.join(", "))+".":""));}
-  if(db)basis.push("<b>Run length</b> — "+(!dur||!(planned>dur+(bm?0:1))?esc(db):bm?esc(db.replace(bm[0],"Now runs "+dur+" day"+(dur===1?"":"s")+" (researched as "+planned+")")):"Researched as a "+planned+"-day run. The start has since moved to today, so "+dur+" days remain before the planned end date."));
+  var sb=o.schedule&&typeof o.schedule.basis==='string'&&oppvSchedule(o)?o.schedule.basis.trim():'';
+  if(sb)basis.push("<b>Run length</b> — "+esc(sb));
+  else if(db)basis.push("<b>Run length</b> — "+(!dur||!(planned>dur+(bm?0:1))?esc(db):bm?esc(db.replace(bm[0],"Now runs "+dur+" day"+(dur===1?"":"s")+" (researched as "+planned+")")):"Researched as a "+planned+"-day run. The start has since moved to today, so "+dur+" days remain before the planned end date."));
   (p.caveats||[]).forEach(function(c){ if(/headroom|conversion rate|market read/i.test(c))basis.push(esc(c)); });
   var fc=m.maxClicksPerDay!=null?"clicks/day = the lower of daily budget ÷ expected CPC and the ~"+oppCpd(m.maxClicksPerDay)+" a day that measured searches supply (~"+Math.round((m.clickShare||0.05)*100)+"% of searches won as clicks), × days":"clicks = daily budget ÷ expected CPC × days"+(m.maxClicksPerDay===null?", an upper bound because no searches were measured":"");
   basis.push("<b>Forecast</b> — "+fc+" (start and end dates both count); sales = clicks × "+(Math.round((m.cvr||0)*1000)/10)+"% conversion rate"+(m.aov>0?"; revenue = sales × "+money(m.aov)+" "+ccy+" average order":"")+". Scenario ROAS applies ±"+Math.round((m.uncertainty!=null?m.uncertainty:0.3)*100)+"% conversion uncertainty.");
@@ -4212,9 +4364,17 @@ function oppCard(o,i,ceil){ var ui=oppUi(i),open=ui.open||{},w=oppWindow(o,ui),b
   // The page the web research verified the occasion date on (scan dateCheck.url), as a small external link; plain http(s) hosts only.
   var dsm=/^https?:\/\/(?:www\.)?([a-z0-9.-]+)(?::\d+)?(?:[\/?#]|$)/i.exec(String(dc.url||'')),dsrc=dsm?'<span>verified on <a class="oppDateSrc" href="'+tip(dc.url)+'" target="_blank" rel="noopener noreferrer" title="'+tip('Occasion date verified on '+dc.url)+'" style="color:var(--ink-70);text-decoration-color:var(--gold);text-underline-offset:2px">'+esc(dsm[1])+' ↗</a></span>':'';
   var genTip=blk?(blk.text||blk.toast):'Creates a paused draft in Approvals for creative review. Nothing is sent to Google until you approve it.',busy=!blk&&!!OPP_LAUNCHING[oppKey(i)];
-  return elFrom('<div class="exp oppCard'+(blk&&blk.kind==='expired'?' is-expired':'')+'" data-i="'+i+'" style="border-left-color:'+edge+'">'+
-    '<div class="oppCardHeader"><span class="oppCardPriority" style="background:'+edge+'"></span><div class="oppCardTitle"><h4>'+esc(o.occasion)+'</h4><div class="oppCardMeta"><span>'+esc(o.collectionTitle)+'</span><span class="sep"></span><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+w.days+'</span> <span class="opDurU" data-i="'+i+'">'+(w.days===1?'day':'days')+'</span></span>'+(o.peakDate?'<span class="sep"></span><span title="'+tip('Occasion date'+(dc.source==='calendar rule'?', set by the calendar rule':dc.source?', confirmed by web research'+(oppSourceName(dc)?': '+oppSourceName(dc):''):'')+'. Details under Why these numbers.')+'">Occasion '+esc(fmtDate(o.peakDate))+'</span>'+dsrc:'')+(nar?'<span class="sep"></span><span title="'+tip('Buyers shop for this occasion only in these countries, so the draft targets them unless you change the countries.')+'">'+esc(o.markets.join(', '))+' only</span>':'')+'</div></div><div class="oppCardBadges">'+urgPill(o)+'<span class="oppScore" title="'+tip('Ranking score (0–99): how this idea compares with the other suggestions on measured demand, timing, inventory fit and past results. It is not a chance of sales.')+'">Score '+Math.max(0,Math.min(99,Math.round(o.score||0)))+'</span></div></div>'+
+  // Where the occasion date came from and which markets it is for stay on the card, in the fold beside the schedule (or in the older date line when no schedule was saved).
+  var dateBits=o.peakDate?'<span title="'+tip('Occasion date'+(dc.source==='calendar rule'?', set by the calendar rule':dc.source?', confirmed by web research'+(oppSourceName(dc)?': '+oppSourceName(dc):''):'')+'. Details under Why these numbers.')+'">Occasion '+esc(fmtDate(o.peakDate))+'</span>'+dsrc:'';
+  var marketBits=nar?'<span title="'+tip('Buyers shop for this occasion only in these countries, so the draft targets them unless you change the countries.')+'">'+esc(o.markets.join(', '))+' only</span>':'';
+  var sch=oppvSchedule(o),chip=oppvChipHtml(o,'search'),sub=/^evergreen/i.test(String(o.occasion||''))||String(o.occasion||'').trim().toLowerCase()===String(o.collectionTitle||'').trim().toLowerCase()?'':String(o.occasion||'').trim(),searchThemes=oppvSearchThemes(o);
+  return elFrom('<div class="exp oppCard oppv'+(blk&&blk.kind==='expired'?' is-expired':'')+'" data-oppv-card data-i="'+i+'" style="border-left-color:'+edge+'">'+
+    oppvHeadHtml(o,'search',i,!!open.what,urgPill(o))+
+    '<div class="oppCardTitle oppvTitle"><h4>'+esc(o.collectionTitle)+'</h4>'+(!chip&&sub?'<div class="oppvSub">'+esc(sub)+'</div>':'')+'</div>'+
     '<div class="oppCardWhy">'+esc(o.rationale||"")+'</div>'+
+    (sch?oppvWhenHtml(o,'data-ui="when"',!!open.when,i,'<div class="oppCardMeta oppvSources">'+dateBits+(dateBits&&marketBits?'<span class="sep"></span>':'')+marketBits+'</div>'):'<div class="oppCardMeta"><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+w.days+'</span> <span class="opDurU" data-i="'+i+'">'+(w.days===1?'day':'days')+'</span></span>'+(dateBits?'<span class="sep"></span>'+dateBits:'')+(marketBits?'<span class="sep"></span>'+marketBits:'')+'</div>')+
+    oppvAdsHtml(o,'search',{},'data-oppv-ads="'+i+'"')+
+    (searchThemes.length?'<div class="pmxFacts oppvFacts">'+oppvFactRow('themes','Search themes',searchThemes,4,80)+'</div>':'')+
     '<div class="oppCardMetrics">'+
       '<div class="oppCardMetric"><b>'+(r.searchVolume!=null?'~'+Number(r.searchVolume).toLocaleString():'—')+'</b><span>Searches / month</span><small>'+(real?'Keyword Planner · '+measured+' of '+kd.length+' keywords measured':'AI estimate, not measured')+'</small>'+(r.dataAt?'<small title="'+tip('Keyword Planner data fetched '+fmtDateTime(new Date(r.dataAt)))+'">Fetched '+timeago(r.dataAt)+' ago</small>':'')+'</div>'+
       '<div class="oppCardMetric" title="'+tip('What a click is expected to cost on average: the middle of the top-of-page bid range, never above your max CPC. Every forecast on this card uses it.')+'"><b class="planECpc" data-i="'+i+'">'+money(pr0.eCpc)+'</b><span>Expected CPC · '+ccy+'</span><small>'+(bl>0&&bh>0?(gBid?'Google range ':'Estimated range ')+money(bl)+'–'+money(bh):'No bid range')+'</small></div>'+
@@ -4223,7 +4383,7 @@ function oppCard(o,i,ceil){ var ui=oppUi(i),open=ui.open||{},w=oppWindow(o,ui),b
     '</div>'+
     (blk&&blk.text?'<div class="oppCardBlock'+(blk.kind==='expired'?' expired':'')+'">'+esc(blk.text)+'</div>':'')+
     '<div class="oppCardActions"><button class="btn gold sm opGen'+(busy?' is-busy':'')+'" data-i="'+i+'" title="'+tip(genTip)+'"'+(blk||busy?' disabled':'')+'>'+(blk?esc(blk.label):busy?'<span class="spin bspin"></span>Generating…':'Create review draft')+'</button><button type="button" class="btn ghost sm" data-delete-opportunity="search" data-i="'+i+'"'+(busy?' disabled title="Available once the draft is written"':'')+'>Delete</button><details class="opDx" data-ui="dx"'+(open.dx?' open':'')+'><summary>Review &amp; adjust</summary><div class="oppDetailsBody">'+
-    '<div class="oppDetailsIntro"><b>Forecasts are scenarios, not predicted purchases.</b>'+(o.audience&&(o.audience.buyer||o.audience.recipient)?('<br>'+esc(o.audience.buyer||"")+(o.audience.recipient?(' → '+esc(o.audience.recipient)):'')):'')+'</div>'+
+    '<div class="oppDetailsIntro"><span class="oppScore" title="'+tip('Ranking score (0–99): how this idea compares with the other suggestions on measured demand, timing, inventory fit and past results. It is not a chance of sales.')+'">Score '+Math.max(0,Math.min(99,Math.round(o.score||0)))+'</span><b>Forecasts are scenarios, not predicted purchases.</b>'+(o.audience&&(o.audience.buyer||o.audience.recipient)?('<br>'+esc(o.audience.buyer||"")+(o.audience.recipient?(' → '+esc(o.audience.recipient)):'')):'')+'</div>'+
     (o.audience&&o.audience.searchStyle?('<div class="muted" style="font-size:11.5px;margin:0 0 12px">'+(o.audience.motivation?('Motivation: '+esc(o.audience.motivation)+' · '):'')+'Searches like: “'+esc(o.audience.searchStyle)+'”</div>'):'')+
 '<div class="grid" style="grid-template-columns:1.4fr 1fr 1fr;gap:16px;align-items:end">'+
       '<div><label style="'+lab+'">Daily budget ('+ccy+')</label><div class="range"><input type="range" class="opBud" data-i="'+i+'" min="1" max="'+ceil+'" value="'+bud+'"><span class="rngval opBudV" data-i="'+i+'">'+money(bud)+'</span></div><div class="muted planClicks" data-i="'+i+'" style="font-size:10.5px;margin-top:3px">'+oppCpdLine(pr0)+'</div></div>'+
