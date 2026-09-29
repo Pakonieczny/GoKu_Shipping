@@ -31,7 +31,10 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  const wide=plan.payload.generatedAssets.find(a=>a.asset.width===1200&&a.asset.height===300);assert(wide&&wide.asset.bytes<=5120*1024);assert.equal(rda.logoImages.length,1);assert.equal(rda.logoImages[0].asset,wide.tempResourceName);assert.equal(rda.squareLogoImages.length,1);
  assert.equal(ops.filter(o=>o.assetGroupAssetOperation?.create.fieldType==='LANDSCAPE_LOGO'&&o.assetGroupAssetOperation.create.asset===wide.tempResourceName).length,1);
  // The plan states each campaign's bidding exactly as built.
- const bidding=Object.fromEntries(plan.summary.campaigns.map(c=>[c.style,c.bidding]));assert.equal(bidding.pmax,'Maximize conversion value');assert.equal(bidding.fixed_display,'Maximize conversions');assert.equal(bidding.responsive_display,'Maximize conversions');
+ const bidding=Object.fromEntries(plan.summary.campaigns.map(c=>[c.style,c.bidding]));assert.equal(bidding.pmax,'Maximize conversion value · no target ROAS until it has about 6 weeks and 30 conversions in 30 days');assert.equal(bidding.fixed_display,'Maximize conversions');assert.equal(bidding.responsive_display,'Maximize conversions');
+ // A run length is kept per campaign and counts from the day it is enabled (applyApproval and setCampaignStatus move the end date).
+ const timed=await E.get('_prepareCampaignStyles')({item,context:{w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}},choice:R.selection(['pmax'],{pmax:10},['2840'],{pmax:30}),identity:'b'.repeat(64)}),timedCampaign=timed.payload.mutateOperations.find(o=>o.campaignOperation).campaignOperation.create;
+ assert.equal(timed.payload.meta.plannedDays[timedCampaign.resourceName],30);assert.equal(timed.summary.campaigns[0].days,30);assert(!plan.payload.meta.plannedDays&&plan.summary.campaigns.every(c=>c.days===null));
  assert('audienceSignal' in plan.summary.campaigns.find(c=>c.style==='pmax'));assert(/may make one from your images/.test(plan.summary.videoStatus));
  assert.equal(ops.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).length,1);
  const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));

@@ -13186,6 +13186,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // Jobs OpenAI never started, which the collector cancels and queues again.
       const restarting = effective.filter(_awaitingStallRestart).length;
       const restartingActive = activeJobs.filter(_awaitingStallRestart).length;
+      // Sets whose job OpenAI never started, sent again, until they are saved.
+      const byName = new Map(session.batches.map((b) => [b.batchName, b]));
+      const leafOf = (b) => {
+        for (let hops = 0; b?.retryBatchName && hops < 20; hops++) b = byName.get(b.retryBatchName);
+        return b;
+      };
+      const restarted = session.batches.filter((b) => b.stallRestart === "restarted" && !leafOf(b)?.collected).length;
       const cancelling = activeJobs.filter((b) => b.providerStatus === "cancelling" && !_awaitingStallRestart(b)).length;
       const settledStates = effective.filter((b) => !_awaitingStallRestart(b)).map((b) => _normBatchState(b.state));
       const failed = settledStates.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
@@ -13305,7 +13312,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
         : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
-      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${attention ? ` · ${attention} need attention` : ""}`]);
+      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${restarted ? ` · ${restarted} restarted` : ""}${attention ? ` · ${attention} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (waitingRetries) rows.push(["Queue admission", `${running} active provider jobs · new jobs and retries start below ${_batchRetryLimit}`]);
       if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
@@ -13339,7 +13346,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         </div>` : "";
       const activity = [cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
         running > cancelling + restartingActive ? `${running - cancelling - restartingActive} active jobs` : "",
-        waitingRetries ? `${waitingRetries} queued` : "",
+        waitingRetries ? `${waitingRetries} queued` : "", restarted ? `${restarted} restarted` : "",
         attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -13355,6 +13362,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : notSubmitted ? `${notSubmitted} sets still need to be submitted. Keep the original submission tab open.`
         : attention ? "Some jobs need attention. Open Details & actions to review them."
         : "";
+      if (restarted && !restarting) explanation = `${explanation} ${restarted} set(s) OpenAI never started were cancelled at no cost and sent again.`.trim();
       const capacityNote = capacityStopped.length
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
       const attemptsNote = attemptsStopped.length
