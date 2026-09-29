@@ -142,8 +142,10 @@ async function control() {
       if (s.exists) c = { ...c, ...s.data() };
     } catch (e) {}
   }
-  // env hard ceiling always wins as an upper bound even if Firestore says higher
-  c.maxDailyBudgetTotal = Math.min(c.maxDailyBudgetTotal, Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL || c.maxDailyBudgetTotal));
+  // env hard ceiling always wins as an upper bound even if Firestore says higher. A missing or
+  // invalid stored value falls back to the default ceiling; it never reads as "no ceiling".
+  const envCeil = Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL), storedCeil = Number(c.maxDailyBudgetTotal), envOk = isFinite(envCeil) && envCeil > 0;
+  c.maxDailyBudgetTotal = Math.min(isFinite(storedCeil) && storedCeil > 0 ? storedCeil : (envOk ? envCeil : 100), envOk ? envCeil : Infinity);
   c.autoApproveVettedTemplates=false;
   try {c.budgetCurrency=await _accountCurrency();c.budgetCurrencyVerified=true;}catch(e){c.budgetCurrency=null;c.budgetCurrencyVerified=false;}
   return c;
@@ -1743,14 +1745,17 @@ function _learningPublication(item, result, operations) {
   return { schema:1, at:Date.now(), campaignIds:[...campaignIds], campaignChannels,
     meaning:"Reviewed creative containing this guidance was sent to Google; this does not confirm serving or improvement." };
 }
-async function applyApproval(id, ctrl) {
+async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
   const f=fb();if(!f)throw new Error("No Firestore connection.");
   const ref=f.db.collection(COL.approvals).doc(String(id)),attempt=require("crypto").randomUUID(),lock=f.db.collection(COL.state).doc("publicationLease");let it;
   ctrl=ctrl||await control();
-  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw new Error("Another publication is still running. Its result must finish before this draft can be sent.");
+  // Drafts approved together publish one at a time: the worker waits up to waitForLeaseMs for the
+  // running one. Still busy after that: this draft stays APPROVED with the reason shown, to retry.
+  for(const giveUp=Date.now()+(Number(waitForLeaseMs)||0);;){try{
+  await f.db.runTransaction(async tx=>{const s=await tx.get(ref);if(!s.exists)throw new Error("Draft not found.");it=s.data();const lease=await tx.get(lock);if(lease.exists&&lease.data().until>Date.now())throw Object.assign(new Error("Another publication is still running. Its result must finish before this draft can be sent."),{leaseBusy:true});
     if(it.status!=="APPROVED")throw new Error(it.status==="APPLIED"?"This draft was already published.":"Draft is not available for publication; another attempt may be running.");
     assertCreativeReviewed(it);tx.update(ref,{status:"APPLYING",applyAttempt:attempt,applyStartedAt:Date.now(),lastError:null});tx.set(lock,{owner:attempt,until:Date.now()+600000});
-  });
+  });break;}catch(e){if(!e.leaseBusy)throw e;if(Date.now()>=giveUp){if(it&&it.status==="APPROVED")await ref.update({lastError:e.message+" Publish it again once that finishes."}).catch(()=>{});throw e;}await new Promise(r=>setTimeout(r,5000));}}
   let dispatched=false, publicationResult=null;
   try {
     const p=it.payload||{};
@@ -1764,6 +1769,8 @@ async function applyApproval(id, ctrl) {
     let ops=await materializeReviewedCreative(it);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
     if(newNames.length){const live=await gaql("SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'");if(live.some(r=>newNames.includes((r.campaign||{}).name)))throw new Error("A campaign with this draft's name already exists. Review the existing campaign instead of creating a duplicate.");}
+    // Campaigns are only ever enabled from Campaigns, where the ceiling and monthly stop are checked.
+    if([...(ops||[]).map(o=>o.campaignOperation&&(o.campaignOperation.create||o.campaignOperation.update)),...(p.service==="campaigns"?(p.operations||[]).map(o=>o&&(o.create||o.update)):[])].some(c=>c&&c.status==="ENABLED"))throw new Error("Drafts publish campaigns paused. Enable the campaign from Campaigns, where the daily ceiling and monthly stop are checked.");
     const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
     if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
       const want=budgetOps.reduce((n,o)=>n+fromMicros(o.campaignBudgetOperation.create.amountMicros),0);
@@ -1780,9 +1787,14 @@ async function applyApproval(id, ctrl) {
       if(p.groupSplitGuard&&!ctrl.dryRun){await mutateAll(ops,{ctrl,validateOnly:true,label:"validate-product-split:"+id});await _guardProductGroupSplit(it);}
       publicationResult=await mutateAll(ops,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});
     } else if(p.service&&p.operations){if(p.service==="campaignBudgets"){
-        const rows=await gaql("SELECT campaign_budget.resource_name,campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'"),budgets=new Map();rows.forEach(r=>{const a=r.campaignBudget||{};budgets.set(a.resourceName,fromMicros(a.amountMicros));});
+        // Each reviewed move reads "from X to Y". A budget that no longer reads X was edited since,
+        // so the reviewed change no longer describes what would happen: refuse, never re-base it.
+        const res=p.operations.map(o=>o&&o.update&&o.update.resourceName);if(!res.length||res.some(r=>!/^customers\/\d+\/campaignBudgets\/\d+$/.test(String(r||""))))throw new Error("This budget proposal contains an unexpected operation. Nothing was changed.");
+        const baseline=new Map(((p.meta||{}).baseline||[]).map(m=>[m.budgetRes,Number(m.from)])),nowRows=await gaql(`SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign_budget WHERE campaign_budget.resource_name IN (${res.map(r=>`'${r}'`).join(", ")})`),now=new Map(nowRows.map(r=>[(r.campaignBudget||{}).resourceName,fromMicros((r.campaignBudget||{}).amountMicros)]));
+        if(res.some(r=>!baseline.has(r)||!now.has(r)||Math.abs(now.get(r)-baseline.get(r))>=0.01))throw new Error("A budget changed after this proposal was made, so its reviewed amounts no longer apply. Nothing was changed. Delete this draft; the next weekly review proposes fresh amounts.");
+        const budgets=(await _enabledBudgets()).budgets; // spendable only: ENDED excluded, shared budgets once
         p.operations.forEach(o=>{if(o.update&&budgets.has(o.update.resourceName))budgets.set(o.update.resourceName,fromMicros(o.update.amountMicros));});
-        if([...budgets.values()].reduce((a,b)=>a+b,0)>Number(ctrl.maxDailyBudgetTotal))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
+        if(!([...budgets.values()].reduce((a,b)=>a+b,0)<=Number(ctrl.maxDailyBudgetTotal)+0.001))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
       }
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
@@ -3165,6 +3177,10 @@ async function pruneAssets({ ctrl, minImpr = 500 } = {}) {
        AND ad_group_ad_asset_view.field_type IN ('HEADLINE','DESCRIPTION')`);
   const weak = rows.filter(r => Number(r.metrics.impressions || 0) >= minImpr);
   if (!weak.length) return { flagged: 0, queued: 0 };
+  // Review note only (it removes nothing). One open note at a time, not a new one every day.
+  const f = fb(); let open = null;
+  if (f) (await f.db.collection(COL.approvals).where("status", "==", "PENDING").get()).forEach(d => { const a = d.data(); if (a.type === "creative" && (a.payload || {}).note === "operator-review") open = d.id; });
+  if (open) return { flagged: weak.length, queued: 0, approvalId: open, existing: true };
   // (replacement copy generation happens at the campaign/collection level on the
   //  next event refresh; here we just surface the weak assets for the operator)
   const byCampaign = {};
@@ -5176,33 +5192,47 @@ async function designStudioOpportunityStatus({ refreshMetrics = false } = {}) {
 }
 
 // MINE: converting search terms ⇒ exact keywords; expensive zero-conv terms ⇒ negatives.
-async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8 } = {}) {
+async function mineSearchTerms({ ctrl, convMin = 1, wasteCost = 8, wasteClicks = 30 } = {}) {
   ctrl = ctrl || (await control());
   const rows = await gaql(
     `SELECT search_term_view.search_term, search_term_view.status, campaign.id, campaign.name,
             ad_group.resource_name, metrics.conversions, metrics.cost_micros, metrics.clicks
      FROM search_term_view WHERE ${await _last90Clause()}`);
-  const addKw = []; const addNeg = [];
+  // Never exclude a keyword the campaign targets, nor a term that converted anywhere in it: waste is
+  // judged per campaign (rows are per ad group) and needs wasteClicks clicks, not a few pricey ones.
+  const kwRows = await gaql(`SELECT campaign.id, ad_group_criterion.keyword.text FROM ad_group_criterion WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status != 'REMOVED'`);
+  const targeted = new Set(kwRows.map(r => (r.campaign || {}).id + "|" + String(((r.adGroupCriterion || {}).keyword || {}).text || "").toLowerCase()));
+  // Terms already in a draft waiting for review or publication are not proposed again.
+  const waiting = new Set(), f = fb();
+  if (f) for (const s of ["PENDING", "APPROVED", "APPLYING", "APPLY_UNKNOWN"]) (await f.db.collection(COL.approvals).where("status", "==", s).get()).forEach(d => { const a = d.data();
+    if (a.type === "keywords" || a.type === "negatives") ((a.payload || {}).operations || []).forEach(o => { const c = o && o.create && (o.create.adGroupCriterion || o.create.campaignCriterion || o.create); if (c && c.keyword) waiting.add((c.adGroup || c.campaign) + "|" + String(c.keyword.text).toLowerCase()); }); });
+  const valid = t => t.length <= 80 && t.split(/\s+/).length <= 10;
+  const addKw = [], byCampaign = new Map();
   rows.forEach(r => {
     const term = r.searchTermView.search_term || r.searchTermView.searchTerm;
-    if (!term) return;
+    if (!term || !valid(term)) return;
     const conv = Number(r.metrics.conversions || 0);
-    const cost = fromMicros(r.metrics.costMicros);
-    const already = (r.searchTermView.status === "ADDED");
-    if (conv >= convMin && !already && r.adGroup) {
-      addKw.push({ adGroupCriterion: { adGroup: r.adGroup.resourceName, status: "ENABLED",
-        keyword: { text: term, matchType: "EXACT" } } });
-    } else if (conv === 0 && cost >= wasteCost && r.campaign) {
-      addNeg.push({ campaignCriterion: { campaign: `customers/${CID}/campaigns/${r.campaign.id}`,
-        negative: true, keyword: { text: term, matchType: "EXACT" } } });
+    const status = r.searchTermView.status || "NONE";
+    if (conv >= convMin && status === "NONE" && r.adGroup && !waiting.has(r.adGroup.resourceName + "|" + term.toLowerCase())) {
+      waiting.add(r.adGroup.resourceName + "|" + term.toLowerCase());
+      addKw.push({ adGroup: r.adGroup.resourceName, status: "ENABLED", keyword: { text: term, matchType: "EXACT" } });
     }
+    if (!r.campaign) return;
+    const k = r.campaign.id + "|" + term.toLowerCase(), x = byCampaign.get(k) || { campaignId: r.campaign.id, term, conv: 0, cost: 0, clicks: 0, status: new Set() };
+    x.conv += conv; x.cost += fromMicros(r.metrics.costMicros); x.clicks += Number(r.metrics.clicks || 0); x.status.add(status); byCampaign.set(k, x);
+  });
+  const addNeg = [];
+  byCampaign.forEach((x, k) => {
+    const campaign = `customers/${CID}/campaigns/${x.campaignId}`;
+    if (x.conv > 0 || x.cost < wasteCost || x.clicks < wasteClicks || [...x.status].some(s => s !== "NONE") || targeted.has(k) || waiting.has(campaign + "|" + x.term.toLowerCase())) return;
+    addNeg.push({ campaign, negative: true, keyword: { text: x.term, matchType: "EXACT" } });
   });
   let queued = 0;
   if (addKw.length) { await enqueueApproval({ type: "keywords", vetted: true,
     summary: `${addKw.length} converting search terms → add as exact keywords`,
     payload: { service: "adGroupCriteria", operations: addKw.map(create => ({ create })) } }); queued++; }
   if (addNeg.length) { await enqueueApproval({ type: "negatives", vetted: true,
-    summary: `${addNeg.length} wasteful zero-conversion terms → add as negatives`,
+    summary: `${addNeg.length} zero-conversion terms (${wasteClicks}+ clicks each, 90 days) → add as exact negatives`,
     payload: { service: "campaignCriteria", operations: addNeg.map(create => ({ create })) } }); queued++; }
   return { keywords: addKw.length, negatives: addNeg.length, queued };
 }
@@ -5240,20 +5270,24 @@ async function anomalyCheck({ ctrl } = {}) {
   const tz = await _accountTz();
   const today = _acctDateYmd(tz, 0);
   const y = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING YESTERDAY`);
-  const t = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date DURING LAST_14_DAYS`);
+  const t = await gaql(`SELECT segments.date, metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${_acctDateYmd(tz, -15 * 86400000)}' AND '${_acctDateYmd(tz, -2 * 86400000)}'`);
   const yCostNative = fromMicros((y[0] && y[0].metrics.costMicros) || 0);
-  const tCostNative = fromMicros((t[0] && t[0].metrics.costMicros) || 0) / 14;
-  // The trip decision is a RATIO of two native-currency figures — currency-invariant, so it's computed
-  // on the native numbers directly and needs no conversion for correctness. Only the human-readable
-  // figures (the logged trip reason, and whatever this returns for display) are converted to USD below,
-  // so a person reading the reason later sees real dollars rather than an unlabeled CAD figure.
-  const tripped = tCostNative > 0 && yCostNative > tCostNative * ctrl.anomalySpendMultiple;
+  // Baseline: the 14 days BEFORE yesterday, averaged over the days that actually spent — so a launch
+  // after a quiet spell is not an "anomaly" and a spike does not dilute its own baseline. Under 7
+  // spending days there is no baseline yet; then only spend above twice the daily ceiling (beyond
+  // Google's up-to-2x daily delivery) trips. All figures are native (account) currency.
+  const spent = t.map(r => fromMicros((r.metrics || {}).costMicros)).filter(v => v > 0);
+  const tCostNative = spent.length ? spent.reduce((a, b) => a + b, 0) / spent.length : 0;
+  const multiple = Number(ctrl.anomalySpendMultiple) > 1 ? Number(ctrl.anomalySpendMultiple) : 2.5, ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
+  const spike = spent.length >= 7 && yCostNative > tCostNative * multiple, overCeiling = ceiling > 0 && yCostNative > ceiling * 2;
+  const tripped = spike || overCeiling;
   const rate = await _fxRateToUsd(today);
   const yCost = rate != null ? yCostNative * rate : yCostNative;
   const tCost = rate != null ? tCostNative * rate : tCostNative;
   if (tripped && f) {
+    const money = v => (ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : "") + Number(v).toFixed(2);
     await f.db.collection(COL.control).doc("control").set(
-      { enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `spend ${yCost.toFixed(2)} > ${ctrl.anomalySpendMultiple}× avg ${tCost.toFixed(2)}` },
+      { enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: spike ? `yesterday's spend ${money(yCostNative)} > ${multiple}× the recent daily average ${money(tCostNative)}` : `yesterday's spend ${money(yCostNative)} > twice the daily budget ceiling ${money(ceiling)}` },
       { merge: true });
   }
   return { yesterday: +yCost.toFixed(2), trailingAvg: +tCost.toFixed(2), tripped, fxIncomplete: rate == null };
@@ -5261,11 +5295,28 @@ async function anomalyCheck({ ctrl } = {}) {
 
 /* ===================== Spend-cap enforcement ===================== */
 
-// Sum of ENABLED campaigns' daily budgets (the budgets that can actually spend right now).
-async function _enabledBudgetTotal() {
-  const rows=await gaql("SELECT campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
-  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,fromMicros(b.amountMicros));});
-  return [...budgets.values()].reduce((a,b)=>a+b,0);
+// Daily budgets that can actually spend right now: ENABLED campaigns that have not ENDED, each
+// (shared) budget counted once. total is in the account currency. Every spend check uses this.
+async function _enabledBudgets() {
+  const rows=await gaql("SELECT campaign.id, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.status = 'ENABLED'");
+  const budgets=new Map();rows.forEach(r=>{const b=r.campaignBudget||{};if((r.campaign||{}).servingStatus==="ENDED")return;if(!b.resourceName)throw new Error("Enabled budget resource could not be verified.");budgets.set(b.resourceName,fromMicros(b.amountMicros));});
+  return {total:[...budgets.values()].reduce((a,b)=>a+b,0),budgets};
+}
+async function _enabledBudgetTotal() { return (await _enabledBudgets()).total; }
+// Refuses a change that would push the spendable daily budgets over the ceiling, or add spend once
+// month-to-date spend has reached the monthly stop. enabling: the campaign will be able to spend
+// after the change; amount: its new daily budget. Runs in dry-run too. Returns the budget resource.
+async function _assertSpendLimits(campaignId, { ctrl, amount = null, enabling = false } = {}) {
+  const id=String(campaignId).replace(/\D/g,""),row=id&&(await gaql(`SELECT campaign.id, campaign_budget.resource_name, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`))[0],b=(row&&row.campaignBudget)||{};
+  if(!b.resourceName)throw new Error("This campaign's budget could not be verified in Google Ads, so nothing was changed.");
+  const live=await _enabledBudgets(),counted=live.budgets.has(b.resourceName);if(!counted&&!enabling)return b.resourceName; // cannot spend yet; enabling it is checked then
+  const after=live.total-(counted?live.budgets.get(b.resourceName):0)+(amount==null?fromMicros(b.amountMicros):Number(amount)),ceiling=Number(ctrl.maxDailyBudgetTotal)||0,money=v=>(ctrl.budgetCurrency?ctrl.budgetCurrency+" ":"")+Number(v).toFixed(2);
+  if(after<=live.total+0.001)return b.resourceName; // no added spend
+  if(ceiling>0&&after>ceiling+0.001)throw new Error(`This would raise the daily budgets that can spend to ${money(after)}, over your daily ceiling of ${money(ceiling)}. Nothing was changed. Lower or pause another campaign first, or raise the ceiling in Controls.`);
+  const limit=Number(ctrl.maxMonthlySpend)||0;
+  if(limit>0){const m=await _mtdSpend();if(m.fxIncomplete)throw new Error("Month-to-date spend cannot be compared with your USD monthly stop threshold without an exchange rate, so nothing was changed. Try again later.");
+    if(m.mtd>=limit)throw new Error(`Month-to-date spend (USD ${m.mtd.toFixed(2)}) has reached your monthly stop threshold of USD ${limit}. Nothing was changed. Raise the threshold in Controls first.`);}
+  return b.resourceName;
 }
 
 // Keep the SUM of enabled campaigns' daily budgets at/under the ceiling by scaling them all down
@@ -5274,19 +5325,22 @@ async function enforceBudgetCeiling({ ctrl } = {}) {
   ctrl = ctrl || (await control());
   const ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
   if (!(ceiling > 0)) return { ok: true, skipped: "no ceiling set" };
+  // Same spendable set as every other check: ENDED campaigns cannot spend, and a shared budget is
+  // one daily amount (and one update) however many enabled campaigns use it.
   const rows = await gaql(
-    `SELECT campaign.id, campaign.name, campaign_budget.resource_name, campaign_budget.amount_micros
+    `SELECT campaign.id, campaign.name, campaign.serving_status, campaign_budget.resource_name, campaign_budget.amount_micros
      FROM campaign WHERE campaign.status = 'ENABLED'`);
-  const items = rows.map(r => ({ id: r.campaign.id, name: r.campaign.name,
-      res: r.campaignBudget && r.campaignBudget.resourceName,
-      budget: fromMicros(r.campaignBudget && r.campaignBudget.amountMicros) }))
-    .filter(x => x.res && x.budget > 0);
+  const byRes = new Map();
+  rows.forEach(r => { const res = r.campaignBudget && r.campaignBudget.resourceName; if (!res || (r.campaign || {}).servingStatus === "ENDED") return;
+    const x = byRes.get(res); if (x) { x.name += " + " + r.campaign.name; return; }
+    byRes.set(res, { id: r.campaign.id, name: r.campaign.name, res, budget: fromMicros(r.campaignBudget.amountMicros) }); });
+  const items = [...byRes.values()].filter(x => x.budget > 0);
   const total = items.reduce((a, b) => a + b.budget, 0);
   if (total <= ceiling + 0.001) return { ok: true, total: +total.toFixed(2), ceiling, withinCeiling: true };
   const factor = ceiling / total, floor = 1;
   const ops = [], moves = [];
   items.forEach(x => {
-    const nb = Math.max(floor, +(x.budget * factor).toFixed(2));
+    const nb = Math.max(floor, Math.floor(x.budget * factor * 100) / 100); // round down: the trimmed sum never lands above the ceiling
     if (Math.abs(nb - x.budget) < 0.01) return;
     moves.push({ campaign: x.name, from: x.budget, to: nb });
     ops.push({ update: { resourceName: x.res, amountMicros: micros(nb) }, updateMask: "amount_micros" });
@@ -5308,7 +5362,11 @@ async function _mtdSpend() {
   const start = end.slice(0, 8) + "01"; // first day of the current month, YYYY-MM-01
   const r = await gaql(`SELECT metrics.cost_micros FROM customer WHERE segments.date BETWEEN '${start}' AND '${end}'`);
   const nativeMicros = (r[0] && r[0].metrics && r[0].metrics.costMicros) || 0;
-  const rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
+  let rate = await _fxRateToUsd(end); // "today" is the representative date for a month-to-date total
+  // Rate service unreachable: use the newest rate saved in the last 31 days rather than leaving the
+  // monthly stop unable to compare (and so switched off) until the service returns.
+  if (rate == null) { const f = fb(); try { const acct = await _accountCurrency(), saved = f ? ((await f.db.collection(COL.state).doc("fxRates").get()).data() || {}) : {}, min = acct + ":" + _ymd(new Date(Date.parse(end + "T12:00:00Z") - 31 * 86400000));
+    const k = Object.keys(saved).filter(k => k >= min && k <= acct + ":" + end && Number(saved[k]) > 0).sort().pop(); if (k) rate = Number(saved[k]); } catch (e) {} }
   const mtd = rate != null ? fromMicros(nativeMicros) * rate : fromMicros(nativeMicros);
   return { mtd, mtdNative: fromMicros(nativeMicros), fxIncomplete: rate == null, start, end };
 }
@@ -5324,19 +5382,22 @@ async function monthlySpendGuard({ ctrl } = {}) {
   if(fxIncomplete)throw new Error("Monthly USD threshold cannot be compared until the account exchange rate is available.");
   const pct = +(mtd / limit * 100).toFixed(1);
   if (mtd < limit) return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: false, window: { start, end } };
-  let paused = 0;
+  // A failed pause is recorded, never swallowed; the hourly check keeps retrying it (the kick runs
+  // this guard even while scheduled automation is off). Nothing left to pause: nothing to record.
+  let paused = 0, pauseError = null;
   try {
     const rows = await gaql(`SELECT campaign.id, campaign.resource_name FROM campaign WHERE campaign.status = 'ENABLED'`);
     const ops = rows.map(r => ({ update: { resourceName: (r.campaign && r.campaign.resourceName) || `customers/${CID}/campaigns/${r.campaign.id}`, status: "PAUSED" }, updateMask: "status" }));
-    if (ops.length && !ctrl.dryRun) await mutate("campaigns", ops, { ctrl, label: "monthlyCapPause" });
+    if (!ops.length) return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused: 0, alreadyPaused: true, dryRun: !!ctrl.dryRun };
+    if (!ctrl.dryRun) await mutate("campaigns", ops, { ctrl, label: "monthlyCapPause" });
     paused = ops.length;
-  } catch (e) {}
+  } catch (e) { pauseError = String((e && e.message) || e).slice(0, 300); }
   const f = fb();
   if (f && !ctrl.dryRun) {
-    try { await f.db.collection(COL.control).doc("control").set({ enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `monthly cap reached: ${CURRENCY}${mtd.toFixed(2)} \u2265 ${CURRENCY}${limit}` }, { merge: true }); } catch (e) {}
+    try { await f.db.collection(COL.control).doc("control").set({ enabled: false, trippedAt: f.FV.serverTimestamp(), tripReason: `monthly cap reached: USD ${mtd.toFixed(2)} \u2265 USD ${limit}` + (pauseError ? ` \u2014 pausing campaigns FAILED and will be retried hourly: ${pauseError}` : "") }, { merge: true }); } catch (e) {}
   }
-  await ledger({ kind: "monthlySpendGuard", mtd: +mtd.toFixed(2), limit, paused, validateOnly: !!ctrl.dryRun });
-  return { ok: true, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused, dryRun: !!ctrl.dryRun };
+  await ledger({ kind: "monthlySpendGuard", mtd: +mtd.toFixed(2), limit, paused, ok: !pauseError, error: pauseError, validateOnly: !!ctrl.dryRun });
+  return { ok: !pauseError, mtd: +mtd.toFixed(2), limit, pct, tripped: true, paused, dryRun: !!ctrl.dryRun, ...(pauseError ? { pauseError, error: "Monthly stop reached but pausing campaigns failed: " + pauseError } : {}) };
 }
 
 /* ===================== Live Shopify collections ===================== */
@@ -5944,6 +6005,7 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   if (status !== "ENABLED" && status !== "PAUSED" && status !== "REMOVED") throw new Error("status must be ENABLED, PAUSED, or REMOVED");
   const id = String(campaignId).replace(/\D/g, "");
   if (!id) throw new Error("missing campaign id");
+  if (status === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true }); // daily ceiling + monthly stop
   const resourceName = `customers/${CID}/campaigns/${id}`;
   // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
   // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
@@ -6039,6 +6101,9 @@ async function setCampaignEndDate(campaignId, { endDate, addDays, ctrl } = {}) {
     if (cur.startDate && target < cur.startDate) throw new Error(`End date ${target} is before this campaign's start date (${cur.startDate}).`);
     if (cur.endDate === target) return { ok: true, id, unchanged: true, endDate: target, previousEndDate: cur.endDate, name: cur.name };
   }
+  // An ENABLED campaign that has ENDED starts spending again the moment its end date moves out:
+  // the same daily ceiling and monthly stop checks as enabling it. (A serving one adds nothing.)
+  if (String(cur.status).toUpperCase() === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true });
 
   // Write it. Same field-name fallback as the reads above.
   let applied = null, lastErr = null;
@@ -6224,9 +6289,12 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
   ctrl = ctrl || (await control());
   const amt = Number(dailyBudget);
   if (!(amt > 0)) throw new Error("budget must be a positive number");
+  const cur = ctrl.budgetCurrency ? ctrl.budgetCurrency + " " : ""; // budgets are in the account currency
   if (ctrl.maxDailyBudgetTotal && amt > ctrl.maxDailyBudgetTotal)
-    throw new Error(`budget ${CURRENCY}${amt} exceeds your account ceiling ${CURRENCY}${ctrl.maxDailyBudgetTotal}`);
-  let res = budgetRes || await campaignBudgetRes(campaignId);
+    throw new Error(`budget ${cur}${amt} exceeds your account ceiling ${cur}${ctrl.maxDailyBudgetTotal}`);
+  // Resolved here, never from the browser's (possibly stale) budgetRes, and checked as a total: the
+  // new amount must keep every spendable budget under the ceiling (and the monthly stop unreached).
+  let res = await _assertSpendLimits(campaignId, { ctrl, amount: amt });
   if (!res) throw new Error("could not resolve this campaign's budget resource");
   const op = { update: { resourceName: res, amountMicros: micros(amt) }, updateMask: "amount_micros" };
   const mres = await mutate("campaignBudgets", [op], { ctrl, label: "setBudget:" + amt });
