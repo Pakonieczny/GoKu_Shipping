@@ -2927,8 +2927,10 @@ function _windowSearches(keywords, start, end) {
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
 // today = the account's date (YYYY-MM-DD); startDate/endDate/dailyBudget/maxCpc = values chosen for a draft.
 function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market, economics, confidence, currency, nativeToUsd, today: todayYmd, orderCutoffDays, clickShare, startDate: winStart, endDate: winEnd, dailyBudget, maxCpc } = {}) {
-  const ccy = currency || CURRENCY;
-  if(ccy!=="USD")aov=Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
+  const ccy = currency || "UNVERIFIED", basis = currency || CURRENCY, usd = basis === "USD"; // texts name an unverified currency as such; the math keeps its basis
+  // Order value is in the currency the store's orders are valued in (storeSignals: GADS_CURRENCY); it converts only from that, and only USD has a rate here.
+  const orderCcy = (economics && economics.currency) || CURRENCY;
+  if(orderCcy!==basis)aov=orderCcy==="USD"&&Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
   const tierLabel = _TIER_LABEL[tier];
   // CPC: REAL Keyword Planner top-of-page bids when we have them, tier heuristic otherwise.
@@ -2945,7 +2947,7 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
     cpcSource = bidsMeasured ? (research.source || "google_keyword_planner") : "competition_estimate";
   } else {
     // Tier benchmarks are US-dollar figures; express them in the account currency.
-    const t = CPC_TIERS[tier], fx = ccy !== "USD" && Number(nativeToUsd) > 0 ? 1 / Number(nativeToUsd) : 1;
+    const t = CPC_TIERS[tier], fx = !usd && Number(nativeToUsd) > 0 ? 1 / Number(nativeToUsd) : 1;
     cpc = { low: _r2(t.low * fx), max: _r2(t.max * fx) }; cpcSource = "estimate";
   }
   // ---- ONE projection chain. Every number on the card derives from these three inputs. ----
@@ -4955,7 +4957,7 @@ function _studioCopy(group, fallback) {
   const descriptions = _studioList((group && group.descriptions || []).map(_studioSafeDescription).filter(Boolean).concat(fallback.descriptions), 5);
   return { headlines, longHeadlines, descriptions, businessName: "Brites Jewelry" };
 }
-function _studioDate(days) { const d = new Date(Date.now() + Number(days || 0) * 86400000); return d.toISOString().slice(0, 10); }
+async function _studioDate(days) { return _acctDateYmd(await _accountTz().catch(() => "America/Toronto"), Number(days || 0) * 86400000); } // the account's date: UTC runs a day ahead every Toronto evening
 
 function _designStudioBaseBlueprint() {
   const pmaxGroups = [
@@ -5263,7 +5265,7 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
   spec = spec || {}; ctrl = ctrl || (await control());
   const landingUrl = DESIGN_STUDIO_URL; // never trust a stored/client URL
   const dailyBudget = Math.max(1, Number(spec.dailyBudget) || 1);
-  const startDate = spec.startDate || _studioDate(0), endDate = spec.endDate || _studioDate(90);
+  const startDate = spec.startDate || await _studioDate(0), endDate = spec.endDate || await _studioDate(90);
   const bRes = `customers/${CID}/campaignBudgets/-1`, cRes = `customers/${CID}/campaigns/-2`;
   const tag = DESIGN_STUDIO_TAGS.pmax, schedule = _campaignScheduleFields(startDate, endDate);
   const groups = (Array.isArray(spec.groups) && spec.groups.length ? spec.groups : _designStudioBaseBlueprint().pmax.groups).slice(0, 3);
@@ -5416,8 +5418,8 @@ async function designStudioPerformance({ days = 30 } = {}) {
   const tz = await _accountTz(), end = _acctDateYmd(tz, 0), start = _acctDateYmd(tz, -(days - 1) * 86400000);
   const readiness = await designStudioConversionReadiness();
   const exactNames = [`BA · ${DESIGN_STUDIO_TAGS.pmax}`, `BA · ${DESIGN_STUDIO_TAGS.search}`];
-  const all = await metricsRange({ start, end });
-  const campaigns = (Array.isArray(all) ? all : []).filter(x => exactNames.includes(x.name)).map(x => ({
+  const all = await metricsRange({ start, end }); // { snapshot: campaign rows, currency }
+  const campaigns = (Array.isArray(all) ? all : (all && Array.isArray(all.snapshot) ? all.snapshot : [])).filter(x => exactNames.includes(x.name)).map(x => ({
     ...x, lane: x.name === exactNames[0] ? "pmax" : "search",
     metrics: _studioMetricSummary([x])
   }));
@@ -5495,7 +5497,7 @@ async function designStudioPerformance({ days = 30 } = {}) {
     cpa: funnel.apiOk && funnel.purchase ? overall.cost / funnel.purchase : null,
     roas: funnel.apiOk && overall.cost ? funnel.value / overall.cost : null,
     fxIncomplete: !!funnel.fxIncomplete };
-  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: await _accountCurrency().catch(() => null),
+  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: (all && all.currency) || "USD", accountCurrency: await _accountCurrency().catch(() => null),
     start, end, days, campaigns, overall, purchase, readiness, daily, funnel, rates, assetGroups, channelMix, searchInsights, fetchedAt: Date.now() };
   const f = fb(); if (f) { try { await f.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).set({ performance: result }, { merge: true }); } catch (e) {} }
   return result;
