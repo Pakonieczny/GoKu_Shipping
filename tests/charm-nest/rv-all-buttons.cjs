@@ -2,9 +2,11 @@
 // and resolve button and make all the buttons look the same as in the other tabs … Including the drop zone purple menu").
 // An Unknown SKU or Options card has no "Review & resolve": Print QR label (the primary until its designs are ready),
 // Complete Order, Send to Sheet (greyed and disabled until a design is dropped and read, the primary then) and the dashed
-// drop zone, the markup, classes and sizes of a custom card's, run by the same code; its question is answered in the
-// order window a click on the card opens. A line leaving Review this way has its question answered on the order timeline
-// with who, and a completed one is under Completed with its seal. Runs the sorter in headless Chromium against the local
+// drop zone, the markup, classes and sizes of a custom card's, run by the same code. No question is asked anywhere (Paul,
+// 29 Sep 01:01: the decision box removed "from the UI and the review tab, from all pop-up modals"): a click on any card,
+// a custom one's included, opens its order window, which shows no decision box, and the card unfolds nothing. A line
+// leaving Review by its buttons has its question answered on the order timeline with who, and a completed one is under
+// Completed with its seal. Runs the sorter in headless Chromium against the local
 // fake site (bridge-server.cjs): every request that is not to the loopback is aborted and the label printer is a stub, so
 // nothing is printed or written live.
 //   node tests/charm-nest/rv-all-buttons.cjs [playwright-core dir]   (CN_SHOT=file saves an Unknown SKU and a custom card)
@@ -102,13 +104,24 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
       console.log('  · screenshot: ' + shot);
     } catch (e) { console.log('  – screenshot not saved: ' + e.message); await page.click('#reviewView .egTab[data-k="unmatchedSku"]').catch(() => {}); }
 
-    // 2 · a click on the card opens the order, whose window asks the Unknown SKU question (the charm to use, nothing to
-    //     cut, hold the order): what "Review & resolve" showed
+    // 2 · a click on an Unknown SKU card, or on a custom one, opens its order; nothing asks its question: no panel on the
+    //     card, no decision box in the window (what is under it stands where it stood)
+    const asked = () => page.evaluate(() => ({ dialogs: document.querySelectorAll('dialog[open]').length, fix: document.getElementById('owFix').innerHTML, controls: [...document.querySelectorAll('#orderWin :is([data-a=alias], [data-a=nodesign], [data-a=hold], [data-a=mat], [data-a=skip], [data-pick], [data-ai])')].map(b => b.textContent.trim()), words: /waiting on a decision/i.test(document.getElementById('orderWin').textContent), panel: document.querySelectorAll('#rvList .reviewDetails, #rvList .rvItem').length }));
+    const none = { dialogs: 1, fix: '', controls: [], words: false, panel: 0 };
     await page.click(card('4175892473') + ' .purchaseSummary');
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix [data-a=alias]'), null, { timeout: 10000 });
-    assert.equal(await page.evaluate(() => document.querySelectorAll('dialog[open]').length), 1, 'one window');
-    assert.deepEqual(await page.evaluate(() => ['alias', 'nodesign', 'hold'].map(a => !!document.querySelector(`#owFix [data-a=${a}]`))), [true, true, true], 'the Unknown SKU controls, in the order window');
+    await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4175892473_41758924731', null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Unknown SKU: its order, and no question box');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    assert.equal(await page.evaluate(sel => document.querySelector(sel).querySelectorAll('.reviewDetails, .rvItem').length, card('4175892473')), 0, 'nothing unfolded on the card');
+    await page.click('#reviewView .egTab[data-k="customOrder"]');
+    await page.click(card(CUSTOM) + ' .purchaseSummary');
+    await page.waitForFunction(() => OrderWin.isOpen() && OrderWin.key() === '4174476673_41744766731', null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Custom Orders: its order, and no question box either');
+    assert.match(await page.evaluate(() => document.getElementById('owCustom').textContent), /Custom Orders/, 'its custom line (label and buttons) stays');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    await page.click('#reviewView .egTab[data-k="unmatchedSku"]');
 
     // 3 · Complete Order on an Unknown SKU line: completed by hand (how "button", by who), its question answered with who,
     //     the card leaves for Completed with its seal, under the Unknown SKU chip there
@@ -180,13 +193,16 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(() => OrderWin.isOpen()); await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
-    // 6 · Options: the same column, and its question in the order window its card opens
+    // 6 · Options: the same column; a click opens its order, which asks nothing
     await page.click('#reviewView .egTab[data-k="needsMapping"]');
     list = await buttons();
     assert.deepEqual(list.map(x => [x.rid, x.b]), [['4178100002', WANT]], JSON.stringify(list));
     assert.deepEqual(same(await page.evaluate(COLUMN, card('4178100002'))), same(cuCol), 'Options and Custom Orders: one column');
     await page.click(card('4178100002') + ' .engravingIdentity');
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix [data-pick]'), null, { timeout: 10000 });
+    await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await asked(), none, 'Options: no question box');
+    assert.equal(await page.$('#orderWin [data-pick]'), null, 'no option to map there');
     await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     await page.click('#reviewView .egTab[data-k="needsMapping"]');   // (the filter let go: Open, everything)
     list = await buttons();
@@ -194,7 +210,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
 
     assert.deepEqual(outside, [], 'no Etsy call');
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ every Review card: the custom card\'s column (Print QR label, Complete Order, Send to Sheet greyed until ready, drop zone), designs, its question in the order window (Chromium)');
+    console.log('  ✓ every Review card: the custom card\'s column (Print QR label, Complete Order, Send to Sheet greyed until ready, drop zone), designs, a click opens its order, no question box anywhere (Chromium)');
     console.log('Review buttons OK');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

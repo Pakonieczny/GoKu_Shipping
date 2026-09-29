@@ -7722,16 +7722,8 @@ const Review = window.Review = (() => {
     const it=items().find(it=>rowsOf(it).some(r=>r.key===rowKey));
     RV.filter=null;RV.cseg="open";RV.limit=RV.keep=items().length;reviewFilter=null;RV.open=it?.key || null;render();
     const c=it && reviewRows.get(it.key)?.node;
-    // (its question is answered in its order's window, which opens, as a click on the card opens it)
-    if(c){c.scrollIntoView({behavior:'smooth',block:'center'});found(c);const r=rowsOf(it)[0];if(r&&window.OrderWin){opened=mkeyOf(it);OrderWin.open(r.key);}}
-  }
-  /** The question the order window asks for a line (Review cards have no "Review & resolve" since 29 Sep: their questions
-   *  are answered there): the one whose card opened it (a line can wait on two, its Options card and its Unknown SKU card
-   *  each opening its order), else a custom order's, else the first. */
-  let opened="";
-  function askFor(rowKey) {
-    const asks=items().filter(x=>(x.rows || [x.row]).some(y=>y && y.key===rowKey) && !/^(eng|held):/.test(String(x.key)));
-    return asks.find(x=>opened && mkeyOf(x)===opened) || asks.find(x=>x.kind==="customOrder") || asks[0] || null;
+    // (the card is marked, and its order opens, as a click on the card opens it)
+    if(c){c.scrollIntoView({behavior:'smooth',block:'center'});found(c);const r=rowsOf(it)[0];if(r&&window.OrderWin)OrderWin.open(r.key);}
   }
   /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
   function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
@@ -8121,22 +8113,20 @@ const Review = window.Review = (() => {
     const refocus=putTyped(host,was);if(refocus)refocus();
   }
   function reviewRow(it) {
-    const row=it.row || rowsOf(it)[0],group=rowsOf(it),open=RV.open===it.key;
+    const row=it.row || rowsOf(it)[0],group=rowsOf(it);
     const stamp=stampOf(it);
     const cached=reviewRows.get(it.key);if(cached?.stamp===stamp)return cached.node;
-    const was=typedIn(cached?.node?.querySelector('.reviewDetails'));   // carried into the rebuilt card
     const cu=it.kind==='customOrder',rec=it.record || null,spc=row?.spec?.special || (rec?{label:rec.category || 'Custom order'}:null);
     // any other card: the custom card's buttons, for the order it shows (actOf); cx is what those buttons act on
     const ax=cu?null:actOf(it),cx=cu?it:ax,busy=cx?CustomPrint.statusHtml(cx,'sm'):'';
     // Claude's reading of a line with no design of its own: its confidence beside the label, the card's edge in its colour
     const aiChip=row&&!it.done&&(cu||it.kind==='unmatchedSku')?CustomRead.chip(row):'',conf=cu&&!it.done&&row?CustomRead.bandOf(row):'';
-    const node=el('div','doneRow workRow reviewListRow'+(open?' open':'')+(cu?' cuRow':'')+(ax?' rvCu':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
+    const node=el('div','doneRow workRow reviewListRow'+(cu?' cuRow':'')+(ax?' rvCu':'')+(it.info?(it.done?' cuDone':' cuInfo'):'')+(conf?' conf-'+conf:''));node.dataset.row=row?.key || '';node.dataset.rid=String(row?.order?.receiptId || rec?.receiptId || '');node.dataset.mkey=mkeyOf(it);
     const orders=new Set(group.map(r=>r.order.receiptId));
     const queue=cu?(it.done?(row&&!row.spec?.special?'Completed by hand':'Custom order · completed'):it.info?'Custom order':'Review required'):'Review required';
-    // no card has "Review & resolve" (a custom one since Paul, 27 Sep 19:45, every other tab's since 29 Sep 00:38): its
-    // question is answered in the order window, which a click on the card opens. Only a card with no order to open (its
-    // line no longer in the pull) shows its question in place, at a click on the card, with no button of its own
-    const decide=!it.info&&!cu&&!row;
+    // no card asks its question anywhere (Paul: no "Review & resolve", 27 Sep 19:45 and 29 Sep 00:38; the decision box
+    // gone from the order window, 28 Sep 16:45, and from the Review tab and every window, 29 Sep 01:01): a card is dealt
+    // with by its buttons (Print QR label, Complete Order, Send to Sheet, its designs), and a click on it opens its order
     // a custom card prints the sorting station's QR sticker for its order (CustomPrint), completes it without one
     // (Complete Order) or sends the order's own designs to the sheets (CustomSheet); a completed one prints it again or
     // reopens; while a label is being made, a name is asked or its Undo is offered, the card says so instead
@@ -8163,17 +8153,17 @@ const Review = window.Review = (() => {
       +(cu&&it.done&&row?`<button class="btn ghost sm" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>`:'');
     const media=row?ListMedia.pair(row):`<div class="compareUnavailable">${cu?'Order no longer in the pull':'Production review'}</div>`;
     const summary=row?purchaseMarkup(row):rec?`<div class="purchaseType"><span class="purchaseLabel">Listing</span><strong>${esc(rec.title || '—')}</strong></div>`:'<span class="purchaseMissing">Sheet-level decision</span>';
-    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(cx):''}<div class="reviewDetails"${open&&decide?'':' hidden'}></div>`;
-    const detail=node.querySelector('.reviewDetails');
-    const show=()=>{if(!decide)return;if(!detail.childNodes.length){detail.appendChild(card(it));const f=putTyped(detail,was.splice(0));if(f&&!node.isConnected)node._refocus=f;}detail.hidden=false;node.classList.add('open');node.setAttribute('aria-expanded','true');};
-    if(decide){node.tabIndex=0;node.title='Show its question';node.setAttribute('aria-expanded','false');
-      const flip=()=>{if(detail.hidden){RV.open=it.key;show();}else{RV.open=null;detail.hidden=true;node.classList.remove('open');node.setAttribute('aria-expanded','false');}};
-      node.onclick=e=>{if(!e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails'))flip();};
-      node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();flip();}};}
-    // (a card with no custom buttons still opens its order at a click: its question is answered there)
+    node.innerHTML=media+`<div class="engravingIdentity"><span class="queueLabel">${esc(queue)}</span><div class="engravingOrder"><b class="mono">${esc(row?.order?.receiptId || it.rid || 'Production')}</b><span class="sku mono">${esc(row?.spec?.designSku || row?.line?.sku || rec?.sku || '')}</span></div><span class="purchaseLabel${aiChip?' aiLabel':''}">${esc(cu?(spc?.label || 'Custom order'):(KIND_WORDS[it.kind] || it.kind))}${aiChip}</span><span class="rowExcerpt reviewReason" title="${esc(it.why || '')}">${esc((cu&&!it.info&&row&&!row.spec?.special?.decided&&row.spec?.special?.read?.summary) || it.why || 'Decision needed')}</span>${group.length>1 ? `<span class="groupScope">${orders.size} orders · ${group.length} lines · first item shown</span>` : ''}</div><div class="purchaseSummary">${summary}</div><div class="rowActions">${acts}</div>${cs?CustomSheet.stripHtml(cx):''}`;
+    // (its custom buttons as a custom card's, and a click on the card opens its order; one whose line has left the pull
+    // opens the order by its number)
     if(cx||row)wireAct(node,cx||{key:'rv:'+it.key,rows:[]},cx?cs:null,row);
+    const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
+    if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
+      const openIt=()=>OrderWin.openOrder(rid,{from:node});
+      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
+      node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
-    if(open&&decide)show();reviewRows.set(it.key,{stamp,node});return node;
+    reviewRows.set(it.key,{stamp,node});return node;
   }
   /** A card's custom buttons (cx: what they act on; cs: its designs, when it takes them), and a click that opens its order:
    *  a custom card's, and since 28 Sep every other card's in Review. */
@@ -8186,8 +8176,8 @@ const Review = window.Review = (() => {
     // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
     // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
     if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
-      const openIt=()=>{opened=node.dataset.mkey || '';OrderWin.open(row.key);};
-      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.reviewDetails,.cuDesigns'))return;openIt();};
+      const openIt=()=>OrderWin.open(row.key);
+      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
   /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
@@ -8317,7 +8307,7 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     return cl.open.concat(cl.done).find(it => (it.rows || []).some(r => r.key === rowKey)) || null;
   }
-  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, askFor, problemText, syncOrderItems, focus, showCard, repool, customItemFor, actFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
+  return { view: () => RV, settled: () => settled, items, count, add, remove, render, card, cardIn, leaveCard, problemText, syncOrderItems, focus, showCard, repool, customItemFor, actFor, printable, cardKey: row => customKey(row).slice(4), _kept: () => ({ asked: askedSeen.size, skip: skipSeen.size }) };
 })();
 
 /* ═══ 24b · Sandbox — a stored copy of the open orders, an emulated Etsy, isolated records (nothing real is touched) ═══ */
@@ -9228,28 +9218,18 @@ const OrderWin = window.OrderWin = (() => {
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
-    // the question this line waits on, answered here; its card stays while the question is the same, so a repaint (a
-    // repool, another order arriving) never empties a field being typed in. Since the Review cards lost "Review &
-    // resolve" (Paul, 29 Sep 00:38) every question (an unknown SKU, an option to map, a custom order's) is answered here,
-    // the window a click on its card opens: that card's question first (Review.askFor; 28 Sep only a custom order's was)
+    // no decision box: a line's question (a custom order's, an option to map, an unknown SKU) is asked nowhere, in this
+    // window or in Review (Paul, 28 Sep 16:45: "remove this from the UI ... move up everything that is below to fill up
+    // the empty space"; 29 Sep 01:01: "Remove this from the UI and the review tab, from all pop-up modals"): its Review
+    // card's buttons deal with it, and what was under the box stands where it stood
+    // (a line whose engraving is still to be settled says so, with the way to the Engraving tab: no question is asked)
     const fix = byId("owFix"), fold = foldFrom(fix, r.key);
-    const item = inPull(r.key) ? Review.askFor(r.key) : null;
-    if (item) {
-      let slot = fix.querySelector(".owFix > .owFixCard");
-      if (!slot) { fix.innerHTML = ""; const box = el("div", "owFix", '<div class="t">This line is waiting on a decision</div>'); slot = el("div", "owFixCard"); box.appendChild(slot); fix.appendChild(box); }
-      Review.cardIn(slot, item);
-    } else {
-      // an answered question folds away where it was (a still copy of it folds up as it fades), never vanishing at once
-      const had = fix.querySelector(".owFix > .owFixCard"), box = had && had.parentNode;
-      if (had) Review.leaveCard(had);   // (what was picked there waits for its order to be shown again)
-      if (fold && box && fold.rect && fold.rect.height) fold.g = Motion.ghost(box, fold.rect, null, box);
-      fix.innerHTML = "";
-      if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
-        const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
-        const b = el("button", "btn ghost sm", "Open it in Engraving");
-        b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
-        box.appendChild(b); fix.appendChild(box);
-      }
+    fix.innerHTML = "";
+    if (inPull(r.key) && r.engrave && r.engrave.needed && !r.engrave.approved) {
+      const box = el("div", "owFix", '<div class="t">Its engraving is still to be settled</div>');
+      const b = el("button", "btn ghost sm", "Open it in Engraving");
+      b.onclick = () => { W.dlg.close(); setMode("engrave"); Engrave.render(); };
+      box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key)) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
     foldTo(fold);
@@ -9258,7 +9238,7 @@ const OrderWin = window.OrderWin = (() => {
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
   }
-  /** A custom order's own line above its decision: what kind it is, where it stands, and its QR label — the same
+  /** A custom order's own line: what kind it is, where it stands, and its QR label — the same
    *  sorting-station sticker, printed and completed as from its Custom Orders card (CustomPrint). One line, no window. */
   function paintCustom(r) {
     const fix = byId("owFix"); if (!fix || !fix.parentNode) return;
@@ -9269,7 +9249,7 @@ const OrderWin = window.OrderWin = (() => {
     if (!it) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; return; }
     const busy = CustomPrint.statusHtml(it, "xs"), can = Review.printable(it);
     const label = (r.spec.special && r.spec.special.label) || (it.record && it.record.category) || it.category || "Custom order";
-    const why = it.info || it.done ? it.why : can ? "decide below, or print its label once made by hand" : "a decision waits below";
+    const why = it.info || it.done ? it.why : can ? "print its label once made by hand, or complete it" : it.why || "its lines are on the sheets";
     const rec = it.record || null, printed = !!(it.done && rec && window.Seal && Seal.hasPrint(rec));
     const stamp = JSON.stringify([it.key, label, why, CustomPrint.stamp(it), !!it.done, can, rec && (rec.stamps || []).length, rec && rec.prints]);
     bar.hidden = false;
