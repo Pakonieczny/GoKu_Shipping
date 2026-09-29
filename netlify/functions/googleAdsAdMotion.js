@@ -255,17 +255,38 @@ function createMotionService(D){
    for(const f of ready.slice(0,8)){const row=await f.place.ref.collection('editorAIJobs').doc(f.j.id).collection('data').doc('result').get();if(row.exists&&row.data().responsive){editorId=f.j.id;home=f.place.ref;break;}}
    if(!editorId)waiting=found.filter(f=>f.j.phase!=='ready').sort(best)[0]?.j||null;
   }
-  if(!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error(waiting?'The AI design for this ad is not finished yet ('+String(waiting.phase||'in progress').replace(/_/g,' ')+'). Finish or apply it in the Static ads tab, then generate animated ads.':'Run AI Design (with a generated scene) for this ad in the Static ads tab first, then generate animated ads.');
-  const editor=home.collection('editorAIJobs').doc(editorId),[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
-  if(!record.exists||record.data().phase!=='ready'||!saved.exists||!saved.data().responsive||!request.exists)throw new Error('The product scene is still being designed. Its animation will follow when ready.');
-  const editorScope=record.data().scope;if(!input.fromEditorWorker&&!sameProduct(record.data()))throw new Error('This animated ad belongs to another product or group.');if(w.archivedAt)throw Error('This ad was deleted.');
+  // Still nothing: use the ad's saved design. Its AI design may sit in the workspace that saved it, and failing that its own photos and
+  // the saved messaging are enough to make a film (no new image or text purchase).
+  let basis=null;
+  if(!editorId&&!input.fromEditorWorker&&D.motionBasis){
+   try{basis=await D.motionBasis({workspaceId:input.workspaceId,productId:input.productId,groupRef:input.groupRef});}catch{basis=null;}
+   if(basis?.aiJob){try{if(basis.aiJob.workspaceId!==input.workspaceId)home=(await D.context(basis.aiJob.workspaceId)).ref;editorId=basis.aiJob.id;}catch{editorId=null;home=ref;}}
+  }
+  const ownFilm=!editorId&&!!basis?.sources?.length;
+  if(!ownFilm&&!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error(waiting?'The AI design for this ad is not finished yet ('+String(waiting.phase||'in progress').replace(/_/g,' ')+'). Finish or apply it in the Static ads tab, then generate animated ads.':'This ad has no saved design yet. Open the editor and save one (or run AI Design), then generate animated ads.');
+  if(w.archivedAt)throw Error('This ad was deleted.');
+  let editor=null,record=null,saved=null,request=null,editorScope={productId:input.productId,groupRef:input.groupRef};
+  if(!ownFilm){
+   editor=home.collection('editorAIJobs').doc(editorId);[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
+   if(!record.exists||record.data().phase!=='ready'||!saved.exists||!saved.data().responsive||!request.exists)throw new Error('The product scene is still being designed. Its animation will follow when ready.');
+   editorScope=record.data().scope;if(!input.fromEditorWorker&&!sameProduct(record.data()))throw new Error('This animated ad belongs to another product or group.');
+  }
   const groupRef=input.fromEditorWorker?editorScope.groupRef:input.groupRef,product=products.find(p=>bare(p.id)===bare(editorScope.productId)),group=(w.context.groups||[]).find(g=>g.ref===groupRef);if(!product||!group)throw Error('The saved animation product or group is no longer available.');
-  const editorWorkspaceId=home===ref?input.workspaceId:home.id,crossGroup=group.ref!==editorScope.groupRef,priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>j.editorJobId===editorId&&j.resetAt&&String(j.productId)===String(product.id)&&j.groupRef===group.ref).sort((a,b)=>b.resetAt-a.resetAt)[0];
-  const refreshed=await identityFor(editorWorkspaceId,editorId);
-  const result=saved.data(),evidenceRow=await editor.collection('data').doc('evidence').get(),id='motion_'+hash(editorId+(crossGroup?':for:'+group.ref:'')+':v'+PIPELINE+(lastDiscard?':after:'+lastDiscard.id:'')).slice(0,40),target=jobs(ref).doc(id);
+  const basisId=ownFilm?basis.design.id:null,editorWorkspaceId=home===ref?input.workspaceId:home.id,crossGroup=!ownFilm&&group.ref!==editorScope.groupRef,priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>(j.editorJobId||null)===(editorId||null)&&(j.basisDesignId||null)===basisId&&j.resetAt&&String(j.productId)===String(product.id)&&j.groupRef===group.ref).sort((a,b)=>b.resetAt-a.resetAt)[0];
+  let plan,sourceImages,originalSources,research=null;
+  if(ownFilm){
+   const said=w.messaging&&bare(w.messaging.productId)===bare(product.id)&&w.messaging.groupRef===group.ref&&w.messaging.copy||{},pick=(list,max)=>(Array.isArray(list)?list:[]).map(v=>String(v?.text||v||'').replace(/\s+/g,' ').trim()).find(v=>v&&v.length<=max)||'';
+   const title=String(product.title||'').replace(/\s+/g,' ').trim(),shortHeadline=pick(said.headlines,30)||title.slice(0,30),headline=pick(said.longHeadlines,72)||pick(said.headlines,72)||title.slice(0,72),description=pick(said.descriptions,90);
+   plan={copy:{headline,shortHeadline,description,cta:'Shop now'},nativeCopy:{headlines:(Array.isArray(said.headlines)?said.headlines:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,15),longHeadlines:(Array.isArray(said.longHeadlines)?said.longHeadlines:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,5),descriptions:(Array.isArray(said.descriptions)?said.descriptions:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,5)},style:{background:'#fff9f0',ink:'#302318'},imageDirections:[],layouts:[]};
+   sourceImages=basis.sources;originalSources=basis.originalSources?.length?basis.originalSources:basis.sources;
+  }else{
+   const refreshed=await identityFor(editorWorkspaceId,editorId),evidenceRow=await editor.collection('data').doc('evidence').get();
+   plan=saved.data().responsive.plan;sourceImages=saved.data().sources;originalSources=refreshed||request.data().identitySources||request.data().sources;research=evidenceRow.exists?evidenceRow.data():null;
+  }
+  const id='motion_'+hash((ownFilm?'design:'+basisId:editorId)+(crossGroup?':for:'+group.ref:'')+':v'+PIPELINE+(lastDiscard?':after:'+lastDiscard.id:'')).slice(0,40),target=jobs(ref).doc(id);
   await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),existing=await tx.get(target);if(current.data().archivedAt)throw Error('This ad was deleted.');if(!input.fromEditorWorker)scope(current.data(),input);if(existing.exists)return;
-   captionCopy({...result.responsive.plan,renderVersion:10});
-   tx.set(target,{id,pipelineVersion:PIPELINE,renderVersion:10,research:evidenceRow.exists?evidenceRow.data():null,productFacts:{title:product.title,description:String(product.description||'').slice(0,6000),url:product.url},editorJobId:editorId,...(home!==ref?{editorWorkspaceId}:{}),workspaceId:input.workspaceId,productId:product.id,groupRef:group.ref,title:product.title,destination:product.url,phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),leaseUntil:0,owner:null,progress:{pct:0,label:'Preparing product research and brand direction'},plan:result.responsive.plan,sourceImages:result.sources,originalSources:refreshed||request.data().identitySources||request.data().sources,masters:{},variants:[],estimatedUsd:2*SECONDS*OUTPUT_USD_PER_SECOND,costEstimated:true,provider:MODEL,seconds:SECONDS,inFlight:null,error:null});
+   captionCopy({...plan,renderVersion:10});
+   tx.set(target,{id,pipelineVersion:PIPELINE,renderVersion:10,research,productFacts:{title:product.title,description:String(product.description||'').slice(0,6000),url:product.url},editorJobId:editorId||null,...(basisId?{basisDesignId:basisId}:{}),...(!ownFilm&&home!==ref?{editorWorkspaceId}:{}),workspaceId:input.workspaceId,productId:product.id,groupRef:group.ref,title:product.title,destination:product.url,phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),leaseUntil:0,owner:null,progress:{pct:0,label:'Preparing product research and brand direction'},plan,sourceImages,originalSources,masters:{},variants:[],estimatedUsd:2*SECONDS*OUTPUT_USD_PER_SECOND,costEstimated:true,provider:MODEL,seconds:SECONDS,inFlight:null,error:null});
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
  }
  // One reviewed deduction, one bounded correction. Films, captions and
@@ -351,10 +372,12 @@ function createMotionService(D){
   const continueSaved=async()=>{await save({phase:'queued',leaseUntil:0});return {ok:true,continue:true,workspaceId:job.workspaceId,jobId:job.id};};
   try{
    if(job.pipelineVersion>=2&&!job.creativeDirection){
-    const editor=ref.collection('editorAIJobs').doc(job.editorJobId);
-    if(!job.research){const evidence=await editor.collection('data').doc('evidence').get();if(evidence.exists)job.research=evidence.data();}
-    const saved=await editor.collection('data').doc('result').get();
-    if(saved.exists&&saved.data().responsive?.plan)job.plan=saved.data().responsive.plan;
+    if(job.editorJobId&&!job.editorWorkspaceId){
+     const editor=ref.collection('editorAIJobs').doc(job.editorJobId);
+     if(!job.research){const evidence=await editor.collection('data').doc('evidence').get();if(evidence.exists)job.research=evidence.data();}
+     const saved=await editor.collection('data').doc('result').get();
+     if(saved.exists&&saved.data().responsive?.plan)job.plan=saved.data().responsive.plan;
+    }
     const receipt=target.collection('receipts').doc('direction'),prior=await receipt.get();
     if(job.inFlight&&!prior.exists)throw Error('The product motion plan has no confirmed response; its paid request is protected.');
     await save({inFlight:{key:'direction',requestId:job.inFlight?.requestId||crypto.randomUUID()},progress:{pct:3,label:'Researching the product’s story, setting, lighting and movement'}});

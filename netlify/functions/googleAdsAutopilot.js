@@ -11418,6 +11418,7 @@ function _motionEngine(){
   loadAsset:_loadCreativeAsset,reviewImages:_designEngineAdapters().reviewImages,planMotion:_designEngineAdapters().responses,
   // A film re-reads the operator's framing from the saved canvas before it generates.
   identityFor:(workspaceId,jobId)=>_designEngine().editorIdentity({workspaceId,jobId}),
+  motionBasis:input=>_designEngine().editorMotionBasis(input),
   videoRequest:provider.request,videoContent:provider.content,
   saveVideo:async(id,bytes,kind,info={})=>{if(!/^[a-zA-Z0-9_-]+$/.test(id)||!/^[a-zA-Z0-9_-]+$/.test(kind))throw Error('Invalid video storage key.');const hash=creativeHash(bytes.toString('base64')),ext=info.mimeType==='image/jpeg'?'jpg':'mp4',path=`Brites_GAds_Motion/${id}/${kind}-${hash}.${ext}`,bucket=fb().admin.storage().bucket();await require('./googleAdsAdDesignAdapters').ensureCreativeCors(bucket);await bucket.file(path).save(bytes,{resumable:false,metadata:{contentType:info.mimeType||'video/mp4',cacheControl:'private,max-age=3600'}});return {path,hash,bytes:bytes.length,...info};},
   loadVideo:async a=>{if(!valid(a))throw Error('Invalid saved video.');const [bytes]=await fb().admin.storage().bucket().file(a.path).download();if(creativeHash(bytes.toString('base64'))!==a.hash)throw Error('The saved video changed.');return bytes;},

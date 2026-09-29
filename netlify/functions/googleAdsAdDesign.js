@@ -393,6 +393,24 @@ function createAdDesignService(deps) {
     return {savedDesigns:await Promise.all(page.map(async d=>({...d,url:await deps.signAsset(d.asset),thumbnailUrl:await deps.signAsset(d.thumbnail||d.asset)}))),savedDesignCursor:ordered.length>60?page[page.length-1].createdAt:null,imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
   }
   async function editorSavedDesigns(input={}){const w=await read(input.workspaceId);editorScope(w,input);return {ok:true,...await savedDesignGallery(w,input.before)};}
+  // What an animated film can be made from without buying anything new: this product's finished AI design (it may sit in the
+  // workspace that saved the design), else the newest saved design's own photographs.
+  async function editorMotionBasis(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);
+    const designs=[];for(const t of await savedDesignTargets(w))for(const d of (await t.ref.get()).docs){const x=d.data();if(!x.deletedAt&&productKey(x.productId)===productKey(input.productId))designs.push(x);}
+    designs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+    const workspaces=[...new Set([input.workspaceId,...designs.slice(0,8).map(d=>d.workspaceId).filter(id=>id&&token(id))])];
+    for(const workspaceId of workspaces){
+      const rows=await refFor(workspaceId).collection('editorAIJobs').get(),jobs=rows.docs.map(d=>({...d.data(),id:d.data().id||d.id})).filter(j=>j.phase==='ready'&&!j.resetAt&&productKey(j.scope?.productId)===productKey(input.productId)).sort((a,b)=>((b.scope.groupRef===input.groupRef)-(a.scope.groupRef===input.groupRef))||(b.createdAt||0)-(a.createdAt||0));
+      for(const job of jobs.slice(0,6)){const row=await refFor(workspaceId).collection('editorAIJobs').doc(job.id).collection('data').doc('result').get();if(row.exists&&row.data().responsive)return {aiJob:{id:job.id,workspaceId}};}
+    }
+    for(const design of designs.slice(0,6)){
+      const owner=design.workspaceId&&token(design.workspaceId)?design.workspaceId:input.workspaceId,sources=[];
+      for(const id of design.sourceIds||[]){const row=await refFor(owner).collection('editorSources').doc(id).get();if(row.exists&&row.data().asset)sources.push(clean({id:row.data().id||id,asset:row.data().asset,width:row.data().width,height:row.data().height,title:row.data().title,source:row.data().source,productIds:row.data().productIds}));}
+      if(sources.length){const product=sources.filter(x=>x.source?.kind==='product');return {design:{id:design.id,name:design.name||''},sources,originalSources:product};}
+    }
+    return null;
+  }
   async function editorOpenSavedDesign(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose a saved design.');
     const found=await savedDesignRecord(w,input.id),design=found&&found.design;if(!design||design.deletedAt)throw new Error('This saved design was deleted or is no longer available.');
@@ -1440,7 +1458,7 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorMotionBasis, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
 

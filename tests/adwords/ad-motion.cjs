@@ -213,7 +213,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  bunny.D.context=async()=>({ref:bunny.ref,w:(await bunny.ref.get()).data(),products:[{id:'p',title:'Pendant',url:'https://example.test/p'},{id:'b',title:'Bunny',url:'https://example.test/b'}]});
  const bunnyScope={productId:'b',groupRef:'g'};let noDesign='';
  try{await bunny.service.start({workspaceId:'design_test',...bunnyScope});}catch(e){noDesign=e.message;}
- ok(/Run AI Design/.test(noDesign)&&!/belongs to another/.test(noDesign),'a product with no design of its own is told to run AI Design, not blamed on its scope ('+noDesign+')');
+ ok(/no saved design yet/.test(noDesign)&&!/belongs to another/.test(noDesign),'a product with no design of its own is told to run AI Design, not blamed on its scope ('+noDesign+')');
  ok((await bunny.ref.collection('motionJobs').get()).docs.length===0,'nothing is queued from the other product\'s design');
  const bunnyId='eai_'+'b'.repeat(40),bunnyDesign=bunny.ref.collection('editorAIJobs').doc(bunnyId);
  await bunnyDesign.set({id:bunnyId,scope:bunnyScope,phase:'ready',createdAt:5});await bunnyDesign.collection('data').doc('request').set({sources:[{asset:{path:'photo'}}]});await bunnyDesign.collection('data').doc('result').set({responsive:{plan:{nativeCopy:{headlines:['Bunny','A little luck']},layouts:[]}},sources:[{asset:{path:'photo'},width:100,height:100}]});
@@ -238,6 +238,16 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  await waiting.ref.collection('editorAIJobs').doc('eai_'+'e'.repeat(40)).set({id:'eai_'+'e'.repeat(40),scope:bunnyScope,phase:'awaiting_review',createdAt:8});
  let notDone='';try{await waiting.service.start({workspaceId:'design_test',...bunnyScope});}catch(e){notDone=e.message;}
  ok(/not finished yet \(awaiting review\)/.test(notDone),'a design still awaiting review is named as unfinished ('+notDone+')');
+
+ // No AI design anywhere, but the ad has a saved design: the film is made from that design's photos and the saved messaging, start to finish.
+ const saved=await setup();
+ await saved.ref.set({settings:bunnyScope,messaging:{productId:'b',groupRef:'g',copy:{headlines:['Bunny Pendant','A little luck'],longHeadlines:['A little luck to wear every single day'],descriptions:['Handmade bunny pendant necklace.']}}},{merge:true});
+ saved.D.context=async()=>({ref:saved.ref,w:(await saved.ref.get()).data(),products});
+ saved.D.motionBasis=async()=>({design:{id:'saved_design_1',name:'Bunny'},sources:[{id:'photo_1',asset:{path:'photo'},width:100,height:100}],originalSources:[]});
+ const savedStart=await saved.service.start({workspaceId:'design_test',...bunnyScope}),savedJob=(await saved.ref.collection('motionJobs').doc(savedStart.jobId).get()).data();
+ ok(savedJob.editorJobId===null&&savedJob.basisDesignId==='saved_design_1'&&savedJob.productId==='b'&&savedJob.plan.copy.shortHeadline==='Bunny Pendant'&&savedJob.plan.copy.description==='Handmade bunny pendant necklace.','a film is queued from the saved design and the saved messaging');
+ const savedRun=await saved.service.run({workspaceId:'design_test',jobId:savedStart.jobId}),savedStatus=await saved.service.status({workspaceId:'design_test',...bunnyScope});
+ ok(savedRun.ok&&savedStatus.phase==='ready'&&savedStatus.variants.length===3,'the film made from a saved design runs to three finished sizes ('+savedRun.error+')');
 
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
  require('./suite-guard.cjs').done();
