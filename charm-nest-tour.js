@@ -204,12 +204,19 @@
    *  coming down is re-aimed. */
   function resized(t) {
     t.capAt = capAtOf();
-    const n = t.cap; if (n && n.isConnected) { for (const a of n.getAnimations()) tryDo(() => a.cancel()); n.style.opacity = ""; n.style.transform = capPlace(t, n, 0); }
+    // (each glides there from where it is drawn now, in a moment: set there at once, it jumped across the screen)
+    const glide = (n, to, op) => {
+      const cs = getComputedStyle(n), from = { transform: cs.transform === "none" ? to : cs.transform, opacity: cs.opacity };
+      for (const a of n.getAnimations()) tryDo(() => a.cancel());
+      Object.assign(n.style, { transform: to, opacity: op });
+      if (!t.ff && !t.gentle) t.anim(n, [from, { transform: to, opacity: op }], { duration: 320, easing: SOFT, fill: "none" });
+    };
+    const n = t.cap; if (n && n.isConnected) glide(n, capPlace(t, n, 0), "1");
     // the coin waiting in the Nest tab stays hanging from it (the pieces still to go leave from there)
     const c = t.coin, d = t.dock;
     if (c && c.isConnected && d && c._at === d && c.getAnimations().every(a => a.playState === "finished")) {
       const d1 = dockOf();
-      if (Math.hypot(d1.x - d.x, d1.y - d.y) > 1) { for (const a of c.getAnimations()) tryDo(() => a.cancel()); Object.assign(c.style, { transform: tf(d1), opacity: "1" }); c._at = t.dock = d1; }
+      if (Math.hypot(d1.x - d.x, d1.y - d.y) > 1) { glide(c, tf(d1), "1"); c._at = t.dock = d1; }
     }
     reaim(t);
   }
