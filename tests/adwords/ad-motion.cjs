@@ -206,6 +206,20 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  const safeJob=await safe.service.start({workspaceId:'design_test',...safe.scope});
  ok((await safe.ref.collection('motionJobs').doc(safeJob.jobId).get()).data().originalSources[0].asset.path==='pinned-original','an unavailable resolver falls back to the pinned reference rather than stopping the film');
 
+ // A workspace switched from one product to another keeps its editorAI pointer on the first product's design.
+ // Animating the second product must use its own finished design, never fail with a scope error, and never borrow the other one.
+ const bunny=await setup();
+ await bunny.ref.set({settings:{productId:'b',groupRef:'g'}},{merge:true});
+ bunny.D.context=async()=>({ref:bunny.ref,w:(await bunny.ref.get()).data(),products:[{id:'p',title:'Pendant',url:'https://example.test/p'},{id:'b',title:'Bunny',url:'https://example.test/b'}]});
+ const bunnyScope={productId:'b',groupRef:'g'};let noDesign='';
+ try{await bunny.service.start({workspaceId:'design_test',...bunnyScope});}catch(e){noDesign=e.message;}
+ ok(/Run AI Design/.test(noDesign)&&!/belongs to another/.test(noDesign),'a product with no design of its own is told to run AI Design, not blamed on its scope ('+noDesign+')');
+ ok((await bunny.ref.collection('motionJobs').get()).docs.length===0,'nothing is queued from the other product\'s design');
+ const bunnyId='eai_'+'b'.repeat(40),bunnyDesign=bunny.ref.collection('editorAIJobs').doc(bunnyId);
+ await bunnyDesign.set({id:bunnyId,scope:bunnyScope,phase:'ready',createdAt:5});await bunnyDesign.collection('data').doc('request').set({sources:[{asset:{path:'photo'}}]});await bunnyDesign.collection('data').doc('result').set({responsive:{plan:{nativeCopy:{headlines:['Bunny','A little luck']},layouts:[]}},sources:[{asset:{path:'photo'},width:100,height:100}]});
+ const bunnyStart=await bunny.service.start({workspaceId:'design_test',...bunnyScope}),bunnyJob=(await bunny.ref.collection('motionJobs').doc(bunnyStart.jobId).get()).data();
+ ok(bunnyJob.editorJobId===bunnyId&&bunnyJob.productId==='b'&&bunnyJob.title==='Bunny','the product\'s own finished design is animated even though the workspace pointer names another product\'s');
+
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});

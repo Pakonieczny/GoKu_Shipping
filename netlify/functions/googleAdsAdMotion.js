@@ -239,7 +239,17 @@ function createMotionService(D){
   if(input.rerunOf)return repair({...input,repairOf:input.rerunOf,explicitRerun:true});
   if(input.repairOf)return repair(input);
   const {ref,w,products}=await D.context(input.workspaceId);if(!input.fromEditorWorker)scope(w,input);
-  const matching=(!input.editorJobId&&!input.fromEditorWorker)?(await ref.collection('editorAIJobs').get()).docs.map(d=>d.data()).filter(j=>j.phase==='ready'&&!j.resetAt&&j.scope.productId===input.productId&&j.scope.groupRef===input.groupRef).sort((a,b)=>b.createdAt-a.createdAt)[0]:null;const editorId=input.editorJobId||matching?.id||w.editorAI?.id;if(!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error('Run AI Design to prepare a product scene before animating it.');
+  // Use this ad's own finished AI design. The workspace's editorAI pointer follows whichever design ran last,
+  // so after switching products it can name another product's design; that one is never borrowed.
+  const bare=id=>String(id||'').split('/').pop(),forThisAd=j=>!!j&&!!j.scope&&bare(j.scope.productId)===bare(input.productId)&&j.scope.groupRef===input.groupRef;
+  let editorId=input.editorJobId||null;
+  if(!editorId&&input.fromEditorWorker)editorId=w.editorAI?.id||null;
+  if(!editorId){
+   const own=(await ref.collection('editorAIJobs').get()).docs.map(d=>({...d.data(),id:d.data().id||d.id})).filter(j=>j.phase==='ready'&&!j.resetAt&&forThisAd(j)).sort((a,b)=>b.createdAt-a.createdAt);
+   if(w.editorAI?.id){const at=own.findIndex(j=>j.id===w.editorAI.id);if(at>0)own.unshift(...own.splice(at,1));}
+   for(const j of own.slice(0,8)){const row=await ref.collection('editorAIJobs').doc(j.id).collection('data').doc('result').get();if(row.exists&&row.data().responsive){editorId=j.id;break;}}
+  }
+  if(!/^eai_[a-f0-9]{40}$/.test(editorId||''))throw new Error('Run AI Design to prepare a product scene for this ad before animating it.');
   const editor=ref.collection('editorAIJobs').doc(editorId),[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
   if(!record.exists||record.data().phase!=='ready'||!saved.exists||!saved.data().responsive||!request.exists)throw new Error('The product scene is still being designed. Its animation will follow when ready.');
   const editorScope=record.data().scope;if(!input.fromEditorWorker)scope(w,editorScope);if(w.archivedAt)throw Error('This ad was deleted.');const product=products.find(p=>String(p.id)===String(editorScope.productId)),group=(w.context.groups||[]).find(g=>g.ref===editorScope.groupRef);if(!product||!group)throw Error('The saved animation product or group is no longer available.');const priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>j.editorJobId===editorId&&j.resetAt&&String(j.productId)===String(editorScope.productId)&&j.groupRef===editorScope.groupRef).sort((a,b)=>b.resetAt-a.resetAt)[0];
