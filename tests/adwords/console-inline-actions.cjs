@@ -146,14 +146,15 @@ await test('a researched occasion date names its source; research lists the page
   channel='pmax';rw.renderScanAudit();assert.equal(rd.querySelector('.scanPages'),null,'product ads research does not claim the Search pages');r.window.close();
 });
 
-await test('asking Google for the serving check shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
-  const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;
-  Object.assign(vw,{DASH:{},api:()=>new Promise((res,rej)=>{answer={res,rej};}),servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
+await test('asking Google for the serving check asks for servingCheck alone and shows the standard spinner, through a redraw; a failure gives the button back',async()=>{
+  const v=new JSDOM('<!doctype html><body><div id="host"></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document,host=vd.getElementById('host');let answer;const asked=[];
+  Object.assign(vw,{DASH:{},api:(action,body)=>{asked.push([action,JSON.parse(JSON.stringify(body))]);return new Promise((res,rej)=>{answer={res,rej};});},servingOf:()=>null,servingClass:()=>'',servingBadgeAttrs:()=>({cls:'',text:'',title:''}),renderServing:s=>'<p class="answer">'+s.headline+'</p>',
     servingStoredHtml:()=>'<div class="servHead"><b>Google serving check</b><button type="button" class="btn ghost sm servRun">Check with Google</button></div>'});
   vw.eval([html.match(/^var SERV_ASK=\{\};$/m)[0]].concat(['esc','btnBusy','loadServing','wireServing'].map(pick)).join('\n'));
   const draw=()=>{host.innerHTML='<div class="servbox" data-sc="5">'+vw.servingStoredHtml()+'</div>';vw.wireServing(host);},btn=()=>host.querySelector('.servRun'),spin='<span class="spin bspin"></span>Asking Google…';
   draw();let b=btn(),run=vw.loadServing(host.querySelector('.servbox'));
   assert.equal(b.disabled,true);assert.equal(b.innerHTML,spin);assert.equal(await vw.loadServing(host.querySelector('.servbox')),undefined,'one ask at a time');
+  assert.deepEqual(asked,[['servingCheck',{id:'5'}]],'the check asks the server for the serving check alone');assert.doesNotMatch(html,/campaignTimeline/,'nothing on the page asks for the old timeline');
   answer.rej(new Error('Google did not answer.'));await run;
   assert.equal(b.disabled,false);assert.equal(b.textContent,'Check with Google','the button keeps its own words');
   assert.equal(host.querySelector('.servErr').textContent,'Google serving check failed: Google did not answer.');
