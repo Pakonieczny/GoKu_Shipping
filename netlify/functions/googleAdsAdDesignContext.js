@@ -37,7 +37,7 @@ function extractCurrentCreative(snapshot,context={}){
     }else if(selection.channel==='search'){
       const ad=(components.searchAds||[]).find(row=>(row.resourceName===selection.ref||row.adGroupAdResourceName===selection.ref)&&row.status!=='REMOVED');if(!ad)continue;
       const rsa=ad.responsiveSearchAd||{};groups.push({groupRef:selection.ref,copy:{headlines:text(rsa.headlines),longHeadlines:[],descriptions:text(rsa.descriptions),path1:rsa.path1||'',path2:rsa.path2||''},finalUrls:ad.finalUrls||[],status:ad.status||'ENABLED'});
-      (components.searchImageLinks||[]).filter(row=>row.adGroup===ad.adGroup&&row.fieldType==='IMAGE').forEach(row=>addImage(row,selection.ref));
+      (components.searchImageLinks||[]).filter(row=>row.adGroup===ad.adGroup&&row.fieldType==='AD_IMAGE').forEach(row=>addImage(row,selection.ref));
     }
   }
   return {source:'Current Google Ads snapshot',capturedAt:snapshot&&snapshot.capturedAt||null,images,groups,warnings:[...new Set(warnings)]};
