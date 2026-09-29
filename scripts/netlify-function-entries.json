@@ -170,6 +170,8 @@
   ],
   "modules": [
     "_adsCheckGate.js",
+    "_beadyCharmCap.js",
+    "_beadyCharmCapFlat.js",
     "_editPasscode.js",
     "_charmNestAgent.js",
     "_charmNestAsset.js",

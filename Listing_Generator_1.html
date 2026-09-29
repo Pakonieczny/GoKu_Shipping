@@ -10251,6 +10251,11 @@ async function generateCharmQuad(targetCharmRef, targetEarringRef, charmConcept,
     // Beady requests sent from older tabs or queued earlier
     // (withCurrentBeadyCharmSize in geminiImageProxy-background.js); change
     // both together.
+    // Measured on finished sets (2026-09-29), this wording barely moves the
+    // charm: the image model copies the placeholder charm of the reference
+    // photo. The size is therefore also set after generation, by
+    // _beadyCharmCap.js (batch collection and Redo): the charm the model drew
+    // is shrunk to 0.87 and the vacated area repainted. Slots 1 to 5 only.
     const NECKLACE_MODEL_CHARM_SIZE = `CHARM SIZE AND CAMERA SCALE — REQUIRED 25% REDUCTION
     The charm must be visibly 25% smaller in BOTH width and height than the previous baseline. This is a required linear-size correction, not a suggestion or an area reduction. Preserve the source aspect ratio and all design details.
     For a model with visible chin and collarbone dip, the FINAL charm height is chin-to-dip distance × 0.75 / 7 (the previous distance / 7 baseline multiplied by 0.75). For a product-only scene, or when those landmarks are not visible, use 0.75 times the template placeholder charm's height and preserve the new charm's proportions. Do not invent an anatomical measurement in a product-only scene.
