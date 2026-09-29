@@ -4,6 +4,7 @@
 */
 
 const admin = require("./firebaseAdmin");
+const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
@@ -15687,8 +15688,33 @@ async function _handlerImpl(event) {
         perSetSlotResults.set(route.setIndex, arr);
       };
 
+      // Beady Necklace charm size is set here, not by the prompt (see
+      // _beadyCharmCap.js): the picture and the reference photo it was made from.
+      const capByKey = new Map();
+      for (let setIdx = 0; setIdx < setsMeta.length; setIdx++) {
+        for (const t of (setsMeta[setIdx]?.tasks || [])) {
+          const slot = Number(t?.slotIndex);
+          if (!Number.isFinite(slot) || String(t?.type) === "copy") continue;
+          if (t?.input_charm_storage_path && t?.input_storage_path) {
+            capByKey.set(`s${setIdx}_slot${slot}`, { category: setsMeta[setIdx]?.category, template: t.input_storage_path });
+          }
+        }
+      }
+
       const uploadOne = async (route, buffer, key) => {
         try {
+          const cap = capByKey.get(key);
+          if (cap) {
+            // Skip when the file is already there (a concurrent collector won);
+            // the create-only save below would discard the work anyway.
+            const [already] = await bucket.file(`${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`).exists();
+            if (!already) {
+              buffer = await capBeadyCharmSize({
+                category: cap.category, slotIndex: route.slotIndex, buf: buffer,
+                loadTemplate: async () => (await storagePathToBuffer(cap.template)).buffer,
+              });
+            }
+          }
           const embed = embedByKey.get(key);
           if (embed) buffer = embedPngTextMetadata(buffer, embed);
           const storagePath = `${route.outputBasePath}/Slot_${route.slotIndex + 1}.png`;
@@ -16377,6 +16403,15 @@ async function _handlerImpl(event) {
 
       outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
 
+      // Beady Necklace charm size is set here, not by the prompt (see
+      // _beadyCharmCap.js). Only a request that places a charm is resized.
+      if (basePath1 && !isCharmPipeline) {
+        outBuf = await capBeadyCharmSize({
+          category: cat, slotIndex: effectiveSlot, buf: outBuf,
+          loadTemplate: async () => img0.buffer,
+        });
+      }
+
       // Write the caller-supplied design description into the PNG itself so
       // the description travels with the image through approvals, pool moves
       // and downloads.
@@ -16793,6 +16828,16 @@ async function _handlerImpl(event) {
     }
 
     outBuf = await applyFinalFrameZoomIfNeeded(outBuf, postprocess);
+
+    // Beady Necklace charm size is set here, not by the prompt (see
+    // _beadyCharmCap.js). Only a request that places a charm is resized; an
+    // adjustment-mode Redo (existing slot image, no charm) is left alone.
+    if (kind === "edits" && input_charm_storage_path && input_storage_path) {
+      outBuf = await capBeadyCharmSize({
+        category: normalizeCategory(activeCategory), slotIndex: Number(slotIndex), buf: outBuf,
+        loadTemplate: async () => (await storagePathToBuffer(input_storage_path)).buffer,
+      });
+    }
 
     await firestoreRetry(
       () =>
