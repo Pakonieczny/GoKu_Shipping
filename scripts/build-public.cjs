@@ -74,6 +74,8 @@ const assets = [
   "assets/design-1.html",
   "assets/design.html",
   "assets/pmax-recommendation.js",
+  "assets/opportunity-timeline.js",
+  "assets/ad-preview-thumbs.js",
   "css/style.css",
   "js/utils.js",
   "lib/jsQR.js",

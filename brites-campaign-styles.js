@@ -127,6 +127,50 @@
       iconSvg(d.icon, opts.size) + (opts.label === false ? '' : '<span>' + escape(opts.text || d.name) + '</span>') + '</span>';
   }
 
+  // What a recommended campaign is called and explained as wherever an opportunity is shown (the Search and Product
+  // ads cards): a plain name, then three short lines for the "What is this?" disclosure. The icon and colour come from
+  // the style or channel above, so an opportunity wears the same mark as the campaign it becomes.
+  const KIND_WORDS = {
+    search: {
+      of: 'SEARCH', name: 'Search text ad',
+      tagline: 'Words that appear when someone searches Google for what you sell.',
+      where: 'On Google search results, above and below the regular listings.',
+      suits: 'Shoppers who already know what they want and are typing it in.'
+    },
+    pmax: {
+      of: 'pmax', name: 'Product ad (Performance Max)',
+      tagline: 'Your products shown as ads across Google, placed for you.',
+      where: 'Google Search, Shopping, YouTube, Gmail, Maps and partner sites.',
+      suits: 'Products in your Merchant Center feed that shoppers already buy.'
+    },
+    responsive_display: {
+      of: 'responsive_display', name: 'Responsive banner ad',
+      tagline: 'One set of photos and words that Google fits to almost any banner space.',
+      where: 'Websites and apps in the Google Display Network.',
+      suits: 'Reaching more people cheaply. Judge it by sales, not clicks.'
+    },
+    fixed_display: {
+      of: 'fixed_display', name: 'Fixed banner ad',
+      tagline: 'Your finished banner design, shown exactly as made.',
+      where: 'Websites and apps in the Google Display Network, in the sizes you supply.',
+      suits: 'When the exact look of the ad matters more than reach.'
+    }
+  };
+  const KIND_ALIASES = { product: 'pmax', product_ads: 'pmax', performance_max: 'pmax', display: 'responsive_display' };
+  function opportunityKind(kind) {
+    const raw = String(kind == null ? '' : kind).trim().toLowerCase().replace(/[\s-]+/g, '_');
+    const key = KIND_ALIASES[raw] || raw;
+    const words = Object.prototype.hasOwnProperty.call(KIND_WORDS, key) ? KIND_WORDS[key] : null;
+    if (!words) return null;
+    const d = describe(words.of);
+    return { key, name: words.name, tagline: words.tagline, where: words.where, suits: words.suits, icon: d.icon, accent: d.accent };
+  }
+  // The type mark for an opportunity card: the campaign icon and its plain name, or '' for a type this file does not know.
+  function opportunityBadge(kind, options) {
+    const k = opportunityKind(kind);
+    return k ? badge(KIND_WORDS[k.key].of, Object.assign({ title: false }, options, { text: k.name })) : '';
+  }
+
   // The publisher refuses new campaigns whose budgets, added to those of
   // campaigns already enabled, exceed the total daily budget ceiling in
   // Controls. Browser and server word it the same way, before anything is approved.
@@ -163,6 +207,6 @@
       (target.sharedBudget ? ' and every campaign using this shared budget' : '') + '.' + (target.status === 'ENABLED' ? '' : ' The campaign is paused; the product runs once you enable it.');
   }
 
-  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg, budgetCeilingMessage, pmaxTargetFits, pmaxDefaultTarget, pmaxJoinText };
+  const api = { STYLES, CHANNELS, ICONS, byKey, describe, badge, iconSvg, opportunityKind, opportunityBadge, budgetCeilingMessage, pmaxTargetFits, pmaxDefaultTarget, pmaxJoinText };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.BritesCampaignStyles = api;
 })(typeof window === 'object' ? window : globalThis);

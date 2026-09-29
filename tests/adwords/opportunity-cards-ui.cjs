@@ -13,7 +13,12 @@ const ctx={console,Date,Math,Number,String,Object,Array,JSON,isFinite,Promise,se
   renderOpportunities:()=>calls.push('render'),renderScanProg:()=>{ctx.OPP_SCANNING=true;},hideScanProg:()=>calls.push('hideProg'),
   oppOverride:{},oppCountries:{},OPPS:[],PMAXOPPS:[],RESEARCH_STATUS:{},OPP_RECONCILIATION:null,SCAN_AUDIT:{engineVersion:'14.0.0'},OPPSAT:null,PMAXAT:null,OPP_LAST_ERROR:null,PMAXERR:null,OPP_SCANNING:false,OPP_PROGRESS:null,OPP_LEARNING:{},oppPollTimer:null};
 vm.createContext(ctx);
+// The shared modules the cards draw with; the page loads them as plain scripts before its own.
+ctx.BritesCampaignStyles=require('../../brites-campaign-styles.js');ctx.BritesOppTimeline=require('../../assets/opportunity-timeline.js');ctx.BritesAdPreview=require('../../assets/ad-preview-thumbs.js');
+const {safeMarkup,tags,text,inOrder}=require('./lib/markup-safety.cjs');
+const vis=JSON.parse(fs.readFileSync(path.resolve(__dirname,'fixtures/opportunity-visuals-sample.json'),'utf8')),clone=x=>JSON.parse(JSON.stringify(x));
 for(const n of ['defCountries','oppCty','fmtDateTime','timeago'])vm.runInContext(line(n),ctx);
+for(const n of ['pmaxDayMs','pmaxTodayMs','pmaxDateText','pmaxDaysText','pmaxAttr','pmaxShort','pmaxTimingList','pmaxDaysAway','pmaxOccasionChip','oppvVerdict','oppvStyles','oppvChannelIcon','oppvToday','oppvYmd','oppvDayText','oppvSchedule','oppvChip','oppvChipHtml','oppvTypeHtml','oppvHelpHtml','oppvHeadHtml','oppvWhyHtml','oppvWhenHtml','oppvAdsInner','oppvAdsHtml','oppvFactRow','oppvSearchThemes'])vm.runInContext(pick(n),ctx);
 for(const n of ['oppKey','oppBidOf','oppCpcOf','oppUi','oppWindow','oppExpiry','oppBlock','oppCpd','oppCpdLine','oppDemandNote','oppSigned','oppSalesTxt','oppModel','oppProj','oppRecalc','fmtDate','daysBtw','stratLine','compChip','tailChip','kwResearchPanel','oppSourceUrl','oppSourceName','planBlock','urgPill','oppBidSeg','oppCard','researchState','researchNeedsRefresh','updateOpportunityState','loadOpportunities','launchOpp'])vm.runInContext(pick(n),ctx);
 // The research engine itself, offline, on the same fixed day as the console fixtures below.
 const engineFile=path.resolve(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),NOW=Date.parse('2026-09-29T15:00:00Z');
@@ -120,6 +125,100 @@ await test('a plan forecast to lose money names that blocker and never tops Best
   const b=ctx.oppBlock(Object.assign(base(),{eligibility:{ready:false,measuredKeywords:5,expectedSales:2,reason:r}}));assert.deepEqual([b.kind,b.label,b.text],['evidence','Forecast below break-even',r]);
   vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
   assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
+await test('the saved Product ads funnel arrives with the research state, and a run without one clears it',()=>{const funnel={at:1,verdict:'None qualified: the Merchant Center product list could not be read.',stages:[{key:'collections',label:'Collections looked at',count:9,note:''}],skipped:[]};
+  ctx.updateOpportunityState({pmaxList:[],pmaxFunnel:funnel,pmaxAt:1});assert.equal(ctx.PMAXFUNNEL.verdict,funnel.verdict);assert.equal(ctx.PMAXFUNNEL.stages[0].count,9);
+  ctx.updateOpportunityState({pmaxList:[],pmaxAt:1});assert.equal(ctx.PMAXFUNNEL,null,'an older saved run has no funnel');
+  ctx.updateOpportunityState({pmaxList:[],pmaxFunnel:'text'});assert.equal(ctx.PMAXFUNNEL,null,'a malformed funnel is not kept');ctx.OPPS=[];ctx.PMAXOPPS=[];});
+// ---- What each Search card shows first: its type, when it runs and the ads it would run (all drawn from data; nothing is generated or paid for) ----
+const face=(o,open)=>{ctx.OPPS=[o];delete ctx.OPP_UI[ctx.oppKey(0)];if(open)ctx.oppUi(0).open=open;ctx.RESEARCH_STATUS={search:{status:'ready',checkedAt:Date.now()}};return ctx.oppCard(o,0,100);};
+const visual=n=>clone(vis.searchOpportunities[n]),KIND=ctx.BritesCampaignStyles.opportunityKind('search');
+const foldOf=h=>{const a=h.indexOf('<details class="oppvFold"');return a<0?'':h.slice(a,h.indexOf('</details>',a));};
+await test('a Search card opens with its type: the icon and plain name, a "What is this?" button and the occasion; the title and one sentence follow',()=>{today='2026-09-29';
+  const o=visual(0),h=face(o);
+  inOrder(h,['class="oppvHead"','class="campaignBadge"','<span>Search text ad</span>','data-oppv-what="search"','class="oppvChip"','data-oppv-help','<h4>'+o.collectionTitle+'</h4>','class="oppCardWhy"','data-oppv-when="0"','data-oppv-ads="0"','class="pmxFacts oppvFacts"','class="oppCardMetrics"','class="oppCardActions"'],'Search card');
+  assert.equal(h.split('class="oppCardWhy"').length,2,'exactly one short reason on the face');
+  assert.match(h,/<button type="button" class="oppvWhat" data-oppv-what="search" data-i="0" aria-label="What is this\?" aria-expanded="false" aria-controls="oppvHelp-search-0">/);
+  assert.match(h,/<div class="oppvHelp" id="oppvHelp-search-0" data-oppv-help hidden>/,'the three plain lines stay closed until asked, and the button names the panel it opens');
+  // The words come from the one shared vocabulary, so the console and the server describe the type the same way.
+  for(const w of [KIND.name,KIND.tagline,KIND.where,KIND.suits])assert(h.includes(w),w);
+  assert.equal(KIND.name,'Search text ad');assert.match(h,/<span class="oppvChip" title="[^"]*\b25\b[^"]* · CA">Christmas · 87 days<\/span>/);
+  safeMarkup(h,'Search card');});
+await test('the panel ids are unique per card, and the open state is remembered with the card',()=>{today='2026-09-29';
+  const a=face(visual(0)),b=ctx.oppCard(visual(1),1,100);assert(a.includes('id="oppvHelp-search-0"')&&b.includes('id="oppvHelp-search-1"')&&!b.includes('id="oppvHelp-search-0"'));
+  const open=face(visual(0),{what:true});assert.match(open,/aria-expanded="true" aria-controls="oppvHelp-search-0"/);assert.match(open,/<div class="oppvHelp" id="oppvHelp-search-0" data-oppv-help>/,'no hidden attribute once opened');});
+await test('the "What is this?" button opens and closes its own panel with one delegated listener, and a redraw keeps the choice',()=>{today='2026-09-29';
+  const from=html.indexOf("if(typeof document!=='undefined'&&document&&typeof document.addEventListener==='function')document.addEventListener('click',function(e){var b=e.target&&e.target.closest?e.target.closest('[data-oppv-what]')"),endTok='ui.open.what=open;}});',to=html.indexOf(endTok,from);
+  assert(from>0&&to>from,'the listener is in the page');const listener=html.slice(from,to+endTok.length);
+  const realDoc=ctx.document;let handler=null,registered=0;ctx.document={addEventListener:(t,f)=>{registered++;assert.equal(t,'click');handler=f;}};vm.runInContext(listener,ctx);ctx.document=realDoc;
+  assert.equal(registered,1,'one listener for every card on both tabs');
+  face(visual(0));const panel={hidden:true},card={querySelector:s=>s==='[data-oppv-help]'?panel:null},attrs={'data-oppv-what':'search','data-i':'0','aria-expanded':'false'},
+    button={getAttribute:n=>attrs[n],setAttribute:(n,v)=>{attrs[n]=v;},closest:s=>s==='[data-oppv-card]'?card:button},event=target=>({target});
+  handler(event({closest:s=>s==='[data-oppv-what]'?button:null}));assert.deepEqual([panel.hidden,attrs['aria-expanded'],ctx.oppUi(0).open.what],[false,'true',true]);
+  assert.match(ctx.oppCard(ctx.OPPS[0],0,100),/aria-expanded="true"/,'drawn again, the card is still open');
+  handler(event({closest:s=>s==='[data-oppv-what]'?button:null}));assert.deepEqual([panel.hidden,attrs['aria-expanded'],ctx.oppUi(0).open.what],[true,'false',false]);
+  handler(event({closest:()=>null}));handler({target:null});assert.equal(panel.hidden,true,'a click elsewhere on the page changes nothing');});
+await test('the timeline headline and a plain verdict are always on the card; the reasons are one tap away in "Why these dates"',()=>{today='2026-09-29';
+  const cases=[[0,'good','Good time to start','Runs Nov 14 to Dec 18 · 35 days'],[1,'tight','Tight timing','Runs Sep 29 to Oct 17 · 19 days'],[2,'evergreen','No deadline','Runs Sep 29 to Oct 26 · 28 days'],[4,'too_short','Too late for this event','Would run Sep 29 to Oct 15 · 17 days']];
+  for(const [n,verdict,word,headline] of cases){const o=visual(n),h=face(o),fold=foldOf(h),face0=h.replace(fold,'');
+    assert.equal(o.schedule.verdict,verdict);assert.equal(o.schedule.headline,headline);
+    assert.match(h,new RegExp('<span class="oppvVerdict is-'+verdict+'">'+word+'</span>'));assert.match(h,new RegExp('class="oppTl__head">'+headline.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'</span>'));
+    assert(h.includes('data-verdict="'+verdict+'"'));assert(h.includes('<span>When it runs</span>'));
+    assert.match(fold,/^<details class="oppvFold" data-ui="when"><summary>Why these dates<\/summary>/,'the fold is closed until opened');
+    for(const w of o.schedule.why)assert(fold.includes(w.replace(/&/g,'&amp;')),verdict+' reason in the fold: '+w);
+    assert(fold.includes('Learning period')&&fold.includes(o.schedule.learning.note),'the learning explanation is in the fold');
+    assert(!/Learning period/.test(face0),'and only there');
+    safeMarkup(h,verdict);}
+  const open=foldOf(face(visual(0),{when:true}));assert.match(open,/^<details class="oppvFold" data-ui="when" open>/,'a card left open stays open when it is drawn again');});
+await test('the timeline follows the console date, and the occasion chip counts days from it',()=>{today='2026-10-29';const h=face(visual(0));
+  assert.match(h,/Christmas · 57 days</);assert.match(h,/Today · <b>Oct 29<\/b>/);assert.match(h,/class="oppTl__head">Runs Nov 14 to Dec 18 · 35 days</,'the run itself is the engine’s');
+  today='2026-12-26';assert(!face(visual(0)).includes('oppvChip'),'a passed occasion has no chip');today='2026-09-29';});
+await test('the fold carries the date sources and the timeline words; the face keeps the words-only legend',()=>{today='2026-09-29';const h=face(visual(0)),fold=foldOf(h);
+  assert.match(fold,/class="oppCardMeta oppvSources"[\s\S]*Occasion [^<]*<\/span>[\s\S]*verified on <a class="oppDateSrc" href="https:\/\/www\.timeanddate\.com\/holidays\/us\/christmas-day" target="_blank" rel="noopener noreferrer"/);
+  assert(h.replace(fold,'').includes('<span class="oppTl__lab">Learning</span>')&&h.includes('<span class="oppTl__lab">Order cutoff</span>'),'each colour of the bar has a word');});
+await test('a card saved before schedules existed keeps the old window line and draws no bar or empty box',()=>{today='2026-09-29';const o=visual(3),h=face(o);
+  assert(!/data-oppv-when|When it runs|oppvFold|oppTl/.test(h),'no timeline, no fold, no placeholder');assert.match(h,/<span class="opWin" data-i="0">/);assert.match(h,/class="opDur" data-i="0">38</);
+  inOrder(h,['class="oppvHead"','<h4>Charm Bracelets</h4>','class="oppCardWhy"','class="opWin"','data-oppv-ads="0"'],'legacy Search card');
+  assert.match(h,/Mother's Day · 222 days/,'the chip still comes from the saved peak date');assert(h.includes('data-oppv-ads="0"'),'the ads are still shown');
+  assert.match(ctx.planBlock(o,0),/<b>Run length<\/b> — Starts 45 days before the peak\./);safeMarkup(h,'legacy');});
+await test('an unusable schedule is treated as none: no throw, no half-drawn bar',()=>{today='2026-09-29';
+  const junk=[null,'soon',7,[],{},{version:1},{version:1,start:'nope',end:'2026-12-01',days:3},{version:1,kind:'search',start:'2026-12-10',end:'2026-12-01',days:-8,phases:[],verdict:'good'}];
+  for(const s of junk){const o=visual(0);o.schedule=s;const h=face(o);assert(!/data-oppv-when|oppTl|oppvFold/.test(h),JSON.stringify(s));assert.match(h,/class="opWin"/,'the window line stands in');assert.match(h,/Christmas · 87 days/,'the chip falls back to the saved peak date');safeMarkup(h,'junk');}
+  assert.match(ctx.planBlock(Object.assign(visual(0),{schedule:{}}),0),/<b>Run length<\/b> — /,'the run-length line survives too');});
+await test('the run-length line quotes the schedule’s own basis when there is one',()=>{today='2026-09-29';const o=visual(0),pb=ctx.planBlock(o,0);
+  assert(pb.includes('<b>Run length</b> — '+o.schedule.basis.replace(/&/g,'&amp;')),o.schedule.basis);});
+await test('the ads strip is labelled, holds the Search formats and uses only words from the opportunity',()=>{today='2026-09-29';const o=visual(0),h=face(o),ads=h.slice(h.indexOf('data-oppv-ads="0"'));
+  assert(ads.includes('<span>The ads this would run</span>')&&ads.includes('Examples · select one to enlarge'));assert.match(ads,/data-abp-kind="search"/);assert.equal((ads.match(/class="abp-thumb"/g)||[]).length,2,'the text ad and the same ad with its extra links');
+  assert(text(ads).includes(o.keywordData[0].text),'the search shown is one of this opportunity’s keywords');assert(!/<img/.test(ads.split('class="pmxFacts')[0]),'no product photo on a text ad');});
+await test('the Search themes line lists the biggest searches first, four at most, with the rest counted',()=>{today='2026-09-29';const o=visual(0),h=face(o);
+  const sorted=o.keywordData.slice().sort((a,b)=>b.searches-a.searches).map(k=>k.text);assert.deepEqual(ctx.oppvSearchThemes(o),sorted);
+  const row=/<span class="pmxFactLabel">Search themes<\/span><span class="pmxFactVal">([\s\S]*?)<\/span><\/div>/.exec(h.slice(h.indexOf('class="pmxFacts oppvFacts"')));assert(row,'themes row');
+  assert.deepEqual([...row[1].matchAll(/<span class="pmxFactItem" title="[^"]*">([^<]*)<\/span>/g)].map(m=>m[1]),sorted.slice(0,4));assert.match(row[1],/<span class="pmxFactMore" title="birthstone initial necklace">\+1 more<\/span>/);
+  const few=face(visual(4));assert(!/pmxFactMore/.test(few)&&/Search themes/.test(few),'two themes: nothing counted');
+  const none=visual(0);none.keywordData=[];assert(!/Search themes/.test(face(none)),'no keywords: no empty row');
+  assert.deepEqual(ctx.oppvSearchThemes({keywordData:[{text:' b ',searches:1},{text:'B',searches:9},{text:'a'},{keyword:'c',volume:5},{},null]}),['c','b','a'],'blank and repeated rows are skipped, the first spelling stays');});
+await test('every function the old card had is still there: budget, dates, keywords plan, draft, delete; the score sits in the details',()=>{today='2026-09-29';const h=face(visual(0));
+  for(const s of ['class="opBud"','class="opStart"','class="opEnd"','data-ui="kw"','data-ui="why"','class="btn gold sm opGen"','data-delete-opportunity="search" data-i="0"','data-ui="dx"'])assert(h.includes(s),s);
+  assert(h.indexOf('class="oppScore"')>h.indexOf('data-ui="dx"'),'the score pill is inside the Review & adjust details, not on the face');});
+await test('editing the dates says how they differ from the recommended run, and hides the note when they match',()=>{today='2026-09-29';const o=visual(0);ctx.OPPS=[o];
+  const els={},el=s=>els[s]||(els[s]={value:'',textContent:'',title:'',min:'',hidden:true,classList:{toggle(){}}}),key=s=>s.replace(/\[data-i="\d+"\]/,''),cards={querySelector:s=>el(key(s)),querySelectorAll:s=>[el(key(s))]};
+  el('.opBud').value='10';el('.opStart').value='2026-11-20';el('.opEnd').value='2026-12-10';ctx.oppRecalc(cards,0);
+  assert.equal(el('.oppvMine').hidden,false);assert.match(el('.oppvMine').textContent,/^Your dates: .+ to .+ · 21 days\. The bar shows the recommended run\.$/);
+  el('.opStart').value=o.schedule.start;el('.opEnd').value=o.schedule.end;ctx.oppRecalc(cards,0);assert.deepEqual([el('.oppvMine').hidden,el('.oppvMine').textContent],[true,'']);
+  const legacyCard=visual(3);ctx.OPPS=[legacyCard];el('.opStart').value='2027-03-30';el('.opEnd').value='2027-04-30';ctx.oppRecalc(cards,0);assert.equal(el('.oppvMine').hidden,true,'a card with no schedule has no note to show');});
+await test('hostile text in every field the visuals read stays text',()=>{today='2026-09-29';const bad='<img src=x onerror=alert(1)>',quote='" onmouseover="alert(1)" x="',o=visual(0);
+  Object.assign(o,{collectionTitle:bad+'Title',occasion:bad+'Occasion',rationale:bad+'Why',keywordData:[{text:bad+'kw',real:true,searches:5},{text:quote,real:true,searches:4}],keyPhrases:[bad+'phrase']});
+  Object.assign(o.schedule,{headline:bad+'Runs',basis:bad+'basis',why:[bad+'why1',quote+'why2'],learning:Object.assign({},o.schedule.learning,{note:bad+'note'})});o.schedule.event=Object.assign({},o.schedule.event,{label:bad+'Christmas',market:quote});
+  o.schedule.phases.forEach(p=>{p.label=bad+p.key;});
+  const h=face(o);safeMarkup(h,'hostile Search card');assert(!/<img src=x/.test(h.replace(/<img class="abp-photo"[^>]*>/g,'')));
+  assert(text(h).includes(bad+'Title'),'the words are shown, not run');assert(!tags(h).some(t=>'onmouseover' in t.attrs||'x' in t.attrs),'no injected attribute');});
+await test('the section headers use the type icon, and fall back to their letter when the vocabulary is missing',()=>{
+  const s=ctx.oppvChannelIcon('search','S'),p=ctx.oppvChannelIcon('pmax','P');assert.match(s,/^<span class="oppChannelIcon" data-kind="search" style="--campaign-accent:#[0-9a-f]{6}"><svg /);assert.match(p,/data-kind="pmax"/);
+  assert(!/>S<|>P</.test(s+p),'no letter avatar once the icon exists');
+  const saved=ctx.BritesCampaignStyles;delete ctx.BritesCampaignStyles;try{assert.equal(ctx.oppvChannelIcon('search','S'),'<span class="oppChannelIcon">S</span>');assert.equal(ctx.oppvTypeHtml('search',0,false),'');
+    const h=face(visual(0));assert(!h.includes('oppvType')&&h.includes('<h4>')&&h.includes('data-oppv-when'),'the card still draws without the badge');safeMarkup(h,'no vocabulary');}finally{ctx.BritesCampaignStyles=saved;}});
+await test('a missing timeline or previews module only removes its own part of the card',()=>{today='2026-09-29';
+  const t=ctx.BritesOppTimeline,a=ctx.BritesAdPreview;try{delete ctx.BritesOppTimeline;let h=face(visual(0));assert(!/data-oppv-when|oppTl/.test(h)&&/class="opWin"/.test(h)&&/data-oppv-ads="0"/.test(h)&&/Christmas · 87 days/.test(h));
+    ctx.BritesOppTimeline=t;delete ctx.BritesAdPreview;h=face(visual(0));assert(!/oppvAds|The ads this would run/.test(h)&&/data-oppv-when="0"/.test(h));safeMarkup(h,'no previews');}finally{ctx.BritesOppTimeline=t;ctx.BritesAdPreview=a;}});
 console.log(`${passed} opportunity card checks passed.`);
 require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});
