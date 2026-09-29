@@ -151,6 +151,7 @@ await test('one indicator per wait, shell top bar, phone channel tabs and a shad
   assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-shell"/);
   assert.doesNotMatch(read('brites-groups.css'),/\.topbar|\.brand\b/,'the top bar is styled only by the shell');
   assert.match(html,/\.rail\{[^}]*box-shadow:none[^}]*\}\s*body\.navOpen \.rail\{transform:none;box-shadow:14px 0 40px rgba\(0,0,0,\.25\)\}/);
-  assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);});
+  assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
+  assert.match(html,/\.ieRow input\{flex:1 1 110px;max-width:170px;min-width:0;/,'on a phone the amount, Save and Cancel share one row');});
 console.log(passed+' console inline action checks passed.');
 })().catch(e=>{console.error(e);process.exit(1);});
