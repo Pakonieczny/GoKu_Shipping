@@ -1,14 +1,18 @@
 (function(root){
  'use strict';
- const active=new Map(),histories=new Map();let seq=0,notice;
+ const active=new Map(),histories=new Map();let seq=0,notice,owner=null;
  const duration=ms=>{const s=Math.max(0,Math.floor(ms/1000));return s<60?s+'s':Math.floor(s/60)+'m '+s%60+'s';};
  function begin(label){const id=++seq;active.set(id,{label:label||'Loading',started:Date.now()});return()=>active.delete(id);}
+ // A page may pass a check that says its own status line already shows the wait in `host`
+ // (the open dialog, or the page). Pages that never call it keep the behaviour below unchanged.
+ function own(check){owner=typeof check==='function'?check:null;}
+ function shown(host){try{return !!owner&&!!owner(host);}catch(e){return false;}}
  function render(){
   const now=Date.now(),jobs=[...active.values()].filter(j=>now-j.started>=1800);
   if(!jobs.length){notice?.remove();notice=null;return;}
   const host=[...document.querySelectorAll('dialog[open]')].pop()||document.body;
   // An existing task progress surface owns feedback; do not stack a request toast on it.
-  if([...host.querySelectorAll('progress:not([data-bp-managed] progress)')].some(p=>!p.hidden&&!p.closest('[hidden]')&&p.getClientRects().length)){notice?.remove();notice=null;return;}
+  if(shown(host)||[...host.querySelectorAll('progress:not([data-bp-managed] progress)')].some(p=>!p.hidden&&!p.closest('[hidden]')&&p.getClientRects().length)){notice?.remove();notice=null;return;}
   if(!notice){notice=document.createElement('div');notice.className='bp-activity';notice.setAttribute('role','status');notice.setAttribute('data-bp-managed','');notice.innerHTML='<span class="bp-spinner" aria-hidden="true"></span><div><b></b><progress class="bp-track" aria-label="Waiting for a response" hidden></progress><small></small></div>';}
   if(notice.parentNode!==host)host.appendChild(notice);
   const oldest=jobs.reduce((a,b)=>a.started<b.started?a:b),age=now-oldest.started;
@@ -42,6 +46,6 @@
   for(const [key,h] of histories)if(Date.now()-h.seen>10000)histories.delete(key);
   document.querySelectorAll('.bp-note').forEach(n=>{if(n.previousElementSibling?.tagName!=='PROGRESS')n.remove();else if(n.previousElementSibling.hidden)n.hidden=true;});
  }
- root.BritesProgress={begin,duration,reset};
+ root.BritesProgress={begin,duration,reset,own};
  setInterval(()=>{render();enhance();},500);
 })(window);

@@ -18,6 +18,22 @@ function load(file){const mod={exports:{}};const env={EDIT_PASSCODE:'test-pass',
  const mark=E.markPublishRequested;E.markPublishRequested=async()=>{throw Error('storage busy');};calls.length=0;r=await api.handleAction({action:'apply',id:'draft'});assert(r.queued);assert.equal(calls.filter(x=>x[0]==='dispatch').length,1);E.markPublishRequested=mark;count++;
  calls.length=0;r=await api.handleAction({action:'reconcileApproval',id:'draft',outcome:'not_published'});assert.equal(r.status,'APPROVED');assert.deepEqual(calls.map(x=>x[0]),['reconcile']);assert.equal(calls[0][1].outcome,'not_published');count++;
  calls.length=0;r=await api.handleAction({action:'retryStuck'});assert.match(String(r.error),/unknown action/);assert.equal(calls.length,0);count++;
+ assert(!/retryStuck/.test(fs.readFileSync(require('path').resolve(__dirname,'../../brites-adwords.html'),'utf8')),'the console keeps no label for the removed bulk re-send');count++;
+ // Publication status: queued only while another publication holds the lease, and only for this request.
+ {const docs={},dbc=db.collection,T=Date.now(),status=async()=>await api.handleAction({action:'approvalStatus',id:'draft'});
+  db.collection=n=>({doc:id=>({get:async()=>({exists:(n+'/'+id) in docs,data:()=>JSON.parse(JSON.stringify(docs[n+'/'+id]))})})});
+  docs['approvals/draft']={status:'APPROVED',publishRequestedAt:T-2000,applyStartedAt:T-600000,lastError:null};docs['state/publicationLease']={owner:'other',until:T+60000};
+  r=await status();assert.equal(r.queued,true);assert.equal(r.publishRequestedAt,T-2000);assert.equal(r.startedAt,T-600000);count++;
+  delete docs['state/publicationLease'];assert.equal((await status()).queued,false,'nothing ahead: the worker is only starting');
+  docs['state/publicationLease']={owner:'other',until:T-1};assert.equal((await status()).queued,false,'an expired lease holds nothing');count++;
+  docs['state/publicationLease']={owner:'other',until:T+60000};
+  for(const extra of [{applyStartedAt:T-1000},{validatedAt:T-1000},{lastError:'Refused'},{status:'APPLYING'},{publishRequestedAt:null}]){docs['approvals/draft']={status:'APPROVED',publishRequestedAt:T-2000,...extra};assert.equal((await status()).queued,false,JSON.stringify(extra));}count++;
+  db.collection=dbc;}
+ // The request's server time is returned; a dispatch that fails takes the draft out of the queue with the reason.
+ {const before=Date.now();calls.length=0;r=await api.handleAction({action:'apply',id:'draft'});assert(r.queued&&r.requestedAt>=before&&r.requestedAt<=Date.now());count++;
+  E.markPublishNotStarted=async(id,reason)=>{calls.push(['notStarted',id,reason]);};upstream=502;calls.length=0;
+  await assert.rejects(()=>api.handleAction({action:'approve',id:'draft'}),/dispatch failed: HTTP 502/);assert.deepEqual(calls.map(x=>x[0]),['reviewGate','queued','dispatch','notStarted']);assert.deepEqual(calls[3].slice(1),['draft','Background dispatch failed: HTTP 502']);
+  E.markPublishNotStarted=async()=>{throw Error('storage busy');};await assert.rejects(()=>api.handleAction({action:'apply',id:'draft'}),/dispatch failed/,'the dispatch error is what the console sees');upstream=202;delete E.markPublishNotStarted;count++;}
  calls.length=0;r=await api.handleAction({action:'creativePrepare',id:'draft',retry:true});assert(r.queued);assert.equal(calls[0][1].tasks[0],'creativePrepare');assert(calls[0][1].retry);count++;
  calls.length=0;r=await api.handleAction({action:'distill',genId:'learning-123'});assert.equal(r.genId,'learning-123');assert.equal(calls[0][1].genId,'learning-123');count++;
  upstream=500;await assert.rejects(()=>api.handleAction({action:'creativePrepare',id:'draft'}),/dispatch failed/);upstream=202;count++;

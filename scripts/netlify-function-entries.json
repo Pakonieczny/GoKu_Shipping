@@ -209,6 +209,7 @@
     "_etsyMailTrackingResolve.js",
     "_etsyMailVetoes.js",
     "_etsyPricingScheme.js",
+    "_googleAdsCampaignOptions.js",
     "_googleAdsClaude.js",
     "_googleAdsServing.js",
     "_googleApiKeys.js",
