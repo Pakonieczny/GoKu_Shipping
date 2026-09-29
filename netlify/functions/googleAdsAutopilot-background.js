@@ -322,7 +322,9 @@ exports.handler = async (event) => {
       else if (task === "serving") { result.serving = await E.servingSweep({ budgetMs: Math.min(180000, DEADLINE_MS - (Date.now() - t0) - 180000) }); }
       else if (task === "mine")     { result.mine = await E.mineSearchTerms({ ctrl });
         // Performance Max has its own search terms report; its drafts wait in Approvals like the Search ones.
-        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } } }
+        if (typeof E.minePmaxSearchTerms === "function") { try { result.minePmax = await E.minePmaxSearchTerms({ ctrl }); } catch (e) { result.minePmax = { error: String(e.message || e).slice(0, 300) }; } }
+        // Live Search exclusions that stop buying searches ("free", "bulk", "wish"): one removal draft, sent only once approved.
+        if (typeof E.draftSearchNegativeRemovals === "function") { try { result.stopExcluding = await E.draftSearchNegativeRemovals(); } catch (e) { result.stopExcluding = { error: String(e.message || e).slice(0, 300) }; } } }
       else if (task === "prune")    { result.prune = await E.pruneAssets({ ctrl }); }
       else if (task === "budgets")  { result.budgets = await E.reallocateBudgets({ ctrl }); }
       else if (task === "ceiling")  { result.ceiling = await E.enforceBudgetCeiling({ ctrl }); }
