@@ -471,7 +471,15 @@
       await up.finished.catch(() => {}); t.remove();
     }
     /* a seal over its button: a press there presses the button (and the seal sinks with it); anywhere else it wobbles */
-    const btnOf = s => { const r = s.closest(".sealRow"); return r && r.parentElement ? r.parentElement.querySelector("[data-seal-btn]") : null; };
+    // (the button just before its row: an open card has its print seals on Print QR label and its Complete Order seals on
+    // Complete Order, 29 Sep; else the row's first sealed button, as a completed card has one)
+    const btnOf = s => {
+      const r = s.closest(".sealRow"); if (!r) return null;
+      let p = r.previousElementSibling; while (p && p.classList.contains("sealRow")) p = p.previousElementSibling;
+      if (p && p.matches("[data-seal-btn]")) return p;
+      return r.parentElement ? r.parentElement.querySelector("[data-seal-btn]") : null;
+    };
+    const rowOf = b => { const n = b.nextElementSibling; return n && n.classList.contains("sealRow") ? n : b.parentElement && b.parentElement.querySelector(".sealRow"); };
     const inside = (el, e) => { const r = el.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom; };
     let pressed = null;
     doc.addEventListener("pointermove", e => {
@@ -485,9 +493,9 @@
       if (!b || b.disabled) return;
       if (s && !inside(b, e)) return;
       pressed = b; b.classList.add("act");
-      const row = b.parentElement && b.parentElement.querySelector(".sealRow"); if (row) row.classList.add("press");
+      const row = rowOf(b); if (row) row.classList.add("press");
     });
-    const release = () => { if (!pressed) return; pressed.classList.remove("act"); const row = pressed.parentElement && pressed.parentElement.querySelector(".sealRow"); if (row) { row.classList.remove("press"); row.classList.remove("spring"); void row.offsetWidth; row.classList.add("spring"); } pressed = null; };
+    const release = () => { if (!pressed) return; pressed.classList.remove("act"); const row = rowOf(pressed); if (row) { row.classList.remove("press"); row.classList.remove("spring"); void row.offsetWidth; row.classList.add("spring"); } pressed = null; };
     doc.addEventListener("pointerup", release); doc.addEventListener("pointercancel", release);
     doc.addEventListener("click", e => {
       const s = e.target.closest && e.target.closest(".sealRow .seal"); if (!s) return;

@@ -115,6 +115,7 @@ const assets = [
   "charm-nest-bridge.js",
   "charm-nest-progress.js",
   "charm-nest-sheetwin.js",
+  "charm-nest-tour.js",
   "charm-nest-search.js",
   "charm-nest-signins.js",
   "charm-nest-check.html",

@@ -33,7 +33,8 @@
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
  *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · aliasGet · aliasPut ·
- *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customDelete
+ *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customReopen
+ *      (customDelete: an older page's name for customReopen; nothing deletes a record)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
 const admin = require("./firebaseAdmin");
@@ -48,7 +49,7 @@ const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(R
    bridge log) go to Sandbox_-prefixed collections; the master index, the charm library, maps and calibration stay
    shared and are only read. Set per request; a function instance handles one request at a time. ── */
 let PREFIX = "";
-const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Design_Bridge"]);
+const SANDBOXED = new Set(["Charm_Nest_Rose_Stock", "Charm_Nest_Sheets", "Charm_Pool", "Charm_Pool_Back", "Charm_Nest_Sets", "Charm_Nest_Counters", "Charm_Nest_Runs", "Charm_Nest_Run_Lines", "Charm_Nest_Run_Live", "Charm_Nest_Release", "Charm_Nest_Arrivals", "Charm_Nest_Cancelled", "Charm_Nest_Cancelled_History", "Design_Bridge"]);
 const col = name => db.collection(SANDBOXED.has(name) ? PREFIX + name : name);
 const FV = admin.firestore.FieldValue;
 
@@ -843,6 +844,18 @@ function poolEvents(ids, p, before, b) {
     const lines = [...new Set(rows.map(r => r.prev.lineKey || lineOfCopy(r.id)))], tids = [...new Set(rows.map(r => String(r.prev.transactionId || r.id.split("_")[1])))];
     const was = [...new Set(rows.map(r => r.prev.sheetId).filter(Boolean))], wasNames = [...new Set(rows.map(r => sheetLabel(null, r.prev.sheetName) || r.prev.sheetId).filter(Boolean))];
     const e = { orderId, type: kind, by, station: "sorter", device: str(b.device, 40), lineKey: lines.length === 1 ? lines[0] : "", transactionId: tids.length === 1 ? tids[0] : "", data: Object.assign({ copies: rows.length, poolIds: rows.slice(0, 40).map(r => r.id), lines: lines.slice(0, 20) }, nobody ? { signedIn: false } : {}, b.employeeId ? { employeeId: str(b.employeeId, 60) } : {}) };
+    // a cancel's removal (Paul, 29 Sep 00:26): each sheet (or the pool, for pieces not placed yet) its own step, "Removed
+    // from GF Sheet 1 (Set 2)", with the outcome; id: the removal time and the place, which AutoCancel's own event uses too
+    if (kind === "removed" && /^cancel/i.test(String(p.removedReason || ""))) {
+      const bySheet = new Map(); for (const r of rows) { const k = r.prev.sheetId || ""; if (!bySheet.has(k)) bySheet.set(k, []); bySheet.get(k).push(r); }
+      for (const [sid, rs] of bySheet) {
+        const r0 = rs[0].prev, name = sid ? sheetLabel(null, r0.sheetName) || str(sid, 80) : "", set = setLabel(r0.setId), metal = METAL_CODE[r0.material] || METAL_CODE[r0.metal] || "";
+        out.push(Object.assign({}, e, { at, sheetId: str(sid, 100), sheet: name || (metal ? metal + " pool" : "the pool"), setId: r0.setId || "", id: `${at}-${sid || "pool"}`,
+          text: sid ? `Removed from ${name}${set ? " (" + set + ")" : ""}` : `Removed from the ${metal ? metal + " " : ""}pool`,
+          data: Object.assign({}, e.data, { copies: rs.length, poolIds: rs.slice(0, 40).map(r => r.id), reason: str(p.removedReason, 300), sheets: sid ? [sid] : [], cancel: true, outcome: "removed" }) }));
+      }
+      continue;
+    }
     if (kind === "removed") Object.assign(e, { at, sheetId: was[0] || "", sheet: wasNames.join(", "), setId: rows[0].prev.setId || "", text: [wasNames.join(", "), p.removedReason].filter(Boolean).join(" · "), id: String(at) }, { data: Object.assign(e.data, { reason: str(p.removedReason, 300), sheets: was }) });
     else if (kind === "moved") {
       const from = wasNames.length ? wasNames : String(p.movedFrom || "").split(",").filter(Boolean), to = sheetLabel(null, p.sheetName) || str(p.movedTo, 100);
@@ -893,7 +906,21 @@ async function op_poolUpdate(b) {
   for (const id of ids) { batch.set(col(POOL).doc(id), Object.assign({}, b.patch || {}, { updatedAt: FV.serverTimestamp() }), { merge: true }); if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; } }
   if (n) await batch.commit();
   if (told) await stamp(() => poolEvents(ids, p, before, b), "pool");
+  if (told && /^cancel/i.test(String(p.removedReason || ""))) await noteCancelRemovals(ids, p, before, b);
   return { ok: true, count: ids.length };
+}
+/* A cancelled order's pieces taken off (removedReason "cancelled...", the sheet window's Cancel and AutoCancel): each sheet
+   they left is a removal on its cancel record too, with when and who (_orderCancel.noteRemovals; kept for good, 29 Sep).
+   Only a record already there: a person's cancel writes its record after the take-off, and adds its sheets then
+   (cancelFates). Never fails the op. */
+async function noteCancelRemovals(ids, p, before, b) {
+  try {
+    for (const e of poolEvents(ids, p, before, b).filter(e => e.type === "removed").slice(0, 20)) {
+      const where = str(e.sheet, 100);
+      await OrderCancel.noteRemovals(db, e.orderId, [where ? { id: `sheet~${where}`, at: e.at, where, kind: "sheet", outcome: "removed", by: e.by, lineKey: e.lineKey, text: `taken off ${where}` }
+        : { id: `pool~${e.at}`, at: e.at, where: "the pool", kind: "pool", outcome: "removed", by: e.by, lineKey: e.lineKey, text: "taken out of the pool" }], { prefix: PREFIX });
+    }
+  } catch (e) { console.warn("[charmNestLibrary] cancel record: removal not noted:", (e && e.message) || e); }
 }
 async function op_poolList(b) {
   let q = col(POOL);
@@ -1910,7 +1937,9 @@ async function op_optionMapPut(b) {
 /* Review → Custom Orders prints the sorting station's QR sticker for a special line and marks it completed: the line is
    then never pooled and no longer holds its order. One document per order line (its sorter key, "{receipt}_{transaction}"),
    kept with the sticker it printed so it can be printed again after the order has left the pull. Every sorter browser
-   reads the same records (customGet); reopening deletes one (customDelete). Sandboxed with the sorter's own records. */
+   reads the same records (customGet). A record is kept for good (Paul, 29 Sep 00:35: "the seal must always remain and
+   follow that order forever"): reopening or undoing (customReopen) only sets its state to "open", with who and when in
+   its history; its seals (stamps) are never cleared. Sandboxed with the sorter's own records. */
 const CUSTOM = "Charm_Custom_Orders";
 SANDBOXED.add(CUSTOM);
 const CUSTOM_DAYS = 180;
@@ -1919,12 +1948,12 @@ const lineKeyOk = s => /^[\w\-]{3,120}$/.test(String(s || ""));
 // sticker, is read by its key when that sticker is printed again. The lists read every field but the sticker (up to 20 KB
 // each); a record written before hasLabel was kept is taken to have one (every print hands one), and printing it again
 // reads it by its key and says so when there is none.
-const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "updatedAtMs", "hasLabel"];
+const CUSTOM_FIELDS = ["key", "receiptId", "transactionId", "sku", "title", "category", "kind", "state", "lastPrintedAt", "lastPrintedBy", "prints", "printedAt", "printedBy", "completedAt", "completedBy", "how", "stamps", "history", "reopenedAt", "reopenedBy", "updatedAtMs", "hasLabel"];
 const customRow = (d, withLabel) => { const x = Object.assign({}, d); delete x.updatedAt; if (!withLabel) { x.hasLabel = typeof x.hasLabel === "boolean" ? x.hasLabel : x.label !== undefined ? !!x.label : true; delete x.label; } return x; };
 async function op_customGet(b) {
   if (b.key != null) { const key = String(b.key); if (!lineKeyOk(key)) return { error: "bad key" }; const s = await col(CUSTOM).doc(key).get(); return { record: s.exists ? customRow(s.data(), true) : null }; }
   // the lines a sorter has pulled, read by their keys (it polls these every minute): a key with no record was never
-  // completed or has been reopened; `keys` says how many were read, the first that many asked for
+  // completed; one reopened says state "open" and keeps its seals; `keys` says how many were read, the first that many asked for
   if (Array.isArray(b.keys)) {
     const keys = [...new Set(b.keys.map(String))].filter(lineKeyOk).slice(0, 1000), records = {};
     for (let i = 0; i < keys.length; i += 100) for (const s of await db.getAll(...keys.slice(i, i + 100).map(k => col(CUSTOM).doc(k)), { fieldMask: CUSTOM_FIELDS })) if (s.exists) records[s.id] = customRow(s.data(), false);
@@ -1937,7 +1966,8 @@ async function op_customGet(b) {
 }
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label
    printed, so no print is counted). Either records who completed it and when (completedAt/completedBy).
-   stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order, the newest 24: { how: "print" | "button", at, by }.
+   stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order: { how: "print" | "button", at, by }. Every seal is
+   kept (29 Sep: none is ever dropped; the cap only guards the document's size, far past any order's presses).
    The card shows each as a seal of its own (a print seal or a Complete Order seal). A record from before them has its
    seals read from what it kept (the completion, the first and the last print). */
 const legacyStamps = c => {
@@ -1963,14 +1993,34 @@ async function op_customPut(b) {
   if (labelJson && labelJson.length <= 20000) doc.label = labelJson;
   doc.hasLabel = !!(doc.label || (cur && cur.label));
   const prev = cur && Array.isArray(cur.stamps) ? cur.stamps : legacyStamps(cur);
-  doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-24);
+  doc.stamps = prev.concat({ how: button ? "button" : "print", at: now, by: who }).slice(-STAMPS_MAX);
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
     text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
-async function op_customDelete(b) { const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" }; await col(CUSTOM).doc(key).delete(); return { ok: true }; }
+const STAMPS_MAX = 2000;
+/* Reopen or Undo (Paul, 29 Sep 00:35: "the seals can never ever disappear… even though you can reopen an order, the
+   seal must always remain and follow that order forever"). The record is never deleted and its seals never cleared: its
+   state becomes "open" (the sorter reads the line as not completed), who and when join its history, and the order's
+   timeline gets a note (not a seal). A record from before the stamps has its seals written out from what it kept, so a
+   later completion cannot take them. One already open is left as it is (a retry records nothing again). */
+async function op_customReopen(b) {
+  const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" };
+  const ref = col(CUSTOM).doc(key), snap = await ref.get(); if (!snap.exists) return { ok: true, record: null };
+  const cur = snap.data(); if (cur.state === "open") return { ok: true, record: customRow(cur, false) };
+  const how = b.how === "undo" ? "undo" : "reopen", who = str(b.by || "operator", 80), now = Date.now();
+  const doc = { state: "open", reopenedAt: now, reopenedBy: who, updatedAtMs: now, updatedAt: FV.serverTimestamp(),
+    history: (Array.isArray(cur.history) ? cur.history : []).concat({ how, at: now, by: who }).slice(-STAMPS_MAX) };
+  if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
+  await ref.set(doc, { merge: true });
+  const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
+  await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
+    text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
+    data: { reopened: how, seals, sku: cur.sku || "" }, id: `customReopen-${key}-${now}` }), "custom reopen");
+  return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
+}
 /* Is a line a custom order? Claude's kept readings (only those read from exactly what the page has now) and a person's
    decisions (_charmNestCustomRead). A reading is shared by production and the sandbox (the sandbox plays the real orders
    under their real numbers); a person's decision is kept per workspace. A new reading is a customRead job (startAgent). */
@@ -1991,7 +2041,9 @@ const orderIdOf = v => String(v == null ? "" : v).replace(/\D/g, "").slice(0, 30
 async function op_cancelPut(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
   const r = b.record && typeof b.record === "object" ? b.record : {}, who = str(b.by || "operator", 80);
-  const rec = OrderCancel.record({ orderId: id, by: who, why: str(b.why, 400), at: Date.now(), buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines,
+  // at: the moment the person pressed Cancel (the page's clock, within the last day), else now (Paul, 29 Sep 00:26)
+  const pressed = num(b.at), now = Date.now(), at = pressed > now - 864e5 && pressed <= now + 6e4 ? Math.min(Math.round(pressed), now) : now;
+  const rec = OrderCancel.record({ orderId: id, by: who, why: str(b.why, 400), at, buyer: r.buyer, placedAt: r.placedAt, shipBy: r.shipBy, sheets: r.sheets, lines: r.lines,
     source: b.source === "etsy" ? "etsy" : "sorter", etsyStatus: str(b.etsyStatus || r.etsyStatus, 40) });
   const out = await OrderCancel.put(db, FV, rec, { prefix: PREFIX, person: who, detectedBy: "sorter", eventId: str(b.eventId, 80) });
   return out.error ? out : { ok: true, record: out.record, created: out.created, kept: out.kept };
@@ -2055,21 +2107,54 @@ async function op_sandboxCancel(b) {
 }
 /* What became of a cancelled order's pieces, sheet by sheet ({orderId, fates:[{sheet, fate: "removed"|"cut", text}]}): the
    sorter's AutoCancel and its sheet window write it on the record (the Cancelled tab reads it); see _orderCancel.noteFates. */
-async function op_cancelFates(b) { return OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX }); }
+// (removals: [{ id, at, where, kind, outcome, by, text, lineKey, station }], see _orderCancel.noteRemovals; by: who)
+async function op_cancelFates(b) {
+  const out = await OrderCancel.noteFates(db, b.orderId, b.fates, { prefix: PREFIX, by: str(b.by, 80), removals: Array.isArray(b.removals) ? b.removals : [] });
+  if (out && out.ok && !out.missing) await cancelSteps(b);
+  return out;
+}
+/* Each fate on the order's timeline as its own step (cancelStep; Paul, 29 Sep 00:26): "On a cut sheet: set aside (GF
+   Sheet 2)", "Still on SS Sheet 3: not taken off yet". A removal is the pieces' own `removed` event (poolEvents), so a
+   "removed" fate is written only over a step of that sheet already there (it said "still on", it is off now). Ids are
+   the cancel's time and the place (Timeline.stepId): the next check or a retry says how the same step stands now. */
+async function cancelSteps(b) {
+  const id = orderIdOf(b.orderId), fates = (Array.isArray(b.fates) ? b.fates : []).filter(f => f && f.sheet).slice(0, 30);
+  if (!id || !fates.length) return 0;
+  let cancelAt = num(b.cancelAt);
+  if (!(cancelAt > 1e12)) { try { const s = await col(CANCELLED).doc(id).get(); cancelAt = s.exists ? num(s.data().at) : 0; } catch (_) { cancelAt = 0; } }
+  if (!(cancelAt > 1e12)) return 0;
+  const TL = require("./_orderTimeline"), ev = f => { const st = TL.cancelStepOf(f); return { orderId: id, type: "cancelStep", at: Date.now(), by: str(f.by || b.by, 80), station: "sorter", device: str(b.device, 40), sheet: str(f.sheet, 80), id: TL.stepId(cancelAt, f.sheet), text: st.text, data: { outcome: st.outcome, done: st.done, sheet: str(f.sheet, 80), cancelAt, note: str(f.text, 160) } }; };
+  const off = fates.filter(f => f.fate === "removed"), rest = fates.filter(f => f.fate !== "removed");
+  if (off.length) {
+    try {
+      const refs = off.map(f => { const c = TL.clean(ev(f), { prefix: PREFIX }); return c ? db.collection(PREFIX + TL.COL).doc(c.key) : null; });
+      const got = await db.getAll(...refs.filter(Boolean));
+      const had = new Set(got.filter(d => d.exists).map(d => d.id));
+      off.forEach((f, i) => { if (refs[i] && had.has(refs[i].id)) rest.push(f); });
+    } catch (e) { console.warn("[charmNestLibrary] cancel steps not read:", e.message || e); }
+  }
+  return stamp(() => rest.map(ev), "cancel steps");
+}
 /* ── the order timeline (_orderTimeline.js): the sorter's own events, and the whole timeline of one order ── */
 const Timeline = require("./_orderTimeline");
 async function op_timelineAdd(b) { return Timeline.add(db, FV, b.events, { prefix: PREFIX, source: "sorter" }); }
 async function op_timelineGet(b) { return Timeline.get(db, b.orderId, { prefix: PREFIX, sandboxed: SANDBOXED, derive: b.derive !== false }); }   // recorded + derived from the records already kept
-async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX }); }
+// (full: each whole record, its lines, fates and removals, for an order read long after it left the pull)
+async function op_cancelCheck(b) { return Timeline.cancelCheck(db, b.orderIds || b.orderId, { prefix: PREFIX, full: b.full === true }); }
 /* Restoring a cancelled order deletes its cancel record; the timeline keeps it first: the cancelRestored event carries the
-   record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel. */
+   record (who cancelled it, when and why), so the cancel still shows. Its id is the cancel's own time: once per cancel.
+   The whole record (its lines, fates and removals, which the event's 2 KB may not hold) is kept for good in
+   Charm_Nest_Cancelled_History/{id}~{at}, in the same batch as the delete: no restore loses it. */
+const CANCEL_HISTORY = "Charm_Nest_Cancelled_History";
 async function op_cancelRestore(b) {
   const id = orderIdOf(b.orderId); if (!id) return { error: "orderId required" };
   const ref = col(CANCELLED).doc(id);
   let rec = null; try { const s = await ref.get(); rec = s.exists ? s.data() : null; } catch (e) { console.warn("[charmNestLibrary] cancel record not read for the timeline:", e.message || e); }
   if (rec) await stamp(() => { const c = cancelCopy(rec); return { orderId: id, type: "cancelRestored", by: str(b.by, 80) || "operator", station: "sorter", sheet: str((c.sheets || []).join(", "), 80),
     text: `Was cancelled${c.by ? " by " + c.by : ""}${c.why ? ": " + c.why : ""}`, data: { cancelled: c }, id: String(num(c.at) || "record") }; }, "cancel restored");
-  await ref.delete(); return { ok: true };
+  const batch = db.batch();
+  if (rec) batch.set(col(CANCEL_HISTORY).doc(`${id}~${Math.round(num(rec.at)) || Date.now()}`), Object.assign({}, rec, { restoredAt: Date.now(), restoredBy: str(b.by, 80) || "operator" }));
+  batch.delete(ref); await batch.commit(); return { ok: true };
 }
 /** A cancel record small enough for an event's data (≤ 2 KB): long titles are shortened, then dropped, then lines left out. */
 function cancelCopy(r) {
@@ -2079,7 +2164,11 @@ function cancelCopy(r) {
   if (!fits() && lines()) x.lines = x.lines.map(l => Object.assign({}, l, { title: str(l && l.title, 40) }));
   if (!fits() && lines()) x.lines = x.lines.map(l => { const o = Object.assign({}, l); delete o.title; return o; });
   if (!fits() && Array.isArray(x.sheets)) x.sheets = x.sheets.slice(0, 6);
+  // (the removals, where and how each went, stay before the lines: the whole record is in Charm_Nest_Cancelled_History)
+  if (!fits() && Array.isArray(x.removals)) x.removals = x.removals.map(r => ({ where: str(r && r.where, 60), outcome: str(r && r.outcome, 12), at: num(r && r.at) }));
+  if (!fits() && Array.isArray(x.fates)) delete x.fates;
   while (!fits() && lines() && x.lines.length) { x.lines.pop(); x.linesLeftOut = (x.linesLeftOut || 0) + 1; }
+  while (!fits() && Array.isArray(x.removals) && x.removals.length) { x.removals.pop(); x.removalsLeftOut = (x.removalsLeftOut || 0) + 1; }
   if (!fits()) for (const k of Object.keys(x)) if (!["orderId", "by", "why", "at", "source", "etsyStatus", "etsyAt"].includes(k)) delete x[k];
   return x;
 }
@@ -2089,7 +2178,7 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
-  customGet: op_customGet, customPut: op_customPut, customDelete: op_customDelete };
+  customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
