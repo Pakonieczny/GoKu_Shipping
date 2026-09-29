@@ -3664,7 +3664,31 @@ html.gs-locked body > *:not(#gate){display:none!important}
             </div>
           </div>
 
-          <label class="field-label">Filter by category</label>
+          <label class="field-label">Quick date filters</label>
+          <div class="chip-row" id="approvedListPresets">
+            <button class="chip active" data-preset="all">All time</button>
+            <button class="chip" data-preset="today">Today</button>
+            <button class="chip" data-preset="yesterday">Yesterday</button>
+            <button class="chip" data-preset="week">This week</button>
+            <button class="chip" data-preset="month">This month</button>
+            <button class="chip" data-preset="7d">Last 7 days</button>
+            <button class="chip" data-preset="30d">Last 30 days</button>
+            <button class="chip" data-preset="latest10">Latest 10</button>
+            <button class="chip" data-preset="latest25">Latest 25</button>
+          </div>
+
+          <label class="field-label" style="margin-top: 14px;">Custom date range</label>
+          <div class="row date-row" style="gap: 8px; align-items: center;">
+            <input type="date" aria-label="Created on or after" id="approvedListDateFrom" style="flex: 1;">
+            <span class="muted" style="font-size: 11px;">→</span>
+            <input type="date" aria-label="Created on or before" id="approvedListDateTo" style="flex: 1;">
+            <button class="btn btnSmall" id="approvedListDateClear" style="width: auto;">Clear</button>
+          </div>
+
+          <!-- Auditable readout of the window actually in force. -->
+          <div class="window-info" id="approvedListWindowInfo">no date limit</div>
+
+          <label class="field-label" style="margin-top: 14px;">Filter by category</label>
           <div class="chip-row" id="approvedListCategories">
             <button class="chip cat-chip active" aria-pressed="true" data-cat="*">All <span class="cat-count" id="catCount-all">—</span></button>
             <button class="chip cat-chip" aria-pressed="false" data-cat="Beady_Necklace">Beady necklaces <span class="cat-count" id="catCount-Beady_Necklace">—</span></button>
@@ -15119,6 +15143,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         cacheTime: 0,
         cacheStale: false,
         loading: false,
+        preset: 'all',
+        dateFrom: null,
+        dateTo: null,
         sort: 'newest',
         pageSize: 24,
         page: 1,
@@ -15326,10 +15353,277 @@ Click the button again to permanently delete eligible temporary files, or cancel
       else base = `up to ${fmt(to)}`;
       return extra ? `${base} · ${extra}` : base;
     }
+
+    // ---------------------------------------------------------------------
+    // SHARED DATE FILTERS (Approved → Listings and Approved → Charms)
+    //
+    // Each sub-tab keeps { preset, dateFrom, dateTo } in its state and runs
+    // the same resolve → filter → readout steps below, so a quick filter or
+    // a custom range means exactly the same thing on either side.
+    //
+    // Precedence: an explicit custom range always wins over a calendar
+    // preset. Previously the two were silently AND-ed together, so a stale
+    // date in the range inputs could quietly empty out a preset's result
+    // with nothing in the UI to explain why. Now selecting a preset clears
+    // the range inputs, typing a range switches the chips to "Custom", and
+    // _resolveDateWindow reports which one is live.
+    // ---------------------------------------------------------------------
+    function _resolveDateWindow(s) {
+      const isLatest = s.preset === 'latest10' || s.preset === 'latest25';
+      if (s.dateFrom != null || s.dateTo != null) {
+        return { from: s.dateFrom, to: s.dateTo, source: 'custom', latestN: 0 };
+      }
+      if (isLatest) {
+        return { from: null, to: null, source: 'latest', latestN: s.preset === 'latest10' ? 10 : 25 };
+      }
+      const r = _presetRange(s.preset);
+      return { from: r ? r.from : null, to: r ? r.to : null, source: r ? 'preset' : 'all', latestN: 0 };
+    }
+
+    // Date window (inclusive on both ends), then "Latest N". Rows with no
+    // usable date cannot satisfy a date question, so they drop out of any
+    // windowed view — the readout reports how many were set aside.
+    //
+    // "Latest N" means the N most recent BY DATE — independent of the
+    // display sort, which the caller applies afterwards. The old code
+    // sliced after sorting, so choosing "Oldest first" + "Latest 10"
+    // returned the ten OLDEST sets.
+    function _applyDateWindow(rows, win, dateMsOf) {
+      let out = rows.slice();
+      if (win.from != null || win.to != null) {
+        out = out.filter(rec => {
+          const ms = dateMsOf(rec);
+          if (!ms) return false;
+          if (win.from != null && ms < win.from) return false;
+          if (win.to   != null && ms > win.to)   return false;
+          return true;
+        });
+      }
+      if (win.latestN) {
+        out.sort((a, b) => dateMsOf(b) - dateMsOf(a));
+        out = out.slice(0, win.latestN);
+      }
+      return out;
+    }
+
+    function _dateWindowLabel(win, allText = 'no date limit · showing everything') {
+      if (win.source === 'latest') return `newest ${win.latestN} by date`;
+      if (win.source === 'all') return allText;
+      if (win.from != null && win.to != null && win.from > win.to) return 'Invalid range: start date must be on or before end date';
+      return _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom range' : null);
+    }
+
+    // Text of the auditable "window in force" readout under the date controls.
+    function _dateWindowReadout(win, filteredCount, total, undated, allText) {
+      const parts = [_dateWindowLabel(win, allText), `${filteredCount} of ${total} sets`, 'dates use set creation time'];
+      if (undated > 0 && (win.from != null || win.to != null)) {
+        parts.push(`${undated} undated set${undated === 1 ? '' : 's'} excluded`);
+      }
+      return parts.join(' · ');
+    }
+
+    // Wires one sub-tab's preset chips, custom range inputs and Clear button
+    // to its state. Only ever one date rule in force, and the UI always
+    // shows which — no more invisible AND of two conflicting rules.
+    function _wireDateFilters(s, ids, render) {
+      const chips = document.querySelectorAll(`#${ids.presets} .chip`);
+      const fromEl = document.getElementById(ids.from);
+      const toEl = document.getElementById(ids.to);
+      const setChip = (preset) => chips.forEach(c => c.classList.toggle('active', c.dataset.preset === preset));
+      const afterRangeInput = () => {
+        if (s.dateFrom != null || s.dateTo != null) { s.preset = 'custom'; setChip('custom'); }
+        else { s.preset = 'all'; setChip('all'); }
+        s.page = 1;
+        render();
+      };
+      chips.forEach(chip => {
+        chip.addEventListener('click', () => {
+          setChip(chip.dataset.preset);
+          s.preset = chip.dataset.preset;
+          // A preset supersedes any custom range.
+          s.dateFrom = null;
+          s.dateTo = null;
+          fromEl.value = '';
+          toEl.value = '';
+          s.page = 1;
+          render();
+        });
+      });
+      fromEl.addEventListener('input', e => {
+        const v = e.target.value; // YYYY-MM-DD, interpreted in local time
+        s.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
+        afterRangeInput();
+      });
+      toEl.addEventListener('input', e => {
+        const v = e.target.value;
+        // End of day must include the final 999ms or sets made in the last
+        // second of the chosen day fall outside the window.
+        s.dateTo = v ? _endOfDayMs(new Date(v + 'T12:00:00')) : null;
+        afterRangeInput();
+      });
+      document.getElementById(ids.clear).addEventListener('click', () => {
+        s.dateFrom = null;
+        s.dateTo = null;
+        fromEl.value = '';
+        toEl.value = '';
+        s.preset = 'all';
+        setChip('all');
+        s.page = 1;
+        render();
+      });
+    }
+
     function _parseListingId(folderId) {
       const m = folderId.match(/^(.+)_Set_(\d+)$/);
       if (!m) return { id: folderId, category: 'Unknown', setN: 0 };
       return { id: folderId, category: m[1], setN: parseInt(m[2], 10) };
+    }
+
+    // ---------------------------------------------------------------------
+    // LISTING SET DATES
+    //
+    // A charm set's folder id carries its creation time (Deriv_<ms>); a
+    // listing set's does not (Beady_Necklace_Set_435). Its creation time is
+    // the `timestamp` its manifest.json was written with when the set was
+    // made. A set whose manifest has no usable timestamp falls back to the
+    // time its manifest (or, with no manifest, its first file) was saved in
+    // Completed_Listing_Sets, i.e. when it was approved: later than its
+    // creation, but the closest time on record.
+    //
+    // An approved set's date never changes, so dates are kept in this
+    // browser (IndexedDB meta store) and a later visit reads only the sets
+    // it has not seen yet. The listing itself renders at once; the dates are
+    // read in the background and only a date filter waits for them.
+    // ---------------------------------------------------------------------
+    const LISTING_DATES_KEY = 'approved_listing_dates_v1';
+    const LISTING_DATES_CONCURRENCY = 12;
+    const _listDates = {
+      ms: new Map(),          // set id -> creation time (ms)
+      unreadable: new Set(),  // no usable date this session; Refresh retries them
+      localLoaded: false,
+      pass: null,             // promise of the read pass in flight
+      again: false,           // listing reloaded mid-pass: go round once more
+      done: 0,
+      total: 0,
+    };
+    const _listingDateMs = (it) => _listDates.ms.get(it.id) || 0;
+    const _listingDatesPending = () => !!_listDates.pass;
+    const _listingsNeedDates = () => _resolveDateWindow(_approvedSubState.listings).source !== 'all';
+
+    // Creation time in ms, or 0 when the value is missing or implausible.
+    function _plausibleDateMs(v) {
+      const ms = typeof v === 'number' ? v : Date.parse(v);
+      if (!Number.isFinite(ms)) return 0;
+      if (ms < Date.UTC(2020, 0, 1) || ms > Date.now() + 2 * 86400000) return 0;
+      return ms;
+    }
+
+    async function _readListingSetDate(item) {
+      const manifestRef = ref(storage, `${item.fullPath}/manifest.json`);
+      let hasManifest = false;
+      try {
+        const buf = await getBytes(manifestRef);
+        hasManifest = true;
+        const ms = _plausibleDateMs(JSON.parse(new TextDecoder().decode(buf))?.timestamp);
+        if (ms) return ms;
+      } catch (e) {
+        // Missing manifest or unreadable JSON: use a file time below.
+        // Anything else (network, auth) throws, so the set is read again
+        // instead of being taken for undated.
+        if (e instanceof SyntaxError) hasManifest = true;
+        else if (e?.code !== 'storage/object-not-found') throw e;
+      }
+      let fileRef = hasManifest ? manifestRef : null;
+      if (!fileRef) {
+        const res = await listAll(ref(storage, item.fullPath));
+        fileRef = (res.items || [])[0] || null;
+        if (!fileRef) return 0;
+      }
+      const md = await getMetadata(fileRef);
+      return _plausibleDateMs(md?.timeCreated);
+    }
+
+    async function _loadListingDatesLocal() {
+      if (_listDates.localLoaded) return;
+      _listDates.localLoaded = true;
+      const saved = await cacheMetaGet(LISTING_DATES_KEY);
+      const dates = saved && saved.v === 1 && saved.dates && typeof saved.dates === 'object' ? saved.dates : null;
+      if (!dates) return;
+      for (const [id, v] of Object.entries(dates)) {
+        const ms = _plausibleDateMs(Number(v));
+        if (ms && !_listDates.ms.has(id)) _listDates.ms.set(id, ms);
+      }
+    }
+
+    // Keeps only sets still in the folder, so neither the saved record nor
+    // the in-memory map outgrows the folder itself.
+    function _saveListingDatesLocal() {
+      const all = _approvedSubState.listings.cache;
+      if (!all) return;
+      const present = new Set(all.map(it => it.id));
+      const dates = {};
+      for (const [id, ms] of _listDates.ms) {
+        if (present.has(id)) dates[id] = ms;
+        else _listDates.ms.delete(id);
+      }
+      cacheMetaSet(LISTING_DATES_KEY, { v: 1, savedAt: Date.now(), dates }); // fire and forget
+    }
+
+    function _paintListingDateProgress() {
+      if (!_listingsNeedDates()) return;
+      const wait = document.getElementById('approvedListDateWait');
+      if (wait) wait.textContent = `Reading set dates… ${_listDates.done} of ${_listDates.total}`;
+      _updateListWindowReadout();
+    }
+
+    // Starts reading the dates of listed sets that have none yet. A no-op
+    // when every set is dated (or unreadable this session), so it is safe
+    // to call on every render.
+    function _ensureListingDates() {
+      const ls = _approvedSubState.listings;
+      if (!ls.cache) return;
+      if (_listDates.pass) { _listDates.again = true; return; }
+      const missing = () => (ls.cache || []).filter(it => !_listDates.ms.has(it.id) && !_listDates.unreadable.has(it.id));
+      if (_listDates.localLoaded && missing().length === 0) return;
+      _listDates.pass = (async () => {
+        try {
+          await _loadListingDatesLocal();
+          do {
+            _listDates.again = false;
+            const todo = missing();
+            if (!todo.length) continue;
+            await ensureStorageSignedIn();
+            _listDates.done = 0;
+            _listDates.total = todo.length;
+            _paintListingDateProgress();
+            await _asyncPool(LISTING_DATES_CONCURRENCY, todo, async (it) => {
+              let ms = 0;
+              for (let attempt = 1; attempt <= 2; attempt++) {
+                try { ms = await _readListingSetDate(it); break; }
+                catch (e) { if (attempt === 2) console.warn('[approved listings] could not read the date of', it.id, e?.message || e); }
+              }
+              if (ms) _listDates.ms.set(it.id, ms);
+              else _listDates.unreadable.add(it.id);
+              _listDates.done++;
+              _paintListingDateProgress();
+            });
+            _saveListingDatesLocal();
+          } while (_listDates.again);
+        } catch (e) {
+          // e.g. sign-in failed: park what is left until Refresh rather
+          // than retrying in a loop.
+          console.warn('[approved listings] reading set dates failed', e?.message || e);
+          missing().forEach(it => _listDates.unreadable.add(it.id));
+        } finally {
+          _listDates.pass = null;
+          _listDates.done = 0;
+          _listDates.total = 0;
+        }
+        if (appMode === 'approvedCharms' && _approvedSubState.active === 'listings') {
+          if (_listingsNeedDates()) _renderListingsPage();
+          else _updateListWindowReadout();
+        }
+      })();
     }
 
     // === LISTINGS: load, filter, paginate, render ===
@@ -15365,7 +15659,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
     function _filterAndSortListings() {
       const ls = _approvedSubState.listings;
       const all = ls.cache || [];
-      const filtered = all.filter(it => ls.categories.has(it.category));
+      // Category first, then the date window, so "Latest 10" on one
+      // category means that category's ten newest sets.
+      const inCategories = all.filter(it => ls.categories.has(it.category));
+      const filtered = _applyDateWindow(inCategories, _resolveDateWindow(ls), _listingDateMs);
       const sorted = [...filtered];
       if (ls.sort === 'newest') sorted.sort((a,b) => b.setN - a.setN);
       else if (ls.sort === 'oldest') sorted.sort((a,b) => a.setN - b.setN);
@@ -15427,41 +15724,86 @@ Click the button again to permanently delete eligible temporary files, or cancel
       ls.thumbsLoading.set(item.id, promise);
     }
 
+    // Category chip counts follow the date window: each chip says how many
+    // sets it would show under the dates in force ('…' while the dates a
+    // date filter needs are still being read). Also painted by the RT view
+    // 'approved.catCounts', so a live repaint never puts totals back.
+    function _paintListingCategoryCounts() {
+      const ls = _approvedSubState.listings;
+      const all = ls.cache || [];
+      const win = _resolveDateWindow(ls);
+      const waiting = win.source !== 'all' && _listingDatesPending();
+      const paint = (key, rows) => {
+        const el = document.getElementById(`catCount-${key}`);
+        if (el) el.textContent = waiting ? '…' : String(_applyDateWindow(rows, win, _listingDateMs).length);
+      };
+      paint('all', all);
+      _LISTING_CATEGORIES.forEach(c => paint(c, all.filter(it => it.category === c)));
+    }
+
     function _updateListingsCounts(filteredCount) {
       const ls = _approvedSubState.listings;
       const all = ls.cache || [];
-      // Per-category counts
-      const counts = { '*': all.length };
-      _LISTING_CATEGORIES.forEach(c => counts[c] = 0);
-      all.forEach(it => { if (counts[it.category] != null) counts[it.category]++; });
-      Object.entries(counts).forEach(([k, v]) => {
-        const el = document.getElementById(`catCount-${k === '*' ? 'all' : k}`);
-        if (el) el.textContent = v;
-      });
+      // Counts are unknown until the dates a date filter needs are read.
+      const waiting = _listingsNeedDates() && _listingDatesPending();
+      _paintListingCategoryCounts();
       // Sub-tab badge
       const subBadge = document.getElementById('approvedSubLstCount');
       if (subBadge) subBadge.textContent = all.length;
       // Visible count
       const visEl = document.getElementById('approvedListVisibleCount');
-      if (visEl) visEl.textContent = filteredCount;
+      if (visEl) visEl.textContent = waiting ? '…' : filteredCount;
       // Selected count
       const selEl = document.getElementById('approvedListSelectedCount');
       if (selEl) selEl.textContent = ls.selected.size;
-      // Smart download label
+      // Smart download label. With nothing selected it downloads what the
+      // filters show, so it waits while the dates are still being read.
       const dl = document.getElementById('approvedListDownloadBtn');
       if (dl && !dl.dataset.busy) {
+        dl.disabled = waiting && ls.selected.size === 0;
         if (ls.selected.size > 0) dl.textContent = `Download ${ls.selected.size} selected (ZIP)`;
+        else if (waiting) dl.textContent = 'Reading set dates…';
         else dl.textContent = `Download ${filteredCount} visible (ZIP)`;
       }
+    }
+
+    // Paints the "window in force" readout under the listing date controls.
+    function _updateListWindowReadout(filteredCount) {
+      const el = document.getElementById('approvedListWindowInfo');
+      if (!el) return;
+      const ls = _approvedSubState.listings;
+      const all = ls.cache || [];
+      const win = _resolveDateWindow(ls);
+      // With a category chip picked "showing everything" would be untrue.
+      const allText = _LISTING_CATEGORIES.every(c => ls.categories.has(c))
+        ? 'no date limit · showing everything' : 'no date limit';
+      if (win.source !== 'all' && _listingDatesPending()) {
+        const progress = _listDates.total ? ` ${_listDates.done} of ${_listDates.total}` : '';
+        el.textContent = [_dateWindowLabel(win, allText), `reading set dates${progress}…`, 'dates use set creation time'].join(' · ');
+        return;
+      }
+      if (filteredCount == null) filteredCount = _filterAndSortListings().length;
+      const undated = all.filter(it => ls.categories.has(it.category) && !_listingDateMs(it)).length;
+      el.textContent = _dateWindowReadout(win, filteredCount, all.length, undated, allText);
     }
 
     function _renderListingsPage() {
       const ls = _approvedSubState.listings;
       const grid = document.getElementById('approvedListingsGrid');
       const pagination = document.getElementById('approvedListingsPagination');
+      // Dates are read in the background; only a date filter waits for them.
+      _ensureListingDates();
       const filtered = _filterAndSortListings();
 
       _updateListingsCounts(filtered.length);
+      _updateListWindowReadout(filtered.length);
+
+      if (_listingsNeedDates() && _listingDatesPending()) {
+        const progress = _listDates.total ? ` ${_listDates.done} of ${_listDates.total}` : '';
+        grid.innerHTML = `<div style="grid-column: 1/-1; padding: 36px;">${window.getSpinnerHTML(`<span id="approvedListDateWait">Reading set dates…${progress}</span>`)}</div>`;
+        if (pagination) pagination.style.display = 'none';
+        return;
+      }
 
       if (filtered.length === 0) {
         grid.innerHTML = `<div class="slotRefEmpty" style="grid-column: 1/-1; padding: 36px;">No approved listings match this filter.</div>`;
@@ -15530,54 +15872,16 @@ Click the button again to permanently delete eligible temporary files, or cancel
       }
     }
 
-    // ---------------------------------------------------------------------
-    // Resolve the single window actually being applied.
-    //
-    // Precedence: an explicit custom range always wins over a calendar
-    // preset. Previously the two were silently AND-ed together, so a stale
-    // date in the range inputs could quietly empty out a preset's result
-    // with nothing in the UI to explain why. Now selecting a preset clears
-    // the range inputs, typing a range switches the chips to "Custom", and
-    // this function reports which one is live.
-    // ---------------------------------------------------------------------
+    // The window in force on the Charms side (see _resolveDateWindow).
     function _resolveCharmWindow() {
-      const cs = _approvedSubState.charms;
-      const isLatest = cs.preset === 'latest10' || cs.preset === 'latest25';
-      if (cs.dateFrom != null || cs.dateTo != null) {
-        return { from: cs.dateFrom, to: cs.dateTo, source: 'custom', latestN: 0 };
-      }
-      if (isLatest) {
-        return { from: null, to: null, source: 'latest', latestN: cs.preset === 'latest10' ? 10 : 25 };
-      }
-      const r = _presetRange(cs.preset);
-      return { from: r ? r.from : null, to: r ? r.to : null, source: r ? 'preset' : 'all', latestN: 0 };
+      return _resolveDateWindow(_approvedSubState.charms);
     }
 
     function _filterAndSortCharms() {
       const cs = _approvedSubState.charms;
-      const all = cs.cache || [];
-      const win = _resolveCharmWindow();
-      let out = all.slice();
-
-      // Date window (inclusive on both ends). Rows whose folder id carries no
-      // usable timestamp cannot satisfy a date question, so they drop out of
-      // any windowed view — the UI reports how many were set aside.
-      if (win.from != null || win.to != null) {
-        out = out.filter(rec => {
-          if (!rec.dateMs) return false;
-          if (win.from != null && rec.dateMs < win.from) return false;
-          if (win.to   != null && rec.dateMs > win.to)   return false;
-          return true;
-        });
-      }
-
-      // "Latest N" means the N most recent BY DATE — independent of the
-      // display sort. The old code sliced after sorting, so choosing
-      // "Oldest first" + "Latest 10" returned the ten OLDEST sets.
-      if (win.latestN) {
-        out.sort((a, b) => b.dateMs - a.dateMs);
-        out = out.slice(0, win.latestN);
-      }
+      // A charm set's date comes from its folder id; ids with no usable
+      // timestamp drop out of any windowed view (see _applyDateWindow).
+      const out = _applyDateWindow(cs.cache || [], _resolveCharmWindow(), rec => rec.dateMs);
 
       // Display sort last. Undated rows sort to the end in either direction
       // rather than pretending to be from 1970.
@@ -15595,20 +15899,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
     function _updateCharmWindowReadout(filteredCount) {
       const el = document.getElementById('approvedCharmWindowInfo');
       if (!el) return;
-      const cs = _approvedSubState.charms;
-      const all = cs.cache || [];
-      const win = _resolveCharmWindow();
+      const all = _approvedSubState.charms.cache || [];
       const undated = all.filter(r => !r.dateMs).length;
-      let text;
-      if (win.source === 'latest') text = `newest ${win.latestN} by date`;
-      else if (win.source === 'all') text = 'no date limit · showing everything';
-      else if (win.from != null && win.to != null && win.from > win.to) text = 'Invalid range: start date must be on or before end date';
-      else text = _describeWindow(win.from, win.to, win.source === 'custom' ? 'custom range' : null);
-      const parts = [text, `${filteredCount} of ${all.length} sets`, 'dates use set creation time'];
-      if (undated > 0 && (win.from != null || win.to != null)) {
-        parts.push(`${undated} undated set${undated === 1 ? '' : 's'} excluded`);
-      }
-      el.textContent = parts.join(' · ');
+      el.textContent = _dateWindowReadout(_resolveCharmWindow(), filteredCount, all.length, undated);
     }
 
     function _renderCharmsPage() {
@@ -15868,62 +16161,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
       _renderListingsPage();
     });
 
+    // === Wire the date filters (same controls on both sub-tabs) ===
+    _wireDateFilters(_approvedSubState.listings, {
+      presets: 'approvedListPresets', from: 'approvedListDateFrom', to: 'approvedListDateTo', clear: 'approvedListDateClear',
+    }, _renderListingsPage);
+
     // === Wire CHARMS controls ===
-    // Selecting a preset clears any custom range, and typing a custom range
-    // deselects the preset chips. Only ever one date rule in force, and the
-    // UI always shows which — no more invisible AND of two conflicting rules.
-    function _setCharmPresetChip(preset) {
-      document.querySelectorAll('#approvedCharmPresets .chip').forEach(c => {
-        c.classList.toggle('active', c.dataset.preset === preset);
-      });
-    }
-    document.querySelectorAll('#approvedCharmPresets .chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const cs = _approvedSubState.charms;
-        _setCharmPresetChip(chip.dataset.preset);
-        cs.preset = chip.dataset.preset;
-        // A preset supersedes any custom range.
-        cs.dateFrom = null;
-        cs.dateTo = null;
-        const f = document.getElementById('approvedCharmDateFrom');
-        const t = document.getElementById('approvedCharmDateTo');
-        if (f) f.value = '';
-        if (t) t.value = '';
-        cs.page = 1;
-        _renderCharmsPage();
-      });
-    });
-    document.getElementById('approvedCharmDateFrom').addEventListener('input', e => {
-      const v = e.target.value; // YYYY-MM-DD, interpreted in local time
-      const cs = _approvedSubState.charms;
-      cs.dateFrom = v ? _startOfDayMs(new Date(v + 'T12:00:00')) : null;
-      if (cs.dateFrom != null || cs.dateTo != null) { cs.preset = 'custom'; _setCharmPresetChip('custom'); }
-      else { cs.preset = 'all'; _setCharmPresetChip('all'); }
-      cs.page = 1;
-      _renderCharmsPage();
-    });
-    document.getElementById('approvedCharmDateTo').addEventListener('input', e => {
-      const v = e.target.value;
-      const cs = _approvedSubState.charms;
-      // End of day must include the final 999ms or sets approved in the last
-      // second of the chosen day fall outside the window.
-      cs.dateTo = v ? _endOfDayMs(new Date(v + 'T12:00:00')) : null;
-      if (cs.dateFrom != null || cs.dateTo != null) { cs.preset = 'custom'; _setCharmPresetChip('custom'); }
-      else { cs.preset = 'all'; _setCharmPresetChip('all'); }
-      cs.page = 1;
-      _renderCharmsPage();
-    });
-    document.getElementById('approvedCharmDateClear').addEventListener('click', () => {
-      const cs = _approvedSubState.charms;
-      cs.dateFrom = null;
-      cs.dateTo = null;
-      document.getElementById('approvedCharmDateFrom').value = '';
-      document.getElementById('approvedCharmDateTo').value = '';
-      cs.preset = 'all';
-      _setCharmPresetChip('all');
-      cs.page = 1;
-      _renderCharmsPage();
-    });
+    _wireDateFilters(_approvedSubState.charms, {
+      presets: 'approvedCharmPresets', from: 'approvedCharmDateFrom', to: 'approvedCharmDateTo', clear: 'approvedCharmDateClear',
+    }, _renderCharmsPage);
     document.getElementById('approvedCharmSort').addEventListener('change', e => {
       _approvedSubState.charms.sort = e.target.value;
       _approvedSubState.charms.page = 1;
@@ -16065,6 +16311,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (ls.selected.size > 0) {
         targetItems = (ls.cache || []).filter(it => ls.selected.has(it.id));
       } else {
+        // The date filter's result is not known until the dates are read
+        // (the button is disabled meanwhile).
+        if (_listingsNeedDates() && _listingDatesPending()) return;
         targetItems = _filterAndSortListings();
       }
       if (targetItems.length === 0) {
@@ -16263,6 +16512,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
     // -- Hook D: clicking the Refresh buttons inside the Approved tab UI
     document.getElementById('approvedListRefreshBtn')?.addEventListener('click', () => {
       _approvedSubState.listings.cacheStale = true;
+      _listDates.unreadable.clear(); // try the sets whose date could not be read again
       _showSubtab('listings');
     });
     document.getElementById('approvedCharmRefreshBtn')?.addEventListener('click', () => {
@@ -18574,18 +18824,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
          detail), otherwise by the live folder breakdown, so the chips show real
          numbers before the grid has finished loading. */
       rtView('approved.catCounts', [P_BUFFER], () => {
-        const cache = _approvedSubState?.listings?.cache;
-        let total, counts = {};
-        if (cache) {
-          total = cache.length;
-          _LISTING_CATEGORIES.forEach(c => counts[c] = 0);
-          cache.forEach(it => { if (counts[it.category] != null) counts[it.category]++; });
-        } else {
-          const rec = rtGet(P_BUFFER);
-          if (rec.n == null) return;
-          total = rec.n;
-          counts = rec.byCat || {};
-        }
+        // Once loaded, the chips follow the date filter (see
+        // _paintListingCategoryCounts); folder totals would undo that.
+        if (_approvedSubState?.listings?.cache) { _paintListingCategoryCounts(); return; }
+        // Folder totals carry no dates, so they can't answer a date filter.
+        if (_listingsNeedDates()) return;
+        const rec = rtGet(P_BUFFER);
+        if (rec.n == null) return;
+        const total = rec.n;
+        const counts = rec.byCat || {};
         const all = document.getElementById('catCount-all');
         if (all) all.textContent = String(total);
         _LISTING_CATEGORIES.forEach(c => {
