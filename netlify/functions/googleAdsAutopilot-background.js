@@ -90,7 +90,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "analyzeCampaign", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
   // The monthly stop is Paul's hard spending limit, not optimisation: it keeps checking with automation
   // off (e.g. after the anomaly breaker trips) and can only pause campaigns once his threshold is reached.
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t) || t === "monthly");
@@ -276,6 +276,21 @@ exports.handler = async (event) => {
         await E.setGenStatus(genId,{phase:"running",kind:"learning",startedAt:Date.now()});
         try {result.distill=await E.distillLessons({refreshEvidence:true,onProgress:progress=>E.setGenStatus(genId,{phase:"running",kind:"learning",...progress})});await E.setGenStatus(genId,{phase:"done",kind:"learning",ok:!result.distill.error,pct:100,label:result.distill.unchanged?"Existing guidance retained":"Learning updated",result:result.distill});}
         catch(e){await E.setGenStatus(genId,{phase:"done",ok:false,error:e.message});throw e;}
+      }
+      else if (task === "analyzeCampaign") {
+        // A campaign's paid AI analysis, moved off the ~26 s console gateway so an answer is never cut off;
+        // analyzeCampaign saves it as the campaign's cached analysis, and the console polls gen_<genId>.
+        const gId = String(body.genId || "analysis-" + String(body.campaignId || "").replace(/\D/g, "")), meta = { kind: "campaign-analysis", campaignId: body.campaignId || null };
+        try { await E.setGenStatus(gId, { ...meta, phase: "running", startedAt: Date.now() }); } catch (e) {}
+        try {
+          const an = await E.analyzeCampaign(body.campaignId, { force: !!body.force });
+          result.analyzeCampaign = { campaignId: body.campaignId || null, ok: true, status: (an && an.status) || null };
+          try { await E.setGenStatus(gId, { ...meta, phase: "done", ok: true, analysis: JSON.parse(JSON.stringify(an || {})) }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 300);
+          result.analyzeCampaign = { error: msg };
+          try { await E.setGenStatus(gId, { ...meta, phase: "done", ok: false, error: msg }); } catch (e2) {}
+        }
       }
       else if (task === "generate") {
         // Campaign generation (keyword research + high-effort copy) outruns the

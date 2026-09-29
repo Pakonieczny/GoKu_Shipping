@@ -3185,9 +3185,15 @@ function wirePerf(){
   T.querySelectorAll(".panalyze").forEach(function(b){b.onclick=function(){doAnalyze(b.dataset.id,true);};});
 }
 async function doAnalyze(id,force){P.loading[id]=true;renderPerf();var aid=actStart("analyzeCampaign");
-  try{var r=await api("analyzeCampaign",{id:id,force:!!force});if(r&&!r.error)P.analysis[id]=r;else toast((r&&r.error)||"analysis failed");}
+  try{var r=await api("analyzeCampaign",{id:id,force:!!force});if(r&&r.queued&&r.genId)r=await analysisWait(r.genId);if(r&&!r.error)P.analysis[id]=r;else toast((r&&r.error)||"analysis failed");}
   catch(x){toast(x.message);}
   actEnd(aid);P.loading[id]=false;renderPerf();}
+// A fresh analysis is a paid AI call, so the background worker runs it (the gateway would cut it off); poll its status.
+async function analysisWait(genId){var t0=Date.now();
+  while(Date.now()-t0<600000){await new Promise(function(res){setTimeout(res,3000);});
+    var st=await api("genStatus",{genId:genId}).catch(function(){return null;});
+    if(st&&st.phase==="done")return st.ok&&st.analysis?st.analysis:{error:st.error||"analysis failed"};}
+  return {error:"The analysis is still running. Close and reopen this campaign in a minute to see it."};}
 async function setBudget(id,amt,res,btn){
   if((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun){if(!confirm("Dry-run is ON \u2014 this will validate only and NOT change the budget. Continue?"))return;}
   else if(!confirm("Set daily budget to "+money(amt)+"?\n\nThis changes real spend."))return;
@@ -3992,9 +3998,11 @@ function oppCard(o,i,ceil){ var ui=oppUi(i),open=ui.open||{},w=oppWindow(o,ui),b
   var past=(o.pastStats&&o.pastStats.roas)?'<span class="'+(o.pastStats.roas>=3?"roas-good":"roas-bad")+'">'+esc(o.pastStats.roas)+'x ROAS last run</span>':'';
   var edge=o.priority==="high"?"var(--gold)":o.priority==="medium"?"var(--sage)":"var(--slate)";
   var tip=function(s){return esc(s).replace(/"/g,'&quot;');};
+  // The page the web research verified the occasion date on (scan dateCheck.url), as a small external link; plain http(s) hosts only.
+  var dsm=/^https?:\/\/(?:www\.)?([a-z0-9.-]+)(?::\d+)?(?:[\/?#]|$)/i.exec(String(dc.url||'')),dsrc=dsm?'<span>verified on <a class="oppDateSrc" href="'+tip(dc.url)+'" target="_blank" rel="noopener noreferrer" title="'+tip('Occasion date verified on '+dc.url)+'" style="color:var(--ink-70);text-decoration-color:var(--gold);text-underline-offset:2px">'+esc(dsm[1])+' ↗</a></span>':'';
   var genTip=blk?(blk.text||blk.toast):'Creates a paused draft in Approvals for creative review. Nothing is sent to Google until you approve it.',busy=!blk&&!!OPP_LAUNCHING[oppKey(i)];
   return elFrom('<div class="exp oppCard'+(blk&&blk.kind==='expired'?' is-expired':'')+'" data-i="'+i+'" style="border-left-color:'+edge+'">'+
-    '<div class="oppCardHeader"><span class="oppCardPriority" style="background:'+edge+'"></span><div class="oppCardTitle"><h4>'+esc(o.occasion)+'</h4><div class="oppCardMeta"><span>'+esc(o.collectionTitle)+'</span><span class="sep"></span><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+w.days+'</span> <span class="opDurU" data-i="'+i+'">'+(w.days===1?'day':'days')+'</span></span>'+(o.peakDate?'<span class="sep"></span><span title="'+tip('Occasion date'+(dc.source==='calendar rule'?', set by the calendar rule':dc.source?', confirmed by web research'+(dc.reference?': '+dc.reference:''):'')+'. Details under Why these numbers.')+'">Occasion '+esc(fmtDate(o.peakDate))+'</span>':'')+(nar?'<span class="sep"></span><span title="'+tip('Buyers shop for this occasion only in these countries, so the draft targets them unless you change the countries.')+'">'+esc(o.markets.join(', '))+' only</span>':'')+'</div></div><div class="oppCardBadges">'+urgPill(o)+'<span class="oppScore" title="'+tip('Ranking score (0–99): how this idea compares with the other suggestions on measured demand, timing, inventory fit and past results. It is not a chance of sales.')+'">Score '+Math.max(0,Math.min(99,Math.round(o.score||0)))+'</span></div></div>'+
+    '<div class="oppCardHeader"><span class="oppCardPriority" style="background:'+edge+'"></span><div class="oppCardTitle"><h4>'+esc(o.occasion)+'</h4><div class="oppCardMeta"><span>'+esc(o.collectionTitle)+'</span><span class="sep"></span><span class="opWin" data-i="'+i+'">'+winTxt+'</span><span class="sep"></span><span><span class="opDur" data-i="'+i+'">'+w.days+'</span> <span class="opDurU" data-i="'+i+'">'+(w.days===1?'day':'days')+'</span></span>'+(o.peakDate?'<span class="sep"></span><span title="'+tip('Occasion date'+(dc.source==='calendar rule'?', set by the calendar rule':dc.source?', confirmed by web research'+(dc.reference?': '+dc.reference:''):'')+'. Details under Why these numbers.')+'">Occasion '+esc(fmtDate(o.peakDate))+'</span>'+dsrc:'')+(nar?'<span class="sep"></span><span title="'+tip('Buyers shop for this occasion only in these countries, so the draft targets them unless you change the countries.')+'">'+esc(o.markets.join(', '))+' only</span>':'')+'</div></div><div class="oppCardBadges">'+urgPill(o)+'<span class="oppScore" title="'+tip('Ranking score (0–99): how this idea compares with the other suggestions on measured demand, timing, inventory fit and past results. It is not a chance of sales.')+'">Score '+Math.max(0,Math.min(99,Math.round(o.score||0)))+'</span></div></div>'+
     '<div class="oppCardWhy">'+esc(o.rationale||"")+'</div>'+
     '<div class="oppCardMetrics">'+
       '<div class="oppCardMetric"><b>'+(r.searchVolume!=null?'~'+Number(r.searchVolume).toLocaleString():'—')+'</b><span>Searches / month</span><small>'+(real?'Keyword Planner · '+measured+' of '+kd.length+' keywords measured':'AI estimate, not measured')+'</small>'+(r.dataAt?'<small title="'+tip('Keyword Planner data fetched '+fmtDateTime(new Date(r.dataAt)))+'">Fetched '+timeago(r.dataAt)+' ago</small>':'')+'</div>'+

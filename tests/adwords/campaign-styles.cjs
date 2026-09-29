@@ -11,7 +11,7 @@ const fixture=path.join(__dirname,'design-publication.cjs'),source=fs.readFileSy
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
 vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
 (async()=>{
- const E=ctx.factory(),f=ctx.memoryFactory(),root=f.db.collection('workspaces').doc('test'),sharp=require('../../node_modules/sharp');
+ const E=ctx.factory(),f=ctx.memoryFactory(),root=f.db.collection('workspaces').doc('test'),sharp=require('sharp');
  const assets={};for(const [shape,width,height] of [['square',600,600],['landscape',1200,628],['portrait',600,750]]){const bytes=await sharp({create:{width,height,channels:3,background:'#ddd'}}).jpeg().toBuffer(),p='Brites_GAds_Creative/test/'+shape+'.jpg';assets[shape]={path:p,width,height,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))};f.files.set(p,bytes);}
  const copy={headlines:['Peach Charm','For Your Favorite Foodie','A Playful Gift'],longHeadlines:['Give a playful peach charm'],descriptions:['Shop the peach charm at Brites Jewelry.','Choose your favorite metal.']},w={context:{itemIds:['shopify_US_1_2'],handle:'charms',feedLabel:'US'},settings:{productId:'1',groupRef:'g'},job:{result:{assets}}};await root.set(w);
  const item={sourceHash:'source',designReview:{workspaceId:'test',copy,layoutReview:{jobId:'eai_test',reviewVersion:11}}};
