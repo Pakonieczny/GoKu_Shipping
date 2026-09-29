@@ -5,7 +5,8 @@
 // Layout and content audit of one region of the page.
 function pageAudit(opts) {
   opts = opts || {};
-  const vw = window.innerWidth, vh = window.innerHeight;
+  // The screen's width as set: a phone browser widens innerWidth to fit a page that is too wide.
+  const vw = opts.vw || window.innerWidth, vh = window.innerHeight;
   const out = { docOverflow: null, overflow: [], clipped: [], overlaps: [], smallTargets: [], leaks: [], bareDollar: [] };
   const roots = (opts.scopes || ['body']).map(s => document.querySelector(s)).filter(Boolean);
   if (!roots.length) return out;
@@ -41,6 +42,8 @@ function pageAudit(opts) {
       const v = node.nodeValue;
       if (!v || !v.trim()) continue;
       const el = node.parentElement; if (!el || !visible(el)) continue;
+      // Text for screen readers only, in a 1 px clipped box, is meant to be hidden.
+      const eb = el.getBoundingClientRect(); if (eb.width <= 1 && eb.height <= 1) continue;
       // Measure the glyphs only: trailing spaces hang past right-aligned boxes.
       const range = document.createRange(); range.setStart(node, v.search(/\S/)); range.setEnd(node, v.length - v.match(/\s*$/)[0].length);
       const r = range.getBoundingClientRect(); if (r.width < 1 || r.height < 1) continue;

@@ -165,7 +165,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
   const audit = async (tab, scopes, full, label) => {
     // Layout is judged once height eases have finished, as a person would see it.
     await page.waitForFunction(() => !document.getAnimations().some(a => a.playState === 'running' && a.effect && a.effect.getKeyframes().some(k => 'height' in k)), null, { timeout: 1200, polling: 50 }).catch(() => {});
-    let res; try { res = await page.evaluate(pageAudit, { scopes, minTap: vp.phone && full ? 32 : 0, cadTracers: fx.cadTracers }); } catch (e) { notes.push('audit failed on ' + tab + ': ' + e.message); return; }
+    let res; try { res = await page.evaluate(pageAudit, { scopes, minTap: vp.phone && full ? 32 : 0, cadTracers: fx.cadTracers, vw: page.viewportSize().width }); } catch (e) { notes.push('audit failed on ' + tab + ': ' + e.message); return; }
     const ctx = label || state.lastAction;
     if (res.docOverflow) { const f = add('page wider than viewport', vp.name, tab, Object.assign({ after: ctx }, res.docOverflow), (res.docOverflow.culprits[0] || {}).sel || 'doc'); await shoot(f, (res.docOverflow.culprits[0] || {}).sel, tab); }
     for (const o of res.overflow) { const f = add('element overflows its container', vp.name, tab, Object.assign({ after: ctx }, o), o.container + '|' + o.sel); await shoot(f, o.sel, tab); }
@@ -303,11 +303,13 @@ async function runViewport(browser, vp, base, known, canShoot) {
       // Playwright's retries also line a control up with the top edge, under the sticky top bar, where no one
       // would tap it; a control is reported as covered only when it is covered in the middle of the screen too.
       try { await press(3000); } catch (e) {
-        if (!/intercepts pointer events/.test(String(e.message || e))) throw e;
-        await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'center' })); await press(4000);
+        if (!/intercepts pointer events/.test(String(e.message || e)) || !(await target.count())) throw e;
+        await target.evaluate(el => el.scrollIntoView({ block: 'center', inline: 'center' }), null, { timeout: 2000 }); await press(4000);
       }
       C.clicked++;
     } catch (e) {
+      // A control the page drew again under the press (the reload that follows a change) is gone, not broken.
+      if (!(await loc.count().catch(() => 0))) { C.vanished++; return; }
       const msg = String(e.message || e).split('\n');
       const why = (msg.find(l => /intercepts pointer events/.test(l)) || msg.find(l => /outside of the viewport|not visible|not stable|detached/.test(l)) || msg[0]).trim().slice(0, 200);
       if (/intercepts pointer events/.test(why)) add('control covered by another element', vp.name, tab, { control: c.text, family: c.family, why }, c.family + '|' + why.replace(/\d+/g, '#').slice(0, 80));
@@ -349,8 +351,9 @@ async function runViewport(browser, vp, base, known, canShoot) {
     else await page.mouse.move(x, y);
     await page.waitForTimeout(220);
     if (vp.phone) tapChanged = await changes().catch(() => 0);
+    // The page's tooltip moves into an open dialog so that it shows above it.
     const tip = await page.evaluate(() => {
-      const cands = [...document.querySelectorAll('body > div, .bcTip')].filter(d => { const s = getComputedStyle(d); return s.display !== 'none' && (s.pointerEvents === 'none') && d.textContent.trim() && (s.position === 'fixed' || s.position === 'absolute'); });
+      const cands = [...document.querySelectorAll('body > div, dialog[open] > div, .bcTip')].filter(d => { const s = getComputedStyle(d); return s.display !== 'none' && (s.pointerEvents === 'none') && d.textContent.trim() && (s.position === 'fixed' || s.position === 'absolute'); });
       const t = cands[cands.length - 1]; if (!t) return null; t.setAttribute('data-harness-tip', '1'); const r = t.getBoundingClientRect();
       return { text: t.textContent.replace(/\s+/g, ' ').trim().slice(0, 120), left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), bottom: Math.round(r.bottom), vw: innerWidth, vh: innerHeight };
     });
@@ -473,6 +476,7 @@ async function runViewport(browser, vp, base, known, canShoot) {
       await goTab(tab);
       await audit(tab, ['#v-' + tab, '#groupContext'], true, 'tab opened');
       if (tab === 'command') await chartResize(tab);
+      if (vp.phone) await narrow(tab);
       await crawl(tab, ['#v-' + tab, '#groupContext'], BUDGET, 0);
       await audit(tab, ['#v-' + tab, '#groupContext'], true, 'after exercising the tab');
     } catch (e) { notes.push(`${vp.name}/${tab}: walk stopped — ${String(e.message).split('\n')[0]}`); try { await page.keyboard.press('Escape'); await ensureSignedIn(); } catch (e2) {} }
@@ -482,6 +486,19 @@ async function runViewport(browser, vp, base, known, canShoot) {
   await crawl('shell', ['.topbar', '#groupContext'], 10, 0);
   await context.close();
 
+  // The narrowest phones in use (320 px): no sideways scroll, with the dry-run pill in the top bar as well.
+  async function narrow(tab) {
+    const wide = async label => {
+      const res = await page.evaluate(pageAudit, { scopes: ['.topbar', '#v-' + tab, '#groupContext'], cadTracers: fx.cadTracers, vw: 320 }).catch(() => null), o = res && res.docOverflow;
+      if (o) { const f = add('page wider than a 320 px phone', vp.name, tab, Object.assign({ after: label }, o), (o.culprits[0] || {}).sel || 'doc'); await shoot(f, (o.culprits[0] || {}).sel, tab); }
+    };
+    await page.setViewportSize({ width: 320, height: vp.height }); await page.waitForTimeout(700);
+    await wide('tab opened');
+    const was = await page.evaluate(() => { const d = document.getElementById('pillDry'), s = d.getAttribute('style'); d.style.display = 'inline-flex'; return s; });
+    await wide('with the dry-run pill');
+    await page.evaluate(s => { const d = document.getElementById('pillDry'); if (s == null) d.removeAttribute('style'); else d.setAttribute('style', s); }, was);
+    await page.setViewportSize({ width: vp.width, height: vp.height }); await page.waitForTimeout(700);
+  }
   async function chartResize(tab) {
     const measure = () => page.evaluate(() => ['chartSpendRev', 'chartClicks', 'salesTrend'].map(id => { const host = document.getElementById(id), svg = host && host.querySelector('svg'); if (!svg || !host.offsetParent) return null; const vb = svg.viewBox && svg.viewBox.baseVal, r = svg.getBoundingClientRect(), hr = host.getBoundingClientRect(); return { id, host: Math.round(hr.width), svg: Math.round(r.width), vb: vb ? Math.round(vb.width) : null }; }).filter(Boolean));
     await settle(400, 6000);
