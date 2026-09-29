@@ -43,5 +43,9 @@ await test('research omits empty request payloads and never checks skipped sourc
 await test('partial source failures stay visible in research detail',()=>{ctx.SCAN_AUDIT.checks.push({id:'pmax_paid_product_reporting',label:'Paid product history',status:'warning',error:'503 unavailable'});ctx.renderScanAudit();assert.match(node('scanAudit').innerHTML,/Paid product history/);assert.match(node('scanAudit').innerHTML,/Request details/);assert.match(node('scanAudit').innerHTML,/Partial data/);});
 await test('Command Center has no 14d shortcut or cumulative-snapshot daily chart',()=>{const a=pick('cmdApplyRange'),render=pick('renderCommand');assert(!a.includes('val.preset==="14d"'));assert(!render.includes('DASH.metricsSeries'));assert(!render.includes('cmdMetrics||DASH.lastMetrics'));assert.match(a,/cmdRangeSeq/);assert.match(pick('loadDailyStats'),/_dailySeq/);});
 await test('Command Center removed campaigns retain read-only schedules and budgets',()=>{assert.match(pick('campaignTable'),/historicalSchedule/);assert.match(pick('campaignTable'),/historicalBudget/);});
+await test('on phones the conversion basis is never cut off: the date range takes the first row, the basis shares the second with Refresh',()=>{
+  // Measured in Chromium: side by side at 360-480 px the basis select clipped "conversion date" by 4-24 px.
+  assert.match(html,/@media\(max-width:480px\)\{\.gpControls>label:first-child\{flex-basis:100%\}\}/);
+  for(const key of ['search','dialog'])assert.match(ctx.performanceControls(key,{range:{preset:'14d'},busy:false}),/^<div class="gpControls" data-perf-controls="\w+"><label>Reporting dates<select[^>]*data-perf-preset>/,'the date range is the first control');});
 console.log(`${passed} focused UI behavior checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

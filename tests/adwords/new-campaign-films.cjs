@@ -1,22 +1,32 @@
 // New paused campaigns receive their product's three reviewed films. After a first ad or Campaign
 // Styles publication is APPLIED, the films bind to the new asset group and the existing reviewed
-// upload -> validate -> attach flow runs; dry run validates the attachment and attaches nothing.
+// upload -> validate -> attach flow runs; dry run starts no YouTube upload and attaches nothing.
+// A rejected validation attached nothing, so it resets for free; the new campaign's own group finds the films.
 // Offline: Firestore, Google Ads reads and writes, YouTube receipts and the worker dispatch are fakes.
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
 const dir=path.resolve(__dirname,'../../netlify/functions')+'/',file=dir+'googleAdsAutopilot.js',realRequire=require('node:module').createRequire(file),sharp=realRequire('sharp');
 const {reviewHash}=realRequire('./googleAdsMotionPublication'),R=realRequire('./googleAdsCampaignStyles');
 const clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
 let checks=0;const ok=(v,m)=>{assert(v,m);checks++;};
-function engine(){const context=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?async()=>{throw Error('Live network forbidden');}:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123'}},console,Buffer,Date,Intl,Map,Set,URL,setTimeout,clearTimeout});vm.runInContext(fs.readFileSync(file,'utf8'),context);return {E:context.module.exports,get:n=>vm.runInContext(n,context),bind(values){context.__m=values;vm.runInContext(Object.keys(values).map(k=>k+'=__m.'+k).join('\n'),context);}};}
+// Google's resumable YouTube upload, faked: every call is recorded; anything else is refused.
+const net=[];let sessions=0;
+async function fakeFetch(url,o={}){url=String(url);const cmd=(o.headers||{})['X-Goog-Upload-Command']||null;net.push({url,cmd});const res=(headers,json)=>({ok:true,status:200,headers:{get:n=>headers[n.toLowerCase()]??null},json:async()=>json});
+ if(/\/youTubeVideoUploads:create$/.test(url)&&cmd==='start')return res({'x-goog-upload-url':'https://googleads.googleapis.com/resumable/upload/session/'+(++sessions)},{});
+ if(/\/resumable\/upload\/session\/\d+$/.test(url)&&cmd==='query')return res({'x-goog-upload-size-received':'0'},{});
+ if(/\/resumable\/upload\/session\/\d+$/.test(url)&&cmd==='upload, finalize')return res({},{resourceName:'customers/123/youTubeVideoUploads/'+url.split('/').pop()});
+ throw Error('Live network forbidden: '+url);}
+function engine(){const context=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?fakeFetch:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123'}},console,Buffer,Date,Intl,Map,Set,URL,setTimeout,clearTimeout});vm.runInContext(fs.readFileSync(file,'utf8'),context);return {E:context.module.exports,get:n=>vm.runInContext(n,context),bind(values){context.__m=values;vm.runInContext(Object.keys(values).map(k=>k+'=__m.'+k).join('\n'),context);}};}
 function memory(){const docs=new Map(),files=new Map();
  const doc=p=>({id:p.split('/').pop(),path:p,get:async()=>({exists:docs.has(p),id:p.split('/').pop(),data:()=>clone(docs.get(p))}),set:async v=>{docs.set(p,clone(v));},update:async v=>{if(!docs.has(p))throw Error('Missing document '+p);const next=clone(docs.get(p));for(const [key,value] of Object.entries(clone(v))){const parts=key.split('.');let at=next;for(const part of parts.slice(0,-1))at=at[part]||(at[part]={});at[parts.at(-1)]=value;}docs.set(p,next);},collection:n=>collection(p+'/'+n)});
- const collection=p=>({doc:n=>doc(p+'/'+n),where(){return this;},select(){return this;},get:async()=>({docs:[...docs.keys()].filter(k=>k.startsWith(p+'/')&&!k.slice(p.length+1).includes('/')).map(k=>({id:k.split('/').pop(),data:()=>clone(docs.get(k))}))})});
+ const collection=p=>({doc:n=>doc(p+'/'+n),where(){return this;},select(){return this;},limit(){return this;},get:async()=>({docs:[...docs.keys()].filter(k=>k.startsWith(p+'/')&&!k.slice(p.length+1).includes('/')).map(k=>({id:k.split('/').pop(),data:()=>clone(docs.get(k))}))})});
  return {docs,files,db:{collection,runTransaction:async fn=>fn({get:r=>r.get(),set:(r,v)=>r.set(v),update:(r,v)=>r.update(v)})},FV:{serverTimestamp:()=>Date.now()},admin:{storage:()=>({bucket:()=>({file:p=>({download:async()=>{if(!files.has(p))throw Error('Saved file missing');return [files.get(p)];},getSignedUrl:async()=>['https://storage.test/'+p]})})})}};}
 
 const WS='ws_new',PRODUCT='11',NEW_AD='opportunity:duck',EXISTING='customers/123/assetGroups/7',DEST='https://britesjewelry.com/products/duck',JOB='motion_'+'a'.repeat(40),PUB='publish_'+'b'.repeat(32),REVIEW='design-review-'+'c'.repeat(32);
 const OFFERS=['shopify_us_11_1','shopify_us_11_2'],groupOf=id=>'customers/123/assetGroups/'+id;
 const copy={headlines:['Duck Necklace','A Whimsical Duck Charm','Jewelry For Duck Lovers'],longHeadlines:['Discover a whimsical duck necklace'],descriptions:['Shop the duck necklace at Brites Jewelry.','Find the duck charm necklace in our collection.']};
-const films=(extra={})=>({id:JOB,workspaceId:WS,productId:PRODUCT,groupRef:NEW_AD,title:'Duck necklace',destination:DEST,phase:'ready',pipelineVersion:2,plan:{copy:{headline:'Your Little Duck'},nativeCopy:clone(copy)},quality:{pass:true,productFaithful:true,mobileReadable:true,score:98},variants:['mobile_portrait','mobile_square','desktop_landscape'].map(key=>({key,format:key.split('_')[1],seconds:10,asset:{path:'Brites_GAds_Motion/'+JOB+'/'+key+'.mp4',hash:key}})),createdAt:1000,...extra});
+// The saved films are real bytes in storage, so an upload or a dry-run check reads the exact reviewed files.
+const KEYS=['mobile_portrait','mobile_square','desktop_landscape'],filmBytes=key=>Buffer.from('reviewed film '+key),filmHash=key=>require('node:crypto').createHash('sha256').update(JSON.stringify(filmBytes(key).toString('base64'))).digest('hex');
+const films=(extra={})=>({id:JOB,workspaceId:WS,productId:PRODUCT,groupRef:NEW_AD,title:'Duck necklace',destination:DEST,phase:'ready',pipelineVersion:2,plan:{copy:{headline:'Your Little Duck'},nativeCopy:clone(copy)},quality:{pass:true,productFaithful:true,mobileReadable:true,score:98},variants:KEYS.map(key=>({key,format:key.split('_')[1],seconds:10,asset:{path:'Brites_GAds_Motion/'+JOB+'/'+key+'.mp4',hash:filmHash(key)}})),createdAt:1000,...extra});
 
 // campaigns: the paused campaigns Google created, each with one asset group (id) for the product.
 async function setup({job=films(),groupRef=NEW_AD,campaignId=null,campaigns={555:66}}={}){
@@ -25,16 +35,18 @@ async function setup({job=films(),groupRef=NEW_AD,campaignId=null,campaigns={555
  f.docs.set(ws,{sourceSetId:'s1',settings:{productId:PRODUCT,groupRef},context,messaging:{copy}});
  f.docs.set(ws+'/sourceSets/s1/products/p11',{id:PRODUCT,title:'Duck necklace',url:DEST,offerIds:OFFERS});
  if(job)f.docs.set(ws+'/motionJobs/'+job.id,{...job,groupRef});
+ for(const key of KEYS)f.files.set('Brites_GAds_Motion/'+JOB+'/'+key+'.mp4',filmBytes(key));
  const gaql=async q=>{state.queries.push(q);
   const inCampaigns=q.match(/campaign\.id IN \(([\d,]+)\)/);if(inCampaigns)return inCampaigns[1].split(',').filter(id=>state.campaigns[id]).map(id=>({campaign:{id},assetGroup:{resourceName:groupOf(state.campaigns[id]),finalUrls:[DEST]}}));
   const named=q.match(/FROM asset_group WHERE asset_group\.resource_name = '([^']+)'/);if(named){const id=Object.keys(state.campaigns).find(c=>groupOf(state.campaigns[c])===named[1]);return id?[{campaign:{id,status:state.status[id]||'PAUSED'},assetGroup:{resourceName:named[1],status:'ENABLED',finalUrls:[DEST]}}]:[];}
   if(q.includes('FROM asset_group_listing_group_filter'))return [{assetGroupListingGroupFilter:{type:'SUBDIVISION'}},...state.filters.map(value=>({assetGroupListingGroupFilter:{type:'UNIT_INCLUDED',caseValue:{productItemId:{value}}}})),{assetGroupListingGroupFilter:{type:'UNIT_EXCLUDED',caseValue:{productItemId:{}}}}];
   if(q.includes("IN ('HEADLINE'"))return [...Object.entries({headlines:'HEADLINE',longHeadlines:'LONG_HEADLINE',descriptions:'DESCRIPTION'}).flatMap(([k,fieldType])=>copy[k].map(text=>({assetGroupAsset:{fieldType},asset:{textAsset:{text}}}))),{assetGroupAsset:{fieldType:'CALL_TO_ACTION_SELECTION'},asset:{callToActionAsset:{callToAction:'SHOP_NOW'}}}];
-  if(q.includes('FROM you_tube_video_upload')){const name=q.match(/'([^']+)'/)[1];return [{youTubeVideoUpload:{resourceName:name,videoId:'abcdefghij'+name.slice(-1),state:'PROCESSED'}}];}
+  if(q.includes('FROM you_tube_video_upload')){if(state.enableDuringProcessing)state.status[state.enableDuringProcessing]='ENABLED';const name=q.match(/'([^']+)'/)[1];return [{youTubeVideoUpload:{resourceName:name,videoId:'abcdefghij'+name.slice(-1),state:'PROCESSED'}}];}
   if(q.includes("asset_group_asset.field_type = 'YOUTUBE_VIDEO'"))return [];
   throw Error('Unexpected Google query: '+q);};
- e.bind({fb:()=>f,gaql,control:async()=>({enabled:true,dryRun:state.dryRun}),
-  mutateAll:async(ops,o={})=>{const vo=o.validateOnly==null?!!(o.ctrl||{}).dryRun:o.validateOnly;state.mutations.push({vo,label:o.label,ops:clone(ops)});return vo?{}:{mutateOperationResponses:ops.map((_,i)=>({assetResult:{resourceName:'customers/123/assets/'+(900+i)}}))};},
+ e.bind({fb:()=>f,gaql,control:async()=>({enabled:true,dryRun:state.dryRun}),mintToken:async()=>'test-token',
+  // rejectValidate: Google refuses the validate-only request. lostResponse: the real request left, its answer was lost.
+  mutateAll:async(ops,o={})=>{const vo=o.validateOnly==null?!!(o.ctrl||{}).dryRun:o.validateOnly;state.mutations.push({vo,label:o.label,ops:clone(ops)});if(vo&&state.rejectValidate)throw Error(state.rejectValidate);if(!vo&&o.onDispatch)o.onDispatch();if(!vo&&state.lostResponse)throw Error(state.lostResponse);return vo?{}:{mutateOperationResponses:ops.map((_,i)=>({assetResult:{resourceName:'customers/123/assets/'+(900+i)}}))};},
   _adDesignSelectionHash:()=>'source',_adDesignApprovalReview:async id=>({hash:f.docs.get('Brites_GAds_Approvals/'+id)?.reviewHash,reviewed:true}),
   applyApproval:async id=>{if(state.dryRun)return {status:'VALIDATED'};await f.db.collection('Brites_GAds_Approvals').doc(id).update({status:'APPLIED',publishedCampaignIds:Object.keys(state.campaigns).concat(state.extraCampaigns||[])});return {status:'APPLIED'};},
   _verifiedCampaignAnalysisBasis:async()=>({version:2,snapshotHash:'s',snapshot:{components:{assetGroups:[]}}}),
@@ -137,8 +149,8 @@ const motionOf=job=>({jobId:job.id,reviewHash:reviewHash(job)});
  await Kmod.exports.handleAction({action:'publishAdDesignPublication'});await Kmod.exports.handleAction({action:'publishAdDesignSubmission'});ok(calls.length===1,'no queued films, no dispatch');
  // 12. Animated ads panel: where the films attach, before and after an upload exists.
  const {JSDOM}=require('jsdom');
- async function panel(status){const dom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.setTimeout=()=>0;w.clearTimeout=()=>{};
-  w.eval(fs.readFileSync(path.join(__dirname,'../../brites-ad-motion.js'),'utf8'));const calls=[];w.BritesAdMotion.mount(w.document.getElementById('host'),{scope:{workspaceId:WS,productId:PRODUCT,groupRef:NEW_AD},request:async(a,b)=>{calls.push({a,b});return a==='adDesignMotionStatus'?status:{ok:true,queued:true};}});
+ async function panel(status,scope={workspaceId:WS,productId:PRODUCT,groupRef:NEW_AD}){const dom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};w.setTimeout=()=>0;w.clearTimeout=()=>{};
+  w.eval(fs.readFileSync(path.join(__dirname,'../../brites-ad-motion.js'),'utf8'));const calls=[];w.BritesAdMotion.mount(w.document.getElementById('host'),{scope,request:async(a,b)=>{calls.push({a,b});return a==='adDesignMotionStatus'?status:{ok:true,queued:true};}});
   await new Promise(setImmediate);return {dom,calls,q:s=>w.document.querySelector(s)};}
  const ready={ok:true,workspaceId:WS,jobId:JOB,phase:'ready',reviewHash:'f'.repeat(64),variants:[],quality:{score:98},qualityTargetMet:true};
  let ui=await panel({...ready,attachTarget:null,attachNote:'Publish this product’s ad first. Its reviewed films attach to the new paused campaign once Google creates it.'});
@@ -149,5 +161,61 @@ const motionOf=job=>({jobId:job.id,reviewHash:reviewHash(job)});
  await ui.q('[data-confirm] .bam-primary').onclick();ok(ui.calls.some(c=>c.a==='startAdMotionPublication'&&c.b.jobId===JOB&&c.b.reviewHash==='f'.repeat(64)),'approving starts the reviewed upload');ui.dom.window.close();
  ui=await panel({...ready,publication:{phase:'validated',message:'Dry run: Google validated attaching these videos. Nothing was attached. Turn off dry run, then approve the upload again to attach them.',target:{campaignId:'555',groupRef:groupOf(66)},videos:[]}});
  ok(/Dry run/.test(ui.q('[data-publication]').textContent)&&/Target: paused campaign 555/.test(ui.q('[data-publication]').textContent)&&!ui.q('[data-publish]').hidden,'a dry-run result explains itself and can be approved again');ui.dom.window.close();
- console.log('PASS '+checks+' new-campaign film binding, dry-run attachment, target safety and dispatch checks');
-})().catch(e=>{console.error(e.stack);process.exitCode=1;});
+ // A rejected validation offers a free reset; an attachment that may have reached Google offers nothing.
+ const rejected={phase:'blocked',resettable:true,error:'Google policy: video asset rejected',message:'Nothing was attached, so this step can be reset for free: completed uploads are kept and no new film is made. Fix the reason below, then reset and retry.',target:{campaignId:'555',groupRef:groupOf(66)},videos:[]};
+ ui=await panel({...ready,publication:rejected});ok(!ui.q('[data-publish]').hidden&&ui.q('[data-publish]').textContent==='Reset and retry attachment'&&/reset for free/.test(ui.q('[data-publication]').textContent)&&/video asset rejected/.test(ui.q('[data-publication]').textContent),'a rejected validation shows Google’s reason and a free reset');
+ ui.q('[data-publish]').click();ok(/Reset and retry the video attachment/.test(ui.q('[data-confirm]').textContent)&&/costs nothing/.test(ui.q('[data-confirm]').textContent)&&!/Upload portrait/.test(ui.q('[data-confirm]').textContent),'the reset confirmation says nothing is made or uploaded again');
+ await ui.q('[data-confirm] .bam-primary').onclick();ok(ui.calls.some(c=>c.a==='startAdMotionPublication'&&c.b.jobId===JOB),'confirming the reset re-approves the same reviewed films');ui.dom.window.close();
+ ui=await panel({...ready,publication:{...rejected,resettable:false,message:null,error:'socket hang up'}});ok(ui.q('[data-publish]').hidden,'an uncertain attachment is never offered a reset');ui.dom.window.close();
+ // The new campaign's own group: actions go to the films' own workspace and scope.
+ ui=await panel({...ready,workspaceId:WS,jobGroupRef:NEW_AD,fromEarlierVersion:true,attachTarget:{campaignId:'555',groupRef:groupOf(66)},attachNote:'These films attach to paused campaign 555, created when this ad was published.'},{workspaceId:'ws_group',productId:PRODUCT,groupRef:groupOf(66)});
+ ok(ui.calls[0].a==='adDesignMotionStatus'&&ui.calls[0].b.workspaceId==='ws_group'&&!ui.q('[data-publish]').hidden,'the group’s own panel loads the linked films');
+ ui.q('[data-publish]').click();await ui.q('[data-confirm] .bam-primary').onclick();const linkedCall=ui.calls.find(c=>c.a==='startAdMotionPublication');
+ ok(linkedCall&&linkedCall.b.workspaceId===WS&&linkedCall.b.groupRef===NEW_AD&&linkedCall.b.jobId===JOB,'approving there uses the films’ own workspace and scope');ui.dom.window.close();
+
+ // 13. Dry run starts no YouTube upload: the saved films and the paused target are checked, nothing is sent.
+ e=await setup();e.prepareFirstAd(motionOf(films()));await e.publishFirstAd();e.state.dryRun=true;let sent=net.length;
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});let pub=e.job().publication;
+ ok(run.dryRun&&run.uploaded===false&&net.length===sent&&pub.phase==='validated'&&pub.videos.every(v=>!v.sessionUrl&&!v.inFlight&&!v.resourceName)&&e.state.mutations.length===0,'dry run starts no YouTube upload and sends nothing to Google');
+ status=await e.E.adDesignMotionStatus(e.scope);ok(/No YouTube upload was started and nothing was attached/.test(status.publication.message),'status says the dry run uploaded nothing');
+ e.state.dryRun=false;out=await e.E.startAdMotionPublication({...e.scope,jobId:JOB,reviewHash:reviewHash(films())});run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});const uploads=net.slice(sent);
+ ok(out.queued&&run.attached&&uploads.filter(c=>c.cmd==='start').length===3&&uploads.filter(c=>c.cmd==='upload, finalize').length===3&&e.state.mutations.map(m=>m.vo).join()==='true,false','dry run off: approving again uploads the three films once and attaches them');
+
+ // 14. Google rejects the validate-only attachment: nothing was attached, so the upload can be reset for free.
+ e=await setup();e.prepareFirstAd(motionOf(films()));await e.publishFirstAd();e.uploaded();e.state.rejectValidate='Google policy: video asset rejected';
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});pub=e.job().publication;
+ ok(!run.ok&&run.resettable&&pub.phase==='blocked'&&pub.resettable===true&&pub.attachmentInFlight===false&&e.state.mutations.length===1&&e.state.mutations[0].vo===true,'a rejected validation attaches nothing and leaves the upload resettable');
+ status=await e.E.adDesignMotionStatus(e.scope);ok(status.publication.resettable&&/reset for free/.test(status.publication.message)&&/video asset rejected/.test(status.publication.error),'status explains the free reset and Google’s reason');
+ delete e.state.rejectValidate;sent=net.length;out=await e.E.startAdMotionPublication({...e.scope,jobId:JOB,reviewHash:reviewHash(films())});pub=e.job().publication;
+ ok(out.queued&&pub.phase==='queued'&&!pub.error&&!pub.resettable&&pub.target.groupRef===groupOf(66)&&pub.videos.every((v,i)=>v.resourceName==='customers/123/youTubeVideoUploads/'+(i+1)),'re-approval resets it and keeps the target and upload receipts');
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});ok(run.attached&&net.length===sent&&e.state.mutations.slice(1).map(m=>m.vo).join()==='true,false','the retry validates and attaches with no new upload or film');
+ // The campaign was enabled before the films attached: nothing is sent, and the reset waits until it is paused again.
+ e=await setup();e.prepareFirstAd(motionOf(films()));await e.publishFirstAd();e.uploaded();e.state.status['555']='ENABLED';
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});ok(run.resettable&&e.job().publication.resettable&&e.state.mutations.length===0,'an enabled campaign blocks the attachment before anything is sent');
+ await assert.rejects(()=>e.E.startAdMotionPublication({...e.scope,jobId:JOB,reviewHash:reviewHash(films())}),/paused campaign/);ok(e.job().publication.phase==='blocked','no reset while the campaign is enabled');
+ e.state.status['555']='PAUSED';await e.E.startAdMotionPublication({...e.scope,jobId:JOB,reviewHash:reviewHash(films())});run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});ok(run.attached,'paused again, the reset attachment completes');
+ e=await setup();e.prepareFirstAd(motionOf(films()));await e.publishFirstAd();e.uploaded();e.state.enableDuringProcessing='555';
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});ok(run.resettable&&e.job().publication.resettable&&e.job().publication.videos.every(v=>v.state==='PROCESSED')&&e.state.mutations.length===0,'enabled while YouTube processed: the check before attaching sends nothing and stays resettable');
+ // A real attachment whose answer was lost may have reached Google: never reset, never replayed.
+ e=await setup();e.prepareFirstAd(motionOf(films()));await e.publishFirstAd();e.uploaded();e.state.lostResponse='socket hang up';
+ run=await e.E.runAdMotionPublication({...e.scope,jobId:JOB});pub=e.job().publication;
+ ok(!run.resettable&&pub.phase==='blocked'&&!pub.resettable&&pub.attachmentInFlight===true,'an attachment that may have reached Google is not resettable');
+ await assert.rejects(()=>e.E.startAdMotionPublication({...e.scope,jobId:JOB,reviewHash:reviewHash(films())}),/socket hang up/);ok(e.state.mutations.filter(m=>!m.vo).length===1,'and it is never sent again');
+
+ // 15. The new campaign's own group finds this product's films, so nobody pays for a second set.
+ e=await setup({job:films({phase:'running',quality:null})});e.prepareFirstAd(null);await e.publishFirstAd();e.f.docs.set(e.ws+'/motionJobs/'+JOB,films());
+ const W2='ws_group',ws2='Brites_GAds_State/adDesign/workspaces/'+W2,G66=groupOf(66),own={workspaceId:W2,productId:PRODUCT,groupRef:G66};
+ e.f.docs.set(ws2,{sourceSetId:'s1',settings:{productId:PRODUCT,groupRef:G66},context:{campaignId:'555',groups:[{ref:G66,channel:'pmax'}],itemIds:OFFERS},messaging:{copy}});e.f.docs.set(ws2+'/sourceSets/s1/products/p11',{id:PRODUCT,title:'Duck necklace',url:DEST,offerIds:OFFERS});
+ status=await e.E.adDesignMotionStatus(own);
+ ok(status.jobId===JOB&&status.workspaceId===WS&&status.jobGroupRef===NEW_AD&&status.fromEarlierVersion&&status.variants.length===3&&status.attachTarget?.groupRef===G66&&/paused campaign 555/.test(status.attachNote),'the new campaign’s own group shows the films made for its first ad');
+ ok((await e.get('_latestMotionJob')(e.get('_adDesignWorkspaceRef')(W2),PRODUCT,G66))?.id===JOB,'Campaign Styles from that group find the same films');
+ const other='ws_other';e.f.docs.set('Brites_GAds_State/adDesign/workspaces/'+other,{sourceSetId:'s1',settings:{productId:PRODUCT,groupRef:groupOf(67)},context:{campaignId:'556',groups:[{ref:groupOf(67),channel:'pmax'}]}});e.f.docs.set('Brites_GAds_State/adDesign/workspaces/'+other+'/sourceSets/s1/products/p11',{id:PRODUCT,title:'Duck necklace',url:DEST});
+ ok(!(await e.E.adDesignMotionStatus({workspaceId:other,productId:PRODUCT,groupRef:groupOf(67)})).jobId,'an unrelated group finds no films');
+ // A later Campaign Styles publication from the group's workspace uploads the same films, from their own workspace.
+ e.state.campaigns={555:66,777:88};out=await e.get('_attachPublishedFilms')({workspaceId:W2,product:{id:PRODUCT,url:DEST},groupRef:G66,campaignIds:['777'],approved:motionOf(films()),copy,source:{kind:'campaign_styles',id:'x'}});
+ ok(JSON.stringify(out.publication)===JSON.stringify({queued:true,workspaceId:WS,jobId:JOB,productId:PRODUCT,groupRef:NEW_AD})&&e.job().publication.target.groupRef===groupOf(88)&&e.binding().campaignId==='777'&&![...e.f.docs.keys()].some(k=>k.startsWith(ws2+'/motion')),'films bind and upload from their own workspace; no copy and no second set');
+ status=await e.E.adDesignMotionStatus(own);ok(status.jobId===JOB&&status.publication.target.campaignId==='777','the group’s panel follows the same upload');
+ e.f.docs.set(ws2+'/motionJobs/motion_'+'e'.repeat(40),films({id:'motion_'+'e'.repeat(40),workspaceId:W2,groupRef:G66,createdAt:5000}));status=await e.E.adDesignMotionStatus(own);
+ ok(status.jobId==='motion_'+'e'.repeat(40)&&!status.jobGroupRef&&status.workspaceId===W2,'films made in the group itself come first');
+ console.log('PASS '+checks+' new-campaign film binding, dry-run upload and attachment, free reset, own-group films, target safety and dispatch checks');
+})().catch(e=>{console.error(e.stack);process.exit(1);});// exit now: an open test window would otherwise keep a failed run alive
