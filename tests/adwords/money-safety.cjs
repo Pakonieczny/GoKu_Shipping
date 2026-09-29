@@ -172,7 +172,7 @@ async function engineChecks(){
  const budgetDraft=to=>({type:'budget',status:'APPROVED',payload:{service:'campaignBudgets',operations:[{update:{resourceName:B(11),amountMicros:to*1e6},updateMask:'amount_micros'}],meta:{budgetCurrency:'CAD',baseline:[{budgetRes:B(11),from:60,to}]}}});
  const draft=()=>f.docs.get('Brites_GAds_Approvals/d1');
  reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));W.budgets[B(11)]=50;await refuses(()=>E.applyApproval('d1',C({maxDailyBudgetTotal:500})),/changed after this proposal/,'budget edited since review: approval refused');check(draft().status==='APPROVED'&&/changed after/.test(draft().lastError),'refusal shown on the draft');
- reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));await refuses(()=>E.applyApproval('d1',C()),/exceed the account ceiling/,'approved raise refused when the spendable total would pass the ceiling');
+ reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(72));await refuses(()=>E.applyApproval('d1',C()),/CAD 102\.00, over your daily ceiling of CAD 100\.00/,'approved raise refused when the spendable total would pass the ceiling, with the figures');
  reset();f.docs.set('Brites_GAds_Approvals/d1',budgetDraft(66));await E.applyApproval('d1',C());check(muts.length===1&&draft().status==='APPLIED','matching, in-limit budget move publishes once');
  await assert.rejects(()=>E.applyApproval('d1',C()),/already published/);check(muts.length===1,'cannot publish twice');
  reset();f.docs.set('Brites_GAds_Approvals/d1',{type:'search',status:'APPROVED',payload:{mutateOperations:[{campaignBudgetOperation:{create:{resourceName:B(-1),amountMicros:5e6}}},{campaignOperation:{create:{resourceName:'customers/123/campaigns/-2',name:'BA · x',status:'ENABLED',campaignBudget:B(-1)}}}]}});
