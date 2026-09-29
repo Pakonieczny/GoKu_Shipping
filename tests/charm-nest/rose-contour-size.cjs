@@ -35,11 +35,11 @@ function covered(profile,c,p,allowanceMm){
   assert.deepEqual(Rose.slimShape(all[0]),all[0],'simplifying twice changes nothing');
   // First batch: the two left columns get the first green line.
   const first=placements.slice(0,10),claim=await api.roseClaim({sheetId:'rg-full-sheet',wPt:W,hPt:H,fresh:true});save(first);
-  const plan1=JSON.parse((await api.rosePlan({sheetId:'rg-full-sheet',stockId:claim.stock.id,revision:0,fingerprint:fp(first),shapesJson:JSON.stringify(Rose.shapes(charms,first)),allowanceMm:.2})).planJson);
+  const plan1=JSON.parse((await api.rosePlan({sheetId:'rg-full-sheet',stockId:claim.stock.id,revision:0,fingerprint:fp(first),shapesJson:JSON.stringify(Rose.shapes(charms,first)),allowanceMm:.2,cut:true})).planJson);
   assert(first.every(p=>covered(plan1.profile,charms.find(c=>c.id===p.id),p,.2)),'the first green line clears every exact outline by the full allowance');
   // The latest upload fills the rest of the sheet, then the next green line is prepared.
   await api.roseClaim({sheetId:'rg-full-sheet',stockId:claim.stock.id,revision:0,wPt:W,hPt:H,nesting:true});save(placements);
-  const plan2=JSON.parse((await api.rosePlan({sheetId:'rg-full-sheet',stockId:claim.stock.id,revision:0,fingerprint:fp(placements),shapesJson:json,allowanceMm:.2})).planJson);
+  const plan2=JSON.parse((await api.rosePlan({sheetId:'rg-full-sheet',stockId:claim.stock.id,revision:0,fingerprint:fp(placements),shapesJson:json,allowanceMm:.2,cut:true})).planJson);
   assert.deepEqual(plan2.lines.slice(0,plan1.lines.length),plan1.lines,'the first green line is kept exactly');
   assert(plan2.lines.length>plan1.lines.length,'the full sheet gets its own green line');
   assert.equal(plan2.shapes.length,50);
