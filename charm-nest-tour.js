@@ -71,7 +71,7 @@
 .tourPiece{transform-origin:50% 50%;filter:drop-shadow(0 6px 10px rgba(60,40,90,.26))}
 .tourRing{border-radius:50%;border:2px solid ${RING};box-shadow:0 0 14px rgba(184,137,58,.45)}
 .tourHole{border-radius:16px;box-shadow:0 0 0 200vmax rgba(34,31,27,.26),0 0 0 2px rgba(202,168,97,.8),0 24px 60px rgba(30,24,16,.3)}
-#stage>.tourHold{position:fixed!important;margin:0!important;z-index:1;pointer-events:none}
+#stage>.tourHold{position:fixed!important;margin:0!important;z-index:1;pointer-events:none;contain:strict}
 #modeSeg.tourTabs>button{transition:background-color .5s ease,color .5s ease}
 @media (prefers-reduced-motion:reduce){#modeSeg.tourTabs>button{transition:none}}`;
   function sheet() { if ($("#tourCss")) return; const s = doc.createElement("style"); s.id = "tourCss"; s.textContent = CSS; doc.head.appendChild(s); }
@@ -135,7 +135,7 @@
     const tabOf = e => e.target && e.target.closest && e.target.closest(".topbar [data-mode], #moreMenu [data-mode]");
     let swallow = 0;
     const down = e => {
-      if (tabOf(e)) { t.userTab = true; t.forward(); return; }
+      if (tabOf(e)) { t.userTab = true; unpark(t); t.forward(); return; }
       if (t.ff) return;
       // a press on the view it goes home to, while that view is still in sight, is the person's own: it goes through
       // (not while a window waits to come back over it: it would open a second one)
@@ -145,7 +145,7 @@
     };
     const click = e => { if (Date.now() < swallow && !tabOf(e)) { e.preventDefault(); e.stopPropagation(); swallow = 0; } };
     const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); } t.forward(); };
-    const hash = () => { t.userTab = true; t.forward(); };
+    const hash = () => { t.userTab = true; unpark(t); t.forward(); };
     addEventListener("pointerdown", down, true); addEventListener("click", click, true); addEventListener("keydown", key, true); addEventListener("popstate", hash);
     t.off.push(() => { removeEventListener("pointerdown", down, true); removeEventListener("keydown", key, true); removeEventListener("popstate", hash); setTimeout(() => removeEventListener("click", click, true), 750); });
   }
@@ -294,12 +294,20 @@
     if (Math.abs(r2.left - r.left) > .5 || Math.abs(r2.top - r.top) > .5) Object.assign(n.style, { left: 2 * r.left - r2.left + "px", top: 2 * r.top - r2.top + "px" });
     t.held = h; return h;
   }
-  /** It lets go: back into the layout, and hidden again unless its own tab is the one showing. */
-  function letGo(t, h) {
+  /** It lets go: back into the layout, and hidden again unless its own tab is the one showing. park: the view the tour
+   *  comes home to stays laid out where it stood, unseen (opacity 0, no pointer), until it is switched back to: shown
+   *  again, it was laid out anew in that switch's own frame (a long list: 30-40 ms). */
+  function letGo(t, h, park) {
     h = h || t.held; if (!h) return; if (t.held === h) t.held = null;
+    if (park && modeNow() !== h.mode) { h.n.classList.add("hidden"); h.n.style.opacity = "0"; h.n.setAttribute("aria-hidden", "true"); t.parked = h; return; }
     h.n.classList.remove("tourHold");
     if (h.style) h.n.setAttribute("style", h.style); else h.n.removeAttribute("style");
     if (modeNow() !== h.mode) h.n.classList.add("hidden");
+  }
+  /** The parked view back in its place (shown by its tab, or hidden as ever). */
+  function unpark(t) {
+    const h = t.parked; if (!h) return; t.parked = null;
+    h.n.removeAttribute("aria-hidden"); letGo(t, h);
   }
   /** A view (or a part of one) fades; .done once it has. */
   function fadeView(t, n, a, b, ms) {
@@ -322,6 +330,7 @@
     if (t.userTab) { for (const x of outs) x.cancel(); letGo(t, held); return; }
     mark("switch:" + mode); setMode(mode);
     if (held) held.n.classList.remove("hidden");   // hidden by the tab change: it stays in sight where it stands
+    if (t.parked && t.parked.n === viewOf(mode)) unpark(t);   // (laid out as it was left: back in its place)
     // what shows now is held out of sight (paused on its first frame) before any of it can paint; what was faded out
     // lets go only then (the rail's foot is in both)
     const ins = [];
@@ -342,7 +351,7 @@
     if (shown) tryDo(shown);
     await Promise.all(fin.concat(bye ? [bye.done] : []));
     if (bye) bye.cancel();
-    letGo(t, held);
+    letGo(t, held, !!held && held.mode === t.homeMode && !t.ff && !t.userTab);
   }
 
   /* ── the tour ── */
@@ -376,7 +385,7 @@
     let finish; t.done = new Promise(r => { finish = r; });
     // the card its list holds where it stood while the tour carries it (CustomSheet.send: Motion.carry), let go home
     t.holdKey = (s0 && s0.mkey) || (o.home && o.home.dataset && o.home.dataset.mkey) || "";
-    const home = { mode: modeNow() || "review", scroll: scroller() ? scroller().scrollTop : 0 };
+    const home = { mode: modeNow() || "review", scroll: scroller() ? scroller().scrollTop : 0 }; t.homeMode = home.mode;
     home.anchors = home.mode === "review" ? tryDo(() => anchorsOf(t.holdKey)) || [] : [];
     t.capAt = capAtOf();
     listen(t, home);
@@ -415,7 +424,7 @@
     } catch (e) { tryDo(() => console.warn("send tour", e)); if (!t.userTab && modeNow() !== home.mode) setMode(home.mode); }
     finally {
       clearTimeout(guard); t.forward();
-      letGo(t);
+      letGo(t); unpark(t);
       for (const n of t.nodes) n.remove(); if (s0 && s0.ghost) s0.ghost.remove();
       // the list has its row back (home, it was laid out anew already; a tab picked: the next time it is drawn)
       for (const k of [s0 && s0.mkey, t.holdKey]) if (k) tryDo(() => root.Motion.carry && root.Motion.carry(k, 0));
