@@ -16,7 +16,7 @@ const head=html.slice(0,html.indexOf('</head>'));
 const cssTag=head.match(/<link rel="stylesheet" href="\/brites-flow\.css\?v=([\w.-]+)">/),jsTag=head.match(/<script src="\/brites-flow\.js\?v=([\w.-]+)" defer><\/script>/);
 assert(cssTag&&jsTag&&cssTag[1]===jsTag[1],'the page loads the flow stylesheet and deferred script with one cache version');
 const hooks=[...html.matchAll(/BritesFlow\.\w+\(/g)].length;
-assert.equal(hooks,11);assert.equal([...html.matchAll(/typeof BritesFlow!=="undefined"/g)].length,hooks,'every hook is guarded, so the console works without the module');
+assert.equal(hooks,12);assert.equal([...html.matchAll(/typeof BritesFlow!=="undefined"/g)].length,hooks,'every hook is guarded, so the console works without the module');
 const within=(start,end,needle)=>{const a=html.indexOf(start),b=html.indexOf(end,a+start.length);assert(a>=0&&b>a,'found '+start);assert(html.slice(a,b).includes(needle),needle+' is called from '+start);};
 [['function buildNav(){','\n','BritesFlow.nav(n)'],['function updateBadges(){','\n','BritesFlow.badge(b,c)'],['function go(k){','\n','BritesFlow.go(k)'],
  ['async function generateAndWait(','\n}','BritesFlow.expect("approvals",{id:st.approvalId,from:"Opportunities"})'],
