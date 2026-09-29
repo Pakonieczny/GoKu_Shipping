@@ -37,9 +37,12 @@ const startedAt = () => Date.now();
 async function runEvents(ctrl, log) {
   const due = await E.dueEvents();
   if (!due.length) { log.push("events: none due"); return; }
+  // Budget: the planner's demand-sized budget unless GADS_NEW_CAMPAIGN_BUDGET is set; either way the engine
+  // keeps it inside the room left under the daily ceiling (auto), and the draft still waits for approval.
+  const envBudget = Number(process.env.GADS_NEW_CAMPAIGN_BUDGET);
   for (const d of due) {
     try {
-      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl,peakDate:d.event.peakDate});
+      const out=await E.generateForCollection(d.coll.handle,d.event.label,envBudget>0?envBudget:0,{ctrl,peakDate:d.event.peakDate,auto:true});
       log.push(`events: ${d.coll.handle} — ${out.ok ? "review draft prepared" : (out.reason||"no validated opportunity")}`);
     } catch (e) { log.push(`events: ${d.coll.handle} ERROR ${e.message}`); }
   }
@@ -143,7 +146,9 @@ exports.handler = async (event) => {
           }
         }
       }
-      else if (task === 'adMotionPublication') {result.adMotionPublication=await E.runAdMotionPublication({workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef});}
+      else if (task === 'adMotionPublication') {const input={workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef};result.adMotionPublication=await E.runAdMotionPublication(input);
+        // YouTube processing usually takes minutes: keep checking so an approved upload reaches its attachment without another click.
+        for(let i=0;i<8&&result.adMotionPublication&&result.adMotionPublication.processing&&Date.now()-t0<DEADLINE_MS-120000;i++){await new Promise(r=>setTimeout(r,65000));result.adMotionPublication=await E.runAdMotionPublication(input);}}
       else if (task === 'adDesignMotion') {result.adDesignMotion=await E.runAdDesignMotion({workspaceId:body.workspaceId,jobId:body.jobId});if(result.adDesignMotion.continue)await continueMotion(result.adDesignMotion);} 
       else if (task === "adDesign") {
         result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});

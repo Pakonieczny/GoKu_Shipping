@@ -211,6 +211,7 @@
     "_etsyPricingScheme.js",
     "_googleAdsClaude.js",
     "_googleAdsPmaxStructure.js",
+    "_googleAdsServing.js",
     "_googleApiKeys.js",
     "_googleConnections.js",
     "_investorAdmin.js",
