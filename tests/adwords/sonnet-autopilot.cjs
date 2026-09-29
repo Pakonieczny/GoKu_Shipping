@@ -9,8 +9,8 @@ const ok = (v, m) => { assert.ok(v, m); passed++; }, eq = (a, b, m) => { assert.
 async function rejects(fn, test, m) { await assert.rejects(fn, test, m); passed++; }
 const say = console.log; console.log = () => {}; // the shared client logs one usage line per request
 
-// One Anthropic reply: optional web searches with their results, then the answer text.
-function reply({ text = '', stop = 'end_turn', searches = [], stopDetails, model = 'claude-sonnet-5-5' } = {}) {
+// One Anthropic reply: optional web searches with their results, then the answer text (optionally cited).
+function reply({ text = '', stop = 'end_turn', searches = [], citations = [], stopDetails, model = 'claude-sonnet-5-5' } = {}) {
   const events = [{ type: 'message_start', message: { id: 'msg_fixture', type: 'message', role: 'assistant', model, content: [], stop_reason: null, usage: { input_tokens: 1200, output_tokens: 1 } } }];
   let index = 0;
   for (const s of searches) {
@@ -21,7 +21,8 @@ function reply({ text = '', stop = 'end_turn', searches = [], stopDetails, model
       { type: 'content_block_stop', index });
     index++;
   }
-  events.push({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index, delta: { type: 'text_delta', text } }, { type: 'content_block_stop', index });
+  events.push({ type: 'content_block_start', index, content_block: { type: 'text', text: '' } }, { type: 'content_block_delta', index, delta: { type: 'text_delta', text } },
+    ...citations.map(c => ({ type: 'content_block_delta', index, delta: { type: 'citations_delta', citation: { type: 'web_search_result_location', cited_text: 'fixture', ...c } } })), { type: 'content_block_stop', index });
   events.push({ type: 'message_delta', delta: { stop_reason: stop, stop_sequence: null, ...(stopDetails ? { stop_details: stopDetails } : {}) }, usage: { output_tokens: 600, ...(searches.length ? { server_tool_use: { web_search_requests: searches.length } } : {}) } }, { type: 'message_stop' });
   return { ok: true, status: 200, headers: { get: () => null }, body: Readable.from([Buffer.from(events.map(e => 'event: ' + e.type + '\ndata: ' + JSON.stringify(e) + '\n\n').join(''), 'utf8')]) };
 }
@@ -39,9 +40,11 @@ function network() {
 }
 // Pass-through stand-in for sharp so the creative flow needs no native module.
 const fakeSharp = input => { const api = { rotate: () => api, resize: () => api, jpeg: () => api, toBuffer: async () => (Buffer.isBuffer(input) ? input : Buffer.from(String(input))), metadata: async () => ({ width: 1200, height: 1200 }) }; return api; };
-function engine({ env = { ANTHROPIC_API_KEY: 'test-do-not-send' }, mocks = {} } = {}) {
+// A clock fixed at `now` for date-dependent scan checks.
+const fixedClock = now => class FixedDate extends Date { constructor(...a) { if (a.length) super(...a); else super(now); } static now() { return now; } };
+function engine({ env = { ANTHROPIC_API_KEY: 'test-do-not-send' }, mocks = {}, now = null } = {}) {
   const net = network();
-  const ctx = { module: { exports: {} }, exports: {}, process: { env: { GADS_CUSTOMER_ID: '123', GADS_CURRENCY: 'USD', ...env } }, URL, URLSearchParams, Intl, Date, Buffer, setTimeout, clearTimeout, AbortController, console: { log() {}, warn() {}, error() {}, info() {} }, mocks,
+  const ctx = { module: { exports: {} }, exports: {}, process: { env: { GADS_CUSTOMER_ID: '123', GADS_CURRENCY: 'USD', ...env } }, URL, URLSearchParams, Intl, Date: now ? fixedClock(now) : Date, Buffer, setTimeout, clearTimeout, AbortController, console: { log() {}, warn() {}, error() {}, info() {} }, mocks,
     require: n => n === 'node-fetch' ? net.fetch : n === 'sharp' ? fakeSharp : realRequire(n) };
   vm.createContext(ctx); vm.runInContext(source, ctx, { filename: file });
   vm.runInContext('fb=mocks.fb||(()=>null);' + Object.keys(mocks).filter(n => n !== 'fb').map(n => n + '=mocks.' + n + ';').join(''), ctx);
@@ -91,38 +94,72 @@ function memoryDb(seed = {}) {
   ok(/Use web search/.test(call.body.system) && !call.body.output_config.format, 'search answers are cited text, not structured output');
   const where = ids => e.get('_aiWebSearch')(ids).userLocation.country;
   eq([where(['2124']), where(['2124', '2840']), where([]), where(undefined), where(['2826']), where(['99999'])], ['CA', 'US', 'US', 'US', 'GB', 'US'], 'search follows the target market');
+  eq([2, 9, 0, 'x'].map(n => e.get('_aiWebSearch')(['2124'], n).maxUses), [2, 6, 5, 5], 'search count honored, 1-6');
+  e.net.queue.push({ text: '{"ok":true}' }, { text: '{"ok":true}' });
+  await e.get('openaiJSON')('x', { webSearch: 3 }); await e.get('openaiJSON')('x', { webSearch: 0 });
+  const [three, none] = e.net.ai().slice(-2);
+  eq(three.body.tools, [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3, user_location: { type: 'approximate', country: 'US' } }], 'a number is the search count');
+  ok(!none.body.tools, 'zero searches means no search tool');
+  const cite = (ref, urls) => e.get('_citedSource')(ref, urls.map(url => ({ url, title: '' })));
+  const pages = ['https://www.timeanddate.com/holidays/world/world-kindness-day', 'https://en.wikipedia.org/wiki/Sweetest_Day', 'javascript:alert(1)'];
+  eq(cite('timeanddate.com', pages), pages[0], 'domain'); eq(cite('https://www.timeanddate.com/holidays/world/world-kindness-day', pages), pages[0], 'full URL');
+  eq(cite('Time and Date', pages), pages[0], 'site name'); eq(cite('Wikipedia: Sweetest Day', pages), pages[1]);
+  eq([cite('nationaltoday.com', pages), cite('', pages), cite(null, pages), cite('timeanddate.com', []), cite('alert', pages)], [null, null, null, null, null], 'a page no search returned is not a citation');
   ok(e.net.calls.every(c => c.url.includes('anthropic')), 'no OpenAI text request');
 
   e = engine({ env: { OPENAI_API_KEY: 'images-only' } });
   await rejects(() => e.get('openaiJSON')('x'), err => err.code === 'CLAUDE_NOT_CONFIGURED' && err.notDispatched === true, 'missing Anthropic key');
   eq(e.net.calls.length, 0, 'missing key sends nothing');
 
-  // 2. Opportunity scan: web search is on, localized, and the checked sources are kept.
+  // 2. Opportunity scan: web search is on, localized, its pages are kept, and a researched
+  //    date survives only when its dateSource names a page the search returned.
+  const NOW = Date.parse('2026-09-29T15:00:00Z'), months = ['SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER', 'JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST'];
+  const motifs = { celestial: ['moon', 'star'], maple: ['maple', 'leaf'] }, seeds = [];
+  const kw4 = (tag, coll = 'celestial') => motifs[coll].flatMap(m => ['gold ' + m + ' necklace ' + tag, 'engraved ' + m + ' necklace ' + tag]);
+  const profile = h => ({ handle: h, title: h, sampled: 30, count: 30, typesDetail: [{ type: 'Necklace', n: 30 }], motifs: [{ t: motifs[h][0], n: 20 }, { t: motifs[h][1], n: 10 }], mats: [{ t: 'gold', n: 10 }], personalization: ['engraved'], topProducts: [{ title: motifs[h][0] + ' necklace' }] });
   const scanMocks = {
     control: async () => ({ maxDailyBudgetTotal: 100, defaultCountries: ['2124'], budgetCurrency: 'CAD', budgetCurrencyVerified: true, smartBidding: false }),
-    getCollections: async () => [{ title: 'Bunny Charms', handle: 'bunny-charms' }], fetchTopProducts: async () => [],
+    getCollections: async () => [{ title: 'celestial', handle: 'celestial' }, { title: 'maple', handle: 'maple' }], fetchTopProducts: async () => [], listCountries: async () => [],
     _accountTz: async () => 'America/Toronto', _fxRateToUsd: async () => 0.73, conversionHealth: async () => ({ validated: false, healthy: false }),
-    collectionProfiles: async () => ({ list: [] }), proposePmaxOpportunities: async () => ({ list: [], error: null, at: Date.now() }),
-    playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
+    collectionProfiles: async () => ({ list: [profile('celestial'), profile('maple')], at: NOW, salesBasis: 'fixture' }),
+    proposePmaxOpportunities: async () => ({ list: [], error: null, at: NOW }), playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
     storeSalesEvidence: async () => ({ available: false, periods: { days30: null, days90: null }, seasonality: { months: [] }, merchant: {}, warnings: [] }),
-    _enabledBudgetTotal: async () => 0, storeSignals: async () => ({ orders: 0, totalRevenue: 0 }), collectionAdsPerformance: async () => ({}),
-    accountCvr: async () => ({ cvr: 0.02, source: 'fixture prior' }), keywordResearchPool: async () => ({ ok: false, error: 'offline fixture', status: null, ideasByText: {} })
+    _enabledBudgetTotal: async () => 0, storeSignals: async () => ({ orders: 10, totalRevenue: 900 }), collectionAdsPerformance: async () => ({}),
+    accountCvr: async () => ({ cvr: 0.02, source: 'fixture prior' }),
+    keywordResearch: async s => { seeds.push(...s); return { ok: true, status: 200, ideas: s.map(text => ({ text, searches: 600, competition: 'LOW', competitionIndex: 30, low: 0.6, high: 1.4, monthly: months.map(() => 600), monthlyEnd: '2026-08' })) }; }
   };
-  e = engine({ mocks: scanMocks });
+  const proposal = (occasion, peakDate, dateSource, tag, coll = 'celestial') => ({ collectionTitle: coll, occasion, peakDate, dateSource, markets: ['CA'], priority: 'medium', market: { fitWhy: 'Motifs fit the occasion.', demand: 'rising', angle: 'Made for them' }, rationale: 'Fixture', keywords: kw4(tag, coll), keywordStrategy: 'Motif by type', negatives: ['star chart'], keyPhrases: ['Made for them'], audience: { buyer: 'friends', recipient: 'a friend', motivation: 'thanks', searchStyle: 'gift phrases' } });
+  const answer = { opportunities: [
+    proposal('World Kindness Day', '2026-11-13', 'kindnessday.example.org/2026', 'kindness'), // cited by URL
+    proposal('Sweetest Day', '2026-10-17', 'Holiday Calendar', 'sweetest day', 'maple'), // cited by site name
+    proposal('National Cat Day', '2026-10-29', 'catday.example.net', 'cat lover'), // no search returned this page
+    proposal('Diwali', '2026-11-8', 'diwali.example.org', 'diwali'), // malformed date
+    proposal('Evergreen gifting', null, '', 'gift')
+  ] };
+  e = engine({ mocks: scanMocks, now: NOW });
   e.net.queue.push({ searches: [
-    { query: 'Easter 2027 date Canada', results: [{ url: 'https://example.org/easter-2027', title: 'Easter dates', pageAge: '2 days ago' }, { url: 'javascript:alert(1)', title: 'Not a page' }] },
-    { query: 'bunny necklace gift trend', results: [{ url: 'https://example.com/gift-trends', title: 'Gift trends' }, { url: 'https://example.org/easter-2027', title: 'Easter dates' }] }
-  ], text: 'Checked. {"opportunities":[{"collectionTitle":"Bunny Charms","occasion":"Easter","startDate":"2027-03-01","endDate":"2027-03-28","daysOut":0,"priority":"test","recommendedDailyBudget":10,"keywords":[{"text":"bunny charm necklace"}]}]}' });
+    { query: 'World Kindness Day 2026 date', results: [{ url: 'https://kindnessday.example.org/2026', title: 'World Kindness Day 2026', pageAge: '2 days ago' }, { url: 'javascript:alert(1)', title: 'Not a page' }] },
+    { query: 'Sweetest Day 2026', results: [{ url: 'https://www.holidaycalendar.example.com/sweetest-day', title: 'Sweetest Day 2026' }, { url: 'https://kindnessday.example.org/2026', title: 'World Kindness Day 2026' }] }
+  ], citations: [{ url: 'https://www.holidaycalendar.example.com/sweetest-day', title: 'Sweetest Day 2026' }], text: JSON.stringify(answer) });
   const scan = await e.E.scanOpportunities({ force: true, runId: 'fixture-run' });
   const ai = e.net.ai();
   eq(ai.length, 1, 'one strategist request');
-  eq(ai[0].body.tools, [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: { type: 'approximate', country: 'CA' } }], 'scan searches the account market (Canada)');
-  eq(ai[0].body.output_config.effort, 'high');
-  eq(scan.scanAudit.sources.map(s => s.url), ['https://example.org/easter-2027', 'https://example.com/gift-trends'], 'checked web pages kept once each; non-web links dropped');
-  eq(scan.scanAudit.sources[0], { url: 'https://example.org/easter-2027', title: 'Easter dates', pageAge: '2 days ago' });
+  eq(ai[0].body.tools, [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: { type: 'approximate', country: 'CA' } }], "the research ladder's 5 searches, in the account market (Canada)");
+  eq(ai[0].body.output_config.effort, 'high'); ok(/Verify every date/.test(ai[0].body.messages[0].content[0].text) && /domain or URL of the web page/.test(ai[0].body.messages[0].content[0].text), 'research prompt asks for the page it verified');
+  eq(scan.scanAudit.sources.map(s => s.url), ['https://www.holidaycalendar.example.com/sweetest-day', 'https://kindnessday.example.org/2026'], 'pages kept once each, cited first; non-web links dropped');
+  eq(scan.scanAudit.sources[1], { url: 'https://kindnessday.example.org/2026', title: 'World Kindness Day 2026', pageAge: '2 days ago' });
   const strategy = scan.scanAudit.checks.find(c => c.id === 'search_ai_strategy_1');
   ok(strategy && strategy.status === 'ok' && strategy.category === 'AI' && /Claude Sonnet 5\.5/.test(strategy.source), 'audit names the model');
   eq(strategy.meta.searches, 2); ok(strategy.meta.costUsd > 0.02, 'search fees included in the recorded cost');
+  const dated = scan.scanAudit.checks.find(c => c.id === 'opportunity_dates');
+  eq([dated.meta.research, dated.meta.unverified, dated.meta.uncited, dated.meta.undated], [2, 2, 1, 1], 'two cited dates kept; the uncited and the malformed date dropped');
+  ok(/2 without a verified date \(1 cited an unsearched page\)/.test(dated.detail), dated.detail);
+  ok(!seeds.some(s => /cat lover|diwali/.test(s)), 'dropped occasions spend no Keyword Planner quota');
+  const kindness = scan.opportunities.find(o => o.occasion === 'World Kindness Day'), sweetest = scan.opportunities.find(o => o.occasion === 'Sweetest Day');
+  ok(kindness && sweetest, 'cited occasions reach Paul: ' + JSON.stringify(scan.opportunities.map(o => o.occasion)));
+  eq(kindness.dateCheck, { source: 'web-verified research', proposedDate: '2026-11-13', reference: 'kindnessday.example.org/2026', url: 'https://kindnessday.example.org/2026' }, 'the cited page is kept with the date');
+  eq([kindness.peakDate, kindness.endDate, sweetest.dateCheck.url], ['2026-11-13', '2026-11-13', 'https://www.holidaycalendar.example.com/sweetest-day']);
+  ok(!scan.opportunities.some(o => /Cat Day|Diwali/.test(o.occasion)), 'unverified dates never reach Paul');
   ok(!scan.scanAudit.checks.some(c => c.category === 'OpenAI'), 'no OpenAI audit rows');
   ok(e.net.calls.every(c => c.url.includes('anthropic')), 'scan made no other network request');
 

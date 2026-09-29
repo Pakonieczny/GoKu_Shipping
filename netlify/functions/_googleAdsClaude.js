@@ -224,13 +224,18 @@ function parseJsonText(text) {
   }
   return undefined;
 }
+// Web pages behind an answer: the pages it cites first (cited: true), then the
+// other search results, so the cap never drops a page the answer relied on.
 function sourcesOf(message) {
-  const seen = new Map();
-  for (const b of (message && message.content) || []) {
-    if (b && b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) if (r && r.url && !seen.has(r.url)) seen.set(r.url, { url: r.url, title: r.title || '', pageAge: r.page_age || null });
-    if (b && b.type === 'text' && Array.isArray(b.citations)) for (const c of b.citations) if (c && c.url && !seen.has(c.url)) seen.set(c.url, { url: c.url, title: c.title || '', pageAge: null });
+  const seen = new Map(), blocks = (message && message.content) || [];
+  for (const b of blocks) if (b && b.type === 'text' && Array.isArray(b.citations)) for (const c of b.citations) if (c && c.url && !seen.has(c.url)) seen.set(c.url, { url: c.url, title: c.title || '', pageAge: null, cited: true });
+  for (const b of blocks) if (b && b.type === 'web_search_tool_result' && Array.isArray(b.content)) for (const r of b.content) {
+    if (!r || !r.url) continue;
+    const s = seen.get(r.url);
+    if (!s) seen.set(r.url, { url: r.url, title: r.title || '', pageAge: r.page_age || null });
+    else if (!s.pageAge && r.page_age) s.pageAge = r.page_age;
   }
-  return [...seen.values()].slice(0, 40);
+  return [...seen.values()].slice(0, 60);
 }
 
 // ---------------------------------------------------------------- client
@@ -394,11 +399,12 @@ function createClaudeClient(deps) {
     if (msg.stop_reason === 'refusal') throw claudeError('Claude declined this request' + (msg.stop_details && msg.stop_details.category ? ' (' + msg.stop_details.category + ')' : '') + '.', { code: 'CLAUDE_REFUSAL', definiteResponse: true, usage: msg.usage, costUsd: msg.costUsd });
     let text = finalText(msg), data = parseJsonText(text);
     if (data === undefined && msg.stop_reason === 'max_tokens' && o.retryOnTruncation !== false && body.max_tokens < 64000) {
-      const firstCost = msg.costUsd || 0;
+      const firstCost = msg.costUsd || 0, firstUsage = msg.usage;
       body.max_tokens = clampTokens(Math.min(64000, body.max_tokens * 2));
       body.output_config = { ...body.output_config, effort: lowerEffort(body.output_config.effort) };
       msg = await message(body, o);
       msg.costUsd = Math.round(((msg.costUsd || 0) + firstCost) * 1e6) / 1e6;
+      msg.usage = addUsage(addUsage(zeroUsage(), firstUsage), msg.usage); // both passes are billed, searches included
       if (msg.stop_reason === 'refusal') throw claudeError('Claude declined this request.', { code: 'CLAUDE_REFUSAL', definiteResponse: true });
       text = finalText(msg); data = parseJsonText(text);
     }

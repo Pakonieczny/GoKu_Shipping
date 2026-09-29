@@ -271,5 +271,26 @@ const env = { ANTHROPIC_API_KEY: 'test-key' };
     await assert.rejects(C.createClaudeClient({ env, fetch, sleep: noSleep, log: quiet }).json({ prompt: 'x', webSearch: true }), e => e.code === 'CLAUDE_BAD_JSON' && e.text === 'No JSON here.' && e.sources[0].url === 'https://example.org/holidays');
   }
 
+  // 13. Many search results: the page the answer cites is listed first and never
+  //     cut by the cap; a truncation retry reports the searches of both passes.
+  {
+    const results = Array.from({ length: 70 }, (_, i) => ({ type: 'web_search_result', url: 'https://example.org/page-' + i, title: 'Page ' + i, page_age: i === 65 ? '2026-09-20' : null }));
+    const msg = { content: [{ type: 'web_search_tool_result', content: results }, { type: 'text', text: '{"date":"2026-10-05"}', citations: [{ type: 'web_search_result_location', url: 'https://example.org/page-65', title: 'Page 65', cited_text: 'October 5' }] }] };
+    const sources = C.sourcesOf(msg);
+    assert.equal(sources.length, 60);
+    assert.deepEqual(sources[0], { url: 'https://example.org/page-65', title: 'Page 65', pageAge: '2026-09-20', cited: true });
+    assert.equal(sources.filter(s => s.url === 'https://example.org/page-65').length, 1);
+    const search = { type: 'web_search_tool_result', tool_use_id: 'srv_1', content: [{ type: 'web_search_result', url: 'https://example.org/a', title: 'A' }] };
+    const fetch = fakeFetch([
+      { events: streamOf({ blocks: [{ type: 'server_tool_use', id: 'srv_1', query: 'a' }, search, { type: 'text', text: '{"a":' }], stop: 'max_tokens', outUsage: { server_tool_use: { web_search_requests: 1 } } }) },
+      { events: streamOf({ blocks: [{ type: 'server_tool_use', id: 'srv_1', query: 'a' }, search, { type: 'text', text: '{"a":1}' }], outUsage: { server_tool_use: { web_search_requests: 1 } } }) }
+    ]);
+    const out = await C.createClaudeClient({ env, fetch, sleep: noSleep, log: quiet }).json({ prompt: 'x', webSearch: true });
+    assert.deepEqual(out.data, { a: 1 });
+    assert.equal(out.usage.server_tool_use.web_search_requests, 2, 'both passes searched');
+    assert.equal(out.usage.input_tokens, 200);
+    assert.equal(out.costUsd, C.estimateCostUsd(out.usage), 'reported usage and cost agree');
+  }
+
   console.log('claude-client: Sonnet 5.5 client streams, retries, prices and bridges offline.');
 })().catch(error => { console.error(error); process.exit(1); });
