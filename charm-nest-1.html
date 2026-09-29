@@ -3956,6 +3956,7 @@ function shapeSignature(items) {
   return { count: n, cv: mean ? sd / mean : 0, largestFrac: Math.max(...a) / a.reduce((s, v) => s + v, 0) };
 }
 function computeSaturation(sh) {
+  if (window.NestHold && NestHold.without(sh, () => computeSaturation(sh))) return sh.sat;   // (worked out without the pieces still flying: NestHold)
   const usable = usableArea(sh), items = activeCharms(sh), rt = rhoTarget(sh);
   const live = sh.liveInfo;                                   // from the worker, when a nest is running or done
   const placedIds = new Set(sh.placements.map(p => p.id));
@@ -4067,6 +4068,7 @@ async function checkLearnedRunner(token = localStorage.getItem("cn.learnedKey") 
   finally { clearTimeout(timeout); }
 }
 function startNest(sh) {
+  if (window.NestHold && NestHold.block(sh)) return;   // a piece of it is still flying (Send to Sheet): its nest starts once the last has landed
   if(sh.roseCutAt)return toast("This layout has been cut. Start a new sheet to use its remainder.","bad");
   if (S.settings.nestFlow !== "learned" || sh.appendOnly || sh.metal==='rose'&&(sh.rosePlan||sh.roseProtected)) return startNestReady(sh);
   if (sh._learnedStarting || ["nesting", "finishing", "queued"].includes(sh.status)) return;
@@ -5188,6 +5190,59 @@ const NestFocus = window.NestFocus = (() => {
   }
   return { open, waiting, restore, close: () => close(cur), isOpen: () => !!cur };
 })();
+/* ═══ NestHold · the nest of the pieces a Send to Sheet tour is still flying (Paul, 29 Sep 16:09) ═══
+   "The nesting of the moved charm had already started prior to the completion of the animation." The press still puts
+   the pieces in the pool and on their sheet's list at once (nothing is lost, the record is written as ever). What waits,
+   until the tour sets each one down on its sheet, is everything the nest would show of them: their sheet's nest (its
+   progress, its search drawn, its sheet write), the run's restart (its "Nesting · sheet 1 of 1"), and the sheet's card,
+   which is drawn as if they were not on it yet. A sheet's nest starts once the last of its pieces has landed, sheet by
+   sheet in the tour's order; any other nest (another sheet, a normal pull) goes on as ever. A skip, Esc, the end of the
+   tour, a failure or a safety timer releases everything at once, so nothing is ever left waiting.
+   hold({ lines, ms }) before the lines are placed (found by their line keys) → .bind(poolIds) once they are → .release(ids)
+   at each landing → .releaseAll(). Manual mode is as it was: nothing asked the sheet to nest, so it is only drawn again. */
+const NestHold = window.NestHold = (() => {
+  const tokens = new Set(), waits = [];   // waits: what the run asked for meanwhile (its restart), done at the first landing
+  let replaying = false;
+  const isHeld = c => { for (const t of tokens) if (t.ids ? t.ids.has(c.poolId) : t.keys.has(c.lineKey)) return true; return false; };
+  const heldPages = () => tokens.size ? allSheets().filter(pg => pg.charms.some(isHeld)) : [];
+  /** fn runs with the pieces still flying out of the sheet (its card, its picture and its fill are drawn without them); false when none is on it. */
+  function without(sh, fn) {
+    if (!tokens.size || sh._heldOut) return false;
+    const all = sh.charms, kept = all.filter(c => !isHeld(c)); if (kept.length === all.length) return false;
+    const st = sh.status; sh._heldOut = true; sh.charms = kept; if (st === "ready" && !kept.length) sh.status = "idle";
+    try { fn(); } finally { sh.charms = all; sh._heldOut = false; if (sh.status === "idle" && st === "ready") sh.status = st; }
+    return true;
+  }
+  /** A nest asked for on a sheet with a piece still flying waits (startNest); true when it does. */
+  function block(sh) { if (!tokens.size || sh._heldOut || !sh.charms.some(isHeld)) return false; sh._heldStart = true; return true; }
+  /** The run's restart waits for the first landing (RunCtl.poke); true when it does. */
+  function later(fn) { if (!tokens.size || replaying) return false; if (waits.length < 20) waits.push(fn); return true; }
+  function drop(t, ids) {
+    if (!tokens.has(t)) return;
+    const was = heldPages();
+    if (ids && t.ids) for (const id of ids) t.ids.delete(String(id)); else if (t.ids) t.ids.clear();
+    if (!t.ids || !t.ids.size) { tokens.delete(t); clearTimeout(t.timer); }
+    // each sheet shows what has landed, and its nest, asked for meanwhile, starts once no piece of it is still flying
+    for (const pg of was) {
+      if (!allSheets().includes(pg)) continue;
+      try { computeSaturation(pg); renderCard(pg); } catch (_) {}
+      if (pg._heldStart && !pg.charms.some(isHeld)) { delete pg._heldStart; try { startNest(pg); } catch (_) {} }
+    }
+    if (waits.length) { const fns = waits.splice(0); replaying = true; try { for (const f of fns) try { f(); } catch (_) {} } finally { replaying = false; } }
+  }
+  function hold({ lines = [], ms = 20000 } = {}) {
+    const t = { keys: new Set(lines.map(String)), ids: null, timer: 0 }, api = {
+      bind(ids) { if (tokens.has(t)) { t.ids = new Set((ids || []).map(String)); if (!t.ids.size) drop(t); } return api; },
+      release: ids => drop(t, ids), releaseAll: () => drop(t),
+      arm(ms2) { clearTimeout(t.timer); if (tokens.has(t)) t.timer = setTimeout(() => drop(t), ms2); return api; },
+      // is a nest waiting on this (a start asked for, or the run's restart)? Not in Manual: nobody asked
+      nests: () => waits.length > 0 || allSheets().some(p => p._heldStart && p.charms.some(isHeld)),
+      held: () => tokens.has(t)
+    };
+    tokens.add(t); return api.arm(ms);
+  }
+  return { hold, without, block, later, active: () => tokens.size > 0, pages: heldPages };
+})();
 /** A piece a Send to Sheet flight has yet to land (NestFocus): a faint gold wash and a dashed line where it will stand. */
 function heldWash(ctx, c, tx, k) {
   ctx.beginPath(); CharmNestPDF.pathToCanvas(ctx, c.outline, tx);
@@ -5450,6 +5505,7 @@ function holdCards(ms, fn) {
   }
 }
 function renderCard(sh) {
+  if (window.NestHold && NestHold.without(sh, () => renderCard(sh))) return;   // (drawn without the pieces still flying: NestHold)
   if (sh.charms.length && !sh.cardStartedAt) sh.cardStartedAt = sh.recalled?.cardStartedAt || sh.recalled?.createdAt || (sh.setDay ? new Date(sh.setDay + "T12:00:00").getTime() : Date.now());
   if (window.Session) Session.schedule();
   if (cardHold && sh.el) { cardHold.add(sh); return; }
@@ -5608,6 +5664,7 @@ function drawPreview(sh) {
   sh._drawFrame=requestAnimationFrame(()=>{sh._drawFrame=0;drawPreviewNow(sh);});
 }
 function drawPreviewNow(sh) {
+  if (window.NestHold && NestHold.without(sh, () => drawPreviewNow(sh))) return;   // (drawn without the pieces still flying: NestHold)
   if(document.hidden || !sh.el || sh.el.closest('.hidden,[hidden]'))return;
   const cv = sh.el && $(`[data-r="canvas"]`, sh.el); if (!cv) return;
   const wrap = cv.parentElement; const st = stockFor(sh.metal, sh);
@@ -6455,9 +6512,9 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260929-t3"></script>
+<script src="charm-nest-bridge.js?v=20260929-nh"></script>
 <script src="charm-nest-sheetwin.js?v=20260929-m7"></script>
-<script src="charm-nest-tour.js?v=20260929-t3"></script>
+<script src="charm-nest-tour.js?v=20260929-nh"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-rw"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>

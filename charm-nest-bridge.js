@@ -5850,7 +5850,8 @@ const RunCtl = window.RunCtl = (() => {
   function backgroundSettled() { backgroundDone++; poke(true); }
   function poke(force) {
     const r=B.run;
-    if(r?.status==='processed' && !r.arrivalBusy && (force === true || workChanged(r))){
+    // (pieces a Send to Sheet tour is still flying: the run takes them up at their landing, not at the press: NestHold)
+    if(r?.status==='processed' && !r.arrivalBusy && (force === true || workChanged(r)) && !(window.NestHold && NestHold.later(() => poke(force)))){
       r.processingSignature=workSignature(r);
       const needsNest=allSheets().some(p=>p.runId===r.runId&&!p.runHold&&Gate.nestable(p,r)&&p.charms.length&&(p.dirty||['ready','idle','queued','nesting','finishing'].includes(p.status)));
       continueProcessing(r,needsNest?'nest':'engrave');
@@ -6951,7 +6952,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
-    let flying = false, snap = null, holdKey = "";
+    let flying = false, snap = null, holdKey = "", nestHold = null;
     const letGo = () => { if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 0); holdKey = ""; };
     try {
       // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
@@ -6969,12 +6970,18 @@ const CustomSheet = window.CustomSheet = (() => {
       // order window over it or with reduced motion too; the tour lets go once home
       holdKey = touring ? cardNode(ck)?.dataset.mkey || "" : "";
       if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 30000);
+      // the pieces go into the pool and onto their sheet's list at once, but their sheet's nest (and what it would show of
+      // them) waits until the tour has set each one down (NestHold, Paul 29 Sep 16:09: "the nesting of the moved charm had
+      // already started prior to the completion of the animation"); with no tour (reduced motion, or another tab) nothing waits
+      if (touring && !motionOff() && window.NestHold) nestHold = NestHold.hold({ lines: rows.map(r => r.key), ms: 20000 });
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
       changed();
       say("Placing on the sheets…");
       for (const r of rows) await Review.repool(r);
+      // (the pieces now on a sheet without a place yet are the ones held; one already placed, or none placed, holds nothing)
+      if (nestHold) nestHold.bind(rows.flatMap(r => r.poolIds || []).filter(id => !Pool.sheetOf(id)));
       agent({ bridge: true }, "POOL", `${e.rid}: custom designs sent to the sheets by ${who} — ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`);
       for (const r of rows) TL.line(r, "designSent", { id: `${r.key}.${e.sent.at}`, at: e.sent.at, by: who, text: `Custom design${e.files.length === 1 ? "" : "s"} sent to the sheets by ${who}: ${e.files.map(F => `${F.name} × ${F.qty} → ${labelOf(F.metal)}`).join(", ")}`.slice(0, 200), data: { files: e.files.map(F => ({ name: F.name, qty: F.qty, metal: F.metal, pieces: F.pieces })).slice(0, 12), pieces: (lines[r.key] || []).length, placed: r.state === "pooled" } });
       busy.delete(ck); redraw();
@@ -6992,8 +6999,14 @@ const CustomSheet = window.CustomSheet = (() => {
       // the tour: the order seen leaving the Review list for the Nest tab, onto each sheet it is on, one at a time, and
       // back home; the placement above is done already, the tour only shows it. toSheets stays the quiet way.
       const plan = touring && tourOk() ? tourPlan(rows, e) : null;
-      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
-      else {
+      if (plan && (plan.legs.length || plan.waiting.length)) {
+        flying = true; const delay = shutting ? 480 : 0;
+        // the tour lets each sheet's nest go as its piece lands, all of it when it ends, is skipped or fails; a stuck tour
+        // holds it a few seconds past its own longest length at most
+        if (nestHold) nestHold.arm(SendTour.limit({ legs: plan.legs, waiting: plan.waiting, delay }) + 3000);
+        SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay, hold: nestHold }).catch(() => {}).then(() => { if (nestHold) nestHold.releaseAll(); });
+      } else {
+        if (nestHold) nestHold.releaseAll();   // (no tour: the nest starts as it always did)
         if (snap && snap.ghost) snap.ghost.remove();
         letGo();   // (no tour: the list takes the card where it goes now)
         if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
@@ -7001,6 +7014,7 @@ const CustomSheet = window.CustomSheet = (() => {
         else toast(words, "ok", 6000);
       }
     } catch (err) {
+      if (nestHold) nestHold.releaseAll();
       busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); letGo(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
     } finally { if (!flying) redraw(); }
   }
