@@ -9504,9 +9504,25 @@ const OrderWin = window.OrderWin = (() => {
     if (now) { getComputedStyle(ink).transform; ink.style.transition = ""; }
     const sw = byId("owPieceSw"); if (sw) { sw.hidden = W.pieces.length < 2 || W.view === "sheet"; thumbTo(); }
   }
+  /* the order's two conversations (Paul, 29 Sep 01:04: "I don't see the message history for the emails or their
+     internal messages"): the one Team / Customer column — its threads, composers, drafts, images waiting and live reads
+     — sits in the view in front: beside the Overview, under the Sheet's panel. It is moved, never copied, so nothing is
+     read twice and what was typed stays. The Timeline keeps its full width: the column has no room there. */
+  const chatHost = v => v === "sheet" ? byId("owSheetSide") : v === "info" ? W.dlg.querySelector(".owVInfo") : null;
+  // (a node moved, or hidden, forgets where it was scrolled: each thread is put back as it was last seen)
+  function chatKeep() {
+    const c = W.dlg.querySelector(".owChat"); if (!c || !c.offsetParent) return;
+    W.chatSc = [...c.querySelectorAll("*")].filter(e => e.scrollHeight > e.clientHeight + 1).map(e => ({ e, top: e.scrollTop, end: e.scrollHeight - e.scrollTop - e.clientHeight < 48 }));
+  }
+  function chatTo(v) {
+    const c = W.dlg.querySelector(".owChat"), host = chatHost(v); if (!c || !host || c.parentNode === host) return;
+    host.appendChild(c);
+    for (const s of W.chatSc || []) if (c.contains(s.e)) s.e.scrollTop = s.end ? s.e.scrollHeight : s.top;
+  }
   function setView(v, o = {}) {
     if (!VIEWS.includes(v)) v = "info";
-    const prev = W.view; W.view = v;
+    const prev = W.view, chatWas = !!(W.dlg.open && chatHost(prev)); if (chatWas) chatKeep();
+    W.view = v;
     W.dlg.querySelectorAll(".owTabsV [data-ow-view]").forEach(b => { const on = b.dataset.owView === v; b.setAttribute("aria-selected", on ? "true" : "false"); b.tabIndex = on ? 0 : -1; });
     W.dlg.querySelectorAll(".owTools .owGrp").forEach(g => g.classList.toggle("on", g.dataset.for === v));
     inkTo();
@@ -9519,7 +9535,10 @@ const OrderWin = window.OrderWin = (() => {
       out.finished.then(() => { if (W.view !== prev) from.hidden = true; out.cancel(); }, () => {});
       to.hidden = false; to.animate([{ opacity: 0, transform: `translateX(${dir * 12}px)` }, { opacity: 1, transform: "none" }], { duration: 280, delay: 90, easing: EASE, fill: "backwards" });
     } else { for (const x of views) x.hidden = x !== to; }
-    if (v === "info") { paintThread(true); grow(); try { const t = W.dlg.querySelector("[data-ow-tab][aria-selected=true]"); if (t && window.CustomerMail?.setTab) CustomerMail.setTab(t.dataset.owTab, false); } catch (_) {} }
+    chatTo(v);
+    // (back on screen: drawn again, and the Customer tab repainted as it is — never read again: from Overview to Sheet and
+    // back it never left the screen)
+    if (chatHost(v)) { paintThread(true); grow(); if (!chatWas) try { const t = W.dlg.querySelector("[data-ow-tab][aria-selected=true]"); if (t && window.CustomerMail?.setTab) CustomerMail.setTab(t.dataset.owTab, false); } catch (_) {} }
     if (o.noLoad) return;
     if (v === "timeline") mountFull();
     if (v === "sheet") sheetShow();
