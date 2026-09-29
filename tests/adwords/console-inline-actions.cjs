@@ -17,6 +17,8 @@ await test('no browser pop-ups for campaign edits, the activity log, deleting a 
   for(const name of ['wireCampRows','cmdEditOpen','cmdEditPaint','cmdEditBudget','cmdEditSchedule','cmdEditStatus','deleteCampaignCard','releaseOpp','bindControlsOnce','askInline'])
     assert.doesNotMatch(pick(name),/\b(?:prompt|confirm|alert)\(/,name+' asks in the page');
   assert.doesNotMatch(html,/function renderTimeline\(|function loadBlock\(|querySelectorAll\(["']\.ctl["']\)/,'unreachable timeline, .ctl handler and loadBlock are gone');
+  assert.doesNotMatch(html,/function (?:renderPerf|rowHtml|detailHtml|analysisHtml|actIcon|optDot|fieldVal|wirePerf|doAnalyze|analysisWait|setBudget|campStatus|campStartNow|campSetCountries|schedHtml|schedHint)\(|#ptable|var P=\{sortKey|tr\.prow|tr\.pdetail|renderPerf\(\)/,
+    'the unreachable old performance view (its slider, confirm pop-ups, emoji action icons, state and styles) is gone; Overview edits campaigns in place');
 });
 
 await test('plain words: current tab names, no decorative emoji in working UI, readable date mismatch',()=>{

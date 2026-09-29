@@ -1,5 +1,6 @@
 // Overview (Command Center): figures keep their date basis and currency, campaigns with no activity fold
-// away, deleted campaigns keep the money they spent, and the activity feed reads in plain words.
+// away, deleted campaigns keep the money they spent, the activity feed reads in plain words, and a Google
+// total budget reads as one line in place of the daily budget editor.
 const path=require('path'),REPO=path.resolve(__dirname,'../..');
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const html=fs.readFileSync(path.join(REPO,'brites-adwords.html'),'utf8');
@@ -11,7 +12,7 @@ const ctx={console,Number,String,Object,Array,Math,JSON,Set,Map,isFinite,URL,
   campDates:c=>({s:c.startDate||'',e:c.endDate||''}),statusBadge:c=>'<span class="st">'+c.status+'</span>',campaignBadgeHtml:()=>'',
   historicalBudget:()=>'recorded budget',historicalSchedule:()=>'recorded schedule',fmtMon:x=>x};
 vm.createContext(ctx);vm.runInContext(html.match(/var BASIS_NAMES=\{[^}]*\};/)[0],ctx);
-for(const name of ['basisName','basisLabel','CV','totals','reportNumber','cmdAttr','cmdMoney','campaignWhy','campaignIdle','idleToggleText','campaignTable','groupReportMetrics','lcStep','lcTicks','feedLabel','feedError',
+for(const name of ['basisName','basisLabel','CV','totals','reportNumber','cmdAttr','cmdMoney','campaignWhy','campaignIdle','idleToggleText','campaignTable','totalBudgetLine','groupReportMetrics','lcStep','lcTicks','feedLabel','feedError',
   'servingOf','servingClass','servingLabel','servingWhen','servingSourceText','servingChanged','servingBadgeAttrs','servingBadgeHtml','servingStoredHtml','servingBoxHtml'])vm.runInContext(pick(name),ctx);
 let passed=0;function test(name,fn){fn();passed++;console.log('PASS',name);}
 const plain=x=>JSON.parse(JSON.stringify(x));
@@ -88,5 +89,21 @@ test('each campaign row carries Google\'s last serving verdict as a badge that o
   ctx.DASH.servingChecks={'1':{verdict:null,lastAttempt:{at:'2026-09-28T10:00:00Z',error:'Google Ads request <quota>'}}};
   assert.match(ctx.servingBoxHtml(camps[0]),/The last check could not read this campaign: Google Ads request &lt;quota&gt;/);
   delete ctx.DASH.servingChecks;});
+
+test('a Google total budget reads as its total, days and end date in one line, with no daily budget editor',()=>{
+  const real=vm.createContext({});vm.runInContext(html.match(/var _MON=\[[^\]]*\];/)[0]+pick('fmtMon'),real);const stub=ctx.fmtMon;ctx.fmtMon=real.fmtMon;
+  try{
+    const t=ctx.campaignTable([
+      {id:'21',name:'Holiday flight',status:'PAUSED',primaryStatus:'PAUSED',budget:5,budgetPeriod:'CUSTOM_PERIOD',budgetTotal:150,startDate:'2026-11-01',endDate:'2026-11-30',cost:3},
+      {id:'22',name:'Evergreen',status:'ENABLED',primaryStatus:'ELIGIBLE',budget:20,budgetPeriod:'DAILY',budgetTotal:null,cost:4},
+      {id:'23',name:'Last spring',status:'REMOVED',primaryStatus:'REMOVED',budget:0,budgetPeriod:'CUSTOM_PERIOD',budgetTotal:90,startDate:'2026-05-01',endDate:'2026-05-30',cost:2,historicalOnly:true}]);
+    const det=id=>(t.match(new RegExp('<tr class="cdet"[^>]*data-cid="'+id+'"[\\s\\S]*?</tr>'))||[''])[0];
+    assert.match(det('21'),/<div class="campaignSettings"><span class="totalBudget" title="[^"]+">Total \$150\.00 CAD for 30 days to Nov 30<\/span><span>Schedule /,'the total, the days its dates cover and its end date, in the account currency');
+    assert.doesNotMatch(det('21'),/Daily budget|class="btn ghost sm bge"/,'no daily budget editor');
+    assert.match(det('21'),/<button class="btn ghost sm cst" data-id="21" data-name="Holiday flight" data-total="1" data-to="ENABLED">Enable campaign<\/button>/,'enabling will name the total budget');
+    assert.match(det('22'),/Daily budget <button class="btn ghost sm bge" data-id="22" data-b="20"/);assert.doesNotMatch(det('22'),/totalBudget|data-total/,'a daily budget keeps its editor');
+    assert.match(det('23'),/>Total \$90\.00 CAD for 30 days to May 30</);assert.doesNotMatch(det('23'),/class="btn ghost sm (bge|sce|cst)"/,'a removed campaign reads its total, with no edits');
+    assert.equal(ctx.totalBudgetLine({budgetPeriod:'CUSTOM_PERIOD',budgetTotal:40,endDate:'2026-12-01'},'CAD').replace(/<[^>]+>/g,''),'Total $40.00 CAD to Dec 1','without a start date the days are left out');
+  }finally{ctx.fmtMon=stub;}});
 
 console.log(passed+' Overview checks passed.');
