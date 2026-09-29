@@ -24,10 +24,12 @@
   "use strict";
   const doc = root.document;
   // one soft ease-in-out for every move; a view fades out gathering pace and in settling (so the stage is bare briefly)
-  // (GROW: the app's own curve for a window, used as the order window steps aside and comes back)
-  const SOFT = "cubic-bezier(.42,0,.18,1)", OUT = "cubic-bezier(.4,0,1,1)", IN = "cubic-bezier(0,0,.2,1)", GROW = "cubic-bezier(.3,0,.1,1)", RING = "#b8893a";
+  // (ASIDE: the order window's move as it steps aside and back, soft at both ends and never fast in between; its fade and
+  // its backdrop's run evenly beside it, the least change the screen can take in any one frame)
+  const SOFT = "cubic-bezier(.42,0,.18,1)", OUT = "cubic-bezier(.4,0,1,1)", IN = "cubic-bezier(0,0,.2,1)", ASIDE = "cubic-bezier(.25,0,.75,1)", RING = "#b8893a";
   /** How long each part takes (ms): the same whatever the tour starts from and wherever a sheet stands. */
   const TIME = Object.freeze({
+    aside: 560,     //     the order window steps aside as the designs rise (and comes back, the same motion reversed)
     rise: 700,      // 1 · the designs rise out of the card as a coin
     toNest: 1150,   // 2 · the coin glides up into the Nest tab
     side: 220,      //     the rail's own things and the top bar's tools go first, while the view still stands
@@ -686,7 +688,7 @@
     } else settleList(t, home, false);
     endFocus(t);
     if (modeNow() !== home.mode) return;
-    // a window held: it grows back out of its card first (and, when the press was its own, says there what went where)
+    // a window held: it comes back first (and, when the press was its own, says there what went where)
     if (t.win && await backHome(t, o)) return;
     const M = root.Motion; if (!M) return;
     const live = liveOf(s0);
@@ -729,11 +731,13 @@
 
   /* ── the start and the way home, from a window (Paul, 29 Sep 01:30: "half the animation is not visible because it's
      blocked by the pop-up and it doesn't engage smoothly and it looks broken and disjointed"). Send to Sheet pressed in
-     the order window, on any of its tabs: the window is never closed, only stepped out of the way. It shrinks and fades
-     toward its card (its backdrop fading with it) as the design lifts off the button pressed, and waits out of sight,
+     the order window, on any of its tabs: the window is never closed, only stepped out of the way. In one soft motion
+     (TIME.aside) it eases part of the way toward its card, a little smaller, and fades, its backdrop in step, as the
+     design lifts off the button pressed in the same frame; then it waits out of sight,
      its order, tab, scroll, focus and typed text untouched. The flight runs in a clear, bare modal layer of the tour's
      own, over everything, the window included: nothing covers it, and nothing under it takes a press (a press or a key
-     skips, as always). Home, the window grows back out of its card exactly as it was and says there what went where.
+     skips, as always). Home, the same motion reversed brings the window back exactly as it was, and it says there what
+     went where.
      Transform and opacity only. A card's own Send to Sheet starts from the card itself. ── */
   // (the window over the page as the flight starts, not one already going: the order window's own close, or a copy)
   const popOf = () => [...doc.querySelectorAll("dialog[open]")].reverse().find(d => d.id !== "tourTop" && !d._mdClosing && !(d.id === "orderWin" && root.OrderWin && !OrderWin.isOpen()) && tryDo(() => d.matches(":modal"))) || null;
@@ -745,43 +749,71 @@
       top.appendChild(l); if (!top.open) tryDo(() => top.showModal());
     } else { if (l.parentNode !== doc.body) doc.body.appendChild(l); if (top && top.open) tryDo(() => top.close()); }
   }
-  /** Where the window goes back into: its card, when in sight; else the button pressed. The window keeps its shape,
-   *  scaled between the two sizes, centred on it. */
+  /** Where the window steps toward: its card, when in sight; else the button pressed. */
   const aimOf = k => { const h = rectOf(k.home); return h && onScreen(h) ? h : k.R; };
-  function tuckTf(D, A) {
-    const s = Math.max(.04, Math.min(1, Math.sqrt((A.width / D.width) * (A.height / D.height))));
-    return `translate(${(A.left + A.width / 2 - D.width * s / 2 - D.left).toFixed(1)}px,${(A.top + A.height / 2 - D.height * s / 2 - D.top).toFixed(1)}px) scale(${s.toFixed(4)})`;
+  /** The window's own box as laid out, whatever transform it is drawn with now. */
+  const boxOf = d => d.offsetWidth && d.offsetHeight ? { left: d.offsetLeft, top: d.offsetTop, width: d.offsetWidth, height: d.offsetHeight } : d.getBoundingClientRect();
+  /** Stepped aside: a fifth of the way toward its card and a little smaller (at most an eighth), its shape kept. Only
+   *  part of the way: the whole screen never sweeps down into a card in a few frames, and the eye stays on the design. */
+  function asideTf(D, A) {
+    const full = Math.max(.04, Math.min(1, Math.sqrt((A.width / D.width) * (A.height / D.height)))), s = Math.max(.875, 1 - (1 - full) * .14), way = .2;
+    const x = D.left + D.width / 2 + (A.left + A.width / 2 - D.left - D.width / 2) * way, y = D.top + D.height / 2 + (A.top + A.height / 2 - D.top - D.height / 2) * way;
+    return `translate(${(x - D.width * s / 2 - D.left).toFixed(1)}px,${(y - D.height * s / 2 - D.top).toFixed(1)}px) scale(${s.toFixed(4)})`;
+  }
+  /** One soft motion (Paul, 29 Sep 01:30, "it doesn't engage smoothly and it looks broken and disjointed"): the window
+   *  eases toward its card as it scales a little down and fades, and its backdrop fades in step with it, on one clock
+   *  (made in one task: they start on the same frame). The fade is even: the window is light and the rail under it dark,
+   *  so an eased fade changed a third of the screen in a frame at its fastest. Back is the very same motion in reverse, landing
+   *  on the window exactly as it was (nothing is left on it). With reduced motion only the short fade. Transform and
+   *  opacity only: the window is laid out once, at its own size, and never reflows on the way. */
+  function aside(t, k, back, ms) {
+    const d = k.d, g = !!t.gentle, o = { duration: ms, easing: g ? "ease" : "linear", fill: back ? "none" : "forwards", direction: back ? "reverse" : "normal" };
+    const fade = [{ opacity: 1 }, { opacity: 0 }];
+    return [
+      d.animate(fade, o),
+      g ? null : d.animate([{ transform: "none" }, { transform: asideTf(boxOf(d), aimOf(k)) }], Object.assign({}, o, { easing: ASIDE })),
+      tryDo(() => d.animate(fade, Object.assign({ pseudoElement: "::backdrop" }, o)))
+    ].filter(Boolean);
   }
   function tuck(t, d, o) {
-    const D = d.getBoundingClientRect(), R = rectOf(o.from) || (o.from && o.from.rect) || { left: innerWidth / 2 - 20, top: innerHeight / 2 - 12, width: 40, height: 24 };
-    const k = { d, D, R, from: o.from, inside: !!(o.from && o.from.nodeType && d.contains(o.from)), home: o.home && o.home.nodeType ? o.home : null, focus: doc.activeElement, st: {} };
+    const R = rectOf(o.from) || (o.from && o.from.rect) || { left: innerWidth / 2 - 20, top: innerHeight / 2 - 12, width: 40, height: 24 };
+    const k = { d, R, from: o.from, inside: !!(o.from && o.from.nodeType && d.contains(o.from)), home: o.home && o.home.nodeType ? o.home : null, focus: doc.activeElement, st: {} };
     for (const p of ["transformOrigin", "willChange", "visibility"]) k.st[p] = d.style[p];
     // where the design lifts off: the button pressed, as it stood
     k.spot = t.node("tourSpot"); Object.assign(k.spot.style, { width: R.width + "px", height: R.height + "px", transform: `translate(${R.left}px,${R.top}px)`, opacity: 0 });
     over(true); mark("tuck"); d._tourHeld = true;
     Object.assign(d.style, { transformOrigin: "0 0", willChange: "transform,opacity" });
-    // (with reduced motion it only fades, as the gentle version's views do: nothing shrinks or moves)
-    const g = !!t.gentle, ms = g ? GENTLE.fade : 480;
-    k.a = d.animate(g ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: "none", opacity: 1 }, { opacity: .45, offset: .4 }, { transform: tuckTf(D, aimOf(k)), opacity: 0 }], { duration: ms, easing: g ? "ease" : GROW, fill: "forwards" });
-    k.b = tryDo(() => d.animate([{ opacity: 1 }, { opacity: 0 }], { pseudoElement: "::backdrop", duration: g ? ms : 440, easing: "ease", fill: "forwards" }));
+    k.anims = aside(t, k, false, t.gentle ? GENTLE.fade : TIME.aside);
     // (out of sight once gone: nothing of it drawn under the flight)
-    k.a.finished.then(() => { if (!k.returning) d.style.visibility = "hidden"; }, () => {});
+    k.anims[0].finished.then(() => { if (!k.returning && !k.ready) d.style.visibility = "hidden"; }, () => {});
     return k;
   }
-  /** The window back as it was, grown out of its card (fast: a skip, a tab picked; with reduced motion, faded in). */
+  /** Before it comes back: what changed meanwhile is drawn (the order window: its Send to Sheet gone) and the window
+   *  is laid out and painted, still held out of sight (the step aside holds it at nothing), so its return starts on a
+   *  window ready to draw: drawn only as it came back, its first frames came late and it jumped in. */
+  function ready(k) {
+    if (!k || k.ready) return; k.ready = true;
+    const d = k.d; if (!d.isConnected || !d.open) return;
+    tryDo(() => d.dispatchEvent(new CustomEvent("tour:back")));
+    d.style.visibility = k.st.visibility;
+  }
+  /** The window back as it was: the step aside reversed (fast: a skip, a tab picked; with reduced motion, faded in). */
   async function back(t, fast) {
     const k = t.win; if (!k) return; t.win = null; k.returning = true;
-    const d = k.d, g = !!t.gentle, ms = g ? GENTLE.fade : fast ? 320 : 560, drop = () => { tryDo(() => k.a.cancel()); tryDo(() => k.b && k.b.cancel()); };
+    const d = k.d, ms = t.gentle ? GENTLE.fade : fast ? 320 : TIME.aside, drop = () => { for (const a of k.anims) tryDo(() => a.cancel()); };
     if (d.isConnected && d.open) {
-      // what changed meanwhile is drawn while it is still out of sight (the order window: its Send to Sheet gone)
-      tryDo(() => d.dispatchEvent(new CustomEvent("tour:back")));
-      d.style.visibility = k.st.visibility; mark("back");
-      const a = d.animate(g ? [{ opacity: 0 }, { opacity: 1 }] : [{ transform: tuckTf(k.D, aimOf(k)), opacity: 0 }, { opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], { duration: ms, easing: g ? "ease" : GROW });
-      tryDo(() => d.animate([{ opacity: 0 }, { opacity: 1 }], { pseudoElement: "::backdrop", duration: ms, easing: "ease" }));
+      ready(k); mark("back");
+      // (the reverse is set going before the step aside lets go: no frame between them)
+      const run = aside(t, k, true, ms);
       drop();
-      await Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 400))]);
+      await Promise.race([Promise.all(run.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, ms + 400))]);
+      for (const a of run) tryDo(() => a.cancel());
+      // (landed: its last frame is shown before the rest is let go, and it stays on its own layer a moment longer:
+      // taken off it at once, it was drawn anew in the frame it landed)
+      if (!t.ff && !fast) await new Promise(r => { const h = setTimeout(r, 120); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(h); r(); })); });
     } else drop();
-    for (const [p, v] of Object.entries(k.st)) d.style[p] = v;
+    for (const [p, v] of Object.entries(k.st)) if (p !== "willChange") d.style[p] = v;
+    const wc = k.st.willChange; setTimeout(() => { if (!d._tourHeld && d.style.willChange === "transform,opacity") d.style.willChange = wc; }, 700);
     d._tourHeld = false;
     // (the tour's layer closing gives the focus back where it was; set again in case it went elsewhere)
     over(false);
@@ -791,8 +823,8 @@
    *  said it there; false when the press was not its own (a card's, under it), so home is said on the card as ever. */
   async function backHome(t, o) {
     const k = t.win;
-    // "Back to Review" stands its time to be read, and goes as the window comes back over it
-    if (!t.ff && t.cap) { await t.hold(); if (!t.ff) unsay(t, t.cap, 360); }
+    // "Back to Review" stands its time to be read (the window made ready meanwhile), and goes as it comes back over it
+    if (!t.ff && t.cap) { ready(k); await t.hold(); if (!t.ff) unsay(t, t.cap, 360); }
     await back(t, t.ff);
     const d = k && k.d, M = root.Motion; if (!k || !k.inside) return false;
     if (!d || !d.open || !M || !o.words) return true;
