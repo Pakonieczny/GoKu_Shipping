@@ -68,8 +68,8 @@ function engine(mocks = {}) {
   const real = require('module').createRequire(root + '/googleAdsAutopilot.js');
   const ctx = { module: { exports: {} }, process: { env: { GADS_CURRENCY: 'USD', GMC_REFRESH_TOKEN: 'mock' } }, URL, URLSearchParams, Intl, Date, console, Buffer, setTimeout, clearTimeout, AbortController, mocks,
     require: n => n === 'node-fetch' ? (mocks.fetch || (() => { throw Error('Unexpected network'); }))
-      : n === './_googleAdsPmaxResearch' ? (() => { if (!mocks.R) throw new Error("Cannot find module './_googleAdsPmaxResearch'"); return mocks.R; })()
-      : n === './_googleAdsPmaxKeywords' ? (() => { if (!mocks.K) throw new Error("Cannot find module './_googleAdsPmaxKeywords'"); return mocks.K; })()
+      : n === './_googleAdsPmaxResearch' ? (() => { if (mocks.real) return real(n); if (!mocks.R) throw new Error("Cannot find module './_googleAdsPmaxResearch'"); return mocks.R; })()
+      : n === './_googleAdsPmaxKeywords' ? (() => { if (mocks.real) return real(n); if (!mocks.K) throw new Error("Cannot find module './_googleAdsPmaxKeywords'"); return mocks.K; })()
       : real(n) };
   vm.createContext(ctx);
   vm.runInContext(source + '\nmodule.exports.testResearchStatus=_opportunityResearchStatus;module.exports.testOccasions=_pmaxUpcomingOccasions;module.exports.testSrc={scan:scanOpportunities.toString(),propose:proposePmaxOpportunities.toString()};', ctx);
@@ -102,17 +102,17 @@ function run(over = {}, args = {}) {
   const picks = over.picks || [{ handle: 'birds', feedLabel: 'US' }, { handle: 'pets', feedLabel: 'CA' }, { handle: 'moon', feedLabel: 'US' }];
   const openaiJSON = over.openaiJSON || (async (prompt, opts) => {
     spy.prompts.push({ prompt, opts });
-    if (/^RESEARCH_PROMPT/.test(prompt)) {
+    if (opts && opts.info) {
       spy.research.push({ prompt, opts });
       if (over.researchThrows) throw over.researchThrows;
       opts.info.sources = [{ title: 'Gift guide', url: 'https://example.com/gifts', pageAge: null }]; opts.info.costUsd = 0.05; opts.info.searches = 2; opts.info.model = 'fake';
-      const coll = (prompt.match(/Collection: (.+)/) || [])[1];
-      return over.researchAnswer ? over.researchAnswer(coll) : { headline: `AI headline for ${coll}`, summary: 'Written by the fake model.', marketRead: 'Fake market read.', listingFit: [], creativeAngles: [`AI angle for ${coll}`] };
+      const coll = (prompt.match(/Collection: (.+)/) || prompt.match(/covers the "([^"]+)" collection/) || [])[1];
+      return over.researchAnswer ? over.researchAnswer(coll, prompt) : { headline: `AI headline for ${coll}`, summary: 'Written by the fake model.', marketRead: 'Fake market read.', listingFit: [], creativeAngles: [`AI angle for ${coll}`] };
     }
     spy.selector.push({ prompt, opts });
     return { pmax: picks.map(p => ({ ...p, rationale: 'SELECTOR RATIONALE', dailyBudget: 10, days: 30, angle: 'SELECTOR ANGLE' })) };
   });
-  const x = engine({ R: over.noModules ? null : R, K: over.noModules ? null : K, tz: over.tz || (async () => 'America/Toronto'), fb: over.fb,
+  const x = engine({ real: !!over.real, R: over.noModules ? null : R, K: over.noModules ? null : K, tz: over.tz || (async () => 'America/Toronto'), fb: over.fb,
     backfillOrders: async () => ({ fetched: 0 }), storeSignals: over.storeSignals || (async ({ days }) => sigs[days] || null), merchantProducts: over.merchantProducts || (async a => a.itemIds ? [] : offers),
     pmaxProductPerformance: async () => ({ complete: true, monetaryComplete: true, rows: [], byId: {} }), merchantFreeProductPerformance: async () => free, playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
     takenTags: over.takenTags || (async () => ({})), openaiJSON,
@@ -253,6 +253,38 @@ let pass = 0; async function test(name, fn) { try { await fn(); pass++; } catch 
     const none = await run({ themes: () => [] });
     none.result.list.forEach(o => { assert.ok(o.searchThemes.length > 0 && o.searchThemes.every(t => /^[a-z0-9 ]+$/.test(t))); assert.ok(o.searchThemes.some(t => t.includes(o.productTitles[0].toLowerCase().split(' ')[1]))); });
     assert.match(source, /searchThemes\.length\?searchThemes:savedIdea&&Array\.isArray\(savedIdea\.searchThemes\)&&savedIdea\.searchThemes\.length\?savedIdea\.searchThemes:_derivePmaxSearchThemes/, 'a draft without themes in its request uses the saved idea\'s keyword themes');
+  });
+
+  await test('with the REAL research and keyword modules: valid research on every idea, the model\'s answer is normalized, and a rejected answer falls back to computed research', async () => {
+    const RR = require(root + '/_googleAdsPmaxResearch.js'), today = ymdIn('America/Toronto');
+    const answer = (coll, prompt) => {
+      const ids = [...prompt.matchAll(/^- \{"itemId":"([^"]+)"/gm)].map(m => m[1]), kws = [...prompt.matchAll(/^- "([^"]+)" \|/gm)].map(m => m[1]);
+      return { headline: 'Start now for the next gift date with these bestsellers.', whyNow: { summary: 'The next gift date leaves room for the learning period, and these listings already sold in your store recently.', marketRead: null, caution: null },
+        listingFit: ids.slice(0, 2).map((id, i) => ({ itemId: id, reason: 'Sold in your store recently.', role: i ? 'support' : 'hero' })), keywords: kws.slice(0, 5).map(t => ({ text: t, reason: 'Buyers search this when they shop for gifts.' })), creativeAngles: ['Gift-ready close-up of the charm'], limits: [] };
+    };
+    const good = await run({ real: true, researchAnswer: answer }), sp = good.spy;
+    assert.equal(good.result.list.length, 3); assert.equal(sp.research.length, 3);
+    for (const o of good.result.list) {
+      assert.deepEqual(plain(RR.validateResearch(o.research)), [], o.handle + ' research is valid'); noUndefined(o);
+      assert.equal(o.research.source, 'ai'); assert.equal(o.research.model, 'Sonnet 5.5'); assert.equal(o.research.today, today); assert.equal(o.rationale, o.research.headline); assert.equal(o.angle, o.research.creativeAngles[0]);
+      assert.ok(o.research.whyNow.timing.length >= 1 && o.research.whyNow.timing.every(t => /^[A-Z]{2}(\/[A-Z]{2})*$/.test(t.market))); assert.ok(o.research.keywords.length >= 3 && o.research.keywords.every(k => k.monthlySearches === 320 && k.competition === 'low'));
+      assert.ok(o.research.listingFit.every(f => o.itemIds.includes(f.itemId))); assert.equal(o.research.sources.length, 1); assert.deepEqual(plain(o.searchThemes), plain(o.research.keywords.map(k => k.text)).slice(0, 10));
+      o.searchThemes.forEach(t => assert.ok(t.split(' ').length <= 10 && t.length <= 80 && /^[a-z0-9 ]+$/.test(t)));
+      assert.ok(o.researchFingerprint.startsWith(today));
+    }
+    assert.ok(sp.research.every(c => c.prompt.includes('TODAY: ' + today)), 'the real prompt carries today\'s date'); assert.ok(good.result.list.every(o => sp.research.some(c => o.itemIds.every(id => c.prompt.includes(id)))), 'every offer is in a prompt');
+    assert.equal(audit(good.audits, 'pmax_ai_research').status, 'ok');
+    // A summary the module refuses (too short) means no model prose: the computed research stands alone, complete and valid.
+    const bad = await run({ real: true, researchAnswer: (c, p) => ({ ...answer(c, p), whyNow: { summary: 'Too short.' } }) });
+    for (const o of bad.result.list) { assert.deepEqual(plain(RR.validateResearch(o.research)), []); assert.equal(o.research.source, 'computed'); assert.equal(o.research.model, null); assert.equal(o.rationale, o.research.headline); assert.ok(o.research.keywords.length >= 2 && o.research.listingFit.length >= 1 && o.searchThemes.length >= 2); }
+    assert.match(audit(bad.audits, 'pmax_ai_research').detail, /^Written from your own data only: the model's answer could not be used/);
+    // The model throws, the planner fails: still complete and valid.
+    const down = await run({ real: true, researchThrows: new Error('overloaded'), keywordResearchPool: async () => ({ ok: false, error: 'HTTP 503 internal error', ideasByText: {} }) });
+    for (const o of down.result.list) { assert.deepEqual(plain(RR.validateResearch(o.research)), []); assert.equal(o.research.source, 'computed'); assert.ok(o.research.keywords.every(k => k.monthlySearches === null)); assert.ok(o.searchThemes.length >= 2); }
+    assert.equal(audit(down.audits, 'pmax_keyword_research').detail, 'Keyword volumes unavailable: the service had a temporary problem');
+    // The same-day reuse works with the real fingerprint too.
+    const docs = { 'Brites_GAds_State/opportunities': { pmaxList: plain(good.result.list) } }, fb = () => ({ db: { collection: c => ({ doc: id => ({ get: async () => ({ exists: !!docs[c + '/' + id], data: () => docs[c + '/' + id] }) }) }) } });
+    const again = await run({ real: true, fb }); assert.equal(again.spy.research.length, 0); assert.equal(again.spy.pools.length, 0); assert.equal(audit(again.audits, 'pmax_ai_research').meta.reused, 3);
   });
 
   await test('markets come from the feed label; other feed labels use the account\'s default countries', async () => {
