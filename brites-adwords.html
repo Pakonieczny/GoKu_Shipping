@@ -4410,7 +4410,8 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
   // Nothing typed: stay on the field instead of sending an empty passcode.
   if(!PASS.trim()){try{$("#pc").focus();}catch(_e){}return false;}
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,(e&&e.__cachedPass)?"Signing you back in\u2026":"Connecting\u2026");var aid=actStart("dashboard");
-  try{ DASH=await api("dashboard");
+  // The feed's first page comes with the dashboard, so signing in makes no second activity request.
+  try{ DASH=await api("dashboard",{activity:feedBounds()});
     // Respect the checkbox: on a shared machine the operator can decline the
     // 30-day session and be asked again next visit.
     var _rem=document.getElementById("pcRemember");

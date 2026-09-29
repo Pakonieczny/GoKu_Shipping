@@ -176,6 +176,17 @@ const sum=list=>list.reduce((a,f)=>({spend:a.spend+f.spend,value:a.value+(f.valu
     ui.feedRange={preset:'14d'};ui.renderFeed();await flush();assert(feed.querySelector('[role=alert]').textContent.includes('Firestore is unavailable.'));
     feed.querySelector('#feedRetry').click();await flush();assert.equal(feed.querySelectorAll('.feed__i').length,50);});
 
+  await test('signing in brings the feed’s first page with the dashboard, so it makes no second activity request',async()=>{
+    document.body.insertAdjacentHTML('beforeend','<div id="gate"></div><div id="app"></div><p id="gateErr"></p>');
+    // Everything sign-in touches besides the dashboard request and the feed is a no-op here; renderAll draws the feed as the page does.
+    Object.assign(ui,{PASS:'',timer:null,lastSync:0,lastLivePull:0,setInterval:()=>0,clearInterval:()=>{},btnBusy:()=>()=>{},actStart:()=>1,actEnd:()=>{},sessSave:()=>{},sessClear:()=>{},
+      buildNav:()=>{},bindControlsOnce:()=>{},renderAll:()=>ui.renderFeed(),go:()=>{},loadDiagnostics:()=>{},toast:()=>{},cmdApplyRange:()=>{}});
+    const at=html.indexOf('async function unlock(');assert(at>0);vm.runInContext(html.slice(at,html.indexOf('\n}\n',at)+2),ui);ui.feedRange={preset:'30d'};uiApi=async(a,x)=>clone(await E.dashboard(x));uiCalls=[];
+    await ui.unlock({preventDefault(){},__cachedPass:'fixture-pass'});await flush();
+    assert.equal(document.querySelector('#gateErr').textContent,'','signed in');assert.equal(document.querySelector('#gate').style.display,'none');
+    assert.equal(uiCalls.length,1,'one request signs in');assert.equal(uiCalls[0][0],'dashboard');assert.deepEqual(clone(uiCalls[0][1]),clone({activity:ui.feedBounds()}));
+    assert.equal(document.querySelectorAll('#feed .feed__i').length,50);assert.equal(document.querySelector('#feedSub').textContent,'latest 50 in these dates');});
+
   console.log(passed+' Overview tree and activity feed checks passed.');
 })().catch(e=>{console.error(e);process.exit(1);});
 
