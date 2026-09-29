@@ -214,10 +214,12 @@ async function browserChecks() {
     assert.deepEqual(seg.b, ['Open' + openAll, 'Completed0']); assert(openAll >= 6, 'Open counts everything that waits: ' + JSON.stringify(seg));
     const barH = await page.evaluate(() => document.querySelector('#reviewView .ordBar').getBoundingClientRect().height);
     assert(barH < 40, 'the bar stays one line: ' + barH);
-    // the question is answered in the order window, which a click on the card opens
+    // a click on the card opens the order window, which asks nothing (Paul, 29 Sep 01:01: no decision box in Review or
+    // in any window): the card's buttons deal with it
     await page.click('#rvList .reviewListRow[data-rid="4174476673"] .engravingIdentity');
-    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix .cuStep [data-f=mat]'), null, { timeout: 10000 });
-    await page.click('#owClose');
+    await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });
+    assert.deepEqual(await page.evaluate(() => ({ box: !!document.querySelector('#owFix .rvItem, #owFix .cuStep'), fix: document.getElementById('owFix').innerHTML, words: /waiting on a decision/i.test(document.getElementById('orderWin').textContent), panel: !!document.querySelector('#rvList .reviewDetails') })), { box: false, fix: '', words: false, panel: false }, 'no question box, in the window or on the card');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     if (shots) await page.screenshot({ path: path.join(shots, 'custom-orders-open.png') });
 
     // print the chain-only sticker: the sorting station's label, then completed: the seal is pressed on the button and
@@ -362,7 +364,7 @@ async function browserChecks() {
     assert.match(win.title, /4176576272/); assert.match(win.custom || '', /Custom Orders · Rework/); assert.match(win.custom, /Retry print/, "the print that did not open keeps its seal and offers Retry print (28 Sep)");
     for (const want of ['Order: 4176576272', 'Buyer: Buyer 6272', 'Price: 144', 'Custom order: Rework · SKU RE_5460', 'Title: MODIFICATION REWORK FREE SHIPPING']) assert(win.meta.includes(want), want + ' in ' + JSON.stringify(win.meta));
     assert(win.meta.some(m => /^Purchased: Sep 27, 2026/.test(m)), 'when it was bought: ' + JSON.stringify(win.meta));
-    assert(win.fix, 'its decision, answered in the window'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
+    assert.equal(win.fix, false, 'no decision box in the window (29 Sep 01:01)'); assert.match(win.note, /^Order notes/); assert.deepEqual(win.tabs, ['Team internal', 'Customer on Etsy'], 'the team\'s thread and the customer\'s, side by side');
     assert.equal(win.dialogs, 1, 'one window, never one on top of another');
     // a note left for the next person is saved to the order
     await page.fill('#owNote', 'Customer wants the old chain back — call before shipping');
@@ -460,16 +462,17 @@ async function browserChecks() {
     await page.waitForFunction(n => (window.__printed || 0) > n && !document.querySelector('.cuStat, .btn.working'), printedBefore, { timeout: 30000 });
     assert.equal(srv.st.doc('Charm_Custom_Orders', '4176744752_41767447521').prints, 4, 'printed from the record (the fourth: one was printed despite a cancel above)');
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('qrPrintAll')).userTypedOrderNum), '4176744752', 'the same sticker');
-    // a decision answered with "Hold order": the card is seen flying to the Orders tab, and a note says where it is
+    // an Options card: no "Review & resolve" and no question anywhere (Paul, 29 Sep 00:38 and 01:01); a click opens its
+    // order, whose window asks nothing, and the card stays in Review for its buttons
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     const optCard = '#rvList .reviewListRow[data-rid="4178000003"]';
     const optKey = await page.getAttribute(optCard, 'data-mkey');
-    await page.click(optCard + ' [data-review-open]');
-    await page.click(optCard + ' [data-a=hold]');
-    await page.waitForFunction(() => document.querySelector('#motionLayer .mGhost'), null, { timeout: 5000 });
-    if (shots) { await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, 'decision-hold-flight.png') }); }
-    await page.waitForFunction(() => [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4178000003 is on hold under Orders/.test(n.textContent)) && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
-    assert.equal(await page.evaluate(k => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.mkey === k), optKey), false, 'it left Review');
+    assert.equal(await page.$(optCard + ' [data-review-open]'), null, 'no Review & resolve');
+    await page.click(optCard + ' .engravingIdentity');
+    await page.waitForFunction(() => OrderWin.isOpen(), null, { timeout: 10000 });
+    assert.deepEqual(await page.evaluate(() => ({ fix: document.getElementById('owFix').innerHTML, hold: !!document.querySelector('#orderWin [data-a=hold]'), panel: !!document.querySelector('#rvList .reviewDetails') })), { fix: '', hold: false, panel: false }, 'nothing asked');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    assert.equal(await page.evaluate(k => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.mkey === k), optKey), true, 'it stays in Review');
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Review → Custom Orders, QR label, Completed, Reopen, the order window and its notes (Chromium)');
   } finally { await browser.close(); srv.close(); }

@@ -1,9 +1,11 @@
 // netlify/functions/googleAdsAuthCheck.js
 // ─────────────────────────────────────────────────────────────────────────────
 // One-off credentials tester for the Ad Autopilot. Open it in a browser:
-//   https://<site>/.netlify/functions/googleAdsAuthCheck
+//   https://<site>/.netlify/functions/googleAdsAuthCheck?key=<EDIT_PASSCODE>
 // It runs READ-ONLY checks and returns a per-credential green/red so a
 // fat-fingered paste is obvious. It does NOT mutate anything in Google Ads.
+// It shows credential lengths and account IDs and spends API quota, so it needs
+// the passcode, and refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
 //
 // Self-contained (doesn't require the engine) so you can deploy + test it
 // before wiring the rest. Uses the same env var names the engine reads.
@@ -11,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require("node-fetch");
+const { refuse } = require("./_adsCheckGate");
 const ENV = process.env;
 const V = ENV.GADS_API_VERSION || "v24";
 const CID = (ENV.GADS_CUSTOMER_ID || "").replace(/\D/g, "");
@@ -119,6 +122,8 @@ async function run() {
 }
 
 exports.handler = async (event) => {
+  const refused = refuse(event, "the Google Ads credentials check");
+  if (refused) return refused;
   const result = await run();
   const wantsHtml = (event.headers && /text\/html/.test(event.headers.accept || ""));
   if (!wantsHtml) {

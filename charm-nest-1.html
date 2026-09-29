@@ -799,6 +799,12 @@ dialog.phv.layer.phvIn{background:transparent}
 .owPieces li.on em::before{background:var(--gold2)}
 .owPanel .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .owPanel .why{font:11px var(--sans);color:#8a3a26}
+/* the Sheet view's side (Paul, 29 Sep 01:04): its panel, then the order's two conversations under it, the very column
+   the Overview shows (moved here while the Sheet is in front, never copied), filling the rest; the side scrolls when
+   the panel is tall, the threads inside it */
+.owSide{min-width:0;min-height:0;display:flex;flex-direction:column;overflow:auto;border-left:1px solid var(--line);background:var(--card)}
+.owSide>.owPanel{flex:none;border-left:0;overflow:visible}
+#orderWin.owFull .owSide>.owChat{flex:1 0 360px;min-height:360px;border-left:0;border-top:1px solid var(--line)}
 @media (max-width:900px){
   #orderWin.owFull .owRail{display:none}
   #orderWin.owFull .owVInfo,#orderWin.owFull .owVSheet{grid-template-columns:minmax(0,1fr);overflow:auto}
@@ -806,6 +812,9 @@ dialog.phv.layer.phvIn{background:transparent}
   #orderWin.owFull .owChat{border-left:0;border-top:1px solid var(--line);min-height:420px}
   #orderWin.owFull .owPlateWrap{min-height:320px}
   #orderWin.owFull .owPanel{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #orderWin.owFull .owSide{border-left:0;border-top:1px solid var(--line);overflow:visible}
+  #orderWin.owFull .owSide>.owPanel{border-top:0}
+  #orderWin.owFull .owSide>.owChat{flex:none;min-height:420px}
   .owNowCard,.owNowCard.sealed,.owNowCard.sealed.bad{grid-template-columns:minmax(0,1fr)}
   .owSkip .soft{display:none}
 }
@@ -2424,8 +2433,9 @@ body.cuDragging #rvList>.reviewListRow:not(.cuDropOk){opacity:.42;filter:saturat
 .cuTip{position:fixed;z-index:160;bottom:22px;left:50%;display:flex;align-items:center;gap:9px;max-width:min(520px,calc(100vw - 32px));padding:9px 15px 9px 13px;border-radius:999px;background:var(--velvet);color:#f3eee4;font:600 12px/1.35 var(--sans);box-shadow:0 12px 30px rgba(20,16,10,.28);pointer-events:none;opacity:0;transform:translate(-50%,10px);transition:opacity .2s ease,transform .28s cubic-bezier(.2,.8,.2,1)}
 .cuTip.on{opacity:1;transform:translate(-50%,0)}
 .cuTip i{flex:none;width:8px;height:8px;border-radius:50%;background:#b597dc;box-shadow:0 0 0 3px rgba(181,151,220,.25)}
-/* a button that cannot act yet stays in its place, greyed, and says why (its title; pressed, what is missing lights up) */
-.btn[aria-disabled="true"]{opacity:.45;cursor:default}.btn.ghost[aria-disabled="true"]:hover{background:transparent}
+/* a button that cannot act yet stays in its place, greyed and not pressable, and says why (its title; pressed, what is
+   missing lights up) */
+.btn[aria-disabled="true"]{opacity:.45;cursor:not-allowed}.btn.ghost[aria-disabled="true"]:hover{background:transparent}
 /* the card's place for its designs while it has none: a dashed plum slot as tall as the buttons beside it (a click there
    chooses the files) */
 .cuHint{display:inline-flex;align-items:center;gap:7px;min-height:36px;box-sizing:border-box;padding:6px 12px 6px 10px;border:1.5px dashed rgba(125,86,168,.5);border-radius:9px;background:transparent;font:600 12px/1.3 var(--sans);color:#5d3f82;cursor:pointer;text-align:left;transition:background-color .15s,border-color .15s,color .15s}
@@ -4918,6 +4928,7 @@ function liftFromSheet(sh, c, to) {
 const NestFocus = window.NestFocus = (() => {
   const GROW = "cubic-bezier(.3,0,.1,1)", OPEN_MS = 620, POP_MS = 440, SAFE_MS = 15000, RING = "#b8893a";
   let cur = null;
+  const was = new Map();   // metal → the sheet its card showed before a flight switched it (restore() puts it back)
   const reduced = () => !!(window.Motion && Motion.reduced());
   const layerEl = () => window.Motion ? Motion.layer() : document.body;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -5080,7 +5091,8 @@ const NestFocus = window.NestFocus = (() => {
     const none = { card: null, page: null, spots: [], land: () => Promise.resolve(), close: () => Promise.resolve() };
     if (!pg) return none;
     const metal = pg.metal, prim = S.sheets[metal], at = prim.pages.indexOf(pg);
-    if (at >= 0 && prim.active !== at) showPage(metal, at);   // the card shows the sheet the order went on
+    // the card shows the sheet the order went on; the sheet it showed before is kept, and put back by restore()
+    if (at >= 0 && prim.active !== at) { if (!was.has(metal)) was.set(metal, prim.pages[prim.active] || null); showPage(metal, at); }
     const card = prim.cardEl || pg.el; if (!card) return Object.assign(none, { page: pg });
     const mine = ids.flatMap(id => charmsFor(pg, id).map(c => ({ id, c })));
     const st = cur = { pg, card, mine, live: new Set(), timer: 0, closed: false, safe: +opts.safeMs || 0 };
@@ -5124,7 +5136,14 @@ const NestFocus = window.NestFocus = (() => {
     const g = glide(card, reduced() ? 0 : OPEN_MS), r = el.getBoundingClientRect();
     return { rect: { left: r.left, top: r.top - g.d, width: r.width, height: r.height }, card, el, done: g.done };
   }
-  return { open, waiting, close: () => close(cur), isOpen: () => !!cur };
+  /** Each card back on the sheet it showed before the flights switched it (the tour calls it once home, out of sight;
+   *  a sheet gone since is left as it is). */
+  function restore() {
+    if (cur) return;
+    for (const [metal, pg] of was) { const prim = S.sheets[metal], i = prim && pg ? prim.pages.indexOf(pg) : -1; if (i >= 0 && prim.active !== i) try { showPage(metal, i); } catch (_) {} }
+    was.clear();
+  }
+  return { open, waiting, restore, close: () => close(cur), isOpen: () => !!cur };
 })();
 /** A piece a Send to Sheet flight has yet to land (NestFocus): a faint gold wash and a dashed line where it will stand. */
 function heldWash(ctx, c, tx, k) {
@@ -6389,10 +6408,10 @@ async function boot() {
 }
 boot();
 </script>
-<script src="order-timeline.js?v=20260929-sf2"></script>
-<script src="charm-nest-bridge.js?v=20260929-sf2"></script>
-<script src="charm-nest-sheetwin.js?v=20260929-sf2"></script>
-<script src="charm-nest-tour.js?v=20260929-sf2"></script>
+<script src="order-timeline.js?v=20260929-om"></script>
+<script src="charm-nest-bridge.js?v=20260929-om"></script>
+<script src="charm-nest-sheetwin.js?v=20260929-om"></script>
+<script src="charm-nest-tour.js?v=20260929-om"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260928-st-b"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
@@ -6473,7 +6492,7 @@ boot();
           <div class="owPlateWrap" id="owPlateWrap"><canvas class="owPlate" id="owSheetCv" aria-label="The order's sheet, its pieces in gold"></canvas><div class="owPlateTip" id="owPlateTip" hidden></div><div class="owPlatePick" id="owPlatePick" role="group" aria-label="Another order's charm" hidden></div><div class="owPlateWait" id="owPlateWait" hidden><span class="owSpin"></span><span></span></div></div>
           <div class="owPlateFoot" id="owPlateFoot"></div>
         </div>
-        <aside class="owPanel" id="owSheetPanel"></aside>
+        <div class="owSide" id="owSheetSide"><aside class="owPanel" id="owSheetPanel"></aside></div>
       </section>
     </div>
   </div>
