@@ -5454,6 +5454,9 @@ const Sets = window.Sets = (() => {
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
+        // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
+        // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
+        S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
@@ -6627,6 +6630,8 @@ const CustomPrint = window.CustomPrint = (() => {
       wrote([r.key]); gone++;
     }
     busy.delete(key);
+    // (its card is found where it stood in Open: Review brings it into view there, however it was reopened)
+    Review.view().back = { keys: rows.map(r => r.key), until: Date.now() + 180000 };
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
     catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
@@ -7727,6 +7732,14 @@ const Review = window.Review = (() => {
   }
   /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
   function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** A card back in Open (reopened, or its completion undone) at its place: scrolled into view if it is not, and marked
+   *  (behind the order window it was reopened from, once that window closes). */
+  function bringBack(n, key) {
+    const pane = n.closest(".scroll"), p = pane ? pane.getBoundingClientRect() : { top: 0, bottom: innerHeight }, r = n.getBoundingClientRect();
+    if (r.top < p.top || r.bottom > p.bottom) n.scrollIntoView({ behavior: "smooth", block: r.bottom <= p.top || r.top >= p.bottom ? "center" : "nearest" });
+    const win = document.getElementById("orderWin");
+    if (win && win.open) win.addEventListener("close", () => { const m = reviewRows.get(key)?.node || n; if (m.isConnected) found(m); }, { once: true }); else found(n);
+  }
   /** "Show" for a held order: the Orders tab, its On hold pile. */
   function showHeld() {
     if (typeof setMode === "function") setMode("orders");
@@ -8215,8 +8228,13 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
-    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || a.t - b.t);
-    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a));
+    // a card's place is its order's (Paul, 29 Sep 02:05: an order reopened from Completed goes back where it was, not
+    // to the foot of the list): newest arrival first, its kind, then the order itself (newest order date, then its line);
+    // never when its card was raised, completed or reopened (a whole pull arrives at one time, so that used to decide)
+    const placedOf = it => Math.max(0, ...rowsOf(it).map(r => +r.order.createTs || 0)), lineOf = it => (rowsOf(it)[0] || {}).key || "";
+    const byOrder = (a, b) => placedOf(b) - placedOf(a) || lineOf(a).localeCompare(lineOf(b)) || (a.t || 0) - (b.t || 0);
+    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || byOrder(a, b));
+    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a) || byOrder(a, b));
     // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
@@ -8239,6 +8257,11 @@ const Review = window.Review = (() => {
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
     if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
+    // a card just reopened (or its completion undone: CustomPrint sets RV.back) is found at its place the next time Open
+    // shows it: drawn down to it, brought into view and marked
+    let back = null;
+    if (RV.back && RV.back.until < Date.now()) RV.back = null;
+    if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
@@ -8288,7 +8311,9 @@ const Review = window.Review = (() => {
     for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
-    v.querySelector('.egPane.scroll').scrollTop=oldScroll;
+    // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
+    {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
+    if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
     const notices = doneMode ? [] : items().filter(isNotice);
     if (notices.length) {
