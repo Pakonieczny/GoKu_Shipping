@@ -98,5 +98,9 @@ await test('a demand-capped plan budget is the budget the draft gets: the slider
   const o=served(cheap);assert.equal(o.recommendedDailyBudget,1,'engine budget');ctx.OPPS=[o];delete ctx.OPP_UI[ctx.oppKey(0)];
   const m=/<input type="range" class="opBud" data-i="0" min="([\d.]+)" max="([\d.]+)" value="([\d.]+)"/.exec(ctx.oppCard(o,0,100));assert(m,'budget slider');
   assert(+m[1]<=+m[3]&&+m[3]<=+m[2],'min '+m[1]+' ≤ value '+m[3]+' ≤ max '+m[2]);assert.equal(+m[3],1);});
+await test('a plan forecast to lose money names that blocker and never tops Best match',()=>{ctx.RESEARCH_STATUS={search:{status:'ready',checkedAt:Date.now()}};const r='Projected ROAS 0.8x (0.6–1.0x with conversion uncertainty) is below the 2.5x break-even at a 40% margin: this plan is forecast to lose CAD 120 over the run.';
+  const b=ctx.oppBlock(Object.assign(base(),{eligibility:{ready:false,measuredKeywords:5,expectedSales:2,reason:r}}));assert.deepEqual([b.kind,b.label,b.text],['evidence','Forecast below break-even',r]);
+  vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
+  assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
 console.log(`${passed} opportunity card checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});
