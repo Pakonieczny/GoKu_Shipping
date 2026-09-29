@@ -1,6 +1,7 @@
 .topbar{min-height:52px;padding-top:10px!important;padding-bottom:10px!important}.topbar h1{font-size:24px!important}.topbar #vsub{display:none}.brand{padding-top:20px!important;padding-bottom:20px!important}.bg-global-note{font-size:11px;color:var(--ink-70)}
 /* Products & groups: campaign › group › listing, each with its own figures. Columns line up at every level. */
-#v-groups{--bg-cols:minmax(0,1fr) 112px minmax(84px,104px) minmax(54px,70px) minmax(48px,62px) minmax(84px,104px) 68px}
+/* The tree's room depends on the rail as much as the window, so layouts follow the view's own width. */
+#v-groups{container:bg-view/inline-size;--bg-cols:minmax(0,1fr) 112px minmax(84px,104px) minmax(54px,70px) minmax(48px,62px) minmax(84px,104px) 68px}
 .bg-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}.bg-toolbar>input[type=search]{flex:1 1 220px;min-width:0}.bg-toolbar input,.bg-toolbar select{height:36px;box-sizing:border-box;border:1px solid var(--line);background:var(--card);border-radius:9px;padding:0 10px;color:var(--ink);font:inherit;font-size:12.5px}.bg-toolbar>select{flex:0 1 250px;min-width:0}.bg-dates{display:flex;align-items:center;gap:8px}.bg-dates label{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-70)}.bg-dates input{width:142px}.bg-toolbar .btn{height:36px;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}.bg-toolbar [data-bg-action=saved]{margin-left:auto}
 .bg-scope,.bg-wait{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;min-height:20px;margin:0 0 14px;font-size:11.5px;color:var(--ink-70)}.bg-wait{color:var(--ink)}.bg-scope>span[aria-hidden],.bg-report-label>span[aria-hidden]{color:var(--ink-25)}
 .bg-link{padding:0;border:0;background:none;color:var(--gold);font:inherit;cursor:pointer}.bg-link:hover{text-decoration:underline}.bg-link:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}.bg-alert{margin:-6px 0 14px;font-size:12px;color:#785718}.bg-metrics+.bg-alert{margin:10px 0 0}
@@ -41,15 +42,23 @@
 .bg-breadcrumbs{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden}.bg-breadcrumbs button{flex:0 1 auto;min-width:0;max-width:280px;padding:4px 0;border:0;background:none;color:var(--gold,#a9823f);font:inherit;cursor:pointer;overflow:hidden;text-overflow:ellipsis}.bg-breadcrumbs button:hover{text-decoration:underline}.bg-breadcrumbs [data-bg-home]{flex:none}.bg-breadcrumbs>span{flex:none;color:var(--ink-45)}.bg-breadcrumbs>[aria-current]{flex:0 1 auto;min-width:0;color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
 @keyframes bg-turn{to{transform:rotate(360deg)}}@keyframes bg-shimmer{0%{background-position:100% 0}100%{background-position:-100% 0}}
 @media(min-width:761px) and (max-width:1020px){.bg-context{margin:10px 8px -10px}}
-@media(max-width:900px){.bg-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.bg-detail-head h2{font-size:22px}.bg-copy ul{columns:1}.bg-notice{align-items:flex-start;flex-direction:column}.bg-tabs{gap:18px}}
-@media(max-width:760px){
-#v-groups{--bg-cols:minmax(0,1fr) auto auto}.bg-context{margin:8px 3px -12px}.bg-back{max-width:45%}
-.bg-toolbar>input[type=search]{flex-basis:100%}.bg-toolbar>select{flex:1 1 100%}.bg-dates{flex:1 1 100%}.bg-dates label{flex:1;min-width:0}.bg-dates input{width:auto;flex:1;min-width:0}.bg-toolbar [data-bg-action=saved]{margin-left:0}
+@container bg-view (max-width:900px){.bg-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.bg-detail-head h2{font-size:22px}.bg-copy ul{columns:1}.bg-notice{align-items:flex-start;flex-direction:column}.bg-tabs{gap:18px}}
+/* Narrow views (tablet, narrow window beside the rail, phone): name, state and action on one line, the figures beneath it. */
+@container bg-view (max-width:900px){
+.bg-tree{--bg-cols:minmax(0,1fr) auto auto}
 .bg-head{display:none}.bg-line{padding:0 12px;column-gap:8px}.bg-line>.bg-toggle,.bg-line>.bg-state,.bg-line>.bg-act,.bg-line>.bg-listing{grid-row:1}.bg-line>.bg-toggle{grid-column:1}.bg-line>.bg-state{grid-column:2;justify-content:flex-end}.bg-line>.bg-act{grid-column:3}.bg-line>.bg-listing{grid-column:1}
-.bg-cells{display:grid;grid-column:1/-1;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;padding:0 0 12px 26px}.bg-leaf .bg-cells:empty{display:none}.bg-cell{text-align:left;font-size:12px}.bg-cell .bg-full{display:none}.bg-cell .bg-brief{display:inline}.bg-cell::before{content:attr(data-label);display:block;font-size:10px;font-weight:600;color:var(--ink-45)}
+.bg-cells{display:grid;grid-column:1/-1;grid-template-columns:repeat(4,minmax(0,150px));gap:6px;padding:0 0 12px 26px}.bg-leaf .bg-cells:empty{display:none}.bg-cell{text-align:left;font-size:12px}.bg-cell::before{content:attr(data-label);display:block;font-size:10px;font-weight:600;color:var(--ink-45)}
 .bg-group .bg-toggle{padding-left:14px}.bg-listing{padding-left:28px}.bg-note{padding:9px 12px 11px 42px}.bg-panel-foot{padding:0 12px 12px 42px}
 .bg-products.has-metrics{grid-template-columns:1fr}.bg-products-head{display:none}.bg-products.has-metrics>article{grid-template-columns:48px minmax(0,1fr);row-gap:10px}.bg-products.has-metrics .bg-cells{grid-column:1/-1;padding:0}.bg-products.has-metrics article>button{grid-column:1/-1;justify-self:start}
+}
+/* Phone-width views: amounts shorten (CA$176.6K) and figure cards pair up. */
+@container bg-view (max-width:520px){
+.bg-cell .bg-full{display:none}.bg-cell .bg-brief{display:inline}
 .bg-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.bg-metrics>div{padding:13px 14px}.bg-metrics b{font-size:17px}
+}
+@media(max-width:760px){
+.bg-context{margin:8px 3px -12px}.bg-back{max-width:45%}
+.bg-toolbar>input[type=search]{flex-basis:100%}.bg-toolbar>select{flex:1 1 100%}.bg-dates{flex:1 1 100%}.bg-dates label{flex:1;min-width:0}.bg-dates input{width:auto;flex:1;min-width:0}.bg-toolbar [data-bg-action=saved]{margin-left:0}
 .bg-split{padding:20px 18px;width:94vw}.bg-split table{font-size:12px}.bg-split th,.bg-split td{padding:9px 6px}
 }
 @media(prefers-reduced-motion:reduce){.bg-collapse,.bg-collapse-inner,.bg-chev,.bg-tabs button,.bg-camp-line,.bg-group-line{transition:none!important}.bg-spin,.bg-bone,.bg-cell.is-pending i{animation:none!important}}
