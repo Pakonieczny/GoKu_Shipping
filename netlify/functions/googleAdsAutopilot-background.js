@@ -124,7 +124,9 @@ exports.handler = async (event) => {
           }
         }
       }
-      else if (task === 'adMotionPublication') {result.adMotionPublication=await E.runAdMotionPublication({workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef});}
+      else if (task === 'adMotionPublication') {const input={workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef};result.adMotionPublication=await E.runAdMotionPublication(input);
+        // YouTube processing usually takes minutes: keep checking so an approved upload reaches its attachment without another click.
+        for(let i=0;i<8&&result.adMotionPublication&&result.adMotionPublication.processing&&Date.now()-t0<DEADLINE_MS-120000;i++){await new Promise(r=>setTimeout(r,65000));result.adMotionPublication=await E.runAdMotionPublication(input);}}
       else if (task === 'adDesignMotion') {result.adDesignMotion=await E.runAdDesignMotion({workspaceId:body.workspaceId,jobId:body.jobId});if(result.adDesignMotion.continue)await continueMotion(result.adDesignMotion);} 
       else if (task === "adDesign") {
         result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});
