@@ -12601,10 +12601,10 @@ These requirements take precedence over any instruction to duplicate a reference
         alert(`Cannot verify current batch jobs: ${err?.message || err}. Retry later.`);
         return;
       }
-      if (liveBatches.some((b) => !b.collected && ![
+      if (liveBatches.some((b) => !b.collected && (_awaitingStallRestart(b) || ![
         "JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED", "JOB_STATE_SUCCEEDED",
         "BATCH_STATE_FAILED", "BATCH_STATE_EXPIRED", "BATCH_STATE_CANCELLED", "BATCH_STATE_SUCCEEDED",
-      ].includes(b.state))) {
+      ].includes(b.state)))) {
         alert("Some batch jobs are still running. Wait for them to finish and collect their images before resuming empty folders.");
         return;
       }
@@ -13145,6 +13145,12 @@ Click the button again to permanently delete eligible temporary files, or cancel
       return x.startsWith("BATCH_STATE_") ? "JOB_STATE_" + x.slice("BATCH_STATE_".length) : x;
     }
 
+    // A job OpenAI accepted but never started: the collector is cancelling it
+    // (nothing was made, so nothing is billed) and will queue its set again.
+    function _awaitingStallRestart(b) {
+      return b?.stallRestart === "pending" && !b.collected;
+    }
+
     function _formatDuration(ms) {
       if (!ms || ms < 0) return "—";
       const sec = Math.floor(ms / 1000);
@@ -13177,9 +13183,13 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
-      const cancelling = activeJobs.filter((b) => b.providerStatus === "cancelling").length;
-      const failed = states.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
-      const cancelled = states.filter((st) => st === "JOB_STATE_CANCELLED").length;
+      // Jobs OpenAI never started, which the collector cancels and queues again.
+      const restarting = effective.filter(_awaitingStallRestart).length;
+      const restartingActive = activeJobs.filter(_awaitingStallRestart).length;
+      const cancelling = activeJobs.filter((b) => b.providerStatus === "cancelling" && !_awaitingStallRestart(b)).length;
+      const settledStates = effective.filter((b) => !_awaitingStallRestart(b)).map((b) => _normBatchState(b.state));
+      const failed = settledStates.filter((st) => st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED").length;
+      const cancelled = settledStates.filter((st) => st === "JOB_STATE_CANCELLED").length;
       const lastProviderCheck = Math.max(0, ...activeJobs.map((b) => Number(b.updatedAt || 0)));
       const oldestActiveAt = activeJobs.length ? Math.min(...activeJobs.map((b) => Number(b.createdAt || Date.now()))) : 0;
       const requestStats = activeJobs.reduce((sum, b) => {
@@ -13218,7 +13228,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const capacityStopped = effective.filter((b) => b.retryStatus === "capacity_refused" && !b.collected);
       // Sets the server stopped after their five retry attempts.
       const attemptsStopped = effective.filter((b) => b.retryStatus === "attempts_exhausted" && !b.collected);
-      const attention = effective.filter((b) => !b.retryRequested &&
+      const attention = effective.filter((b) => !b.retryRequested && !_awaitingStallRestart(b) &&
         (b.collected ? b.results?.failedCount > 0 :
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
       const originals = session.batches.filter((b) => !b.retryOf);
@@ -13261,6 +13271,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Complete"; headlineColor = "#7fdb96";
       } else if (cancelling) {
         headline = "Stopping jobs"; headlineColor = "#fde68a";
+      } else if (restarting && running === restartingActive && !refilling) {
+        headline = "Restarting stalled jobs"; headlineColor = "#fde68a";
       } else if (refilling) {
         headline = "Filling queue"; headlineColor = "#93c5fd";
       } else if (providerWaiting) {
@@ -13293,7 +13305,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
         : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
-      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${attention ? ` · ${attention} need attention` : ""}`]);
+      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${attention ? ` · ${attention} need attention` : ""}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (waitingRetries) rows.push(["Queue admission", `${running} active provider jobs · new jobs and retries start below ${_batchRetryLimit}`]);
       if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
@@ -13325,16 +13337,18 @@ Click the button again to permanently delete eligible temporary files, or cancel
         <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const activity = [cancelling ? `${cancelling} stopping` : "",
-        running > cancelling ? `${running - cancelling} active jobs` : "", waitingRetries ? `${waitingRetries} queued` : "",
+      const activity = [cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
+        running > cancelling + restartingActive ? `${running - cancelling - restartingActive} active jobs` : "",
+        waitingRetries ? `${waitingRetries} queued` : "",
         attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
+        : restarting ? `OpenAI never started ${restarting} job(s) within 3 hours. They are cancelled at no cost and their sets are queued again.`
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
         : providerWaiting
-        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}.`
+        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. A job OpenAI has not started after 3 hours is restarted automatically.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
@@ -13356,7 +13370,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // anything is still running. Recover-all if there are failed /
       // expired batches the user could pull partial results from.
       const cancellableBatches = session.batches.filter((b) => {
-        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
+        if (b.retryBatchName) return false;
+        // Cancelling a restart keeps its set from being queued again.
+        if (_awaitingStallRestart(b)) return true;
+        if (b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         // A failed job queued for retry is taken out of the queue too.
         if (b.retryRequested && !b.collected && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(st)) return true;
@@ -13364,7 +13381,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       });
       const recoverableBatches = session.batches.filter((b) => {
         const st = _normBatchState(b.state);
-        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName;
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !b.retryBatchName &&
+          !_awaitingStallRestart(b);
       });
       const retryable = recoverableBatches.filter((b) => !b.responsesFile && !b.retryRequested &&
         b.retryStatus !== "submitting" && b.retryStatus !== "capacity_refused" && b.retryStatus !== "attempts_exhausted");
@@ -13387,7 +13405,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : "";
 
       const stateDetail = session.batches.map((b) => {
-        const state = b.providerStatus === "cancelling" ? "stopping" : _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
+        const state = _awaitingStallRestart(b) ? "never started · restarting"
+          : b.stallRestart === "restarted" ? "never started · queued again"
+          : b.providerStatus === "cancelling" ? "stopping" : _normBatchState(b.state).replace("JOB_STATE_", "").toLowerCase();
         const name = _batchSafeText(b.displayName || b.batchName || "Unnamed batch");
         const updated = b.updatedAt ? new Date(b.updatedAt).toLocaleString() : "No update yet";
         const counts = b.batchStats || b.requestCounts || {};
@@ -13433,7 +13453,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
     async function _cancelSession(sessionId) {
       const targets = _lastBatchList.filter((b) => {
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
-        if (b.retryBatchName || b.providerStatus === "cancelling") return false;
+        if (b.retryBatchName) return false;
+        // A job being restarted by the collector: cancelling stops the restart.
+        if (_awaitingStallRestart(b)) return true;
+        if (b.providerStatus === "cancelling") return false;
         const st = _normBatchState(b.state);
         // Queued retries stop too; otherwise the collector keeps submitting them.
         if (b.retryRequested && !b.collected && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(st)) return true;
@@ -13514,7 +13537,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const targets = _lastBatchList.filter((b) => {
         if ((b.sessionId || "(unsessioned)") !== sessionId) return false;
         const st = _normBatchState(b.state);
-        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !!b.responsesFile;
+        return (st === "JOB_STATE_FAILED" || st === "JOB_STATE_EXPIRED") && !b.collected && !!b.responsesFile &&
+          !_awaitingStallRestart(b);
       });
       if (!targets.length) return;
       if (!confirm(`Recover partial results from ${targets.length} failed batch(es)?\n\nThis collects existing provider outputs only. It will not regenerate missing images or overwrite saved sets.`)) return;
@@ -13693,8 +13717,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
         const active = _lastBatchList.filter((b) => !b.collected &&
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state))).length;
-        const queued = _lastBatchList.filter((b) => !b.collected && b.retryRequested && !b.retryBatchName &&
-          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))).length;
+        const queued = _lastBatchList.filter((b) => !b.collected && (b.retryRequested && !b.retryBatchName &&
+          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) ||
+          _awaitingStallRestart(b) && ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
         let sweepNote = "";
         if (manual && queued && active < _batchRetryLimit) {
           _showBatchCheck(`Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to fill them…`);
@@ -13743,6 +13768,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           const st = _normBatchState(b.state);
           if (b.collected) return false;
           if (b.retryRequested && !b.retryBatchName) return true;
+          if (_awaitingStallRestart(b)) return true;
           if (st === "JOB_STATE_FAILED" || st === "JOB_STATE_CANCELLED" || st === "JOB_STATE_EXPIRED") return false;
           return true;
         });
