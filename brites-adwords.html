@@ -2189,7 +2189,7 @@ function servingStoredHtml(s){var k=servingClass(s),run='<button type="button" c
 function servingBoxHtml(c){if(!c||c.deleted||c.status==="REMOVED")return "";return '<div class="servbox" data-sc="'+esc(String(c.id))+'">'+servingStoredHtml(servingOf(c.id))+'</div>';}
 // Asks Google now (campaignTimeline's serving result, which the server also keeps for the badge).
 async function loadServing(box){if(!box||box._busy)return;box._busy=true;var id=box.getAttribute("data-sc"),btn=box.querySelector(".servRun");
-  if(btn){btn.disabled=true;btn.textContent="Asking Google…";}
+  var done=btnBusy(btn,"Asking Google…");
   try{var t=await api("campaignTimeline",{id:id});if(!t||t.error)throw new Error(t&&t.error||"Google did not answer.");
     var s=t.serving||null;
     if(servingClass(s)&&typeof DASH!=="undefined"&&DASH){DASH.servingChecks=DASH.servingChecks||{};
@@ -2198,7 +2198,7 @@ async function loadServing(box){if(!box||box._busy)return;box._busy=true;var id=
     var a=servingBadgeAttrs(servingOf(id));Array.prototype.forEach.call(document.querySelectorAll('.servBadge[data-serv="'+id+'"]'),function(b){b.className=a.cls;b.textContent=a.text;b.title=a.title;});
   }catch(x){Array.prototype.forEach.call(box.querySelectorAll(".servErr"),function(e){e.remove();});
     box.insertAdjacentHTML("beforeend",'<div class="servMeta servErr" role="alert">Google serving check failed: '+esc(String(x.message||x).slice(0,160))+'</div>');
-    if(btn){btn.disabled=false;btn.textContent="Check with Google";}}
+    done();}
   finally{box._busy=false;var nb=box.querySelector(".servRun");if(nb)nb.onclick=function(ev){ev.stopPropagation();loadServing(box);};}}
 function wireServing(scope){
   Array.prototype.forEach.call(scope.querySelectorAll(".servRun"),function(b){b.onclick=function(ev){ev.stopPropagation();loadServing(b.closest(".servbox"));};});

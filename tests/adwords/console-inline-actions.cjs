@@ -146,6 +146,16 @@ await test('a researched occasion date names its source; research lists the page
   channel='pmax';rw.renderScanAudit();assert.equal(rd.querySelector('.scanPages'),null,'product ads research does not claim the Search pages');r.window.close();
 });
 
+await test('asking Google for the serving check shows the standard spinner; a failure gives the button back',async()=>{
+  const v=new JSDOM('<!doctype html><body><div class="servbox" data-sc="5"><button type="button" class="btn ghost sm servRun">Check again with Google</button></div></body>',{runScripts:'outside-only'}),vw=v.window,vd=vw.document;let answer;
+  vw.api=()=>new Promise((res,rej)=>{answer={res,rej};});vw.eval(['esc','btnBusy','loadServing'].map(pick).join('\n'));
+  const box=vd.querySelector('.servbox'),b=box.querySelector('.servRun'),run=vw.loadServing(box);
+  assert.equal(b.disabled,true);assert.equal(b.innerHTML,'<span class="spin bspin"></span>Asking Google…');
+  answer.rej(new Error('Google did not answer.'));await run;
+  assert.equal(b.disabled,false);assert.equal(b.textContent,'Check again with Google','the button keeps its own words');
+  assert.equal(box.querySelector('.servErr').textContent,'Google serving check failed: Google did not answer.');v.window.close();
+});
+
 await test('one indicator per wait, shell top bar, phone channel tabs and a shadow-free closed drawer',()=>{
   assert.match(html,/BritesProgress\.own\(function\(host\)\{var scope=host===document\.body\?document\.querySelector\("\.view:not\(\.hidden\)"\):host;/);
   assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-shell"/);
