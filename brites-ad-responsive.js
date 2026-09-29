@@ -11,20 +11,37 @@
   // the layout tests all read this one rule so they cannot drift apart.
   const BANNER_EDGE_BOARDS=['display_468x60','display_728x90','display_930x180','display_970x90','display_980x120'];
   const bannerEdgeMargin=board=>BANNER_EDGE_BOARDS.includes(board.key)?Math.min(board.width*.035,board.height*.30):0;
-  function selectImage(plan,images,board){const f=family(board);return images.find(i=>i.forBoards?.includes(board.key))||images.find(i=>i.forFamilies?.includes(f))||images[0];}
+  // A photo that cuts the charm (unusable) is never chosen: its sizes fall back
+  // to the closest-shaped photo whose crop still holds the complete charm.
+  function selectImage(plan,images,board){
+    const f=family(board),pick=list=>list.find(i=>i.forBoards?.includes(board.key))||list.find(i=>i.forFamilies?.includes(f));
+    if(!images.some(i=>i.unusable))return pick(images)||images[0];
+    const usable=images.filter(i=>!i.unusable),ratio=board.width/board.height,holds=i=>{try{cleanCrop(i,board);return true;}catch(_){return false;}},distance=i=>Math.abs(Math.log(i.width/i.height/ratio));
+    return pick(usable)||usable.slice().sort((a,b)=>distance(a)-distance(b)).find(holds)||usable[0]||images[0];
+  }
   // Design at the actual viewing width, then export at the requested resolution.
   // A 2048px master must not turn a 36px CTA into a 6px mobile label.
-  const layoutVersion=32;
+  const layoutVersion=33;
+  // Room around the located charm when a layout scales it to fit its region:
+  // 1.10 leaves 5 percent of the charm's size clear on each side.
+  const CHARM_ROOM=1.10;
   const brands=typeof module==='object'&&module.exports?require('./brites-brand-assets'):root.BritesBrandAssets;
   // The scene catalog matches meaningful crop families rather than charging for
   // every output size. Slim skyscrapers may receive an extra composition.
+  // Every scene keeps the whole charm and its bail inside the frame with room to
+  // spare, so neither a photo edge nor a small error in the charm box cuts it.
+  const KEEP_WHOLE='Never crop the charm: the complete charm and its bail stay fully inside the frame, with at least 12 percent of the frame clear above the top of the bail and on every side.';
   const sceneCatalog=[
-    {key:'landscape',format:{key:'landscape',width:2048,height:1072,requestSize:'2064x1088'},families:['landscape'],boards:[],direction:'Product on the right, within x 0.55–0.93 and y 0.08–0.92. The left 46 percent is continuous quiet photographic surface for the existing centered brand, title and action.'},
-    {key:'square',format:{key:'square',width:2048,height:2048,requestSize:'2048x2048'},families:['square'],boards:[],direction:'Complete product centered horizontally within x 0.30–0.70 and y 0.04–0.42, occupying at most 38 percent of source height. The renderer zooms this into a dominant product view; this extra scene area is essential for both square and 300x250/336x280 crops. Keep the remaining lower surface quiet and continuous for captions. No separate footer.'},
-    {key:'portrait',format:{key:'portrait',width:1638,height:2048,requestSize:'1648x2048'},families:['portrait'],boards:[],direction:'Complete product in the upper 58 percent, centered horizontally, with the lower third quiet for the existing brand, product name and action. Protect a 4:5 crop as well as 3:5; do not place props behind the captions.'},
-    {key:'tall',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:['skyscraper'],boards:['display_300x600'],direction:'A deliberate tall photograph. Keep the entire jewelry in x 0.27–0.73, y 0.18–0.60 so narrow horizontal crops retain the product. Lower third is an uninterrupted surface for the existing centered copy stack. Compose the vertical space deliberately with a subtle diagonal of peach-colored fabric, a small peach slice or a verified packaging edge above or below the charm. Keep props secondary, separated from the jewelry and outside the lower copy area. Do not add extra jewelry, chains or imply accessories are included. Avoid a large empty flat field; use depth and restrained editorial still-life context.'},
-    {key:'banner',format:{key:'landscape',width:3072,height:1024,requestSize:'3072x1024'},families:['banner'],boards:[],direction:'Close jewelry view in the left third, with uninterrupted calm surface and matching illumination extending right. A product-free right-side surface supplies the tonal continuation for ultra-wide banners. Avoid horizontal seams, horizon lines or props in that continuation.'},
-    {key:'slim',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:[],boards:['display_120x600','display_160x600'],direction:'Dedicated slim crop. Keep complete jewelry including hardware in the central 42 percent of the source width and upper 60 percent of height. Keep the lower third quiet and continuous. This scene is specifically for 1:5 and 4:15 banners. Use an intentional vertical arrangement with a restrained peach or fabric accent above or below the product, never beside its narrow protected silhouette or behind the lower copy. No extra jewelry or invented included accessories.'}
+    {key:'landscape',format:{key:'landscape',width:2048,height:1072,requestSize:'2064x1088'},families:['landscape'],boards:[],direction:'Product on the right, within x 0.55–0.88 and y 0.12–0.88. The left 46 percent is continuous quiet photographic surface for the existing centered brand, title and action. '+KEEP_WHOLE},
+    {key:'square',format:{key:'square',width:2048,height:2048,requestSize:'2048x2048'},families:['square'],boards:[],direction:'Complete product centered horizontally within x 0.30–0.70 and y 0.12–0.48, occupying at most 36 percent of source height. The renderer zooms this into a dominant product view; this extra scene area is essential for both square and 300x250/336x280 crops. Keep the remaining lower surface quiet and continuous for captions. No separate footer. '+KEEP_WHOLE},
+    {key:'portrait',format:{key:'portrait',width:1638,height:2048,requestSize:'1648x2048'},families:['portrait'],boards:[],direction:'Complete product between y 0.12 and 0.58, centered horizontally, with the lower third quiet for the existing brand, product name and action. Protect a 4:5 crop as well as 3:5; do not place props behind the captions. '+KEEP_WHOLE},
+    {key:'tall',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:['skyscraper'],boards:['display_300x600'],direction:'A deliberate tall photograph. Keep the entire jewelry in x 0.27–0.73, y 0.18–0.60 so narrow horizontal crops retain the product. Lower third is an uninterrupted surface for the existing centered copy stack. Compose the vertical space deliberately with a subtle diagonal of peach-colored fabric, a small peach slice or a verified packaging edge above or below the charm. Keep props secondary, separated from the jewelry and outside the lower copy area. Do not add extra jewelry, chains or imply accessories are included. Avoid a large empty flat field; use depth and restrained editorial still-life context. '+KEEP_WHOLE},
+    {key:'banner',format:{key:'landscape',width:3072,height:1024,requestSize:'3072x1024'},families:['banner'],boards:[],direction:'Close jewelry view in the left third, between y 0.12 and 0.88, with uninterrupted calm surface and matching illumination extending right. A product-free right-side surface supplies the tonal continuation for ultra-wide banners. Avoid horizontal seams, horizon lines or props in that continuation. '+KEEP_WHOLE},
+    {key:'slim',format:{key:'portrait',width:1024,height:3072,requestSize:'1024x3072'},families:[],boards:['display_120x600','display_160x600'],direction:'Dedicated slim crop. Keep complete jewelry including hardware in the central 42 percent of the source width, between y 0.12 and 0.60. Keep the lower third quiet and continuous. This scene is specifically for 1:5 and 4:15 banners. Use an intentional vertical arrangement with a restrained peach or fabric accent above or below the product, never beside its narrow protected silhouette or behind the lower copy. No extra jewelry or invented included accessories. '+KEEP_WHOLE},
+    // Specialized sets for the sizes the landscape and portrait photos serve
+    // worst: 580x400 (about 3:2) and 240x400/250x360 (about 3:5).
+    {key:'midLandscape',format:{key:'landscape',width:1536,height:1056,requestSize:'1536x1056'},families:[],boards:['display_580x400'],direction:'Dedicated 580x400 scene, about 3:2. Complete charm and bail in the right 45 percent, within x 0.57–0.88 and y 0.14–0.86, and no larger than 60 percent of the frame height. The left half is continuous quiet photographic surface for the brand, headline and action; keep props out of it. '+KEEP_WHOLE},
+    {key:'midPortrait',format:{key:'portrait',width:1296,height:2048,requestSize:'1296x2048'},families:[],boards:['display_240x400','display_250x360'],direction:'Dedicated 240x400 and 250x360 scene, about 3:5. Complete charm and bail centered horizontally in the upper 55 percent, within x 0.18–0.82 and y 0.14–0.52. The lower third is quiet continuous surface for the brand, product name and action; keep props out of it. '+KEEP_WHOLE}
   ];
   function cleanCrop(image,board){
     const ratio=board.width/board.height,w=image.width,h=image.height,cw=Math.min(w,h*ratio),ch=cw/ratio,f=image.focus;
@@ -113,12 +130,12 @@
       if(label.length*size*.65+12>width)label='Shop';
       objects.push(base('cta','button',{type:'Group',left:x,top:y,width,height,buttonPadding:4,objects:[{type:'Rect',originX:'left',originY:'top',left:-width/2,top:-height/2,width,height,fill:style.accent,strokeWidth:0,rx:style.preserveSavedStyle?height*style.buttonRadius:3,ry:style.preserveSavedStyle?height*style.buttonRadius:3},{type:'Textbox',originX:'center',originY:'center',left:0,top:0,width:width-8,height:16,text:label,fontFamily:style.buttonFont||style.bodyFont,fontWeight:style.buttonWeight||'700',fontSize:size,fill:style.buttonInk,textAlign:'center',lineHeight:1}]}));
     }
-    // Frame the located charm, not the full chain or photograph. Small placements
-    // receive tighter crops; larger ones retain a little photographic context.
-    // Legacy unlocated photographs keep their conservative framing until located.
+    // Frame the located charm, not the full chain or photograph, with a margin
+    // around it so a small error in the charm box never cuts it off. Legacy
+    // unlocated photographs keep their conservative framing until located.
     function photograph(frame){
       const focus=image.focus,valid=focus&&['x','y','width','height'].every(k=>Number.isFinite(focus[k]))&&focus.width>0&&focus.height>0;
-      const small=Math.min(frame.width,frame.height)<=100,padding=['display_120x600','display_160x600','display_300x600'].includes(board.key)?1.30:narrow||board.key==='landscape'?1.14:1.025;
+      const padding=['display_120x600','display_160x600','display_300x600'].includes(board.key)?1.30:narrow||board.key==='landscape'?1.18:CHARM_ROOM;
       const cover=Math.max(frame.width/image.width,frame.height/image.height);
       const safeWidth=image.width/image.height>1.3?image.width*.30:image.width;
       const desired=valid?Math.min(frame.width/(image.width*focus.width*padding),frame.height/(image.height*focus.height*padding)):cover;
@@ -148,10 +165,10 @@
     function bottomFade(y,height){const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');objects.push(base('photo_caption_fade','shape',{type:'Rect',left:0,top:y,width:W,height,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:0,y2:1},colorStops:[{offset:0,color:'rgba('+rgb+',0)'},{offset:.75,color:'rgba('+rgb+',.3)'},{offset:1,color:'rgba('+rgb+',.82)'}]}}));}
     function fullBleedLandscape(){
       if(board.key!=='landscape'||style.treatment!=='soft-fade'||!image.focus)return false;
-      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.36/(image.width*q.width*1.04),H*.86/(image.height*q.height*1.04))),cw=W/scale,ch=H/scale;
+      const q=image.focus,scale=Math.max(W/image.width,H/image.height,Math.min(W*.36/(image.width*q.width*CHARM_ROOM),H*.86/(image.height*q.height*CHARM_ROOM))),cw=W/scale,ch=H/scale;
       const cx=clamp(image.width*(q.x+q.width/2)-cw*.74,0,image.width-cw),cy=clamp(image.height*(q.y+q.height/2)-ch/2,0,image.height-ch);
       const subject={left:(image.width*q.x-cx)*scale,top:(image.height*q.y-cy)*scale,width:image.width*q.width*scale,height:image.height*q.height*scale},pad=Math.max(6,W*.025),tw=Math.min(W*.44,subject.left-pad*2);
-      if(tw<76||subject.top<0||subject.top+subject.height>H)return false;
+      if(tw<76||subject.top<H*.02||subject.top+subject.height>H*.98)return false;
       objects.push(base('product_scene','photo',{type:'Image',sourceKey:image.id,left:0,top:0,width:cw,height:ch,cropX:cx,cropY:cy,scaleX:scale,scaleY:scale}));
       const rgb=style.background.match(/[a-f0-9]{2}/gi).map(v=>parseInt(v,16)).join(',');
       objects.push(base('image_fade','shape',{type:'Rect',left:0,top:0,width:W,height:H,fill:{type:'linear',gradientUnits:'percentage',coords:{x1:0,y1:0,x2:1,y2:0},colorStops:[{offset:0,color:'rgba('+rgb+',1)'},{offset:Math.max(0,(tw-pad)/W),color:'rgba('+rgb+',.92)'},{offset:subject.left/W,color:'rgba('+rgb+',0)'},{offset:1,color:'rgba('+rgb+',0)'}]}}));
@@ -187,7 +204,7 @@
       if(!side&&top<H*.50)return false;
       const sideMargin=board.key==='display_300x600'?W*.10:pad;
       const region=side?{left:W*.55,top:pad,width:W*.45-pad,height:H-pad*2}:{left:sideMargin,top:pad,width:W-sideMargin*2,height:top-pad*2};
-      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*1.04),region.height/(image.height*focus.height*1.04)));
+      const scale=Math.max(W/image.width,side?H/image.height:0,Math.min(region.width/(image.width*focus.width*CHARM_ROOM),region.height/(image.height*focus.height*CHARM_ROOM)));
       const cw=W/scale;let ch=Math.min(image.height,(side?H:top)/scale),cx=clamp(image.width*(focus.x+focus.width/2)-(region.left+region.width/2)/scale,0,image.width-cw),cy=clamp(image.height*(focus.y+focus.height/2)-(region.top+region.height/2)/scale,0,image.height-ch);
       const subject={left:(image.width*focus.x-cx)*scale,top:(image.height*focus.y-cy)*scale,width:image.width*focus.width*scale,height:image.height*focus.height*scale};
       if(subject.left<region.left||subject.top<region.top||subject.left+subject.width>region.left+region.width||subject.top+subject.height>region.top+region.height)return false;

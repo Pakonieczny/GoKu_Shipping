@@ -123,17 +123,21 @@ async function setup({generatedSource=false,autoProofs=true,layer=null,makeSourc
   multi.D.generateImage=async args=>{const out=await gen(args);formats.push(args.format.requestSize);Date.now=()=>started+90000;return out;};try{const first=await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});ok(first.continue&&multi.calls.images===1,'long scene run yields after a saved receipt');ok(multi.f.docs.get(multi.p+'/editorAIJobs/'+multi.jobId).leaseUntil===0,'continuation releases worker lease');}finally{Date.now=realNow;delete multi.D.stageBudgetMs;multi.D.generateImage=async args=>{formats.push(args.format.requestSize);return gen(args);};}resumed=true;}
   await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});
   const done=await multi.svc.editorAIStatus({...multi.input,jobId:multi.jobId});assert.equal(done.phase,'ready',done.error);n++;
-  ok(multi.calls.images===count&&multi.calls.focus===count,'every '+count+'-scene source is generated and localized once');
-  assert.deepEqual(formats,engine.sceneCatalog.slice(0,count).map(s=>s.format.requestSize));n++;
+  // A new design also gets the two specialised photos (580 x 400, and 240 x 400 / 250 x 360), derived when the plan omits them.
+  const wanted=count+2;ok(multi.calls.images===wanted&&multi.calls.focus===wanted,'every '+count+'-scene source, plus the two specialised photos, is generated and localized once');
+  assert.deepEqual(formats,[...engine.sceneCatalog.slice(0,count).map(s=>s.format.requestSize),'1536x1056','1296x2048']);n++;
+  ok(done.result.responsive.images.every(i=>i.focusCheck&&i.focusCheck.version>=1),'every photo carries its measured charm check');
+  const routed=k=>engine.selectImage(plan,done.result.responsive.images,engine.boards.find(b=>b.key===k))?.sceneKey;
+  ok(routed('display_580x400')==='midLandscape'&&routed('display_240x400')==='midPortrait'&&routed('display_250x360')==='midPortrait','the mid-size Display boards use their own photos');
   for(const b of engine.boards){const im=engine.selectImage(plan,done.result.responsive.images,b);ok(im.forBoards?.includes(b.key)||im.forFamilies.includes(engine.family(b)),b.key+' gets its assigned scene');}
-  await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});ok(multi.calls.images===count,'completed multi-scene retry buys no replacements');
+  await multi.svc.editorAIRun({workspaceId:multi.id,jobId:multi.jobId});ok(multi.calls.images===wanted,'completed multi-scene retry buys no replacements');
  }
  plan.scenePlans=plan.scenePlans.slice(0,5);
  for(const fixed of [true,false]){
-  const repair=await setup(),response=repair.D.responses;repair.D.responses=async args=>{const out=await response(args);if(args.text?.format?.name==='brites_subject_focus'&&[2,6].includes(repair.calls.focus))out.output_text=JSON.stringify({x:.3,y:.04,width:.4,height:repair.calls.focus===6&&fixed?.38:.5,confident:true});return out;};
-  const first=await repair.svc.editorAIRun({workspaceId:repair.id,jobId:repair.jobId});ok(first.continue&&repair.calls.images===6,'only the unsuitable square scene receives one bounded correction');
+  const repair=await setup(),response=repair.D.responses;repair.D.responses=async args=>{const out=await response(args);if(args.text?.format?.name==='brites_subject_focus'&&[2,8].includes(repair.calls.focus))out.output_text=JSON.stringify({x:.3,y:.04,width:.4,height:repair.calls.focus===8&&fixed?.38:.5,confident:true});return out;};
+  const first=await repair.svc.editorAIRun({workspaceId:repair.id,jobId:repair.jobId});ok(first.continue&&repair.calls.images===8,'only the unsuitable square scene receives one bounded correction (7 scenes, then that one again)');
   await repair.svc.editorAIRun({workspaceId:repair.id,jobId:repair.jobId});const state=await repair.svc.editorAIStatus({...repair.input,jobId:repair.jobId});
-  ok(repair.calls.images===6,'correction resumes without regenerating the other scenes');
+  ok(repair.calls.images===8,'correction resumes without regenerating the other scenes');
   if(fixed)ok(state.phase==='ready'&&repair.calls.quality===1,'corrected framing reaches complete-ad review');else {ok(state.phase==='ready'&&repair.calls.quality===1,'a safe retained layout reaches review without a repeated hard stop');ok([...repair.f.docs.entries()].some(([key,value])=>key.endsWith('/data/scene_fit_notes')&&value.retainedLayouts.length),'retained framing limitations remain recorded');}
  }
  const budget=await setup();budget.D.control=async()=>({creativeBudgetUsd:budget.calls.responses?1:30});budget.D.reserveCost=async()=>({reservedUsd:.6});await budget.svc.editorAIRun({workspaceId:budget.id,jobId:budget.jobId});const budgetStatus=await budget.svc.editorAIStatus({...budget.input,jobId:budget.jobId});ok(budgetStatus.phase==='ready','former spending cap does not stop generation');ok(budget.calls.images>=5,'all scenes complete despite former spending cap');

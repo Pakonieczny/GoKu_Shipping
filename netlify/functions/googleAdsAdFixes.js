@@ -81,4 +81,55 @@ function options(kind,quality,ctx){
  for(const [category,review]of Object.entries(quality.categoryReviews))for(let index=0;index<(review?.deductions||[]).length;index++){const d=deductionAt(quality,category,index);if(!d)continue;out.push(kind==='animated'?classifyAnimated(d,ctx):classifyStatic(d,ctx));}
  return out;
 }
-module.exports={ANIMATED_FORMATS,resolveFormats,deductionAt,classifyAnimated,classifyStatic,captionHints,masterFor,options};
+// Placement (a saved static set): a size whose photo cuts the charm, or that
+// still cuts it when laid out around the measured charm, needs a new photo; a
+// size that is fine once laid out again only needs a new layout. Text over the
+// charm is not fixed by new photos. A specialised photo the set lacks takes
+// over its sizes. Everything a person reads is in plain words, never ids.
+const SPECIAL=['midLandscape','midPortrait'],EDGE_WORDS={top:'top',right:'right side',bottom:'bottom',left:'left side'};
+const joinWords=list=>list.length<2?list.join(''):list.slice(0,-1).join(', ')+' and '+list[list.length-1],plural=(n,word)=>n+' '+word+(n===1?'':'s');
+// A size in plain words: '250x360', or 'portrait on phones' for the master
+// shapes. `active` is the saved design (its own artboard and device).
+function sizeName(key,active){const m=/^(mobile|desktop)_(.+)$/.exec(key),board=m?m[2]:active?.artboard?.key,device=m?m[1]:active?.device==='desktop'?'desktop':'mobile',d=/^display_(\d+x\d+)$/.exec(board||'');return d?d[1]:String(board||key)+' on '+(device==='desktop'?'desktop':'phones');}
+const sizeCount=(keys,active)=>new Set(keys.map(k=>sizeName(k,active))).size;
+// results: every size's check (browser findings merged in); relayout: the same
+// sizes laid out again around the measured charm; declared: the checks before
+// the browser findings. sizes: [{key,boardKey}]; planned: scene keys in the
+// saved plan; sceneFor(key): the scene behind a size; special: {sceneKey:
+// {boards,shape}} for the specialised shapes; order: the scene catalog order.
+function placementPlan({results=[],relayout={},declared=[],sizes=[],planned=new Set(),sceneFor=()=>null,special={},order=[],active}={}){
+ const scenes=new Map(),relayoutFormats=[],unresolved=[],want=(key,size,issues=[])=>{const s=scenes.get(key)||{sizes:[],issues:[]};if(!s.sizes.includes(size))s.sizes.push(size);s.issues.push(...issues.filter(i=>i.kind!=='covered').map(i=>({...i,size})));scenes.set(key,s);};
+ for(const key of SPECIAL)if(!planned.has(key)&&special[key])for(const size of sizes)if((special[key].boards||[]).includes(size.boardKey))want(key,size.key);
+ for(const r of results){
+  if(r.ok)continue;
+  const taker=[...scenes.keys()].find(k=>!planned.has(k)&&scenes.get(k).sizes.includes(r.key));if(taker){want(taker,r.key,r.issues);continue;}
+  const kinds=new Set((r.issues||[]).map(i=>i.kind)),again=relayout[r.key]||{ok:false,kinds:[]},scene=sceneFor(r.key);
+  if(kinds.has('source-cut')||(kinds.has('cut')||kinds.has('missing'))&&!again.ok&&again.kinds.some(k=>k!=='covered')){if(scene)want(scene,r.key,r.issues);else unresolved.push(r.key);}
+  else if(again.ok&&(kinds.has('cut')||kinds.has('missing')||declared.find(d=>d.key===r.key)?.issues.some(i=>i.kind==='covered')))relayoutFormats.push(r.key);
+  else unresolved.push(r.key);
+ }
+ const rank=k=>{const i=order.concat(SPECIAL).indexOf(k);return i<0?99:i;},sceneKeys=[...scenes.keys()].sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b)),corrections={};
+ for(const key of sceneKeys){
+  const s=scenes.get(key),named=list=>joinWords([...new Set(list.map(k=>sizeName(k,active)))]),edges=list=>joinWords([...new Set(list.flatMap(i=>i.edges||[]))].map(e=>EDGE_WORDS[e]||e)),own=s.issues.filter(i=>i.kind==='source-cut'),cut=s.issues.filter(i=>i.kind==='cut'),parts=[];
+  if(!planned.has(key))parts.push('A new '+(special[key]?.shape?special[key].shape+' ':'')+'photo made for '+named(s.sizes)+'.');
+  if(own.length)parts.push('The earlier photo itself cut off the charm at the '+edges(own)+', in '+named(own.map(i=>i.size))+'.');
+  if(cut.length)parts.push('The charm was cut off at the '+edges(cut)+' in '+named(cut.map(i=>i.size))+'.');
+  corrections[key]=parts.concat('Keep the complete charm and bail inside the photo with a clear margin.').join(' ');
+ }
+ const photoFormats=sceneKeys.flatMap(k=>scenes.get(k).sizes),formats=sizes.map(s=>s.key).filter(k=>photoFormats.includes(k)||relayoutFormats.includes(k));
+ let reason=null;
+ if(!sceneKeys.length&&!relayoutFormats.length){
+  const names=joinWords([...new Set(unresolved.map(k=>sizeName(k,active)))]);
+  reason=!unresolved.length?'Nothing to fix: every size shows the complete charm, and the set already has every photo shape.':unresolved.every(k=>results.find(r=>r.key===k)?.issues.some(i=>i.kind==='covered'))?'Text or the logo covers the charm in '+names+'. New photos will not fix that; move the text in the editor.':'The charm is not fully clear in '+names+', and new photos or a new layout would not fix it. Adjust '+(unresolved.length>1?'those sizes':'that size')+' in the editor.';
+ }
+ return {sceneKeys,relayoutFormats,corrections,formats,photoFormats,unresolved,reason};
+}
+function placementLabel({sceneKeys=[],relayoutFormats=[],photoFormats=[],estimatedUsd=0},active){
+ const reframe=sizeCount(relayoutFormats,active);
+ return (reframe?'Reframe '+plural(reframe,'size')+(sceneKeys.length?' and make '+plural(sceneKeys.length,'new photo'):''):'Make '+plural(sceneKeys.length,'new photo')+' for '+plural(sizeCount(photoFormats,active),'size'))+' · about US$'+Number(estimatedUsd||0).toFixed(2);
+}
+function placementProgress(fix,active){
+ const reframe=sizeCount(fix.relayoutFormats||[],active),photos=sizeCount((fix.formats||[]).filter(k=>!(fix.relayoutFormats||[]).includes(k)),active);
+ return 'Saved · '+[reframe?plural(reframe,'size')+' will be reframed':'',photos?'new photos will be made for '+plural(photos,'size'):''].filter(Boolean).join(' and ');
+}
+module.exports={ANIMATED_FORMATS,resolveFormats,deductionAt,classifyAnimated,classifyStatic,captionHints,masterFor,options,SPECIAL,sizeName,placementPlan,placementLabel,placementProgress};

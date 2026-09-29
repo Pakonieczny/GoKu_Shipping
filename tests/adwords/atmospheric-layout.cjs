@@ -3,7 +3,7 @@ const root=path.resolve(__dirname,'../..'),r=require(root+'/brites-ad-responsive
 const plan={...base,style:{...base.style,treatment:'soft-fade'},copy:{headline:'A Peach for Your Foodie',shortHeadline:'Peach Charm',description:'Gift-ready packaging included.',cta:'Shop now'}};
 let n=0;const ok=(v,m)=>{assert(v,m);n++};
 (async()=>{
- const focusByScene={landscape:{x:.58,y:.08,width:.29,height:.8},square:{x:.3,y:.04,width:.4,height:.38},portrait:{x:.28,y:.04,width:.44,height:.5},tall:{x:.29,y:.18,width:.42,height:.42},banner:{x:.04,y:.08,width:.23,height:.84},slim:{x:.29,y:.18,width:.42,height:.42}};
+ const focusByScene={landscape:{x:.58,y:.08,width:.29,height:.8},square:{x:.3,y:.04,width:.4,height:.38},portrait:{x:.28,y:.04,width:.44,height:.5},tall:{x:.29,y:.18,width:.42,height:.42},banner:{x:.04,y:.08,width:.23,height:.84},slim:{x:.29,y:.18,width:.42,height:.42},midLandscape:{x:.6,y:.2,width:.24,height:.58},midPortrait:{x:.3,y:.16,width:.4,height:.34}};
  const planned=r.sceneCatalog.map(s=>({id:s.key,width:s.format.width,height:s.format.height,forFamilies:s.families,forBoards:s.boards,focus:focusByScene[s.key]}));
  for(const b of r.variants){const image=r.selectImage(plan,planned,b),d=r.document(plan,image,b,b.device);ok(d.sceneFit.mode!=='legacy',b.key+' planned scene fits without an exposed join');if(['square','landscape','portrait'].includes(b.key)){const c=r.cleanCrop(image,b);ok(c.x>=0&&c.y>=0,'planned crop valid');}}
  const {JSDOM}=require('jsdom'),dom=new JSDOM('<body></body>',{pretendToBeVisual:true,runScripts:'outside-only',resources:'usable',url:'https://example.test'}),w=dom.window;
