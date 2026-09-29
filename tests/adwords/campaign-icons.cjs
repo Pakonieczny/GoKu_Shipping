@@ -77,7 +77,7 @@ for (const s of styles.STYLES) {
 check(/status:'PAUSED'/.test(publisher) && /status: ?"PAUSED"/.test(autopilot), 'the publishing code really does create campaigns paused');
 check(/explicitlyShared:false/.test(publisher) && /explicitlyShared: ?false/.test(autopilot), 'budgets really are unshared');
 check(/maximizeConversions:\{\}/.test(publisher), 'Display bidding really is maximize conversions, as disclosed');
-check(/brandGuidelinesEnabled: ?false/.test(autopilot), 'Performance Max brand guidelines really are off, as disclosed');
+check(/brandGuidelinesEnabled: ?false/.test(autopilot), 'Performance Max brand guidelines really are off, so both logos may link to the asset group');
 check(/assetAutomationStatus: ?"OPTED_OUT"/.test(autopilot), 'automatically generated creative really is opted out, as disclosed');
 // Bidding is disclosed for every style, and matches what each builder sends.
 check(styles.byKey.pmax.autoSettings.some(l => /conversion value/i.test(l)) && /maximizeConversionValue:/.test(autopilot), 'Performance Max discloses the conversion-value bidding its builder sends');

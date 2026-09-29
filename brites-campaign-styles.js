@@ -53,7 +53,7 @@
         'Its own budget, never shared with another campaign.',
         'Bids to maximize conversions.',
         'No audience or placement targeting: Google chooses where it shows across the Display Network.',
-        'Only your approved text and photos; Google’s asset enhancements and auto-generated video are off.'
+        'Your approved text and photos plus the official Brites logo; Google’s asset enhancements and auto-generated video are off.'
       ]
     },
     {
