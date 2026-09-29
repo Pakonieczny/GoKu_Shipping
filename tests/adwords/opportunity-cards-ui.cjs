@@ -14,7 +14,7 @@ const ctx={console,Date,Math,Number,String,Object,Array,JSON,isFinite,Promise,se
   oppOverride:{},oppCountries:{},OPPS:[],PMAXOPPS:[],RESEARCH_STATUS:{},OPP_RECONCILIATION:null,SCAN_AUDIT:{engineVersion:'14.0.0'},OPPSAT:null,PMAXAT:null,OPP_LAST_ERROR:null,PMAXERR:null,OPP_SCANNING:false,OPP_PROGRESS:null,OPP_LEARNING:{},oppPollTimer:null};
 vm.createContext(ctx);
 for(const n of ['defCountries','oppCty','fmtDateTime','timeago'])vm.runInContext(line(n),ctx);
-for(const n of ['oppKey','oppBidOf','oppCpcOf','oppUi','oppWindow','oppExpiry','oppBlock','oppCpd','oppCpdLine','oppDemandNote','oppSigned','oppSalesTxt','oppModel','oppProj','oppRecalc','fmtDate','daysBtw','stratLine','compChip','tailChip','kwResearchPanel','planBlock','urgPill','oppBidSeg','oppCard','researchState','researchNeedsRefresh','updateOpportunityState','loadOpportunities','launchOpp'])vm.runInContext(pick(n),ctx);
+for(const n of ['oppKey','oppBidOf','oppCpcOf','oppUi','oppWindow','oppExpiry','oppBlock','oppCpd','oppCpdLine','oppDemandNote','oppSigned','oppSalesTxt','oppModel','oppProj','oppRecalc','fmtDate','daysBtw','stratLine','compChip','tailChip','kwResearchPanel','oppSourceUrl','oppSourceName','planBlock','urgPill','oppBidSeg','oppCard','researchState','researchNeedsRefresh','updateOpportunityState','loadOpportunities','launchOpp'])vm.runInContext(pick(n),ctx);
 // The research engine itself, offline, on the same fixed day as the console fixtures below.
 const engineFile=path.resolve(__dirname,'../../netlify/functions/googleAdsAutopilot.js'),NOW=Date.parse('2026-09-29T15:00:00Z');
 class FixedDate extends Date{constructor(...a){if(a.length)super(...a);else super(NOW);}static now(){return NOW;}}
@@ -68,6 +68,14 @@ await test('occasion date, markets, data age and eligibility reason are on the c
   assert.match(pb,/<b>Budget<\/b> — .*Measured demand limits this/);assert.match(pb,/the lower of daily budget ÷ expected CPC and the ~0\.5 a day/);assert.match(pb,/data fetched /);
   const q=Object.assign({},o,{eligibility:{ready:false,measuredKeywords:4,expectedSales:0.2,reason:'Measured demand supports ~0.2 expected sales over the run, too few for a test.'}});ctx.OPPS=[q];
   const hq=ctx.oppCard(q,0,100);assert.match(hq,/disabled>Too few expected sales<\/button>/);assert.match(hq,/oppCardBlock">Measured demand supports ~0\.2 expected sales/);delete ctx.DASH;today='2026-10-01';});
+await test('a web-verified occasion date links the page it was verified on: a small external link, http(s) only',()=>{today='2026-10-21';
+  const card=dc=>{const o=served(research(300),{durationDays:11,startDate:'2026-10-21',dateCheck:dc});ctx.OPPS=[o];return ctx.oppCard(o,0,100);},web=url=>({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com',url});
+  const h=card(web('https://www.timeanddate.com/holidays/canada/halloween?a=1&b="2"')),a=/verified on <a class="oppDateSrc" href="([^"]*)" target="_blank" rel="noopener noreferrer"[^>]*>([^<]*)<\/a>/.exec(h);
+  assert(a,'source link');assert.equal(a[1],'https://www.timeanddate.com/holidays/canada/halloween?a=1&amp;b=&quot;2&quot;');assert.equal(a[2],'timeanddate.com ↗');assert.match(h,/confirmed by web research: timeanddate\.com/);
+  assert(!card({source:'calendar rule',proposedDate:'2026-10-30',reference:null,url:null}).includes('oppDateSrc'),'a calendar-rule date has no source link');
+  assert(!card({source:'web-verified research',proposedDate:'2026-10-31',reference:'timeanddate.com'}).includes('oppDateSrc'),'research saved before sources were kept shows no link');
+  for(const url of ['javascript:alert(1)','https://evil.example@good.example/x','//cdn.example/x',' https://lead.example/x','ftp://files.example/x'])assert(!card(web(url)).includes('oppDateSrc'),url);
+  today='2026-10-01';});
 await test('editing the dates keeps a valid window: one-day runs allowed, an end before the start is corrected',()=>{today='2026-10-01';const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
   const els={},el=s=>els[s]||(els[s]={value:'',textContent:'',title:'',min:'',classList:{toggle(){}}}),key=s=>s.replace(/\[data-i="\d+"\]/,''),cards={querySelector:s=>el(key(s)),querySelectorAll:s=>[el(key(s))]};
   el('.opBud').value='10';el('.opStart').value='2026-10-05';el('.opEnd').value='2026-10-05';ctx.oppRecalc(cards,0);assert.equal(el('.opEnd').value,'2026-10-05');assert.equal(el('.opDur').textContent,1);assert.equal(el('.opDurU').textContent,'day');
@@ -91,6 +99,16 @@ await test('a draft being written survives a re-render: its card stays busy and 
   calls.length=0;finish({ok:false,reason:'Fewer than four inventory-matched keywords have measured demand.'});await run;
   assert.match(toasts.pop(),/Fewer than four/,'the outcome is shown although its card was redrawn');assert(calls.includes('render'),'the card is drawn again with the outcome');
   assert.match(ctx.oppCard(o,0,100),/>Create review draft</,'once the attempt ends the card can be used again');
+  delete nodes.oppCards;delete ctx.generateAndWait;});
+await test('Delete waits while the draft is being written, on the card and on a redrawn card',async()=>{today='2026-10-01';
+  const o=base();o.eligibility={ready:true,measuredKeywords:4};ctx.OPPS=[o];
+  const els={},el=s=>els[s]||(els[s]={value:'',innerHTML:'',textContent:''});nodes.oppCards={querySelector:s=>el(s.replace(/\[data-i="\d+"\]/,''))};el('.opBud').value='10';
+  let finish;ctx.generateAndWait=()=>new Promise(r=>{finish=r;});
+  const del={disabled:false},btn={disabled:false,innerHTML:'',isConnected:true,classList:{add(){},remove(){}},parentNode:{querySelector:s=>s==='[data-delete-opportunity]'?del:null}};
+  const run=ctx.launchOpp('0',btn);assert.equal(del.disabled,true,'the card’s Delete is disabled while its paid draft is written');
+  assert.match(ctx.oppCard(o,0,100),/data-delete-opportunity="search" data-i="0" disabled/,'a redrawn card keeps Delete disabled');
+  finish({ok:false,reason:'Keyword Planner is unavailable.'});await run;assert.equal(del.disabled,false,'Delete is back once the attempt ends');
+  assert.doesNotMatch(ctx.oppCard(o,0,100),/data-delete-opportunity="search" data-i="0" disabled/);
   delete nodes.oppCards;delete ctx.generateAndWait;});
 await test('a demand-capped plan budget is the budget the draft gets: the slider can hold it',()=>{today='2026-09-29';
   // Thin demand on cheap keywords: the engine sizes the budget down to 1 a day. A slider floor above it would raise it at launch.

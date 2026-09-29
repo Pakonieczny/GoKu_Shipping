@@ -117,6 +117,50 @@ function sanitizeSchema(schema) {
 function rulesNote(notes) {
   return notes.length ? `Output rules the JSON schema cannot express. Follow each one exactly:\n${notes.slice(0, 80).map(n => '- ' + n).join('\n')}` : '';
 }
+// A schema too large or complex for Anthropic to compile into an output grammar is
+// refused with a 400 before any answer starts, so it costs nothing. The request is
+// then sent once more with the schema in the instructions instead of
+// output_config.format, and the schema name is remembered for the rest of this warm
+// lambda so later requests skip the refused attempt. The body-to-name map is never sent.
+const GRAMMAR_LIMITED = new Set(), SCHEMA_NAMES = new WeakMap();
+function grammarLimit(error) {
+  return !!error && Number(error.status) === 400 && /compiled grammar is too large|grammar (?:is )?too (?:large|complex)|grammar compilation|schema (?:is )?too (?:large|complex)|too many (?:strict tools|optional parameters|(?:parameters with )?union types)/i.test(String(error.message || ''));
+}
+function schemaInPrompt(payload) {
+  const { format, ...config } = payload.output_config || {};
+  const rule = 'Return only one JSON object that matches this JSON schema, with no prose or markdown around it:\n' + JSON.stringify(format && format.schema);
+  const out = { ...payload, system: Array.isArray(payload.system) ? payload.system.concat([{ type: 'text', text: rule }]) : [payload.system, rule].filter(Boolean).join('\n\n') };
+  if (Object.keys(config).length) out.output_config = config; else delete out.output_config;
+  return out;
+}
+// Where a value strays from a structured-output schema (the subset sanitizeSchema
+// keeps): types, required and unknown keys, enum/const, anyOf/allOf, items, $ref.
+function schemaErrors(value, schema, root, path, out) {
+  const errors = out || [], at = path || '$';
+  root = root || schema;
+  if (errors.length >= 20 || !schema || typeof schema !== 'object') return errors;
+  if (typeof schema.$ref === 'string') {
+    const m = /^#\/(\$defs|definitions)\/(.+)$/.exec(schema.$ref), target = m && root[m[1]] && root[m[1]][m[2]];
+    return target ? schemaErrors(value, target, root, at, errors) : errors;
+  }
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some(s => !schemaErrors(value, s, root, at, []).length)) { errors.push(`${at} matches none of the allowed shapes`); return errors; }
+  if (Array.isArray(schema.allOf)) schema.allOf.forEach(s => schemaErrors(value, s, root, at, errors));
+  if (schema.const !== undefined && JSON.stringify(value) !== JSON.stringify(schema.const)) errors.push(`${at} must be ${JSON.stringify(schema.const)}`);
+  if (Array.isArray(schema.enum) && !schema.enum.some(v => JSON.stringify(v) === JSON.stringify(value))) errors.push(`${at} is not one of the allowed values`);
+  const types = schema.type == null ? [] : [].concat(schema.type);
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value === 'number' ? (Number.isInteger(value) ? 'integer' : 'number') : typeof value;
+  if (types.length && !types.some(t => t === kind || (t === 'number' && kind === 'integer'))) { errors.push(`${at} should be ${types.join(' or ')}, not ${kind}`); return errors; }
+  if (kind === 'object') {
+    const props = schema.properties || {};
+    for (const key of schema.required || []) if (!Object.prototype.hasOwnProperty.call(value, key)) errors.push(`${at}.${key} is missing`);
+    for (const [key, v] of Object.entries(value)) {
+      if (Object.prototype.hasOwnProperty.call(props, key)) schemaErrors(v, props[key], root, `${at}.${key}`, errors);
+      else if (schema.additionalProperties === false) errors.push(`${at}.${key} is not in the schema`);
+    }
+  }
+  if (kind === 'array' && schema.items && typeof schema.items === 'object') value.forEach((v, i) => schemaErrors(v, schema.items, root, `${at}[${i}]`, errors));
+  return errors.slice(0, 20);
+}
 
 // --------------------------------------------------------------- content
 // An OpenAI-style image reference (data URL or https URL) as a Claude image block.
@@ -184,6 +228,7 @@ function fromResponsesRequest(request) {
   if (schemaOn && !tools.length) {
     const clean = sanitizeSchema(format.schema);
     body.output_config.format = { type: 'json_schema', schema: clean.schema };
+    SCHEMA_NAMES.set(body, String(format.name || ''));
     if (clean.notes.length) system.push(rulesNote(clean.notes));
   } else if (format && (format.type === 'json_schema' || format.type === 'json_object')) {
     system.push('Return only one JSON object, with no prose or markdown around it.' + (schemaOn ? ' It must match this JSON schema: ' + JSON.stringify(format.schema) : ''));
@@ -326,8 +371,13 @@ function createClaudeClient(deps) {
     const retries = o.retries == null ? 4 : Math.max(0, Number(o.retries) || 0);
     const idleMs = o.idleMs == null ? 240000 : Number(o.idleMs) || 0;
     const maxContinuations = o.maxContinuations == null ? 4 : Math.max(0, Number(o.maxContinuations) || 0);
-    const payload = { ...body, model: MODEL, stream: true };
+    let payload = { ...body, model: MODEL, stream: true };
     if (!payload.max_tokens) payload.max_tokens = 16000;
+    // Structured output, keyed by schema name (else the label, else the schema's hash) for the grammar fallback.
+    const format = payload.output_config && payload.output_config.format, schema = format && format.type === 'json_schema' && format.schema;
+    const schemaKey = schema ? String(SCHEMA_NAMES.get(body) || o.schemaName || o.label || 'schema-' + require('crypto').createHash('sha256').update(JSON.stringify(schema)).digest('hex').slice(0, 16)) : '';
+    let schemaInstead = !!schemaKey && GRAMMAR_LIMITED.has(schemaKey);
+    if (schemaInstead) { payload = schemaInPrompt(payload); log(`[claude] ${o.label || 'request'}: the "${schemaKey}" schema is too large to compile, so it goes in the instructions`); }
     const headers = { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': API_VERSION };
     const total = zeroUsage(), prior = [];
     let messages = (payload.messages || []).slice(), last = null;
@@ -358,6 +408,12 @@ function createClaudeClient(deps) {
           const aborted = error && (error.name === 'AbortError' || error.type === 'aborted');
           const timedOut = aborted && deadline && Date.now() >= deadline - 50;
           if (timedOut || (error && error.code === 'CLAUDE_TIMEOUT')) throw claudeError('Claude did not finish within ' + Math.round(Number(o.timeoutMs) / 1000) + ' seconds.', { code: 'CLAUDE_TIMEOUT', cause: error });
+          if (schemaKey && !schemaInstead && grammarLimit(error)) {
+            // Refused before any answer started (not billed): one more request, schema in the instructions.
+            GRAMMAR_LIMITED.add(schemaKey); payload = schemaInPrompt(payload); schemaInstead = true; attempt = 0;
+            log(`[claude] ${o.label || 'request'}: the "${schemaKey}" schema is too large to compile (${String(error.message || '').slice(0, 200)}); asking once more with it in the instructions`);
+            continue;
+          }
           const retryable = aborted || (error && error.retryable) || (error && error.status == null && isRetryable(null, error.message));
           const mayBeBilled = o.retryUnknown === false && !(error && error.rejected);
           if (!retryable || attempt > retries || mayBeBilled) { if (aborted) throw claudeError('Claude stopped sending data.', { code: 'CLAUDE_IDLE', cause: error }); throw error; }
@@ -376,6 +432,17 @@ function createClaudeClient(deps) {
     }
     const final = { ...last, content: prior.concat(last.content || []), usage: total };
     final.costUsd = estimateCostUsd(total);
+    if (schemaInstead) {
+      // Without the grammar the JSON may come fenced or with a sentence around it: keep only the JSON,
+      // so callers that parse strictly read it as before, and record where it strays from the schema.
+      final.schemaInPrompt = true;
+      const data = final.stop_reason === 'refusal' || final.stop_reason === 'max_tokens' ? undefined : parseJsonText(finalText(final));
+      if (data && typeof data === 'object') {
+        final.content = final.content.filter(b => !b || b.type !== 'text').concat([{ type: 'text', text: JSON.stringify(data) }]);
+        final.schemaErrors = schemaErrors(data, schema);
+        if (final.schemaErrors.length) log(`[claude] ${o.label || 'request'}: the answer strays from the "${schemaKey}" schema: ${final.schemaErrors.slice(0, 3).join('; ')}`);
+      }
+    }
     log(`[claude] ${o.label || 'request'} model=${final.model || MODEL} stop=${final.stop_reason} in=${total.input_tokens} cache_read=${total.cache_read_input_tokens} out=${total.output_tokens} searches=${total.server_tool_use.web_search_requests} usd=${final.costUsd}`);
     return final;
   }
@@ -400,6 +467,7 @@ function createClaudeClient(deps) {
     } else if (o.schema) {
       const clean = sanitizeSchema(o.schema);
       body.output_config.format = { type: 'json_schema', schema: clean.schema };
+      SCHEMA_NAMES.set(body, String(o.schemaName || o.label || ''));
       if (clean.notes.length) system.push(rulesNote(clean.notes));
     }
     body.system = system.filter(Boolean).join('\n\n');
@@ -420,6 +488,8 @@ function createClaudeClient(deps) {
       const u = msg.usage || {};
       throw claudeError(`Claude returned unparseable JSON (stop: ${msg.stop_reason || '?'}, ${text.length} chars; input ${u.input_tokens || 0} tok, output ${u.output_tokens || 0} tok, effort ${body.output_config.effort}).`, { code: 'CLAUDE_BAD_JSON', text, stopReason: msg.stop_reason, usage: msg.usage, costUsd: msg.costUsd, sources: sourcesOf(msg) });
     }
+    // With the schema in the instructions nothing enforced it, so the answer is checked here instead.
+    if (msg.schemaInPrompt && msg.schemaErrors && msg.schemaErrors.length) throw claudeError(`Claude's answer does not match the requested JSON schema (${msg.schemaErrors.slice(0, 3).join('; ')}).`, { code: 'CLAUDE_BAD_JSON', text, schemaErrors: msg.schemaErrors, stopReason: msg.stop_reason, usage: msg.usage, costUsd: msg.costUsd, sources: sourcesOf(msg) });
     return { data, text, message: msg, usage: msg.usage, costUsd: msg.costUsd, model: msg.model || MODEL, sources: sourcesOf(msg) };
   }
 
@@ -443,6 +513,6 @@ module.exports = {
   claudeMessage: (body, opts) => client().message(body, opts),
   claudeResponses: (request, opts) => client().responses(request, opts),
   available: env => !!((env || process.env).ANTHROPIC_API_KEY),
-  estimateCostUsd, sanitizeSchema, rulesNote, imageBlock, fromResponsesRequest, toResponsesResult, finalText, parseJsonText, sourcesOf, effortFor, webSearchTool,
-  _test: { zeroUsage, addUsage, isRetryable, retryDelayMs, lowerEffort, partsToBlocks, clampTokens }
+  estimateCostUsd, sanitizeSchema, rulesNote, imageBlock, fromResponsesRequest, toResponsesResult, finalText, parseJsonText, sourcesOf, effortFor, webSearchTool, schemaErrors,
+  _test: { zeroUsage, addUsage, isRetryable, retryDelayMs, lowerEffort, partsToBlocks, clampTokens, grammarLimit, schemaInPrompt, grammarLimited: GRAMMAR_LIMITED }
 };
