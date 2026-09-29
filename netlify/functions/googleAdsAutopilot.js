@@ -3365,7 +3365,7 @@ const _MERCHANT_SELECT_CORE = `shopping_product.resource_name, shopping_product.
 const _MERCHANT_SELECT = `${_MERCHANT_SELECT_CORE}, shopping_product.product_type_level1,
       shopping_product.product_type_level2, shopping_product.custom_attribute0, shopping_product.custom_attribute1,
       shopping_product.custom_attribute2, shopping_product.custom_attribute3, shopping_product.custom_attribute4,
-      shopping_product.product_image_uri, shopping_product.issues`;
+      shopping_product.product_image_uri, shopping_product.issues, shopping_product.target_countries`;
 function _gaqlString(v) {
   return "'" + String(v == null ? "" : v).replace(/[\r\n\t]+/g, " ").replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'";
 }
@@ -3389,12 +3389,14 @@ function _merchantLookupPlan({ itemIds = [], signals = [], titles = [] } = {}) {
 function _merchantProductRow(x, merchantId) {
   if (!x || String(x.merchantCenterId || "") !== String(merchantId) || !x.itemId || !x.title) return null;
   return { itemId: String(x.itemId), title: String(x.title), status: String(x.status || ""), availability: String(x.availability || ""),
-    type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null,
+    type1: x.productTypeLevel1 || null, type2: x.productTypeLevel2 || null, feedLabel: x.feedLabel || null, targetCountries: Array.isArray(x.targetCountries) ? x.targetCountries.map(c => String(c).toUpperCase()) : [],
     imageUrl: x.productImageUri || null, customLabels: [x.customAttribute0,x.customAttribute1,x.customAttribute2,x.customAttribute3,x.customAttribute4].filter(Boolean),
     issues: Array.isArray(x.issues) ? x.issues.map(i => String((i && (i.description || i.detail || i.errorCode || i.code)) || JSON.stringify(i)).slice(0, 180)) : [],
     issueDetails: Array.isArray(x.issues) ? x.issues.map(i => ({description:String(i.description||i.detail||i.errorCode||""),severity:String(i.adsSeverity||""),code:String(i.errorCode||"")})) : [],
     merchantId: String(x.merchantCenterId) };
 }
+// A feed title Google received garbled (UTF-8 read as Latin-1) is a feed problem: flag it, never copy it into ad text.
+function _merchantTitleProblem(title) { return require("./_merchantHealth").titleProblem(title); }
 function _merchantFeedLabels(plan) {
   const labels = new Set();
   (plan.itemIds || []).forEach(id => {
@@ -3432,12 +3434,15 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
       richFieldFallback: mode === "core-field fallback", richError: rows && rows._richError || null,
       error: err ? _auditText((err && err.message) || err, 300) : null });
   };
+  // One item ID can exist under several feed labels (e.g. US and USD_…); each is a separate
+  // Merchant offer with its own status, so never let one label's row overwrite another's.
+  const offerKey = row => String(row.feedLabel || "").toUpperCase() + "|" + row.itemId.toLowerCase();
   const absorb = (rows, kind) => {
     successfulQueries.n++; if (kind && queryKinds[kind] != null) queryKinds[kind]++;
     if (rows && rows._queryMode === "core-field fallback") queryModes.coreFallback++; else queryModes.enriched++;
     (rows || []).forEach(r => {
       const row = _merchantProductRow(r.shoppingProduct || {}, merchantId);
-      if (row) found.set(row.itemId.toLowerCase(), row);
+      if (row) found.set(offerKey(row), row);
     });
   };
   // 1) Fast path: exact, machine-generated offer IDs only. Product titles are
@@ -3456,8 +3461,8 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   const enough = () => {
     if (!found.size) return false;
     if (!wantedIds.size) return true;
-    let hits = 0; found.forEach(x => { if (wantedIds.has(x.itemId.toLowerCase())) hits++; });
-    return hits >= Math.min(wantedIds.size, Math.max(2, Math.ceil(wantedIds.size * .35)));
+    const hits = new Set(); found.forEach(x => { if (wantedIds.has(x.itemId.toLowerCase())) hits.add(x.itemId.toLowerCase()); });
+    return hits.size >= Math.min(wantedIds.size, Math.max(2, Math.ceil(wantedIds.size * .35)));
   };
   // 2) Reliable fallback for historical/title-only orders: read the bounded CA/US
   // feed slices using only safe scalar filters, then match titles locally. Google
@@ -3473,7 +3478,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
           const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
           const idMatch = wantedIds.has(row.itemId.toLowerCase());
           const titleMatch = wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9);
-          if (idMatch || titleMatch) found.set(row.itemId.toLowerCase(), row);
+          if (idMatch || titleMatch) found.set(offerKey(row), row);
         });
       } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("feed", "feed label " + label, 1, null, e); }
     }
@@ -3487,7 +3492,7 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
       noteRequest("account", "account-wide bounded fallback", 1, rows, null);
       rows.forEach(r => {
         const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (!row) return;
-        if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(row.itemId.toLowerCase(), row);
+        if (wantedIds.has(row.itemId.toLowerCase()) || wantedTitles.some(t => _pmaxTitleMatch(row.title, t) >= .9)) found.set(offerKey(row), row);
       });
     } catch (e) { if (_isGadsQuotaError(e)) throw e; errors.push(String(e.message || e)); noteRequest("account", "account-wide bounded fallback", 1, null, e); }
   }
@@ -3838,8 +3843,9 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
       if(!offers.length)return;
       matchedSignals.add(best);
       const contribution = best.weight * (.55 + bestM * .45) + Math.min(20, Number(prod.sold) || 0);
-      offers.slice(0, 12).forEach(mp => offerMap.set(mp.itemId, mp));
-      allMatches.push({ title: prod.title, productId:best.productId||prod.productId||null,variantId:best.variantId||null,sku:best.sku||null, itemIds:offers.map(mp=>mp.itemId),evidenceId:"demand-"+allMatches.length,weight:contribution,profit30d:best.profit30d||0,monthly:((sig365&&(sig365.productRows||sig365.topProducts))||[]).filter(row=>salesEvidenceUtil.exactProductMatches({productId:best.productId||prod.productId,variantId:best.variantId,itemId:best.itemId||best.sku},row)).flatMap(row=>row.monthly||[]), soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
+      // Keep each feed label's own offer (same item ID, separate Merchant offer) so every market sees the full product.
+      offers.filter(mp => offers.filter(x => x.feedLabel === mp.feedLabel).indexOf(mp) < 12).forEach(mp => offerMap.set(String(mp.feedLabel||"")+"|"+mp.itemId, mp));
+      allMatches.push({ title: prod.title, productId:best.productId||prod.productId||null,variantId:best.variantId||null,sku:best.sku||null, itemIds:[...new Set(offers.map(mp=>mp.itemId))],evidenceId:"demand-"+allMatches.length,weight:contribution,profit30d:best.profit30d||0,monthly:((sig365&&(sig365.productRows||sig365.topProducts))||[]).filter(row=>salesEvidenceUtil.exactProductMatches({productId:best.productId||prod.productId,variantId:best.variantId,itemId:best.itemId||best.sku},row)).flatMap(row=>row.monthly||[]), soldTitle: best.name, orders: Number(best.orders)||0, units: Number(best.units)||0,
         revenue: Math.round(Number(best.revenue)||0), estimatedProfit: Math.round(Number(best.estimatedProfit)||0),orders30d:best.orders30d,revenue30d:best.revenue30d,
         source: [...best.sources].join("+"), offers: offers.length,attributionBasis:"Observed Shopify product demand; only explicit source attribution is organic",merchantReportedOnly:[...best.sources].includes("merchant-reported-conversions") });
       });
@@ -3917,9 +3923,12 @@ function pmaxCandidatesFromSignals({ collections = [], profiles = [], sig30 = nu
   return chosen.slice(0, 8).map((c,i)=>({...c,rankingContext:{rank:i+1,candidateCount:chosen.length,alternative:chosen[i+1]?{title:chosen[i+1].collectionTitle,score:chosen[i+1].score}:null}}));
 }
 
+// Google rejects the WHOLE atomic mutate for one search theme over 10 words
+// (AssetGroupSignalError TOO_MANY_WORDS), over 80 characters, or with disallowed characters.
+function _pmaxThemeText(x){let out="";for(const w of String(x||"").toLowerCase().replace(/['’]/g,"").replace(/[^a-z0-9 ]+/g," ").split(" ").filter(Boolean).slice(0,10)){if(out.length+(out?1:0)+w.length>80)break;out+=(out?" ":"")+w;}return out;}
 function _derivePmaxSearchThemes(candidate) {
   const TYPE = /\b(necklace|necklaces|earring|earrings|bracelet|bracelets|charm|charms|pendant|pendants|anklet|anklets|locket|lockets)\b/i;
-  const out = [], add = x => { x=String(x||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim(); if(x&&x.length<=80&&!out.includes(x))out.push(x); };
+  const out = [], add = x => { x=_pmaxThemeText(x); if(x&&!out.includes(x))out.push(x); };
   (candidate.productTitles||[]).slice(0,8).forEach(t=>{ const clean=String(t).replace(/\b(14k|solid gold|gold filled|rose gold filled|sterling silver)\b/ig," ").replace(/\s+/g," ").trim(); if(TYPE.test(clean))add(clean); });
   (candidate.types||[]).slice(0,4).forEach(t=>add(`${candidate.collectionTitle} ${t}`));
   add(`${candidate.collectionTitle} jewelry`);
@@ -4297,7 +4306,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const finalUrl=productDestination||`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
   const ops=[
-    {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
+    {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(Math.round(Number(dailyBudget)*100)/100),deliveryMethod:"STANDARD",explicitlyShared:false}}},
     {campaignOperation:{create:{resourceName:cRes,name:`BA · ${tag}`,status:"PAUSED",advertisingChannelType:"PERFORMANCE_MAX",campaignBudget:bRes,
       /* New PMax campaigns default to brand-guidelines ENABLED, which moves BUSINESS_NAME/
          LOGO to campaign-level CampaignAsset links and rejects our group-level attaches
@@ -4315,7 +4324,7 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
   const grouped={};exact.forEach(itemId=>{const productId=_productIdFromItemId(itemId);if(!productId)throw new Error("Merchant offer has no verifiable Shopify product reference.");(grouped[productId]=grouped[productId]||[]).push(itemId);});
   const groups=combinedCreativeGroup?[{label:productTitle||coll.title,itemIds:exact}]:Object.keys(grouped).map(productId=>({productId,label:(details.find(d=>grouped[productId].includes(d.itemId))||{}).title||("Product "+productId),itemIds:grouped[productId]}));
   if(groups.length>4)throw new Error("Select up to four products per creative package. Different products receive their own copy and images.");
-  const themes=[...new Set((searchThemes||[]).map(x=>String(x).toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim()).filter(Boolean))].slice(0,25);
+  const themes=[...new Set((searchThemes||[]).map(_pmaxThemeText).filter(Boolean))].slice(0,25);
   // Campaign-level sitelinks/callouts/structured snippets — same proven machinery the
   // Search builder uses (real collection URLs only). Sitelinks are a scored ad-strength
   // component PMax previews flag as missing without them. Temp IDs -10.. (its own range,
@@ -4335,7 +4344,10 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     const productUrl=details.find(d=>g.itemIds.includes(d.itemId)&&require("./googleAdsAdDesignContext").destination(d.url)?.kind==="product")?.url;
     const groupUrl=productDestination||productUrl||finalUrl;
     const agId=-(3+gi),agRes=`customers/${CID}/assetGroups/${agId}`;
-    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:`AG · ${String(g.label).slice(0,60)}`,finalUrls:[groupUrl],status:"ENABLED"}}});
+    // Google rejects the whole mutate when two asset groups share a name (DUPLICATE_NAME);
+    // two products can share a feed title or its first 60 characters.
+    const agName=`AG · ${String(g.label).slice(0,60)}`,agTaken=ops.some(o=>o.assetGroupOperation&&o.assetGroupOperation.create.name===agName);
+    ops.push({assetGroupOperation:{create:{resourceName:agRes,campaign:cRes,name:agTaken?`${agName} · ${gi+1}`:agName,finalUrls:[groupUrl],status:"ENABLED"}}});
     const ctaRes=`customers/${CID}/assets/${_tempIdFloor(ops)}`;
     ops.unshift({assetOperation:{create:{resourceName:ctaRes,callToActionAsset:{callToAction:"SHOP_NOW"}}}});
     ops.push({assetGroupAssetOperation:{create:{assetGroup:agRes,asset:ctaRes,fieldType:"CALL_TO_ACTION_SELECTION"}}});
@@ -4347,8 +4359,8 @@ function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoa
     }else ops.push({assetGroupListingGroupFilterOperation:{create:{resourceName:root,assetGroup:agRes,type:"UNIT_INCLUDED",listingSource:"SHOPPING"}}});
     // Give each coherent product group its own relevant themes. Signals guide learning;
     // they do not restrict PMax reach.
-    const typeWords=_kwWords(g.label);
-    let local=themes.filter(t=>typeWords.some(w=>t.includes(w))).slice(0,8);if(!local.length)local=[String(g.label).toLowerCase().slice(0,80)];
+    const typeWords=_kwWords(g.label).filter(w=>w.length>2),fit=t=>typeWords.filter(w=>t.split(" ").includes(w)).length;
+    let local=themes.filter(t=>groups.length===1||fit(t)).sort((a,b)=>fit(b)-fit(a)).slice(0,8);if(!local.length)local=[_pmaxThemeText(g.label)].filter(Boolean);
     local.forEach(text=>ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,searchTheme:{text}}}}));
     if(audienceResource)ops.push({assetGroupSignalOperation:{create:{assetGroup:agRes,audience:{audience:audienceResource}}}});
     // Supplied creative for small-placement rendering (Display/Discover tiles).
@@ -4538,8 +4550,9 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         if(taken.docs.some(d=>["PENDING","APPROVED","APPLYING","APPLY_UNKNOWN"].includes(d.data().status))){results.push({campaign:c.name,skipped:"A creative refresh is already awaiting review."});continue;}
         const links=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE asset_group.resource_name = '${g.resourceName}'`);
         const themes=await gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
-        const filters=await gaql(`SELECT asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
-        const itemIds=filters.map(x=>((((x.assetGroupListingGroupFilter||{}).caseValue||{}).productItemId)||{}).value).filter(Boolean);
+        const filters=await gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
+        // Only UNIT_INCLUDED nodes are advertised products; an excluded item ID is not.
+        const itemIds=filters.filter(x=>(x.assetGroupListingGroupFilter||{}).type==="UNIT_INCLUDED").map(x=>((((x.assetGroupListingGroupFilter||{}).caseValue||{}).productItemId)||{}).value).filter(Boolean);
         const studio=(g.finalUrls||[]).some(u=>String(u).split("?")[0]===DESIGN_STUDIO_URL);
         const productIds=[...new Set(itemIds.map(_productIdFromItemId).filter(Boolean))];
         const sourceProducts=studio?[]:await _productShotsByIds(productIds);
@@ -4548,7 +4561,7 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         const ops=links.filter(x=>kind.includes((x.assetGroupAsset||{}).fieldType)).map(x=>({assetGroupAssetOperation:{remove:x.assetGroupAsset.resourceName}}));
         ops.push({campaignOperation:{update:{resourceName:c.resourceName,assetAutomationSettings:CREATIVE_AUTOMATIONS.map(assetAutomationType=>({assetAutomationType,assetAutomationStatus:"OPTED_OUT"}))},updateMask:"asset_automation_settings"}});
         const copy=field=>links.filter(x=>(x.assetGroupAsset||{}).fieldType===field).map(x=>(x.asset&&x.asset.textAsset||{}).text).filter(Boolean);
-        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds:ops.filter(x=>x.assetGroupListingGroupFilterOperation&&x.assetGroupListingGroupFilterOperation.create&&x.assetGroupListingGroupFilterOperation.create.assetGroup===g.resourceName&&x.assetGroupListingGroupFilterOperation.create.type==="UNIT_INCLUDED").map(x=>x.assetGroupListingGroupFilterOperation.create.caseValue?.productItemId?.value).filter(Boolean),keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
+        const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds,keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
         const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
         results.push({campaign:c.name,assetGroup:g.name,approvalId:id});queued++;
       } catch(e){results.push({campaign:c.name,assetGroup:g.name,error:String(e.message||e).slice(0,300)});}
@@ -4620,8 +4633,13 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   } catch(e){}
   if(!requestedIds.length)throw new Error("Select exact eligible Merchant Center offers before building a campaign.");
   if(requestedIds.length!==selected.length)throw new Error("Some selected Merchant Center offers are no longer eligible. Refresh product research to update the product selection.");
-  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(x=>x.title))];
-  const liveDetails=selected.map(x=>({itemId:x.itemId,title:x.title,url:x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
+  const feedTitle=x=>(_merchantTitleProblem(x.title)||{suggested:x.title}).suggested,garbled=selected.filter(x=>_merchantTitleProblem(x.title));
+  const exactIds=selected.map(x=>x.itemId), chosenTitles=[...new Set(selected.map(feedTitle))];
+  // shopping_product has no link field: resolve each selected product's own page so its
+  // asset group lands where its copy points instead of on the collection page.
+  const productUrls={};
+  if(!design.productDestination)try{const pids=[...new Set(exactIds.map(_productIdFromItemId).filter(Boolean))].slice(0,30),d=pids.length?await _withTimeout(shopifyGql(`{ nodes(ids:[${pids.map(id=>`"gid://shopify/Product/${id}"`).join(",")}]) { ... on Product { id handle status } } }`),10000,"Product page lookup"):null;((d&&d.nodes)||[]).filter(p=>p&&p.handle&&p.status==="ACTIVE").forEach(p=>{productUrls[String(p.id).split("/").pop()]=`https://britesjewelry.com/products/${encodeURIComponent(p.handle)}`;});}catch(e){}
+  const liveDetails=selected.map(x=>({itemId:x.itemId,title:feedTitle(x),url:productUrls[_productIdFromItemId(x.itemId)]||x.link||x.url||null,type1:x.type1||null,type2:x.type2||null,feedLabel:x.feedLabel||liveFeedLabel||null,customLabels:x.customLabels||[]}));
   const themes=(Array.isArray(searchThemes)&&searchThemes.length?searchThemes:_derivePmaxSearchThemes({collectionTitle:coll.title,productTitles:chosenTitles,types})).slice(0,25);
   let audienceResource=String(ENV.GADS_PMAX_AUDIENCE_RESOURCE||"").trim()||null;
   if(!audienceResource&&ENV.GADS_PMAX_AUDIENCE_ID)audienceResource=`customers/${CID}/audiences/${String(ENV.GADS_PMAX_AUDIENCE_ID).replace(/\D/g,"")}`;
@@ -4639,13 +4657,17 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     else if(auto&&auto.warning&&!audienceCheck.warning)audienceCheck.warning=auto.warning;
   }else audienceCheck.source="configured audience";
   audienceResource=audienceCheck.resource;
-  const budget=Math.max(3,Number(dailyBudget)||10), start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
+  // Google budgets must be a multiple of the currency's minimum unit (cents).
+  const budget=Math.round(Math.max(3,Number(dailyBudget)||10)*100)/100, start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
   let countries=(Array.isArray(ctrl.defaultCountries)&&ctrl.defaultCountries.length)?ctrl.defaultCountries:["2124"];
-  // Feed labels in this store represent CA/US markets. Align location targeting to
-  // that market so a CA feed campaign cannot accidentally spend against US traffic,
-  // and vice versa. Custom/non-country feed labels retain the configured defaults.
-  if (liveFeedLabel) {
-    try { const all=await listCountries({}); const hit=all.find(c=>String(c.code||"").toUpperCase()===String(liveFeedLabel).toUpperCase()); if(hit&&hit.id)countries=[String(hit.id)]; } catch(e) {}
+  // A country-code feed label (CA/US) keeps the campaign in that market so a CA feed
+  // campaign cannot spend against US traffic, and vice versa. Any other label (e.g. USD_…)
+  // targets only the configured countries its selected offers can actually show in.
+  const offerCountries=[...new Set(selected.flatMap(x=>x.targetCountries||[]))];
+  if (liveFeedLabel||offerCountries.length) {
+    try { const all=await listCountries({}),geo=code=>(all.find(c=>String(c.code||"").toUpperCase()===String(code).toUpperCase())||{}).id;
+      const hit=liveFeedLabel&&geo(liveFeedLabel),within=offerCountries.map(geo).filter(id=>id&&countries.map(String).includes(String(id)));
+      if(hit)countries=[String(hit)];else if(within.length)countries=within.map(String); } catch(e) {}
   }
   const safeTargetRoas=Math.max(0,Number(targetRoas)||0);
   // Source real product photos (preferring close-up/detail shots) and upload
@@ -4664,7 +4686,7 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   const destination=design.productDestination?require('./googleAdsAdDesignContext').destination(design.productDestination):null;
   if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
   const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
-  const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
+  const scope=(built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products"))+(garbled.length?` (feed title garbled on ${garbled.slice(0,3).map(x=>x.itemId).join(", ")}${garbled.length>3?` and ${garbled.length-3} more`:""}: fix it at its Merchant source)`:"");
   const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
     payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
@@ -5045,7 +5067,7 @@ async function buildDesignStudioPmaxCampaignOps(spec, { ctrl } = {}) {
     txt.ids.longHeadlines.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "LONG_HEADLINE" } } }));
     txt.ids.descriptions.forEach(a => ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: a, fieldType: "DESCRIPTION" } } }));
     ops.push({ assetGroupAssetOperation: { create: { assetGroup: agRes, asset: txt.ids.businessName, fieldType: "BUSINESS_NAME" } } });
-    const themes = _studioList(g.searchThemes, 25).map(x => x.toLowerCase()).filter(x => x.length <= 80);
+    const themes = [...new Set(_studioList(g.searchThemes, 25).map(_pmaxThemeText).filter(Boolean))];
     themes.forEach(text => ops.push({ assetGroupSignalOperation: { create: { assetGroup: agRes, searchTheme: { text } } } }));
     if (audience) ops.push({ assetGroupSignalOperation: { create: { assetGroup: agRes, audience: { audience } } } });
     groupMeta.push({ name: g.name, angle: g.angle, searchThemes: themes, headlines: copy.headlines.length, longHeadlines: copy.longHeadlines.length, descriptions: copy.descriptions.length });
@@ -7420,6 +7442,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const productLinkCoverage = await _attachCachedProductLinks(prodRows);
   const unidentifiedRows = prodRows.filter(p => !p.identityComplete).length;
   if (unidentifiedRows) warnings.push("Google returned product activity without an offer ID. It remains in totals as unidentified activity, with no guessed product link.");
+  // Shoppers see a garbled feed title in these ads. Name each offer, its spend and the fix at the feed's source.
+  const garbledTitles = prodRows.filter(p => p.identityComplete && (p.titleProblem = _merchantTitleProblem(p.title))).sort((a, b) => b.cost - a.cost);
+  if (garbledTitles.length) warnings.push(require("./_merchantHealth").garbledTitlesNotice(garbledTitles, context.budgetCurrency));
 
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
