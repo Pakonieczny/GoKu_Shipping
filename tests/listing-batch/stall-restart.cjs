@@ -305,6 +305,8 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   ]);
   assert.match(requeued, /never started · queued again/);
   assert.match(requeued, /1 queued/);
+  assert.match(requeued, /1 restarted/, "the card shows the restart until the set is saved");
+  assert.match(requeued, /1 set\(s\) OpenAI never started were cancelled at no cost and sent again/);
   assert.doesNotMatch(requeued, /need attention|All batches cancelled/);
   console.log("Listing batch: a job OpenAI never started is cancelled after three hours and only its missing images are queued again, once, with every guard and the card");
 })().catch((err) => { console.error(err); process.exitCode = 1; });
