@@ -36,7 +36,10 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
   // Before its contour is prepared, the sheet offers one plain action.
   w.RoseStock.render(sh);
   assert.deepEqual([...sh.el.querySelectorAll('.roseCut button')].map(b=>b.textContent),['Cut Sheet']);
-  await w.RoseStock.plan(sh);
+  // Only Cut Sheet adds a green line (Paul, 29 Sep): the sheet in its set, saved and shown, draws none by itself.
+  await new Promise(r=>setTimeout(r,0));await w.RoseStock.plan(sh);
+  assert.equal(plan,null,'no line is asked for');assert(!sh.rosePlan);assert.equal(entries().length,0);assert.deepEqual(numbers(sh),[]);
+  await w.RoseStock.plan(sh,{cut:true});
   assert.deepEqual(entries().map(e=>[e.time,e.line]),[[new Date(T1).toISOString(),true]]);
   assert.match(entries()[0].text,/Green line 1 · 1 charm/);
   assert(!/Green line|RG_Sep|Refresh/.test(sh.el.querySelector('.roseHistory').textContent),'no line labels, file names or refresh button on the card');
@@ -50,7 +53,10 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
   w.RoseStock.protect(sh);sh.dirty=true;w.RoseStock.render(sh);
   assert.equal(entries().length,1);assert.equal(entries()[0].time,new Date(T1).toISOString());assert.deepEqual(numbers(sh),['1'],'the protected line keeps its number during nesting');
   sh.placements.push({id:'b',cxPt:40,cyPt:10,angle:0,scale:1});sh.dirty=false;delete sh.rosePlan;delete sh.rosePlanHash;delete sh.rosePlanKey;
-  await w.RoseStock.plan(sh);
+  // Send to Sheet placed b past line 1: it stays uncut, with no line 2, until Cut Sheet is pressed.
+  w.RoseStock.render(sh);await new Promise(r=>setTimeout(r,0));await w.RoseStock.plan(sh);
+  assert.equal(plan.stages.length,1,'no line 2 is asked for');assert.deepEqual(entries().map(e=>e.time),[new Date(T1).toISOString()]);assert.deepEqual(numbers(sh),['1'],'b is shown uncut');
+  await w.RoseStock.plan(sh,{cut:true});
   assert.deepEqual(entries().map(e=>[e.time,e.line]),[[new Date(T1).toISOString(),true],[new Date(T2).toISOString(),true]],'both lines are listed oldest first');
   assert.match(entries()[1].text,/Green line 2 · 1 charm/);
   assert(Math.abs(entries()[1].left-over(topOf(plan.lines.slice(...plan.stages[1].lines))))<.01,'mark 2 sits over green line 2');
@@ -90,6 +96,6 @@ const numbers=sheet=>{const c=canvas();w.RoseStock.paint(c.ctx,sheet,2,'lines');
   for(let i=0;i<50&&!fresh.roseCutAt;i++)await new Promise(r=>setTimeout(r,5));
   assert.deepEqual(ops,['rosePlan','roseRecordCut'],'Cut Sheet plans the line, then records the cut');
   assert(fresh.roseCutAt&&!fresh.el.querySelector('.roseHistory button, .roseCut button'),'after the cut the sheet offers no buttons');w.CN.api=api;
-  console.log('Rose line timeline OK: dated marks on the ruler over each green line, Cut Sheet only while there is room, numbered preview lines, protected nesting, permanent cut history and undated earlier lines, including contours saved before dates were kept');
+  console.log('Rose line timeline OK: dated marks on the ruler over each green line, only Cut Sheet adds one, Cut Sheet only while there is room, numbered preview lines, protected nesting, permanent cut history and undated earlier lines, including contours saved before dates were kept');
   dom.window.close();
 })().catch(e=>{console.error(e);dom.window.close();process.exit(1)});
