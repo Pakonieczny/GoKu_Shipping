@@ -6858,13 +6858,17 @@ const CustomSheet = window.CustomSheet = (() => {
   function setQty(ck, id, d) { const e = all()[ck]; if (!e || e.sent) return; const F = e.files.find(x => x.id === id); if (!F) return; F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed(); }
 
   /* ── Send to Sheet ── */
-  async function send(it) {
+  /** how.from: the button pressed in a window (the order window's Send to Sheet): the design lifts off it, and the
+   *  window steps out of the way and comes back as it was (SendTour); no copy of the card behind it is lifted. */
+  async function send(it, how = {}) {
     const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
     // not ready: what is missing is shown where it is fixed (the window, its reason lit), or, with no design yet, the
     // card's drop area is lit and says what it takes
     const why = notReady(e);
     // (a card of another Review tab has no drop box of its own, to stay as short as it was: its window opens, to drop in)
     const hint = cardNode(ck)?.querySelector(".cuHint");
+    // (pressed in a window: said there, never a second window over it)
+    if (how.from && (why || !employeeName())) { toast(why || "Your name is needed first", "bad", 5000); return; }
     if (why) { if ((e && e.files.length) || !hint) { open(it, { from: cardNode(ck) }); nudge(); } else { lit(hint, "cuNudge"); toast(why, "bad", 5000); } return; }
     const who = employeeName(); if (!who) { open(it, { askName: true, from: cardNode(ck) }); return; }
     const rows = openLines(it);
@@ -6882,7 +6886,7 @@ const CustomSheet = window.CustomSheet = (() => {
       for (const F of e.files) for (let q = 0; q < F.qty; q++) { const r = rows[q % rows.length]; const { charms } = await read(F); for (let i = 0; i < charms.length; i++) lines[r.key].push({ f: F.id, i }); }
       // the Send to Sheet tour (charm-nest-tour.js, Paul 29 Sep 00:25) keeps where the order started: a lifted copy of
       // its card, made before the list is redrawn without it
-      const touring = tourOk(); if (touring) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
+      const touring = tourOk(); if (touring && !how.from) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
@@ -6906,11 +6910,11 @@ const CustomSheet = window.CustomSheet = (() => {
       // the tour: the order seen leaving the Review list for the Nest tab, onto each sheet it is on, one at a time, and
       // back home; the placement above is done already, the tour only shows it. toSheets stays the quiet way.
       const plan = touring && tourOk() ? tourPlan(rows, e) : null;
-      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: snap || cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
+      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
       else {
         if (snap && snap.ghost) snap.ghost.remove();
         if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
-        else if (toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;
+        else if (!how.from && toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;   // (under a window it would not be seen)
         else toast(words, "ok", 6000);
       }
     } catch (err) {
@@ -8160,7 +8164,7 @@ const Review = window.Review = (() => {
     const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
     if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
-      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
+      node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     reviewRows.set(it.key,{stamp,node});return node;
@@ -8175,9 +8179,10 @@ const Review = window.Review = (() => {
     const who=CustomPrint.wire(node,cx);if(who)node._refocus=()=>who.focus({preventScroll:true});
     // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
     // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
+    // (never a double-click's second click: after Send to Sheet it landed on the card redrawn, and opened it over the tour)
     if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.open(row.key);
-      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
+      node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
   /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
@@ -8838,6 +8843,8 @@ const OrderWin = window.OrderWin = (() => {
       unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
+    // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
+    W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
@@ -9232,11 +9239,32 @@ const OrderWin = window.OrderWin = (() => {
       box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key)) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
+    paintSend(r);
     foldTo(fold);
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
+  }
+  /** Send to Sheet in the header, on every tab, while the order's own designs are ready and not sent: its Review card's
+   *  button. The design lifts off it and the view steps out of the way for the flight, then comes back as it was (SendTour,
+   *  Paul 29 Sep 01:30); nothing opens over it (a design still to fix, or a name to ask, is said in a toast). */
+  function paintSend(r) {
+    let b = byId("owSendSheet"); if (b && b._busy) return;
+    const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
+    if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; return; }
+    if (!b) { const now = byId("owNow"); if (!now) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; now.before(b); }
+    b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
+    b.onclick = async () => {
+      if (b._busy || !(employeeName() || askEmployee())) return;
+      b._busy = true; b.disabled = true; b.innerHTML = '<span class="spin"></span>Sending…';
+      try { await CustomSheet.send(b._it, { from: b }); }
+      finally {
+        // (while the view is out of the way nothing in it is drawn: it is drawn as it comes back, tour:back)
+        b._busy = false;
+        if (!W.dlg._tourHeld) { b.disabled = false; b.textContent = "Send to Sheet"; const r2 = W.dlg.open && rowOf(W.key); if (r2) paintSend(r2); }
+      }
+    };
   }
   /** A custom order's own line: what kind it is, where it stands, and its QR label — the same
    *  sorting-station sticker, printed and completed as from its Custom Orders card (CustomPrint). One line, no window. */
