@@ -1409,7 +1409,7 @@
     function paintLanes() {
       const who = {}; for (const e of S.events) (who[e.lane] = who[e.lane] || new Set()).add(whoOf(e));
       const selLane = S.sel && S.byKey.get(S.sel) ? S.byKey.get(S.sel).lane : "";
-      const html = LANES.map(L => { const w = who[L.k] ? [...who[L.k]].join(", ") : "—"; return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
+      const html = LANES.map(L => { const w = !who[L.k] || !who[L.k].size ? "—" : L.k === "office" ? "Operator" : [...who[L.k]].join(", "); /* (the Office lane names no one: Paul, 29 Sep, "it just should say Operator") */ return `<div class="tlLane${L.st ? " stn" : ""}${selLane === L.k ? " on" : ""}" data-lane="${L.k}"><b>${iconSvg(L.ic)}${esc(L.l)}</b><span title="${esc(w)}">${esc(w)}</span></div>`; }).join("");
       if (html !== lanesHtml) { lanesHtml = html; $(".tlLanes").innerHTML = html; }
     }
     function paintCanvas(D, o) {

@@ -145,8 +145,8 @@ function fakeDb() {
     const listeners = new Set();
     Object.assign(ctx, {
       addEventListener: (t, fn) => { if (t === 'message') listeners.add(fn); }, removeEventListener: (t, fn) => listeners.delete(fn),
-      document: { createElement: () => ({ style: {}, setAttribute() {}, remove() {} }), body: { appendChild(f) {
-        const nonce = String(f.src).split('#notify=')[1];
+      document: { addEventListener() {}, removeEventListener() {}, querySelector: () => null, querySelectorAll: () => [], createElement: () => ({ style: {}, setAttribute() {}, remove() {} }), body: { appendChild(f) {
+        const nonce = String(f.src).split('#notify=')[1].split('&')[0];
         setTimeout(() => { for (const fn of [...listeners]) fn({ origin: 'https://sorter.test', data: { source: 'qr-printer', nonce, phase: 'done', ok, error: ok ? '' : 'the print dialog was closed' } }); }, 5);
       } } },
       localStorage: { setItem() {}, removeItem() {}, getItem: () => null },
@@ -176,7 +176,7 @@ function fakeDb() {
   assert.equal(cp.events[0].data.again, true, 'Print again says so');
   cp = await customPrint({ ok: false });
   assert.equal(cp.events.length, 0, 'a sticker not printed records nothing');
-  assert(!cp.api.some(b => b.op === 'customPut') && cp.msgs.some(x => /not printed/.test(x[0])), 'and nothing is completed, as before');
+  assert(!cp.api.some(b => b.op === 'customPut') && cp.msgs.some(x => /not printed|didn't open/.test(x[0])), 'and nothing is completed, as before');
   console.log('sorter Review "Print QR label": labelPrinted (custom, station design, who) once printed; nothing when the print fails');
 
   console.log('st-d: all passed');
