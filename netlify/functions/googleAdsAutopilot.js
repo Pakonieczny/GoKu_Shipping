@@ -9918,7 +9918,9 @@ function _groupService(){
   if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval});
   return _groupsService;
 }
-async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
+// A campaign deleted here is removed in Google. The reporting tree keeps the read-only history of its groups
+// (the money they spent in these dates, like its campaign row); every other view leaves them out.
+async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds(),tree=!!(input&&input.reportingTree===true);out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId))||tree&&g.historical);return out;}
 async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
 async function adDesignSavedWorkspaces(input={}){return require('./googleAdsGroups').savedWorkspaces({db:fb().db,stateCollection:COL.state,after:input.after,deletedCampaignIds:await _deletedCampaignIds()});}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
