@@ -6951,7 +6951,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const rows = openLines(it);
     if (!rows.length) { toast("Every line of that order is already on a sheet or completed", "bad", 5000); return; }
     const say = t => { busy.set(ck, t); redraw(); };
-    let flying = false, snap = null;
+    let flying = false, snap = null, holdKey = "";
+    const letGo = () => { if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 0); holdKey = ""; };
     try {
       // each file traced (a reload keeps only its bytes) and kept in the cloud, so its pieces can be read back anywhere
       for (const F of e.files) {
@@ -6964,6 +6965,10 @@ const CustomSheet = window.CustomSheet = (() => {
       // the Send to Sheet tour (charm-nest-tour.js, Paul 29 Sep 00:25) keeps where the order started: a lifted copy of
       // its card, made before the list is redrawn without it
       const touring = tourOk(); if (touring && !how.from) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
+      // the card keeps its place in its list while the tour carries it (the list holds it: Motion.carry), pressed in the
+      // order window over it or with reduced motion too; the tour lets go once home
+      holdKey = touring ? cardNode(ck)?.dataset.mkey || "" : "";
+      if (holdKey && window.Motion && Motion.carry) Motion.carry(holdKey, 30000);
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
@@ -6990,12 +6995,13 @@ const CustomSheet = window.CustomSheet = (() => {
       if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
       else {
         if (snap && snap.ghost) snap.ghost.remove();
+        letGo();   // (no tour: the list takes the card where it goes now)
         if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
         else if (!how.from && toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;   // (under a window it would not be seen)
         else toast(words, "ok", 6000);
       }
     } catch (err) {
-      busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
+      busy.delete(ck); if (snap && snap.ghost) snap.ghost.remove(); letGo(); toast(`${e.rid}: not sent — ${err.message}`, "bad", 8000);
     } finally { if (!flying) redraw(); }
   }
   /** preparePool for a line sent from its card: its pieces from the card's files, each on its own metal. */
@@ -8289,8 +8295,10 @@ const Review = window.Review = (() => {
     if(was){const pair=was.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     settledRows.set(d, node); return node;
   }
-  function render() {
-    if(window.CharmNestInteraction?.defer('review-view',render))return;
+  /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
+  function render(opts) {
+    opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
+    if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
     const active=v.contains(document.activeElement)?document.activeElement:null;
@@ -8383,10 +8391,24 @@ const Review = window.Review = (() => {
     };
     const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
-    const sameView = host._mView === view && host.childElementCount > 0; host._mView = view;
+    // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
+    // a custom order moves to the foot of its list, and one answered leaves it, its place held empty. Nothing moves
+    // under the coin (Paul, 29 Sep 01:30); the tour lets go once home, out of sight, and the list is laid out anew then.
+    if (window.Motion && Motion.carrying) {
+      const had = [...host.children].filter(n => n.dataset && (n.dataset.mkey || n.dataset.holdKey));
+      had.forEach((n, i) => {
+        const k = n.dataset.mkey || n.dataset.holdKey; if (!Motion.carrying(k)) return;
+        const j = desired.findIndex(x => x.node.dataset.mkey === k), at = Math.min(i, desired.length);
+        if (j >= 0) { if (j !== i) desired.splice(at, 0, desired.splice(j, 1)[0]); return; }
+        const cs = getComputedStyle(n), gap = el("div", "rvHold"); gap.dataset.holdKey = k; gap.setAttribute("aria-hidden", "true");
+        Object.assign(gap.style, { height: n.getBoundingClientRect().height + "px", marginTop: cs.marginTop, marginBottom: cs.marginBottom, pointerEvents: "none" });
+        desired.splice(at, 0, { it: null, node: gap });
+      });
+    }
+    const sameView = !opts.still && host._mView === view && host.childElementCount > 0; host._mView = view;
     if (window.Motion) Motion.reconcile(host, desired.length ? desired.map(x => x.node) : [empty()], { animate: sameView, leave });
     else { host.replaceChildren(...(desired.length ? desired.map(x => x.node) : [empty()])); }
-    for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
+    for (const {it,node} of desired) { if(!it)continue; const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
     // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
