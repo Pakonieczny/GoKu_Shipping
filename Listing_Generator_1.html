@@ -4469,9 +4469,21 @@ html.gs-locked body > *:not(#gate){display:none!important}
       const charmName = (charmPath.split("/").pop() || charmPath);
       const slug = _gravityKey(charmName) + "_" + charmName.replace(/[^A-Za-z0-9._-]/g, "_");
       const key = slug + "|" + (allowHoopRepair ? "1" : "0");
+      // The memo is keyed by the charm's NAME, so an answer can be handed to a
+      // caller who names the same charm at a different path. Wherever the
+      // answer is just "the original file" it holds the FIRST caller's path,
+      // and by the time of a Redo that path is stale: the collector has moved
+      // the charm to the Used pool, so Redo asked the server for a New_Charms
+      // file that was gone ("input_storage_path not found"). Only the derived
+      // files (rotated copy, hooped copy) are worth sharing; the original is
+      // always answered with the path THIS caller resolved.
+      const forThisCaller = (r) => {
+        const mine = (p) => (p === r.original ? charmPath : p);
+        return { base: mine(r.base), rotated: mine(r.rotated) };
+      };
       // Memoise the PROMISE, not the result, so two slots asking at the same
       // moment share one repair instead of racing into two generations.
-      if (_gravityMemo.has(key)) return await _gravityMemo.get(key);
+      if (_gravityMemo.has(key)) return forThisCaller(await _gravityMemo.get(key));
       const work = (async () => {
         try {
           const cachePath = `${GRAVITY_CACHE_DIR}/${slug}`;
@@ -4542,10 +4554,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
           console.warn("[gravity] correction failed, using original charm:", charmPath, err);
           return { base: charmPath, rotated: charmPath };
         }
-      })();
+      })().then((r) => ({ ...r, original: charmPath }));
       _gravityMemo.set(key, work);
       try {
-        return await work;
+        return forThisCaller(await work);
       } catch (err) {
         _gravityMemo.delete(key);
         console.warn("[gravity] correction threw, using original charm:", charmPath, err);
@@ -5205,8 +5217,10 @@ html.gs-locked body > *:not(#gate){display:none!important}
             if (isAdjustmentMode) {
               if (isStrictCharmReferenceSlot) {
                 inputPath = slotStoragePath;
-                charmPath = await charmPathForSlot(
-                  charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
+                charmPath = await charmPathThatExists(
+                  await charmPathForSlot(
+                    charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1),
+                  charmLatest.fullPath);
                 const strictReferencePrompt =
                   spec.folder === "Charm_Types"
                     ? CHARM_TYPES_PROMPT
@@ -5267,8 +5281,10 @@ The output must look like the input image with ONLY the user's requested change 
               // Random source reference + the listing's originally-allocated
               // charm + the slot's base prompt.
               inputPath = srcRandom.fullPath;
-              charmPath = await charmPathForSlot(
-                charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1);
+              charmPath = await charmPathThatExists(
+                await charmPathForSlot(
+                  charmLatest.fullPath, ctxCategory, spec.folder, slotIndex + 1),
+                charmLatest.fullPath);
               finalPrompt = buildSlotPrompt(ctxCategory, spec.folder, slotIndex + 1);
             }
 
@@ -5596,6 +5612,24 @@ The output must look like the input image with ONLY the user's requested change 
       }
 
       return await listRandomFile(fallbackFolderPath);
+    }
+
+    /**
+     * The charm path a Redo is about to send must name a file that is there.
+     * Whatever the reference helpers hand back (a remembered answer, a cached
+     * rotated or hooped copy) is checked once more, and the charm this Redo
+     * just resolved is sent instead when the file has gone, so a stale path
+     * can no longer reach the server as "input_storage_path not found".
+     */
+    async function charmPathThatExists(path, resolvedPath) {
+      if (!path || path === resolvedPath) return path;
+      try {
+        await getMetadata(ref(storage, path));
+        return path;
+      } catch (_) {
+        console.warn(`[redo] ${path} is gone; sending ${resolvedPath} instead.`);
+        return resolvedPath;
+      }
     }
 
     /**
