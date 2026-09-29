@@ -807,7 +807,9 @@
         if (x.cut) continue;
         const g = x.stages || {};
         if (x.placed != null) facts.push(`${x.name} holds ${x.placed} piece${x.placed === 1 ? "" : "s"}${x.pct ? ` · ${Math.round(x.pct)}% full` : ""}`);
-        if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
+        // (a Rose Gold sheet's newest charms wait for its Cut Sheet press: said by name, with what to press)
+        if (x.uncut > 0) add("person", `${x.name} has ${x.uncut} charm${x.uncut === 1 ? "" : "s"} not cut yet: press Cut Sheet`);
+        else if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
         if (g.front === false) add("wait", `${x.name}'s front cut file is saved`);
         if (g.approval === false) add("person", `${x.name}: ${x.waiting || "some"} engraving${x.waiting === 1 ? "" : "s"} still to approve in Review`);
         if (g.backs === false && g.approval !== false) add("wait", `${x.name} has ${x.saved || 0} of ${x.required || 0} back files saved`);

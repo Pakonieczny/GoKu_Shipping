@@ -101,6 +101,19 @@ const A = '4175423829', Bo = '4175423830';
     check(rec3 && !rec3.rosePlanJson && JSON.stringify(stagesOf(rec3.roseProtectedJson)) === '[1]', `3 · the saved sheet keeps line 1 and no plan for the new charm (${rec3 && JSON.stringify({ plan: stagesOf(rec3.rosePlanJson), guard: stagesOf(rec3.roseProtectedJson) })})`);
     await page.locator('.sheetCard[data-m="rose"]').screenshot({ path: path.join(SHOTS, 'rg-after-send.png') });
 
+    // 3 · the set waits for that press and says so by name (Paul could not tell what "…layout checks…" wanted): its
+    //     release reason and the run's pill, whose words open the sheet at its Cut Sheet button
+    const wait = await page.evaluate(() => {
+      const sh = CN.S.sheets.rose.pages.at(-1), r = B.run, was = r.status, issue = Sets.releaseIssue(Sets.setOfSheet(sh));
+      CN.setMode('review'); r.status = 'processed'; RunCtl.renderBanner();   // (the run rests there once its set is deferred)
+      const pill = document.querySelector('#runBanner .rbText')?.textContent, why = document.querySelector('#runBanner .rbWhy')?.textContent;
+      document.querySelector('#runBanner [data-rbcut]')?.click(); r.status = was; RunCtl.renderBanner();
+      return new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done({ issue, pill, why, mode: CN.S.mode, focus: document.activeElement?.matches('.sheetCard[data-m="rose"] [data-rose="cut"]') }))));
+    });
+    const words = 'Rose Gold Sheet 1 has 1 charm not cut yet: press Cut Sheet';
+    check(wait.issue === words && wait.pill === 'Waiting on you · Cut Sheet' && wait.why.endsWith(words) && wait.mode === 'nest' && wait.focus,
+      `3 · the set's wait names the sheet and Cut Sheet, and its words open the sheet at the button (${JSON.stringify(wait)})`);
+
     // 4 · a page opened before this rule asks for the contour on its own: refused, nothing written
     const before = JSON.stringify(record(s.sheetId));
     const old = await page.evaluate(async fp => { const sh = CN.S.sheets.rose.pages.at(-1); try { await CN.api('charmNestLibrary', { op: 'rosePlan', sheetId: sh.sheetId, stockId: sh.roseStock.id, revision: sh.roseStock.revision, fingerprint: fp, shapesJson: JSON.stringify(CharmNestRose.shapes(sh.charms, sh.placements)), allowanceMm: 0.2 }); return 'accepted'; } catch (e) { return e.message; } }, Rose.fingerprint(record(s.sheetId)));
