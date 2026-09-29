@@ -11,7 +11,8 @@ let passed=0;const check=(v,msg)=>{assert(v,msg);passed++;};
 (async()=>{
  await engineChecks();
  legacyConsoleCheck();
- consoleChecks();
+ modelChecks();
+ await consoleChecks();
  console.log('PASS '+passed+' currency-label checks (approval summaries, Studio errors, AI prompts, reports, console amounts)');
 })().catch(e=>{console.error(e);process.exit(1);});
 
@@ -24,6 +25,7 @@ async function engineChecks(){
  const cx=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?async()=>{throw Error('Live network forbidden');}:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123'}},console,Buffer,Date,Intl,Map,Set,URL,setTimeout:fn=>setImmediate(fn),clearTimeout});
  vm.runInContext(fs.readFileSync(dir+'googleAdsAutopilot.js','utf8'),cx);const E=cx.module.exports,get=n=>vm.runInContext(n,cx);
  const bind=v=>{cx.__m=v;vm.runInContext(Object.keys(v).map(k=>k+'=__m.'+k).join('\n'),cx);};
+ const studioPerformance=get('designStudioPerformance'),planCampaign=get('planCampaign');
  const ctrl={enabled:true,dryRun:false,maxDailyBudgetTotal:100,maxMonthlySpend:500,budgetCurrency:'CAD',budgetCurrencyVerified:true,defaultCountries:['2124'],smartBidding:false};
  let approvals=[],enabled=40,prompts=[];
  const copy={headlines:['Bunny charm necklace','Handmade bunny gifts','Personalized charms'],descriptions:['Handmade bunny charm necklaces.','Made to order.']};
@@ -79,6 +81,44 @@ async function engineChecks(){
  const pmaxSrc=get('proposePmaxOpportunities').toString(),scanSrc=get('scanOpportunities').toString();
  check(!/\$6-\$15|ceiling \$\$\{/.test(pmaxSrc)&&/\$\{bc\} 6-15\/day, respecting total ceiling \$\{bc\} \$\{ceiling\}\/day/.test(pmaxSrc)&&/proposePmaxOpportunities\(\{[^)]*currency:ctrl\.budgetCurrency/.test(scanSrc),'PMax selector prompt names the account currency for budgets');
  check(/Daily ceiling \$\{ctrl\.budgetCurrency\|\|"UNVERIFIED"\}/.test(scanSrc),'scan audit never labels an unverified ceiling USD');
+
+ // 7. planCampaign: an unverified account currency is named as such, never assumed USD; every number is unchanged.
+ const base={title:'Bunny Charms',occasion:'Evergreen gifting',ceiling:100,headroom:60,smartBidding:false,research:null,aov:60,cvrInfo:{cvr:0.02,source:'benchmark'}};
+ const pu=planCampaign({...base,currency:null,nativeToUsd:null}),pd=planCampaign({...base,currency:'USD',nativeToUsd:null});
+ const words=x=>JSON.stringify([x.goal,x.budget.basis,x.cpc.basis,x.duration.basis,x.caveats]),numbers=x=>JSON.stringify(x,(k,v)=>typeof v==='string'?undefined:v);
+ check(pu.currency==='UNVERIFIED'&&!/\bUSD\b/.test(words(pu))&&/UNVERIFIED \d/.test(words(pu))&&numbers(pu)===numbers(pd),'plan with an unverified currency names it and keeps the same numbers ('+pu.goal+')');
+
+ // 8. Studio results come from metricsRange's campaign rows ({ snapshot, currency }), so both Studio campaigns count.
+ bind({designStudioConversionReadiness:async()=>({apiOk:true,purchaseReady:true,start:[],design:[],approve:[],cart:[],purchase:[]}),fb:()=>null,gaql:async()=>[],
+  metricsRange:async()=>({ok:true,currency:'USD',snapshot:[{id:'11',name:'BA · design-studio-pmax',cost:30,clicks:20,impr:900,conv:1,value:60},{id:'22',name:'BA · design-studio-search',cost:20,clicks:15,impr:400,conv:0,value:0},{id:'33',name:'BA · bunny',cost:99,clicks:50,impr:5000,conv:2,value:120}]})});
+ const perf=await studioPerformance({days:30});
+ check(perf.campaigns.map(c=>c.lane).join()==='pmax,search'&&perf.overall.cost===50&&perf.overall.clicks===35&&perf.currency==='USD','Studio results include both Studio campaigns and nothing else ('+JSON.stringify(perf.overall)+')');
+
+ // 9. The store's order value converts only from the currency its orders are in (storeSignals: GADS_CURRENCY). CAD orders on a
+ //    CAD account keep their value (not ~37% more), USD orders convert, and a currency with no rate gives no revenue forecast.
+ const cadStore=vm.createContext({module:{exports:{}},exports:{},require:n=>n==='node-fetch'?async()=>{throw Error('Live network forbidden');}:realRequire(n),process:{env:{GADS_CUSTOMER_ID:'123',GADS_CURRENCY:'CAD'}},console,Buffer,Date,Intl,Map,Set,URL,setTimeout:fn=>setImmediate(fn),clearTimeout});
+ vm.runInContext(fs.readFileSync(dir+'googleAdsAutopilot.js','utf8'),cadStore);const planCad=vm.runInContext('planCampaign',cadStore);
+ const acct={...base,currency:'CAD',nativeToUsd:0.73,economics:{marginRate:0.5}},same=planCad(acct),fromUsd=planCad({...acct,economics:{marginRate:0.5,currency:'USD'}});
+ const usdStore=planCampaign(acct),noRate=planCad({...acct,economics:{marginRate:0.5,currency:'EUR'}});
+ check(same.expected.aov===60&&same.model.aov===60&&same.expected.breakEvenCpa===30&&Math.abs(same.expected.revenue-same.expected.conversions*60)<0.01&&/× CAD 60\.00 average order/.test(same.caveats.join(' ')),'CAD orders on a CAD account keep their order value ('+same.expected.aov+')');
+ check(Math.abs(fromUsd.expected.aov-60/0.73)<1e-9&&Math.abs(usdStore.expected.aov-60/0.73)<1e-9,'USD orders convert to the CAD account ('+fromUsd.expected.aov+', '+usdStore.expected.aov+')');
+ check(noRate.expected.aov===null&&noRate.expected.revenue===null&&noRate.expected.breakEvenCpa===null&&noRate.expectedRoas===null,'orders in a currency with no rate give no revenue forecast, not a wrong one ('+noRate.expected.aov+')');
+
+ // 10. A Studio PMax draft saved without dates starts and ends on the account's dates: at 23:30 in Toronto UTC is already tomorrow.
+ const realNow=Date.now;Date.now=()=>Date.parse('2026-09-30T03:30:00Z');
+ try{
+  bind({_creativeImageOps:async()=>({ops:[],groups:{'customers/123/assetGroups/-3':{square:['sq'],landscape:['ls'],portrait:[],logo:'lg'}}}),_buildPmaxTextAssetOps:()=>({ops:[],ids:{headlines:[],longHeadlines:[],descriptions:[],businessName:'bn'}})});
+  const b=await get('buildDesignStudioPmaxCampaignOps')({dailyBudget:5,groups:[{name:'Gifts',angle:'a',searchThemes:[],headlines:[],longHeadlines:[],descriptions:[]}],reviewedCreative:{}},{ctrl:clone(ctrl)}),c=b.ops.find(o=>o.campaignOperation).campaignOperation.create;
+  check(!c.startDateTime&&c.endDateTime==='20261228 23:59:59','Studio draft starts today and ends 90 days later on the account calendar ('+[c.startDateTime,c.endDateTime]+')');
+ }finally{Date.now=realNow;}
+}
+
+function modelChecks(){
+ // A saved PMax suggestion that never recorded its budget currency is not forecast as if it were USD.
+ const M=require(root+'/assets/pmax-recommendation.js'),paid={available:true,monetaryComplete:true,currency:'USD',days:90,impressions:10000,clicks:200,conversions:10,cost:100,value:500};
+ const cand={recommendationSchema:1,itemIds:['shopify_US_11_101'],offerDetails:[{itemId:'shopify_US_11_101',title:'Corgi necklace',paidPerformance:paid,evidenceIds:[]}],demandEvidence:[],paidPerformance:paid,dailyBudget:12,days:30};
+ const none=M.buildRecommendation(cand,{dailyBudget:12,days:30}).forecast,usd=M.buildRecommendation({...cand,budgetCurrency:'USD',budgetCurrencyVerified:true},{dailyBudget:12,days:30}).forecast;
+ check(none.currency==='Unverified'&&!none.scenarios.length&&none.missing.some(x=>/could not be verified/.test(x))&&!none.missing.some(x=>/Unverified to USD/.test(x))&&usd.currency==='USD'&&usd.scenarios.length===3,'a PMax suggestion with no recorded budget currency is not forecast as USD');
 }
 
 function legacyConsoleCheck(){
@@ -90,8 +130,8 @@ function legacyConsoleCheck(){
  check(/ceiling CAD 100\/day/.test(els.ctrlbar.innerHTML)&&!/\$/.test(els.ctrlbar.innerHTML),'legacy console ceiling in CAD');
 }
 
-function consoleChecks(){
- const pick=name=>{const m=new RegExp('^function '+name+'\\(','m').exec(html);assert(m,name+' exists');const rest=html.slice(m.index),next=/\n(?:async )?function \w+\(/.exec(rest.slice(1));return next?rest.slice(0,next.index+1):rest;};
+async function consoleChecks(){
+ const pick=name=>{const m=new RegExp('^(?:async )?function '+name+'\\(','m').exec(html);assert(m,name+' exists');const rest=html.slice(m.index),next=/\n(?:async )?function \w+\(/.exec(rest.slice(1));return next?rest.slice(0,next.index+1):rest;};
  const span=(a,b)=>{const i=html.indexOf(a),j=html.indexOf(b,i+1);assert(i>=0&&j>i,a);return html.slice(i,j);};
  const helpers=['money','ccyMark','moneyIn','acctMoney','acctMark'].map(pick).join('\n');
  const cx=vm.createContext({DASH:{budgetCurrency:'CAD'},console,Intl});vm.runInContext(helpers,cx);
@@ -111,4 +151,39 @@ function consoleChecks(){
   performance:{ok:true,currency:'USD',start:'2026-09-01',end:'2026-09-29',overall:{cost:80.5,clicks:60},purchase:{cpa:40.25},funnel:{},rates:{}}};
  sx.renderDesignStudioGrowth();const sg=els.studioGrowth.innerHTML;
  check(/Launch settings · budgets in CAD/.test(sg)&&/US\$80\.50<\/div><div class="l">Spend/.test(sg)&&/US\$40\.25<\/div><div class="l">Purchase CPA/.test(sg),'Studio launch budgets name CAD; converted spend and purchase CPA read US$');
+
+ // Performance dialog chart: its axis names the report currency; a negative value keeps its sign in front.
+ const fm=html.match(/chartOpts=\{[^;]*?fmt:(function\(v\)\{.*?\}),labels:/);assert(fm,'performance chart formatter found');
+ vm.runInContext('var d={currency:"USD"};var perfFmt='+fm[1],cx);
+ check(cx.perfFmt(250)==='US$250'&&cx.perfFmt(-50)==='\u2212US$50','performance chart axis reads US$');
+
+ // Campaign tree: the in-place budget editor names the budget currency in its question, its check and its report.
+ const {JSDOM}=require('jsdom'),tdom=new JSDOM('<div id="snapshot"><table><tbody><tr class="cdet" data-cid="7"><td><div class="campaignSettings"><button class="bge" data-id="7" data-b="10" data-res="">$10 CAD</button></div></td></tr></tbody></table></div>');
+ const said=[],tx=vm.createContext({document:tdom.window.document,DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'7',budget:10}]},cmdReport:{budgetCurrency:'CAD'},cmdMetrics:[],BUDGET_OVERRIDES:{},Intl,console,
+  esc:s=>String(s==null?'':s),cmdAttr:s=>String(s==null?'':s),cmdOpening(){},renderCommand(){},toast:m=>said.push(m),api:async()=>({ok:true})});
+ vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+span('var CMD_EDIT=null','// Extend how long a campaign runs'),tx);
+ const tdoc=tdom.window.document;tx.cmdEditOpen('budget',tdoc.querySelector('.bge'));const asked=tdoc.querySelector('.cmdEdit label').textContent;
+ tx.CMD_EDIT.value='15';await tx.cmdEditBudget(false);const jump=tdoc.querySelector('.cmdEdit .ieQ').textContent;await tx.cmdEditBudget(true);
+ check(/\(CAD\)$/.test(asked)&&/\(\$10 CAD \u2192 \$15 CAD\)/.test(jump)&&/^Budget \$10 CAD \u2192 \$15 CAD$/.test(said[0])&&tx.DASH.lastMetrics[0].budget===15&&!tdoc.querySelector('.cmdEdit'),'campaign tree budget edit names CAD ('+[asked,jump].concat(said).join(' | ')+')');
+
+ // Ad Doctor "Set" budget and enable confirmations name the account currency.
+ const sm=[],bx=vm.createContext({DASH:{budgetCurrency:'CAD',control:{dryRun:false},lastMetrics:[]},Intl,console,confirm:m=>{sm.push(m);return true;},toast:m=>sm.push(m),
+  btnBusy(){},actStart:()=>1,actEnd(){},api:async()=>({ok:true}),reload:async()=>{},renderAll(){},P:{expanded:{}}});
+ vm.runInContext(helpers+'\n'+pick('setBudget')+'\n'+pick('campStatus'),bx);
+ await bx.setBudget('7',15,'',{});await bx.campStatus('7','A',12,'ENABLED',{});
+ check(/Set daily budget to CA\$15\?/.test(sm[0])&&/^Budget set to CA\$15$/.test(sm[1])&&/spending up to CA\$12\/day/.test(sm[2]),'Ad Doctor budget confirmations read CA$ ('+sm.join(' | ')+')');
+
+ // PMax: a suggestion whose saved currency was never verified does not show that currency on its budget.
+ const model=require(root+'/assets/pmax-recommendation.js'),out={},doc={getElementById:()=>null,createElement:()=>{const el={id:'',innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null,addEventListener(){}};return el;}};
+ const qx=vm.createContext({window:{BritesPmaxRecommendation:model},document:doc,Intl,Date,console,esc:s=>String(s==null?'':s),apvEnc:encodeURIComponent,friendlyResearchError:String,researchNeedsRefresh:()=>false,wireOpportunityDeletion(){},PMAXAT:1,PMAXERR:null});
+ vm.runInContext(html.slice(html.indexOf('function pmaxProductChoices('),html.indexOf('function renderOpportunities(){')),qx);
+ const host={parentNode:{insertBefore(el){out.html=el.innerHTML;}}},pmax=v=>({collectionTitle:'Pets',handle:'pets',itemIds:['shopify_US_11_101'],productTitles:['Corgi'],dailyBudget:12,days:30,...v});
+ qx.PMAXOPPS=[pmax({budgetCurrency:'USD',budgetCurrencyVerified:false})];qx.renderPmaxSection(host);const unver=out.html;
+ qx.PMAXOPPS=[pmax({budgetCurrency:'CAD',budgetCurrencyVerified:true})];qx.renderPmaxSection(host);const ver=out.html;
+ check(/class="pmxBudget">\$<input/.test(unver)&&!/daily budget in USD/.test(unver)&&/class="pmxBudget">CAD \$<input/.test(ver),'PMax budget shows a verified currency only');
+
+ // AI costs are billed in US dollars, and the edited scripts are re-fetched (new ?v= tags).
+ const editor=fs.readFileSync(root+'/brites-ad-editor.js','utf8'),motion=fs.readFileSync(root+'/brites-ad-motion.js','utf8');
+ check(/'AI cost'\)\+' · US\$'\+Number\(cost\.estimatedUsd\)/.test(editor)&&/about US\$2\.03/.test(motion)&&/Estimated cost US\$'\+Number/.test(motion)&&/video cost: US\$2\.03/.test(motion)&&!/[^S]\$(?:\d|'\+)/.test(editor+motion),'editor and motion AI costs read US$');
+ check(!/brites-ad-editor\.js\?v=20260929-studio(?:-proofs)?'|brites-ad-motion\.js\?v=20260929-studio(?:-films)?"|pmax-recommendation\.js\?v=20260929-concise"/.test(html),'edited scripts carry new version tags');
 }

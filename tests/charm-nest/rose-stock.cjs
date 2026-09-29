@@ -45,8 +45,9 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  const plannedShapes=[shape('locked-1',2,2,8,30)],planned=sheet('sheet-guard',plannedShapes);
  const claim=await api.roseClaim({sheetId:planned.id,wPt:100,hPt:50,fresh:true});store.set('Charm_Nest_Sheets/'+planned.id,planned);
  const fs=require('node:fs'),vm=require('node:vm'),library=fs.readFileSync('netlify/functions/charmNestLibrary.js','utf8');
- const ctx={db,col:query,FV:{serverTimestamp:()=>123456},SHEETS:'Charm_Nest_Sheets',RUNS:'Charm_Nest_Runs',DELETE_CODE:'975311',isId:()=>true,require:()=>create};vm.createContext(ctx);
- vm.runInContext(library.slice(library.indexOf('async function op_putSheet('),library.indexOf('async function op_listSheets('))+';this.put=op_putSheet;',ctx);
+ const ctx={db,col:query,FV:{serverTimestamp:()=>123456},SHEETS:'Charm_Nest_Sheets',RUNS:'Charm_Nest_Runs',BACK:'Charm_Pool_Back',DELETE_CODE:'975311',isId:()=>true,require:()=>create,Buffer};vm.createContext(ctx);
+ // (op_putSheet with what it keeps of each back, sheetBack, and its size guard, SHEET_DOC_BYTES, as the library has them)
+ vm.runInContext(library.slice(library.indexOf('const SHEET_BACK_FIELDS'),library.indexOf('async function op_listSheets('))+';this.put=op_putSheet;',ctx);
  vm.runInContext(library.slice(library.indexOf('async function op_deleteSheet('),library.indexOf('/* A calibration row'))+';this.del=op_deleteSheet;',ctx);
  vm.runInContext(library.slice(library.indexOf('async function op_archiveEmptySheet('),library.indexOf('// ── arrival ledger'))+';this.archive=op_archiveEmptySheet;',ctx);
     const args={sheetId:planned.id,stockId:claim.stock.id,revision:0,fingerprint:create.fingerprint(planned),shapesJson:JSON.stringify(plannedShapes),allowanceMm:.2};

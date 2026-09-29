@@ -5281,7 +5281,11 @@ const Sets = window.Sets = (() => {
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
     const reports=sheets.map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
-    if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    if(!window.CharmNestReadiness.set(set,reports).ready){
+      // a Rose Gold sheet whose newest charms wait for Cut Sheet (only a press adds its green line): named, with what to press
+      const uncut=sheets.find(sh=>window.RoseStock?.waiting?.(sh));
+      throw pendingRelease(uncut?RoseStock.waitWords(uncut):"Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    }
     if (!Gate.modern(set.runId)) return;
     if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw pendingRelease("The set's sheets are not all loaded");
     for (const sh of sheets) {
@@ -5401,13 +5405,17 @@ const Sets = window.Sets = (() => {
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const held = Object.entries(st.orders || {}).filter(([, o]) => o && o.held);
+    // a Rose Gold sheet of this set waiting for its Cut Sheet press (the set waits with it): named, and the words lead there
+    const uncut = st.setId && !st.committedAt ? allSheets().find(p => p.setId === st.setId && window.RoseStock?.waiting?.(p)) : null;
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
+          ${uncut ? `<div class="holds"><b>Waiting:</b> <button type="button" class="cutSheetLink" data-cut-sheet title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(uncut))}</button></div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
+    const cb = card.querySelector("[data-cut-sheet]"); if (cb) cb.onclick = () => RoseStock.showCut(uncut);
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
     // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
@@ -6208,7 +6216,9 @@ const RunCtl = window.RunCtl = (() => {
   }
   function runView(r) {
     const reviewN = Review.count(), engN = Engrave.pendingCount();
-    const waiting = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · "), waitingFor = waiting || "nothing";
+    // a Rose Gold sheet whose set waits for its Cut Sheet press: named, and the words open the sheet at its button
+    const cut = allSheets().find(p => p.runId === r.runId && window.RoseStock?.waiting?.(p)), asked = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean);
+    const waiting = asked.concat(cut ? ["Cut Sheet"] : []).join(" · "), waitingFor = asked.concat(cut ? [`<button type="button" class="cutSheetLink" data-rbcut title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(cut))}</button>`] : []).join(" · ") || "nothing";
     // with nothing for a person to do, say what the run is waiting for: lines on sheets that have not been released yet
     const onCards = r.status === "processed" ? Orders.rows().filter(x => x.state === "pooled").length : 0;
     const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
@@ -6286,6 +6296,7 @@ const RunCtl = window.RunCtl = (() => {
     const ask = f => { close(); requestAnimationFrame(() => setTimeout(f)); };
     if (b.dataset.rbres) { close(); B.openRuns = null; resumeRun(b.dataset.rbres).catch(err => toast(err.message, "bad", 7000)); }
     else if (b.dataset.cxack) window.AutoCancel?.ack(b.dataset.cxack, b.closest(".rbCxItem"));   // (the menu stays open on what is left)
+    else if (b.hasAttribute("data-rbcut")) { close(); const sh = r && allSheets().find(p => p.runId === r.runId && window.RoseStock?.waiting?.(p)); if (sh) RoseStock.showCut(sh); }
     else switch (b.id) {
       case "rbNow": close(); cancelNext(); if (clearRunState() === false) return; start({ mode: "auto" }).catch(err => toast(err.message, "bad")); break;
       case "rbCancelNext": close(); cancelNext(); break;
@@ -6897,7 +6908,9 @@ const CustomSheet = window.CustomSheet = (() => {
   function setQty(ck, id, d) { const e = all()[ck]; if (!e || e.sent) return; const F = e.files.find(x => x.id === id); if (!F) return; F.qty = Math.max(1, Math.min(99, (F.qty || 1) + d)); changed(); }
 
   /* ── Send to Sheet ── */
-  async function send(it) {
+  /** how.from: the button pressed in a window (the order window's Send to Sheet): the design lifts off it, and the
+   *  window steps out of the way and comes back as it was (SendTour); no copy of the card behind it is lifted. */
+  async function send(it, how = {}) {
     const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
     // sent once, for good: a second press (the window in the moment before it closes, another card of the order, during
     // or after the tour) sends nothing again (Paul, 29 Sep: a design went on its sheet twice)
@@ -6907,6 +6920,8 @@ const CustomSheet = window.CustomSheet = (() => {
     const why = notReady(e);
     // (a card of another Review tab has no drop box of its own, to stay as short as it was: its window opens, to drop in)
     const hint = cardNode(ck)?.querySelector(".cuHint");
+    // (pressed in a window: said there, never a second window over it)
+    if (how.from && (why || !employeeName())) { toast(why || "Your name is needed first", "bad", 5000); return; }
     if (why) { if ((e && e.files.length) || !hint) { open(it, { from: cardNode(ck) }); nudge(); } else { lit(hint, "cuNudge"); toast(why, "bad", 5000); } return; }
     const who = employeeName(); if (!who) { open(it, { askName: true, from: cardNode(ck) }); return; }
     const rows = openLines(it);
@@ -6924,7 +6939,7 @@ const CustomSheet = window.CustomSheet = (() => {
       for (const F of e.files) for (let q = 0; q < F.qty; q++) { const r = rows[q % rows.length]; const { charms } = await read(F); for (let i = 0; i < charms.length; i++) lines[r.key].push({ f: F.id, i }); }
       // the Send to Sheet tour (charm-nest-tour.js, Paul 29 Sep 00:25) keeps where the order started: a lifted copy of
       // its card, made before the list is redrawn without it
-      const touring = tourOk(); if (touring) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
+      const touring = tourOk(); if (touring && !how.from) try { snap = SendTour.snap(cardNode(ck)); } catch (_) {}
       e.sent = { at: Date.now(), by: who, lines };
       // a Review card's question (an unknown SKU, an option): answered by its own designs, recorded with who sent them
       if (it.onDone) { try { it.onDone(who, "sheet"); } catch (_) {} }
@@ -6948,11 +6963,11 @@ const CustomSheet = window.CustomSheet = (() => {
       // the tour: the order seen leaving the Review list for the Nest tab, onto each sheet it is on, one at a time, and
       // back home; the placement above is done already, the tour only shows it. toSheets stays the quiet way.
       const plan = touring && tourOk() ? tourPlan(rows, e) : null;
-      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: snap || cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
+      if (plan && (plan.legs.length || plan.waiting.length)) { flying = true; SendTour.play({ from: how.from || snap || cardNode(ck), home: cardNode(ck), rid: e.rid, legs: plan.legs, waiting: plan.waiting, words, pieces: n, delay: shutting ? 480 : 0 }).catch(() => {}); }
       else {
         if (snap && snap.ghost) snap.ghost.remove();
         if (held) toast(`${e.rid}: sent, but not placed yet — ${held.reason}. It is tried again with the next update.`, "bad", 9000);
-        else if (toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;
+        else if (!how.from && toSheets(ck, n, words, shutting ? 700 : 0)) flying = true;   // (under a window it would not be seen)
         else toast(words, "ok", 6000);
       }
     } catch (err) {
@@ -8210,7 +8225,7 @@ const Review = window.Review = (() => {
     const rid=String(rec?.receiptId || it.rid || '').replace(/\D/g,'');
     if(!row&&rid&&window.OrderWin){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.openOrder(rid,{from:node});
-      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
+      node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
     if(cached?.node){const pair=cached.node.querySelector('.comparePair');if(pair)node.querySelector('.comparePair')?.replaceWith(pair);}
     reviewRows.set(it.key,{stamp,node});return node;
@@ -8225,9 +8240,10 @@ const Review = window.Review = (() => {
     const who=CustomPrint.wire(node,cx);if(who)node._refocus=()=>who.focus({preventScroll:true});
     // the order itself, in full (the order window: what was bought, when, what the customer wrote, the team's and the
     // customer's conversations and the order's notes): a click anywhere on the card but its pictures and its controls
+    // (never a double-click's second click: after Send to Sheet it landed on the card redrawn, and opened it over the tour)
     if(row){node.tabIndex=0;node.title='Open the order — everything about it, its conversations and its notes';
       const openIt=()=>OrderWin.open(row.key);
-      node.onclick=e=>{if(e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
+      node.onclick=e=>{if(e.detail>1||e.target.closest('button,a,input,select,textarea,label,.comparePair,.cuDesigns'))return;openIt();};
       node.onkeydown=e=>{if(e.target===node&&(e.key==='Enter'||e.key===' ')){e.preventDefault();openIt();}};}
   }
   /** A decision answered, under Completed: who answered it and when (kept with the workspace, the newest 200). */
@@ -8900,6 +8916,8 @@ const OrderWin = window.OrderWin = (() => {
       unmountTimeline(); W.row = null; W.rows = null; W.listed = null; W.look++; sheetReset(); W.dlg.classList.remove("owCancelled"); lookDone();
       try { window.CustomerMail?.orderClosed(); } catch (_) {}
     });
+    // back from a Send to Sheet flight that took the view out of the way (SendTour): drawn as it is now, still unseen
+    W.dlg.addEventListener("tour:back", () => { if (W.dlg.open && !W.closing) tryDo(paint); });
     byId("owPhoto").onclick = e => e.currentTarget.classList.toggle("zoom");
     byId("owCopy").onclick = async () => { const r = rowOf(W.key); const sku = r && ((r.spec && r.spec.designSku) || r.line.sku); if (!sku) return; try { await navigator.clipboard.writeText(sku); toast("SKU copied", "ok", 1800); } catch (_) {} };
     byId("owWhoBtn").onclick = () => { askEmployee(); paintWho(); };
@@ -9294,11 +9312,36 @@ const OrderWin = window.OrderWin = (() => {
       box.appendChild(b); fix.appendChild(box);
     }
     if (inPull(r.key)) paintCustom(r); else { const bar = byId("owCustom"); if (bar) { bar.hidden = true; bar.innerHTML = ""; bar._stamp = ""; } }
+    paintSend(r);
     foldTo(fold);
     const sw = byId("owSkip"); sw.setAttribute("aria-checked", r.state === "skipped" ? "true" : "false");
     paintNow(r);
     paintWho();
     if (W.view === "sheet" && SV.rid && SV.rid !== rid) sheetShow();
+  }
+  /** Send to Sheet in the header, on every tab, while the order's own designs are ready and not sent: its Review card's
+   *  button. The design lifts off it and the view steps out of the way for the flight, then comes back as it was (SendTour,
+   *  Paul 29 Sep 01:30); nothing opens over it (a design still to fix, or a name to ask, is said in a toast). */
+  function paintSend(r) {
+    let b = byId("owSendSheet"); if (b && b._busy) return;
+    const it = inPull(r.key) && window.CustomSheet ? tryDo(() => Review.customItemFor(r.key) || Review.actFor(r.key)) : null, c = it ? tryDo(() => CustomSheet.cardOf(it)) : null;
+    if (!(c && c.files.length && !c.sent && c.open && !c.why && !c.busy)) { if (b) b.hidden = true; return; }
+    if (!b) { const now = byId("owNow"); if (!now) return; b = el("button", "btn gold xs", "Send to Sheet"); b.type = "button"; b.id = "owSendSheet"; b.title = "Put every design on the next open sheet of its metal"; now.before(b); }
+    b.hidden = false; b._it = it; b.disabled = false; if (b.textContent !== "Send to Sheet") b.textContent = "Send to Sheet";
+    b.onclick = async () => {
+      if (b._busy || !(employeeName() || askEmployee())) return;
+      b._busy = true; b.disabled = true; b.innerHTML = '<span class="spin"></span>Sending…';
+      // (what the send says when it cannot go is a toast, under this window: said here, beside the button, instead)
+      const was = new Set(document.querySelectorAll("#toasts .toast.bad"));
+      try { await CustomSheet.send(b._it, { from: b }); }
+      finally {
+        // (while the view is out of the way nothing in it is drawn: it is drawn as it comes back, tour:back)
+        b._busy = false;
+        if (!W.dlg._tourHeld) { b.disabled = false; b.textContent = "Send to Sheet"; const r2 = W.dlg.open && rowOf(W.key); if (r2) paintSend(r2); }
+        const said = [...document.querySelectorAll("#toasts .toast.bad")].filter(x => !was.has(x)).pop();
+        if (said && W.dlg.open && !W.closing && !W.dlg._tourHeld && b.isConnected && window.Motion) tryDo(() => { const n = Motion.note(b.hidden ? byId("owNow") || b : b, { text: said.dataset.msg, tone: "bad", ms: 7000 }); if (n) W.dlg.appendChild(n); });
+      }
+    };
   }
   /** A custom order's own line: what kind it is, where it stands, and its QR label — the same
    *  sorting-station sticker, printed and completed as from its Custom Orders card (CustomPrint). One line, no window. */
@@ -9553,7 +9596,7 @@ const OrderWin = window.OrderWin = (() => {
     const sheets = [...pages].map(pg => {
       const placed = (pg.placements || []).length;
       const rep = dec && R.sheet ? tryDo(() => R.sheet(Object.assign({}, pg, { roseStockId: pg.roseStock && pg.roseStock.id, id: pg.sheetId, poolIds: (pg.placements || []).map(p => ((pg.charms || []).find(c => c.id === p.id) || {}).poolId).filter(Boolean), placedCount: placed, outputs: pg.cloud || {}, engraving: dec }))) : null;
-      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt };
+      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt, uncut: (window.RoseStock && tryDo(() => RoseStock.waiting(pg))) || 0 };
     });
     return { lines, sheets };
   }
@@ -10396,6 +10439,9 @@ const RunHistory = window.RunHistory = (() => {
     const s = String(g.status || "").toLowerCase(), r = runOf(g);
     let [tone, word, why] = STATUS[s] || (s.startsWith("complete") ? STATUS.complete : ["neutral", s || "unknown", ""]);
     if (s === "stopped" && r && r.stoppedBy) why = `Stopped · ${r.stoppedBy}`;
+    // a Rose Gold sheet of the set waiting for its Cut Sheet press: the set waits with it
+    const uncut = g.setId && !g.committedAt && !s.startsWith("complete") ? allSheets().find(p => p.setId === g.setId && window.RoseStock?.waiting?.(p)) : null;
+    if (uncut) { tone = "warn"; word = "waits for Cut Sheet"; why = RoseStock.waitWords(uncut); }
     return { tone, word, why };
   }
   /** Why the cards cannot take another set just now (Recall.open's own guards, asked before it is pressed). */

@@ -22,7 +22,7 @@ await test('no browser pop-ups for campaign edits, the activity log, deleting a 
 await test('plain words: current tab names, no decorative emoji in working UI, readable date mismatch',()=>{
   assert.doesNotMatch(html,/✨|thinking…|\\u2728/,'no sparkles');
   assert.doesNotMatch(html,/enable from Command Center|The Command Center and campaign window/);
-  assert.match(html,/enable it in Overview\./);assert.match(html,/Overview and the campaign window use the same product report\./);
+  assert.match(html,/Overview and the campaign window use the same product report\./);
   assert.doesNotMatch(server,/Enable the campaign from Campaigns|Edit them from Campaigns|in Command Center/);
   assert.match(server,/Enable the campaign in Overview, where the daily ceiling and monthly stop are checked\./);
   assert.match(server,/Delete it from the campaign list in Opportunities first/);assert.doesNotMatch(repair,/console Performance tab/);
@@ -41,7 +41,7 @@ Object.assign(w,{DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'77',budget:35,stat
   BUDGET_OVERRIDES:{},END_DATE_OVERRIDES:{},REPORT_CAMPAIGN_OPEN:new Set(),_cmdRestoring:false,_MON:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
   api:async(action,body)=>{calls.push([action,JSON.parse(JSON.stringify(body))]);const r=reply[action];return typeof r==='function'?r(body):r||{ok:true};},
   toast:m=>toasts.push(String(m)),renderDiag(){},loadCampaignTree(){}});
-w.eval(['esc','cmdAttr','money','rpYmd','rpParse','fmtMon','cmdOpening','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
+w.eval(['esc','cmdAttr','money','reportNumber','rpYmd','rpParse','fmtMon','cmdOpening','wireCampRows','cmdEditRow','cmdEditMark','cmdEditOpen','cmdEditClose','cmdEditPaint','cmdEditFail','cmdEditSaved','cmdEditBudget','cmdEditSchedule','cmdEditStatus'].map(pick).join('\n'));
 const camp=()=>w.cmdMetrics[0];
 w.renderCommand=function(){const c=camp(),snap=d.getElementById('snapshot');
   snap.innerHTML='<table><tbody><tr class="crow" data-i="0" data-cid="77"><td>Autumn necklaces</td></tr><tr class="cdet" data-d="0" data-cid="77" style="display:none"><td><div class="campaignSettings"><button class="btn ghost sm bge" data-id="77" data-b="'+c.budget+'" data-res="customers/1/campaignBudgets/5">'+c.budget+'</button><button class="btn ghost sm sce" data-id="77" data-end="'+(c.endDate||'')+'" data-name="Autumn necklaces">schedule</button><button class="btn ghost sm cst" data-id="77" data-name="Autumn necklaces" data-to="'+(c.status==='ENABLED'?'PAUSED':'ENABLED')+'">'+(c.status==='ENABLED'?'Pause campaign':'Enable campaign')+'</button></div><div class="adlvl"></div></td></tr></tbody></table>';
@@ -55,13 +55,13 @@ await test('the daily budget edits in place, checks its input, asks before a lar
   assert.match(box().textContent,/New daily budget for this campaign \(CAD\)/);assert.equal($('#cmdEditIn').value,'35');assert.equal($('.bge').getAttribute('aria-expanded'),'true');
   type('lots');submit();assert.equal(msg(),'Budget must be a positive number');assert.equal(calls.length,0);
   type('50');w.renderCommand();assert(box(),'a refresh keeps the open editor');assert.equal($('#cmdEditIn').value,'50','and what was typed');
-  submit();assert.match(box().textContent,/That’s a 43% change \(\$35 → \$50\)\. Large budget jumps can reset a Smart Bidding campaign’s learning\. Apply anyway\?/);assert.equal(calls.length,0);
+  submit();assert.match(box().textContent,/That’s a 43% change \(\$35 CAD → \$50 CAD\)\. Large budget jumps can reset a Smart Bidding campaign’s learning\. Apply anyway\?/);assert.equal(calls.length,0);
   press('back');assert.equal($('#cmdEditIn').value,'50');submit();
   reply.setBudget={error:'Budget is above the daily ceiling.'};press('apply');await tick();await tick();
   assert.equal(msg(),'Budget change failed: Budget is above the daily ceiling.','a failed save keeps the editor with the reason');
   reply.setBudget={ok:true};press('apply');await tick();await tick();
   assert.deepEqual(calls.at(-1),['setBudget',{id:'77',budget:50,budgetRes:'customers/1/campaignBudgets/5'}]);assert.equal(box(),null,'saved: the editor closes');
-  assert.equal(w.BUDGET_OVERRIDES['77'].budget,50);assert.equal($('.bge').textContent,'50','the row shows the new budget');assert.equal(toasts.at(-1),'Budget $35 → $50');
+  assert.equal(w.BUDGET_OVERRIDES['77'].budget,50);assert.equal($('.bge').textContent,'50','the row shows the new budget');assert.equal(toasts.at(-1),'Budget $35 CAD → $50 CAD','the budget names its currency');
   $('.bge').click();type('45');submit();await tick();await tick();assert.deepEqual(calls.at(-1),['setBudget',{id:'77',budget:45,budgetRes:'customers/1/campaignBudgets/5'}],'small changes save without the extra question');
 });
 
@@ -81,6 +81,8 @@ await test('pausing asks in place, Escape cancels, and the pause goes through se
   box().dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(box(),null);assert(d.activeElement.classList.contains('cst'),'focus returns to the button');
   $('.cst').click();press('yes');assert.match(box().querySelector('[data-k="yes"]').textContent,/Pausing…/,'the wait shows on the button');await tick();await tick();
   assert.deepEqual(calls.at(-1),['setStatus',{id:'77',status:'PAUSED'}]);assert.equal($('.cst').textContent,'Enable campaign');assert.equal(toasts.at(-1),'Paused ✓ — Autumn necklaces');
+  reply.setStatus={ok:true,endDate:'2026-11-19'};$('.cst').click();assert.match(box().textContent,/Enable “Autumn necklaces”\? It will start spending its daily budget\./);press('yes');await tick();await tick();
+  assert.deepEqual(calls.at(-1),['setStatus',{id:'77',status:'ENABLED'}]);assert.equal(toasts.at(-1),'Enabled ✓ — Autumn necklaces · runs to 2026-11-19','enabling says how long it now runs');
 });
 dom.window.close();
 
@@ -126,18 +128,18 @@ await test('a launched draft settles: counts roll, the card folds away, then the
   s.window.close();
 });
 
-await test('a researched occasion date links its page; research lists the pages it read under Research details',()=>{
+await test('a researched occasion date names its source; research lists the pages it read under Research details',()=>{
   const r=new JSDOM('<!doctype html><body><div id="scanAudit"></div></body>',{runScripts:'outside-only'}),rw=r.window,rd=rw.document;let channel='search';
   Object.assign(rw,{$:q=>rd.querySelector(q),SCAN_AUDIT:null,OPP_RECONCILIATION:null,currentResearchChannel:()=>channel,researchState:()=>({status:'ready',checkedAt:Date.now()-3600000,message:'Research results are saved.'}),
     researchCheckChannel:x=>x.channel,auditStatus:()=>({color:'green',icon:'✓'}),auditTime:ms=>ms+' ms',friendlyResearchError:e=>e,timeago:()=>'1h',toast(){}});
-  rw.eval(['esc','cmdAttr','oppSourceUrl','oppSourceName','oppSourceLink','renderScanAudit'].map(pick).join('\n'));
-  const link=rw.oppSourceLink({source:'web-verified research',reference:'Holiday calendar lists "Halloween"',url:'https://www.timeanddate.com/holidays/us/halloween?x="y"'});
-  assert.match(link,/^<a class="srcLink" href="https:\/\/www\.timeanddate\.com\/holidays\/us\/halloween\?x=%22y%22" target="_blank" rel="noopener noreferrer" title="[^"]+">Holiday calendar lists "Halloween" ↗<\/a>$/);
+  rw.eval(['esc','cmdAttr','oppSourceUrl','oppSourceName','renderScanAudit'].map(pick).join('\n'));
+  assert.equal(rw.oppSourceName({source:'web-verified research',reference:'Holiday calendar lists "Halloween"',url:'https://www.timeanddate.com/holidays/us/halloween'}),'Holiday calendar lists "Halloween"');
   assert.equal(rw.oppSourceName({reference:'https://www.example.org/dates',url:'https://www.example.org/dates'}),'example.org','a bare link reads as its site');
-  assert.equal(rw.oppSourceLink({reference:'Almanac',url:'javascript:alert(1)'}),'Almanac','only web pages are linked');assert.equal(rw.oppSourceName({}),'');
-  assert.match(pick('planBlock'),/confirmed by web research"\+\(oppSourceName\(dc\)\?": "\+oppSourceLink\(dc\):""\)/,'the explanation carries the link');
+  assert.equal(rw.oppSourceName({reference:'Almanac',url:'javascript:alert(1)'}),'Almanac');assert.equal(rw.oppSourceName({}),'');
+  for(const url of ['javascript:alert(1)','https://evil.example@good.example/x','//cdn.example/x',' https://lead.example/x','ftp://files.example/x'])assert.equal(rw.oppSourceUrl({url}),null,'not linked: '+url);
+  assert.match(pick('planBlock'),/confirmed by web research"\+\(oppSourceName\(dc\)\?": "\+esc\(oppSourceName\(dc\)\):""\)/,'the explanation names the source; the card itself links the page');
   assert.match(pick('oppCard'),/confirmed by web research'\+\(oppSourceName\(dc\)\?': '\+oppSourceName\(dc\):''\)/,'the date tooltip names the source');
-  const audit={checks:[{id:'keyword_planner_pool',channel:'search',label:'Keyword Planner demand',status:'ok'}],sources:[{url:'https://www.timeanddate.com/holidays/us/halloween',title:'Halloween 2026',pageAge:'2 weeks ago'},{url:'javascript:alert(1)',title:'bad'},{url:'https://en.wikipedia.org/wiki/Thanksgiving',title:''}]};
+  const audit={checks:[{id:'keyword_planner_pool',channel:'search',label:'Keyword Planner demand',status:'ok'}],sources:[{url:'https://www.timeanddate.com/holidays/us/halloween',title:'Halloween 2026',pageAge:'2 weeks ago'},{url:'javascript:alert(1)',title:'bad'},{url:'https://user@en.wikipedia.org/x',title:'sign-in part'},{url:'https://en.wikipedia.org/wiki/Thanksgiving',title:''}]};
   rw.renderScanAudit(audit);const pages=rd.querySelector('.researchTechnical .scanPages');assert(pages,'pages sit inside Research details');assert.equal(pages.open,false,'folded by default');
   assert.equal(pages.querySelector('summary').textContent,'Pages searched · 2');assert.deepEqual([...pages.querySelectorAll('a')].map(a=>[a.textContent,a.target,a.rel]),[['Halloween 2026','_blank','noopener noreferrer'],['en.wikipedia.org','_blank','noopener noreferrer']]);
   pages.open=true;rw.renderScanAudit();assert.equal(rd.querySelector('.scanPages').open,true,'an opened list stays open through a refresh');

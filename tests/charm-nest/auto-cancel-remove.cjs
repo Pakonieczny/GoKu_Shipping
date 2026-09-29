@@ -16,7 +16,7 @@ const fs = require('fs'), path = require('path'), assert = require('assert');
 const root = path.join(__dirname, '../..');
 const pwDir = process.argv[2] || process.env.PW_DIR || path.join(root, 'node_modules');
 const { chromium } = require(path.join(pwDir, 'playwright-core'));
-const { start } = require('./bridge-server.cjs');
+const { start, Timestamp } = require('./bridge-server.cjs');
 
 const A = '4100000001', B = '4100000002', C = '4100000003', D = '4100000004', E = '4100000005';
 const pid = (rid, tx, copy) => `${rid}_${5000000000 + tx}_${copy}`;
@@ -32,7 +32,8 @@ const GOLD = [[A, 1, 1], [A, 1, 2], [B, 2, 1], [C, 3, 1]], SILVER = [[D, 4, 1], 
   saved('gold-open-1', 'gold', GOLD); saved('silver-cut-1', 'silver', SILVER);
   for (const [r, t, c] of GOLD) st.put(POOL, pid(r, t, c), { poolId: pid(r, t, c), orderId: r, sheetId: 'gold-open-1', state: 'placed', material: 'gold' });
   for (const [r, t, c] of SILVER) st.put(POOL, pid(r, t, c), { poolId: pid(r, t, c), orderId: r, sheetId: 'silver-cut-1', state: 'committed', material: 'silver' });
-  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [] }, extra), false);
+  // (every writer of a cancel record stamps createdAt, the server's time: cancelList reads what was written since by it)
+  const cancel = (rid, by, extra) => st.put(CANCELLED, rid, Object.assign({ orderId: rid, by, why: '', at: Date.now(), sheets: [], lines: [], createdAt: Timestamp.now() }, extra), false);
 
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox'] });
   const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
