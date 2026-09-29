@@ -12,6 +12,30 @@ const capacityRefusals = (record) => Number(record?.capacityRefusals || 0) +
   (quotaFailure(record?.providerError) ? 1 : 0);
 const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha256')
   .update(JSON.stringify([session, display, sets.map(s => s.outputBasePath).sort()])).digest('hex').slice(0, 40);
+// OpenAI sometimes accepts a job and never starts it: 0 of 6 images for 6 to
+// 17 hours while jobs sent after it finish in minutes (about one job in four
+// on 2026-09-27 and 28, 30 each day). Each one holds one of the thirty places
+// until OpenAI expires it at 24 hours, so the whole queue stopped. After
+// STALL_RESTART_MS with nothing done the collector cancels it (nothing was
+// made, so nothing is billed) and queues its set again, at most
+// STALL_RESTART_LIMIT times per set. Normal jobs finish in 5 minutes to about
+// 2 hours.
+const STALL_RESTART_MS = 3 * 60 * 60 * 1000;
+const STALL_RESTART_LIMIT = 5;
+const toMillis = (value) => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
+// A one-set listing job that has done nothing at all since it was sent.
+// `live` is a fresh provider answer: { providerStatus, batchStats }.
+function neverStarted(record, live, now) {
+  const stats = live?.batchStats || {};
+  const sentAt = toMillis(record?.createdAt);
+  return String(record?.batchName || '').startsWith('batch_') && !record.locallyQueued && !record.collected &&
+    ['validating', 'in_progress'].includes(live?.providerStatus) &&
+    Number(stats.requestCount || 0) > 0 &&
+    !Number(stats.successfulRequestCount || 0) && !Number(stats.failedRequestCount || 0) &&
+    sentAt > 0 && now - sentAt >= STALL_RESTART_MS &&
+    Number(record.stallRestarts || 0) < STALL_RESTART_LIMIT &&
+    record.sets?.length === 1 && record.sets[0]?.setKind !== 'charm_maker';
+}
 
 function admissionControl(db, collection, timestamp, now = Date.now) {
   const gate = db.collection('LG1_Config').doc('batchAdmission');
@@ -99,4 +123,5 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   }
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
-module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT };
+module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
+  neverStarted, STALL_RESTART_MS, STALL_RESTART_LIMIT };
