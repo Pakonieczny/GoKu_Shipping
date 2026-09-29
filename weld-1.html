@@ -1013,11 +1013,52 @@
   <script src="order-timeline.js?v=20260928-ov3"></script>
   <script src="station-timeline.js?v=20260928-fxS"></script>
   <script>
+    /* Who welds: the person signed in with this station's 6-digit PIN login (Brites_Orders/"Employee Numbers"), by the
+       name the login stored. Never the typed "Employee Name" field (a guess) and never an earlier person: the timeline
+       client is told the current name each time, so a scan with nobody signed in says so instead of the last one's name.
+       The login's only id is the PIN itself, so no employee id is recorded. */
+    function weldSignedIn() {
+      let name = "";
+      try { if (localStorage.getItem("employee_id")) name = String(localStorage.getItem("employee_name") || "").trim().slice(0, 80); } catch (_) {}
+      try { if (window.OrderTimeline) OrderTimeline.config({ by: name }); } catch (_) {}
+      return name;
+    }
+    /* Welding is for stud earrings only (read as the sorter's rail reads a piece: a stud, never a huggie, a hoop or a
+       charm only) */
+    const WELD_STUD = /\bstuds?\b/i, WELD_NOT_STUD = /\b(?:huggies?|hoops?|necklaces?|bracelets?|anklets?|key\s*(?:chains?|rings?))\b|\bcharms?\s+only\b/i;
+    function weldIsStud(t) {
+      try {
+        const text = [t && t.title, ...((t && Array.isArray(t.variations)) ? t.variations.map(v => v && (v.formatted_value || v.value)) : [])].filter(Boolean).join(" ");
+        return WELD_STUD.test(text) && !WELD_NOT_STUD.test(text);
+      } catch (_) { return false; }
+    }
+    /* The weld is done: the station has no "weld done" button, and its flow is "weld the studs, then scan at the Welding
+       station", so the scan that loads the order here (phone scanner weld-scan-1 or typed) completes it. One `welded` for
+       the order; on an order that mixes stud earrings with other pieces, one per stud line (its transaction), so only the
+       studs are stamped. Uses the receipt the page already loaded (no Etsy call); fire-and-forget, never throws. */
+    function weldDone(orderNumber, orderData) {
+      try {
+        if (!window.StationTimeline) return;
+        const by = weldSignedIn(), data = by ? {} : { signedIn: false };
+        const lines = Array.isArray(orderData && orderData.transactions) ? orderData.transactions : [];
+        const studs = lines.filter(weldIsStud);
+        if (lines.length) { data.lines = lines.length; data.studs = studs.length; }
+        const tids = studs.map(t => String((t && t.transaction_id) || "").replace(/\D/g, "")).filter(Boolean);
+        const id = String(orderNumber || "").replace(/\D/g, "").slice(0, 30);
+        if (id && studs.length && studs.length < lines.length && tids.length === studs.length && window.OrderTimeline) {
+          const at = Date.now(), m = Math.floor(at / 60000);
+          studs.forEach((t, i) => OrderTimeline.record({
+            orderId: id, type: "welded", at, by, station: "welding", device: "weld-1", transactionId: tids[i],
+            id: `weld-1-${id}-welded-${tids[i]}-${m}`, data,
+            text: `Welded at Welding · ${String((t && t.title) || "stud earrings").slice(0, 120)}`
+          }));
+          return;
+        }
+        StationTimeline.did("welded", orderNumber, "Welded at Welding", data);
+      } catch (_) {}
+    }
     try {
-      StationTimeline.init({
-        station: "welding", device: "weld-1",
-        getEmployee: () => localStorage.getItem("employee_name") || (document.getElementById("employeeName") || {}).value || ""
-      });
+      StationTimeline.init({ station: "welding", device: "weld-1", getEmployee: weldSignedIn });
     } catch (_) {}
   </script>
 
@@ -2547,11 +2588,12 @@ function metalToBadge(label){
 
         const orderData = await pullEtsyOrderDetails(orderNumber);
         /* Order timeline: record the scan (who, where, how) and check for a cancel; a cancelled order raises the alert.
-           Not awaited, so the order loads as before. The weld station has no "weld done" button, so a scan here is the weld. */
+           Not awaited, so the order loads as before. The weld station has no "weld done" button, so a scan here is the weld
+           (weldDone: who, and the stud lines). */
         try {
           if (window.StationTimeline) {
             StationTimeline.scanned(orderNumber, { how: stHow, extra: { etsyStatus: (orderData && orderData.status) || "" } })
-              .then(r => { if (r && !r.cancelled) StationTimeline.did("welded", orderNumber); })
+              .then(r => { if (r && !r.cancelled) weldDone(orderNumber, orderData); })
               .catch(() => {});
           }
         } catch (_) {}
