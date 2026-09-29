@@ -18,7 +18,7 @@ function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}
   rows ||= [{key:'order:1',order:{receiptId:'order'},state:'written',poolIds:['p']}];
   sets ||= [{setId:'pending',sheetIds:['a'],blocked:true},{setId:'ready',sheetIds:['b']}];
   const asyncCall=name=>async()=>{calls.push(name);};
-  const ctx={window:{},B:{run:r},S:{cloud:{ok:true},settings:{autoCommit}},O,Date,Promise,Map,Set,JSON,queueMicrotask,setTimeout,clearTimeout,setInterval,clearInterval,
+  const ctx={window:{},B:{run:r,maps:{}},S:{cloud:{ok:true},settings:{autoCommit}},O,Date,Promise,Map,Set,JSON,queueMicrotask,setTimeout,clearTimeout,setInterval,clearInterval,
     allSheets:()=>pages,Orders:{rows:()=>rows,lineRecord:x=>[x.key,x],revalidate:async()=>{calls.push('revalidate');return{changed:[]};},unclaim:asyncCall('unclaim'),pull:async()=>rows},
     Pool:{sheetOf:()=>null,addAll:async()=>0},Engrave:{items:()=>jobs,pendingCount:()=>state.pending,classifyAll:asyncCall('classify'),fitAll:asyncCall('fit'),
       // the words are read and fitted beside the run: the step only starts that work (see Engrave.background)
@@ -29,7 +29,10 @@ function fixture({pending=1, review=1, autoCommit='on', pages=[], sets, rows}={}
       commit:async s=>{assert(!s.blocked,'unready set cannot commit');calls.push('commit:'+s.setId);s.committedAt=Date.now();return{completed:[s.setId],refused:[]};}},
     api:async(_,b)=>{calls.push('save');return{};},Session:{schedule(){}},LiveStrip:{render(){}},Arrivals:{start:()=>calls.push('arrivals')},
     agent(){},toast(){},notifyPerson(){},ding(){},CN:{renderCard(){}},sheetName:s=>s.metal,
-    startNest:p=>{calls.push('nest:'+p.sheetId);p.status='nesting';},sheetDirty:p=>{delete p.runHold;p.problem=null;p.dirty=true;p.status='ready';},METALS:[]};
+    startNest:p=>{calls.push('nest:'+p.sheetId);p.status='nesting';},sheetDirty:p=>{delete p.runHold;p.problem=null;p.dirty=true;p.status='ready';},METALS:[],
+    // the slice also holds Custom Orders (CustomPrint's data-cu-print click listener, CustomSheet's window blur
+    // listener, CustomRead's store named by the side of the sandbox): a page with no buttons, production's side
+    document:{addEventListener(){},querySelector:()=>null,querySelectorAll:()=>[],getElementById:()=>null},addEventListener(){},WORKSPACE_SANDBOX:false};
   vm.createContext(ctx);vm.runInContext(controller,ctx);
   const ctl=ctx.window.RunCtl;
   return {ctx,ctl,r,calls,state,pages,sets,rows,jobs};

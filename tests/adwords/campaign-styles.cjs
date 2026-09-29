@@ -11,7 +11,7 @@ const fixture=path.join(__dirname,'design-publication.cjs'),source=fs.readFileSy
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
 vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
 (async()=>{
- const E=ctx.factory(),f=ctx.memoryFactory(),root=f.db.collection('workspaces').doc('test'),sharp=require('../../node_modules/sharp');
+ const E=ctx.factory(),f=ctx.memoryFactory(),root=f.db.collection('workspaces').doc('test'),sharp=require('sharp');
  const assets={};for(const [shape,width,height] of [['square',600,600],['landscape',1200,628],['portrait',600,750]]){const bytes=await sharp({create:{width,height,channels:3,background:'#ddd'}}).jpeg().toBuffer(),p='Brites_GAds_Creative/test/'+shape+'.jpg';assets[shape]={path:p,width,height,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))};f.files.set(p,bytes);}
  const copy={headlines:['Peach Charm','For Your Favorite Foodie','A Playful Gift'],longHeadlines:['Give a playful peach charm'],descriptions:['Shop the peach charm at Brites Jewelry.','Choose your favorite metal.']},w={context:{itemIds:['shopify_US_1_2'],handle:'charms',feedLabel:'US'},settings:{productId:'1',groupRef:'g'},job:{result:{assets}}};await root.set(w);
  const item={sourceHash:'source',designReview:{workspaceId:'test',copy,layoutReview:{jobId:'eai_test',reviewVersion:11}}};
@@ -31,7 +31,10 @@ vm.runInContext(source+'\nthis.factory=engine;this.memoryFactory=memory;',ctx);
  const wide=plan.payload.generatedAssets.find(a=>a.asset.width===1200&&a.asset.height===300);assert(wide&&wide.asset.bytes<=5120*1024);assert.equal(rda.logoImages.length,1);assert.equal(rda.logoImages[0].asset,wide.tempResourceName);assert.equal(rda.squareLogoImages.length,1);
  assert.equal(ops.filter(o=>o.assetGroupAssetOperation?.create.fieldType==='LANDSCAPE_LOGO'&&o.assetGroupAssetOperation.create.asset===wide.tempResourceName).length,1);
  // The plan states each campaign's bidding exactly as built.
- const bidding=Object.fromEntries(plan.summary.campaigns.map(c=>[c.style,c.bidding]));assert.equal(bidding.pmax,'Maximize conversion value');assert.equal(bidding.fixed_display,'Maximize conversions');assert.equal(bidding.responsive_display,'Maximize conversions');
+ const bidding=Object.fromEntries(plan.summary.campaigns.map(c=>[c.style,c.bidding]));assert.equal(bidding.pmax,'Maximize conversion value · no target ROAS until it has about 6 weeks and 30 conversions in 30 days');assert.equal(bidding.fixed_display,'Maximize conversions');assert.equal(bidding.responsive_display,'Maximize conversions');
+ // A run length is kept per campaign and counts from the day it is enabled (applyApproval and setCampaignStatus move the end date).
+ const timed=await E.get('_prepareCampaignStyles')({item,context:{w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach',offerIds:['shopify_US_1_2']}},choice:R.selection(['pmax'],{pmax:10},['2840'],{pmax:30}),identity:'b'.repeat(64)}),timedCampaign=timed.payload.mutateOperations.find(o=>o.campaignOperation).campaignOperation.create;
+ assert.equal(timed.payload.meta.plannedDays[timedCampaign.resourceName],30);assert.equal(timed.summary.campaigns[0].days,30);assert(!plan.payload.meta.plannedDays&&plan.summary.campaigns.every(c=>c.days===null));
  assert('audienceSignal' in plan.summary.campaigns.find(c=>c.style==='pmax'));assert(/may make one from your images/.test(plan.summary.videoStatus));
  assert.equal(ops.filter(o=>o.adGroupAdOperation?.create.ad.imageAd).length,1);
  const refs=new Set(ops.map(o=>Object.values(o)[0]?.create?.resourceName).filter(Boolean));

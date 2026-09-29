@@ -141,7 +141,7 @@ async function handleAction(body) {
   const f = fb();
   const a = body.action;
   const ctrl = await E.control();
-  if (a === "dashboard") return await E.dashboard();
+  if (a === "dashboard") return await E.dashboard(body); // body.activity pages the activity feed by its dates
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
   // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
   if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {
@@ -204,13 +204,15 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd"];
+                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd","orderCutoffDays"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
     // then read as "no ceiling", silently switching the spend checks off.
-    const limits = { maxDailyBudgetTotal: [1, 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
+    // The daily ceiling cannot pass the site limit (GADS_MAX_DAILY_BUDGET_TOTAL): control() would clamp it
+    // anyway, so a higher value is refused here instead of being saved and silently not applied.
+    const limits = { maxDailyBudgetTotal: [1, Number(ctrl.maxDailyBudgetLimit) > 0 ? Number(ctrl.maxDailyBudgetLimit) : 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
       targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
-      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"] };
+      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"], orderCutoffDays: [0, 30, "Order cutoff days"] };
     for (const [k, [min, max, label]] of Object.entries(limits)) {
       if (patch[k] === undefined) continue;
       const n = typeof patch[k] === "string" && !patch[k].trim() ? NaN : Number(patch[k]);
@@ -220,6 +222,7 @@ async function handleAction(body) {
     if (patch.autoApproveVettedTemplates !== undefined) patch.autoApproveVettedTemplates = false;
     if (patch.creativeBudgetUsd !== undefined) patch.creativeBudgetUsd = Math.max(1,Math.min(30,Number(patch.creativeBudgetUsd)||8));
     if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
+    if (patch.orderCutoffDays !== undefined) patch.orderCutoffDays = Math.round(patch.orderCutoffDays); // whole days
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
         .map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
@@ -237,8 +240,14 @@ async function handleAction(body) {
   if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
   if (a === "approvalStatus") {
     const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
-    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data(),req=Number(d.publishRequestedAt)||0;
+    // Queued: handed to the worker, not started or checked since, while another publication holds the
+    // lease. The worker waits its turn (up to 8 minutes), so the console stops polling and says so.
+    let queued=false;
+    if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
+      try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
+    }
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
@@ -248,12 +257,17 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
-    return await dispatchTask("publishApproval", { id:String(body.id) });
+    // Server time of this request: the console tells this attempt's result from an earlier one by it,
+    // whatever its own clock says. The marker also clears an Approved draft's previous error.
+    const requestedAt = Date.now();
+    try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
+    try { return { ...(await dispatchTask("publishApproval", { id:String(body.id) })), requestedAt }; }
+    catch (e) { try { await E.markPublishNotStarted(body.id, e.message); } catch (x) {} throw e; } // nothing started: the card must not read as queued
   }
-  if (a === "retryStuck") {
-    try { return await E.retryStuckApprovals(ctrl); }
-    catch (e) { return { error: e.message }; }
-  }
+  // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
+  // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
+  // limit and re-sent every approved draft at once. Each draft is published from its own card.)
+  if (a === "reconcileApproval") return await E.reconcileApproval({ id: body.id, outcome: body.outcome });
   if (a === "setBudget") {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }
@@ -343,8 +357,18 @@ async function handleAction(body) {
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "analyzeCampaign") {
-    try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
-    catch (e) { return { error: e.message }; }
+    // A fresh analysis is a paid high-effort AI call that can outlast the ~26 s gateway, so the background worker
+    // runs it and the console polls genStatus; a saved analysis (under 6 h) still returns at once. A request while
+    // that campaign's analysis is running (10 min) joins it instead of paying for a second one.
+    try {
+      const id = String(body.id || "").replace(/\D/g, ""); if (!id) return { error: "Campaign id missing." };
+      if (!body.force) { const saved = await E.analyzeCampaign(id, { cacheOnly: true }); if (saved) return saved; }
+      const genId = "analysis-" + id, run = await E.getGenStatus(genId).catch(() => null);
+      if (run && run.phase === "running" && Date.now() - Number(run.at || 0) < 10 * 60000) return { queued: true, genId, joined: true };
+      await E.setGenStatus(genId, { phase: "running", kind: "campaign-analysis", campaignId: id, startedAt: Date.now() });
+      try { return await dispatchTask("analyzeCampaign", { genId, campaignId: id, force: !!body.force }); }
+      catch (e) { await E.setGenStatus(genId, { phase: "done", ok: false, kind: "campaign-analysis", campaignId: id, error: e.message }).catch(() => {}); throw e; }
+    } catch (e) { return { error: e.message }; }
   }
   if (a === "campaignTimeline") {
     try { return await E.campaignTimeline({ id: body.id }); }
@@ -435,7 +459,7 @@ async function handleAction(body) {
             { id:"background_worker",category:"orchestration",label:"Background worker dispatch",status:"queued",startedAt:dispatchAt,detail:"Dispatching the read-only scan to the Netlify background function." }
           ] };
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
+          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, lastError: null, lastErrorAt: null, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
           f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
         ]); } catch (e) {}
         let bgStatus = null, bgError = null;
@@ -452,9 +476,13 @@ async function handleAction(body) {
         bg.detail = bgError ? "The background worker did not accept the scan." : "Background worker accepted the scan; execution is now asynchronous."; bg.error = bgError;
         baseAudit.summary = { total:2, ok:bgError?1:2, warning:0, failed:bgError?1:0, skipped:0, running:0, queued:0 };
         if (bgError) baseAudit.completedAt = Date.now();
+        // Netlify may run the worker before this line: it then owns the scanning flag and the audit, so an
+        // accepted dispatch writes neither back (a finished scan never returns to "scanning"), and the
+        // audit is only updated while it is still this run's queued record.
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning:!bgError, lastError:bgError||null, lastErrorAt:bgError?Date.now():null }, { merge:true }),
-          f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
+          bgError ? f.db.collection(E.COL.state).doc("opportunities").set({ scanning:false, lastError:bgError, lastErrorAt:Date.now() }, { merge:true }) : null,
+          f.db.runTransaction(async tx => { const ref = f.db.collection(E.COL.state).doc("opportunityScanAudit"), snap = await tx.get(ref), cur = snap.exists ? (snap.data() || {}).scanAudit : null;
+            if (!cur || (cur.runId === runId && cur.status === "queued")) tx.set(ref, { scanAudit:baseAudit }, { merge:true }); })
         ]); } catch (e) {}
         const cur = await E.opportunitiesWithStatus({ cacheOnly: true });
         return Object.assign({}, cur, { scanning: !bgError, started: !bgError, runId, dispatchStatus:bgStatus, dispatchError:bgError });
@@ -468,8 +496,13 @@ async function handleAction(body) {
     catch (e) { return { collections: [], error: e.message }; }
   }
   if (a === "occasions") {
-    try { return { occasions: await E.suggestOccasions(body.coll, { force: !!body.force }) }; }
-    catch (e) { return { occasions: [], error: e.message }; }
+    // cacheOnly (opening the builder, changing collection, the Sales link) and any request without force
+    // return the saved list, or the standard one, and never reach the model. Only Suggest (force) asks the
+    // AI, in the background worker past the 26s gateway; the console polls genStatus with a spinner.
+    try {
+      if (body.force && !body.cacheOnly) return await dispatchTask("suggestOccasions", { genId: "occasions-" + Date.now() + Math.random().toString(36).slice(2, 6), coll: body.coll || null });
+      return { occasions: await E.suggestOccasions(body.coll, { force: false }) };
+    } catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "releaseOpportunity") {
     try { return await E.releaseOpportunity({ tag: body.tag }); }

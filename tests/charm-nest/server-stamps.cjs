@@ -1,6 +1,8 @@
 // Server stamps (Paul, 28 Sep, D1-D3: every change is recorded, every step passed is a stamped milestone). The
 // charmNestLibrary ops that already know who did what write it on the order's timeline (Order_Timeline): customPut,
-// laserDone, backPut, poolUpdate, customDecide, roseRecordCut, arrivalRecord and cancelRestore. Each event has a stable
+// laserDone, backPut, poolUpdate, customDecide, roseRecordCut, arrivalRecord and cancelRestore. Only the real milestones
+// (MILESTONES in _orderTimeline.js, Paul, 28 Sep) are milestones: a Complete Order press and a label print are sealed
+// points on the Office lane and a set committed is a step in between, none of them a milestone. Each event has a stable
 // id (an op sent twice writes it once), each op adds at most one timeline batch, and a timeline that cannot be written
 // never fails the op. Runs the real handler against an in-memory Firestore. No network.
 //   node tests/charm-nest/server-stamps.cjs
@@ -91,6 +93,7 @@ const warnings = [], realWarn = console.warn;
 console.warn = (...a) => { warnings.push(a.map(String).join(' ')); };
 const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const create = require(path.join(fnDir, '_charmNestRoseStock.js'));
+const Timeline = require(path.join(fnDir, '_orderTimeline.js'));
 const post = async body => { const r = await lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: {} }); return { status: r.statusCode, body: JSON.parse(r.body || '{}') }; };
 const ok = async body => { const before = timelineBatches.n, r = await post(body); assert.strictEqual(r.status, 200, body.op + ': ' + JSON.stringify(r.body)); assert(timelineBatches.n - before <= 1, body.op + ' writes at most one timeline batch'); return r.body; };
 const events = (prefix = '') => [...store].filter(([k]) => k.startsWith(prefix + 'Order_Timeline/')).map(([k, v]) => Object.assign({ key: k.slice(k.indexOf('/') + 1) }, v));
@@ -99,7 +102,8 @@ const one = (orderId, type) => { const l = of(orderId, type); assert.strictEqual
 const T = Date.now() - 3600e3;
 
 (async () => {
-  /* ── customPut: each new seal is an event (print → sealPrinted, Complete Order → sealCompleted, a milestone) ── */
+  /* ── customPut: each new seal is an event (print → sealPrinted, Complete Order → sealCompleted); both are sealed points
+     on the Office lane, not milestones (only MILESTONES are) ── */
   const R1 = '4170000001';
   await ok({ op: 'customPut', key: R1 + '_5001', receiptId: R1, transactionId: '5001', sku: 'CUSTOM-NAME', by: 'Ana' });
   const printed = one(R1, 'sealPrinted');
@@ -108,7 +112,8 @@ const T = Date.now() - 3600e3;
   assert.strictEqual(printed.at, store.get(`Charm_Custom_Orders/${R1}_5001`).stamps[0].at, 'the event is the seal the record keeps');
   await ok({ op: 'customPut', key: R1 + '_5001', receiptId: R1, transactionId: '5001', how: 'button', by: 'Ben' });
   const completed = one(R1, 'sealCompleted');
-  assert(completed.by === 'Ben' && completed.milestone === true && completed.data.how === 'button', JSON.stringify(completed));
+  assert(completed.by === 'Ben' && completed.milestone === false && completed.data.how === 'button', JSON.stringify(completed));
+  assert(!Timeline.MILESTONES.has('sealCompleted') && !Timeline.MILESTONES.has('sealPrinted'), 'a seal is a point, not a milestone');
   assert.strictEqual(of(R1).length, 2);
 
   /* ── laserDone: every order on the sheet, with its label; marked again adds nothing; undone is a note ── */
@@ -141,7 +146,7 @@ const T = Date.now() - 3600e3;
   await ok({ op: 'backPut', back });
   assert.strictEqual(of(R2, 'engraveApproved').length, 1, 'the same approval sent again is one event');
 
-  /* ── poolUpdate: placed (a milestone), moved, set committed, removed; each once ── */
+  /* ── poolUpdate: placed (a milestone), moved, set committed (a step in between, not a milestone), removed; each once ── */
   const R5 = '4170000005', A = R5 + '_70001_1', B = R5 + '_70002_1';
   for (const id of [A, B]) store.set('Charm_Pool/' + id, { poolId: id, orderId: R5, transactionId: id.split('_')[1], sheetId: null, setId: SET, state: 'ready' });
   const placedPatch = { sheetId: 'sh-gf-1', setId: SET, state: 'written', sheetName: 'GF_Sep.28.26_Set-1_Sheet-2' };
@@ -158,10 +163,12 @@ const T = Date.now() - 3600e3;
   assert(moved.by === 'Fay' && moved.at === movedAt && moved.text === 'GF Sheet 2 → GF Sheet 3' && moved.data.from === 'sh-gf-1' && moved.data.to === 'sh-gf-2' && moved.lineKey === R5 + '_70001', JSON.stringify(moved));
   await ok({ op: 'poolUpdate', poolIds: [A, B], patch: { state: 'committed', committedAt: T + 3000 } });
   const committed = one(R5, 'setCommitted');
-  assert(committed.setId === SET && committed.text === 'Set 1' && committed.milestone === true && committed.at === T + 3000, JSON.stringify(committed));
+  assert(committed.setId === SET && committed.text === 'Set 1' && committed.milestone === false && committed.at === T + 3000, JSON.stringify(committed));
+  assert(!Timeline.MILESTONES.has('setCommitted'), 'a set committed is a step in between, not a milestone');
   await ok({ op: 'poolUpdate', poolIds: [A], patch: { state: 'abandoned', sheetId: null, setId: null, removedBy: 'Gus', removedReason: 'cancelled: buyer asked', removedAt: T + 4000 } });
   const removed = one(R5, 'removed');
-  assert(removed.by === 'Gus' && removed.sheet === 'GF Sheet 3' && removed.data.reason === 'cancelled: buyer asked' && /cancelled: buyer asked/.test(removed.text) && removed.at === T + 4000, JSON.stringify(removed));
+  // (a cancel's removal, Paul 29 Sep 00:26: "Removed from GF Sheet 3 (Set 1)", its reason and outcome in the details)
+  assert(removed.by === 'Gus' && removed.sheet === 'GF Sheet 3' && removed.data.reason === 'cancelled: buyer asked' && removed.text === 'Removed from GF Sheet 3 (Set 1)' && removed.data.outcome === 'removed' && removed.at === T + 4000, JSON.stringify(removed));
   const count5 = of(R5).length;
   await ok({ op: 'poolUpdate', poolIds: [A], patch: { removedVerifiedAt: Date.now() } });
   await ok({ op: 'poolUpdate', poolIds: [B], patch: { engrave: true } });
