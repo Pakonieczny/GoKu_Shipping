@@ -1997,14 +1997,17 @@ async function op_customPut(b) {
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
-    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120) }, id: `${key}-${now}` }), "custom seal");
+    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
+// where a Complete Order or a Reopen was pressed (the order window, a Review card: the page says so), for its point on
+// the order's timeline (Paul, 29 Sep 02:08)
+const pressedIn = b => (b && b.from ? { pressedIn: str(b.from, 40) } : {});
 /* Reopen or Undo (Paul, 29 Sep 00:35: "the seals can never ever disappear… even though you can reopen an order, the
    seal must always remain and follow that order forever"). The record is never deleted and its seals never cleared: its
    state becomes "open" (the sorter reads the line as not completed), who and when join its history, and the order's
-   timeline gets a note (not a seal). A record from before the stamps has its seals written out from what it kept, so a
+   timeline gets a note (drawn there as a Reopen point of its own, beside the Complete point it never takes away). A record from before the stamps has its seals written out from what it kept, so a
    later completion cannot take them. One already open is left as it is (a retry records nothing again). */
 async function op_customReopen(b) {
   const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" };
@@ -2012,13 +2015,13 @@ async function op_customReopen(b) {
   const cur = snap.data(); if (cur.state === "open") return { ok: true, record: customRow(cur, false) };
   const how = b.how === "undo" ? "undo" : "reopen", who = str(b.by || "operator", 80), now = Date.now();
   const doc = { state: "open", reopenedAt: now, reopenedBy: who, updatedAtMs: now, updatedAt: FV.serverTimestamp(),
-    history: (Array.isArray(cur.history) ? cur.history : []).concat({ how, at: now, by: who }).slice(-STAMPS_MAX) };
+    history: (Array.isArray(cur.history) ? cur.history : []).concat(Object.assign({ how, at: now, by: who }, b.from ? { from: str(b.from, 40) } : {})).slice(-STAMPS_MAX) };
   if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
   await ref.set(doc, { merge: true });
   const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
   await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
     text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
-    data: { reopened: how, seals, sku: cur.sku || "" }, id: `customReopen-${key}-${now}` }), "custom reopen");
+    data: { reopened: how, seals, sku: cur.sku || "", ...pressedIn(b) }, id: `customReopen-${key}-${now}` }), "custom reopen");
   return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
 }
 /* Is a line a custom order? Claude's kept readings (only those read from exactly what the page has now) and a person's

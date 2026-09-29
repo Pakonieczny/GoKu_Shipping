@@ -5454,6 +5454,9 @@ const Sets = window.Sets = (() => {
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
+        // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
+        // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
+        S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
@@ -6417,13 +6420,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /* The sticker printed (its print dialog closed): `labelPrinted` on the order's timeline, whether or not its lines are
      then marked completed. Paul, 28 Sep: the Review tab is where the Design Station prints, so the station is design;
-     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is. */
+     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is.
+     Every print is an event of its own (Paul, 29 Sep 02:08: each print a seal on the timeline): its id is its moment,
+     not its minute, so a label printed again within the minute is not folded into the one before; print is its
+     seal's number on the card (Print Nº n). */
   function labelled(rid, who, o) {
     try {
       const at = Date.now();
-      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${Math.floor(at / 60000)}`,
+      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
         text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -6493,7 +6499,7 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
@@ -6524,8 +6530,17 @@ const CustomPrint = window.CustomPrint = (() => {
     const go = anyway(it, "complete"); if (go === false) return;
     withName(key, who => completeAs(it, who, go));
   }
+  /* where Complete Order, Reopen or Undo was pressed, for its point on the order's timeline (Paul, 29 Sep 02:08): the
+     order window (a modal: while it is open nothing behind it takes a press), else Review, by the card's tab */
+  function pressedIn(it) {
+    try { if (OrderWin.isOpen()) return "Order window"; } catch (_) {}
+    return !it ? "Review" : "Review · " + (it.kind === "customOrder" ? "Custom Orders" : it.category || "a card");
+  }
+  /** The open order window's timeline reads the new point now (its feed otherwise reads again only within 20 s). */
+  function tlFresh() { try { const f = OrderWin.isOpen() && OrderWin._feed(); if (f && f.refresh) f.refresh({ force: true }); } catch (_) {} }
   function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
+    const from = pressedIn(it);
     const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
     if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
     const held = rows.map(r => r.key).filter(k => !printing.has(k));
@@ -6537,7 +6552,7 @@ const CustomPrint = window.CustomPrint = (() => {
       const saved = {}; let putErr = null, cut = 0;
       for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
-        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
+        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label, from }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
       }
       const done = Object.keys(saved), rid = rows[0].order.receiptId;
       keepDone(saved);
@@ -6545,7 +6560,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length) sealed(it, rows, saved, done, who, "button");
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
-      settle(); say(key, null); pressSoon();
+      settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
@@ -6589,7 +6604,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack(it.key, u.rows, employeeName() || u.who, "undo");
+    takeBack(it.key, u.rows, employeeName() || u.who, "undo", pressedIn(it));
   }
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
@@ -6597,24 +6612,25 @@ const CustomPrint = window.CustomPrint = (() => {
     if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo");
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo", pressedIn(null));
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
+    const from = pressedIn(it);
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen", from); });
   }
   /** Each line's record reopened, never deleted: its seals stay on it for good and show on the Open card's buttons (Paul,
    *  29 Sep 00:35); only its state changes, with who and when in its history and on the order's timeline. The page
    *  follows each as it goes (a failure part way leaves it saying what the cloud holds), then the lines are put back for
    *  cutting; a failure of either is said as what it is. */
-  async function takeBack(key, rows, who, how) {
+  async function takeBack(key, rows, who, how, from) {
     const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
     say(key, how === "undo" ? "Undoing…" : "Reopening…");
     let gone = 0;
     for (const r of rows) {
       let back = null;
-      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how }, { quiet: true }); }
+      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how, from }, { quiet: true }); }
       catch (e) {
         busy.delete(key); settle(); say(key, null);
         toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
@@ -6627,10 +6643,12 @@ const CustomPrint = window.CustomPrint = (() => {
       wrote([r.key]); gone++;
     }
     busy.delete(key);
+    // (its card is found where it stood in Open: Review brings it into view there, however it was reopened)
+    Review.view().back = { keys: rows.map(r => r.key), until: Date.now() + 180000 };
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
     catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
-    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`);
+    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`); tlFresh();
   }
   /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
@@ -7727,6 +7745,14 @@ const Review = window.Review = (() => {
   }
   /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
   function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** A card back in Open (reopened, or its completion undone) at its place: scrolled into view if it is not, and marked
+   *  (behind the order window it was reopened from, once that window closes). */
+  function bringBack(n, key) {
+    const pane = n.closest(".scroll"), p = pane ? pane.getBoundingClientRect() : { top: 0, bottom: innerHeight }, r = n.getBoundingClientRect();
+    if (r.top < p.top || r.bottom > p.bottom) n.scrollIntoView({ behavior: "smooth", block: r.bottom <= p.top || r.top >= p.bottom ? "center" : "nearest" });
+    const win = document.getElementById("orderWin");
+    if (win && win.open) win.addEventListener("close", () => { const m = reviewRows.get(key)?.node || n; if (m.isConnected) found(m); }, { once: true }); else found(n);
+  }
   /** "Show" for a held order: the Orders tab, its On hold pile. */
   function showHeld() {
     if (typeof setMode === "function") setMode("orders");
@@ -8215,8 +8241,13 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
-    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || a.t - b.t);
-    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a));
+    // a card's place is its order's (Paul, 29 Sep 02:05: an order reopened from Completed goes back where it was, not
+    // to the foot of the list): newest arrival first, its kind, then the order itself (newest order date, then its line);
+    // never when its card was raised, completed or reopened (a whole pull arrives at one time, so that used to decide)
+    const placedOf = it => Math.max(0, ...rowsOf(it).map(r => +r.order.createTs || 0)), lineOf = it => (rowsOf(it)[0] || {}).key || "";
+    const byOrder = (a, b) => placedOf(b) - placedOf(a) || lineOf(a).localeCompare(lineOf(b)) || (a.t || 0) - (b.t || 0);
+    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || byOrder(a, b));
+    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a) || byOrder(a, b));
     // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
@@ -8239,6 +8270,11 @@ const Review = window.Review = (() => {
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
     if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
+    // a card just reopened (or its completion undone: CustomPrint sets RV.back) is found at its place the next time Open
+    // shows it: drawn down to it, brought into view and marked
+    let back = null;
+    if (RV.back && RV.back.until < Date.now()) RV.back = null;
+    if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
@@ -8288,7 +8324,9 @@ const Review = window.Review = (() => {
     for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
-    v.querySelector('.egPane.scroll').scrollTop=oldScroll;
+    // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
+    {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
+    if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
     const notices = doneMode ? [] : items().filter(isNotice);
     if (notices.length) {

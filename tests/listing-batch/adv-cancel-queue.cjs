@@ -13,7 +13,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
-const { quotaFailure } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
+const { quotaFailure, neverStarted } = require("../../netlify/functions/lib/listingBatchAdmission.cjs");
 
 const server = fs.readFileSync("netlify/functions/geminiImageProxy-background.js", "utf8");
 const page = fs.readFileSync("Listing_Generator_1.html", "utf8");
@@ -26,6 +26,7 @@ const sweepSrc = slice(server, '  if (kind === "batch_sweep") {', '  if (kind ==
 const cancelSrc = slice(server, '    if (kind === "batch_cancel") {\n      const apiKey', "    // Paginated scan and one collected batch");
 const cancelSessionSrc = slice(page, "    async function _cancelSession(sessionId) {", "    // Recover (force-collect partial results)");
 const renderSrc = slice(page, "    function _renderSessionBlock(session) {", "    // Cancel every still-running batch in a session.");
+const _awaitingStallRestart = vm.runInNewContext(`${slice(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {")}; _awaitingStallRestart`, {});
 
 const one = (extra = {}) => [{ category: "Beady_Necklace", setN: 1, outputBasePath: "x", ...extra }];
 
@@ -61,7 +62,7 @@ async function runSweep(jobs, statuses = {}) {
     throw new Error(`unexpected ${p.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${sweepSrc} })()`, {
-    kind: "batch_sweep", getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }), quotaFailure,
+    kind: "batch_sweep", getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }), quotaFailure, neverStarted,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" }, FieldValue: { serverTimestamp: () => clock } } },
     module: { exports: { handler } }, json: (statusCode, body) => ({ statusCode, ...body }),
@@ -148,7 +149,7 @@ async function runCancel(doc, gate = {}) {
   const status = { set textContent(v) { texts.push(v); }, get textContent() { return texts[texts.length - 1] || ""; } };
   let confirmText = "";
   await vm.runInNewContext(`(async () => { ${cancelSessionSrc} await _cancelSession("s"); })()`, {
-    _lastBatchList: list, _normBatchState: (s) => s, confirm: (t) => { confirmText = t; return true; },
+    _lastBatchList: list, _normBatchState: (s) => s, _awaitingStallRestart, confirm: (t) => { confirmText = t; return true; },
     postJson: async (_fn, p) => { calls.push(p.batchName); if (p.batchName === "batch_f1") throw new Error("busy"); return { ok: true }; },
     refreshBatchJobsPanel: async () => ({ ok: true }), console: { warn: () => {} },
     document: { getElementById: (id) => id === "batchRecoveryStatus" ? status : null, querySelectorAll: () => [] },
@@ -161,7 +162,7 @@ async function runCancel(doc, gate = {}) {
   // The button counts the same jobs.
   const html = vm.runInNewContext(`${renderSrc}; _renderSessionBlock(session)`, {
     session: { sessionId: "s", batches: list.filter((b) => b.sessionId === "s"), earliest: 1, latest: 2 },
-    _normBatchState: (s) => s, _batchSafeText: (s) => String(s), _formatDuration: () => "1s",
+    _normBatchState: (s) => s, _awaitingStallRestart, _batchSafeText: (s) => String(s), _formatDuration: () => "1s",
     _batchSweepInfo: null, _batchRetryLimit: 30, _batchNextSweepAt: null,
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "m" }), DEFAULT_IMAGE_MODEL: "m",
   });
@@ -174,6 +175,7 @@ async function runCancel(doc, gate = {}) {
   const line = { textContent: "" };
   const shown = await vm.runInNewContext(`(async () => { ${refreshSrc}; return refreshBatchJobsPanel(); })()`, {
     _lastBatchList: [{ batchName: "batch_r1" }], _batchSafeText: (s) => String(s),
+    _batchListSeq: 0, _batchPanelSeq: 0, _batchListDataSeq: 0,
     postJson: async () => { throw new Error("Failed to fetch"); },
     document: { getElementById: (id) => id === "batchJobsList" ? listEl : id === "batchRefreshStatus" ? line : null },
   });

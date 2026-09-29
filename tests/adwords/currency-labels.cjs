@@ -31,15 +31,19 @@ async function engineChecks(){
   _accountCurrency:async()=>'CAD',_accountTz:async()=>'America/Toronto',_fxRateToUsd:async()=>0.73,fb:()=>null,
   collectionMeta:async h=>({handle:h,title:'Bunny Charms'}),collectionProfiles:async()=>({list:[{handle:'bunny',typesDetail:[{type:'necklace'}]}]}),getCollections:async()=>[{handle:'bunny',title:'Bunny Charms'}],
   generateRSAAssets:async()=>clone(copy),researchOpportunity:async()=>({ok:false}),storeSignals:async()=>{throw Error('no store data offline');},accountCvr:async()=>({cvr:0.02,source:'benchmark'}),
-  groundKeywordPlan:()=>{const k=['bunny necklace','bunny charm necklace','easter bunny necklace','personalized bunny necklace'].map(t=>({text:t,real:true,searches:90}));return {ok:true,keywords:k,groups:[{label:'Bunny',keywords:k}],confidence:90,evidence:{accepted:4,rejected:0},rejected:[]};},
+  groundKeywordPlan:()=>{const k=['bunny necklace','bunny charm necklace','easter bunny necklace','personalized bunny necklace'].map(t=>({text:t,real:true,measured:true,searches:90}));return {ok:true,keywords:k,groups:[{label:'Bunny',keywords:k}],confidence:90,evidence:{accepted:4,rejected:0},rejected:[]};},
   _bestSearchLandingUrl:()=>'https://britesjewelry.com/collections/bunny',accountWasteNegatives:async()=>[],recordOccasionUse:async()=>{},
-  buildSearchCampaignOps:()=>({ops:[],tag:'BA · bunny',negatives:['free'],assetSummary:null,keywordSummary:{count:4,researched:true,exact:2},adGroupSummary:[]}),
+  buildSearchCampaignOps:()=>({ops:[{campaignOperation:{create:{startDateTime:'2026-10-01 00:00:00',endDateTime:'2026-10-28 23:59:59'}}}],tag:'BA · bunny',negatives:['free'],assetSummary:null,keywordSummary:{count:4,researched:true,exact:2,measured:4},adGroupSummary:[]}),
   openaiJSON:async p=>{prompts.push(p);throw Error('AI is offline in tests');},playbookSlice:async()=>{throw Error('offline');}});
 
  // 1. Search draft: the Manual CPC cap in the approval summary is the account currency.
  let r=await get('generateForCollection')('bunny','Evergreen gifting',12,{ctrl:clone(ctrl),maxCpc:1.25,countries:['2124']});
  check(r.ok&&r.currency==='CAD','Search draft built for the CAD account');
  check(/Manual CPC ≤ CAD 1\.25\/click/.test(approvals[0].summary)&&!/USD|\$/.test(approvals[0].summary),'Search approval summary: CPC cap in CAD, never USD or a bare $ ('+approvals[0].summary+')');
+
+ // An unverified account currency is never claimed to be USD: the cap is Google's native amount.
+ approvals=[];r=await get('generateForCollection')('bunny','Evergreen gifting',12,{ctrl:{...clone(ctrl),budgetCurrency:null,budgetCurrencyVerified:false},maxCpc:1.25,countries:['2124']});
+ check(r.ok&&/Manual CPC ≤ 1\.25\/click/.test(approvals[0].summary)&&!/USD|\$/.test(approvals[0].summary),'Search approval summary with an unverified currency names none ('+approvals[0].summary+')');
 
  // 2. PMax draft: the daily budget in the approval summary is the account currency.
  const f=memory();f.docs.set('Brites_GAds_State/opportunities',{pmaxList:[]});approvals=[];
