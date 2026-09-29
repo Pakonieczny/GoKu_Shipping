@@ -53,26 +53,30 @@ button{font:inherit;cursor:pointer;border:none;background:none;color:inherit}
 .rail__brand .tag{font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:#9a9183;margin-top:3px}
 .nav{padding:12px 12px;display:flex;flex-direction:column;gap:2px;flex:1;overflow:auto}
 .nav button{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:10px;color:#cfc7b8;font-size:13.5px;font-weight:500;text-align:left;width:100%;transition:background .15s,color .15s}
-.nav button .ic{width:17px;height:17px;flex:0 0 17px;opacity:.85}
+.nav button .ic{width:17px;height:17px;flex:0 0 17px;opacity:.85;display:inline-grid;place-items:center;line-height:1}
 .nav button .badge{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--gold);color:#2a2114;border-radius:20px;padding:1px 7px;font-weight:700}
 .nav button:hover{background:var(--velvet-2);color:#fff}
 .nav button.active{background:linear-gradient(180deg,#34302a,#2b2722);color:#fff;box-shadow:inset 2px 0 0 var(--gold-2)}
-.rail__foot{padding:14px 18px;border-top:1px solid var(--velvet-line);font-size:11px;color:#8c8476}
-.rail__foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:6px;box-shadow:0 0 0 3px rgba(95,122,91,.18)}
+.rail__foot{padding:10px 12px 10px 18px;border-top:1px solid var(--velvet-line);font-size:11px;color:#a39a8b;display:flex;align-items:center}
+.rail__foot .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--sage);margin-right:8px;flex:0 0 7px;box-shadow:0 0 0 3px rgba(95,122,91,.18)}
+.rail__signout{margin-left:auto;padding:6px 9px;border-radius:8px;font-size:11px;color:#a39a8b;transition:background .15s,color .15s}
+.rail__signout:hover{background:var(--velvet-2);color:#fff}
 
 /* ---- topbar ---- */
 .main{display:flex;flex-direction:column;min-width:0}
 .topbar{position:sticky;top:0;z-index:20;background:rgba(243,240,234,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:13px 28px;display:flex;align-items:center;gap:16px}
 .topbar h1{font-family:var(--serif);font-size:20px;margin:0;font-weight:500}
 .topbar .sub{font-size:12px;color:var(--ink-45);margin-top:1px}
+.topbar__title{min-width:0}.topbar #vtitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .spacer{flex:1}
-.pill{font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 11px;border-radius:30px;display:inline-flex;align-items:center;gap:6px}
+.pill{font-size:11px;font-weight:700;letter-spacing:.04em;padding:4px 11px;border-radius:30px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:none}
 .pill .d{width:7px;height:7px;border-radius:50%}
 .pill.live{background:var(--sage-soft);color:#3c5a39}.pill.live .d{background:var(--sage);animation:pulse 2s infinite}
 .pill.stop{background:var(--clay-soft);color:#8a3a26}.pill.stop .d{background:var(--clay)}
 .pill.dry{background:var(--gold-soft);color:#7a5a1d}.pill.dry .d{background:var(--gold)}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(95,122,91,.5)}50%{box-shadow:0 0 0 5px rgba(95,122,91,0)}}
-.sync{font-family:var(--mono);font-size:11.5px;color:var(--ink-45)}
+.sync{font-family:var(--mono);font-size:11.5px;color:var(--ink-45);white-space:nowrap}
+#btnRefresh{flex:none;display:inline-flex;align-items:center;justify-content:center}#btnRefresh .rf-ic{display:none}
 .btn{border:1px solid var(--ink);background:var(--ink);color:#fff;border-radius:9px;padding:8px 14px;font-size:13px;font-weight:600;transition:transform .08s,opacity .15s,background .15s}
 .btn:hover{opacity:.9}.btn:active{transform:translateY(1px)}
 .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
@@ -227,6 +231,16 @@ select,input[type=text]{width:100%;font:inherit;font-size:13px;padding:9px 11px;
 .sw i{position:absolute;top:3px;left:3px;width:19px;height:19px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .sw.on{background:var(--sage)}.sw.on i{left:22px}
 .sw.danger.on{background:var(--clay)}
+.sw{padding:0;border:0;cursor:pointer}.sw:focus-visible{border-radius:30px}.sw[aria-busy=true]{cursor:progress;opacity:.6}
+.toggle .badge2{flex:none;white-space:nowrap}
+#v-controls .field:last-child{margin-bottom:0}
+#v-controls .fhint{margin:6px 0 0;font-size:12px;line-height:1.45;color:var(--ink-45)}
+#v-controls .frow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#v-controls .fmsg{font-size:12px;color:var(--ink-70)}
+#v-controls input[type=number]{width:110px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13px;background:var(--paper);color:var(--ink)}
+#v-controls .runbtns{display:flex;gap:8px;flex-wrap:wrap}
+#v-controls .runmsg span{display:block;font-size:12px;line-height:1.45;color:var(--ink-70)}#v-controls .runmsg span:not(:empty){margin-top:8px}
+#v-controls .btn.dirty{background:#8d6b2f;border-color:#8d6b2f;color:#fff}
 .range{display:flex;align-items:center;gap:12px}
 input[type=range]{flex:1;accent-color:var(--gold)}
 .rngval{font-family:var(--mono);font-size:14px;font-weight:600;width:74px;text-align:right}
@@ -236,6 +250,13 @@ input[type=range]{flex:1;accent-color:var(--gold)}
 .toast{background:var(--velvet);color:#f4ecdc;padding:12px 16px;border-radius:11px;font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.22);display:flex;align-items:center;gap:10px;animation:tin .25s ease;max-width:330px;border:1px solid var(--velvet-line)}
 .toast .d{width:8px;height:8px;border-radius:50%;background:var(--gold-2);flex:0 0 8px}
 .toast.ok .d{background:var(--sage)}
+.toast.err .d{background:#d9785c}
+.toast>span:last-child{min-width:0;overflow-wrap:anywhere}
+#syncBanner{display:flex;gap:10px;align-items:center;margin:12px 28px 0;padding:10px 14px;border-radius:10px;background:#b42424;color:#fff;font-size:13px;line-height:1.4}
+#syncBanner button{flex:none;background:#fff;color:#b42424;border-radius:7px;padding:6px 12px;font-weight:700}
+#syncBannerMsg{min-width:0;overflow-wrap:anywhere}
+@media(max-width:1020px){#syncBanner{margin:0 0 10px}}
+@media(max-width:760px){#syncBanner{margin:0 4px 10px}#syncBanner button{min-height:38px}}
 @keyframes tin{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
 
 /* run overlay */
@@ -328,7 +349,15 @@ svg{display:block}
   #srChips{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:4px}
   #srChips .srchip{white-space:nowrap;flex:0 0 auto}
   .toasts{left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));align-items:stretch}
-  .actbar{top:64px}
+  /* one thin header row on phones: title, status, refresh */
+  .topbar{flex-wrap:nowrap;padding-left:10px;padding-right:10px}
+  .topbar #vtitle{font-size:19px!important}
+  .topbar .sync{display:none}
+  .topbar .pill{padding:4px 9px;letter-spacing:.02em}
+  #btnRefresh .rf-ic{display:block}#btnRefresh .rf-t{display:none}#btnRefresh.is-busy{font-size:0}#btnRefresh .bspin{margin-right:0}
+  .actbar .adetail{display:none}
+  .rail__signout{min-height:36px}
+  #v-controls .card__h .sub{margin-left:0}
   /* opportunity metric strips + draft internals wrap cleanly */
   .oppm{flex-wrap:wrap;row-gap:8px}
   .pmxrow{grid-template-columns:1fr;align-items:start}
@@ -385,8 +414,6 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .signin__points li{position:relative;padding-left:20px;font-size:12.5px;color:#b8b0a2;line-height:1.5}
 .signin__points li::before{content:"";position:absolute;left:0;top:.5em;width:7px;height:7px;border-radius:50%;
   border:1.5px solid var(--gold-2)}
-.signin__brandfoot{margin-top:auto;padding-top:26px;font-size:10.5px;letter-spacing:.06em;
-  color:#8c8476;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .signin__dotsep{opacity:.55}
 
 /* ---- form side ---- */
@@ -419,6 +446,8 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .signin__submit{width:100%;height:48px;font-size:14.5px;letter-spacing:.01em;border-radius:var(--r-sm)}
 .signin__submit:disabled{opacity:1;cursor:not-allowed;background:var(--paper-2);
   border-color:var(--line);color:var(--ink-25);box-shadow:none}
+/* A failed attempt clears the field; the button reads as unavailable until something is typed. */
+.gatecard:has(#pc:placeholder-shown) .signin__submit:not(.is-busy){cursor:not-allowed;background:var(--paper-2);border-color:var(--line);color:var(--ink-25);box-shadow:none}
 .signin__details{margin-top:22px;border-top:1px solid var(--line-2);padding-top:14px}
 .signin__details summary{font-size:11px;letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-45);cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px}
@@ -463,13 +492,17 @@ table.ptable tr.pdetail>td{border-bottom:2px solid var(--line)}
 .btn[disabled]{opacity:.62;cursor:default}
 .btn.is-busy{cursor:progress}
 
-/* ---- global activity bar (sticky, top of app content) ---- */
-.actbar{display:none;align-items:center;gap:11px;position:sticky;top:10px;z-index:60;background:linear-gradient(95deg,#262019,#332a20);color:#f4ecdc;border-radius:12px;padding:11px 15px;margin-bottom:16px;box-shadow:0 10px 26px rgba(0,0,0,.20);border:1px solid var(--velvet-line)}
-.actbar.show{display:flex;animation:tin .22s ease}
-.actbar .alabel{font-weight:600;font-size:13.5px;white-space:nowrap}
-.actbar .adetail{font-size:12px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---- global activity strip: hangs under the sticky topbar, over the content, so it
+   never pushes the page down or covers the header, at any scroll position ---- */
+.actbar{display:none;align-items:center;gap:10px;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);z-index:60;width:max-content;max-width:min(680px,calc(100% - 24px));background:linear-gradient(95deg,#262019,#332a20);color:#f4ecdc;border-radius:999px;padding:8px 15px 8px 13px;box-shadow:0 10px 26px rgba(0,0,0,.20);border:1px solid var(--velvet-line);pointer-events:none}
+.actbar.show{display:flex;animation:actIn .2s ease}
+@keyframes actIn{from{opacity:0;transform:translate(-50%,-4px)}to{opacity:1;transform:translate(-50%,0)}}
+#actbar .spin{width:14px;height:14px;flex:0 0 14px}
+#actbar progress,#actbar .bp-meter{position:absolute;width:1px;height:1px;margin:0;opacity:0;overflow:hidden;pointer-events:none}
+.actbar .alabel{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.actbar .adetail{font-size:12px;opacity:.72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .actbar .acount{font-family:var(--mono);font-size:11px;opacity:.6;white-space:nowrap}
-.actbar .aeta{margin-left:auto;font-family:var(--mono);font-size:11px;background:rgba(244,236,220,.13);padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
+.actbar .aeta{font-family:var(--mono);font-size:11px;background:rgba(244,236,220,.13);padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none}
 
 /* ---- panel loading block (lists / selects-area / in-row) ---- */
 .lblock{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:9px;padding:32px 18px;color:var(--ink-45);min-height:120px}
@@ -731,12 +764,9 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
         upload for Brites Jewelry — reviewed and approved by a human before anything spends.</p>
       <ul class="signin__points">
         <li>Reviewed creative, dry-run validation and scheduled automation controls</li>
-        <li>Daily and monthly spend ceilings enforced server-side</li>
+        <li>Daily budget ceiling and monthly stop threshold, checked on the server</li>
         <li>Every applied change written to an audit ledger</li>
       </ul>
-      <div class="signin__brandfoot">
-        <span>Google Ads API v24</span><span class="signin__dotsep">·</span><span>Opportunity engine v13.2</span>
-      </div>
     </aside>
 
     <main class="signin__panel">
@@ -805,22 +835,20 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
   <aside class="rail">
     <div class="rail__brand"><div class="logo">Brites <b>·</b> Autopilot</div><div class="tag">Ad Control Room</div></div>
     <nav class="nav" id="nav"></nav>
-    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">connected</span> <a href="#" id="signOut" style="float:right;color:#8c8476;font-size:10.5px;text-decoration:underline" onclick="sessClear();location.reload();return false;">sign out</a><br><span class="muted" style="font-size:10px">live · Google Ads v24 · opportunity engine v13.2</span></div>
+    <div class="rail__foot"><span class="dot" id="connDot"></span><span id="connText">Connected</span><button type="button" class="rail__signout" id="signOut" onclick="sessClear();location.reload();">Sign out</button></div>
   </aside>
   <div class="navscrim" id="navScrim"></div>
   <div class="main">
     <header class="topbar">
-      <button class="navburger" id="navBurger" aria-label="Menu"><span></span><span></span><span></span></button>
-      <div><h1 id="vtitle">Command Center</h1><div class="sub" id="vsub">What the autopilot is doing right now</div></div>
+      <button class="navburger" id="navBurger" aria-label="Menu" aria-controls="nav" aria-expanded="false"><span></span><span></span><span></span></button>
+      <div class="topbar__title"><h1 id="vtitle">Overview</h1><div class="sub" id="vsub"></div></div>
       <div class="spacer"></div>
-      <span class="pill live" id="pillLive"><span class="d"></span>LIVE</span>
-      <span class="pill dry" id="pillDry"><span class="d"></span>DRY-RUN</span>
-      <span class="sync" id="sync">—</span>
-      <button class="btn ghost sm" id="btnResetDesignFailures" title="Reset failed AI jobs across ad groups; retain saved artwork and paid history">Reset failed AI</button>
-      <button class="btn ghost sm" id="btnRefresh">Refresh</button>
+      <span class="pill live" id="pillLive"><span class="d"></span>AUTOPILOT ON</span>
+      <span class="pill dry" id="pillDry" title="Dry-run is on: changes are validated and queued, never applied"><span class="d"></span>DRY-RUN</span>
+      <span class="sync" id="sync"></span>
+      <button class="btn ghost sm" id="btnRefresh" title="Pull live metrics from Google Ads" aria-label="Refresh"><svg class="rf-ic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg><span class="rf-t">Refresh</span></button>
+      <div class="actbar" id="actbar" role="status" aria-live="polite"></div>
     </header>
-
-    <div class="actbar" id="actbar" role="status" aria-live="polite"></div>
 
     <div id="groupContext" class="bg-context"></div><section id="v-groups" class="view hidden"></section>
 <section class="view" id="v-command">
@@ -904,41 +932,38 @@ progress{display:block;width:100%;height:7px;accent-color:var(--gold);border:0;b
     </section>
 
     <section class="view hidden" id="v-controls">
-      <div class="view__head"><div><h2>Controls</h2><p>The guardrails. Saved to the engine on change.</p></div></div>
       <div class="grid ctrlgrid">
         <div class="card pad">
           <div class="card__h"><h3>Operation</h3></div>
-          <div class="toggle"><div class="info"><div class="t">Scheduled automation</div><div class="d">Controls scheduled automation. Existing ads continue running until paused in Campaigns.</div></div><div class="sw" id="swLive"><i></i></div></div>
-          <div class="toggle"><div class="info"><div class="t">Dry-run</div><div class="d">Validate &amp; queue everything, apply nothing.</div></div><div class="sw" id="swDry"><i></i></div></div>
-          <div class="toggle"><div class="info"><div class="t">Creative review required</div><div class="d">Every new or changed ad requires your approval.</div></div><div class="sw on" id="swAuto" aria-label="Creative review required" aria-disabled="true"><i></i></div></div>
-          <div class="toggle"><div class="info"><div class="t">Smart Bidding</div><div class="d">Off = Manual CPC with a hard per-click cap. On = Google sets bids automatically (no cap).</div></div><div class="sw" id="swSmart"><i></i></div></div>
-          <div id="bidNote" style="font-size:11.5px;color:var(--ink-70);line-height:1.6;margin-top:4px;padding:9px 11px;background:var(--paper-2);border-radius:9px"></div>
+          <div class="toggle"><div class="info"><div class="t" id="swLiveT">Scheduled automation</div><div class="d" id="swLiveD">Hourly spend checks and conversion uploads; daily drafts for Approvals. When off, running ads keep serving and nothing changes on its own.</div></div><button type="button" class="sw" id="swLive" role="switch" aria-checked="false" aria-labelledby="swLiveT" aria-describedby="swLiveD"><i></i></button></div>
+          <div class="toggle"><div class="info"><div class="t" id="swDryT">Dry-run</div><div class="d" id="swDryD">Changes are validated and queued, never applied in Google Ads.</div></div><button type="button" class="sw" id="swDry" role="switch" aria-checked="false" aria-labelledby="swDryT" aria-describedby="swDryD"><i></i></button></div>
+          <div class="toggle"><div class="info"><div class="t">Creative review</div><div class="d">Every new or changed ad waits for your approval.</div></div><span class="badge2 b-on">Always on</span></div>
+          <div class="toggle"><div class="info"><div class="t" id="swSmartT">Smart Bidding</div><div class="d" id="swSmartD">For new Search campaigns. Off: Manual CPC with a per-click cap. On: Google sets bids with no cap; best from about 15–30 sales a month.</div></div><button type="button" class="sw" id="swSmart" role="switch" aria-checked="false" aria-labelledby="swSmartT" aria-describedby="swSmartD"><i></i></button></div>
+          <div class="toggle"><div class="info"><div class="t">Default countries</div><div class="d">Every new draft starts with these.</div><div class="chips" id="defCtyChips" style="margin-top:8px"></div></div><button type="button" class="btn ghost sm" id="defCtyEdit">Edit</button></div>
         </div>
         <div class="card pad">
-          <div class="card__h"><h3>Spend &amp; targets <span id="curLab2" class="sub"></span></h3></div>
-          <div class="field"><label>Total daily campaign budget ceiling</label><p class="muted">Google can bill up to twice an average daily budget on a day for most campaigns. This limits configured budgets, not daily charges.</p><div class="range"><input type="range" id="cCeil" min="40" max="500" step="10"><span class="rngval" id="cCeilV"></span></div></div>
-          <div class="field"><label>Max budget move per cycle</label><div class="range"><input type="range" id="cStep" min="5" max="50" step="5"><span class="rngval" id="cStepV"></span></div></div>
-          <div class="field"><label>Target ROAS (0 = auto)</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div></div>
-          <div class="field"><label>Approval needed above</label><div class="range"><input type="range" id="cAppr" min="5" max="50" step="5"><span class="rngval" id="cApprV"></span></div></div>
-          <div class="field"><label>Default target countries <span class="muted" style="font-weight:400">\u00b7 every new draft starts here</span></label><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap"><span id="defCtyChips" style="display:flex;gap:6px;flex-wrap:wrap"></span><button type="button" class="btn ghost sm" id="defCtyEdit" style="padding:3px 9px;font-size:11px">Edit default</button></div></div>
-          <div class="field"><label>Monthly stop threshold <span class="muted" style="font-weight:400">\u00b7 checked hourly; spend may exceed this before campaigns pause</span></label><div style="display:flex;gap:8px;align-items:center"><span id="cMonCur" class="muted" style="font-size:13px"></span><input type="number" id="cMonthly" min="0" step="10" placeholder="off" style="width:120px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;font-size:13px;background:var(--paper)"><button type="button" class="btn ghost sm" id="cMonthlySave" style="padding:5px 11px;font-size:12px">Save</button><span id="cMonthlyMsg" class="muted" style="font-size:11.5px"></span></div></div>
-          <div class="field"><label>Total daily budget <span class="muted" style="font-weight:400">\u00b7 keep the sum of campaign budgets under the ceiling</span></label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="btn ghost sm" id="cTrim" style="padding:5px 11px;font-size:12px">Trim budgets to ceiling now</button><span id="cTrimMsg" class="muted" style="font-size:11.5px"></span></div></div>
+          <div class="card__h"><h3>Spend &amp; targets</h3></div>
+          <div class="field"><label for="cCeil">Daily budget ceiling <span id="curLab2"></span></label><div class="range"><input type="range" id="cCeil" min="40" max="500" step="10"><span class="rngval" id="cCeilV"></span></div><p class="fhint">Limits the sum of campaign daily budgets. Google can bill up to twice a daily budget on one day.</p><div class="frow" style="margin-top:8px"><button type="button" class="btn ghost sm" id="cTrim">Trim budgets to ceiling</button><span id="cTrimMsg" class="fmsg"></span></div></div>
+          <div class="field"><label for="cMonthly">Monthly stop threshold · USD</label><div class="frow"><input type="number" id="cMonthly" min="0" step="10" placeholder="Off"><button type="button" class="btn ghost sm" id="cMonthlySave">Save</button></div><p class="fhint">Checked hourly while scheduled automation is on. Campaigns pause once month-to-date spend reaches it, so spend can pass it slightly.</p></div>
+          <div class="field"><label for="cStep">Max budget move per cycle</label><div class="range"><input type="range" id="cStep" min="5" max="20" step="5"><span class="rngval" id="cStepV"></span></div><p class="fhint">Each budget move waits for you in Approvals.</p></div>
+          <div class="field"><label for="cRoas">Target ROAS</label><div class="range"><input type="range" id="cRoas" min="0" max="700" step="25"><span class="rngval" id="cRoasV"></span></div><p class="fhint">Used by Smart Bidding and budget moves. Auto maximises conversion value without a target.</p></div>
+          <div class="field"><label for="creativeBudget">Image allowance per draft · USD</label><div class="frow"><input type="number" id="creativeBudget" min="1" max="30" step="1"><button type="button" class="btn ghost sm" id="creativeBudgetSave">Save</button></div><p class="fhint">Estimated image cost. Copy and quality reviews are billed separately.</p></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
-          <div class="field"><label for="creativeBudget">Image generation allowance per draft (USD)</label><input type="number" id="creativeBudget" min="1" max="30" step="1"><button class="btn ghost sm" id="creativeBudgetSave">Save allowance</button><p class="muted">Estimated image usage; copy and quality reviews are billed separately.</p></div><div class="card__h"><h3>Maintenance</h3><span class="sub">runs in dry-run if dry-run is on</span></div>
-          <button class="btn ghost sm" onclick="runNow(['conversions'])">Upload conversions</button>
-          <button class="btn ghost sm" onclick="runNow(['measure'])">Measure</button>
-          <button class="btn ghost sm" onclick="runNow(['mine','prune'])">Mine + prune</button>
-          <button class="btn ghost sm" onclick="runNow(['budgets'])">Reallocate budgets</button>
-          <button class="btn ghost sm" onclick="runNow(['events'])">Generate due events</button>
-          <button class="btn ghost sm" id="pmxBackfillBtn" onclick="pmaxBackfillImages()">Redesign existing product ads</button>
+          <div class="card__h"><h3>Run now</h3><span class="sub" id="runNote"></span></div>
+          <div class="runbtns">
+          <button class="btn ghost sm runTask" onclick="runNow(['conversions'],this)" title="Send recent Shopify purchases and refunds to Google Ads">Upload conversions</button>
+          <button class="btn ghost sm runTask" onclick="runNow(['mine','prune'],this)" title="Draft converting search terms as keywords and wasteful ones as negatives, and flag weak ad text">Mine search terms</button>
+          <button class="btn ghost sm runTask" onclick="runNow(['budgets'],this)" title="Draft budget moves toward campaigns beating the target ROAS">Reallocate budgets</button>
+          <button class="btn ghost sm runTask" onclick="runNow(['events'],this)" title="Draft campaigns for occasions coming up (uses AI)">Draft due events</button>
+          <button class="btn ghost sm" id="pmxBackfillBtn" onclick="pmaxBackfillImages()" title="Choose new photos for running Performance Max ads; each swap waits in Approvals">Redesign existing product ads</button>
           <button hidden class="btn ghost sm" id="pmxUpgradeBtn" onclick="pmaxUpgradeAdStrength()">Upgrade running PMax ads (headlines + sitelinks)</button>
-          <span id="runMsg" class="muted" style="font-size:12px"></span>
-          <span id="pmxBackfillMsg" class="muted" style="font-size:12px"></span>
-          <span id="pmxUpgradeMsg" class="muted" style="font-size:12px"></span>
+          <button class="btn ghost sm" id="btnResetDesignFailures" title="Clear failed AI design jobs across ad groups; saved artwork and paid history are kept">Reset failed AI</button>
+          </div>
+          <div class="runmsg" aria-live="polite"><span id="runMsg"></span><span id="pmxBackfillMsg"></span><span id="pmxUpgradeMsg"></span></div>
         </div>
         <div class="card pad" style="grid-column:1/-1">
-          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">read-only · set via GADS_TERM_EXCLUSIONS env</span></div>
+          <div class="card__h"><h3>Brand-safety — excluded terms</h3><span class="sub">Read-only · set by GADS_TERM_EXCLUSIONS in Netlify</span></div>
           <div class="chips" id="termChips"></div>
         </div>
       </div>
@@ -990,18 +1015,21 @@ function cur(){ return (DASH&&DASH.budgetCurrency)||"currency unverified"; }
 function money(n){ n=Number(n)||0; return "$"+(Math.round(n*100)/100).toLocaleString(undefined,{minimumFractionDigits:n%1?2:0,maximumFractionDigits:2}); }
 function pctTxt(n){ return (n>0?"+":"")+(Number(n)||0).toFixed(0)+"%"; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-function toast(msg,ok){const t=elFrom('<div class="toast '+(ok?"ok":"")+'"><span class="d"></span><span>'+esc(msg)+'</span></div>');$("#toasts").appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transform="translateX(20px)";setTimeout(()=>t.remove(),250);},3200);}
+// Long messages stay up long enough to read; ok===false marks a failure.
+function toast(msg,ok){const t=elFrom('<div class="toast '+(ok?"ok":ok===false?"err":"")+'"><span class="d"></span><span>'+esc(msg)+'</span></div>');$("#toasts").appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transform="translateX(20px)";setTimeout(()=>t.remove(),250);},Math.min(9000,Math.max(3200,String(msg).length*55)));}
 /* ---- country / location targeting ---- */
 var COUNTRIES=[];var countriesLoaded=false;
 async function ensureCountries(){ if(countriesLoaded&&COUNTRIES.length)return COUNTRIES; try{var r=await api("countries",{});if(r&&r.ok&&r.list&&r.list.length){COUNTRIES=r.list;countriesLoaded=true;}}catch(e){} return COUNTRIES; }
-function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(String(COUNTRIES[i].id)===s)return COUNTRIES[i].name;}return "#"+s;}
+// Names for the usual targets, so chips read correctly before the full list loads.
+var CTY_KNOWN={"2036":"Australia","2124":"Canada","2826":"United Kingdom","2840":"United States"};
+function ctyName(id){var s=String(id);for(var i=0;i<COUNTRIES.length;i++){if(String(COUNTRIES[i].id)===s)return COUNTRIES[i].name;}return CTY_KNOWN[s]||"#"+s;}
 function ctyChips(ids){ if(!ids||!ids.length)return '<span class="muted" style="font-size:12px">All countries &amp; territories \u2014 no restriction set</span>'; return ids.map(function(id){return '<span class="chip on">'+esc(ctyName(id))+'</span>';}).join(""); }
 function openCountryEditor(o){
-  o=o||{};var sel={};(o.selected||[]).forEach(function(id){sel[String(id)]=true;});
-  var ov=elFrom('<div class="ovsheet" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(22,19,15,.45)"></div>');
-  var box=elFrom('<div style="background:var(--paper);border:1px solid var(--line);border-radius:14px;width:min(460px,92vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:var(--sh);overflow:hidden"></div>');
+  o=o||{};var sel={};(o.selected||[]).forEach(function(id){sel[String(id)]=true;});var opener=document.activeElement;
+  var ov=elFrom('<div class="ovsheet" role="dialog" aria-modal="true" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(22,19,15,.45)"></div>');ov.setAttribute("aria-label",o.title||"Target countries");
+  var box=elFrom('<div tabindex="-1" style="background:var(--paper);border:1px solid var(--line);border-radius:14px;width:min(460px,92vw);max-height:84vh;display:flex;flex-direction:column;box-shadow:var(--sh);overflow:hidden;outline:none"></div>');
   box.innerHTML='<div style="padding:16px 18px;border-bottom:1px solid var(--line)"><div style="font-weight:700;font-size:15px">'+esc(o.title||"Target countries")+'</div><div class="muted" style="font-size:12px;margin-top:3px">'+esc(o.subtitle||"Choose where this ad runs.")+'</div></div>'+
-    '<div style="padding:12px 18px 4px"><input class="ctyq" placeholder="Search countries\u2026" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;box-sizing:border-box;background:var(--paper)"></div>'+
+    '<div style="padding:12px 18px 4px"><input class="ctyq" type="search" aria-label="Search countries" placeholder="Search countries\u2026" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:9px;font-size:13px;box-sizing:border-box;background:var(--paper)"></div>'+
     '<div style="padding:6px 18px;display:flex;gap:7px;flex-wrap:wrap">'+
       '<button class="btn ghost sm ctyq-p" data-ids="2124" style="padding:3px 9px;font-size:11px">Canada</button>'+
       '<button class="btn ghost sm ctyq-p" data-ids="2124,2840" style="padding:3px 9px;font-size:11px">Canada + US</button>'+
@@ -1010,21 +1038,26 @@ function openCountryEditor(o){
     '<div class="ctylist" style="flex:1;overflow:auto;padding:2px 18px 6px;min-height:120px"><div class="lrow" style="padding:18px 0"><span class="spin"></span> <span class="muted">Loading countries\u2026</span></div></div>'+
     '<div style="padding:13px 18px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center"><span class="ctycount muted" style="font-size:12px;flex:1"></span><button class="btn ghost sm ctycancel">Cancel</button><button class="btn gold sm ctysave">'+esc(o.saveLabel||"Save")+'</button></div>';
   ov.appendChild(box);document.body.appendChild(ov);
-  function close(){ov.remove();}
+  function onKey(e){if(e.key==="Escape"){e.stopPropagation();close();}}
+  function close(){document.removeEventListener("keydown",onKey,true);ov.remove();try{if(opener&&opener.isConnected)opener.focus();}catch(e){}}
+  document.addEventListener("keydown",onKey,true);
   ov.onclick=function(e){if(e.target===ov)close();};
   box.querySelector(".ctycancel").onclick=close;
-  var listEl=box.querySelector(".ctylist"),countEl=box.querySelector(".ctycount"),q=box.querySelector(".ctyq");
-  function upd(){var n=Object.keys(sel).filter(function(k){return sel[k];}).length;countEl.textContent=n+" selected";}
+  var listEl=box.querySelector(".ctylist"),countEl=box.querySelector(".ctycount"),q=box.querySelector(".ctyq"),saveBtn=box.querySelector(".ctysave");
+  try{if(window.matchMedia&&matchMedia("(pointer:fine)").matches)q.focus();else box.focus();}catch(e){}
+  function upd(){var n=Object.keys(sel).filter(function(k){return sel[k];}).length,none=!!(o.requireOne&&!n);countEl.style.color="";countEl.textContent=none?"Pick at least one country":n+" selected";if(!saveBtn.classList.contains("is-busy"))saveBtn.disabled=none;}
   function paint(){
-    var f=(q.value||"").trim().toLowerCase();
-    listEl.innerHTML=COUNTRIES.filter(function(c){return !f||c.name.toLowerCase().indexOf(f)>-1||(c.code||"").toLowerCase()===f;}).map(function(c){
+    // Chosen countries lead the list, so the current choice is visible without scrolling.
+    var f=(q.value||"").trim().toLowerCase(),lead=Object.assign({},sel);
+    listEl.innerHTML=COUNTRIES.filter(function(c){return !f||c.name.toLowerCase().indexOf(f)>-1||(c.code||"").toLowerCase()===f;}).sort(function(a,b){return f?0:(lead[String(b.id)]?1:0)-(lead[String(a.id)]?1:0);}).map(function(c){
       return '<label style="display:flex;gap:9px;align-items:center;padding:6px 2px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--line-2)"><input type="checkbox" class="ctycb" value="'+c.id+'"'+(sel[String(c.id)]?" checked":"")+'><span style="flex:1">'+esc(c.name)+'</span><span class="muted" style="font-family:var(--mono);font-size:10.5px">'+esc(c.code||"")+'</span></label>';
     }).join("")||'<div class="muted" style="padding:14px 0">No match.</div>';
     listEl.querySelectorAll(".ctycb").forEach(function(cb){cb.onchange=function(){sel[cb.value]=cb.checked;upd();};});
   }
   box.querySelectorAll(".ctyq-p").forEach(function(b){b.onclick=function(){sel={};(b.dataset.ids||"").split(",").forEach(function(id){if(id)sel[id]=true;});paint();upd();};});
   q.oninput=paint;
-  box.querySelector(".ctysave").onclick=function(){var ids=Object.keys(sel).filter(function(k){return sel[k];});var btn=this;btn.classList.add("is-busy");btn.disabled=true;(o.onSave||function(_,d){d();})(ids,function(){close();});};
+  // A failed save keeps the dialog and the selection; only success closes it.
+  saveBtn.onclick=function(){var ids=Object.keys(sel).filter(function(k){return sel[k];});var restore=btnBusy(saveBtn,"Saving…");(o.onSave||function(_,d){d();})(ids,function(){close();},function(m){restore();upd();if(m){countEl.textContent=m;countEl.style.color="var(--clay)";}});};
   ensureCountries().then(function(){upd();paint();});
 }
 function defCountries(){var d=(((typeof DASH!=="undefined"&&DASH)||{}).control||{}).defaultCountries;return (d&&d.length)?d.slice():["2124"];}
@@ -1070,12 +1103,21 @@ var LOADINFO={
   setStatus:{verb:"Updating campaign in Google Ads",detail:"",eta:"2\u20134s"},
   syncConversions:{verb:"Syncing conversions",detail:"Uploading purchases & refund adjustments to Google Ads",eta:"3\u20138s"},
   conversionHealth:{verb:"Re-checking conversion tracking",detail:"Querying Google Ads conversion status",eta:"3\u20138s"},
-  resume:{verb:"Starting autopilot",detail:"",eta:"~2s"},
-  kill:{verb:"Stopping autopilot",detail:"",eta:"~2s"},
+  resume:{verb:"Turning on scheduled automation",detail:"",eta:"~2s"},
+  kill:{verb:"Turning off scheduled automation",detail:"Running ads keep serving",eta:"~2s"},
   dryRun:{verb:"Switching dry-run mode",detail:"",eta:"~2s"},
   setControl:{verb:"Saving setting",detail:"",eta:"1\u20132s"},
-  runNow:{verb:"Running tasks now",detail:"Handing off to the background worker",eta:"~5s"},
-  clearLedger:{verb:"Clearing activity log",detail:"Deleting recorded ledger history",eta:"~2\u20135s"}
+  runNow:{verb:"Starting tasks",detail:"Handing off to the background worker",eta:"~5s"},
+  clearLedger:{verb:"Clearing activity log",detail:"Deleting recorded ledger history",eta:"~2\u20135s"},
+  pmaxBackfillImages:{verb:"Redesigning product ad images",detail:"Each image swap is queued to Approvals",eta:"several minutes"},
+  pmaxUpgradeAdStrength:{verb:"Upgrading product ad text",detail:"Headlines and sitelinks are queued to Approvals",eta:"several minutes"},
+  resetAdDesignFailures:{verb:"Resetting failed AI jobs",detail:"Saved artwork and paid history are kept",eta:"A few seconds"},
+  enforceCeiling:{verb:"Checking budgets against the daily ceiling",detail:"",eta:"2\u20135s"},
+  monthlyGuard:{verb:"Checking the monthly stop threshold",detail:"",eta:"2\u20135s"},
+  countries:{verb:"Loading countries",detail:"",eta:"1\u20132s"},
+  adGroups:{verb:"Loading products and groups",detail:"",eta:"3\u201310s"},
+  diagnostics:{verb:"Loading Ad Doctor results",detail:"",eta:"1\u20133s"},
+  metricsRange:{verb:"Loading campaign metrics",detail:"",eta:"2\u20136s"}
 };
 function loadInfo(key,over){return Object.assign({verb:"Working",detail:"",eta:""},LOADINFO[key]||{},over||{});}
 
@@ -1084,7 +1126,9 @@ var ACT={stack:[],seq:0};
 function actRender(){var bar=$("#actbar");if(!bar)return;var top=ACT.stack[ACT.stack.length-1];
   if(!top){bar.classList.remove("show");bar.innerHTML="";return;}
   var more=ACT.stack.length>1?'<span class="acount">+'+(ACT.stack.length-1)+'</span>':"";
-  bar.innerHTML='<progress class="action-progress" aria-label="Operation in progress"></progress><span class="alabel">'+esc(top.verb)+'\u2026</span>'+
+  // The progress stays for assistive tech and so the shared waiting notice is not
+  // duplicated; its label is the operation, so each new one starts its own clock.
+  bar.innerHTML='<span class="spin light" aria-hidden="true"></span><progress class="action-progress" aria-label="'+esc(top.verb).replace(/"/g,"&quot;")+'"></progress><span class="alabel">'+esc(top.verb)+'\u2026</span>'+
     (top.detail?'<span class="adetail">'+esc(top.detail)+'</span>':"")+more+
     (top.eta?'<span class="aeta">'+esc(top.eta)+'</span>':"");
   bar.classList.add("show");}
@@ -1184,7 +1228,7 @@ function syncOk(){
   syncFail=0; nextSyncAt=0; lastSync=Date.now();
   if(syncBlocked){ syncBlocked=null; syncBanner(null); }
   var d=$("#connDot"),t=$("#connText");
-  if(d)d.style.background="var(--sage)"; if(t)t.textContent="connected";
+  if(d)d.style.background="var(--sage)"; if(t)t.textContent="Connected";
 }
 function syncFailed(x){
   var code=(x&&x.status)||0;
@@ -1196,7 +1240,7 @@ function syncFailed(x){
     var first=!syncBlocked;
     syncBlocked={code:code,message:(x&&x.message)||"request refused"};
     nextSyncAt=Infinity;
-    if(t)t.textContent=code===401?"signed out":(code===403?"blocked ("+code+")":"unavailable ("+code+")");
+    if(t)t.textContent=code===401?"Signed out":(code===403?"Blocked ("+code+")":"Unavailable ("+code+")");
     syncBanner(syncBlocked);
     if(first)toast(syncMessage(syncBlocked),false);
     if(code===401){ try{sessClear();}catch(e){} }
@@ -1204,40 +1248,39 @@ function syncFailed(x){
     syncFail++;
     var wait=syncBackoff(syncFail);
     nextSyncAt=Date.now()+wait;
-    if(t)t.textContent="retrying in "+(wait>=60000?Math.round(wait/60000)+"m":Math.round(wait/1000)+"s");
+    if(t)t.textContent="Retrying in "+(wait>=60000?Math.round(wait/60000)+"m":Math.round(wait/1000)+"s");
     if(syncFail===1)toast((x&&x.message)||"Refresh failed",false);
   }
 }
 function syncMessage(b){
   if(!b)return "";
-  if(b.code===401)return "Signed out \u2014 the saved passcode was rejected. Enter it again to reconnect.";
-  if(b.code===403)return "Netlify refused the request (403) \u2014 the passcode is not the problem (a wrong one returns 401). "+
-    "The usual cause is that the target function is SCHEDULED: Netlify does not allow scheduled functions to be called over "+
-    "HTTP. Deploy googleAdsAutopilotApi.js (unscheduled) and make sure netlify.toml schedules ONLY googleAdsAutopilotKick. "+
-    "Currently talking to: "+gadsUrl().replace(/^https?:\/\//,"");
-  if(b.code===404)return "The API endpoint was not found (404). Auto-refresh is paused. Is googleAdsAutopilotKick deployed on this site?";
+  if(b.code===401)return "Signed out \u2014 the saved passcode was rejected. Sign in again to reconnect.";
+  if(b.code===403)return "The server refused the request (403), so auto-refresh is paused. Not a passcode problem: "+
+    "googleAdsAutopilotApi must be deployed as an unscheduled function ("+gadsUrl().replace(/^https?:\/\//,"")+").";
+  if(b.code===404)return "The API was not found (404), so auto-refresh is paused. Check that googleAdsAutopilotApi is deployed.";
   return b.message||"Auto-refresh paused.";
 }
-/*  A blocked state has to be visible without opening DevTools. Built in JS so
-    it cannot disturb the existing layout, and it removes itself on recovery. */
+/*  A blocked state has to be visible without opening DevTools. It sits at the
+    top of the work area, under the header rather than over it, so Refresh and
+    the status stay usable; it removes itself on recovery. */
 function syncBanner(b){
   var el=document.getElementById("syncBanner");
   if(!b){ if(el)el.remove(); return; }
   if(!el){
-    el=document.createElement("div"); el.id="syncBanner";
-    el.style.cssText="position:fixed;left:0;right:0;top:0;z-index:9999;background:#b42424;color:#fff;"+
-      "font:13px/1.4 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:10px 14px;display:flex;"+
-      "gap:10px;align-items:center;box-shadow:0 4px 18px rgba(0,0,0,.2)";
+    el=document.createElement("div"); el.id="syncBanner"; el.setAttribute("role","alert");
     var msg=document.createElement("span"); msg.id="syncBannerMsg"; msg.style.flex="1";
     el._msg=msg;                       // hold the node directly; never re-query for it
-    var retry=document.createElement("button"); retry.textContent="Retry now";
-    retry.style.cssText="font:inherit;background:#fff;color:#b42424;border:0;border-radius:7px;padding:6px 12px;cursor:pointer;font-weight:700";
-    retry.onclick=function(){ syncBlocked=null; nextSyncAt=0; syncFail=0; syncBanner(null); reload(true); };
+    var retry=document.createElement("button"); retry.type="button"; el._retry=retry;
     el.appendChild(msg); el.appendChild(retry);
-    document.body.appendChild(el);
+    var bar=document.querySelector(".main>.topbar");
+    if(bar)bar.after(el); else document.body.appendChild(el);
   }
   var m=el._msg||document.getElementById("syncBannerMsg");
   if(m)m.textContent=syncMessage(b);
+  // A rejected passcode cannot be retried with the same passcode: go back to sign-in.
+  var r=el._retry;if(r){r.textContent=b.code===401?"Sign in again":"Retry now";
+    r.onclick=b.code===401?function(){ try{sessClear();}catch(e){} location.reload(); }
+      :function(){ syncBlocked=null; nextSyncAt=0; syncFail=0; syncBanner(null); reload(true); };}
 }
 
 /* ---- charts (pure SVG) ---- */
@@ -1438,6 +1481,12 @@ function updateBadges(){var b=$('#nav button[data-v="approvals"]');if(!b)return;
 function navDrawer(open){document.body.classList[open?"add":"remove"]("navOpen");}
 (function(){var b=document.getElementById("navBurger"),sc=document.getElementById("navScrim");
   if(b)b.onclick=function(){navDrawer(!document.body.classList.contains("navOpen"));};
+  // Drawer and tab state for assistive tech: however the drawer opens or closes,
+  // the burger reports it, focus moves in and back out, and Escape closes it.
+  if(b&&window.MutationObserver){var wasOpen=false;new MutationObserver(function(){var open=document.body.classList.contains("navOpen");if(open===wasOpen)return;wasOpen=open;b.setAttribute("aria-expanded",open?"true":"false");var rail=document.querySelector(".rail");
+    if(open){var t=document.querySelector("#nav button.active")||document.querySelector("#nav button");if(t)t.focus({preventScroll:true});}else if(rail&&rail.contains(document.activeElement))b.focus({preventScroll:true});}).observe(document.body,{attributes:true,attributeFilter:["class"]});}
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"&&document.body.classList.contains("navOpen"))navDrawer(false);});
+  var nv=document.getElementById("nav");if(nv&&window.MutationObserver)new MutationObserver(function(){nv.querySelectorAll("button").forEach(function(x){if(x.classList.contains("active"))x.setAttribute("aria-current","page");else x.removeAttribute("aria-current");});}).observe(nv,{subtree:true,attributes:true,attributeFilter:["class"]});
   if(sc)sc.onclick=function(){navDrawer(false);};})();
 function go(k){if(k==="perf")k="command";if(!document.getElementById("v-"+k))return;navDrawer(false);$$(".view").forEach(v=>v.classList.add("hidden"));$("#v-"+k).classList.remove("hidden");$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===k));var m=NAV.find(n=>n[0]===k);$("#vtitle").textContent=m[1];$("#vsub").textContent=m[2];window.scrollTo(0,0);if(window.BritesGroups){BritesGroups.chrome(k);if(k==="groups")BritesGroups.show();}if(k==="bench"){ensureOpportunities();loadPlaybook();loadDesignStudioGrowth(false);loadGrowthPerformance(document.getElementById('v-bench').dataset.lane,false);}}
 
@@ -1484,7 +1533,8 @@ function totals(camps){var t={cost:0,conv:0,value:0,clicks:0,impr:0,budget:0};(c
 
 /* ---- render: command ---- */
 function renderControlBar(){var c=DASH.control||{};
-  $("#pillLive").className="pill "+(c.enabled?"live":"stop");$("#pillLive").innerHTML='<span class="d"></span>'+(c.enabled?"LIVE":"STOPPED");
+  // "Stopped" read as if the ads had stopped; only the scheduled automation has.
+  $("#pillLive").className="pill "+(c.enabled?"live":"stop");$("#pillLive").innerHTML='<span class="d"></span>'+(c.enabled?"AUTOPILOT ON":"AUTOPILOT OFF");$("#pillLive").title=c.enabled?"Scheduled automation is on":"Scheduled automation is off. Running ads keep serving.";
   $("#pillDry").style.display=c.dryRun?"inline-flex":"none";}
 var convOpen=false;
 var salesRange={preset:"7d"}; var salesFilter="all";
@@ -3398,21 +3448,28 @@ async function launchOpp(i,btn){ var o=OPPS[i]; if(!o)return; if(researchNeedsRe
 }
 
 /* ---- render: controls ---- */
-function setSw(id,on){var s=$("#"+id);s.classList.toggle("on",!!on);}
-function renderControls(){var c=DASH.control||{};$("#growthCurrency").textContent="Campaign budgets and CPC: "+cur()+" · performance reporting: USD";if(document.activeElement!==$("#creativeBudget"))$("#creativeBudget").value=c.creativeBudgetUsd||8;
-  setSw("swLive",c.enabled);setSw("swDry",c.dryRun);setSw("swAuto",true);setSw("swSmart",c.smartBidding);
-  var bn=$("#bidNote");if(bn){bn.innerHTML=c.smartBidding
-    ? '<b>Currently: Smart Bidding.</b> Google sets each bid automatically to maximize conversion value. <b>Trade-off:</b> there is no max-CPC cap (clicks can cost more, especially during the 1\u20132 week learning phase), and it needs ~15\u201330 sales/month to optimize \u2014 below that it can spend unpredictably. New campaigns build on this until you switch back. Best once you have steady conversion volume.'
-    : '<b>Currently: Manual CPC.</b> Every new Search campaign gets a max-CPC cap \u2014 predictable spend, no learning phase, full cost control. <b>Trade-off:</b> Google won\u2019t automatically raise bids to win a likely sale. Best while volume is low; flip on once you\u2019re getting ~15\u201330+ sales/month.';}
-  $("#cCeil").value=c.maxDailyBudgetTotal||100;$("#cCeilV").textContent=money(c.maxDailyBudgetTotal||100);
-  $("#cStep").value=c.maxBudgetStepPct||20;$("#cStepV").textContent=(c.maxBudgetStepPct||20)+"%";
-  $("#cRoas").value=Math.round((c.targetRoas||0)*100);$("#cRoasV").textContent=(c.targetRoas?Number(c.targetRoas).toFixed(1)+"x":"auto");
-  $("#cAppr").value=c.budgetMoveApprovalPct||20;$("#cApprV").textContent=(c.budgetMoveApprovalPct||20)+"%";
+function setSw(id,on){var s=$("#"+id);if(!s)return;s.classList.toggle("on",!!on);s.setAttribute("aria-checked",on?"true":"false");}
+function roasTxt(v){v=Number(v)||0;return v>0?(Math.round(v*100)/100)+"x":"Auto";}
+// A value typed but not saved survives re-renders; its Save button stays marked until saved.
+function ctrlDirty(el){var b=el&&$("#"+el.id+"Save");if(b&&!b.classList.contains("is-busy"))b.classList.toggle("dirty",el.dataset.saved!=null&&el.value!==el.dataset.saved);}
+function ctrlField(el,saved){if(!el)return;saved=String(saved);
+  if(el.dataset.saved!=null&&el.value!==el.dataset.saved)el.dataset.saved=saved;
+  else if(document.activeElement!==el){el.value=saved;el.dataset.saved=saved;}
+  ctrlDirty(el);}
+function renderControls(){var c=DASH.control||{};$("#growthCurrency").textContent="Campaign budgets and CPC: "+cur()+" · performance reporting: USD";ctrlField($("#creativeBudget"),c.creativeBudgetUsd||8);
+  // A switch that is still saving keeps the position the operator chose.
+  [["swLive",c.enabled],["swDry",c.dryRun],["swSmart",c.smartBidding]].forEach(function(p){var s=$("#"+p[0]);if(s&&s.getAttribute("aria-busy")!=="true")setSw(p[0],p[1]);});
+  var ceil=c.maxDailyBudgetTotal||100,step=Math.min(20,c.maxBudgetStepPct||20);
+  $("#cCeil").value=ceil;$("#cCeilV").textContent=money(ceil);
+  $("#cStep").value=step;$("#cStepV").textContent=step+"%";
+  $("#cRoas").value=Math.round((c.targetRoas||0)*100);$("#cRoasV").textContent=roasTxt(c.targetRoas);
   $("#curLab2").textContent="· "+cur();$("#curLab").textContent="("+cur()+")";
-  $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">none set</span>';
+  $("#termChips").innerHTML=(DASH.terms||[]).map(t=>'<span class="chip x">'+esc(t)+'</span>').join("")||'<span class="muted" style="font-size:12px">None set</span>';
   var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());
-  var cm=$("#cMonthly");if(cm&&document.activeElement!==cm){cm.value=(c.maxMonthlySpend&&+c.maxMonthlySpend>0)?(+c.maxMonthlySpend):"";}
-  var cmc=$("#cMonCur");if(cmc)cmc.textContent="USD";
+  ctrlField($("#cMonthly"),(c.maxMonthlySpend&&+c.maxMonthlySpend>0)?(+c.maxMonthlySpend):"");
+  // The background worker skips these tasks while scheduled automation is off.
+  var rn=$("#runNote");if(rn)rn.textContent=c.enabled?"Runs in the background; drafts wait in Approvals":"Greyed-out tasks need scheduled automation on";
+  $$("#v-controls .runTask").forEach(function(b){if(!b.classList.contains("is-busy"))b.disabled=!c.enabled;});
 }
 function bindControlsOnce(){
   var cf=$("#clearFeed");if(cf)cf.onclick=async function(){
@@ -3421,29 +3478,73 @@ function bindControlsOnce(){
     try{var r=await api("clearLedger");DASH.recentLedger=[];renderFeed();toast("Activity log cleared"+((r&&r.deleted)?" \u2014 "+r.deleted+" entries removed":""),true);}
     catch(x){toast(x.message);}
     actEnd(aid);done();};
-  $("#swLive").onclick=async()=>{var on=!$("#swLive").classList.contains("on");var aid=actStart(on?"resume":"kill");try{await api(on?"resume":"kill");toast("Autopilot "+(on?"live":"stopped"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
-  $("#swDry").onclick=async()=>{var on=!$("#swDry").classList.contains("on");var aid=actStart("dryRun");try{await api("dryRun",{on:on});toast("Dry-run "+(on?"on":"off"),on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
-  $("#swAuto").onclick=null;
-  $("#creativeBudgetSave").onclick=async function(){var done=btnBusy(this,'Saving…');try{var r=await api('setControl',{patch:{creativeBudgetUsd:Number($('#creativeBudget').value)}});if(r.error)throw new Error(r.error);toast('Creative allowance saved.',true);await reload();}catch(e){toast(e.message);}finally{done();}};
-  var ssb=$("#swSmart");if(ssb)ssb.onclick=async()=>{var on=!$("#swSmart").classList.contains("on");var aid=actStart("setControl",{verb:"Saving bidding strategy"});try{await api("setControl",{patch:{smartBidding:on}});toast(on?"Smart Bidding on \u2014 no per-click cap":"Manual CPC on \u2014 hard per-click cap",!on);}catch(x){toast(x.message);}actEnd(aid);await reload();};
-  var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),title:"Default target countries",subtitle:"Every new draft starts with these. You can still override per draft or per campaign.",saveLabel:"Save default",onSave:async function(ids,done){if(!ids.length){toast("Pick at least one country.");done();return;}var aid=actStart("setControl",{verb:"Saving default countries"});try{await api("setControl",{patch:{defaultCountries:ids}});toast("Default countries saved \u2713",true);done();actEnd(aid);await reload();}catch(x){actEnd(aid);toast(x.message);done();}}});};
-  var cms=$("#cMonthlySave");if(cms)cms.onclick=async function(){var v=Number($("#cMonthly").value)||0;var msg=$("#cMonthlyMsg");var done=btnBusy(this,"Saving\u2026");var aid=actStart("setControl",{verb:"Saving monthly cap"});try{await api("setControl",{patch:{maxMonthlySpend:v}});if(msg)msg.textContent=v>0?("hourly stop threshold at USD "+v):"monthly cap off";toast(v>0?("Monthly stop threshold set to USD "+v):"Monthly cap turned off",true);}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
-  var ct=$("#cTrim");if(ct)ct.onclick=async function(){var msg=$("#cTrimMsg");var done=btnBusy(this,"Checking\u2026");var aid=actStart("enforceCeiling",{verb:"Trimming budgets to ceiling"});try{var r=await api("enforceCeiling",{});if(r&&r.ok){if(r.skipped){if(msg)msg.textContent="set a ceiling first";toast("Set a daily ceiling first.");}else if(r.withinCeiling){if(msg)msg.textContent="already within ceiling ("+cur()+(r.total||0)+" / "+cur()+(r.ceiling||0)+")";toast("Already within ceiling \u2713",true);}else if(r.dryRun){if(msg)msg.textContent="validated (dry-run)";toast("Validated (dry-run) \u2014 nothing changed.");}else{if(msg)msg.textContent="trimmed "+(r.trimmed||0)+" campaigns to fit "+cur()+(r.ceiling||0);toast("Trimmed "+(r.trimmed||0)+" campaigns to your ceiling \u2713",true);}}else{toast("Failed: "+((r&&r.error)||"unknown"));}}catch(x){toast(x.message);}actEnd(aid);done();await reload();};
-  function slider(id,vid,fmt,key,map){var r=$("#"+id),v=$("#"+vid);r.oninput=()=>{v.textContent=fmt(r.value);};r.onchange=async()=>{try{await api("setControl",{patch:{[key]:map(r.value)}});toast("Saved",true);}catch(x){toast(x.message);}};}
-  slider("cCeil","cCeilV",v=>money(v),"maxDailyBudgetTotal",v=>+v);
-  slider("cStep","cStepV",v=>v+"%","maxBudgetStepPct",v=>+v);
-  slider("cRoas","cRoasV",v=>(+v?(v/100).toFixed(1)+"x":"auto"),"targetRoas",v=>+v/100);
-  slider("cAppr","cApprV",v=>v+"%","budgetMoveApprovalPct",v=>+v);
+  // One save at a time per control, each with its line in the activity strip.
+  async function saving(key,over,fn){var aid=actStart(key,over);try{return await fn();}finally{actEnd(aid);}}
+  function ccy(n){var c=DASH&&DASH.budgetCurrency;return money(n)+(c?" "+c:"");}
+  // A switch flips at once, ignores clicks while it saves and flips back if the save fails.
+  function swBind(id,run,msg){var s=$("#"+id);if(!s)return;s.onclick=async function(){if(s.getAttribute("aria-busy")==="true")return;var on=!s.classList.contains("on");setSw(id,on);s.setAttribute("aria-busy","true");
+    try{var r=await run(on);if(r&&r.error)throw new Error(r.error);toast(msg(on),true);}catch(x){setSw(id,!on);toast(x.message,false);}
+    s.removeAttribute("aria-busy");reload();};}
+  swBind("swLive",function(on){return saving(on?"resume":"kill",null,function(){return api(on?"resume":"kill");});},function(on){return on?"Scheduled automation on":"Scheduled automation off. Running ads keep serving.";});
+  swBind("swDry",function(on){return saving("dryRun",{verb:on?"Turning on dry-run":"Turning off dry-run"},function(){return api("dryRun",{on:on});});},function(on){return on?"Dry-run on: changes are validated, not applied":"Dry-run off: approved changes apply in Google Ads";});
+  swBind("swSmart",function(on){return saving("setControl",{verb:"Saving bidding strategy"},function(){return api("setControl",{patch:{smartBidding:on}});});},function(on){return on?"Smart Bidding on for new Search campaigns":"Smart Bidding off: new Search campaigns use Manual CPC with a per-click cap";});
+  // Number fields: typing marks Save, Enter saves, and a failed save keeps what was typed.
+  function numSave(id,build){var inp=$("#"+id),btn=$("#"+id+"Save");if(!inp||!btn)return;
+    inp.oninput=function(){ctrlDirty(inp);};inp.onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();btn.click();}};
+    btn.onclick=async function(){var p=build(inp.value);if(p.error){toast(p.error,false);inp.focus();return;}var done=btnBusy(btn,"Saving…");
+      try{var r=await saving("setControl",{verb:p.verb},function(){return api("setControl",{patch:p.patch});});if(r&&r.error)throw new Error(r.error);inp.value=p.shown;inp.dataset.saved=p.shown;toast(p.ok,true);}
+      catch(x){toast(p.fail+": "+x.message,false);}
+      done();ctrlDirty(inp);reload();};}
+  numSave("cMonthly",function(raw){var n=raw===""?0:Number(raw);if(!(n>=0))return {error:"Enter an amount, or leave it empty to turn the threshold off."};n=Math.round(n*100)/100;
+    return {patch:{maxMonthlySpend:n},shown:n>0?String(n):"",verb:"Saving monthly stop threshold",ok:n>0?"Monthly stop threshold set to USD "+n:"Monthly stop threshold off",fail:"Monthly stop threshold not saved"};});
+  numSave("creativeBudget",function(raw){var n=Number(raw);if(raw===""||!(n>0))return {error:"Enter an image allowance from 1 to 30."};n=Math.min(30,Math.max(1,n));
+    return {patch:{creativeBudgetUsd:n},shown:String(n),verb:"Saving image allowance",ok:"Image allowance set to USD "+n+" per draft",fail:"Image allowance not saved"};});
+  var dce=$("#defCtyEdit");if(dce)dce.onclick=function(){openCountryEditor({selected:defCountries(),requireOne:true,title:"Default countries",subtitle:"Every new draft starts with these. You can still change them per draft or campaign.",onSave:async function(ids,done,fail){
+    try{var r=await saving("setControl",{verb:"Saving default countries"},function(){return api("setControl",{patch:{defaultCountries:ids}});});if(r&&r.error)throw new Error(r.error);
+      if(DASH&&DASH.control)DASH.control.defaultCountries=ids.slice();var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(ids);done();toast("Default countries saved",true);reload();}
+    catch(x){fail("Not saved: "+x.message);}}});};
+  var ct=$("#cTrim");if(ct)ct.onclick=async function(){var msg=$("#cTrimMsg");msg.textContent="";var done=btnBusy(ct,"Checking…");
+    try{var r=await saving("enforceCeiling",null,function(){return api("enforceCeiling",{});});if(!r||!r.ok)throw new Error((r&&r.error)||"no answer from the server");
+      var n=r.trimmed||0,b=n+" budget"+(n===1?"":"s");
+      if(r.skipped)msg.textContent="No ceiling is set.";
+      else if(r.withinCeiling)msg.textContent="Within the ceiling: "+money(r.total||0)+" of "+ccy(r.ceiling||0)+".";
+      else if(!n)msg.textContent="Nothing to trim: budgets are at the minimum.";
+      else if(r.dryRun)msg.textContent="Dry-run: "+b+" would be trimmed to fit "+ccy(r.ceiling)+".";
+      else{msg.textContent="Trimmed "+b+" to fit "+ccy(r.ceiling)+".";toast(msg.textContent,true);}}
+    catch(x){toast("Trim failed: "+x.message,false);}
+    done();reload();};
+  // Sliders save on release. A failed save puts the slider back.
+  function slider(id,vid,fmt,key,map,name){var r=$("#"+id),v=$("#"+vid);r.oninput=function(){v.textContent=fmt(r.value);};
+    r.onchange=async function(){var want=map(r.value),said=key==="maxDailyBudgetTotal"?ccy(want):fmt(r.value),aid=actStart("setControl",{verb:"Saving "+name.toLowerCase()});
+      try{var x=await api("setControl",{patch:{[key]:want}});if(x&&x.error)throw new Error(x.error);
+        // The site environment can cap the ceiling below the saved value, so read it back.
+        var before=DASH,cap=want;if(key==="maxDailyBudgetTotal"){await reload();if(DASH!==before&&DASH&&DASH.control)cap=Number(DASH.control[key]);}else reload();
+        if(cap<want)toast(name+" saved, but the site limits it to "+ccy(cap));else toast(name+" set to "+said,true);}
+      catch(e){toast(name+" not saved: "+e.message,false);renderControls();}
+      actEnd(aid);};}
+  slider("cCeil","cCeilV",function(v){return money(v);},"maxDailyBudgetTotal",function(v){return +v;},"Daily budget ceiling");
+  slider("cStep","cStepV",function(v){return v+"%";},"maxBudgetStepPct",function(v){return +v;},"Max budget move");
+  slider("cRoas","cRoasV",function(v){return roasTxt(v/100);},"targetRoas",function(v){return +v/100;},"Target ROAS");
   var bb=$("#bBudget");bb.oninput=()=>$("#bBudgetV").textContent="$"+bb.value;
   $("#oppScan").onclick=()=>loadOpportunities(true);var kdb=$("#kwDiag");if(kdb)kdb.onclick=runKwDiag;var cw=$("#customWrap");if(cw)cw.addEventListener("toggle",function(){if(cw.open){ensureBench();paintBenchCty();}});$("#bColl").onchange=()=>loadOccasions(false);$("#bEvent").onchange=showOccWhy;$("#bOccRefresh").onclick=()=>loadOccasions(true);$("#bCollRefresh").onclick=()=>loadCollections(true);$("#bGen").onclick=generateBench;
   var bce=$("#bCtyEdit");if(bce)bce.onclick=function(){openCountryEditor({selected:benchCty(),title:"Target countries",subtitle:"Where this draft will run \u2014 baked in at generation.",saveLabel:"Use these",onSave:function(ids,done){benchCountries=ids.slice();paintBenchCty();done();}});};
   $("#btnResetDesignFailures").onclick=resetAdDesignFailures;
-  $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var done=btnBusy(b,"Refreshing\u2026");var aid=actStart("measureNow");
-    try{var r=await api("measureNow");if(r&&r.ok===false){toast("Live pull failed: "+(r.error||"unknown"));}else{toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"live from Google Ads",true);}}
-    catch(x){toast("Live pull error: "+x.message);}
-    actEnd(aid);done();await reload();};
+  // The button stays busy until the refreshed numbers are on screen.
+  $("#btnRefresh").onclick=async function(){var b=$("#btnRefresh");var done=btnBusy(b,"Refreshing…");
+    try{var r=await saving("measureNow",null,function(){return api("measureNow");});if(r&&r.ok===false)toast("Live pull failed: "+(r.error||"no details"),false);else toast("Pulled "+(((r&&r.campaigns)!=null)?r.campaigns+" campaigns ":"")+"from Google Ads",true);}
+    catch(x){toast("Live pull failed: "+x.message,false);}
+    await saving("dashboard",null,reload);done();};
+  // Names for uncommon default countries come with the full list.
+  if(defCountries().some(function(id){return !CTY_KNOWN[String(id)];}))ensureCountries().then(function(){var dc=$("#defCtyChips");if(dc)dc.innerHTML=ctyChips(defCountries());});
 }
-async function runNow(tasks){$("#runMsg").textContent=" running…";var aid=actStart("runNow",{detail:tasks.join(", ")});try{var r=await api("runNow",{tasks:tasks});$("#runMsg").textContent=" "+(r.status||"")+" ["+tasks.join(",")+"] — refreshing in ~5s";setTimeout(()=>reload(),5000);}catch(x){$("#runMsg").textContent=" "+x.message;}actEnd(aid);}
+// What each task is called and where its results appear.
+var RUN_TASKS={conversions:["Conversion upload","the activity log"],"mine,prune":["Search-term mining","Approvals"],budgets:["Budget reallocation","Approvals"],events:["Event drafting","Approvals"]};
+async function runNow(tasks,btn){var t=RUN_TASKS[tasks.join(",")]||[tasks.join(", "),"the activity log"],msg=$("#runMsg");msg.textContent="";
+  var done=btnBusy(btn,"Starting…"),aid=actStart("runNow",{detail:t[0]});
+  try{var r=await api("runNow",{tasks:tasks});if(!r||r.status!=="kicked"||r.upstream>=400)throw new Error((r&&(r.error||r.reason))||("the background worker answered HTTP "+((r&&r.upstream)||"nothing")));
+    msg.textContent=t[0]+" started. Results appear in "+t[1]+".";}
+  catch(x){msg.textContent=t[0]+" did not start: "+x.message;toast(t[0]+" did not start",false);}
+  actEnd(aid);done();}
 async function pmaxUpgradeAdStrength(){
   var btn=$("#pmxUpgradeBtn"),msg=$("#pmxUpgradeMsg");
   if(!confirm("This adds headlines, long headlines, descriptions, and sitelinks to every currently ENABLED PMax campaign that's below the ad-strength quality target. It only ADDS \u2014 nothing already live is removed or replaced, and no serving history is lost. The actual change is queued to Approvals for you to review, same as everything else. Continue?"))return;
@@ -3581,6 +3682,8 @@ function sessSave(p){try{localStorage.setItem(SESS_KEY,btoa(unescape(encodeURICo
 function sessRead(){try{var r=localStorage.getItem(SESS_KEY);if(!r)return null;var o=JSON.parse(decodeURIComponent(escape(atob(r))));if(!o||!o.p||!o.exp||Date.now()>o.exp)return null;return o.p;}catch(e){return null;}}
 function sessClear(){try{localStorage.removeItem(SESS_KEY);}catch(e){}}
 async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#pc").value;$("#gateErr").textContent="";
+  // Nothing typed: stay on the field instead of sending an empty passcode.
+  if(!PASS.trim()){try{$("#pc").focus();}catch(_e){}return false;}
   var gb=$(".gatecard button[type=submit]");var gdone=btnBusy(gb,(e&&e.__cachedPass)?"Signing you back in\u2026":"Connecting\u2026");var aid=actStart("dashboard");
   try{ DASH=await api("dashboard");
     // Respect the checkbox: on a shared machine the operator can decline the
@@ -3595,11 +3698,12 @@ async function unlock(e){if(e)e.preventDefault();PASS=(e&&e.__cachedPass)||$("#p
       var lp=Math.floor((Date.now()-lastLivePull)/60000);
       var el=$("#sync");
       if(el){
-        if(syncBlocked){ el.textContent="auto-refresh paused \u2014 "+(syncBlocked.code===401?"signed out":"server refused ("+syncBlocked.code+")"); }
+        // Short and calm: the text only changes once a minute unless a sync is failing.
+        if(syncBlocked){ el.textContent="Auto-refresh paused"; el.title=syncMessage(syncBlocked); }
         else{
-          var due=Math.max(0,Math.ceil((syncDueAt()-Date.now())/1000));
-          el.textContent="synced "+(since<60?since+"s":Math.floor(since/60)+"m")+" ago \u00b7 "+
-            (syncFail?("retrying in "):("auto-refresh in "))+(due>=60?Math.ceil(due/60)+"m":due+"s");
+          var due=Math.max(0,Math.ceil((syncDueAt()-Date.now())/1000)),dueTxt=due>=60?Math.ceil(due/60)+"m":due+"s";
+          el.textContent=syncFail?"Sync failed · retrying in "+dueTxt:"Synced "+(since<60?"just now":Math.floor(since/60)+"m ago");
+          el.title=syncFail?"":"Next auto-refresh in "+dueTxt;
         }
       }
       if(livePulling||document.hidden)return;
