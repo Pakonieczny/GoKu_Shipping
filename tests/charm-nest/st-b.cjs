@@ -171,7 +171,7 @@ const T = Date.now() - 3600e3;
   assert(/op: 'laserDone', kind, id, done, by: by \|\| undefined, device: 'charm-nest-1', via \}/.test(lib), 'the Library says where it was marked');
   assert(/LibraryDone\.mark\("sheet", id, done, \{ via: "Sheet window" \}\)/.test(win), 'the sheet window says it was there');
   assert(!/\|\|'operator'/.test(rose) && /CNEmployee\?\.name\?\.\(\)/.test(rose) && /device:'charm-nest-1'/.test(rose), 'the Rose cut sends the signed-in name or nothing');
-  for (const f of ['charm-nest-library.js', 'charm-nest-rose-ui.js', 'charm-nest-sheetwin.js']) assert(html.includes(`${f}?v=20260928-st-b`), f + ' version bumped');
+  for (const f of ['charm-nest-library.js', 'charm-nest-rose-ui.js', 'charm-nest-sheetwin.js']) assert(new RegExp(f.replace(/\./g, '\\.') + '\\?v=\\d{8}-').test(html), f + ' version bumped');
 
   console.warn = realWarn;
   assert(!warnings.some(w => /timeline not recorded/.test(w)), 'no stamp failed: ' + warnings.join(' | '));

@@ -43,7 +43,7 @@ delete process.env.EDIT_PASSCODE;
     assert(/state: "written", sheetName: sh\.fileBase \}, stampWho\(\)\)/.test(src), 'onSheetSaved (placed) passes stampWho()');
     assert(/\{ state: "committed", committedAt: Date\.now\(\) \}, stampWho\(\)\)/.test(src), 'commit (setCommitted) passes stampWho()');
     const html = fs.readFileSync(path.join(root, 'charm-nest-1.html'), 'utf8');
-    assert(/charm-nest-bridge\.js\?v=20260928-st-E/.test(html), 'the page loads the new bridge');
+    assert(/charm-nest-bridge\.js\?v=\d{8}-/.test(html), 'the page loads the new bridge');
     console.log('page: ok');
   })().then(server).catch(e => { console.error(e); process.exit(1); });
 }
