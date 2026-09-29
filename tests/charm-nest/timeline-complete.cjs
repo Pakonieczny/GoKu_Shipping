@@ -158,7 +158,7 @@ const opsOf = evs => evs.filter(opOf).map(e => [opOf(e), e.by, (e.data && e.data
     await mount(P, await tl(P));
     await page.waitForFunction(() => window.__el.querySelectorAll('.tlSt[data-key]').length >= 2, null, { timeout: 10000 });
     const old = await page.evaluate(() => ({ drawn: [...window.__el.querySelectorAll('.tlSt[data-key]')].map(b => b.dataset.key.split('~')[0]), lane: window.__el.querySelector('.tlLane[data-lane="office"] span').textContent }));
-    assert.deepEqual(old.drawn, ['arrived', 'sealCompleted'], 'Order in, then the completion: ' + old.drawn);
+    assert.deepEqual(old.drawn, ['arrived', 'sealCompleted', 'sealPrinted'], 'Order in, the completion, and its QR label print (every print is a seal too): ' + old.drawn);
     assert.equal(old.lane, 'Operator');
     h = await (async () => { await page.hover('.tlTestHost .tlSt[data-key^="sealCompleted~"]'); await page.waitForTimeout(450); return page.evaluate(() => [...window.__el.querySelectorAll('.tlLoupe text')].map(t => t.textContent).join(' | ')); })();
     assert.match(h, /ORDER COMPLETED/); assert.match(h, /PAUL/); assert.match(h, /SORTER/);
