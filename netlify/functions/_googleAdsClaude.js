@@ -8,7 +8,8 @@
 // not ship the Anthropic SDK). Requests always stream, so a long answer never
 // trips an idle-connection timeout; the stream is assembled into the same
 // message object a non-streaming call returns.
-const nodeFetch = require('node-fetch');
+// node-fetch is loaded only when no fetch is injected: callers that pass their
+// own (the autopilot, Analyze Ad, offline tests) never load a second copy.
 const { StringDecoder } = require('string_decoder');
 
 const MODEL = 'claude-sonnet-5-5';
@@ -241,7 +242,7 @@ function sourcesOf(message) {
 // ---------------------------------------------------------------- client
 function createClaudeClient(deps) {
   const D = deps || {};
-  const env = D.env || process.env, fetch = D.fetch || nodeFetch;
+  const env = D.env || process.env, fetch = D.fetch || require('node-fetch');
   const sleep = D.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const log = D.log || ((...args) => console.log(...args));
 
