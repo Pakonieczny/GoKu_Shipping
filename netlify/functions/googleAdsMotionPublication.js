@@ -23,7 +23,8 @@ function safePublication(p) {
   if (!p) return null;
   return {phase:p.phase, error:p.error || null, updatedAt:p.updatedAt, attachedAt:p.attachedAt || null,
     target:p.target?{campaignId:p.target.campaignId, groupRef:p.target.groupRef}:null,
-    ...(p.phase==='validated'?{message:'Dry run: Google validated attaching these videos. Nothing was attached. Turn off dry run, then approve the upload again to attach them.'}:{}),
+    ...(p.phase==='validated'?{message:p.validation?.uploaded===false?'Dry run: the three films and their paused target were checked. No YouTube upload was started and nothing was attached. Turn off dry run, then approve the upload again.':'Dry run: Google validated attaching these videos. Nothing was attached. Turn off dry run, then approve the upload again to attach them.'}:{}),
+    ...(p.phase==='blocked'&&p.resettable?{resettable:true,message:'Nothing was attached, so this step can be reset for free: completed uploads are kept and no new film is made. Fix the reason below, then reset and retry.'}:{}),
     videos:(p.videos || []).map(v => ({key:v.key, state:v.state, resourceName:v.resourceName || null, videoId:v.videoId || null})),
     merchant:p.merchant?{phase:p.merchant.phase,error:p.merchant.error||null,reviewHash:p.merchant.reviewHash,links:p.merchant.plan?.videoLinks||[],identity:p.merchant.plan?.identity||null,source:p.merchant.plan?.sourceName||null}:null,
     verification:p.verification || null};
@@ -57,6 +58,8 @@ function createPublicationService(D) {
       const row = await tx.get(ref), current = row.data();
       if (reviewHash(current) !== expectedHash) throw Error('The reviewed animation changed.');
       const p = current.publication;
+      // Nothing was attached (a failed check or Google's validate-only rejection): reset for free, keeping upload receipts.
+      if (p?.phase === 'blocked' && p.resettable === true && !p.attachmentInFlight && !(p.videos || []).some(v => v.inFlight)) {tx.update(ref, {publication:{...p, phase:'queued', error:null, resettable:false, resetAt:Date.now(), updatedAt:Date.now()}}); return;}
       if (p?.phase === 'blocked') throw Error(p.error || 'Reconcile the previous Google request before retrying.');
       if (p?.phase === 'attached' || p?.leaseUntil > Date.now()) return;
       tx.update(ref, {publication:p || {phase:'queued', reviewHash:expectedHash, ...(target?{target}:{}), createdAt:Date.now(), updatedAt:Date.now(), videos:selection(current).map(v => ({key:v.key, hash:v.asset.hash, state:'NOT_STARTED'}))}});
@@ -81,8 +84,18 @@ function createPublicationService(D) {
         tx.update(ref, {publication:clone(p)});
       });
     };
+    // A failure before anything is sent to Google attaches nothing, so it can be reset for free, unless an
+    // earlier request is still unresolved (a crashed attachment or upload), which always needs reconciliation.
+    const free = async f => {try {return await f();} catch (e) {if (e && typeof e === 'object') e.nothingAttached = true; throw e;}};
+    const unresolved = !!p.attachmentInFlight || p.videos.some(v => v.inFlight);
     try {
-      await D.assertTarget(job, p.target || null);
+      await free(() => D.assertTarget(job, p.target || null));
+      // Dry run starts no YouTube upload: the saved films are checked and nothing is sent to Google.
+      if (p.videos.some(v => !v.resourceName) && D.dryRun && await free(() => D.dryRun())) {
+        for (const video of p.videos) {if (video.resourceName) continue; const bytes = await D.loadVideo(selection(job).find(v => v.key === video.key).asset); if (!bytes.length || bytes.length > 100000000) throw Error('The saved video size is invalid.');}
+        await save({phase:'validated', leaseUntil:0, validation:{dryRun:true, uploaded:false, validatedAt:Date.now()}});
+        return {ok:true, dryRun:true, validated:true, uploaded:false};
+      }
       for (const video of p.videos) {
         if (video.resourceName) continue;
         const variant = selection(job).find(v => v.key === video.key);
@@ -116,7 +129,7 @@ function createPublicationService(D) {
       if (p.videos.some(v => v.state !== 'PROCESSED' || !/^[a-zA-Z0-9_-]{11}$/.test(v.videoId || ''))) {
         await save({phase:'processing', nextCheckAt:Date.now()+60000, leaseUntil:0}); return {ok:true, processing:true};
       }
-      await D.assertTarget(job, p.target || null);
+      await free(() => D.assertTarget(job, p.target || null));
       // A missing attachment response is never blindly replayed.
       if (p.attachmentInFlight) throw Error('The prior Google asset attachment needs reconciliation before another mutation.');
       await save({attachmentInFlight:true});
@@ -126,8 +139,10 @@ function createPublicationService(D) {
       await save({phase:'attached', attachmentInFlight:false, attachmentReceipt:receipt, attachedAt:Date.now(), leaseUntil:0});
       return {ok:true, attached:true};
     } catch (e) {
-      await save({phase:'blocked', leaseUntil:0, error:String(e.message || e).slice(0,1000)});
-      return {ok:false, error:e.message};
+      // Nothing reached Google as a change (a failed check, or Google rejected the validate-only request): receipts stay and a reset is free.
+      const resettable = !!(e && e.nothingAttached === true) && !unresolved;
+      await save({phase:'blocked', leaseUntil:0, error:String(e.message || e).slice(0,1000), ...(resettable?{resettable:true, attachmentInFlight:false}:{})});
+      return {ok:false, error:e.message, ...(resettable?{resettable:true}:{})};
     }
   }
   async function verify(input) {

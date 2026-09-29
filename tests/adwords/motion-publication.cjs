@@ -41,6 +41,27 @@ async function setup(){
  const pending=await setup();pending.D.uploadState=async resourceName=>({resourceName,state:'UPLOADED'});await pending.service.start({...pending.scope,reviewHash:reviewHash(pending.job)});ok((await pending.service.run(pending.scope)).processing&&pending.calls.attach===0,'YouTube processing must complete before attachment');
  const wrong=await setup();wrong.D.uploadState=async()=>({resourceName:'customers/1/youTubeVideoUploads/999',state:'PROCESSED',videoId:'abcdefghijk'});await wrong.service.start({...wrong.scope,reviewHash:reviewHash(wrong.job)});ok(!(await wrong.service.run(wrong.scope)).ok&&wrong.calls.attach===0,'wrong upload receipt rejected');
 
+ // Dry run starts no YouTube upload; the saved films are still checked.
+ const dry=await setup();let dryRun=true,loads=0;dry.D.dryRun=async()=>dryRun;dry.D.loadVideo=async()=>{loads++;return Buffer.from('video');};
+ await dry.service.start({...dry.scope,reviewHash:reviewHash(dry.job)});let dryOut=await dry.service.run(dry.scope),dryPub=(await dry.ref.get()).data().publication;
+ ok(dryOut.dryRun&&dryOut.uploaded===false&&dry.calls.start+dry.calls.finish+dry.calls.attach===0&&loads===3&&dryPub.phase==='validated'&&dryPub.videos.every(v=>!v.sessionUrl&&!v.inFlight),'dry run starts no upload session and attaches nothing');
+ ok(/No YouTube upload was started/.test(safePublication(dryPub).message),'the dry-run result says nothing was uploaded');
+ dryRun=false;await dry.service.start({...dry.scope,reviewHash:reviewHash(dry.job)});ok((await dry.service.run(dry.scope)).attached&&dry.calls.start===3&&dry.calls.attach===1,'with dry run off the same approval flow uploads and attaches');
+ // Nothing attached (a failed check or a rejected validate-only request): a free reset keeps the upload receipts.
+ const free=await setup();let rejectFree=true;free.D.attach=async()=>{free.calls.attach++;if(rejectFree)throw Object.assign(Error('validate-only request rejected'),{nothingAttached:true});return {accepted:true};};
+ await free.service.start({...free.scope,reviewHash:reviewHash(free.job)});let freeOut=await free.service.run(free.scope),freePub=(await free.ref.get()).data().publication;
+ ok(!freeOut.ok&&freeOut.resettable&&freePub.phase==='blocked'&&freePub.resettable===true&&freePub.attachmentInFlight===false&&safePublication(freePub).resettable,'a rejected validation is blocked but resettable');
+ rejectFree=false;await free.service.start({...free.scope,reviewHash:reviewHash(free.job)});freePub=(await free.ref.get()).data().publication;ok(freePub.phase==='queued'&&!freePub.error&&freePub.videos.every(v=>v.resourceName),'re-approval resets it and keeps the upload receipts');
+ ok((await free.service.run(free.scope)).attached&&free.calls.start===3&&free.calls.finish===3&&free.calls.attach===2,'the retry attaches without uploading again');
+ const unsure=await setup();unsure.D.attach=async()=>{unsure.calls.attach++;throw Error('connection reset after dispatch');};await unsure.service.start({...unsure.scope,reviewHash:reviewHash(unsure.job)});
+ ok(!(await unsure.service.run(unsure.scope)).resettable&&(await unsure.ref.get()).data().publication.attachmentInFlight===true,'an attachment that may have reached Google is never resettable');
+ await assert.rejects(()=>unsure.service.start({...unsure.scope,reviewHash:reviewHash(unsure.job)}),/connection reset/);checks++;
+ // A worker that crashed mid-attachment left the request unresolved: a later failed check must not clear it.
+ const crashed=await setup();await crashed.service.start({...crashed.scope,reviewHash:reviewHash(crashed.job)});const cp=(await crashed.ref.get()).data().publication;
+ await crashed.ref.update({publication:{...cp,phase:'uploading',leaseUntil:0,attachmentInFlight:true,videos:cp.videos.map((v,i)=>({...v,resourceName:'customers/1/youTubeVideoUploads/'+(i+1),state:'PROCESSED',videoId:'abcdefghij'+(i+1)}))}});
+ crashed.D.assertTarget=async()=>{throw Error('Video publication requires the exact product destination in a paused campaign.');};const crashedOut=await crashed.service.run(crashed.scope),crashedPub=(await crashed.ref.get()).data().publication;
+ ok(!crashedOut.resettable&&crashedPub.phase==='blocked'&&!crashedPub.resettable&&crashedPub.attachmentInFlight===true&&crashed.calls.attach===0,'a crashed attachment stays unresolved even when a later check fails');
+
  const merchant=await setup();merchant.D.prepareMerchant=async()=>({reviewHash:'merchant-review',videoLinks:['https://www.youtube.com/watch?v=abcdefghij1'],identity:{offerId:'123'},before:['existing'],sourceName:'Exact product feed'});let merchantWrites=0;merchant.D.publishMerchant=async plan=>{merchantWrites++;assert.equal(JSON.stringify(plan.before),JSON.stringify(['existing']));return {status:'APPLIED'};};
  await assert.rejects(()=>merchant.service.prepareMerchant(merchant.scope),/Finish/);checks++;
  await merchant.service.start({...merchant.scope,reviewHash:reviewHash(merchant.job)});await merchant.service.run(merchant.scope);
