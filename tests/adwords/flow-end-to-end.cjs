@@ -278,7 +278,7 @@ const KEYWORDS = { 'snowy owl necklace': 880, 'sterling silver owl necklace': 39
 const OPPORTUNITY = { collectionTitle: COLLECTION.title, occasion: 'Evergreen gifting', startDate: TODAY, endDate: ymd(29), daysOut: 0, priority: 'high', recommendedDailyBudget: 12,
   market: { fit: 1.05, fitWhy: 'Owl motifs dominate the collection listings', demand: 'steady', angle: 'A keepsake owl for the bird lover' }, proven: false,
   rationale: 'Steady owl demand and deep motif inventory', keywords: Object.keys(KEYWORDS).map(text => ({ text, searches: 100, competition: 'LOW', cpcLow: 0.4, cpcHigh: 1.1, intent: 'medium', tail: 'MID' })),
-  keywordStrategy: 'Motif plus product type, long-tail first', negatives: ['owl costume', 'owl plush', 'owl drawing'], keyPhrases: ['A little owl to keep close'],
+  keywordStrategy: 'Motif plus product type, long-tail first', negatives: ['owl costume', 'owl plush', 'owl drawing', 'free'], keyPhrases: ['A little owl to keep close'],
   audience: { buyer: 'Partners of bird watchers', recipient: 'Owl lovers', motivation: 'A meaningful nature keepsake', searchStyle: 'motif plus jewelry type' } };
 const RSA = { headlines: ['Owl Necklaces for Bird Lovers', 'Handcrafted Owl Jewelry', 'Snowy Owl Necklace', 'Barn Owl Earrings', 'Sterling Silver Owl Charms', 'Engraved Owl Keepsakes',
   'Gifts for Owl Lovers', 'Personalize Your Owl Charm', 'Made to Order by Brites', 'Nature Lover Jewelry', 'A Keepsake Owl for Them', 'Owl Jewelry Made With Care',
@@ -448,6 +448,9 @@ const near = (a, b) => Math.abs(a - b) < 0.005;
   check((pending.summary.includes('(' + opp.startDate + ' → ' + opp.endDate + ', ' + opp.durationDays + 'd)') || pending.summary.includes('(starts when enabled, ends ' + opp.endDate + ', up to ' + opp.durationDays + 'd)')) && pending.summary.includes('Manual CPC ≤ CAD '),
     'the Approvals summary shows the card window with both end dates counted and the cap in the account currency');
   check(JSON.stringify(created('campaignCriterionOperation').filter(c => c.location).map(c => c.location.geoTargetConstant.split('/').pop())) === JSON.stringify(card.countries), 'draft targets exactly the card countries');
+  const draftNegatives = created('campaignCriterionOperation').filter(c => c.negative).map(c => c.keyword);
+  check(['owl costume', 'owl plush', 'owl drawing'].every(t => draftNegatives.some(k => k.text === t && k.matchType === 'BROAD')) && ['free pattern', 'for free'].every(t => draftNegatives.some(k => k.text === t && k.matchType === 'PHRASE')) && !draftNegatives.some(k => k.text === 'free'),
+    'draft excludes the card theme-conflict terms and freebie phrases; the card\'s lone "free" would stop "nickel free" buyers and is left out');
   const draftKeywords = created('adGroupCriterionOperation').map(k => k.keyword.text), grounded = new Set(opp.keywordData.map(k => k.text));
   check(measured.every(k => draftKeywords.includes(k.text)) && draftKeywords.every(k => grounded.has(k)), 'draft keywords are the grounded research keywords, including every measured one');
   check(mutations().length === 0, 'nothing has been sent to Google before approval');

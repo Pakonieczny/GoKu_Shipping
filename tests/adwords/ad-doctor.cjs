@@ -60,7 +60,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
         { issue: 'valid budget', fix: 'x', impact: 'high', executable: { kind: 'setBudget', budget: 12 } },
         { issue: 'unknown keyword', fix: 'x', executable: { kind: 'pauseKeywords', keywords: [{ adGroupId: '7', criterionId: '1' }] } },
         { issue: 'known keyword', fix: 'x', executable: { kind: 'pauseKeywords', keywords: [{ adGroupId: '7', criterionId: '99', text: 'model text' }] } },
-        { issue: 'negatives', fix: 'x', executable: { kind: 'addNegatives', keywords: ['free', 'charm necklace', 'Personalized'] } },
+        { issue: 'negatives', fix: 'x', executable: { kind: 'addNegatives', keywords: ['jobs', 'charm necklace', 'Personalized'] } },
         { issue: 'existing keyword', fix: 'x', executable: { kind: 'addKeywords', adGroupId: '7', keywords: [{ text: 'charm necklace', matchType: 'PHRASE' }, { text: 'mom gift', matchType: 'EXACT' }] } },
         { issue: 'invented kind', fix: 'x', executable: { kind: 'deleteCampaign' } }] }] };
     const sanitize = (x, total) => plain(e.get('_diagSanitize')(x, diag, { maxDailyBudgetTotal: 30 }, total)).campaigns[0];
@@ -74,14 +74,19 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(ex[0].kind === 'none' && ex[1].kind === 'none', 'budgets equal to the current one or over the ceiling are advice only');
     check(ex[2].kind === 'setBudget' && ex[2].budget === 12, 'a valid budget change keeps its button');
     check(ex[3].kind === 'none' && ex[4].kind === 'pauseKeywords' && ex[4].keywords[0].text === 'charm necklace', 'only evidence keywords can be paused, named as the evidence names them');
-    check(ex[5].kind === 'addNegatives' && ex[5].keywords.join() === 'free' && ex[5].skipped.includes('charm necklace') && ex[5].skipped.includes('personalized'), 'negatives that would block converting searches or active keywords are left out');
+    check(ex[5].kind === 'addNegatives' && ex[5].keywords.join() === 'jobs' && ex[5].skipped.includes('charm necklace') && ex[5].skipped.includes('personalized') && !ex[5].skippedWhy, 'negatives that would block converting searches or active keywords are left out');
     check(other[0].kind === 'none' && ex[6].keywords.length === 1 && ex[6].keywords[0].text === 'mom gift', 'keywords go only to evidence ad groups and are not re-added');
     check(other[1].kind === 'none' && ex[7].kind === 'none', 'unknown ads and invented actions are advice only');
-    const neg = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['free', 'engraved locket'] } }] }] };
+    const neg = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['jobs', 'engraved locket'] } }] }] };
     const unguarded = plain(e.get('_diagSanitize')(neg, { campaigns: diag.campaigns }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
     check(unguarded.kind === 'none', 'without the full converting-terms read, a proposed negative is advice only');
     const wide = plain(e.get('_diagSanitize')(neg, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
-    check(wide.kind === 'addNegatives' && wide.keywords.join() === 'free' && wide.skipped.includes('engraved locket'), 'a converting search outside the top terms still blocks the negative that would stop it');
+    check(wide.kind === 'addNegatives' && wide.keywords.join() === 'jobs' && wide.skipped.includes('engraved locket'), 'a converting search outside the top terms still blocks the negative that would stop it');
+    // "free" as a root would also stop "nickel free earrings" and "free shipping": left out, with the reason the card shows.
+    const freebie = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['Free', 'free earrings', 'free charm patterns', 'earrings', 'engraved locket'] } }] }] };
+    const buyers = plain(e.get('_diagSanitize')(freebie, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(buyers.keywords.join() === 'free charm patterns,earrings' && buyers.skipped.join() === 'free,free earrings,engraved locket' && /buying searches such as “nickel free earrings”/.test(buyers.skippedWhy) && /converting searches or active keywords/.test(buyers.skippedWhy),
+      'a negative that would block a buying search ("free" vs "nickel free earrings") is left out; freebie phrases and product words are still offered');
   }
 
   // ── Applied fixes are measured by the console, 14 days either side ──────
