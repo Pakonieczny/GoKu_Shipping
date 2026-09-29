@@ -43,6 +43,8 @@ const gaql=async q=>{queries.push(q);const sel=q.split(/\sFROM\s/)[0],has=f=>sel
   if(from('shopping_performance_view'))return q.includes("'PURCHASE'")?[]:offers.concat(productOnly).map(([g,item,title,d,x])=>({campaign:{id:g.campaign.id,name:g.campaign.name},segments:{date:d,productItemId:item,productTitle:title,productMerchantId:'78',productFeedLabel:'US',productLanguage:'en',productChannel:'ONLINE',productCountry:'geoTargetConstants/2840'},metrics:metrics(x,q)}));
   if(from('asset_group_product_group_view'))return offers.map(([g,item,,d,x])=>({assetGroup:{resourceName:g.group.resourceName},assetGroupListingGroupFilter:{caseValue:{productItemId:{value:item}}},segments:{date:d},metrics:metrics(x,q)}));
   if(from('asset_group_listing_group_filter'))return ['shopify_US_1_11','shopify_US_2_21'].map(value=>({assetGroupListingGroupFilter:{assetGroup:G.live.group.resourceName,type:'UNIT_INCLUDED',caseValue:{productItemId:{value}}}}));
+  // Named groups, removed or not (how the tree names groups Google no longer lists).
+  if(q.includes('.resource_name IN (')){const asked=[...q.matchAll(/'(customers\/[^']+)'/g)].map(x=>x[1]);return Object.values(G).filter(g=>asked.includes(g.group.resourceName)).map(g=>g.kind==='pmax'?{campaign:g.campaign,assetGroup:g.group}:{campaign:g.campaign,adGroup:g.group});}
   // Live structure: removed groups and removed campaigns are filtered out, and the overflow group is missing as from a truncated list.
   if(from('asset_group')&&!has('metrics.'))return [G.live,G.old,G.retired].filter(live).map(g=>({campaign:g.campaign,assetGroup:{...g.group,primaryStatus:'ELIGIBLE'}}));
   if(from('ad_group')&&!has('metrics.'))return [G.peach,G.plum,G.listed].filter(live).map(g=>({campaign:g.campaign,adGroup:{...g.group,primaryStatus:'ELIGIBLE'}}));
@@ -79,19 +81,21 @@ const sum=list=>list.reduce((a,f)=>({spend:a.spend+f.spend,value:a.value+(f.valu
   const group=ref=>tree.groups.find(g=>g.ref===ref);
 
   await test('removed groups, and groups of removed or deleted campaigns, keep the activity they had, flagged, in the campaign rows’ shape',()=>{
-    for(const g of [G.old,G.retired,G.plum]){const x=group(g.group.resourceName);assert(x,'missing '+g.group.name);assert.equal(x.historical,true);assert.equal(x.removed,true);
+    for(const g of [G.old,G.retired,G.plum]){const x=group(g.group.resourceName);assert(x,'missing '+g.group.name);assert.equal(x.historicalOnly,true);assert.equal(x.serving,'Removed');
       assert.equal(x.report.currency,'USD');assert(x.report.click&&x.report.conversion,'both bases');assert.deepEqual(Object.keys(x.report.click).sort(),['clicks','conversions','impressions','spend','value']);}
-    assert.equal(group(G.retired.group.resourceName).serving,'Campaign removed');assert.equal(group(G.old.group.resourceName).serving,'Removed');
-    assert(!group(G.live.group.resourceName).historical&&!group(G.peach.group.resourceName).historical);
+    assert.equal(group(G.retired.group.resourceName).campaignStatus,'REMOVED');assert.equal(group(G.old.group.resourceName).mapping.exactOfferScope,false,'a removed group’s past listings are never read as an exact product scope');
+    assert.deepEqual(group(G.plum.group.resourceName).listingMetrics.map(l=>l.url),['https://britesjewelry.com/products/plum-charm'],'a removed Search group keeps the page its ads led to');
+    assert(!group(G.live.group.resourceName).historicalOnly&&!group(G.peach.group.resourceName).historicalOnly);
     near(group(G.old.group.resourceName).report.conversion.value,22*0.7,'a removed group’s conversion-date value at its day’s rate');
     assert(!group(G.overflow.group.resourceName),'an unlisted live group is never invented');assert(tree.warnings.some(w=>/activity for 1 group it did not list/.test(w)));
     assert.equal(tree.includesRemovedWithActivity,true);assert.equal(daily.products.every(p=>p.report&&p.report.currency==='USD'&&p.report.conversion),true);
     near(daily.products.find(p=>p.itemId==='shopify_US_1_11').report.click.spend,4*0.7+6*0.8,'a listing’s spend at each day’s rate');
     near(daily.products.find(p=>p.itemId==='shopify_US_1_11').report.conversion.value,28*0.8,'a listing’s conversion-date value at its day’s rate');});
 
-  await test('one batched read per report: no per-row queries for removed groups or listing pages',async()=>{
-    queries=[];await E.adGroups({...range,reportingTree:true,force:true});assert.equal(queries.filter(q=>!q.includes('customer.time_zone')).length,8);
-    const plain=await E.adGroups({...range,force:true});assert(!plain.groups.some(g=>g.historical),'other views list live groups only');});
+  await test('batched reads only: one per report, and one per channel to name the groups Google no longer lists',async()=>{
+    queries=[];await E.adGroups({...range,reportingTree:true,force:true});const reads=queries.filter(q=>!q.includes('customer.time_zone'));
+    assert.equal(reads.length,10);assert.equal(reads.filter(q=>q.includes('.resource_name IN (')).length,2);
+    queries=[];const plain=await E.adGroups({...range,force:true});assert(!plain.groups.some(g=>g.historicalOnly),'other views list live groups only');assert(!queries.some(q=>q.includes('.resource_name IN (')));});
 
   ui.cmdReport=clone(report);ui.cmdMetrics=ui.cmdReport.snapshot;ui.DAILY=clone(daily);uiApi=async a=>{assert.equal(a,'adGroups');return clone(tree);};
   const host=document.querySelector('#host');
@@ -120,7 +124,7 @@ const sum=list=>list.reduce((a,f)=>({spend:a.spend+f.spend,value:a.value+(f.valu
     assert(other.textContent.includes('Other activity'));near(figs(other).spend,2.5*0.8+1.5*0.7+2*0.8,'the fig listing Google reports only per campaign, plus placements with no product');near(figs(other).value,10*0.7,'their value');
     assert(tree_(P.id).querySelector('.reportProducts').textContent.includes('Fig Charm')&&tree_(P.id).querySelector('.reportProducts').textContent.includes('already counted in the groups above'));
     assert(tree_(P.id).textContent.includes('2 groups (1 removed)')&&tree_(S.id).textContent.includes('2 groups (1 removed)')&&tree_(R.id).textContent.includes('1 group (1 removed)'));
-    for(const [c,g] of [[P,G.old],[S,G.plum],[R,G.retired]])assert(tree_(c.id).querySelector('[data-group-ref="'+g.group.resourceName+'"] summary small').textContent.includes('removed'),g.group.name+' is marked removed');
+    for(const [c,g] of [[P,G.old],[S,G.plum],[R,G.retired]])assert(tree_(c.id).querySelector('[data-group-ref="'+g.group.resourceName+'"] summary small').textContent.includes('Removed'),g.group.name+' is marked removed');
     assert(fruit.textContent.includes('USD by ad-click date, like the group; the listings and the last row add up to it.'));});
 
   await test('by conversion date: the same tree adds up on conversion-date figures at the same daily rates',async()=>{

@@ -43,7 +43,7 @@ function classifyAnimated(deduction,ctx={}){
  const affected=kind==='master'?keys.filter(k=>masterFor(k,ctx.squareMaster)===orientation):targets;
  const hints=kind==='caption'?captionHints(s):null;
  const usd=kind==='master'?Number(ctx.masterUsd)||0:0;
- const label=kind==='copy'?'Fix · revise this message and re-compose the captions (no new video)':kind==='caption'?'Fix · re-compose '+affected.join(', ')+' captions (no new video)':'Fix · regenerate only the '+orientation+' film'+(usd?' ≈ $'+usd.toFixed(2):'')+' · '+affected.join(', ')+' re-composed, the other film kept';
+ const label=kind==='copy'?'Fix · revise this message and re-compose the captions (no new video)':kind==='caption'?'Fix · re-compose '+affected.join(', ')+' captions (no new video)':'Fix · regenerate only the '+orientation+' film'+(usd?' ≈ US$'+usd.toFixed(2):'')+' · '+affected.join(', ')+' re-composed, the other film kept';
  return {kind,category:deduction.category,index:deduction.index,formats:affected,orientation,hints,estimatedUsd:usd,label,reason:deduction.reason,evidence:deduction.evidence,correction:deduction.correction};
 }
 // Square has no film of its own: it is cropped from whichever master the job chose, portrait by default.
@@ -73,7 +73,7 @@ function classifyStatic(deduction,ctx={}){
   if(!sceneKey)kind='plan';
  }
  const usd=kind==='scene'?Number(ctx.sceneUsd?.(sceneKey))||0:0;
- const label=kind==='scene'?'Fix · regenerate only the '+sceneKey+' scene'+(usd?' ≈ $'+usd.toFixed(2):'')+' · other scenes kept':'Fix · revise the copy/layout plan for this defect (no new images)';
+ const label=kind==='scene'?'Fix · regenerate only the '+sceneKey+' scene'+(usd?' ≈ US$'+usd.toFixed(2):'')+' · other scenes kept':'Fix · revise the copy/layout plan for this defect (no new images)';
  return {kind,category:deduction.category,index:deduction.index,formats:formats.length?formats:keys,sceneKey,estimatedUsd:usd,label,reason:deduction.reason,evidence:deduction.evidence,correction:deduction.correction};
 }
 function options(kind,quality,ctx){
