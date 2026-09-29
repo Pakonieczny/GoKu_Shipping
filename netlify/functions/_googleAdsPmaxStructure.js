@@ -7,13 +7,15 @@
 // with keyword and negative = true), applied to Search and Shopping inventory. This short list
 // removes makers, resellers, job seekers and digital-file searches, which a made-to-order jewellery
 // store cannot sell to. Negatives never match close variants, so plurals are listed where needed.
-// "free" is deliberately absent: "nickel free" and "tarnish free" are buying searches for jewellery.
+// Deliberately absent: "free" ("nickel free" and "tarnish free" are buying searches for jewellery)
+// and "bulk" (gifts for a whole team or wedding party are real orders).
 const PMAX_DEFAULT_NEGATIVES = Object.freeze([
-  ['diy', 'BROAD'], ['how to make', 'PHRASE'], ['tutorial', 'BROAD'], ['wholesale', 'BROAD'], ['bulk', 'BROAD'],
+  ['diy', 'BROAD'], ['how to make', 'PHRASE'], ['tutorial', 'BROAD'], ['wholesale', 'BROAD'],
   ['supplier', 'BROAD'], ['suppliers', 'BROAD'], ['manufacturer', 'BROAD'], ['repair', 'BROAD'], ['jobs', 'BROAD'],
   ['hiring', 'BROAD'], ['salary', 'BROAD'], ['replica', 'BROAD'], ['knockoff', 'BROAD'], ['svg', 'BROAD'],
   ['clipart', 'BROAD'], ['printable', 'BROAD']
 ].map(([text, matchType]) => Object.freeze({ text, matchType })));
+const MAX_WASTE_TERMS = 50; // per campaign and draft, so a draft stays readable
 
 // The brand these exclusions protect, and the words that mark a search for it.
 const BRAND = Object.freeze({ name: 'Brites', domain: 'britesjewelry.com', listName: 'Brites · brand exclusions', words: ['brites'] });
@@ -65,23 +67,33 @@ function eligibleTarget(t) {
 }
 
 // What changed in Google since the draft was reviewed, as the sentence Paul reads; null when the
-// draft still describes exactly what will happen. Never re-bases a reviewed budget.
+// draft still describes exactly what will happen. Never re-bases a reviewed budget. Other lanes of a
+// combined plan may create new campaigns; nothing may change or remove an existing resource except
+// the one reviewed budget update, and nothing else may touch the joined campaign or its budget.
 function existingTargetProblem({ live, guard, ops, customerId, money = v => Number(v).toFixed(2) }) {
-  const name = '“' + (guard.name || ('campaign ' + guard.campaignId)) + '”', res = `customers/${customerId}/campaigns/${guard.campaignId}`;
+  const name = '\u201c' + (guard.name || ('campaign ' + guard.campaignId)) + '\u201d', res = `customers/${customerId}/campaigns/${guard.campaignId}`;
   if (!live || live.status === 'REMOVED' || live.channel !== 'PERFORMANCE_MAX') return `The Performance Max campaign ${name} is no longer in Google Ads. Nothing was changed. Delete this draft and choose another destination.`;
   if (live.servingStatus === 'ENDED' || live.primaryStatus === 'ENDED') return `The campaign ${name} has ended, so the product would never show. Nothing was changed. Delete this draft and choose another destination.`;
   if (String(live.merchantId || '') !== String(guard.merchantId || '') || label(live.feedLabel) !== label(guard.feedLabel)) return `The campaign ${name} now uses a different product feed. Nothing was changed. Delete this draft and prepare it again.`;
   if (typeof live.brandGuidelinesEnabled !== 'boolean') return `Google did not confirm the brand guidelines setting of ${name}. Nothing was changed. Try again shortly.`;
   if (live.brandGuidelinesEnabled !== !!guard.brandGuidelinesEnabled) return `The brand guidelines setting of ${name} changed after this draft was prepared. Nothing was changed. Delete this draft and prepare it again.`;
-  const creates = (ops || []).filter(o => o.assetGroupOperation).map(o => o.assetGroupOperation);
-  const budgetOps = (ops || []).filter(o => o.campaignBudgetOperation).map(o => o.campaignBudgetOperation);
-  const foreign = (ops || []).some(o => o.campaignOperation || o.campaignCriterionOperation || o.campaignAssetOperation || o.campaignSharedSetOperation || o.sharedSetOperation || o.sharedCriterionOperation || o.adGroupOperation || o.adGroupAdOperation || o.adGroupCriterionOperation);
-  if (!creates.length || foreign || creates.some(o => !o.create || o.create.campaign !== res) || budgetOps.length > 1 || budgetOps.some(o => !o.update || o.update.resourceName !== guard.budgetRes || Math.round(Number(o.update.amountMicros)) !== Math.round(Number(guard.budgetAfter) * 1e6) || !(Number(guard.budgetAfter) > Number(guard.budgetBefore))))
-    return `This draft may only add product groups${guard.budgetAfter > guard.budgetBefore ? ' and the reviewed budget' : ''} to ${name}. Nothing was changed.`;
+  const text = o => JSON.stringify(o), quoted = v => JSON.stringify(String(v));
+  const joins = o => !!(o.assetGroupOperation && o.assetGroupOperation.create && o.assetGroupOperation.create.campaign === res);
+  const budgetUpdate = o => !!(o.campaignBudgetOperation && o.campaignBudgetOperation.update);
+  const creates = (ops || []).filter(joins).map(o => o.assetGroupOperation);
+  const budgetOps = (ops || []).filter(budgetUpdate).map(o => o.campaignBudgetOperation);
+  const changesExisting = (ops || []).some(o => { const v = Object.values(o || {})[0] || {}; return !!(v.update || v.remove) && !budgetUpdate(o); });
+  const touches = (ops || []).some(o => !joins(o) && !budgetUpdate(o) && (text(o).includes(quoted(res)) || (!!guard.budgetRes && text(o).includes(quoted(guard.budgetRes)))));
+  const raise = Number(guard.budgetAfter) > Number(guard.budgetBefore);
+  if (!creates.length || changesExisting || touches || budgetOps.length > (raise ? 1 : 0) || (raise && budgetOps.length !== 1) ||
+      budgetOps.some(b => b.update.resourceName !== guard.budgetRes || b.updateMask !== 'amount_micros' || Object.keys(b.update).some(k => !['resourceName', 'amountMicros'].includes(k)) || Math.round(Number(b.update.amountMicros)) !== Math.round(Number(guard.budgetAfter) * 1e6)))
+    return `This draft may only add product groups${raise ? ' and the reviewed budget' : ''} to ${name}. Nothing was changed.`;
   if (Number(live.assetGroupCount || 0) + creates.length > MAX_ASSET_GROUPS) return `${name} already has ${live.assetGroupCount} asset groups; Google allows ${MAX_ASSET_GROUPS}. Nothing was changed. Choose another destination.`;
   const names = new Set((live.assetGroupNames || []).map(lower));
   if (creates.some(o => names.has(lower(o.create.name)))) return `${name} now has an asset group with the same name. Nothing was changed. Delete this draft and prepare it again.`;
-  if (budgetOps.length) {
+  const advertised = new Set((live.includedItemIds || []).map(lower));
+  if ((guard.itemIds || []).some(id => advertised.has(lower(id)))) return `${name} already advertises one of these products in another asset group. Nothing was changed. Delete this draft and choose another destination.`;
+  if (raise) {
     if (live.budgetRes !== guard.budgetRes) return `${name} now uses a different budget. Nothing was changed. Delete this draft and prepare it again.`;
     if (!(Math.abs(Number(live.budget) - Number(guard.budgetBefore)) < 0.005)) return `The budget of ${name} changed after this draft was prepared (now ${money(live.budget)}, reviewed from ${money(guard.budgetBefore)}). Nothing was changed. Delete this draft and prepare it again; reviewed budgets are never re-based.`;
   }
@@ -92,7 +104,8 @@ function existingTargetProblem({ live, guard, ops, customerId, money = v => Numb
 // terms: [{campaignId, term, clicks, cost, conversions}] summed over the reviewed window.
 // existing: Map campaignId -> Set of "text|MATCHTYPE" already excluded. waiting: Set of
 // "campaignResource|text" already in a draft. Brand searches are left to the brand exclusion.
-function negativePlan({ customerId, campaigns, terms, existing, waiting, wasteCost = 8, wasteClicks = 30 }) {
+// themes: Map campaignId -> Set of search themes, never excluded.
+function negativePlan({ customerId, campaigns, terms, existing, waiting, themes, wasteCost = 8, wasteClicks = 30 }) {
   const out = [], sums = new Map();
   (terms || []).forEach(r => {
     const term = String(r.term || '').trim().toLowerCase(); if (!term) return;
@@ -105,8 +118,9 @@ function negativePlan({ customerId, campaigns, terms, existing, waiting, wasteCo
     const pending = text => !!waiting && waiting.has(res + '|' + lower(text));
     const adds = [];
     PMAX_DEFAULT_NEGATIVES.forEach(n => { if (!excluded(n.text) && !pending(n.text)) adds.push({ text: n.text, matchType: n.matchType, reason: 'default' }); });
-    [...sums.values()].filter(x => x.campaignId === id && x.conversions <= 0 && x.cost >= wasteCost && x.clicks >= wasteClicks && validKeyword(x.term) && !isBrandSearch(x.term) && !excluded(x.term) && !pending(x.term) && !adds.some(a => a.text === x.term))
-      .sort((a, b) => b.cost - a.cost).forEach(x => adds.push({ text: x.term, matchType: 'EXACT', reason: 'waste', clicks: x.clicks, cost: round2(x.cost) }));
+    const theme = (themes && themes.get(id)) || new Set();
+    [...sums.values()].filter(x => x.campaignId === id && x.conversions <= 0 && x.cost >= wasteCost && x.clicks >= wasteClicks && validKeyword(x.term) && !isBrandSearch(x.term) && !theme.has(x.term) && !excluded(x.term) && !pending(x.term) && !adds.some(a => a.text === x.term))
+      .sort((a, b) => b.cost - a.cost).slice(0, MAX_WASTE_TERMS).forEach(x => adds.push({ text: x.term, matchType: 'EXACT', reason: 'waste', clicks: x.clicks, cost: round2(x.cost) }));
     if (adds.length) out.push({ campaignId: id, name: c.name, adds });
   }
   return out;
