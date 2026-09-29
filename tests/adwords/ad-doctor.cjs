@@ -216,11 +216,6 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(an.actions[0].suggestedBudget === 25 && an.actions[1].suggestedBudget === null && an.budgetCurrency === 'CAD', 'a suggested budget equal to the current one gets no button');
     reply = null; an = plain(await e.get('analyzeCampaign')('42', { force: true }));
     check(an.status === 'insufficient data', 'without the AI and without a target ROAS, no health grade is claimed');
-    const html = fs.readFileSync(path.join(repo, 'brites-adwords.html'), 'utf8');
-    const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
-    const ui = vm.createContext({ DASH: { budgetCurrency: 'CAD' } });
-    for (const name of ['money', 'esc', 'optDot', 'actIcon', 'analysisHtml']) vm.runInContext(pick(name), ui);
-    check(/Set \$25 CAD\/day/.test(ui.analysisHtml({ id: '42', name: 'Camp A', status: 'ENABLED' }, { score: 60, status: 'healthy', summary: 's', budgetCurrency: 'CAD', actions: [{ type: 'budget', title: 'Raise', detail: 'd', suggestedBudget: 25 }] })), 'the Set budget button says the currency it will set');
   }
 
   // ── The diagnostic page is locked with the console passcode ────────────
@@ -265,7 +260,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.eval('var DASH=null,__calls=[],__replies={},__toasts=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
       'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function confirm(){return true;}');
     for (const name of ['money', 'esc', 'btnBusy', 'timeago']) w.eval(pick(name));
-    w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('// full schedule line + Start-now button')));
+    w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('var feedRange=')));
     const now = Date.now(), body = () => w.document.getElementById('diagBody');
     const camp = (over = {}) => ({ id: '42', name: 'Camp A', status: 'ENABLED', budget: 10, primaryStatus: 'LIMITED', reasonsText: ['Limited by budget', 'unknown'],
       lostISBudget: 20, recommendations: [{ resourceName: 'customers/123/recommendations/b1', type: 'CAMPAIGN_BUDGET', currentBudget: 10, recommendedBudget: 15, options: [{ budget: 15, weeklyClicksDelta: 12, weeklyCostDelta: 30 }] }, { type: 'SITELINK_ASSET' }],

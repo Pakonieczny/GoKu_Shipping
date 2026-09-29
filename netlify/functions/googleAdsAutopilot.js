@@ -3585,7 +3585,7 @@ async function metricsRange({ start, end } = {}) {
   if (!report.cd) warnings.push("Google did not provide conversion-date metrics. Select click date to see reported conversions.");
   base.forEach(r => { const c = r.campaign || {}; byId[c.id] = {
     id: String(c.id), name: c.name, status: c.status, primaryStatus: c.primaryStatus || null, primaryStatusReasons: c.primaryStatusReasons || [],
-    channel: c.advertisingChannelType || null, budget: budgetOf(r), budgetRes: (r.campaignBudget || {}).resourceName || null,
+    channel: c.advertisingChannelType || null, budget: budgetOf(r), ..._budgetKind(r.campaignBudget), budgetRes: (r.campaignBudget || {}).resourceName || null,
     cost: 0, conv: 0, value: 0, clicks: 0, impr: 0, convCd: report.cd ? 0 : null, valueCd: report.cd ? 0 : null,
     costNative: 0, valueNative: 0, valueCdNative: report.cd ? 0 : null, cdUnavailable: !report.cd, fxIncomplete: fx.fxIncomplete, currency: fx.currency,
     metricsUnavailable: false, historicalOnly: c.status === "REMOVED", metricsRange: range }; });
@@ -10241,7 +10241,7 @@ async function dashboard(input = {}) {
       const c = r.campaign || {}, old = prior.get(String(c.id));
       return Object.assign({}, old || { metricsUnavailable: true }, { id: c.id, name: c.name, status: c.status,
         channel: c.advertisingChannelType || null, primaryStatus: c.primaryStatus || null,
-        primaryStatusReasons: c.primaryStatusReasons || [], budget: budgetOf(r),
+        primaryStatusReasons: c.primaryStatusReasons || [], budget: budgetOf(r), ..._budgetKind(r.campaignBudget),
         budgetRes: (r.campaignBudget || {}).resourceName || null });
     });
     out.lastMetrics.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); c.metricsRange = out.lastMetricsRange || null; });
@@ -11623,6 +11623,9 @@ async function _campaignBudgetDaily(rows) {
     return r => dailyOf(row(r));
   } catch (e) { return plain; }
 }
+// The budget's period and, for a campaign total budget (fixed dates), its total, from the same
+// campaign_budget fields: Overview shows that total in place of a daily budget it cannot edit.
+function _budgetKind(b) { b = b || {}; return { budgetPeriod: b.period || null, budgetTotal: _campaignOptions().isTotalBudget(b) ? fromMicros(b.totalAmountMicros) : null }; }
 
 async function _campaignFacts() {
   const rows = await gaql("SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status, campaign.advertising_channel_type, campaign.bidding_strategy_type, campaign.maximize_conversion_value.target_roas, campaign.maximize_conversions.target_cpa_micros, campaign.end_date_time FROM campaign WHERE campaign.status != 'REMOVED'");

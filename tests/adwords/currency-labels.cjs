@@ -166,12 +166,20 @@ async function consoleChecks(){
  tx.CMD_EDIT.value='15';await tx.cmdEditBudget(false);const jump=tdoc.querySelector('.cmdEdit .ieQ').textContent;await tx.cmdEditBudget(true);
  check(/\(CAD\)$/.test(asked)&&/\(\$10 CAD \u2192 \$15 CAD\)/.test(jump)&&/^Budget \$10 CAD \u2192 \$15 CAD$/.test(said[0])&&tx.DASH.lastMetrics[0].budget===15&&!tdoc.querySelector('.cmdEdit'),'campaign tree budget edit names CAD ('+[asked,jump].concat(said).join(' | ')+')');
 
- // Ad Doctor "Set" budget and enable confirmations name the account currency.
- const sm=[],bx=vm.createContext({DASH:{budgetCurrency:'CAD',control:{dryRun:false},lastMetrics:[]},Intl,console,confirm:m=>{sm.push(m);return true;},toast:m=>sm.push(m),
-  btnBusy(){},actStart:()=>1,actEnd(){},api:async()=>({ok:true}),reload:async()=>{},renderAll(){},P:{expanded:{}}});
- vm.runInContext(helpers+'\n'+pick('setBudget')+'\n'+pick('campStatus'),bx);
- await bx.setBudget('7',15,'',{});await bx.campStatus('7','A',12,'ENABLED',{});
- check(/Set daily budget to CA\$15\?/.test(sm[0])&&/^Budget set to CA\$15$/.test(sm[1])&&/spending up to CA\$12\/day/.test(sm[2]),'Ad Doctor budget confirmations read CA$ ('+sm.join(' | ')+')');
+ // Overview status editor and a Google total budget: the total reads in the account currency, and
+ // enabling asks in place (never a browser pop-up), naming the budget that will spend.
+ const lx=vm.createContext({DASH:{budgetCurrency:'CAD'},Intl,console,esc:s=>String(s==null?'':s)});
+ vm.runInContext(helpers+'\n'+html.match(/var _MON=\[[^\]]*\];/)[0]+'\n'+['reportNumber','fmtMon','totalBudgetLine'].map(pick).join('\n'),lx);
+ const line=lx.totalBudgetLine({budgetPeriod:'CUSTOM_PERIOD',budgetTotal:150,startDate:'2026-11-01',endDate:'2026-11-30'},'CAD').replace(/<[^>]+>/g,'');
+ const row=(id,name,total)=>'<tr class="cdet" data-cid="'+id+'"><td><div class="campaignSettings"><button class="cst" data-id="'+id+'" data-name="'+name+'"'+(total?' data-total="1"':'')+' data-to="ENABLED">Enable campaign</button></div></td></tr>';
+ const sdoc=new JSDOM('<div id="snapshot"><table><tbody>'+row('8','Holiday flight',true)+row('9','Evergreen',false)+'</tbody></table></div>').window.document,sm=[],sent=[];
+ const ox=vm.createContext({document:sdoc,DASH:{budgetCurrency:'CAD',lastMetrics:[{id:'8',status:'PAUSED'}]},cmdReport:{budgetCurrency:'CAD'},cmdMetrics:[],Intl,console,esc:s=>String(s==null?'':s),cmdAttr:s=>String(s==null?'':s),
+  cmdOpening(){},renderCommand(){},renderDiag(){},toast:m=>sm.push(m),api:async(a,b)=>{sent.push([a,b]);return {ok:true};},confirm:()=>{throw Error('browser pop-up');},prompt:()=>{throw Error('browser pop-up');}});
+ vm.runInContext(helpers+'\n'+pick('reportNumber')+'\n'+span('var CMD_EDIT=null','// Extend how long a campaign runs')+'\n'+pick('cmdEditStatus'),ox);
+ ox.cmdEditOpen('status',sdoc.querySelector('.cst[data-id="8"]'));const totalQ=sdoc.querySelector('.cmdEdit .ieQ').textContent;await ox.cmdEditStatus();
+ ox.cmdEditOpen('status',sdoc.querySelector('.cst[data-id="9"]'));const dailyQ=sdoc.querySelector('.cmdEdit .ieQ').textContent;
+ check(line==='Total $150 CAD for 30 days to Nov 30'&&totalQ==='Enable “Holiday flight”? It will start spending its total budget.'&&dailyQ==='Enable “Evergreen”? It will start spending its daily budget.'
+  &&JSON.stringify(sent)==='[["setStatus",{"id":"8","status":"ENABLED"}]]'&&sm[0]==='Enabled ✓ — Holiday flight'&&ox.DASH.lastMetrics[0].status==='ENABLED','Overview total budget reads CAD and enabling asks in place ('+[line,totalQ,dailyQ].concat(sm).join(' | ')+')');
 
  // PMax: a suggestion whose saved currency was never verified does not show that currency on its budget.
  const model=require(root+'/assets/pmax-recommendation.js'),out={},doc={getElementById:()=>null,createElement:()=>{const el={id:'',innerHTML:'',querySelectorAll:()=>[],querySelector:()=>null,addEventListener(){}};return el;}};
