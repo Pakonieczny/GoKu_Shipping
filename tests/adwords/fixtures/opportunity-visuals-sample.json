@@ -1,0 +1,967 @@
+{
+ "about": "Invented sample of Search opportunities with the schedule the engine will save on each one (built by netlify/functions/_googleAdsSchedule.js with today fixed at 2026-09-29), plus the Product ads schedule and the image, price and currency the engine adds to each offer. A Christmas run that is good, a Halloween run that is tight, an evergreen run and an older saved idea with no schedule. Fix the clock to 2026-09-29 so days-away text is stable.",
+ "today": "2026-09-29",
+ "searchOpportunities": [
+  {
+   "priority": "high",
+   "score": 88,
+   "rank": 88,
+   "currency": "CAD",
+   "markets": [
+    "CA",
+    "US"
+   ],
+   "countries": [
+    "2124",
+    "2840"
+   ],
+   "eligibility": {
+    "ready": true,
+    "measuredKeywords": 5,
+    "expectedSales": 3.4,
+    "reason": "Inventory and measured demand support a controlled test; outcomes remain uncertain."
+   },
+   "negatives": [
+    "free",
+    "diy",
+    "wholesale",
+    "cheap"
+   ],
+   "acted": null,
+   "audience": {
+    "buyer": "Gift buyers",
+    "recipient": "Mother, partner or friend",
+    "motivation": "A gift with personal meaning",
+    "searchStyle": "personalized initial necklace for her"
+   },
+   "dateCheck": {
+    "source": "web-verified research",
+    "proposedDate": "2026-12-25",
+    "url": "https://www.timeanddate.com/holidays/us/christmas-day",
+    "reference": null
+   },
+   "tag": "search|initial-charm-necklaces|christmas",
+   "occasion": "Christmas",
+   "collectionTitle": "Personalized Initial Charm Necklaces",
+   "collectionHandle": "initial-charm-necklaces",
+   "rationale": "Gift buyers search for personalized initial necklaces from early November, and your last Christmas campaign returned 3.4x.",
+   "peakDate": "2026-12-25",
+   "startDate": "2026-11-14",
+   "endDate": "2026-12-18",
+   "durationDays": 35,
+   "daysOut": 87,
+   "recommendedDailyBudget": 18,
+   "estTotalSpend": 630,
+   "proven": true,
+   "pastStats": {
+    "roas": 3.4
+   },
+   "keyPhrases": [
+    "a necklace made just for her",
+    "initials she will wear every day"
+   ],
+   "keywordData": [
+    {
+     "text": "personalized initial necklace",
+     "real": true,
+     "searches": 4400,
+     "low": 0.62,
+     "high": 1.55,
+     "competitionIndex": 44
+    },
+    {
+     "text": "initial charm necklace gift",
+     "real": true,
+     "searches": 2900,
+     "low": 0.7,
+     "high": 1.68,
+     "competitionIndex": 51
+    },
+    {
+     "text": "custom name necklace for mom",
+     "real": true,
+     "searches": 1600,
+     "low": 0.55,
+     "high": 1.4,
+     "competitionIndex": 38
+    },
+    {
+     "text": "christmas gift for her jewelry",
+     "real": true,
+     "searches": 1300,
+     "low": 0.9,
+     "high": 2.1,
+     "competitionIndex": 62
+    },
+    {
+     "text": "birthstone initial necklace",
+     "real": true,
+     "searches": 880,
+     "low": 0.58,
+     "high": 1.2,
+     "competitionIndex": 30
+    }
+   ],
+   "research": {
+    "source": "google_keyword_planner",
+    "searchVolume": 11080,
+    "competitionIndex": 42,
+    "cpc": {
+     "low": 0.55,
+     "high": 1.68
+    },
+    "realCount": 5,
+    "dataAt": 1790700000000
+   },
+   "plan": {
+    "model": {
+     "eCpcMarket": 0.96,
+     "eCpc": 0.96,
+     "cpcLow": 0.55,
+     "cpcHigh": 1.68,
+     "cvr": 0.022,
+     "aov": 64,
+     "marginRate": 0.62,
+     "uncertainty": 0.35,
+     "maxClicksPerDay": 21,
+     "clickShare": 0.05,
+     "cvrSource": "store history"
+    },
+    "cpc": {
+     "low": 0.55,
+     "max": 1.68,
+     "basis": "Middle of the Google top-of-page bid range."
+    },
+    "budget": {
+     "daily": 18,
+     "basis": "Sized to the searches Google measured for these keywords."
+    },
+    "duration": {
+     "days": 35,
+     "startDate": "2026-11-14",
+     "endDate": "2026-12-18",
+     "basis": "Starts 41 days before Christmas, and stops 7 days before it so orders can still arrive."
+    },
+    "expected": {
+     "conversions": 21.6,
+     "aov": 64,
+     "marginRate": 0.62,
+     "breakEvenRoas": 1.61,
+     "spendTotal": 630
+    },
+    "caveats": [
+     "Conversion rate modeled at 2.2% from your store history."
+    ],
+    "goal": "Sell personalized necklaces to Christmas gift buyers."
+   },
+   "schedule": {
+    "version": 1,
+    "kind": "search",
+    "today": "2026-09-29",
+    "timeSensitive": true,
+    "event": {
+     "label": "Christmas",
+     "date": "2026-12-25",
+     "daysAway": 87,
+     "market": "CA"
+    },
+    "start": "2026-11-14",
+    "end": "2026-12-18",
+    "days": 35,
+    "learning": {
+     "days": 14,
+     "endsOn": "2026-11-27",
+     "note": "Smart Bidding usually needs about 2 weeks of clicks and sales before its bids settle, so early results can look unstable."
+    },
+    "judgeAfter": "2026-11-28",
+    "phases": [
+     {
+      "key": "learning",
+      "from": "2026-11-14",
+      "to": "2026-11-27",
+      "days": 14,
+      "label": "Learning"
+     },
+     {
+      "key": "selling",
+      "from": "2026-11-28",
+      "to": "2026-12-18",
+      "days": 21,
+      "label": "Selling"
+     },
+     {
+      "key": "cutoff",
+      "from": "2026-12-19",
+      "to": "2026-12-25",
+      "days": 7,
+      "label": "Order cutoff"
+     }
+    ],
+    "verdict": "good",
+    "headline": "Runs Nov 14 to Dec 18 · 35 days",
+    "why": [
+     "Christmas is Dec 25, 87 days away.",
+     "Google needs about 2 weeks to learn a Smart Bidding Search campaign; judge it from Nov 28.",
+     "Stops Dec 18 so gifts can still arrive by Dec 25."
+    ],
+    "basis": "Ends Dec 18 (Christmas Dec 25 less a 7-day order cutoff). Counted back from there: about 2 weeks of learning, then 21 days of selling."
+   }
+  },
+  {
+   "priority": "medium",
+   "score": 71,
+   "rank": 71,
+   "currency": "CAD",
+   "markets": [
+    "CA",
+    "US"
+   ],
+   "countries": [
+    "2124",
+    "2840"
+   ],
+   "eligibility": {
+    "ready": true,
+    "measuredKeywords": 5,
+    "expectedSales": 3.4,
+    "reason": "Inventory and measured demand support a controlled test; outcomes remain uncertain."
+   },
+   "negatives": [
+    "free",
+    "diy",
+    "wholesale",
+    "cheap"
+   ],
+   "acted": null,
+   "audience": {
+    "buyer": "Gift buyers",
+    "recipient": "Mother, partner or friend",
+    "motivation": "A gift with personal meaning",
+    "searchStyle": "personalized initial necklace for her"
+   },
+   "dateCheck": {
+    "source": "calendar rule",
+    "proposedDate": null,
+    "reference": null
+   },
+   "tag": "search|birthstone-charms|halloween",
+   "occasion": "Halloween",
+   "collectionTitle": "Birthstone Charms",
+   "collectionHandle": "birthstone-charms",
+   "rationale": "Searches for birthstone charms climb before Halloween, but made-to-order pieces need to ship two weeks ahead.",
+   "peakDate": "2026-10-31",
+   "startDate": "2026-09-29",
+   "endDate": "2026-10-17",
+   "durationDays": 19,
+   "daysOut": 32,
+   "recommendedDailyBudget": 12,
+   "estTotalSpend": 228,
+   "proven": false,
+   "pastStats": null,
+   "keyPhrases": [
+    "a charm for every month"
+   ],
+   "keywordData": [
+    {
+     "text": "birthstone charm",
+     "real": true,
+     "searches": 3600,
+     "low": 0.5,
+     "high": 1.3,
+     "competitionIndex": 40
+    },
+    {
+     "text": "birthstone charm necklace",
+     "real": true,
+     "searches": 1900,
+     "low": 0.6,
+     "high": 1.5,
+     "competitionIndex": 44
+    },
+    {
+     "text": "october birthstone opal charm",
+     "real": true,
+     "searches": 590,
+     "low": 0.55,
+     "high": 1.1,
+     "competitionIndex": 28
+    },
+    {
+     "text": "birthstone charms for bracelets",
+     "real": true,
+     "searches": 480,
+     "low": 0.5,
+     "high": 1,
+     "competitionIndex": 26
+    }
+   ],
+   "research": {
+    "source": "google_keyword_planner",
+    "searchVolume": 6570,
+    "competitionIndex": 42,
+    "cpc": {
+     "low": 0.55,
+     "high": 1.68
+    },
+    "realCount": 5,
+    "dataAt": 1790700000000
+   },
+   "plan": {
+    "model": {
+     "eCpcMarket": 0.96,
+     "eCpc": 0.96,
+     "cpcLow": 0.55,
+     "cpcHigh": 1.68,
+     "cvr": 0.022,
+     "aov": 64,
+     "marginRate": 0.62,
+     "uncertainty": 0.35,
+     "maxClicksPerDay": 14,
+     "clickShare": 0.05,
+     "cvrSource": "store history"
+    },
+    "cpc": {
+     "low": 0.5,
+     "max": 1.5,
+     "basis": "Middle of the Google top-of-page bid range."
+    },
+    "budget": {
+     "daily": 12,
+     "basis": "Sized to measured search volume."
+    },
+    "duration": {
+     "days": 19,
+     "startDate": "2026-09-29",
+     "endDate": "2026-10-17",
+     "basis": "Ends 14 days before Halloween so made-to-order pieces can arrive."
+    },
+    "expected": {
+     "conversions": 6.1,
+     "aov": 58,
+     "marginRate": 0.62,
+     "breakEvenRoas": 1.61,
+     "spendTotal": 228
+    },
+    "caveats": [],
+    "goal": "Sell birthstone charms ahead of Halloween."
+   },
+   "schedule": {
+    "version": 1,
+    "kind": "search",
+    "today": "2026-09-29",
+    "timeSensitive": true,
+    "event": {
+     "label": "Halloween",
+     "date": "2026-10-31",
+     "daysAway": 32,
+     "market": "US"
+    },
+    "start": "2026-09-29",
+    "end": "2026-10-17",
+    "days": 19,
+    "learning": {
+     "days": 14,
+     "endsOn": "2026-10-12",
+     "note": "Smart Bidding usually needs about 2 weeks of clicks and sales before its bids settle, so early results can look unstable."
+    },
+    "judgeAfter": "2026-10-13",
+    "phases": [
+     {
+      "key": "learning",
+      "from": "2026-09-29",
+      "to": "2026-10-12",
+      "days": 14,
+      "label": "Learning"
+     },
+     {
+      "key": "selling",
+      "from": "2026-10-13",
+      "to": "2026-10-17",
+      "days": 5,
+      "label": "Selling"
+     },
+     {
+      "key": "cutoff",
+      "from": "2026-10-18",
+      "to": "2026-10-31",
+      "days": 14,
+      "label": "Order cutoff"
+     }
+    ],
+    "verdict": "tight",
+    "headline": "Runs Sep 29 to Oct 17 · 19 days",
+    "why": [
+     "Halloween is Oct 31, 32 days away.",
+     "Tight fit: Google finishes learning Oct 13, leaving only 5 days to sell.",
+     "Stops Oct 17 so gifts can still arrive by Oct 31."
+    ],
+    "basis": "Ends Oct 17 (Halloween Oct 31 less a 14-day order cutoff). About 2 weeks of learning leaves 5 selling days."
+   }
+  },
+  {
+   "priority": "low",
+   "score": 64,
+   "rank": 64,
+   "currency": "CAD",
+   "markets": [],
+   "countries": [
+    "2124"
+   ],
+   "eligibility": {
+    "ready": true,
+    "measuredKeywords": 5,
+    "expectedSales": 3.4,
+    "reason": "Inventory and measured demand support a controlled test; outcomes remain uncertain."
+   },
+   "negatives": [
+    "free",
+    "diy",
+    "wholesale",
+    "cheap"
+   ],
+   "acted": null,
+   "audience": {
+    "buyer": "Gift buyers",
+    "recipient": "Mother, partner or friend",
+    "motivation": "A gift with personal meaning",
+    "searchStyle": "personalized initial necklace for her"
+   },
+   "dateCheck": {},
+   "tag": "search|best-sellers|evergreen",
+   "occasion": "Everyday gifting",
+   "collectionTitle": "Best Sellers",
+   "collectionHandle": "best-sellers",
+   "rationale": "Your best sellers already convert from search all year, so this test does not depend on a date.",
+   "peakDate": null,
+   "startDate": "2026-09-29",
+   "endDate": "2026-10-26",
+   "durationDays": 28,
+   "daysOut": 0,
+   "recommendedDailyBudget": 9,
+   "estTotalSpend": 252,
+   "proven": false,
+   "pastStats": null,
+   "keyPhrases": [
+    "our most loved pieces"
+   ],
+   "keywordData": [
+    {
+     "text": "personalized jewelry gifts",
+     "real": true,
+     "searches": 5400,
+     "low": 0.7,
+     "high": 1.9,
+     "competitionIndex": 55
+    },
+    {
+     "text": "custom charm necklace",
+     "real": true,
+     "searches": 3200,
+     "low": 0.6,
+     "high": 1.5,
+     "competitionIndex": 47
+    },
+    {
+     "text": "gifts for her under 100",
+     "real": true,
+     "searches": 2100,
+     "low": 0.8,
+     "high": 2,
+     "competitionIndex": 60
+    }
+   ],
+   "research": {
+    "source": "google_keyword_planner",
+    "searchVolume": 10700,
+    "competitionIndex": 42,
+    "cpc": {
+     "low": 0.55,
+     "high": 1.68
+    },
+    "realCount": 5,
+    "dataAt": 1790700000000
+   },
+   "plan": {
+    "model": {
+     "eCpcMarket": 0.96,
+     "eCpc": 0.96,
+     "cpcLow": 0.55,
+     "cpcHigh": 1.68,
+     "cvr": 0.022,
+     "aov": 64,
+     "marginRate": 0.62,
+     "uncertainty": 0.35,
+     "maxClicksPerDay": 18,
+     "clickShare": 0.05,
+     "cvrSource": "store history"
+    },
+    "cpc": {
+     "low": 0.6,
+     "max": 1.9,
+     "basis": "Middle of the Google top-of-page bid range."
+    },
+    "budget": {
+     "daily": 9,
+     "basis": "Sized to measured search volume."
+    },
+    "duration": {
+     "days": 28,
+     "startDate": "2026-09-29",
+     "endDate": "2026-10-26",
+     "basis": "Runs 28 days, the usual length of a Search test."
+    },
+    "expected": {
+     "conversions": 4.4,
+     "aov": 64,
+     "marginRate": 0.62,
+     "breakEvenRoas": 1.61,
+     "spendTotal": 252
+    },
+    "caveats": [],
+    "goal": "Keep best sellers in front of ready buyers."
+   },
+   "schedule": {
+    "version": 1,
+    "kind": "search",
+    "today": "2026-09-29",
+    "timeSensitive": false,
+    "event": null,
+    "start": "2026-09-29",
+    "end": "2026-10-26",
+    "days": 28,
+    "learning": {
+     "days": 14,
+     "endsOn": "2026-10-12",
+     "note": "Smart Bidding usually needs about 2 weeks of clicks and sales before its bids settle, so early results can look unstable."
+    },
+    "judgeAfter": "2026-10-13",
+    "phases": [
+     {
+      "key": "learning",
+      "from": "2026-09-29",
+      "to": "2026-10-12",
+      "days": 14,
+      "label": "Learning"
+     },
+     {
+      "key": "selling",
+      "from": "2026-10-13",
+      "to": "2026-10-26",
+      "days": 14,
+      "label": "Selling"
+     }
+    ],
+    "verdict": "evergreen",
+    "headline": "Runs Sep 29 to Oct 26 · 28 days",
+    "why": [
+     "Not tied to a date, so it can start today.",
+     "Google needs about 2 weeks to learn a Smart Bidding Search campaign; judge it from Oct 13."
+    ],
+    "basis": "Not tied to a date. Runs the usual 28 days for this kind of campaign."
+   }
+  },
+  {
+   "priority": "medium",
+   "score": 58,
+   "rank": 58,
+   "currency": "CAD",
+   "markets": [
+    "CA",
+    "US"
+   ],
+   "countries": [
+    "2124",
+    "2840"
+   ],
+   "eligibility": {
+    "ready": true,
+    "measuredKeywords": 5,
+    "expectedSales": 3.4,
+    "reason": "Inventory and measured demand support a controlled test; outcomes remain uncertain."
+   },
+   "negatives": [
+    "free",
+    "diy",
+    "wholesale",
+    "cheap"
+   ],
+   "acted": null,
+   "audience": {
+    "buyer": "Gift buyers",
+    "recipient": "Mother, partner or friend",
+    "motivation": "A gift with personal meaning",
+    "searchStyle": "personalized initial necklace for her"
+   },
+   "dateCheck": {
+    "source": "calendar rule",
+    "proposedDate": "2027-05-09"
+   },
+   "tag": "search|charm-bracelets|mothers-day",
+   "occasion": "Mother's Day",
+   "collectionTitle": "Charm Bracelets",
+   "collectionHandle": "charm-bracelets",
+   "rationale": "Saved before schedules existed.",
+   "peakDate": "2027-05-09",
+   "startDate": "2027-03-25",
+   "endDate": "2027-05-01",
+   "durationDays": 38,
+   "daysOut": 191,
+   "recommendedDailyBudget": 10,
+   "estTotalSpend": 380,
+   "proven": false,
+   "pastStats": null,
+   "keyPhrases": [],
+   "keywordData": [
+    {
+     "text": "charm bracelet for mom",
+     "real": true,
+     "searches": 2400,
+     "low": 0.6,
+     "high": 1.5,
+     "competitionIndex": 45
+    }
+   ],
+   "research": {
+    "source": "google_keyword_planner",
+    "searchVolume": 2400,
+    "competitionIndex": 42,
+    "cpc": {
+     "low": 0.55,
+     "high": 1.68
+    },
+    "realCount": 5,
+    "dataAt": 1790700000000
+   },
+   "plan": {
+    "model": {
+     "eCpcMarket": 0.96,
+     "eCpc": 0.96,
+     "cpcLow": 0.55,
+     "cpcHigh": 1.68,
+     "cvr": 0.022,
+     "aov": 64,
+     "marginRate": 0.62,
+     "uncertainty": 0.35,
+     "maxClicksPerDay": 10,
+     "clickShare": 0.05,
+     "cvrSource": "store history"
+    },
+    "cpc": {
+     "low": 0.6,
+     "max": 1.5,
+     "basis": "Middle of the Google top-of-page bid range."
+    },
+    "budget": {
+     "daily": 10,
+     "basis": "Sized to measured search volume."
+    },
+    "duration": {
+     "days": 38,
+     "startDate": "2027-03-25",
+     "endDate": "2027-05-01",
+     "basis": "Starts 45 days before the peak."
+    },
+    "expected": {
+     "conversions": 5,
+     "aov": 64,
+     "marginRate": 0.62,
+     "breakEvenRoas": 1.61,
+     "spendTotal": 380
+    },
+    "caveats": [],
+    "goal": "Sell charm bracelets for Mother's Day."
+   }
+  },
+  {
+   "priority": "low",
+   "score": 40,
+   "rank": 40,
+   "currency": "CAD",
+   "markets": [
+    "US"
+   ],
+   "countries": [
+    "2840"
+   ],
+   "eligibility": {
+    "ready": false,
+    "measuredKeywords": 2,
+    "expectedSales": 0.9,
+    "reason": "Too late to test this in time."
+   },
+   "negatives": [
+    "free",
+    "diy",
+    "wholesale",
+    "cheap"
+   ],
+   "acted": null,
+   "audience": {
+    "buyer": "Gift buyers",
+    "recipient": "Mother, partner or friend",
+    "motivation": "A gift with personal meaning",
+    "searchStyle": "personalized initial necklace for her"
+   },
+   "dateCheck": {
+    "source": "calendar rule",
+    "proposedDate": "2026-10-17"
+   },
+   "tag": "search|initial-bracelets|sweetest-day",
+   "occasion": "Sweetest Day",
+   "collectionTitle": "Initial Bracelets",
+   "collectionHandle": "initial-bracelets",
+   "rationale": "Searches for initial bracelets rise for Sweetest Day, but there is no longer time for a new test to learn and sell.",
+   "peakDate": "2026-10-17",
+   "startDate": "2026-09-29",
+   "endDate": "2026-10-15",
+   "durationDays": 17,
+   "daysOut": 18,
+   "recommendedDailyBudget": 8,
+   "estTotalSpend": 136,
+   "proven": false,
+   "pastStats": null,
+   "keyPhrases": [],
+   "keywordData": [
+    {
+     "text": "initial bracelet for her",
+     "real": true,
+     "searches": 1300,
+     "low": 0.5,
+     "high": 1.2,
+     "competitionIndex": 33
+    },
+    {
+     "text": "sweetest day gift for her",
+     "real": true,
+     "searches": 720,
+     "low": 0.6,
+     "high": 1.4,
+     "competitionIndex": 40
+    }
+   ],
+   "research": {
+    "source": "google_keyword_planner",
+    "searchVolume": 2020,
+    "competitionIndex": 42,
+    "cpc": {
+     "low": 0.55,
+     "high": 1.68
+    },
+    "realCount": 5,
+    "dataAt": 1790700000000
+   },
+   "plan": {
+    "model": {
+     "eCpcMarket": 0.96,
+     "eCpc": 0.96,
+     "cpcLow": 0.55,
+     "cpcHigh": 1.68,
+     "cvr": 0.022,
+     "aov": 64,
+     "marginRate": 0.62,
+     "uncertainty": 0.35,
+     "maxClicksPerDay": 8,
+     "clickShare": 0.05,
+     "cvrSource": "store history"
+    },
+    "cpc": {
+     "low": 0.5,
+     "max": 1.3,
+     "basis": "Middle of the Google top-of-page bid range."
+    },
+    "budget": {
+     "daily": 8,
+     "basis": "Sized to measured search volume."
+    },
+    "duration": {
+     "days": 17,
+     "startDate": "2026-09-29",
+     "endDate": "2026-10-15",
+     "basis": "Ends 2 days before Sweetest Day."
+    },
+    "expected": {
+     "conversions": 0.9,
+     "aov": 58,
+     "marginRate": 0.62,
+     "breakEvenRoas": 1.61,
+     "spendTotal": 136
+    },
+    "caveats": [],
+    "goal": "Sell initial bracelets for Sweetest Day."
+   },
+   "schedule": {
+    "version": 1,
+    "kind": "search",
+    "today": "2026-09-29",
+    "timeSensitive": true,
+    "event": {
+     "label": "Sweetest Day",
+     "date": "2026-10-17",
+     "daysAway": 18,
+     "market": "US"
+    },
+    "start": "2026-09-29",
+    "end": "2026-10-15",
+    "days": 17,
+    "learning": {
+     "days": 14,
+     "endsOn": "2026-10-12",
+     "note": "Smart Bidding usually needs about 2 weeks of clicks and sales before its bids settle, so early results can look unstable."
+    },
+    "judgeAfter": "2026-10-13",
+    "phases": [
+     {
+      "key": "learning",
+      "from": "2026-09-29",
+      "to": "2026-10-12",
+      "days": 14,
+      "label": "Learning"
+     },
+     {
+      "key": "selling",
+      "from": "2026-10-13",
+      "to": "2026-10-15",
+      "days": 3,
+      "label": "Selling"
+     },
+     {
+      "key": "cutoff",
+      "from": "2026-10-16",
+      "to": "2026-10-17",
+      "days": 2,
+      "label": "Order cutoff"
+     }
+    ],
+    "verdict": "too_short",
+    "headline": "Would run Sep 29 to Oct 15 · 17 days",
+    "why": [
+     "Too late to test this for Sweetest Day: learning would end only 3 days before the last gift orders can arrive.",
+     "Sweetest Day is Oct 17, 18 days away.",
+     "Better as an ongoing test, or saved for next year."
+    ],
+    "basis": "Would end Oct 15 (Sweetest Day Oct 17 less a 2-day order cutoff). With about 2 weeks of learning, 3 days would be left to sell."
+   }
+  }
+ ],
+ "tooLateSchedule": {
+  "version": 1,
+  "kind": "search",
+  "today": "2026-09-29",
+  "timeSensitive": true,
+  "event": {
+   "label": "Sweetest Day",
+   "date": "2026-10-17",
+   "daysAway": 18,
+   "market": "US"
+  },
+  "start": "2026-09-29",
+  "end": "2026-10-15",
+  "days": 17,
+  "learning": {
+   "days": 14,
+   "endsOn": "2026-10-12",
+   "note": "Smart Bidding usually needs about 2 weeks of clicks and sales before its bids settle, so early results can look unstable."
+  },
+  "judgeAfter": "2026-10-13",
+  "phases": [
+   {
+    "key": "learning",
+    "from": "2026-09-29",
+    "to": "2026-10-12",
+    "days": 14,
+    "label": "Learning"
+   },
+   {
+    "key": "selling",
+    "from": "2026-10-13",
+    "to": "2026-10-15",
+    "days": 3,
+    "label": "Selling"
+   },
+   {
+    "key": "cutoff",
+    "from": "2026-10-16",
+    "to": "2026-10-17",
+    "days": 2,
+    "label": "Order cutoff"
+   }
+  ],
+  "verdict": "too_short",
+  "headline": "Would run Sep 29 to Oct 15 · 17 days",
+  "why": [
+   "Too late to test this for Sweetest Day: learning would end only 3 days before the last gift orders can arrive.",
+   "Sweetest Day is Oct 17, 18 days away.",
+   "Better as an ongoing test, or saved for next year."
+  ],
+  "basis": "Would end Oct 15 (Sweetest Day Oct 17 less a 2-day order cutoff). With about 2 weeks of learning, 3 days would be left to sell."
+ },
+ "pmaxSchedule": {
+  "version": 1,
+  "kind": "pmax",
+  "today": "2026-09-29",
+  "timeSensitive": true,
+  "event": {
+   "label": "Christmas",
+   "date": "2026-12-25",
+   "daysAway": 87,
+   "market": "US"
+  },
+  "start": "2026-10-31",
+  "end": "2026-12-11",
+  "days": 42,
+  "learning": {
+   "days": 21,
+   "endsOn": "2026-11-20",
+   "note": "Performance Max usually spends its first 2 to 3 weeks learning who buys, and Google suggests about 6 weeks before judging it."
+  },
+  "judgeAfter": "2026-12-12",
+  "phases": [
+   {
+    "key": "learning",
+    "from": "2026-10-31",
+    "to": "2026-11-20",
+    "days": 21,
+    "label": "Learning"
+   },
+   {
+    "key": "selling",
+    "from": "2026-11-21",
+    "to": "2026-12-11",
+    "days": 21,
+    "label": "Selling"
+   },
+   {
+    "key": "cutoff",
+    "from": "2026-12-12",
+    "to": "2026-12-25",
+    "days": 14,
+    "label": "Order cutoff"
+   }
+  ],
+  "verdict": "good",
+  "headline": "Runs Oct 31 to Dec 11 · 42 days",
+  "why": [
+   "Christmas is Dec 25, 87 days away.",
+   "Google needs about 3 weeks to learn a Performance Max campaign, and about 6 weeks before it is fair to judge; judge it from Dec 12.",
+   "Stops Dec 11 so gifts can still arrive by Dec 25."
+  ],
+  "basis": "Ends Dec 11 (Christmas Dec 25 less a 14-day order cutoff). Counted back from there: about 3 weeks of learning, then 21 days of selling."
+ },
+ "pmaxOfferExtras": {
+  "shopify_US_7301_9001": {
+   "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/birth-flower-charm-necklace.jpg?v=1",
+   "price": 68,
+   "currency": "USD"
+  },
+  "shopify_US_7302_9002": {
+   "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/initial-charm-necklace.jpg?v=1",
+   "price": 54,
+   "currency": "USD"
+  },
+  "shopify_US_7303_9003": {
+   "imageUrl": "https://cdn.shopify.com/s/files/1/0000/0001/products/paperclip-heart-bracelet.jpg?v=1",
+   "price": 72,
+   "currency": "USD"
+  }
+ }
+}

@@ -60,5 +60,11 @@ field label or its column header counts as labelled.
 `report.json` (findings, coverage per tab, API actions answered), and
 screenshots of layout findings. `HARNESS_DEBUG=1` logs every control operated.
 
+`pmax-research.cjs` is a separate, focused check of the Product ads research
+card, its reasoning fold, the data-unavailable banner and the funnel note at
+desktop, 390 px and 320 px. It uses `tests/adwords/fixtures/pmax-research-sample.json`,
+a fixed clock (2026-09-29) and the same fake API. Run it with
+`PLAYWRIGHT_MODULE=<path to playwright> node tests/adwords/browser/pmax-research.cjs`.
+
 The files here are not part of `tests/adwords/run.cjs`, which runs only the
 top-level `tests/adwords/*.cjs` suites.
