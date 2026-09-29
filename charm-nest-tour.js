@@ -752,6 +752,7 @@
   /** Where the window steps toward: its card, when in sight; else the button pressed. */
   const aimOf = k => { const h = rectOf(k.home); return h && onScreen(h) ? h : k.R; };
   /** The window's own box as laid out, whatever transform it is drawn with now. */
+  const LAG = 160;   // (ms: how far the frames on screen may trail the page's own clock while a window moves)
   const boxOf = d => d.offsetWidth && d.offsetHeight ? { left: d.offsetLeft, top: d.offsetTop, width: d.offsetWidth, height: d.offsetHeight } : d.getBoundingClientRect();
   /** Stepped aside: a fifth of the way toward its card and a little smaller (at most an eighth), its shape kept. Only
    *  part of the way: the whole screen never sweeps down into a card in a few frames, and the eye stays on the design. */
@@ -767,7 +768,7 @@
    *  on the window exactly as it was (nothing is left on it). With reduced motion only the short fade. Transform and
    *  opacity only: the window is laid out once, at its own size, and never reflows on the way. */
   function aside(t, k, back, ms) {
-    const d = k.d, g = !!t.gentle, o = { duration: ms, easing: g ? "ease" : "linear", fill: back ? "none" : "forwards", direction: back ? "reverse" : "normal" };
+    const d = k.d, g = !!t.gentle, o = { duration: ms, easing: g ? "ease" : "linear", fill: "forwards", direction: back ? "reverse" : "normal" };
     const fade = [{ opacity: 1 }, { opacity: 0 }];
     return [
       d.animate(fade, o),
@@ -784,8 +785,9 @@
     over(true); mark("tuck"); d._tourHeld = true;
     Object.assign(d.style, { transformOrigin: "0 0", willChange: "transform,opacity" });
     k.anims = aside(t, k, false, t.gentle ? GENTLE.fade : TIME.aside);
-    // (out of sight once gone: nothing of it drawn under the flight)
-    k.anims[0].finished.then(() => { if (!k.returning && !k.ready) d.style.visibility = "hidden"; }, () => {});
+    // (out of sight once gone, nothing of it drawn under the flight: hidden once the frames drawn off the main thread,
+    // which come a little after it has finished here, are in)
+    k.anims[0].finished.then(() => setTimeout(() => { if (!k.returning && !k.ready) d.style.visibility = "hidden"; }, LAG), () => {});
     return k;
   }
   /** Before it comes back: what changed meanwhile is drawn (the order window: its Send to Sheet gone) and the window
@@ -807,10 +809,10 @@
       const run = aside(t, k, true, ms);
       drop();
       await Promise.race([Promise.all(run.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, ms + 400))]);
+      // (landed, held there as it ends: the frames drawn off the main thread come a little after it has finished here, and
+      // let go at once it jumped the last of the way; it stays on its own layer a moment longer too)
+      await new Promise(r => setTimeout(r, LAG));
       for (const a of run) tryDo(() => a.cancel());
-      // (landed: its last frame is shown before the rest is let go, and it stays on its own layer a moment longer:
-      // taken off it at once, it was drawn anew in the frame it landed)
-      if (!t.ff && !fast) await new Promise(r => { const h = setTimeout(r, 120); requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(h); r(); })); });
     } else drop();
     for (const [p, v] of Object.entries(k.st)) if (p !== "willChange") d.style[p] = v;
     const wc = k.st.willChange; setTimeout(() => { if (!d._tourHeld && d.style.willChange === "transform,opacity") d.style.willChange = wc; }, 700);
