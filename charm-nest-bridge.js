@@ -2138,15 +2138,20 @@ const Pool = window.Pool = (() => {
     return { sp, pools, charms };
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
-  function attachPool(row, run, prep, contended) {
+  function attachPool(row, run, prep, contended, placed) {
     const { sp, pools, charms } = prep;
     // a line that went (cancelled, AutoCancel, or gone from Etsy) while it was made up never goes onto a sheet: the run's
     // pool step is not waited for by AutoCancel, and it used to place the cancelled order after it had been taken off
     if (row.state === "gone" || window.Cancelled?.has?.(row.order.receiptId)) { const ids = pools.map(p => p.poolId); if (ids.length && S.cloud.ok) update(ids, { state: "abandoned", sheetId: null, setId: null }).catch(() => {}); return; }
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
+    // a line already on a sheet is never placed again (Paul, 29 Sep: one Send to Sheet put an order's own design on its
+    // Rose Gold sheet twice): a piece a sheet of this sorter holds, or one the cloud has on a saved sheet (placed), stays
+    // where it is, and no second copy of it goes on
+    const saved = new Map((placed || []).filter(x => pools.some(p => p.poolId === x.poolId)).map(x => [x.poolId, x]));
+    const on = new Set(pools.map(p => p.poolId).filter(id => saved.has(id) || charmOf(id)));
     // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
-    const byMetal = new Map(); for (const c of charms) { const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
+    const byMetal = new Map(); for (const c of charms) { if (on.has(c.poolId)) continue; const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
     for (const [metal, list] of byMetal) {
       let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
       if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(metal);
@@ -2155,14 +2160,25 @@ const Pool = window.Pool = (() => {
       for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
-    for (const p of pools) B.pool.rows.set(p.poolId, p);
+    for (const p of pools) if (!on.has(p.poolId) || !B.pool.rows.has(p.poolId)) B.pool.rows.set(p.poolId, saved.has(p.poolId) ? Object.assign({}, p, saved.get(p.poolId)) : p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
+    if (on.size) { agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${on.size === pools.length ? "already on a sheet" : `${on.size} of ${pools.length} pieces already on a sheet`} — not placed again`); if (on.size === pools.length) { settle(row); return; } }
     agent({ metal: sp.material, pool: true }, "POOL", prep.custom ? `${row.order.receiptId} · custom designs: ${[...byMetal].map(([m, l]) => `${l.length} → ${labelOf(m)}`).join(", ")}` : `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
+  /* One placement of a line at a time. Two made up side by side (Send to Sheet while an answer on the order's card, or an
+     intake, put the same line on) each made a copy of its pieces, and both went onto the sheet under one pool id (Paul,
+     29 Sep). A line being placed (placing: its key, until its pieces are on) is left alone by addAll, and a second
+     poolAdd waits for the first, then finds the line on its sheet. */
+  const placing = new Map();
+  function lock(rows) { let freed; const p = new Promise(r => { freed = r; }); for (const r of rows) placing.set(r.key, p); return () => { for (const r of rows) if (placing.get(r.key) === p) placing.delete(r.key); freed(); }; }
   async function poolAdd(row, run) {
-    const prep = await preparePool(row, run); if (!prep) return;
-    const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
-    attachPool(row, run, prep, r.contended);
+    for (let w; (w = placing.get(row.key));) { await w.catch(() => {}); if (onSheets(row)) { settle(row); return; } }
+    const free = lock([row]);
+    try {
+      const prep = await preparePool(row, run); if (!prep) return;
+      const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
+      attachPool(row, run, prep, r.contended, r.placed);
+    } finally { free(); }
   }
   /* A line that could not go on a sheet (its SKU in no master file or blocked, a size its design lacks, too big for the
      plate, a design that would not load) is made up again only when something it depends on has changed: the line as
@@ -2216,8 +2232,13 @@ const Pool = window.Pool = (() => {
     // A line a person holds waits for that person (the hold is lifted through Review.repool), and a line whose pieces
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
-    // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing)
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing; a line being placed
+    // now, by Send to Sheet or an answer, is that placement's: placing)
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !placing.has(r.key) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    const free = lock(rows);
+    try { return await addRows(run, rows); } finally { free(); }
+  }
+  async function addRows(run, rows) {
     const plan = await Gate.plan(rows);
     const held = [...plan.wait.values()];
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
@@ -2240,15 +2261,15 @@ const Pool = window.Pool = (() => {
       try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); else row.poolTry = trySig(row); } catch (e) { hold(row, e, true); }
       if (++n % 5 === 0) { Orders.render(); }
     }
-    let contended = [], failure = null;
+    let contended = [], placed = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
       // four hundred rows read and written one after another ran past the edge's patience (its "Inactivity Timeout" page,
       // 25 Sep); the server now reads a call's rows together and writes them in a batch, and a call carries two hundred
-      try { for (let i = 0; i < all.length; i += 200) contended = contended.concat((await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" })).contended || []); }
+      try { for (let i = 0; i < all.length; i += 200) { const r = await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); } }
       catch (e) { failure = e; }
     }
-    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended); } catch (e) { hold(row, e); } }
+    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
@@ -6878,6 +6899,9 @@ const CustomSheet = window.CustomSheet = (() => {
   /* ── Send to Sheet ── */
   async function send(it) {
     const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
+    // sent once, for good: a second press (the window in the moment before it closes, another card of the order, during
+    // or after the tour) sends nothing again (Paul, 29 Sep: a design went on its sheet twice)
+    if (e && e.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
     // not ready: what is missing is shown where it is fixed (the window, its reason lit), or, with no design yet, the
     // card's drop area is lit and says what it takes
     const why = notReady(e);
@@ -7204,7 +7228,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
     d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
     // Send to Sheet stays where it is, greyed while it cannot send, and says why (pressed, the reason lights up)
-    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow;
+    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow || sent;
     if (why && !busyNow) sb.setAttribute("aria-disabled", "true"); else sb.removeAttribute("aria-disabled");
     sb.title = busyNow ? busyNow : why ? (files.length ? why : "Its designs come first: drop the order's .ai or .dxf files here") : "Put every design on the next open sheet of its metal";
     const later = d.querySelector("[data-later]"), keep = files.length && !sent;
