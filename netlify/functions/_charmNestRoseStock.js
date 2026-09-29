@@ -144,8 +144,12 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
     });
     // every order on the sheet gets the cut on its timeline (charmNestLibrary's stamp never throws); the revision is its id
     const sheet=out.cutSheet;delete out.cutSheet;
+    // who cut it, as the sorter's sign-in names them: none is "" and signedIn false, never the ledger's 'operator'
+    // (station tracking B); the page it was pressed on is the device. Orders from the pieces' pool ids when unlisted.
     if(sheet&&stamp)await stamp(()=>{const c=out.cut,label=sheetLabel?sheetLabel(sheet):String(sheet.fileBase||c.sheetId).slice(0,80);
-      return [...new Set((sheet.orders||[]).map(String))].slice(0,300).map(orderId=>({orderId,type:'roseCut',at:c.at,by:c.by,station:'laser',sheetId:c.sheetId,sheet:label,setId:sheet.setId||'',text:label,data:{stockId:c.stockId,revision:c.revision},id:`${c.sheetId}-${c.revision}`}));},'rose cut');
+      const who=String(c.by||'').trim().slice(0,80),signedIn=!!who&&who!=='operator',device=String(b.device||'').replace(/[^\w.-]/g,'').slice(0,40);
+      const orders=Array.isArray(sheet.orders)&&sheet.orders.length?sheet.orders:(sheet.poolIds||[]).map(k=>(/^(\d{1,30})_/.exec(String(k))||[])[1]||'').filter(Boolean);
+      return [...new Set(orders.map(String))].slice(0,300).map(orderId=>({orderId,type:'roseCut',at:c.at,by:signedIn?who:'',station:'laser',device,sheetId:c.sheetId,sheet:label,setId:sheet.setId||'',text:label,data:{stockId:c.stockId,revision:c.revision,signedIn},id:`${c.sheetId}-${c.revision}`}));},'rose cut');
     return out;
   }
   // A rehearsal has its own collection and cannot reserve physical stock,

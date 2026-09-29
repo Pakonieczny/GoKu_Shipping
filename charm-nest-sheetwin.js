@@ -1161,7 +1161,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function markDone(done) {
     const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Moving back…"}`;
     try {
-      await LibraryDone.mark("sheet", id, done);
+      await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
       if (W.id !== id) return;
       W.rec.laserDoneAt = done ? Date.now() : null; head(W.rec, false);
       // where the sheet went, said slowly where the eye already is (Paul, 27 Sep): the state pops, and a note under it
