@@ -157,7 +157,7 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     list = await buttons(); assert.deepEqual(list.find(x => x.rid === other.split('_')[0]).b, WANT);
 
     // 5 · Send to Sheet: a design dropped on an Unknown SKU card, its metal in the designs window, sent; the line leaves
-    //     Review for the sheets, answered with who (the timeline and Completed)
+    //     Review for the sheets, answered with who (the timeline; never listed under Completed)
     const eKey = '4178100001_41781000011';
     // with no design yet, Send to Sheet is greyed and disabled: pressed, it sends nothing and opens nothing (its drop
     // zone lights up)
@@ -186,11 +186,11 @@ const COLUMN = sel => { const n = document.querySelector(sel); return [...n.quer
     await page.waitForFunction(k => __tl.some(e => e.key === k && e.type === 'decided'), eKey, { timeout: 10000 });
     const tlE = await page.evaluate(k => __tl.filter(e => e.key === k && ['decided', 'designSent'].includes(e.type)).map(e => [e.type, e.by]), eKey);
     assert.deepEqual(tlE.sort(), [['decided', 'Test Operator'], ['designSent', 'Test Operator']], JSON.stringify(tlE));
+    // a send is never listed under Completed (Paul, 29 Sep): its answer is on the timeline above, the line on the sheets
+    const doneBefore = await page.evaluate(() => +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent);
     await page.click('#reviewView .rvSeg [data-cseg="done"]');
-    const res = await page.evaluate(sel => { const n = document.querySelector(sel + '.rvSettled'); return n && { why: n.querySelector('.rowExcerpt').textContent, by: n.querySelector('.by').textContent, strip: n.querySelector('.cuDesigns')?.textContent || '' }; }, card('4178100001'));
-    assert(res && /sent to the sheets with the order's own designs/.test(res.why) && /^Test Operator/.test(res.by) && /On the sheets.*Sent by Test Operator/.test(res.strip), 'under Completed, with who: ' + JSON.stringify(res));
-    await page.click(card('4178100001') + '.rvSettled .purchaseSummary');
-    await page.waitForFunction(() => OrderWin.isOpen()); await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
+    const res = await page.evaluate(sel => ({ card: !!document.querySelector(sel), n: +document.querySelector('#reviewView .rvSeg [data-cseg="done"] b').textContent, listed: document.querySelectorAll('#rvList .reviewListRow').length }), card('4178100001'));
+    assert.deepEqual(res, { card: false, n: doneBefore, listed: doneBefore }, 'sent to the sheets: not under Completed, not counted: ' + JSON.stringify(res));
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
 
     // 6 · Options: the same column; a click opens its order, which asks nothing

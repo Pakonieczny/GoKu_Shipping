@@ -74,7 +74,9 @@ if(require.main===module)(async()=>{
  for(const board of [{key:'display_120x600',width:120,height:600},{key:'display_160x600',width:160,height:600},{key:'display_300x1050',width:300,height:1050},{key:'display_250x360',width:250,height:360},{key:'display_240x400',width:240,height:400}]){
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
-   if(board.height/board.width<=2)ok(t.top-bottom<60,'portrait copy stays close to the product '+board.key);
+   // The charm keeps a 5 percent margin inside its region (CHARM_ROOM), so the
+   // copy sits a few pixels further below it than the former 60 px bound.
+   if(board.height/board.width<=2)ok(t.top-bottom<68,'portrait copy stays close to the product '+board.key);
    if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top-(t.top+t.aiBoxHeight)<=30.1,'tall action follows the headline without a large gap '+board.key);ok(b.width*b.scaleX<=board.width-10&&b.height*b.scaleY>=(board.width>=240?48:36),'tall action scales with available copy space '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
@@ -105,10 +107,14 @@ if(require.main===module)(async()=>{
  const noFocus=responsive.document(fadePlan,{...photo,focus:null},{key:'square',width:2048,height:2048},'mobile');ok(!noFocus.objects.some(o=>o.id==='ai_image_fade'),'unlocated products retain safe framing instead of speculative overlays');
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
  const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
- ok(small.height<=focused.height*focused.focus.height*1.03,'small placement removes surplus vertical context while retaining the whole charm');
+ // A 5 percent margin (CHARM_ROOM 1.10) stays around the charm; the former 1.025 fit allowed 1.03.
+ ok(small.height<=focused.height*focused.focus.height*1.11&&small.height>=focused.height*focused.focus.height,'small placement removes surplus vertical context while retaining the whole charm');
  assert.throws(()=>research.validateSubjectFocus({x:.95,y:.8,width:.1,height:.1,confident:true}),/reliably/);checks++;
  assert.throws(()=>research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:false}),/reliably/);checks++;
- ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'}}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');
+ ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'},width:1024,height:536}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');
+ assert.throws(()=>research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'}}),/exact pixel size/);checks++;
+ const focusBox=research.validateSubjectFocus({left:200,top:100,right:300,bottom:260,complete:true,cutEdges:[],confident:true},{width:1000,height:500});ok(Math.abs(focusBox.x-.2)<1e-6&&Math.abs(focusBox.height-.32)<1e-6,'a pixel box answer becomes fractions of the photo');
+ ok(research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:true},{width:1000,height:500}).x===.45,'fraction answers saved earlier still parse');
  const beforeProofBoard=e.board,beforeProofDoc=JSON.stringify(e.document());const proofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(plan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan,images:[photo]}});
  ok(proofs.length===27&&proofs[0].key==='active'&&new Set(proofs.map(p=>p.key)).size===27,'browser renders the active canvas plus all 26 responsive variants');
  ok(e.board===beforeProofBoard&&JSON.stringify(e.document())===beforeProofDoc,'rendering quality proofs does not modify editable artwork');

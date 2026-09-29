@@ -513,6 +513,71 @@ function createAdDesignService(deps) {
     await target.update({animation:clean({requestedAt:row.data().animation?.requestedAt||Date.now(),motionJobId,queued:queued===true,error:error?String(error).slice(0,700):null,at:Date.now()})});
     return {ok:true,workspaceId,jobId,motionJobId,queued:queued===true,error};
   }
+  // Charm placement of a saved AI set. Each photo's charm is measured from its
+  // own pixels (free, no AI request), every size is checked where the charm
+  // really is, and each size is laid out again around the measured charm to
+  // tell a size that only needs a new layout from one that needs a new photo.
+  const MID_SCENES={midLandscape:{format:{key:'landscape',width:1536,height:1056,requestSize:'1536x1056'},boards:['display_580x400'],shape:'3:2'},midPortrait:{format:{key:'portrait',width:1296,height:2048,requestSize:'1296x2048'},boards:['display_240x400','display_250x360'],shape:'3:5'}};
+  const sceneProfile=key=>{const c=require('../../brites-ad-responsive').sceneCatalog.find(s=>s.key===key);return c?{format:c.format,boards:c.boards?.length?c.boards:MID_SCENES[key]?.boards||[],shape:MID_SCENES[key]?.shape}:MID_SCENES[key]||null;};
+  const noPlacementFix=reason=>({available:false,reason,sceneKeys:[],relayoutFormats:[],corrections:{},formats:[],estimatedUsd:0,label:null});
+  function placementSizes(result){
+    const responsive=require('../../brites-ad-responsive'),r=result.responsive,device=result.device==='desktop'?'desktop':'mobile';
+    return [{key:'active',board:{...result.artboard,device},document:result.document},...(r.documents?.length?r.documents.map(d=>({key:d.device+'_'+d.key,board:{key:d.key,width:d.width,height:d.height,device:d.device},document:d.document})):(r.variants||responsive.variants).map(b=>({key:b.device+'_'+b.key,board:b,document:null})))];
+  }
+  async function placementMeasure(result){
+    const P=require('../../brites-ad-placement'),checks={};
+    for(const image of result.responsive.images){
+      if(image.focusCheck?.version===P.VERSION){checks[image.id]=image.focusCheck;continue;}
+      const source=(result.sources||[]).find(s=>s.id===image.id);if(!source?.asset)throw new Error('A saved photo of this set is missing.');
+      const {data,info}=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:256,height:256,fit:'inside'}).removeAlpha().raw().toBuffer({resolveWithObject:true});
+      checks[image.id]={...P.measureProduct({data,width:info.width,height:info.height,channels:info.channels},image.focus),modelFocus:image.focus||null};
+    }
+    return checks;
+  }
+  // Every size as saved, and the same size laid out again around the measured charm.
+  function placementCheck(result,focusChecks){
+    const P=require('../../brites-ad-placement'),responsive=require('../../brites-ad-responsive'),{plan,images}=result.responsive,locked=o=>!!o.locked||(o.objects||[]).some(locked),kept=(result.document?.objects||[]).filter(locked);
+    const sources=images.map(i=>({id:i.id,width:i.width,height:i.height,focus:i.focus,focusCheck:focusChecks[i.id]||null})),results=[],relayout={};
+    for(const size of placementSizes(result)){
+      const image=responsive.selectImage(plan,images,size.board),saved=P.checkDocument(size.document||responsive.document(plan,image,size.board,size.board.device),size.board,sources,{label:size.key});
+      results.push({key:size.key,ok:saved.ok,issues:saved.issues,warnings:saved.warnings});
+      try{const box=focusChecks[image.id]?.box,fresh=responsive.document(plan,box?{...image,focus:box}:image,size.board,size.board.device);if(size.key==='active')fresh.objects.push(...kept);const again=P.checkDocument(fresh,size.board,sources,{label:size.key});relayout[size.key]={ok:again.ok,kinds:[...new Set(again.issues.map(i=>i.kind))]};}
+      catch{relayout[size.key]={ok:false,kinds:[]};}
+    }
+    return {results,relayout};
+  }
+  // The browser checks each rendered proof with its exact fitted text: its text
+  // findings replace the declared-box ones, and a cut found by either counts.
+  function mergeProofPlacement(results,proof){
+    const seen=new Map((proof?.images||[]).filter(p=>Array.isArray(p.placement?.issues)).map(p=>[p.key,p.placement.issues]));
+    return results.map(r=>{const browser=seen.get(r.key);if(!browser)return r;const issues=browser.concat(r.issues.filter(i=>i.kind!=='covered'&&!browser.some(b=>b.kind===i.kind)));return {...r,ok:!issues.length,issues,rendered:true};});
+  }
+  // What an on-demand fix would change (googleAdsAdFixes decides) and cost. Nothing here is paid.
+  async function placementFixFor({w,result,placement,relayout,declared,refCount}){
+    const Fixes=require('./googleAdsAdFixes'),responsive=require('../../brites-ad-responsive'),{plan,images}=result.responsive,sizes=placementSizes(result),boards=new Map(sizes.map(s=>[s.key,s.board]));
+    const out=Fixes.placementPlan({results:placement.results,relayout,declared,sizes:sizes.map(s=>({key:s.key,boardKey:s.board.key})),planned:new Set((plan.scenePlans||[]).map(s=>s.key)),sceneFor:key=>responsive.selectImage(plan,images,boards.get(key))?.sceneKey||null,special:Object.fromEntries(Fixes.SPECIAL.map(k=>[k,sceneProfile(k)]).filter(([,p])=>p)),order:responsive.sceneCatalog.map(s=>s.key),active:result});
+    if(!out.sceneKeys.length&&!out.relayoutFormats.length)return noPlacementFix(out.reason);
+    // Planning reservations, as the run itself reserves them: each new photo and
+    // its charm localization, then one complete-ad review of the whole set.
+    const quote=async args=>{try{const e=await deps.reserveCost({...args,workspace:w,job:{inputCoverage:{preparedReferenceCount:refCount,usedProductImages:refCount}}});return Number(e&&typeof e==='object'?e.reservedUsd:e)||0;}catch{return 0;}};
+    let usd=0;for(const key of out.sceneKeys){const format=sceneProfile(key)?.format||FORMATS.find(f=>f.key===plan.masterFormat)||FORMATS[0];usd+=await quote({key:'image_'+format.key,format})+await quote({key:'subject_focus'});}
+    usd=Math.round((usd+await quote({key:'quality'}))*100)/100;
+    return {available:true,reason:null,sceneKeys:out.sceneKeys,relayoutFormats:out.relayoutFormats,corrections:out.corrections,formats:out.formats,estimatedUsd:usd,label:Fixes.placementLabel({...out,estimatedUsd:usd},result)};
+  }
+  // Never fails the status: a missing photo or older design gives a plain reason.
+  async function savedPlacement({w,target,phase,result,proofRow,requestRow}){
+    const r=result?.responsive;
+    if(phase!=='ready')return {placement:null,fix:noPlacementFix('The set is not finished yet. Check again when it is ready.')};
+    if(!r?.plan||!Array.isArray(r.plan.scenePlans)||!r.plan.scenePlans.length||!Array.isArray(r.images)||!r.images.length)return {placement:null,fix:noPlacementFix('This older design has no AI photo sets, so its sizes cannot be checked or remade here.')};
+    try{
+      // Cached per exact set, check version and layout engine, so repeated status calls never reload the photos.
+      const P=require('../../brites-ad-placement'),layoutVersion=require('../../brites-ad-responsive').layoutVersion,candidateHash=result.candidateHash||sha(r),cacheRef=target.collection('data').doc('placement_v1'),row=await cacheRef.get();
+      const measured=row.exists&&row.data().candidateHash===candidateHash&&row.data().version===P.VERSION?row.data():null;let cache=measured?.layoutVersion===layoutVersion?measured:null;
+      if(!cache){const focusChecks=measured?.focusChecks||await placementMeasure(result);cache={candidateHash,version:P.VERSION,layoutVersion,checkedAt:Date.now(),focusChecks,...placementCheck(result,focusChecks)};await cacheRef.set(clean(cache)).catch(()=>{});}
+      const results=mergeProofPlacement(cache.results,proofRow?.exists&&proofRow.data().candidateHash===candidateHash?proofRow.data():null),placement={version:P.VERSION,ok:results.every(x=>x.ok),results,checkedAt:cache.checkedAt};
+      return {placement,fix:await placementFixFor({w,result,placement,relayout:cache.relayout,declared:cache.results,refCount:(requestRow?.identitySources||requestRow?.sources||[]).length||1})};
+    }catch{return {placement:null,fix:noPlacementFix('The saved photos could not be checked just now. Try again in a moment.')};}
+  }
   async function editorAIStatus(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);let target;
     if(input.activeAttempt){const id=w.editorAI?.id;if(!id)return {ok:true,jobId:null};const row=await editorAIRef(input.workspaceId,id).get(),job=row.exists?row.data():null;if(!job||job.resetAt||['dismissed','ready'].includes(job.phase))return {ok:true,jobId:null};if(job.scope.productId!==input.productId||job.scope.groupRef!==input.groupRef)throw new Error('The unfinished attempt belongs to another product or ad group. Open that workspace to discard it.');return {ok:true,jobId:id,phase:job.phase,unconfirmed:!!job.inFlight};}
@@ -533,16 +598,28 @@ function createAdDesignService(deps) {
     let weightedReview,reviewVersion;
     for(const version of (Number.isInteger(input.reviewVersion)&&input.reviewVersion>=1&&input.reviewVersion<=11?[input.reviewVersion]:[11,10,9,8,7,6,5,4,3,2,1])){weightedReview=await target.collection('data').doc('ad_quality_v'+version).get();if(weightedReview.exists){reviewVersion=version;break;}}
     const correctedReview=await target.collection('data').doc('scene_repair_quality').get(),initialReview=correctedReview.exists?null:await target.collection('data').doc('scene_quality').get(),review=weightedReview.exists?weightedReview.data():correctedReview.exists?correctedReview.data():initialReview?.exists?initialReview.data():null;
-    let reviewProofs=[];if(input.includeReview&&reviewVersion){const p=await target.collection('data').doc('ad_proofs_v'+reviewVersion).get();if(p.exists&&Array.isArray(p.data().images)&&(!review.proofHash||review.proofHash===p.data().proofHash))reviewProofs=await Promise.all(p.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));}
+    const proofRow=reviewVersion&&(input.includeReview||input.allSizes&&phase==='ready')?await target.collection('data').doc('ad_proofs_v'+reviewVersion).get():null;
+    let reviewProofs=[];if(input.includeReview&&proofRow?.exists&&Array.isArray(proofRow.data().images)&&(!review.proofHash||review.proofHash===proofRow.data().proofHash))reviewProofs=await Promise.all(proofRow.data().images.map(async image=>({key:image.key,width:image.width,height:image.height,url:await deps.signAsset(image.asset)})));
     const quality=review?{rubric:review.rubric||null,scores:review.scores||null,weights:review.weights||null,categoryReviews:review.categoryReviews||null,claimsSupported:review.claimsSupported===true,score:Number.isFinite(review.score)?review.score:null,pass:review.pass===true,productFaithful:review.productFaithful===true,mobileReadable:review.mobileReadable===true,issues:(review.issues||[]).map(issue=>String(issue).slice(0,2000)).slice(0,20)}:null;
     const fixOptions=phase==='ready'&&quality?.categoryReviews&&result?.exists?await editorFixOptions(w,target,result.data(),quality,reviewVersion):[];
-    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,animation:job.animation||null,includeAnimation:requestRow?.includeAnimation===true,fixOf:job.fixOf||null,fixTarget:job.fix?{kind:job.fix.kind,category:job.fix.category,index:job.fix.index,sceneKey:job.fix.sceneKey||null,formats:job.fix.formats||[],label:job.fix.label}:null,canFix:fixOptions.length>0,fixOptions,
+    const placed=input.includeReview||input.allSizes?await savedPlacement({w,target,phase,result:result?.exists?result.data():null,proofRow,requestRow}):null;
+    return {ok:true,workspaceId:input.workspaceId,jobId:job.id,requestId:job.requestId,inputHash:job.inputHash,scope:job.scope,phase,animation:job.animation||null,includeAnimation:requestRow?.includeAnimation===true,fixOf:job.fixOf||null,fixTarget:job.fix?{kind:job.fix.kind,category:job.fix.category,index:job.fix.index,sceneKey:job.fix.sceneKey||null,...(job.fix.kind==='placement'?{sceneKeys:job.fix.sceneKeys||[],relayoutFormats:job.fix.relayoutFormats||[],estimatedUsd:job.fix.estimatedUsd||0}:{}),formats:job.fix.formats||[],label:job.fix.label}:null,canFix:fixOptions.length>0,fixOptions,placement:placed?.placement||null,placementFix:placed?.fix||null,
       startedAt:job.createdAt,updatedAt:job.updatedAt,
       progress:stale?{pct:job.progress.pct,label:unknown?'Provider completion is uncertain. The request will not be charged again.':'Saved work is available to resume.'}:job.progress,
       error:job.error||null,quality,reviewVersion:reviewVersion||null,reviewProofs,qualityTarget:require('./googleAdsAdQuality').TARGET,canRetry:phase==='needs_attention'&&!unknown,hasSavedResponse:receipt.exists,needsNewRequestApproval:false,
       usage:job.stageUsage|| (job.usage?[job.usage]:[]),cost:{estimatedUsd:job.stageUsage?job.stageUsage.reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0):job.usage?.estimatedUsd??(job.inFlight?job.reservedUsd:0),costEstimated:job.stageUsage?job.stageUsage.some(u=>u.costEstimated!==false):job.usage?.costEstimated!==false,reservedUsd:job.reservedUsd||0},
       candidate:candidate?.exists?{...candidate.data(),sources:await Promise.all(candidate.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,
       result:result?.exists?{...result.data(),sources:await Promise.all((result.data().sources||[]).map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:null,...(request?.exists?{mode:request.data().mode,selectedLayerId:request.data().selectedLayerId,originalDocument:request.data().document,sources:await Promise.all(request.data().sources.map(async source=>({...source,url:await deps.signAsset(source.asset)})))}:{}),imageAccess:deps.imageAccessStatus?deps.imageAccessStatus():null};
+  }
+  // The browser's own charm check of one rendered proof, measured with the
+  // exact fitted text. Only known fields are kept; a malformed check is ignored
+  // and never refuses the proofs.
+  function proofPlacement(value){
+    try{
+      if(!value||typeof value!=='object'||!Array.isArray(value.issues))return null;
+      const text=v=>typeof v==='string'?v.slice(0,200):'',issues=value.issues.filter(i=>i&&typeof i==='object'&&['cut','covered','source-cut','missing'].includes(i.kind)).slice(0,10).map(i=>({kind:i.kind,...(Array.isArray(i.edges)?{edges:[...new Set(i.edges.filter(e=>['top','right','bottom','left'].includes(e)))]}:{}),...(Array.isArray(i.layers)?{layers:i.layers.filter(l=>typeof l==='string').slice(0,10).map(text)}:{}),message:text(i.message)}));
+      return {version:Number.isInteger(value.version)&&value.version>0&&value.version<1000?value.version:null,ok:!issues.length,issues};
+    }catch{return null;}
   }
   async function editorAIResume(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);const target=editorAIRef(input.workspaceId,input.jobId);let queued=false;const recoveryJob=await target.get(),recoverable=!!(recoveryJob.exists&&recoveryJob.data().inFlight&&deps.hasResponse&&await deps.hasResponse(recoveryJob.data().inFlight.requestId));
@@ -571,8 +648,8 @@ function createAdDesignService(deps) {
           const exact=require('../../brites-ad-responsive').boards.some(d=>/^display_/.test(d.key)&&d.width===b.width&&d.height===b.height)&&meta.width===b.width&&meta.height===b.height;
           if(meta.format!=='jpeg'||!exact&&(Math.abs(meta.width-b.width*scale)>1||Math.abs(meta.height-b.height*scale)>1))throw new Error('A rendered proof has unexpected pixel dimensions.');
           const asset=await deps.saveAsset(input.workspaceId,bytes,input.jobId+'_proof_'+sha([input.candidateHash,p.key,sha(bytes)]).slice(0,32),{width:meta.width,height:meta.height,mimeType:'image/jpeg',kind:'Complete ad review proof'});
-          const displayWidth=b.key.includes('display_')?b.width:b.device==='desktop'?Math.min(600,b.width):Math.min(360,b.width);
-          images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),renderCheck:p.renderCheck,asset});
+          const displayWidth=b.key.includes('display_')?b.width:b.device==='desktop'?Math.min(600,b.width):Math.min(360,b.width),placement=proofPlacement(p.placement);
+          images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),renderCheck:p.renderCheck,asset,...(placement?{placement}:{})});
         }
         const proof={candidateHash:input.candidateHash,images,proofHash:sha(images),createdAt:Date.now()};
         await f().db.runTransaction(async tx=>{const row=await tx.get(target),saved=await tx.get(target.collection('data').doc('ad_proofs_v11')),c=await tx.get(target.collection('data').doc('candidate'));
@@ -619,19 +696,25 @@ function createAdDesignService(deps) {
     const status=await editorAIStatus({workspaceId,productId,groupRef,jobId:parent.id,allSizes:true}),category=String(input.fix?.category||''),index=Number(input.fix?.index);
     if(!status.quality)throw new Error('This design has no saved review to correct.');
     if(input.reviewHash&&input.reviewHash!==sha({id:parent.id,quality:status.quality}))throw new Error('The design review changed. Refresh before approving a fix.');
-    const plan=(status.fixOptions||[]).find(o=>o.category===category&&o.index===index);if(!plan)throw new Error('That review finding is no longer available.');if(plan.kind==='scene'&&!deps.env.OPENAI_API_KEY)throw new Error(IMAGE_MISSING);
-    const id='eai_'+sha([parent.id,'fix',category,index]).slice(0,40),target=editorAIRef(workspaceId,id),requestRow=await parentRef.collection('data').doc('request').get();if(!requestRow.exists)throw new Error('The reviewed design request is unavailable.');
-    const rows=await parentRef.collection('data').get(),skip=/^(candidate|result|ad_proofs_v\d+|ad_quality_v\d+(_response)?|crop_[a-z_]+|scene_fit_notes|scene_repair(_quality)?|scene_quality|copy_refine.*|plan_fix(_response)?|request)$/;
-    const reused=rows.docs.filter(row=>!skip.test(row.id)&&!(plan.kind==='scene'&&(row.id==='scene_'+plan.sceneKey||row.id==='scene_'+plan.sceneKey+'_fit_repair')));
+    // A placement fix is derived again here from the saved photos; scene keys from the browser are never trusted.
+    const placement=input.fix?.kind==='placement',plan=placement?(status.placementFix?.available?status.placementFix:null):(status.fixOptions||[]).find(o=>o.category===category&&o.index===index);
+    if(!plan)throw new Error(placement?status.placementFix?.reason||'The sizes of this design have nothing to fix.':'That review finding is no longer available.');
+    const scenes=placement?plan.sceneKeys:plan.kind==='scene'?[plan.sceneKey]:[];if(scenes.length&&!deps.env.OPENAI_API_KEY)throw new Error(IMAGE_MISSING);
+    // One placement fix per reviewed design: a second press returns it, never a second paid set.
+    if(placement){const prior=(await ref.collection('editorAIJobs').get()).docs.map(d=>d.data()).find(j=>j.fixOf===parent.id&&j.fix?.kind==='placement'&&!j.resetAt&&j.phase!=='dismissed');if(prior)return {ok:true,workspaceId,jobId:prior.id,queued:false,fix:prior.fix};}
+    const id='eai_'+sha(placement?[parent.id,'placement',plan.sceneKeys]:[parent.id,'fix',category,index]).slice(0,40),target=editorAIRef(workspaceId,id),requestRow=await parentRef.collection('data').doc('request').get();if(!requestRow.exists)throw new Error('The reviewed design request is unavailable.');
+    const rows=await parentRef.collection('data').get(),skip=/^(candidate|result|ad_proofs_v\d+|ad_quality_v\d+(_response)?|crop_[a-z_]+|scene_fit_notes|scene_repair(_quality)?|scene_quality|copy_refine.*|plan_fix(_response)?|placement_v\d+|request)$/;
+    const reused=rows.docs.filter(row=>!skip.test(row.id)&&!scenes.some(k=>row.id==='scene_'+k||row.id==='scene_'+k+'_fit_repair'));
+    const fix=placement?{kind:'placement',sceneKeys:plan.sceneKeys,relayoutFormats:plan.relayoutFormats,corrections:plan.corrections,formats:plan.formats,label:plan.label,estimatedUsd:plan.estimatedUsd,parentReviewVersion:status.reviewVersion||null}:{...plan,parentReviewVersion:status.reviewVersion||null};
     let queued=false;
     await f().db.runTransaction(async tx=>{const latest=await tx.get(ref),exists=await tx.get(target);editorScope(latest.data(),input);if(exists.exists)return;
-      const now=Date.now(),fix={...plan,parentReviewVersion:status.reviewVersion||null};
-      tx.set(target,{id,requestId:'fix_'+id.slice(4,24),inputHash:sha({fixOf:parent.id,category,index}),designKey:parent.designKey,scope:parent.scope,sourceSetId:latest.data().sourceSetId,sourceVersion:latest.data().sourceVersion||null,snapshotHash:latest.data().snapshotHash||null,phase:'queued',owner:null,leaseUntil:0,createdAt:now,updatedAt:now,progress:{pct:4,label:'Targeted correction saved · '+(plan.kind==='scene'?'one scene will be regenerated':'copy and layout plan will be revised')},inFlight:null,reservedUsd:0,stageUsage:[],fixOf:parent.id,fix});
+      const now=Date.now();
+      tx.set(target,{id,requestId:'fix_'+id.slice(4,24),inputHash:sha(placement?{fixOf:parent.id,kind:'placement',sceneKeys:plan.sceneKeys}:{fixOf:parent.id,category,index}),designKey:parent.designKey,scope:parent.scope,sourceSetId:latest.data().sourceSetId,sourceVersion:latest.data().sourceVersion||null,snapshotHash:latest.data().snapshotHash||null,phase:'queued',owner:null,leaseUntil:0,createdAt:now,updatedAt:now,progress:{pct:4,label:placement?require('./googleAdsAdFixes').placementProgress(fix,status.result):'Targeted correction saved · '+(plan.kind==='scene'?'one scene will be regenerated':'copy and layout plan will be revised')},inFlight:null,reservedUsd:0,stageUsage:[],fixOf:parent.id,fix});
       tx.set(target.collection('data').doc('request'),clean({...requestRow.data(),fixOf:parent.id,fix,includeAnimation:false,publicationBaseline:sha({placements:chosenPlacements(latest.data()),messaging:latest.data().messaging||null})}));
       for(const row of reused)tx.set(target.collection('data').doc(row.id),clean({...row.data(),reusedFrom:parent.id}));
       tx.update(ref,{editorAI:{id,designKey:parent.designKey,at:now}});queued=true;
     });
-    return {ok:true,workspaceId,jobId:id,queued,fix:plan};
+    return {ok:true,workspaceId,jobId:id,queued,fix:placement?fix:plan};
   }
   const identityDeps=(ref,workspaceId)=>({workspaceId,sha,loadAsset:deps.loadAsset,saveAsset:deps.saveAsset,
     library:async id=>{const row=await ref.collection('imageLibrary').doc(id).get();return row.exists?row.data():null;}});
@@ -659,6 +742,8 @@ function createAdDesignService(deps) {
     const sources=[];for(const id of sourceIds){const row=await ref.collection('editorSources').doc(id).get();if(!row.exists||row.data().groupRef!==groupRef||String(row.data().productId)!==String(productId))throw new Error('An original photo is outside this product and ad group.');sources.push(row.data());}
     const request={productId:String(productId),groupRef,device,artboard:{key:artboard.key,width:artboard.width,height:artboard.height},document,mode:input.mode,responsive:input.mode==='design'&&input.generateScene===true,includeAnimation:input.mode==='design'&&input.includeAnimation===true,selectedLayerId:String(input.selectedLayerId||''),instruction:String(input.instruction||'').slice(0,2400)},inputHash=sha(request),id='eai_'+sha([designKey,input.requestId]).slice(0,40),target=editorAIRef(workspaceId,id),prior=await target.get();
     if(prior.exists){if(prior.data().inputHash!==inputHash)throw new Error('This AI request ID belongs to a different canvas. Resume its saved result or start a new request.');return editorAIResume({...input,jobId:id});}
+    // A new AI Design plans the two specialized photo sets (580x400, 240x400 and 250x360) beside the five families. Set after the hash so a retry of an earlier request still matches it.
+    if(request.responsive)request.sceneSet=2;
     // Pin physical identity to a verified listing photo, never a prior generated ad.
     // An operator crop of such a photo IS that photo, trimmed on purpose: the
     // reference must show exactly what they framed, never the untrimmed original.
@@ -776,7 +861,7 @@ function createAdDesignService(deps) {
       plan={...revised.plan,masterFormat:plan.masterFormat,alternateNeeded:plan.alternateNeeded,alternateFormat:plan.alternateFormat,alternateReason:plan.alternateReason,imageDirections:plan.imageDirections,scenePlans:plan.scenePlans};
     }
     }
-    const fix=request.fix||null,fixedDirection=spec=>fix?.kind==='scene'&&fix.sceneKey===spec.key?{...spec.direction,composition:spec.direction.composition+' Correct this reviewed defect without altering the exact product: '+String(fix.correction||'').slice(0,500)+' Evidence: '+String(fix.evidence||'').slice(0,300)}:spec.direction;
+    const fix=request.fix||null,fixedDirection=spec=>fix?.kind==='scene'&&fix.sceneKey===spec.key?{...spec.direction,composition:spec.direction.composition+' Correct this reviewed defect without altering the exact product: '+String(fix.correction||'').slice(0,500)+' Evidence: '+String(fix.evidence||'').slice(0,300)}:fix?.kind==='placement'&&(fix.sceneKeys||[]).includes(spec.key)?{...spec.direction,composition:spec.direction.composition+' Correct this without altering the exact product: '+String(fix.corrections?.[spec.key]||'Keep the complete charm and bail inside the photo with a clear margin.').slice(0,700)}:spec.direction;
     if(fix?.kind==='plan'){
       const key='plan_fix',raw=await target.collection('data').doc(key+'_response').get();
       const prepared=research.buildResponsiveRequest({evidence,request,screenshotDataUrl:'unused',sources:[]});
@@ -817,17 +902,57 @@ function createAdDesignService(deps) {
       await ref.collection('editorSources').doc(sourceId).set(clean(source));
       sources.splice(0,sources.length,source);images.splice(0,images.length,{id:sourceId,width:source.width,height:source.height,focalX:.5,focalY:.5,forFamilies:[]});
     }
+    const placement=require('../../brites-ad-placement'),near=(b,e)=>({top:b.y<=.03,right:b.x+b.width>=.97,bottom:b.y+b.height>=.97,left:b.x<=.03})[e];
     for(const image of images){
       const source=sources.find(s=>s.id===image.id),key='subject_focus_'+sha(source.asset).slice(0,24),raw=await target.collection('data').doc(key+'_response').get();
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
       const located=await paid(key,90,'Finding the charm for close, size-aware crops',async(requestId,reservedUsd)=>{
-        let response=raw.exists?raw.data().response:null;
-        if(!response){const bytes=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:1600,height:1600,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer();response=await deps.responses({...research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,'+bytes.toString('base64'),product}),background:true},requestId);await saveData(key+'_response',{response,requestId});}
+        let response=raw.exists?raw.data().response:null,size=raw.exists?raw.data().size||null:null;
+        if(!response){
+          // The photo goes to Sonnet at a size it reads without resizing, so its pixel box maps exactly back.
+          const original=await deps.loadAsset(source.asset),meta=await require('sharp')(original,{limitInputPixels:40000000}).metadata();size=research.focusImageSize(meta.width,meta.height);
+          const shot=await require('sharp')(original,{limitInputPixels:40000000}).resize({width:size.width,height:size.height,fit:'fill'}).jpeg({quality:92}).toBuffer();
+          response=await deps.responses({...research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,'+shot.toString('base64'),product,width:size.width,height:size.height}),background:true},requestId);await saveData(key+'_response',{response,requestId,size});
+        }
         await recordCost(key,{...response,requestId:raw.exists?raw.data().requestId:requestId,reservedUsd});
-        return {focus:research.validateSubjectFocus(research.parseResponse(response)),model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
+        return {focus:research.validateSubjectFocus(research.parseResponse(response),size),model:response.model,usage:response.usage,estimatedUsd:response.estimatedUsd,costEstimated:response.costEstimated};
       });
-      await recordCost(key,located);image.focus=located.focus;source.focus=located.focus;await ref.collection('editorSources').doc(source.id).set(clean(source));
+      await recordCost(key,located);
+      // The model's box is a starting point: the charm is measured from the photo's own pixels (free), and the box every
+      // layout uses joins the two. A photo that cuts the charm at its own edge is recorded here, before any size is laid out.
+      const model=located.focus,modelBox={x:model.x,y:model.y,width:model.width,height:model.height},modelCut=(model.complete===false?model.cutEdges||[]:[]).filter(e=>near(modelBox,e));
+      const px=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:256,height:256,fit:'inside'}).removeAlpha().raw().toBuffer({resolveWithObject:true});
+      const measured=placement.measureProduct({data:px.data,width:px.info.width,height:px.info.height,channels:px.info.channels},modelBox),cutEdges=[...new Set([...(measured.confident?measured.cutEdges:[]),...modelCut])];
+      image.focusCheck={...measured,cutEdges,cut:{top:cutEdges.includes('top'),right:cutEdges.includes('right'),bottom:cutEdges.includes('bottom'),left:cutEdges.includes('left')},modelFocus:modelBox,modelCut};
+      image.focus=measured.confident?{...measured.box}:modelBox;source.focus=image.focus;source.focusCheck=image.focusCheck;await ref.collection('editorSources').doc(source.id).set(clean(source));
       if(Date.now()>sceneDeadline)return {continue:true};
+    }
+    // Charm placement: every size is checked where the charm really is (measured above). A photo that cuts the charm, or a
+    // size that still cuts it, has its scene remade once with the sizes and edges named in the correction (a saved,
+    // cost-checked step like a fit repair, only for a new design: a fix or a re-run of an earlier design never buys an extra
+    // photo). A photo that still cuts the charm is set aside so no size uses it; any size still failing is recorded for review.
+    const activeBoard={...request.artboard,device:request.device==='desktop'?'desktop':'mobile'},placementBoards=[{...activeBoard,label:'active'},...responsive.variants.map(b=>({...b,label:b.device+'_'+b.key}))];
+    const placementRun=()=>{const known=images.map(i=>({id:i.id,width:i.width,height:i.height,focus:i.focus,focusCheck:i.focusCheck||null}));return placementBoards.map(b=>{const image=responsive.selectImage(plan,images,b);try{return {...placement.checkDocument(responsive.document(plan,image,b,b.device),b,known,{label:b.label}),sceneKey:image?.sceneKey||null};}catch(e){return {key:b.label,ok:false,verified:false,issues:[{kind:'missing',message:'This size could not be laid out: '+String(e.message).slice(0,160)}],warnings:[],sceneKey:image?.sceneKey||null};}});};
+    if(plan.scenePlans){
+      const found=new Map(),scene=k=>{if(!found.has(k))found.set(k,{own:new Set(),sizes:[]});return found.get(k);},canRemake=Number(request.sceneSet)>=2&&!request.fix;
+      for(const image of images)if(image.sceneKey&&image.focusCheck?.cutEdges?.length)image.focusCheck.cutEdges.forEach(e=>scene(image.sceneKey).own.add(e));
+      for(const r of placementRun())if(!r.ok&&r.sceneKey)for(const issue of r.issues)if(['cut','missing'].includes(issue.kind))scene(r.sceneKey).sizes.push({key:r.key,edges:issue.edges||[]});
+      let pending=null;
+      for(const [sceneKey,f] of found){
+        const spec=sceneSpecs.find(s=>s.key===sceneKey);if(!spec)continue;
+        const key='scene_'+spec.key+'_fit_repair',remade=!canRemake||(await target.collection('data').doc(key).get()).exists;
+        if(remade){if(f.own.size)for(const image of images)if(image.sceneKey===sceneKey)image.unusable=true;}
+        else if(!pending)pending={spec,key,f};
+      }
+      if(pending){
+        const {spec,key,f}=pending,words={top:'top',right:'right side',bottom:'bottom',left:'left side'},edges=list=>[...list].map(e=>words[e]||e).join(' and '),sizes=f.sizes.map(x=>x.key.replace(/^(mobile|desktop)_/,'').replace('display_','')+(x.edges.length?' ('+edges(x.edges)+')':'')).join(', ');
+        const correction=(f.own.size?'The previous photo cut the charm off at its '+edges(f.own)+' edge. ':'')+(f.sizes.length?'The charm was cut off in these ad sizes: '+sizes+'. ':'')+'Pull the camera back and move the charm toward the centre of the frame so the complete charm and its bail sit fully inside the picture, with at least 12 percent of the frame clear above the bail and on every side. Keep the same exact jewelry, setting, palette and light.';
+        const row=await paid(key,90,'Remaking the '+spec.key+' scene so the complete charm fits',async requestId=>{
+          const direction={...fixedDirection(spec),composition:fixedDirection(spec).composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' '+correction};
+          const generated=await deps.generateImage({requestId,provider:provider(),format:spec.format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:spec.direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+' Preserve the exact original jewelry and the same palette, lighting and scene concept. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
+          const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:spec.format.width,height:spec.format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
+        });await recordCost(key,row);return {continue:true};
+      }
     }
     if(plan.scenePlans){
       const checks=[{...request.artboard,device:request.device==='desktop'?'desktop':'mobile'},...responsive.variants].map(board=>{const image=responsive.selectImage(plan,images,board);return {board,image,fit:responsive.document(plan,image,board,board.device).sceneFit};}),bad=checks.filter(c=>c.fit?.mode==='legacy');
@@ -862,21 +987,24 @@ function createAdDesignService(deps) {
     const chosen=responsive.selectImage(plan,images,request.artboard),document=responsive.document(plan,chosen,request.artboard,request.device==='desktop'?'desktop':'mobile'),locked=o=>o.locked||(o.objects||[]).some(locked);
     // Locked layers remain byte-identical on the active board; originals and every paid scene remain archived.
     document.objects.push(...request.document.objects.filter(locked));
-    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+sceneSpecs.length+' saved scene(s) reused across compatible ad sizes.',sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
+    const placementResults=placementRun().map(({sceneKey,...r})=>({key:r.key,ok:r.ok,verified:r.verified!==false,issues:r.issues,warnings:r.warnings})),placementSummary={version:placement.VERSION,ok:placementResults.every(r=>r.ok),results:placementResults};
+    const candidate={document,productId:request.productId,groupRef:request.groupRef,device:request.device,artboard:request.artboard,destination:product.url,sources,publicationImages,placement:placementSummary,nativeCopy:plan.nativeCopy,responsive:{layoutVersion:responsive.layoutVersion,plan,images,boards:responsive.boards,variants:responsive.variants,documents:responsive.variants.map(b=>({key:b.key,device:b.device,width:b.width,height:b.height,document:responsive.document(plan,responsive.selectImage(plan,images,b),b,b.device)}))},alternatives:[],rationale:plan.rationale+' '+sceneSpecs.length+' saved scene(s) reused across compatible ad sizes.',sourceIds:plan.sourceIds,evidenceHash:evidence.hash,limitations:[...(plan.limitations||[]),...(evidence.warnings||[])]};
     const rubric=require('./googleAdsAdQuality'),candidateHash=sha(candidate),proofRow=await target.collection('data').doc('ad_proofs_v11').get();
     if(!proofRow.exists||proofRow.data().candidateHash!==candidateHash)return {...candidate,candidateHash,reviewPending:true};
     const proof=proofRow.data(),key='ad_quality_v11',raw=await target.collection('data').doc(key+'_response').get();
     if(raw.exists&&(raw.data().candidateHash!==candidateHash||raw.data().proofHash!==proof.proofHash))throw new Error('The saved review response belongs to different ad proofs.');
     if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
+    // Sizes whose charm is cut off or covered, from the declared check and from the browser's own check of each rendered proof.
+    const badSizes=[...new Set([...placementResults.filter(r=>!r.ok).map(r=>r.key),...proof.images.filter(p=>p.placement&&p.placement.ok===false).map(p=>p.key)])],placementRule=badSizes.length?' The charm is cut off or covered by text in these sizes, so name each one in your findings and deduct for it: '+badSizes.join(', ')+'.':'';
     const quality=await paid(key,95,'Reviewing messaging, layout, relevance and visual appeal',async requestId=>({...await deps.reviewImages(refs[0],await Promise.all(proof.images.map(p=>deps.loadAsset(p.asset))),{
-      reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,compositionRules:{treatment:plan.style.treatment,scenes:sceneSpecs.map(s=>s.key),requirements:'The photograph fills each ad. A progressive translucent wash protects the existing copy. Check every size for photographic seams, texture or props competing with text, readable branding, unchanged complete jewelry, no duplicated product, and no fade over the product. Judge actual native display size. Do not deduct merely because the layout uses restrained supporting copy.'},product:{id:product.id,title:product.title,url:product.url},
+      reviewType:'complete_ad',rubric:rubric.RUBRIC,copy:plan.copy,nativeCopy:plan.nativeCopy,compositionRules:{treatment:plan.style.treatment,scenes:sceneSpecs.map(s=>s.key),requirements:'The photograph fills each ad. A progressive translucent wash protects the existing copy. Check every size for photographic seams, texture or props competing with text, readable branding, unchanged complete jewelry, no duplicated product, and no fade over the product. Judge actual native display size. Do not deduct merely because the layout uses restrained supporting copy.'+placementRule},product:{id:product.id,title:product.title,url:product.url},
       research:{sources:research.compactEvidence(evidence).sources,limitations:evidence.warnings},inputCoverage:{usedProductImages:refs.length},
       renderedFormats:proof.images.map(({key,width,height,displayWidth,displayHeight})=>({key,width,height,displayWidth,displayHeight})),
       placementNote:'These are actual browser-rendered editable compositions. Google responsive ads combine separate clean photos and native text dynamically; these proofs are not guaranteed Google placements.'
     },refs,requestId,{durable:true,...(raw.exists?{rawResponse:raw.data().response}:{}),onResponse:response=>saveData(key+'_response',{response,candidateHash,proofHash:proof.proofHash})}),candidateHash,proofHash:proof.proofHash}));
     if(quality.candidateHash!==candidateHash||quality.proofHash!==proof.proofHash)throw new Error('The saved quality score belongs to different ad proofs.');
     await recordCost(key,quality);
-    const needsRevision=!quality.pass||!Number.isFinite(quality.score)||quality.score<rubric.TARGET;
+    const needsRevision=!quality.pass||!Number.isFinite(quality.score)||quality.score<rubric.TARGET||badSizes.length>0;
     return {...candidate,quality,needsRevision,candidateHash,proofHash:proof.proofHash};
   }
   async function editorAIApply(input={}){
@@ -1049,8 +1177,10 @@ function createAdDesignService(deps) {
     if (!value.context.campaignId && !value.context.approvalId && !(value.context.itemIds || []).length) throw new Error("Choose a current product opportunity with exact eligible Merchant offers before generating a new campaign draft.");
     const checked = settingsFor(value.settings, await productsFor(ref, value), value.context.groups || [], value.references || [], formats(), creativeFor(value));
     const selectedPlacements=chosenPlacements(value),placementCount=new Set(selectedPlacements.map(p=>p.imageId)).size;
-    if (!checked.selectedImages.length && !checked.referenceIds.length && !checked.currentAssetIds.length && !placementCount) throw new Error("Select at least one product photo or uploaded reference before generating.");
-    if (!checked.selectedImages.length && !selectedPlacements.some(p=>(p.productIds||[]).length) && !checked.referenceIds.some(id=>(value.references||[]).some(r=>r.id===id&&r.role==="product"))) throw new Error("Select a listing photo or product-detail upload to preserve the jewelry's identity. Current ad images and style references guide the composition.");
+    // Messaging research only reads the product, so it never needs a photo picked (a saved design may be the only thing selected);
+    // the run falls back to the product's main listing photo. Image work still requires the choice.
+    if (mode !== "copy" && !checked.selectedImages.length && !checked.referenceIds.length && !checked.currentAssetIds.length && !placementCount) throw new Error("Select at least one product photo or uploaded reference before generating.");
+    if (mode !== "copy" && !checked.selectedImages.length && !selectedPlacements.some(p=>(p.productIds||[]).length) && !checked.referenceIds.some(id=>(value.references||[]).some(r=>r.id===id&&r.role==="product"))) throw new Error("Select a listing photo or product-detail upload to preserve the jewelry's identity. Current ad images and style references guide the composition.");
     if (checked.selectedImages.length + checked.referenceIds.length + checked.currentAssetIds.length + placementCount > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Reduce this selection or split it into designs; no generation was charged.");
     let jobId, cached = false;
     await f().db.runTransaction(async tx => { const s = await tx.get(ref); if (!s.exists) throw new Error("Workspace was not found."); const current = s.data();let previous = current.job;
@@ -1129,6 +1259,10 @@ function createAdDesignService(deps) {
         const ordered = [...(job.inputCoverage.sourceImageIds || []), ...(job.inputCoverage.referenceIds || [])];
         if (!ordered.length || ordered.some(id=>!job.inputAssets.some(a=>a.id===id))) throw new Error("The saved legacy source set is incomplete. Its paid outputs were preserved; save a new design revision to continue.");
         inputs = ordered.map((id,index)=>{const a=job.inputAssets.find(a=>a.id===id);return {id,label:"P"+(index+1),productId:a.role==="product"?String(product.id):null,role:a.role,origin:"saved",title:product.title,asset:a.asset};});
+      }
+      if (!inputs.length && job.mode === "copy") {
+        const photo = (product.images || []).find(i => i && i.id != null && i.url);
+        if (photo) inputs = [{ id: String(product.id) + ":" + photo.id, label: "P1", productId: String(product.id), imageId: photo.id, role: "product", origin: (product.eligibleGroupRefs || []).includes(group.ref) ? "catalog" : "related", title: product.title, url: photo.url }];
       }
       if (!inputs.length) throw new Error("Select at least one product photo or uploaded reference before generating.");
       if (!legacyPinned && inputs.length > 144) throw new Error("Up to 144 photos can fit legibly in one composition. Split this selection; no generation was charged.");
