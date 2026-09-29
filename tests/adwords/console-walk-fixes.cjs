@@ -1,8 +1,9 @@
 // What the browser walk (tests/adwords/browser) found, checked offline: toasts never take taps, phone controls
 // are thumb-sized, dialogs and sheets ease in (not under reduced motion), panels ease to their new height in
-// 150–400 ms, the country sheet keeps Tab inside it, the sales bar tooltip flips below near the top, image alt
-// text reads as words, group subtitles wrap on phones, the re-image progress line uses what the engine sends,
-// and the sign-in page neither scrolls sideways nor replaces the console with the shop. Synthetic data only.
+// 150–400 ms (clipping through their own style, so no view is left unclickable), the country sheet keeps Tab
+// inside it, the sales bar tooltip flips below near the top, image alt text reads as words, group subtitles wrap
+// on phones, the re-image progress line uses what the engine sends, the sign-in page neither scrolls sideways nor
+// replaces the console with the shop, and a 320 px phone does not scroll sideways. Synthetic data only.
 const assert = require('assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm'), { JSDOM } = require('jsdom');
 const REPO = path.resolve(__dirname, '../..');
 const html = fs.readFileSync(path.join(REPO, 'brites-adwords.html'), 'utf8'), groups = fs.readFileSync(path.join(REPO, 'brites-groups.js'), 'utf8');
@@ -52,7 +53,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
 
   await test('a panel a click opens or fills eases to its new height in 150–400 ms, and stands still when restored or under reduced motion', async () => {
     const p = page('<div class="card" id="card"><details id="d"><summary id="s">Why</summary><p>Because</p></details><button id="b">Load</button><div id="more"></div></div>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const d = p.document.getElementById('d'), card = p.document.getElementById('card');
     p.H.set(d, 40); p.document.getElementById('s').click(); p.H.set(d, 200); d.open = true; await settle();
     assert.equal(p.anims.length, 1); let a = p.anims[0];
@@ -72,7 +73,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
   await test('the smallest block whose height changed eases (a status line elsewhere does not widen it), and an inline expander eases through the block that holds it', async () => {
     const p = page('<div class="card" id="card"><div id="act"><button id="gen">Create review draft</button><span id="msg"></span></div><p>Below</p>' +
       '<dl id="dl"><dd id="dd"><span>Canada</span> <details id="inl" style="display:inline"><summary id="inls">Edit</summary><form>Countries</form></details></dd></dl></div>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const act = p.document.getElementById('act'), dd = p.document.getElementById('dd');
     p.H.set(act, 30); p.H.set(p.document.getElementById('card'), 400); p.document.getElementById('gen').click();
     p.H.set(act, 66); p.H.set(p.document.getElementById('card'), 436); p.document.getElementById('msg').textContent = 'Generating the draft…'; await settle();
@@ -83,7 +84,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     // later status change neither widens nor stops that ease.
     const q = page('<div class="card" id="c2"><span id="meta">Ready</span><details id="set" open><summary>Search settings</summary>' +
       '<div id="body"><div id="row"><button id="kw">Test keyword research</button></div><div id="panel"></div></div></details></div>');
-    q.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    q.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $q = id => q.document.getElementById(id);
     q.H.set($q('row'), 30); q.H.set($q('body'), 80); q.H.set($q('set'), 100); q.H.set($q('c2'), 500); $q('kw').click();
     q.H.set($q('body'), 331); q.H.set($q('set'), 351); q.H.set($q('c2'), 751);
@@ -94,19 +95,27 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     // A panel its own button hides, or a question box its Cancel removes: the block that held it eases shut.
     const r = page('<div class="card" id="c3"><div id="tool"><div id="row"><button id="kw2">Test</button></div><div id="panel"><p>Results</p><button id="dis">Dismiss</button></div>' +
       '<div id="ask"><button id="no">Cancel</button></div></div></div>');
-    r.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    r.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $r = id => r.document.getElementById(id);
     r.H.set($r('panel'), 251); r.H.set($r('tool'), 400); r.H.set($r('c3'), 700); $r('dis').click();
     $r('panel').style.display = 'none'; r.H.set($r('panel'), 0); r.H.set($r('tool'), 149); r.H.set($r('c3'), 449); await settle();
     assert.equal(r.anims.length, 1); assert.equal(r.anims[0].el, $r('tool')); assert.equal(r.anims[0].frames[0].height, '400px'); assert.equal(r.anims[0].frames[1].height, '149px');
     r.anims[0].finish(); r.H.set($r('ask'), 90); $r('no').click(); $r('ask').remove(); r.H.set($r('tool'), 59); r.H.set($r('c3'), 359); await settle();
     assert.equal(r.anims.length, 2); assert.equal(r.anims[1].el, $r('tool')); assert.equal(r.anims[1].frames[0].height, '149px'); assert.equal(r.anims[1].frames[1].height, '59px');
+    // A card that is all its panel holds (the keyword check's answer), hidden by its own Dismiss: what holds the panel eases shut.
+    const s = page('<section class="view" id="v"><div id="tb"><div id="defs"><button id="kw3">Test</button></div><div id="kp"><div class="card pad" id="kc"><p>Answered</p>' +
+      '<div id="kd"><button id="dis3">Dismiss</button></div></div></div><div id="pb">Advertising lessons</div></div></section>');
+    s.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const $s = id => s.document.getElementById(id);
+    s.H.set($s('kp'), 188); s.H.set($s('kc'), 188); s.H.set($s('tb'), 400); s.H.set($s('v'), 900); $s('dis3').click();
+    $s('kp').style.display = 'none'; s.H.set($s('kp'), 0); s.H.set($s('kc'), 0); s.H.set($s('tb'), 212); s.H.set($s('v'), 712); await settle();
+    assert.equal(s.anims.length, 1); assert.equal(s.anims[0].el, $s('tb')); assert.equal(s.anims[0].frames[0].height, '400px'); assert.equal(s.anims[0].frames[1].height, '212px');
   });
 
   await test('a dialog drawn again under the control that asked eases its content, so a centred dialog glides; the design studio is left alone', async () => {
     const p = page('<dialog id="perf" open><header id="hd"><button id="x">Close</button></header><div id="pbody"><div id="ctl"><button id="rf">Refresh</button></div><p>Chart</p></div></dialog>' +
       '<dialog id="adDesignDialog" open><div id="dbody"><div id="dctl"><button id="dt">Messaging</button></div></div></dialog>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const $p = id => p.document.getElementById(id);
     p.H.set($p('ctl'), 40); p.H.set($p('pbody'), 800); $p('rf').click();
     p.H.set($p('pbody'), 300); $p('pbody').innerHTML = '<p>Loading the selected dates…</p>'; await settle();
@@ -117,7 +126,7 @@ const settle = () => new Promise(r => setTimeout(r, 0));
 
   await test('a campaign row opening under its control grows from nothing, and what loads into it later grows from where it stands', async () => {
     const p = page('<table><tbody><tr class="crow" id="r" aria-controls="det-1" role="button"><td>Campaign</td></tr><tr class="cdet" id="det-1" style="display:none"><td><div id="inner">Detail</div></td></tr></tbody></table>');
-    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
     const det = p.document.getElementById('det-1'), inner = p.document.getElementById('inner');
     p.document.getElementById('r').addEventListener('click', () => { det.style.display = ''; });
     p.H.set(inner, 320); p.document.getElementById('r').click(); await settle();
@@ -125,6 +134,27 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.equal(p.anims[0].frames[0].height, '0px'); assert.equal(p.anims[0].frames[1].height, '320px');
     p.anims[0].finish(); p.H.set(inner, 500); inner.innerHTML += '<p>Groups</p>'; await settle();
     assert.equal(p.anims.length, 2); assert.equal(p.anims[1].frames[0].height, '320px'); assert.equal(p.anims[1].frames[1].height, '500px');
+  });
+
+  // The walk found whole views unclickable below a height after rapid eases: Chrome kept a cancelled animation's
+  // overflow clip for hit testing. The clip is now the block's own style, set for the ease and put back after it.
+  await test('an easing block clips its overflow through its own style only while it eases, never inside the animation', async () => {
+    const p = page('<div class="card" id="card"><details id="d" style="overflow:visible"><summary id="s">Why</summary><p id="t">Because</p></details></div>');
+    p.run(['cmdStill', 'easeHeight', 'easeNow', 'easeBare', 'easeWatch', 'easeClick'].map(pick).join('\n'));
+    const d = p.document.getElementById('d');
+    p.H.set(d, 40); p.document.getElementById('s').click(); p.H.set(d, 200); d.open = true; await settle();
+    const a = p.anims[0];
+    assert.equal(p.anims.length, 1); assert(a.frames.every(f => Object.keys(f).join() === 'height'), 'only the height is animated');
+    assert.equal(d.style.overflow, 'clip', 'clipped while it eases');
+    // Restarted before the browser reports the first ease cancelled (it does so a frame later): the late report
+    // leaves the running ease its clip, and the block's own overflow comes back when that one ends.
+    const late = []; a.cancel = function () { this.cancelled = true; late.push(this); };
+    p.H.set(d, 260); p.document.getElementById('t').textContent = 'Because, at length'; await settle();
+    assert.equal(p.anims.length, 2); const b = p.anims[1]; assert(a.cancelled && b.el === d);
+    late.forEach(x => x.oncancel()); assert.equal(d.style.overflow, 'clip', 'still easing');
+    b.finish(); assert.equal(d.style.overflow, 'visible', 'its own overflow is back');
+    p.document.getElementById('s').click(); p.H.set(d, 40); d.open = false; await settle();
+    assert.equal(p.anims.length, 3); p.anims[2].cancel(); assert.equal(d.style.overflow, 'visible', 'and after a cancelled ease');
   });
 
   await test('Tab and Shift+Tab stay inside the country sheet; Escape closes it and returns focus', async () => {
@@ -203,6 +233,17 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.match(rule('.oppCardActions .opDx[open]'), /min-width:0/);
     assert.doesNotMatch(markup, /GADS_TERM_EXCLUSIONS/);
     assert.match(markup, /Brand-safety — excluded terms<\/h3><span class="sub">Read-only · set in Netlify’s environment variables<\/span>/);
+  });
+
+  // The walk's 320 px pass (and the Ad studio agent) found the page 6 px wider than the screen with the dry-run pill shown.
+  await test('on a 320 px phone the top bar keeps one row inside the screen, and the groups dates and the scope addresses wrap', () => {
+    assert.match(rule('.navburger'), /(^|;)flex:none;/, 'the menu keeps its width');
+    assert(css.includes('@media (max-width:379px){.topbar{gap:5px}.topbar .pill{font-size:10px;letter-spacing:0;padding:4px 7px;gap:4px}}'), 'compact pills');
+    assert(css.includes('@media (max-width:339px){.topbar:has(#pillDry[style*="inline-flex"]) .topbar__title{opacity:0}}'), 'no sliver of a title');
+    assert.match(markup, /<span class="pill dry" id="pillDry"/); assert.match(html, /\$\("#pillDry"\)\.style\.display=c\.dryRun\?"inline-flex":"none"/);
+    assert.match(rule('[data-dm-reconnect] code'), /overflow-wrap:anywhere/);
+    const g = fs.readFileSync(path.join(REPO, 'brites-groups.css'), 'utf8'), phone = g.slice(g.indexOf('@media(max-width:760px){'));
+    assert.match(phone, /\.bg-dates\{flex:1 1 100%;min-width:0;flex-wrap:wrap\}\.bg-dates label\{flex:1 1 175px;min-width:0\}/);
   });
 
   console.log(passed + ' console walk checks passed');

@@ -300,7 +300,7 @@ svg{display:block}
 .sgBudget{display:inline-flex;align-items:center;gap:6px;border:1px solid #5a5145;border-radius:9px;padding:0 8px;height:40px;color:#bdb3a4;font-size:11px}.sgBudget b{color:#f4ead9;font-size:10px;letter-spacing:.08em;text-transform:uppercase}.sgBudget input{width:54px;border:0;background:transparent;color:#fff;font:600 13px var(--mono);outline:none;padding:0}.sgBudget:focus-within{border-color:#b79a5b;box-shadow:0 0 0 2px rgba(183,154,91,.13)}.sgBudgetTotal{display:inline-flex;align-items:center;gap:6px;border-left:1px solid #5a5145;padding-left:10px;color:#bdb3a4;font-size:10.5px}.sgBudgetTotal b{color:#f7e5b8;font:700 12px var(--mono)}.sgBudgetTotal small{color:#8f8679}.sgBudgetTotal.over b,.sgBudgetTotal.over small{color:#f1a58e}.sgCtys{display:inline-flex;align-items:center;gap:5px;max-width:240px;overflow:hidden;white-space:nowrap;font-size:10.5px;color:#bdb3a4}
 
 /* =================== Responsive layer: tablet + phone + folds =================== */
-.navburger{display:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
+.navburger{display:none;flex:none;flex-direction:column;justify-content:center;gap:4px;width:42px;height:42px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:0 10px;cursor:pointer}
 .navburger span{display:block;height:2px;border-radius:2px;background:var(--ink)}
 .navscrim{display:none;position:fixed;inset:0;background:rgba(22,19,15,.42);z-index:190;opacity:0;transition:opacity .2s}
 
@@ -381,6 +381,10 @@ svg{display:block}
   .ovsheet>div{width:100%!important;max-width:100%!important;max-height:92dvh!important;border-radius:18px 18px 0 0!important;padding-bottom:calc(14px + env(safe-area-inset-bottom))!important}
   /* superseded by the .signin responsive rules further down */
 }
+/* Narrow phones: both status pills, the menu and Refresh stay on one row inside the screen; below 340 px the
+   dry-run pill leaves the view title no room, so the sliver of it left is not shown (screen readers still read it). */
+@media (max-width:379px){.topbar{gap:5px}.topbar .pill{font-size:10px;letter-spacing:0;padding:4px 7px;gap:4px}}
+@media (max-width:339px){.topbar:has(#pillDry[style*="inline-flex"]) .topbar__title{opacity:0}}
 
 @media (min-width:761px) and (max-width:1020px){
   .view{padding-left:8px;padding-right:8px}
@@ -870,6 +874,8 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 .reportGap{display:flex;align-items:center;gap:16px;padding:16px 4px 16px 28px;border-bottom:1px solid var(--line)}.reportGap>span{flex:1;min-width:100px}.reportGap small{display:block;color:var(--ink-70);font-size:11px;font-weight:400;margin-top:5px}@media(max-width:700px){.reportGap{flex-wrap:wrap;padding-left:4px}}
 @media(min-width:701px){.campaignTreeHost .reportListing+.reportListing .reportMetrics small{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}}
 @media(max-width:700px){#srChips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}#srChips>.srchip{flex:none}#snapshot table.campaignTree{min-width:0}.campaignTree>thead{display:none}.campaignTree,.campaignTree>tbody,.campaignTree tr.cdet,.campaignTree .idleToggle tr{display:block}.campaignTree>tbody[hidden]{display:none}.campaignTree tr.crow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 10px;padding:13px 4px;border-bottom:1px solid var(--line)}.campaignTree tr.crow>td{display:block;padding:0;border:0;min-width:0}#snapshot .campaignTree .crow>td:first-child{grid-column:1/3;display:flex;align-items:flex-start;min-width:0;position:static;background:none}.campaignTree .crow>td:first-child>span:last-child{flex:1;min-width:0;overflow-wrap:anywhere}.campaignTree .crow .treeChevron{margin-right:10px;font-size:20px;line-height:1.1}.campaignTree .crow>td.cstat{grid-column:3;text-align:right}.campaignTree .crow>td[data-label]{text-align:left;font-size:12.5px}.campaignTree .crow>td[data-label]:before{content:attr(data-label);display:block;margin-bottom:2px;font-family:var(--sans);font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-45)}.campaignTree tr.cdet>td{display:block;padding:12px 8px}.campaignTree .idleToggle td{display:block;border:0}.statusWhy{max-width:none}.legend .lcHint{margin-left:0;flex-basis:100%}}
+/* The Google scope addresses in the conversion-tracking steps wrap instead of widening a phone screen. */
+[data-dm-reconnect] code{overflow-wrap:anywhere}
 /* Phones: controls are at least 32 px so a thumb lands on them (links inside a line of text excepted). */
 @media(max-width:760px){
   .rpPreset,.rpNav,.salesLeg,.salesSeg .segF,.bidSeg,#bCollRefresh,#bOccRefresh,.dmConnection input,input[type=range],.adDesignSelectActions button,.adDesignBack,.adDesignUpload input[type=file],.adDesignLinked,#v-groups .bg-link,#groupContext .bg-back,.coCamps label{min-height:32px}
@@ -882,7 +888,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 @media(max-width:480px){.dayClicks{display:none}.dayTable th.r,.dayTable td.r{width:22%}}
 
 </style>
-<link rel="stylesheet" href="/brites-groups.css?v=20260929-wrap">
+<link rel="stylesheet" href="/brites-groups.css?v=20260929-narrow-dates">
 </head>
 <body>
 
@@ -2090,10 +2096,15 @@ function cmdOpening(el){if(!el||!el.classList)return;el.classList.remove('openin
 // longer the further it moves) when a click opens, closes, swaps or loads what they hold: the smallest block
 // around the control whose height changed resizes smoothly, so what follows (or a centred dialog) glides
 // instead of jumping; a table row opening under its control grows from nothing. Restored re-renders and
-// reduced motion do not animate.
+// reduced motion do not animate. The block clips its overflow only while it eases, through its own style:
+// clipping animated as part of the ease can outlive a cancelled ease in Chrome's hit testing, which left
+// everything below that height unclickable.
 function easeHeight(el,from){if(!el.isConnected||!el.animate||cmdStill()||/auto|scroll/.test(getComputedStyle(el).overflowY))return;var to=el.getBoundingClientRect().height,a;if(!(Math.abs(to-from)>=8))return;
-  a=el._ease=el.animate([{height:from+'px',overflow:'clip'},{height:to+'px',overflow:'clip'}],{duration:Math.round(Math.min(400,150+Math.abs(to-from)/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a)el._ease=null;};}
+  if(!el._ease)el._easeOv=el.style.overflow;el.style.overflow='clip';
+  a=el._ease=el.animate([{height:from+'px'},{height:to+'px'}],{duration:Math.round(Math.min(400,150+Math.abs(to-from)/2)),easing:'cubic-bezier(.2,.7,.3,1)'});a.from=from;a.to=to;a.onfinish=a.oncancel=function(){if(el._ease===a){el._ease=null;el.style.overflow=el._easeOv||'';}};}
 function easeNow(a){var p=a.effect&&a.effect.getComputedTiming().progress;return a.from+(a.to-a.from)*(p==null?1:p);}
+// A block's style without its overflow: an ease setting or putting back its clip is not a change to follow.
+function easeBare(s){return String(s||'').replace(/overflow\s*:[^;]*;?/g,'').replace(/[\s;]/g,'');}
 // Watches blocks (smallest first; the last holds the rest) for 1.5 s, or a hidden table row until it shows.
 // The smallest block whose height changed eases, so a change elsewhere that moves nothing (a status line) does
 // not widen it; blocks a redraw removed or hid are passed over, so what held them eases. A change during a
@@ -2102,6 +2113,7 @@ function easeWatch(els,row){var top=els[els.length-1],H=new Map(),live=function(
   if(top._easeMo)top._easeMo.disconnect();mark();
   var mo=top._easeMo=new MutationObserver(function(recs){
     if(row){if(!top.getClientRects().length)return;mo.disconnect();Array.prototype.forEach.call(top.querySelectorAll(':scope>td>*'),function(c){easeHeight(c,0);easeWatch([c]);});return;}
+    recs=recs.filter(function(r){return r.attributeName!=='style'||easeBare(r.oldValue)!==easeBare(r.target.getAttribute('style'));});if(!recs.length)return;
     var i,j,el,from,run=null;
     for(i=0;i<els.length;i++){el=els[i];if(!live(el))continue;
       if(el._ease){run=el;if(recs.some(function(r){return el.contains(r.target);}))break;continue;}
@@ -2110,10 +2122,13 @@ function easeWatch(els,row){var top=els[els.length-1],H=new Map(),live=function(
     for(j=i+1;j<els.length;j++)if(els[j]._ease&&live(els[j]))i=j;el=els[i];
     if(el._ease)from=easeNow(el._ease);else for(from=H.get(el),j=0;j<i;j++)if(els[j]._ease&&live(els[j]))from-=els[j]._ease.to-easeNow(els[j]._ease);
     els.forEach(function(x){if(x._ease)x._ease.cancel();});mark();easeHeight(el,from);});
-  mo.observe(top,row?{attributes:true}:{attributes:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
+  mo.observe(top,row?{attributes:true}:{attributes:true,attributeOldValue:true,childList:true,subtree:true,characterData:true});clearTimeout(top._easeT);top._easeT=setTimeout(function(){mo.disconnect();},1500);}
 function easeClick(e){var t=e.target&&e.target.closest&&e.target.closest('summary,button,[role=button],[role=tab]'),row,top,els=[],n,cs;if(!t||_cmdRestoring||!window.MutationObserver||cmdStill())return;
   row=document.getElementById(t.getAttribute('aria-controls')||'');if(row&&row.tagName==='TR'&&!row.getClientRects().length)return easeWatch([row],true);
   top=t.closest('.draft,.card,.view,dialog:not(#adDesignDialog)>*')||(t.tagName==='SUMMARY'?t.parentNode:t.closest('details'));if(!top)return;
+  // A card that is all its wrapper holds (a panel shown and hidden as one) is watched from the card or view that
+  // holds the wrapper, so that one eases when the wrapper hides.
+  n=top.parentElement;if(n&&n.children.length===1&&n.tagName!=='DIALOG'&&!top.matches('.view'))top=n.closest('.draft,.card,.view,dialog:not(#adDesignDialog)>*')||top;
   // Height applies to blocks only: inline boxes, table parts and scrolling boxes are passed over.
   for(n=t.parentNode;n&&n!==top&&top.contains(n);n=n.parentNode){cs=getComputedStyle(n);if(/^(block|flex|grid|flow-root|list-item)$/.test(cs.display)&&!/auto|scroll/.test(cs.overflowY))els.push(n);}
   els.push(top);easeWatch(els);}

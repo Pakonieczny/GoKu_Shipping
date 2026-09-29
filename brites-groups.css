@@ -62,7 +62,7 @@
 }
 @media(max-width:760px){
 .bg-context{margin:8px 3px -12px}.bg-back,.bg-toolbar .bg-back{max-width:45%}.bg-toolbar>.bg-context{flex-basis:100%;margin:0}
-.bg-toolbar>input[type=search]{flex-basis:100%}.bg-toolbar>select{flex:1 1 100%}.bg-dates{flex:1 1 100%}.bg-dates label{flex:1;min-width:0}.bg-dates input{width:auto;flex:1;min-width:0}.bg-toolbar [data-bg-action=saved]{margin-left:0}
+.bg-toolbar>input[type=search]{flex-basis:100%}.bg-toolbar>select{flex:1 1 100%}.bg-dates{flex:1 1 100%;min-width:0;flex-wrap:wrap}.bg-dates label{flex:1 1 175px;min-width:0}.bg-dates input{width:auto;flex:1;min-width:0}.bg-toolbar [data-bg-action=saved]{margin-left:0}
 .bg-split{padding:20px 18px;width:94vw}.bg-split table{font-size:12px}.bg-split th,.bg-split td{padding:9px 6px}
 .bg-name small{white-space:normal;overflow-wrap:anywhere}
 }
