@@ -152,7 +152,7 @@
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
   const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
-  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
+  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -173,6 +173,75 @@
     }
     return out;
   }
+  /* ── every QR label printed is a seal of its own (Paul, 29 Sep 02:08: "Any time a label is printed whether it be
+     through this software or through the charm sorting software that must be recorded that the label was printed for
+     this order and the time it was printed. We already have the seals for the manual printing. Please use those to show
+     in the timeline."). A print is the Charm Sorter's Print QR label / Print again (a Review card or the order window:
+     the server's sealPrinted, one per line, read from its record's stamps for an older one, and the page's own
+     labelPrinted), the Sorting station's or the Design Station's (labelPrinted). One press is one seal, however many
+     events say it, numbered as the card numbers it (Print Nº n); a reprint is a seal of its own, and none ever goes. A
+     shipping label stays with Shipped. The Charm Sorter's lie on the Office lane, the Sorting station's on Sorting.
+     Drawn with the card's own seal (charm-nest-motion.js Seal.svg) where the page has it. ── */
+  const PRINT_MS = 3 * 60 * 1000;
+  const PRINT_WHERE = { charm: "Charm Sorter", sorting: "Sorting station", qr: "QR station", design: "Design Station" };
+  const isPrint = e => !!e && (e.type === "sealPrinted" || (e.type === "labelPrinted" && labelStepOf(e) === "sorted"));
+  const printPlace = e => e.type === "sealPrinted" || e.station === "sorter" || e.device === "charm-nest-1" || (!!e.data && e.data.label === "custom") ? "charm" : e.station || "other";
+  const sameHand = (a, b) => !a.by || !b.by || String(a.by).trim().toLowerCase() === String(b.by).trim().toLowerCase();
+  const lineOf = e => e.lineKey || e.transactionId || "";
+  /** The print seals, oldest first: one per press, each the event it is drawn as, with print { n, where } and the other
+   *  events of its press hung on it as `same` (so a click on any of them finds it). */
+  function printSeals(events) {
+    const press = [];
+    for (const e of events || []) {
+      if (!isPrint(e)) continue;
+      e.same = null; e.print = null;
+      const place = printPlace(e);
+      if (place !== "charm") { press.push({ place, s: [], l: e }); continue; }
+      if (e.type !== "sealPrinted") continue;
+      // each line's seal of one press (customPut, a line at a time): the press just before, when it has none of this line
+      const p = press.filter(x => x.place === "charm" && x.s.length).pop();
+      if (p && !p.s.some(x => lineOf(x) === lineOf(e)) && e.at - p.s[0].at <= PRINT_MS && sameHand(p.s[0], e)) p.s.push(e);
+      else press.push({ place, s: [e], l: null });
+    }
+    // the page's own word of a press (labelPrinted): the nearest press of the same person that has none yet
+    for (const e of events || []) {
+      if (!isPrint(e) || e.type !== "labelPrinted" || printPlace(e) !== "charm") continue;
+      let best = null;
+      for (const p of press) if (p.place === "charm" && !p.l && p.s.length && sameHand(p.s[0], e) && Math.abs(p.s[0].at - e.at) <= PRINT_MS && (!best || Math.abs(p.s[0].at - e.at) < Math.abs(best.s[0].at - e.at))) best = p;
+      if (best) best.l = e; else press.push({ place: "charm", s: [], l: e });
+    }
+    const count = {}, out = [];
+    for (const p of press.map(p => Object.assign(p, { rep: p.l || p.s[0] })).sort((a, b) => byAt(a.rep, b.rep))) {
+      // its number: the record's count at that press (the card's Print Nº), else the one the page stamped, else the next
+      const had = p.s.map(x => +(x.data && x.data.prints)).find(v => v > 0) || +(p.l && p.l.data && p.l.data.print) || 0;
+      const n = had || (count[p.place] || 0) + 1; count[p.place] = Math.max(count[p.place] || 0, n);
+      const all = (p.l ? [p.l] : []).concat(p.s), rep = p.rep;
+      if (p.place === "charm") for (const x of all) x.lane = "office";
+      rep.print = { n, where: PRINT_WHERE[p.place] || placeOf(rep) || "a station" };
+      rep.same = all.length > 1 ? all.filter(x => x !== rep) : null;
+      out.push(rep);
+    }
+    return out;
+  }
+  /** The seals drawn: the milestones and what a person did (sealsOf), and every label printed (printSeals). */
+  const withPrints = events => sealsOf(events).concat(printSeals(events)).sort(byAt);
+  /** A print's seal: on its lane the QR stamp; its full face the card's own (Seal.svg), else this file's with its words. */
+  function printSvg(e, full, opts) {
+    const n = +e.print.n || 1, plain = Object.assign({}, e, { type: "sealPrinted", print: null });
+    if (!full) return stampSvg(plain, false, opts);
+    const Sl = root.Seal;
+    if (Sl && typeof Sl.svg === "function") {
+      try {
+        const svg = Sl.svg({ how: "print", at: +e.at || 0, by: personOf(e), n }), id = opts && opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "";
+        return id ? svg.replace(/\bsl\d+([ftb])\b/g, id + "$1") : svg;   // (a uid: the same markup every time, as stampSvg's)
+      } catch (_) {}
+    }
+    plain.data = Object.assign({}, e.data, { ring: "QR label printed", foot: "PRINT Nº " + n });
+    return stampSvg(plain, true, opts);
+  }
+  const printTitle = e => `QR label printed · Print Nº ${e.print.n} · ${e.print.where}`;
+  /** The print seal in the Stamps legend. */
+  const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "Name", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
   function blockerOf(events) {
     let hold = null; const need = new Map();
@@ -354,6 +423,30 @@
   //  now, so there is nothing left to filter. The bar keeps one quiet "Stamps" chip — the legend of the seals.)
   const CANCEL_TYPES = new Set(["cancelled", "etsyCancelled"]);
 
+  /* ── Complete Order and Reopen (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the points for when an
+     order was manually completed by pressing the completed button in the Review tab") ──
+     Each press of Complete Order (a Review card, a Custom Orders card, the order window: charmNestLibrary customPut, a
+     sealCompleted whose data.how is "button") is a point of its own on the Office lane ("Operator"), with the green
+     scalloped "Order completed" seal the card is stamped with (Seal in charm-nest-motion.js: its ink, edge and check).
+     A Reopen or an Undo (customReopen: a note with data.reopened) is a point of its own, with its own seal: it never
+     takes the Complete point away (seals never disappear), and a later Complete adds another. The seal's rim says where
+     it was pressed (data.pressedIn; an older press: the sorter), its middle who and when. norm() dresses the event for
+     drawing and the host gets the record back as it came (pubOf). A completion by printing the label is the label's. */
+  KIND.sealCompleted = K("green", "m", "check", "office");   // (the Office lane's, not the sheet's)
+  KIND.reopened = K("velvet", "e", "undo", "office");
+  function opStepOf(x) {
+    if (!x) return "";
+    if (x.type === "sealCompleted") return x.data && x.data.how === "print" ? "" : "complete";
+    return x.type === "reopened" || (x.type === "note" && !!x.data && !!x.data.reopened) ? "reopen" : "";
+  }
+  /** A Complete press or a Reopen as it is drawn: its type, its words and where it was pressed; null for any other. */
+  function opDress(x) {
+    const k = opStepOf(x); if (!k) return null;
+    const d = x.data && typeof x.data === "object" && !Array.isArray(x.data) ? x.data : {}, where = str(d.pressedIn, 40);
+    const text = k === "complete" ? "Completed with Complete Order" : d.reopened === "undo" ? "Completion undone: back to Open" : "Reopened: back to Open";
+    return { type: k === "reopen" ? "reopened" : x.type, text: text + (where ? " · " + where : ""), data: Object.assign({}, d, where ? { foot: where } : {}) };
+  }
+
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
   const arc = (r, a0, a1, sw) => { const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1), span = sw ? (a1 - a0 + 360) % 360 : (a0 - a1 + 360) % 360; return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${span > 180 ? 1 : 0} ${sw} ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
   function scallops(n, rv, rc, sw) { let d = ""; const step = 360 / n; for (let i = 0; i < n; i++) { const a0 = i * step, [x0, y0] = pt(rv, a0), [xm, ym] = pt(rc, a0 + step / 2), [x1, y1] = pt(rv, a0 + step); d += (i ? "" : `M${x0.toFixed(2)} ${y0.toFixed(2)}`) + `Q${xm.toFixed(2)} ${ym.toFixed(2)} ${x1.toFixed(2)} ${y1.toFixed(2)}`; } return `<path d="${d}Z" stroke-width="${sw || 2.4}"/>`; }
@@ -400,6 +493,7 @@
    *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture; opts.uid names
    *  its inner ids (the same stamp then draws the same markup; unique in the page, as the ids are). */
   function stampSvg(e, full, opts) {
+    if (e && e.print) return printSvg(e, full, opts);
     opts = opts || {};
     const Kd = kindOf(e.type), ink = INK[Kd.ink], id = opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "tls" + (++UID), seed = (hash(String(e.key || e.id || e.type) + e.at) % 997) + 1;
     const useTex = opts.tex !== false && !opts.ghost, tex = useTex ? texOf(id, seed) : "", g = useTex ? ` filter="url(#${id}f)"` : "";
@@ -438,6 +532,7 @@
   /* ════ one event, as the timeline reads it ════ */
   function norm(x) {
     if (!x || typeof x !== "object" || !x.type) return null;
+    const was = x, op = opDress(x); if (op) x = Object.assign({}, x, op);   // (a Complete press or a Reopen, drawn)
     const type = String(x.type), at = Number(x.at) || 0, rawId = String(x.id || `${at}-${type}`);
     const e = {
       // the server keeps `${orderId}~${type}~${key}`; the page's own record (live, or still in the outbox) is `key`
@@ -448,11 +543,12 @@
       milestone: x.milestone != null ? !!x.milestone : !!(typeInfo(type) || {}).milestone, pending: !!x.pending, derived: !!x.derived
     };
     e.lane = laneOf(e);
+    if (op) e.orig = Object.fromEntries(["type", "text", "data"].filter(k => was[k] != null).map(k => [k, was[k]]));
     return e;
   }
   // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
-  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return o; };
+  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return e.orig ? Object.assign(o, e.orig) : o; };
   const warn = (what, err) => { try { console.warn("[OrderTimelineUI] " + what + ":", err); } catch (_) {} };
   // oldest first, as the server's byTime: at the same moment the order's arrival leads (a step the server drew at the
   // arrival, from before it, keeps its own order after it: data.recordedAt)
@@ -505,6 +601,7 @@
     return f;
   }
   const titleOf = (e, max) => {
+    if (e.print) return printTitle(e);
     if (e.type === "scan") return seenAt(e);
     const t = e.text && e.text.length <= (max || 90) ? e.text : "";
     return t || labelOf(e.type) + (e.sheet ? " — " + e.sheet : "");
@@ -1030,7 +1127,7 @@
     if (doc.getElementById("tlUiCss")) return;
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
-  const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(stationName(e))}</em>${esc(whoOf(e))}</span>`;
+  const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
   // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
   //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
   const COL = 50, LANE_H = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
@@ -1240,7 +1337,7 @@
       o = o || {};
       const D = S.D = deriveNow();
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
-      S.shown = sealsOf(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
+      S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
@@ -1509,7 +1606,7 @@
       // the legend shows the seals that are actually drawn, nothing else
       const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k }));
       const det = $(".tlDetail");
-      det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}</div>`;
+      det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}${printLegend(t)}</div>`;
       anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
     }
     /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
