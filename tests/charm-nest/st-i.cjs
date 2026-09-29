@@ -112,7 +112,9 @@ const evB = [ev(B, 'arrived', 0, { by: 'Etsy', source: 'etsy' }), ev(B, 'laserDo
     await page.waitForFunction(() => document.querySelector('.tlStop[data-stage="welded"]').classList.contains('d'), null, { timeout: 5000 });
     r = await rail();
     assert.match(r.welded.say, /^Welded · Marco R\. · Welding · done /, r.welded.say); assert(!r.assembled.d, 'a scan at Assembly is not Assembled');
-    assert.equal(await page.evaluate(() => document.querySelectorAll('.tlSt[data-key^="scan"], .tlSt[data-key^="labelPrinted"]').length), 0, 'no seal for a scan or a label print');
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.tlSt[data-key^="scan"]').length), 0, 'no seal for a scan');
+    // (every QR label printed is a seal of its own, Paul 29 Sep 02:08: the Design Station's and the Sorting station's)
+    assert.equal(await page.evaluate(() => document.querySelectorAll('.tlSt[data-key^="labelPrinted"]').length), 2, 'a seal for each QR label printed');
     console.log('  ✓ live: the next read brings Welded · Marco R. · Welding onto the rail; the Assembly scan stays a fact, no seal');
     await page.evaluate(() => window.__tl.destroy());
     assert.deepEqual(errors, []);
