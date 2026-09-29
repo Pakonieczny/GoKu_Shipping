@@ -458,11 +458,16 @@ async function browserChecks() {
     await page.click('#reviewView .rvSeg [data-cseg="open"]');
     const optCard = '#rvList .reviewListRow[data-rid="4178000003"]';
     const optKey = await page.getAttribute(optCard, 'data-mkey');
-    await page.click(optCard + ' [data-review-open]');
-    await page.click(optCard + ' [data-a=hold]');
-    await page.waitForFunction(() => document.querySelector('#motionLayer .mGhost'), null, { timeout: 5000 });
+    // (no "Review & resolve" since 29 Sep: its question is answered in the order window its card opens)
+    assert.equal(await page.$(optCard + ' [data-review-open]'), null, 'no Review & resolve');
+    await page.click(optCard + ' .engravingIdentity');
+    await page.waitForFunction(() => OrderWin.isOpen() && document.querySelector('#owFix [data-a=hold]'), null, { timeout: 10000 });
+    await page.click('#owFix [data-a=hold]');
+    // (the window is over the list, so no card is seen flying: the note says where it went)
     if (shots) { await page.waitForTimeout(700); await page.screenshot({ path: path.join(shots, 'decision-hold-flight.png') }); }
     await page.waitForFunction(() => [...document.querySelectorAll('.mNote .mNoteT')].some(n => /^Order 4178000003 is on hold under Orders/.test(n.textContent)) && !document.querySelector('#motionLayer .mGhost'), null, { timeout: 8000 });
+    assert.equal(await page.evaluate(() => B.orders.byKey.get('4178000003_41780000031').hold), 'held by Test Operator', 'held, by who');
+    await page.click('#owClose'); await page.waitForFunction(() => !OrderWin.isOpen());
     assert.equal(await page.evaluate(k => [...document.querySelectorAll('#rvList .reviewListRow')].some(n => n.dataset.mkey === k), optKey), false, 'it left Review');
     assert.deepEqual(errors, [], 'no page errors');
     console.log('  ✓ Review → Custom Orders, QR label, Completed, Reopen, the order window and its notes (Chromium)');
