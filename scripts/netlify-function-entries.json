@@ -170,6 +170,7 @@
     "visionWarehouse.js"
   ],
   "modules": [
+    "_adsCheckGate.js",
     "_charmNestAgent.js",
     "_charmNestAsset.js",
     "_charmNestAuth.js",

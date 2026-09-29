@@ -1,16 +1,18 @@
 // netlify/functions/googleMerchantHealth.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only Merchant Center health:
-//   https://goldenspike.app/.netlify/functions/googleMerchantHealth
-//   …?format=json
+//   https://goldenspike.app/.netlify/functions/googleMerchantHealth?key=<EDIT_PASSCODE>
+//   …&format=json
 //
 // Answers what googleConnectionsCheck only proved reachable: which offers cannot
 // serve and why, whether Google records the advertising link, and whether store
-// conversions reach Merchant Center. Every call is a read.
+// conversions reach Merchant Center. Every call is a read. Needs the passcode, and
+// refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
 const { merchantHealth, discoverMerchantId } = require('./_merchantHealth');
+const { refuse } = require('./_adsCheckGate');
 const ENV = process.env;
 const TIMEOUT = 20000;
 const MERCHANT = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || '').replace(/\D/g, '');
@@ -89,11 +91,10 @@ function html(result) {
 }
 
 exports.handler = async (event) => {
-  const gate = (ENV.EDIT_PASSCODE || '').trim().replace(/^["']|["']$/g, '');
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while EDIT_PASSCODE is unset.
+  const refused = refuse(event, 'the Merchant Center health check');
+  if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
-  if (gate && String(params.key || '').trim() !== gate) {
-    return { statusCode: 401, headers: { 'Content-Type': 'text/plain' }, body: 'Add ?key=<EDIT_PASSCODE> to run the Merchant Center health check.' };
-  }
   let result;
   try {
     let account = MERCHANT;
