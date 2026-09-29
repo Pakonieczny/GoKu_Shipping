@@ -32,7 +32,7 @@ const ctx = { window, document, URL, DASH: { currency: 'USD', recentOrders: orde
   toast: m => toasts.push(m), api: async () => ({}), reload: async () => {}, go: v => went.push(v), ensureBench: async () => {}, dailyRangeYmd: () => ({ start: '2026-09-01', end: '2026-09-28' }),
   reportCached: async () => ({ groups: [] }), campaignPipeline: c => c.channel === 'PERFORMANCE_MAX' ? 'Performance Max' : 'Search · text ads' };
 vm.createContext(ctx);
-vm.runInContext(cut('var _MONF=', '/* ============ Sales revenue chart') + cut('/* ============ Sales revenue chart', '/* ---- nav ---- */') + cut('var salesRange=', 'function renderConvStrip(') + cut('function reportNumber(', '// A removed campaign cannot be edited'), ctx);
+vm.runInContext(cut('var _MONF=', '/* ============ Sales revenue chart') + cut('/* ============ Sales revenue chart', '/* ---- nav ---- */') + cut('var salesRange=', 'var cmdRange=') + cut('function reportNumber(', '// A removed campaign cannot be edited'), ctx);
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)], text = s => ($(s) || {}).textContent || '';
 
 // Totals leave out refunded, cancelled and test orders, and say so.
