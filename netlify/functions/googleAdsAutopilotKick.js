@@ -104,6 +104,9 @@ async function decideTasks() {
     ["measure", "mine", "prune", "events", "designStudioLearn"].forEach(t => tasks.add(t));
     if (now.getUTCDay() === weeklyDow) tasks.add("budgets");
   }
+  // Read-only and after the daily and weekly work: Google's serving check of every ENABLED campaign
+  // for the Overview badge, in the time the others leave.
+  if (tasks.has("measure")) tasks.add("serving");
   return { tasks: [...tasks], ranDaily, ranWeekly };
 }
 
@@ -208,7 +211,9 @@ async function handleAction(body) {
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
     // then read as "no ceiling", silently switching the spend checks off.
-    const limits = { maxDailyBudgetTotal: [1, 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
+    // The daily ceiling cannot pass the site limit (GADS_MAX_DAILY_BUDGET_TOTAL): control() would clamp it
+    // anyway, so a higher value is refused here instead of being saved and silently not applied.
+    const limits = { maxDailyBudgetTotal: [1, Number(ctrl.maxDailyBudgetLimit) > 0 ? Number(ctrl.maxDailyBudgetLimit) : 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
       targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
       maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"], orderCutoffDays: [0, 30, "Order cutoff days"] };
     for (const [k, [min, max, label]] of Object.entries(limits)) {
@@ -238,8 +243,14 @@ async function handleAction(body) {
   if (a === "restorePlaybook") return await E.restorePlaybook(body.versionId);
   if (a === "approvalStatus") {
     const snap=await f.db.collection(E.COL.approvals).doc(String(body.id)).get();
-    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data();
-    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null};
+    if(!snap.exists)throw new Error("Draft not found.");const d=snap.data(),req=Number(d.publishRequestedAt)||0;
+    // Queued: handed to the worker, not started or checked since, while another publication holds the
+    // lease. The worker waits its turn (up to 8 minutes), so the console stops polling and says so.
+    let queued=false;
+    if(d.status==="APPROVED"&&req&&!d.lastError&&!(Number(d.applyStartedAt)>=req)&&!(Number(d.validatedAt)>=req)){
+      try{const l=await f.db.collection(E.COL.state).doc("publicationLease").get(),x=l.exists?l.data():null;queued=!!(x&&Number(x.until)>Date.now());}catch(e){}
+    }
+    return {ok:true,id:body.id,status:d.status,error:d.lastError||null,validatedAt:d.validatedAt||null,startedAt:d.applyStartedAt||null,publishRequestedAt:req||null,queued};
   }
   if (a === "creativePrepare") return await dispatchTask("creativePrepare", { id:String(body.id), retry:!!body.retry });
   if (a === "reject") {
@@ -249,8 +260,12 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    // Server time of this request: the console tells this attempt's result from an earlier one by it,
+    // whatever its own clock says. The marker also clears an Approved draft's previous error.
+    const requestedAt = Date.now();
     try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
-    return await dispatchTask("publishApproval", { id:String(body.id) });
+    try { return { ...(await dispatchTask("publishApproval", { id:String(body.id) })), requestedAt }; }
+    catch (e) { try { await E.markPublishNotStarted(body.id, e.message); } catch (x) {} throw e; } // nothing started: the card must not read as queued
   }
   // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
   // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
@@ -345,8 +360,18 @@ async function handleAction(body) {
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "analyzeCampaign") {
-    try { return await E.analyzeCampaign(body.id, { force: !!body.force }); }
-    catch (e) { return { error: e.message }; }
+    // A fresh analysis is a paid high-effort AI call that can outlast the ~26 s gateway, so the background worker
+    // runs it and the console polls genStatus; a saved analysis (under 6 h) still returns at once. A request while
+    // that campaign's analysis is running (10 min) joins it instead of paying for a second one.
+    try {
+      const id = String(body.id || "").replace(/\D/g, ""); if (!id) return { error: "Campaign id missing." };
+      if (!body.force) { const saved = await E.analyzeCampaign(id, { cacheOnly: true }); if (saved) return saved; }
+      const genId = "analysis-" + id, run = await E.getGenStatus(genId).catch(() => null);
+      if (run && run.phase === "running" && Date.now() - Number(run.at || 0) < 10 * 60000) return { queued: true, genId, joined: true };
+      await E.setGenStatus(genId, { phase: "running", kind: "campaign-analysis", campaignId: id, startedAt: Date.now() });
+      try { return await dispatchTask("analyzeCampaign", { genId, campaignId: id, force: !!body.force }); }
+      catch (e) { await E.setGenStatus(genId, { phase: "done", ok: false, kind: "campaign-analysis", campaignId: id, error: e.message }).catch(() => {}); throw e; }
+    } catch (e) { return { error: e.message }; }
   }
   if (a === "campaignTimeline") {
     try { return await E.campaignTimeline({ id: body.id }); }
@@ -474,8 +499,13 @@ async function handleAction(body) {
     catch (e) { return { collections: [], error: e.message }; }
   }
   if (a === "occasions") {
-    try { return { occasions: await E.suggestOccasions(body.coll, { force: !!body.force }) }; }
-    catch (e) { return { occasions: [], error: e.message }; }
+    // cacheOnly (opening the builder, changing collection, the Sales link) and any request without force
+    // return the saved list, or the standard one, and never reach the model. Only Suggest (force) asks the
+    // AI, in the background worker past the 26s gateway; the console polls genStatus with a spinner.
+    try {
+      if (body.force && !body.cacheOnly) return await dispatchTask("suggestOccasions", { genId: "occasions-" + Date.now() + Math.random().toString(36).slice(2, 6), coll: body.coll || null });
+      return { occasions: await E.suggestOccasions(body.coll, { force: false }) };
+    } catch (e) { return { occasions: [], error: e.message }; }
   }
   if (a === "releaseOpportunity") {
     try { return await E.releaseOpportunity({ tag: body.tag }); }
