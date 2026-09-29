@@ -37,6 +37,16 @@ r=await E.dailyStats({start:'2026-09-09',end:'2026-09-10'});check(r.campaigns.so
 T.set({deleted:async()=>new Set(['43','44'])});r=await E.metricsRange({start:'2026-09-09',end:'2026-09-10'});const del=r.snapshot.find(c=>c.id==='43');check(del&&del.deleted&&del.historicalOnly&&!r.snapshot.some(c=>c.id==='44'),'a deleted campaign stays only for dates with activity, flagged as deleted');
 const dailyAll=await E.dailyStats({start:'2026-09-09',end:'2026-09-10'});check(r.snapshot.reduce((n,c)=>n+c.cost,0)===33&&dailyAll.totalsByDay.reduce((n,c)=>n+c.cost,0)===33,'account totals still equal the daily series after a campaign is deleted');
 T.set({deleted:async()=>{throw Error('archive offline')}});r=await E.metricsRange({start:'2026-09-09',end:'2026-09-10'});check(r.ok&&r.snapshot.some(c=>c.id==='43'&&!c.deleted)&&r.warnings.some(w=>/Deleted-campaign labels/.test(w)),'an archive outage is a warning, never lost spend');T.set({deleted:async()=>new Set()});base.splice(1);daily.splice(2);
+// A campaign total budget reaches Overview with its period and total from the same campaign read, and
+// counts what is left per remaining day as every ceiling check does (Sep 10 to Sep 30: 21 days).
+{const prior=vm.runInContext('gaql',cx),tb={campaign:{id:'45',name:'BA · holiday-total',status:'ENABLED',advertisingChannelType:'SEARCH'},campaignBudget:{resourceName:'customers/123/campaignBudgets/9',period:'CUSTOM_PERIOD',totalAmountMicros:'150000000'}};
+ const dated={campaign:{id:'45',startDateTime:'2026-09-01 00:00:00',endDateTime:'2026-09-30 23:59:59'},campaignBudget:tb.campaignBudget};base.push(tb);
+ T.set({gaql:async q=>{if(!q.includes('campaign.start_date'))return prior(q);const ids=(q.match(/campaign\.id IN \(([^)]*)\)/)||[])[1];return ids?(ids.split(',').map(s=>s.trim()).includes('45')?[dated]:[]):(await prior(q)).concat([dated]);}});
+ r=await E.metricsRange({start:'2026-09-09',end:'2026-09-10'});const t=r.snapshot.find(c=>c.id==='45'),d=r.snapshot.find(c=>c.id==='42');
+ check(t&&t.budgetPeriod==='CUSTOM_PERIOD'&&t.budgetTotal===150&&Math.abs(t.budget-150/21)<1e-9&&t.startDate==='2026-09-01'&&t.endDate==='2026-09-30','a total budget carries its period, total and dates, counted per remaining day');
+ check(d&&d.budget===10&&d.budgetTotal===null,'a daily budget carries no total');
+ check((fs.readFileSync(filepath,'utf8').match(/budget: budgetOf\(r\), \.\.\._budgetKind\(r\.campaignBudget\)/g)||[]).length===2,'the report and the dashboard take the budget kind from their existing campaign reads');
+ T.set({gaql:prior});base.splice(1);}
 // Default windows end on the ACCOUNT date: 22:00 in Toronto is already the next day in UTC.
 NOW=Date.parse('2026-09-11T02:00:00Z');r=await E.metricsRange({});check(r.accountToday==='2026-09-10'&&r.range.end==='2026-09-10'&&r.range.start==='2026-08-28','default range ends on the account date, not the UTC date');NOW=Date.parse('2026-09-10T16:00:00Z');
 leak=true;await assert.rejects(()=>E.metricsRange({start:'2026-09-09',end:'2026-09-10'}),/outside the requested date range/);count++;leak=false;
