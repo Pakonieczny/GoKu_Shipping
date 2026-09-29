@@ -256,6 +256,33 @@ async function ensureStudioGoldStyleReference() {
   }
 }
 
+// A charm is identified by its file name. batch_collect moves a used charm from
+// New_Charms/ to Used_Necklace_Charm_Pool/ (earrings likewise) as soon as its
+// batch is collected, and charm_restore moves it back, so a path saved with a
+// set, or held by a browser tab that has been open since the set was built,
+// can name a folder the charm has already left. Adjacent entries are partners.
+const CHARM_POOL_DIRS = [
+  "listing-generator-1/Charm_Maker/New_Charms/",
+  "listing-generator-1/Charm_Maker/Used_Necklace_Charm_Pool/",
+  "listing-generator-1/Charm_Maker/New_Charms_Earrings/",
+  "listing-generator-1/Charm_Maker/Used_Earring_Charm_Pool/",
+];
+
+// Where the same charm file lives now, or null. Only a direct file of a charm
+// pool is looked for elsewhere in the pools; anything else is not a charm path.
+async function findMovedCharmPoolFile(bucket, p) {
+  const dir = CHARM_POOL_DIRS.find((d) => p.startsWith(d));
+  if (!dir) return null;
+  const name = p.slice(dir.length);
+  if (!name || name.includes("/")) return null;
+  for (const other of CHARM_POOL_DIRS) {
+    if (other === dir) continue;
+    const [there] = await bucket.file(other + name).exists();
+    if (there) return other + name;
+  }
+  return null;
+}
+
 async function storagePathToBuffer(storagePath) {
   const p = String(storagePath || "").trim();
   if (!p) throw new Error("input_storage_path must be a non-empty string");
@@ -281,10 +308,16 @@ async function storagePathToBuffer(storagePath) {
   }
 
   const bucket = getBucket();
-  const file = bucket.file(p);
+  let file = bucket.file(p);
 
   const [exists] = await file.exists();
-  if (!exists) throw new Error(`input_storage_path not found: ${p}`);
+  if (!exists) {
+    // The same charm file, moved between the pools since the path was saved.
+    const moved = await findMovedCharmPoolFile(bucket, p);
+    if (!moved) throw new Error(`input_storage_path not found: ${p}`);
+    console.warn(`[storagePathToBuffer] ${p} has moved; reading ${moved}`);
+    file = bucket.file(moved);
+  }
 
   let mime = "application/octet-stream";
   try {
