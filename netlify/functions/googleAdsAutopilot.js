@@ -10968,11 +10968,13 @@ function _copyValid(copy, pmax) {
   if(!copy || !list(copy.headlines,15,3) || !list(copy.descriptions,pmax?5:4,2) || (pmax&&!list(copy.longHeadlines,5,1))) return false;
   if(pmax&&(!copy.headlines.some(t=>typeof t==="string"&&t.length<=15)||!copy.descriptions.some(t=>typeof t==="string"&&t.length<=60)))return false;
   const rows=[...copy.headlines,...copy.descriptions,...(copy.longHeadlines||[])];
-  const unsupported=/free shipping|\breturns?\b|\brefund\b|\b\d[\d,.]*\+?\s*(?:reviews|stars|templates)|no card|verified (?:brites )?materials|guaranteed|\$\s*\d/i;
-  return rows.every(t=>typeof t==="string"&&t.trim()&&brandSafe(t)&&!unsupported.test(t)) &&
+  return rows.every(_copyLineValid) &&
     copy.headlines.every(t=>t.length<=30) && copy.descriptions.every(t=>t.length<=90) && (copy.longHeadlines||[]).every(t=>t.length<=90) &&
     new Set(copy.headlines.map(t=>t.toLowerCase())).size===copy.headlines.length;
 }
+// One ad line against the wording rules: not blank, brand-safe, and no claim the store cannot back.
+const _UNSUPPORTED_COPY=/free shipping|\breturns?\b|\brefund\b|\b\d[\d,.]*\+?\s*(?:reviews|stars|templates)|no card|verified (?:brites )?materials|guaranteed|\$\s*\d/i;
+function _copyLineValid(t) { return typeof t==="string"&&!!t.trim()&&brandSafe(t)&&!_UNSUPPORTED_COPY.test(t); }
 function _creativeGroups(item) {
   const p=item.payload||{},m=p.meta||{},ops=p.mutateOperations||[];
   if(Array.isArray(p.reviewGroups)&&p.reviewGroups.length)return p.reviewGroups;
@@ -11386,7 +11388,7 @@ function _designEngine(){
   if(!_adDesignEngine){
     _adDesignContextReader=require("./googleAdsAdDesignContext").createAdDesignContext({fb,COL,shopifyGql,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,creativeGroups:_creativeGroups,creativeHash,reportContext:_reportContext,validatedRange:_validatedReportRange});
     const keywordEvidence=require("./googleAdsAdKeywordResearch").createKeywordEvidence({gaql,keywordResearch,cacheGet:_kwCacheGet,cacheSet:_kwCacheSet});
-    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts,keywordEvidence});
+    const research=require("./googleAdsAdDesignResearch").createAdDesignResearch({creativeFetch:_creativeFetch,copyValid:_copyValid,copyLineValid:_copyLineValid,dailyStats,gaql,playbookSlice,storeSalesEvidence,conversionHealth,merchantProducts,keywordEvidence});
     _adDesignEngine=require("./googleAdsAdDesign").createAdDesignService({fb,COL,env:ENV,control,..._designEngineAdapters(),loadContext:input=>_adDesignContextReader.loadContext(input),currentCreative:require("./googleAdsAdDesignContext").extractCurrentCreative,verifyBasis:_verifiedCampaignAnalysisBasis,verifyContext:_verifyAdDesignContext,findLegacyEditorWorkspaces:_findLegacyEditorWorkspaces,research,saveAsset:_saveCreativeAsset,loadAsset:_loadCreativeAsset,deleteAsset:_deleteCreativeAsset,deleteSavedDesignAsset:_deleteSavedDesignAsset,finish:_finishAdDesign,reviewStatus:_adDesignApprovalReview});
   }return _adDesignEngine;
 }

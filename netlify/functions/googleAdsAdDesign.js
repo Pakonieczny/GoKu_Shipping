@@ -1334,9 +1334,36 @@ function createAdDesignService(deps) {
         await progress(12,"Completing an interrupted AI answer from the saved product research");
         copy=await readCopy("copy_repair",true);
       }
+      // Every slot is filled. Whatever the first answer left empty, or set aside for breaking a rule, is written by one short
+      // top-up request, then the finished set gets the same line rules. The operator's own edited text is never topped up.
+      const fillCopy=async first=>{
+        const research=deps.research,pmax=group.channel==='pmax';
+        if(!research.copyGaps||!research.buildFillRequest||!research.completeCopy||!research.copyGaps(first.copy,pmax).total)return first;
+        await progress(20,"Filling every remaining headline and description slot");
+        const saved=await ref.collection("outputs").doc(jobId+"_copy_fill").get();
+        const request=job.stages.copy_fill||saved.exists&&(saved.data().rawResponse||saved.data().stageResult)?null:research.buildFillRequest({evidence:job.evidence,copy:first.copy,pmax,feedback:value.settings.direction,style:value.settings.style});
+        let fill=null;
+        try{
+          const stage=await paid("copy_fill",async requestId=>{
+            const stored=await ref.collection("outputs").doc(jobId+"_copy_fill").get(),prior=stored.exists&&stored.data().rawResponse;
+            const result=prior||await deps.responses(request,requestId);
+            if(!prior)await writeReceipt("copy_fill",{rawResponse:result,receivedAt:Date.now()});
+            let parsed;try{parsed=require('./googleAdsAdDesignResearch').parseResponse(result);}
+            catch(error){settle(job,"copy_fill",{requestId,usage:result.usage||{},providerModel:result.model||TEXT_MODEL,estimatedUsd:result.estimatedUsd,costEstimated:result.costEstimated!==false});await saveJob({inFlight:null});error.definiteResponse=true;throw error;}
+            return {fill:parsed,usage:result.usage||{},responseId:result.id||null,providerModel:result.model||request&&request.model||TEXT_MODEL,estimatedUsd:result.estimatedUsd==null?1:result.estimatedUsd,costEstimated:result.costEstimated!==false};
+          });
+          fill=stage.fill;
+        }catch(error){
+          // An unfinished or malformed top-up keeps the accepted lines. Any other failure stops here, so a paid request is never repeated blindly.
+          if(!['AI_OUTPUT_INCOMPLETE','AI_OUTPUT_INVALID'].includes(error.code))throw error;
+        }
+        const done=research.completeCopy({evidence:job.evidence,copy:first.copy,fill,channel:group.channel});
+        return {...first,copy:done.copy,limitations:[...(first.limitations||[]),...done.notes]};
+      };
+      if(!job.copyOverride)copy=await fillCopy(copy);
       if(job.copyOverride)copy={...copy,copy:job.copyOverride};
       if(job.mode==='copy'){
-        job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:researchGroup.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)]};
+        job.result={copyOnly:true,copy:copy.copy,brief:copy.brief,evidence:job.evidence,keywords:researchGroup.keywords||[],sourceIds:copy.sourceIds,productIds:[String(product.id)],limitations:copy.limitations||[]};
         await saveJob({phase:'ready',completedAt:Date.now(),leaseUntil:0,inFlight:null,error:null,progress:{pct:100,label:'Messaging researched and saved. Review it with each image, then approve the update here.'}});
         await ref.update({messaging:{copy:copy.copy,productId:value.settings.productId,groupRef:group.ref,researchedAt:Date.now(),evidenceHash:job.evidence.hash,edited:false}});
         return {ok:true,workspaceId,copyOnly:true};

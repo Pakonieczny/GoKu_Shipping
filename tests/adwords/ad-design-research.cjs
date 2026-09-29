@@ -43,6 +43,30 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
   ok(!prompt.includes('Preferred house style: the approved peach'),'previous product is not the house palette');
  }
  let approved=f.api.validateResult({output:result(),evidence:e,channel:'search',group});eq(approved.copy.headlines.length,8);eq(approved.imageDirections.length,2);eq(approved.brief.causal,false);eq(approved.imageDirections[0].sourceImageId,'photo-1');
+ // Every slot is filled: a line that breaks a rule is set aside (not the whole paid answer), and the missing lines come from one short top-up.
+ {
+  const wording=fixture({dependencies:{copyLineValid:t=>!/cure/i.test(t)}}),we=await wording.api.collect(input),api=wording.api;
+  let extra=result();extra.copy.headlines.push('Secure Clasp Monogram Necklace','A Monogram Necklace Made To Be Worn Every Single Day Forever','Dainty Monogram Necklace','  Your   Letter, Worn Close ');
+  const kept=api.validateResult({output:extra,evidence:we,channel:'search',group});
+  eq(kept.copy.headlines,[...result().copy.headlines,'Your Letter, Worn Close'],'lines over 30 characters, repeats and blocked wording are set aside, spacing is tidied');
+  eq(kept.dropped.map(d=>d.why),['wording the ad rules do not allow','over 30 characters','repeated'],'each set-aside line names its reason');
+  eq(kept.shortfall.headlines,6,'the set reports how many headline slots are still empty');
+  eq(kept.shortfall.descriptions,1,'and how many description slots');
+  const full=result();full.copy.headlines=Array.from({length:15},(_,n)=>'Monogram Necklace Idea '+String.fromCharCode(65+n));full.copy.descriptions=['Discover a monogram necklace.','Explore a meaningful monogram necklace.','Find a personal necklace gift with a monogram.','Choose your monogram necklace at Brites.'];
+  eq(api.validateResult({output:full,evidence:we,channel:'search',group}).shortfall.total,0,'a full Search set (15 headlines, 4 descriptions) has no gaps');
+  const first=api.validateResult({output:result(),evidence:we,channel:'search',group}).copy,req=api.buildFillRequest({evidence:we,copy:first,pmax:false});
+  ok(req.text.format.name==='ad_copy_fill'&&!JSON.stringify(req.input).includes('input_image'),'the top-up is a text-only request');
+  ok(req.input[0].content[0].text.includes('at least 10 headlines, at least 5 descriptions')&&req.input[0].content[0].text.includes('Dainty Monogram Necklace'),'it asks for the missing lines plus a few spare, and lists the accepted ones');
+  const topUp={headlines:['Dainty Monogram Necklace','Wear Your Initial Close','Monogram Necklace Gift Idea','A Letter For Every Day','Personal Necklace, Made Yours','Secure Letter Necklace','Initial Jewelry To Cherish','Say It With A Monogram','Everyday Monogram Style','Your Letter, Your Necklace','Small Necklace, Big Meaning'],longHeadlines:['ignored for Search'],descriptions:['Choose a monogram necklace for a gift or for yourself.','Wear a personal monogram necklace every day.']};
+  const done=api.completeCopy({evidence:we,copy:first,fill:topUp,channel:'search'});
+  eq(done.copy.headlines.length,15,'the top-up fills all 15 headline slots');eq(done.copy.descriptions.length,4,'and all 4 description slots');eq(done.copy.longHeadlines,[],'Search never gets long headlines');
+  eq(done.copy.headlines.slice(0,8),first.headlines,'accepted lines stay first');ok(new Set(done.copy.headlines.map(t=>t.toLowerCase())).size===15&&!done.copy.headlines.some(t=>/secure/i.test(t)),'no repeats and no blocked wording');eq(done.notes,[],'nothing is left empty');
+  const thin=api.completeCopy({evidence:we,copy:first,fill:{headlines:['Wear Your Initial Close']},channel:'search'});
+  eq(thin.copy.headlines.length,9,'a top-up that cannot fill everything keeps what passed');ok(thin.notes.some(n=>/Only 9 of 15 headlines/.test(n)),'and names the slots left to fill by hand');
+  assert.throws(()=>api.completeCopy({evidence:we,copy:{headlines:['One','Two','Three'],longHeadlines:[],descriptions:['A','B']},fill:null,channel:'search'}),/failed the current platform length, count or brand requirements: only 3 headlines passed \(at least 8 needed\)/);checks++;
+  const gaps=api.copyGaps({headlines:['A much longer headline here'],longHeadlines:[],descriptions:['D'.repeat(80)]},true);
+  ok(gaps.shortHeadline&&gaps.shortDescription&&gaps.headlines===14&&gaps.longHeadlines===5&&gaps.descriptions===4,'a product ad also needs a headline of 15 characters or fewer and a description of 60 or fewer');
+ }
  await f.api.collect(input);eq(f.calls(),2,'fresh destination read every generation');
  const pinnedGroup={...group,original:{headlines:[{text:'Pinned Monogram Necklace',pinnedField:'HEADLINE_1'}]}};assert.throws(()=>f.api.validateResult({output:result(),evidence:e,channel:'search',group:pinnedGroup}),/pinned/);checks++;
  let bad=result();bad.brief.productId='999';assert.throws(()=>f.api.validateResult({output:bad,evidence:e,channel:'search',group}),/switched/);checks++;

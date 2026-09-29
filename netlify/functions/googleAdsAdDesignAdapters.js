@@ -344,6 +344,7 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     // copy builder refuses more than 220 kB), 1600px focus photos, 3072px labelled
     // source sheets and 2048px finals (a complete-ad review sends about 24 proofs).
     if(key==='subject_focus')return textReserveUsd({textBytes:12000,imagePixels:1600*1600});
+    if(key==='copy_fill')return textReserveUsd({textBytes:260000});
     if(key==='copy'||key==='copy_repair')return textReserveUsd({textBytes:260000,imagePixels:Math.max(1,prepared)*3072*3072});
     if(key==='quality'||key==='quality_repair'||/^quality_scope_[a-f0-9]{16}(_repair)?$/.test(key)){const finals=new Set(Object.values(job&&job.placementAssets||{}).flatMap(assets=>Object.values(assets||{})).map(a=>a&&a.hash)).size||24;return textReserveUsd({textBytes:80000,imagePixels:(Math.max(1,prepared)+2)*3072*3072+finals*2048*2048});}
     const format=sceneFormat||(D.formats||[]).find(f=>'image_'+f.key===key);if(!format)throw new Error('Unknown paid design stage.');
