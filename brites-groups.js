@@ -97,7 +97,7 @@
     // Back is left out when a link or tab beside it already goes to the same place, or when only the list's filter changed.
     const same=!!prev&&(v==='groups'&&prev.view==='groups'&&(!prev.selected&&(!g||!prev.campaign||prev.campaign===g.campaignId)||!!g&&prev.selected===state.selected)||v==='approvals'&&!!g&&prev.view==='groups'&&prev.selected===state.selected),showBack=!!prev&&!same;
     box.hidden=!trail&&!showBack;
-    box.innerHTML=(showBack?'<button type="button" class="bg-back" data-bg-history-back>‹ '+esc(backLabel(prev))+'</button>':'')+(trail?'<nav class="bg-breadcrumbs" aria-label="'+(v==='groups'?'Breadcrumb':'Approval scope')+'">'+trail+'</nav>':'');
+    box.innerHTML=(showBack?'<button type="button" class="bg-back" data-bg-history-back title="Back to '+esc(backLabel(prev))+'">‹ '+esc(backLabel(prev))+'</button>':'')+(trail?'<nav class="bg-breadcrumbs" aria-label="'+(v==='groups'?'Breadcrumb':'Approval scope')+'">'+trail+'</nav>':'');
     const on=(sel,fn)=>{const el=box.querySelector(sel);if(el)el.onclick=fn;};
     on('[data-bg-history-back]',back);
     on('[data-bg-home]',()=>{state.selected=null;state.detail=null;state.campaign='';++state.seq;state.loading=false;persist();options.changed();options.go('groups');render();chrome('groups');restoreList();});
