@@ -2138,15 +2138,20 @@ const Pool = window.Pool = (() => {
     return { sp, pools, charms };
   }
   /** The recorded line joins its sheet. A line a live run already holds (a pool row the record refused) is skipped. */
-  function attachPool(row, run, prep, contended) {
+  function attachPool(row, run, prep, contended, placed) {
     const { sp, pools, charms } = prep;
     // a line that went (cancelled, AutoCancel, or gone from Etsy) while it was made up never goes onto a sheet: the run's
     // pool step is not waited for by AutoCancel, and it used to place the cancelled order after it had been taken off
     if (row.state === "gone" || window.Cancelled?.has?.(row.order.receiptId)) { const ids = pools.map(p => p.poolId); if (ids.length && S.cloud.ok) update(ids, { state: "abandoned", sheetId: null, setId: null }).catch(() => {}); return; }
     const taken = (contended || []).filter(c => pools.some(p => p.poolId === c.poolId));
     if (taken.length) { row.state = "contended"; row.reason = `claimed by run ${taken[0].runId}`; agent({ pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: a live run (${taken[0].runId}) already holds this line — skipped`); return; }
+    // a line already on a sheet is never placed again (Paul, 29 Sep: one Send to Sheet put an order's own design on its
+    // Rose Gold sheet twice): a piece a sheet of this sorter holds, or one the cloud has on a saved sheet (placed), stays
+    // where it is, and no second copy of it goes on
+    const saved = new Map((placed || []).filter(x => pools.some(p => p.poolId === x.poolId)).map(x => [x.poolId, x]));
+    const on = new Set(pools.map(p => p.poolId).filter(id => saved.has(id) || charmOf(id)));
     // (a custom order's own designs may be on more than one metal: each goes on the sheet of its own)
-    const byMetal = new Map(); for (const c of charms) { const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
+    const byMetal = new Map(); for (const c of charms) { if (on.has(c.poolId)) continue; const m = prep.custom ? c.metal : sp.material; if (!byMetal.has(m)) byMetal.set(m, []); byMetal.get(m).push(c); }
     for (const [metal, list] of byMetal) {
       let page=window.LiveNest ? LiveNest.intakePage(metal, run, row.order.receiptId) : pagesOf(metal).at(-1);
       if((run && page.runId && page.runId!==run.runId) || (window.LiveNest&&LiveNest.closed(page)))page=addPage(metal);
@@ -2155,14 +2160,25 @@ const Pool = window.Pool = (() => {
       for (const c of list) if (!page.charms.includes(c)) page.charms.push(c);
       if(page.placements.length){page.intakeAppend=true;page.appendOnly=true;page.dirty=true;if(!['nesting','finishing','queued'].includes(page.status))page.status='ready';renderCard(page);}else sheetDirty(page);
     }
-    for (const p of pools) B.pool.rows.set(p.poolId, p);
+    for (const p of pools) if (!on.has(p.poolId) || !B.pool.rows.has(p.poolId)) B.pool.rows.set(p.poolId, saved.has(p.poolId) ? Object.assign({}, p, saved.get(p.poolId)) : p);
     row.poolIds = pools.map(p => p.poolId); row.state = "pooled"; row.material = sp.material; row.reason = null; delete row.poolTry; delete row.poolError;
+    if (on.size) { agent({ metal: sp.material, pool: true }, "warn", `${row.order.receiptId} · ${sp.designSku}: ${on.size === pools.length ? "already on a sheet" : `${on.size} of ${pools.length} pieces already on a sheet`} — not placed again`); if (on.size === pools.length) { settle(row); return; } }
     agent({ metal: sp.material, pool: true }, "POOL", prep.custom ? `${row.order.receiptId} · custom designs: ${[...byMetal].map(([m, l]) => `${l.length} → ${labelOf(m)}`).join(", ")}` : `${row.order.receiptId} · ${sp.designSku}${sp.quantity > 1 ? " ×" + sp.quantity : ""} → ${labelOf(sp.material)} (${row.engrave && row.engrave.needed ? "engrave" : "plain"})`);
   }
+  /* One placement of a line at a time. Two made up side by side (Send to Sheet while an answer on the order's card, or an
+     intake, put the same line on) each made a copy of its pieces, and both went onto the sheet under one pool id (Paul,
+     29 Sep). A line being placed (placing: its key, until its pieces are on) is left alone by addAll, and a second
+     poolAdd waits for the first, then finds the line on its sheet. */
+  const placing = new Map();
+  function lock(rows) { let freed; const p = new Promise(r => { freed = r; }); for (const r of rows) placing.set(r.key, p); return () => { for (const r of rows) if (placing.get(r.key) === p) placing.delete(r.key); freed(); }; }
   async function poolAdd(row, run) {
-    const prep = await preparePool(row, run); if (!prep) return;
-    const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
-    attachPool(row, run, prep, r.contended);
+    for (let w; (w = placing.get(row.key));) { await w.catch(() => {}); if (onSheets(row)) { settle(row); return; } }
+    const free = lock([row]);
+    try {
+      const prep = await preparePool(row, run); if (!prep) return;
+      const r = S.cloud.ok ? await api("charmNestLibrary", { op: "poolPut", pools: prep.pools }, { label: "Recording the pool" }) : {};
+      attachPool(row, run, prep, r.contended, r.placed);
+    } finally { free(); }
   }
   /* A line that could not go on a sheet (its SKU in no master file or blocked, a size its design lacks, too big for the
      plate, a design that would not load) is made up again only when something it depends on has changed: the line as
@@ -2216,8 +2232,13 @@ const Pool = window.Pool = (() => {
     // A line a person holds waits for that person (the hold is lifted through Review.repool), and a line whose pieces
     // are all on sheets already has nothing to make. Both used to be made up again at the next intake: "Hold order" on
     // a pooled order put a second copy of each of its pieces on a sheet (same pool id, cut twice).
-    // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing)
-    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    // (and a custom line whose QR label is being printed waits for the print: CustomPrint.printing; a line being placed
+    // now, by Send to Sheet or an answer, is that placement's: placing)
+    const rows = Orders.rows().filter(r => ["pulled", "held", "unmatched", "oversize", "waiting"].includes(r.state) && !(r.state === "held" && r.hold) && !window.Cancelled?.has?.(r.order.receiptId) && !(window.CustomPrint && CustomPrint.printing(r.key)) && !placing.has(r.key) && !(onSheets(r) && settle(r)) && due(r)).sort((a, b) => (+a.order.createTs || 0) - (+b.order.createTs || 0));
+    const free = lock(rows);
+    try { return await addRows(run, rows); } finally { free(); }
+  }
+  async function addRows(run, rows) {
     const plan = await Gate.plan(rows);
     const held = [...plan.wait.values()];
     if (held.length) agent({ pool: true }, "POOL", `${held.length} line(s) wait: ${held.filter(w => w.kind === "fill").length} for a full sheet, ${held.filter(w => w.kind === "slow").length} for a slow metal's day`);
@@ -2240,15 +2261,15 @@ const Pool = window.Pool = (() => {
       try { const prep = await preparePool(row, run); if (prep) made.push([row, prep]); else row.poolTry = trySig(row); } catch (e) { hold(row, e, true); }
       if (++n % 5 === 0) { Orders.render(); }
     }
-    let contended = [], failure = null;
+    let contended = [], placed = [], failure = null;
     if (S.cloud.ok && made.length) {
       const all = made.flatMap(([, prep]) => prep.pools);
       // four hundred rows read and written one after another ran past the edge's patience (its "Inactivity Timeout" page,
       // 25 Sep); the server now reads a call's rows together and writes them in a batch, and a call carries two hundred
-      try { for (let i = 0; i < all.length; i += 200) contended = contended.concat((await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" })).contended || []); }
+      try { for (let i = 0; i < all.length; i += 200) { const r = await api("charmNestLibrary", { op: "poolPut", pools: all.slice(i, i + 200) }, { label: "Recording the pool" }); contended = contended.concat(r.contended || []); placed = placed.concat(r.placed || []); } }
       catch (e) { failure = e; }
     }
-    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended); } catch (e) { hold(row, e); } }
+    for (const [row, prep] of made) { if (failure) { hold(row, failure); continue; } try { attachPool(row, run, prep, contended, placed); } catch (e) { hold(row, e); } }
     if (bar) bar.end();
     await Gate.afterPool(run);
     Review.syncOrderItems(); Orders.render(); renderRail(); updateTopSub(); refreshAllCards();
@@ -5260,7 +5281,11 @@ const Sets = window.Sets = (() => {
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
     const reports=sheets.map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
-    if(!window.CharmNestReadiness.set(set,reports).ready)throw pendingRelease("Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    if(!window.CharmNestReadiness.set(set,reports).ready){
+      // a Rose Gold sheet whose newest charms wait for Cut Sheet (only a press adds its green line): named, with what to press
+      const uncut=sheets.find(sh=>window.RoseStock?.waiting?.(sh));
+      throw pendingRelease(uncut?RoseStock.waitWords(uncut):"Set is not ready for laser: finish every sheet's engraving approvals, saved back files, layout checks and QR labels");
+    }
     if (!Gate.modern(set.runId)) return;
     if (!set.sheetIds.length || sheets.length !== set.sheetIds.length || set.sheetIds.some(id => !sheets.some(sh => sh.sheetId === id))) throw pendingRelease("The set's sheets are not all loaded");
     for (const sh of sheets) {
@@ -5380,13 +5405,17 @@ const Sets = window.Sets = (() => {
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const held = Object.entries(st.orders || {}).filter(([, o]) => o && o.held);
+    // a Rose Gold sheet of this set waiting for its Cut Sheet press (the set waits with it): named, and the words lead there
+    const uncut = st.setId && !st.committedAt ? allSheets().find(p => p.setId === st.setId && window.RoseStock?.waiting?.(p)) : null;
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
+          ${uncut ? `<div class="holds"><b>Waiting:</b> <button type="button" class="cutSheetLink" data-cut-sheet title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(uncut))}</button></div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
+    const cb = card.querySelector("[data-cut-sheet]"); if (cb) cb.onclick = () => RoseStock.showCut(uncut);
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
     // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
@@ -5454,6 +5483,9 @@ const Sets = window.Sets = (() => {
         if (request !== libraryRequest || S.library.kind !== "sets") return;
         const records = [...new Map([...(sh.sheets || []), ...(ss.sheets || [])].map(r=>[r.id,r])).values()];
         _cache = {rawSets:ss.sets || [], rawSheets:records, sets:[], sheets:records};
+        // the Library's records (S.library.rows) are what the sheet window, the order search and the cards' backs read a
+        // sheet by: Sets, the view the Library opens on (Paul, 29 Sep), keeps them too, every metal as it reads them
+        S.library.rows = Gate.projectLibraryRecords(records.slice()); S.library.loadedAt = Date.now(); S.library.loadedFor = "all";
       }
       if (S.library.kind !== "sets" || (LD && LD.tab() === "done")) return;
       _cache.sheets=Gate.projectLibraryRecords(_cache.rawSheets || _cache.sheets);
@@ -6184,7 +6216,9 @@ const RunCtl = window.RunCtl = (() => {
   }
   function runView(r) {
     const reviewN = Review.count(), engN = Engrave.pendingCount();
-    const waiting = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean).join(" · "), waitingFor = waiting || "nothing";
+    // a Rose Gold sheet whose set waits for its Cut Sheet press: named, and the words open the sheet at its button
+    const cut = allSheets().find(p => p.runId === r.runId && window.RoseStock?.waiting?.(p)), asked = [reviewN ? `${reviewN} in Review` : "", engN ? `${engN} in Engraving` : ""].filter(Boolean);
+    const waiting = asked.concat(cut ? ["Cut Sheet"] : []).join(" · "), waitingFor = asked.concat(cut ? [`<button type="button" class="cutSheetLink" data-rbcut title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(cut))}</button>`] : []).join(" · ") || "nothing";
     // with nothing for a person to do, say what the run is waiting for: lines on sheets that have not been released yet
     const onCards = r.status === "processed" ? Orders.rows().filter(x => x.state === "pooled").length : 0;
     const idle = onCards ? `${onCards} line${onCards === 1 ? "" : "s"} wait on sheets not released yet` : "waiting for sheets to release";
@@ -6262,6 +6296,7 @@ const RunCtl = window.RunCtl = (() => {
     const ask = f => { close(); requestAnimationFrame(() => setTimeout(f)); };
     if (b.dataset.rbres) { close(); B.openRuns = null; resumeRun(b.dataset.rbres).catch(err => toast(err.message, "bad", 7000)); }
     else if (b.dataset.cxack) window.AutoCancel?.ack(b.dataset.cxack, b.closest(".rbCxItem"));   // (the menu stays open on what is left)
+    else if (b.hasAttribute("data-rbcut")) { close(); const sh = r && allSheets().find(p => p.runId === r.runId && window.RoseStock?.waiting?.(p)); if (sh) RoseStock.showCut(sh); }
     else switch (b.id) {
       case "rbNow": close(); cancelNext(); if (clearRunState() === false) return; start({ mode: "auto" }).catch(err => toast(err.message, "bad")); break;
       case "rbCancelNext": close(); cancelNext(); break;
@@ -6417,13 +6452,16 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /* The sticker printed (its print dialog closed): `labelPrinted` on the order's timeline, whether or not its lines are
      then marked completed. Paul, 28 Sep: the Review tab is where the Design Station prints, so the station is design;
-     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is. */
+     who is the name this page records the print with. The server's sealPrinted stamp (customPut) stays as it is.
+     Every print is an event of its own (Paul, 29 Sep 02:08: each print a seal on the timeline): its id is its moment,
+     not its minute, so a label printed again within the minute is not folded into the one before; print is its
+     seal's number on the card (Print Nº n). */
   function labelled(rid, who, o) {
     try {
       const at = Date.now();
-      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${Math.floor(at / 60000)}`,
+      window.SheetEvents?.order({ type: "labelPrinted", orderId: String(rid || ""), at, by: who || "", station: "design", device: "charm-nest-1", id: `charm-nest-1-${rid}-labelPrinted-${at}`,
         text: `Custom QR label printed at the Design Station (Review)${o.again ? ", again" : ""}`,
-        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
+        data: Object.assign({ label: "custom", printPage: PRINTER, lines: o.lines }, o.n > 0 ? { print: o.n } : {}, o.again ? { again: true } : {}, o.cancelled ? { despiteCancel: true } : {}, who ? {} : { signedIn: false }) });
     } catch (_) {}
   }
   function printedAnyway(rid, who, act, n) {
@@ -6493,7 +6531,7 @@ const CustomPrint = window.CustomPrint = (() => {
       await gate;                                           // (a label that failed early still lets its seal land first)
       stamping.delete(key);
       if (!out.ok) { failed(key, out.error || "the printer failed", shown); say(key, null); unlay(); toast(`The print didn't open (${out.error || "the printer failed"}). Its seal stays and nothing is lost; press Retry print to try again`, "", 8000); return; }
-      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled });
+      labelled(targets[0].receiptId, who, { lines: targets.length, again: !!it.done, cancelled: !!cancelled, n: st.n });
       acting.set(key, "print");
       // a line the run put on a sheet all the same is cut on the laser: it is not marked completed as well
       const cut = it.done ? new Set() : new Set(rows.filter(r => (r.poolIds || []).length).map(r => r.key));
@@ -6524,8 +6562,17 @@ const CustomPrint = window.CustomPrint = (() => {
     const go = anyway(it, "complete"); if (go === false) return;
     withName(key, who => completeAs(it, who, go));
   }
+  /* where Complete Order, Reopen or Undo was pressed, for its point on the order's timeline (Paul, 29 Sep 02:08): the
+     order window (a modal: while it is open nothing behind it takes a press), else Review, by the card's tab */
+  function pressedIn(it) {
+    try { if (OrderWin.isOpen()) return "Order window"; } catch (_) {}
+    return !it ? "Review" : "Review · " + (it.kind === "customOrder" ? "Custom Orders" : it.category || "a card");
+  }
+  /** The open order window's timeline reads the new point now (its feed otherwise reads again only within 20 s). */
+  function tlFresh() { try { const f = OrderWin.isOpen() && OrderWin._feed(); if (f && f.refresh) f.refresh({ force: true }); } catch (_) {} }
   function completeAs(it, who, cancelled) {
     const key = it.key; if (busy.has(key)) return;
+    const from = pressedIn(it);
     const rows = linesOf(it).filter(r => !(r.poolIds || []).length && !(r.spec && r.spec.customDone));
     if (!rows.length) { toast("Nothing left to complete on that card: its lines are on their way to the laser", "bad", 6000); return; }
     const held = rows.map(r => r.key).filter(k => !printing.has(k));
@@ -6537,7 +6584,7 @@ const CustomPrint = window.CustomPrint = (() => {
       const saved = {}; let putErr = null, cut = 0;
       for (const r of rows) {
         if ((r.poolIds || []).length) { cut++; continue; }                     // the run put it on a sheet meanwhile
-        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
+        try { const res = await api("charmNestLibrary", Object.assign({ op: "customPut", how: "button", by: who, label, from }, targetOf(r, it.record, it)), { quiet: true }); if (res && res.record) { saved[r.key] = res.record; wrote([r.key]); } } catch (e) { putErr = e; }
       }
       const done = Object.keys(saved), rid = rows[0].order.receiptId;
       keepDone(saved);
@@ -6545,7 +6592,7 @@ const CustomPrint = window.CustomPrint = (() => {
       if (done.length) sealed(it, rows, saved, done, who, "button");
       if (done.length && it.onDone) { try { it.onDone(who, "button"); } catch (_) {} }
       if (done.length && cancelled) printedAnyway(cancelled, who, "complete", done.length);
-      settle(); say(key, null); pressSoon();
+      settle(); say(key, null); pressSoon(); if (done.length) tlFresh();
       agent({ bridge: true }, putErr ? "warn" : "DS", `${rid}: custom order completed by ${who} (no label printed)${putErr ? ` — not every line was saved (${putErr.message})` : " · Review → Completed"}`);
       if (putErr) toast(`${rid}: ${done.length ? "not every line was" : "the order was not"} completed: ${putErr.message} — press Complete Order to try again`, "bad", 9000);
       else if (cut) toast(`${rid}: ${cut} of its lines went on a sheet meanwhile — cut on the laser, not completed`, "bad", 8000);
@@ -6589,7 +6636,7 @@ const CustomPrint = window.CustomPrint = (() => {
     const u = undoOf(it); if (!u || busy.has(it.key)) return;
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack(it.key, u.rows, employeeName() || u.who, "undo");
+    takeBack(it.key, u.rows, employeeName() || u.who, "undo", pressedIn(it));
   }
   /** Undo from the note under Completed: the lines it completed, by their keys. */
   function undoKeys(keys) {
@@ -6597,24 +6644,25 @@ const CustomPrint = window.CustomPrint = (() => {
     if (!u) { toast("Too late to undo here: open Completed and press Reopen on the order", "", 5000); return; }
     clearTimeout(u.timer); for (const k of u.keys) if (undos.get(k) === u) undos.delete(k);
     comesBack(u.rows);
-    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo");
+    takeBack("cdone:" + Review.cardKey(u.rows[0]), u.rows, employeeName() || u.who, "undo", pressedIn(null));
   }
   /** Back to Open: the completion is taken off (the printed sticker is not undone) and the line is read again. */
   function reopen(it) {
     const rows = linesOf(it); if (!rows.length || busy.has(it.key) || asking.has(it.key)) return;
-    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen"); });
+    const from = pressedIn(it);
+    withName(it.key, who => { for (const r of rows) undos.delete(r.key); comesBack(rows, `Order ${rows[0].order.receiptId} moved back to Open`); takeBack(it.key, rows, who, "reopen", from); });
   }
   /** Each line's record reopened, never deleted: its seals stay on it for good and show on the Open card's buttons (Paul,
    *  29 Sep 00:35); only its state changes, with who and when in its history and on the order's timeline. The page
    *  follows each as it goes (a failure part way leaves it saying what the cloud holds), then the lines are put back for
    *  cutting; a failure of either is said as what it is. */
-  async function takeBack(key, rows, who, how) {
+  async function takeBack(key, rows, who, how, from) {
     const did = how === "undo" ? "undone" : "reopened", rid = rows[0].order.receiptId;
     say(key, how === "undo" ? "Undoing…" : "Reopening…");
     let gone = 0;
     for (const r of rows) {
       let back = null;
-      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how }, { quiet: true }); }
+      try { back = await api("charmNestLibrary", { op: "customReopen", key: r.key, by: who, how, from }, { quiet: true }); }
       catch (e) {
         busy.delete(key); settle(); say(key, null);
         toast(gone ? `${rid}: ${gone} of ${rows.length} lines ${did}; the completion of the others could not be removed (${e.message}) — they stay completed: press Reopen to try again` : `${rid} not ${did}: its completion could not be removed (${e.message})${how === "undo" ? " — it stays completed: press Reopen to try again" : ""}`, "bad", 9000);
@@ -6627,10 +6675,12 @@ const CustomPrint = window.CustomPrint = (() => {
       wrote([r.key]); gone++;
     }
     busy.delete(key);
+    // (its card is found where it stood in Open: Review brings it into view there, however it was reopened)
+    Review.view().back = { keys: rows.map(r => r.key), until: Date.now() + 180000 };
     try { for (const r of rows) if (r.state === "noDesign") await Review.repool(r); else Orders.interpretAll(); }
     catch (e) { settle(); say(key, null); toast(`${rid} ${did}, but its line could not be put back for cutting: ${e.message} — it is under Review → Open`, "bad", 9000); return; }
     say(key, null);
-    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`);
+    agent({ bridge: true }, "DS", `${rid}: custom order ${did} by ${who}`); tlFresh();
   }
   /** What a card shows in place of its buttons, if anything: a spinner and what is happening, the name asked for (a small
    *  field and OK), or "Marked completed · Undo". sz: the buttons' size class ("sm" in Review, "xs" in the order window). */
@@ -6860,6 +6910,9 @@ const CustomSheet = window.CustomSheet = (() => {
   /* ── Send to Sheet ── */
   async function send(it) {
     const ck = ckOf(it), e = all()[ck]; if (busy.has(ck)) return;
+    // sent once, for good: a second press (the window in the moment before it closes, another card of the order, during
+    // or after the tour) sends nothing again (Paul, 29 Sep: a design went on its sheet twice)
+    if (e && e.sent) { toast("That order's designs are already on the sheets", "bad", 5000); return; }
     // not ready: what is missing is shown where it is fixed (the window, its reason lit), or, with no design yet, the
     // card's drop area is lit and says what it takes
     const why = notReady(e);
@@ -7186,7 +7239,7 @@ const CustomSheet = window.CustomSheet = (() => {
     const ready = files.filter(F => F.state === "ready"), n = ready.reduce((a, F) => a + F.pieces * F.qty, 0), why = notReady(e);
     d.querySelector("#cuSum").innerHTML = busyNow ? `<span class="cuStat"><span class="spin"></span>${esc(busyNow)}</span>` : files.length ? `<b>${plural(files.length, "design")} · ${plural(n, "piece")} to cut</b>${why ? `<span class="warn">${esc(why)}</span>` : ""}` : "";
     // Send to Sheet stays where it is, greyed while it cannot send, and says why (pressed, the reason lights up)
-    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow;
+    const sb = d.querySelector("[data-send]"); sb.disabled = !!busyNow || sent;
     if (why && !busyNow) sb.setAttribute("aria-disabled", "true"); else sb.removeAttribute("aria-disabled");
     sb.title = busyNow ? busyNow : why ? (files.length ? why : "Its designs come first: drop the order's .ai or .dxf files here") : "Put every design on the next open sheet of its metal";
     const later = d.querySelector("[data-later]"), keep = files.length && !sent;
@@ -7727,6 +7780,14 @@ const Review = window.Review = (() => {
   }
   /** The card is marked where it now is: a soft glow that fades (it was a class with no look of its own). */
   function found(n) { n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
+  /** A card back in Open (reopened, or its completion undone) at its place: scrolled into view if it is not, and marked
+   *  (behind the order window it was reopened from, once that window closes). */
+  function bringBack(n, key) {
+    const pane = n.closest(".scroll"), p = pane ? pane.getBoundingClientRect() : { top: 0, bottom: innerHeight }, r = n.getBoundingClientRect();
+    if (r.top < p.top || r.bottom > p.bottom) n.scrollIntoView({ behavior: "smooth", block: r.bottom <= p.top || r.top >= p.bottom ? "center" : "nearest" });
+    const win = document.getElementById("orderWin");
+    if (win && win.open) win.addEventListener("close", () => { const m = reviewRows.get(key)?.node || n; if (m.isConnected) found(m); }, { once: true }); else found(n);
+  }
   /** "Show" for a held order: the Orders tab, its On hold pile. */
   function showHeld() {
     if (typeof setMode === "function") setMode("orders");
@@ -8215,8 +8276,13 @@ const Review = window.Review = (() => {
     const cl = customLists(decided);
     const ORDER = ["customOrder", "needsMapping", "unmatchedSku", "blockedSku", "missingSize", "oversize", "fontMissing", "engraveWords", "notRepresentable", "flipFailed", "placement", "orderChanged", "heldOrder"];
     const arrivalOf = it => Math.max(0, ...(it.rows || [it.row]).filter(Boolean).map(r => r.arrivedAt || 0));
-    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || a.t - b.t);
-    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a));
+    // a card's place is its order's (Paul, 29 Sep 02:05: an order reopened from Completed goes back where it was, not
+    // to the foot of the list): newest arrival first, its kind, then the order itself (newest order date, then its line);
+    // never when its card was raised, completed or reopened (a whole pull arrives at one time, so that used to decide)
+    const placedOf = it => Math.max(0, ...rowsOf(it).map(r => +r.order.createTs || 0)), lineOf = it => (rowsOf(it)[0] || {}).key || "";
+    const byOrder = (a, b) => placedOf(b) - placedOf(a) || lineOf(a).localeCompare(lineOf(b)) || (a.t || 0) - (b.t || 0);
+    all.sort((a, b) => arrivalOf(b) - arrivalOf(a) || ORDER.indexOf(tabOf(a)) - ORDER.indexOf(tabOf(b)) || byOrder(a, b));
+    cl.open.sort((a, b) => arrivalOf(b) - arrivalOf(a) || byOrder(a, b));
     // Completed, for every filter: custom orders whose QR label was printed (print again or reopen) and every decision
     // answered, newest first. A custom order answered but not yet finished is still under Open, so its answer waits.
     const openCustom = new Set(all.filter(it => it.kind === "customOrder").map(it => it.key.slice(4)).concat(cl.open.concat(cl.done).map(it => it.key.slice(6))));
@@ -8239,6 +8305,11 @@ const Review = window.Review = (() => {
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
     // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
     if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
+    // a card just reopened (or its completion undone: CustomPrint sets RV.back) is found at its place the next time Open
+    // shows it: drawn down to it, brought into view and marked
+    let back = null;
+    if (RV.back && RV.back.until < Date.now()) RV.back = null;
+    if (RV.back && !doneMode) { const ks = new Set(RV.back.keys); back = list.find(it => rowsOf(it).some(r => ks.has(r.key))) || null; if (back) { RV.back = null; const i = list.indexOf(back); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; } }
     const chip = (id, label, n, cls, title) => `<button class="egTab${(f || "") === id ? " on" : ""}" data-k="${esc(id)}" title="${esc(title || label)}">${esc(label)}${n ? `<b class="${cls || "warn"}">${n}</b>` : ""}</button>`;
     // Open or Completed first, then the filters: the switch holds for every chip, and pressing it shows all it holds
     const openN = all.length + cl.open.length;
@@ -8288,7 +8359,9 @@ const Review = window.Review = (() => {
     for (const {it,node} of desired) { const r=it.settled?it.settled.row:it.row; if(r)ListMedia.mount(node,r); }
     for (const {node} of desired) if(node._refocus){const f=node._refocus;node._refocus=null;f();}
     ListMedia.more(host,list.length,Math.min(RV.limit,list.length),()=>{RV.limit+=40;render();});
-    v.querySelector('.egPane.scroll').scrollTop=oldScroll;
+    // (kept as it was; written only when it moved, so a card being brought into view is not stopped half way)
+    {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
+    if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
     const notices = doneMode ? [] : items().filter(isNotice);
     if (notices.length) {
@@ -9381,7 +9454,7 @@ const OrderWin = window.OrderWin = (() => {
     const html = `<span class="fLabel">Its pieces · the order is where the slowest one is</span>` + sum.each.map(x => {
       const nx = x.steps.find(s => at(s) > x.D.step), slow = x.D.step === sum.step;
       return `<button type="button" class="owPcRow${slow ? " slow" : ""}" data-piece="${esc(x.p.key)}" title="Show only this piece"><i class="dot" style="--c:${esc(colorOf(x.p.metal))}"></i>` +
-        `<span class="nm"><b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}</span><span class="st">${esc((x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled ? " · next: " + esc(nx.l) : ""}</span>` +
+        `<span class="nm"><b>${esc(x.p.name)}</b> · ${esc(pieceMeta(x.p))}</span><span class="st">${esc(x.D.hand ? "Completed by hand" : (x.D.W && x.D.W.label) || "Waiting")}${nx && !x.D.cancelled && !x.D.hand ? " · next: " + esc(nx.l) : ""}</span>` +
         `<span class="steps" aria-hidden="true">${x.steps.map(s => `<i class="${x.D.step >= at(s) || (x.D.stages[at(s)] || {}).first ? "on" : ""}"></i>`).join("")}</span></button>`;
     }).join("");
     box.hidden = false;
@@ -9414,9 +9487,14 @@ const OrderWin = window.OrderWin = (() => {
     const cx = (evs && lastOf(evs, e => e.type === "cancelled" || e.type === "etsyCancelled")) || (W.cancelled ? { type: "cancelled", at: W.cancelled.at, by: W.cancelled.by, text: W.cancelled.reason || "" } : null);
     const restored = cx && evs && lastOf(evs, e => e.type === "cancelRestored" && e.at > cx.at);
     if (cx && !restored) return { tone: "bad", pill: "Cancelled", k: "Cancelled", t: cx.type === "etsyCancelled" ? "Cancelled on Etsy" : "Cancelled" + (cx.by ? " by " + cx.by : ""), ev: cx, cancelled: true };
+    // completed by hand (a Complete Order press no Reopen came after): completed, by whom and when, as the rail and the
+    // Timeline say; a Reopen takes the completion back (its seals stay), so it is where it was before
+    const UI = window.OrderTimelineUI, hand = evs && UI && UI.handOf ? tryDo(() => UI.handOf(slowestEvents() || evs)) : null;
+    if (hand) { const who = tryDo(() => UI.personOf(hand)) || ""; return { tone: "done", pill: "Order completed", k: "Order completed", t: `Completed${who ? " by " + who : ""} · ${new Date(hand.at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`, ev: hand }; }
+    const back = e => e.type === "sealCompleted" && evs.some(x => +x.at >= +e.at && UI && UI.opStepOf && UI.opStepOf(x) === "reopen" && (!x.lineKey || !e.lineKey || x.lineKey === e.lineKey));
     // (all pieces of an order of several: its step is its slowest piece's, as the rail says)
-    const ms = evs && lastOf(slowestEvents() || evs, e => (T[e.type] && T[e.type].milestone) || e.milestone);
-    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage");
+    const ms = evs && lastOf(slowestEvents() || evs, e => ((T[e.type] && T[e.type].milestone) || e.milestone) && !back(e));
+    const last = evs && lastOf(evs, e => e.type !== "note" && e.type !== "teamMessage" && e.type !== "customerMessage" && !back(e));
     if (ms || last) {
       const e = last || ms, ty = T[e.type] || {}, mt = ms ? (T[ms.type] || {}) : ty;
       const g = GROUP_NOW[mt.group] || mt.label || "In progress";
@@ -9486,7 +9564,7 @@ const OrderWin = window.OrderWin = (() => {
     const sheets = [...pages].map(pg => {
       const placed = (pg.placements || []).length;
       const rep = dec && R.sheet ? tryDo(() => R.sheet(Object.assign({}, pg, { roseStockId: pg.roseStock && pg.roseStock.id, id: pg.sheetId, poolIds: (pg.placements || []).map(p => ((pg.charms || []).find(c => c.id === p.id) || {}).poolId).filter(Boolean), placedCount: placed, outputs: pg.cloud || {}, engraving: dec }))) : null;
-      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt };
+      return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt, uncut: (window.RoseStock && tryDo(() => RoseStock.waiting(pg))) || 0 };
     });
     return { lines, sheets };
   }
@@ -10329,6 +10407,9 @@ const RunHistory = window.RunHistory = (() => {
     const s = String(g.status || "").toLowerCase(), r = runOf(g);
     let [tone, word, why] = STATUS[s] || (s.startsWith("complete") ? STATUS.complete : ["neutral", s || "unknown", ""]);
     if (s === "stopped" && r && r.stoppedBy) why = `Stopped · ${r.stoppedBy}`;
+    // a Rose Gold sheet of the set waiting for its Cut Sheet press: the set waits with it
+    const uncut = g.setId && !g.committedAt && !s.startsWith("complete") ? allSheets().find(p => p.setId === g.setId && window.RoseStock?.waiting?.(p)) : null;
+    if (uncut) { tone = "warn"; word = "waits for Cut Sheet"; why = RoseStock.waitWords(uncut); }
     return { tone, word, why };
   }
   /** Why the cards cannot take another set just now (Recall.open's own guards, asked before it is pressed). */

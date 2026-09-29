@@ -3,12 +3,12 @@
 // Verifies the Shopify half of revenue attribution, which is the only part of
 // the chain that can be broken right now with nothing turning red:
 //
-//   https://goldenspike.app/.netlify/functions/shopifyAttributionCheck?key=<EDIT_PASSCODE>
+//   https://goldenspike.app/.netlify/functions/shopifyAttributionCheck?key=<passcode>
 //   …&format=json
 //
 // Read-only: theme assets and webhook registrations, plus the conversion upload
 // queue this application already keeps. It shows order IDs and values, so it needs
-// the passcode, and refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
+// the passcode, and refuses outright while no passcode is set (_adsCheckGate.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
@@ -206,8 +206,8 @@ function html(r) {
 }
 
 exports.handler = async (event) => {
-  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while EDIT_PASSCODE is unset.
-  const refused = refuse(event, 'the Shopify attribution check');
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, 'the Shopify attribution check');
   if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
   let result;

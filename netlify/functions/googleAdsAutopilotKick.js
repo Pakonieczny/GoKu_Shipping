@@ -6,7 +6,8 @@
 //      tasks once daily; budget reallocation weekly.
 //   2) GET  → serve the operator console (approval queue + kill switch + toggles).
 //   3) POST → console actions (approve/reject/apply, kill/resume, dry-run, run-now),
-//      guarded by EDIT_PASSCODE (same passcode the rest of the tooling uses).
+//      guarded by the console passcode: EDIT_PASSCODE when set in Netlify, otherwise
+//      Firestore config/editPasscode (see _editPasscode.js).
 //
 // Only THIS function is scheduled (one netlify.toml entry). The worker and console
 // are triggered, not scheduled — so the whole system adds exactly one cron line.
@@ -38,6 +39,7 @@
 
 const fetch = require("node-fetch");
 const E = require("./googleAdsAutopilot");
+const EP = require("./_editPasscode");
 
 let _fb = null;
 function fb() {
@@ -54,22 +56,24 @@ const HEADERS = {
   "Content-Type": "application/json"
 };
 function ok(o) { return { statusCode: 200, headers: HEADERS, body: JSON.stringify(o) }; }
-// EDIT_PASSCODE, trimmed and unquoted exactly like the other Google check endpoints (a pasted
-// trailing space must not lock the owner out). Compared in constant time.
-function passcode() { return String(process.env.EDIT_PASSCODE || "").trim().replace(/^["']|["']$/g, ""); }
-function sameSecret(a, b) { a = String(a == null ? "" : a).trim(); b = String(b == null ? "" : b); if (!a || !b) return false; const h = x => require("crypto").createHash("sha256").update(x).digest(); return require("crypto").timingSafeEqual(h(a), h(b)); }
-// Server-to-server credential for the background worker. With EDIT_PASSCODE set it IS the
-// passcode; unset, it is derived from the Google Ads OAuth secrets only this site holds, so the
-// scheduled kick keeps running while no browser can call the worker. Must match the worker.
-function workerToken() { const pass = passcode(); if (pass) return pass; const key = [process.env.GADS_REFRESH_TOKEN, process.env.GADS_CLIENT_SECRET, process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|"); return key ? "internal-" + require("crypto").createHmac("sha256", key).update("brites-gads-background-worker/v1").digest("hex") : undefined; }
-const PASSCODE_UNSET = "Set EDIT_PASSCODE in Netlify to enable changes";
+// The console passcode comes from _editPasscode.js: EDIT_PASSCODE when set in Netlify (trimmed and
+// unquoted, so a pasted trailing space cannot lock the owner out), otherwise Firestore
+// config/editPasscode. Compared in constant time; never logged or returned.
+const sameSecret = EP.sameSecret;
+function internalToken() { const key = [process.env.GADS_REFRESH_TOKEN, process.env.GADS_CLIENT_SECRET, process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|"); return key ? "internal-" + require("crypto").createHmac("sha256", key).update("brites-gads-background-worker/v1").digest("hex") : undefined; }
+// Server-to-server credential for the background worker: derived from the Google Ads OAuth secrets
+// only this site holds, so no browser can produce it and it never depends on a passcode that may
+// change in Firestore at any time. Only when those secrets are absent does it fall back to
+// EDIT_PASSCODE from the environment. Synchronous on purpose. Must match the worker.
+function workerToken() { return internalToken() || EP.envPasscode() || undefined; }
+const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)";
 // Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
 // change. Every other action — including any action not listed here — is treated as a change.
 const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
-// true = allowed · "unset" = a change was requested while EDIT_PASSCODE is not configured · false = wrong passcode
-function authed(event, body) {
-  const pass = passcode();
+// true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
+async function authed(event, body, resolved) {
+  const pass = (resolved || await EP.resolve()).value;
   if (!pass) return isReadAction(body && body.action, body) ? true : "unset"; // fail closed: reads only
   const h = (event.headers && (event.headers["x-edit-passcode"] || event.headers["X-Edit-Passcode"])) || "";
   return sameSecret(h, pass) || !!(body && sameSecret(body.passcode, pass));
@@ -139,6 +143,10 @@ async function handleAction(body) {
   const ctrl = await E.control();
   if (a === "dashboard") return await E.dashboard();
   if (a === "pmaxRecommendationEvidence") { try { return await E.pmaxRecommendationEvidence(body); } catch(e) { return {ok:false,error:e.message}; } }
+  // A campaign created paused may queue its product's reviewed films; the upload runs in the background.
+  if (a === "publishAdDesignPublication" || a === "publishAdDesignSubmission") {
+    try {const out=await E[a](body),m=out&&out.motionPublication;if(m&&m.queued)try{await dispatchTask('adMotionPublication',{workspaceId:m.workspaceId,jobId:m.jobId,productId:m.productId,groupRef:m.groupRef});}catch(e){out.message=(out.message||'')+' The film upload is saved but could not start yet; approve it again in Animated ads.';}return out;} catch(e) { return {ok:false,error:e.message}; }
+  }
   if (["adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "draftAdGroupSplit", "draftAdGroupActivation", "adDesignWorkspace", "saveAdDesign", "cropAdDesignImage", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "verifyAdMotionPublication", "saveAdDesignEditor", "applyAdDesignEditorScene", "exportAdDesignEditor", "adDesignSavedDesigns", "openAdDesignSavedDesign", "deleteAdDesignSavedDesign", "deleteAdDesignGeneratedImage", "adDesignGooglePreview", "uploadAdDesignReference", "adDesignProductImages", "adDesignGalleryPage", "adDesignStatus", "resetAdDesignFailures", "saveAdDesignCopy", "adDesignDelivery", "prepareAdDesignPublication", "publishAdDesignSubmission", "publishAdDesignPublication"].includes(a)) {
     try { return await E[a](body); } catch(e) { return {ok:false,error:e.message}; }
   }
@@ -196,7 +204,7 @@ async function handleAction(body) {
   if (a === "setControl") {
     const allow = ["maxDailyBudgetTotal","maxBudgetStepPct","budgetMoveApprovalPct","targetRoas",
                    "minConvForTargetTune","anomalySpendMultiple","autoApproveVettedTemplates","learningCooldownDays",
-                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd"];
+                   "defaultCountries","maxMonthlySpend","smartBidding","creativeBudgetUsd","orderCutoffDays"];
     const patch = {}; allow.forEach(k => { if (body.patch && body.patch[k] !== undefined) patch[k] = body.patch[k]; });
     // Money limits must be real numbers: an empty or invalid value used to be stored as-is and
     // then read as "no ceiling", silently switching the spend checks off.
@@ -204,7 +212,7 @@ async function handleAction(body) {
     // anyway, so a higher value is refused here instead of being saved and silently not applied.
     const limits = { maxDailyBudgetTotal: [1, Number(ctrl.maxDailyBudgetLimit) > 0 ? Number(ctrl.maxDailyBudgetLimit) : 1e6, "Daily budget ceiling"], maxBudgetStepPct: [1, 100, "Largest budget step %"], budgetMoveApprovalPct: [0, 100, "Budget approval threshold %"],
       targetRoas: [0, 1000, "Target ROAS"], minConvForTargetTune: [0, 1e6, "Minimum conversions"], anomalySpendMultiple: [1.1, 100, "Spend anomaly multiple"], learningCooldownDays: [0, 365, "Learning cooldown days"],
-      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"] };
+      maxMonthlySpend: [0, 1e7, "Monthly stop threshold (USD, 0 = off)"], orderCutoffDays: [0, 30, "Order cutoff days"] };
     for (const [k, [min, max, label]] of Object.entries(limits)) {
       if (patch[k] === undefined) continue;
       const n = typeof patch[k] === "string" && !patch[k].trim() ? NaN : Number(patch[k]);
@@ -214,6 +222,7 @@ async function handleAction(body) {
     if (patch.autoApproveVettedTemplates !== undefined) patch.autoApproveVettedTemplates = false;
     if (patch.creativeBudgetUsd !== undefined) patch.creativeBudgetUsd = Math.max(1,Math.min(30,Number(patch.creativeBudgetUsd)||8));
     if (patch.smartBidding !== undefined) patch.smartBidding = !!patch.smartBidding;
+    if (patch.orderCutoffDays !== undefined) patch.orderCutoffDays = Math.round(patch.orderCutoffDays); // whole days
     if (patch.defaultCountries !== undefined) {
       patch.defaultCountries = [...new Set((Array.isArray(patch.defaultCountries) ? patch.defaultCountries : [])
         .map(x => String(x).replace(/\D/g, "")).filter(Boolean))];
@@ -242,12 +251,13 @@ async function handleAction(body) {
   if(a==='deleteOpportunity')return E.deleteOpportunity({channel:body.channel,tag:body.tag});
   if (a === "approve" || a === "apply") {
     if (a === "approve") await E.markApprovalApproved(body.id);
+    try { await E.markPublishRequested(body.id); } catch (e) {} // queue marker for the card; never blocks publishing
     return await dispatchTask("publishApproval", { id:String(body.id) });
   }
-  if (a === "retryStuck") {
-    try { return await E.retryStuckApprovals(ctrl); }
-    catch (e) { return { error: e.message }; }
-  }
+  // Records what Paul found in Google Ads for an unconfirmed publication; nothing is sent to Google.
+  // (The synchronous bulk "retryStuck" re-send was removed: it ran inside the 26-second gateway
+  // limit and re-sent every approved draft at once. Each draft is published from its own card.)
+  if (a === "reconcileApproval") return await E.reconcileApproval({ id: body.id, outcome: body.outcome });
   if (a === "setBudget") {
     try { return await E.setCampaignBudget(body.id, body.budget, { ctrl, budgetRes: body.budgetRes }); }
     catch (e) { return { ok: false, error: e.message }; }
@@ -429,7 +439,7 @@ async function handleAction(body) {
             { id:"background_worker",category:"orchestration",label:"Background worker dispatch",status:"queued",startedAt:dispatchAt,detail:"Dispatching the read-only scan to the Netlify background function." }
           ] };
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
+          f.db.collection(E.COL.state).doc("opportunities").set({ scanning: true, lastError: null, lastErrorAt: null, progress:{pct:1,label:"Dispatching background worker",detail:"run "+runId,at:Date.now()} }, { merge: true }),
           f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
         ]); } catch (e) {}
         let bgStatus = null, bgError = null;
@@ -446,9 +456,13 @@ async function handleAction(body) {
         bg.detail = bgError ? "The background worker did not accept the scan." : "Background worker accepted the scan; execution is now asynchronous."; bg.error = bgError;
         baseAudit.summary = { total:2, ok:bgError?1:2, warning:0, failed:bgError?1:0, skipped:0, running:0, queued:0 };
         if (bgError) baseAudit.completedAt = Date.now();
+        // Netlify may run the worker before this line: it then owns the scanning flag and the audit, so an
+        // accepted dispatch writes neither back (a finished scan never returns to "scanning"), and the
+        // audit is only updated while it is still this run's queued record.
         try { if (f) await Promise.all([
-          f.db.collection(E.COL.state).doc("opportunities").set({ scanning:!bgError, lastError:bgError||null, lastErrorAt:bgError?Date.now():null }, { merge:true }),
-          f.db.collection(E.COL.state).doc("opportunityScanAudit").set({ scanAudit:baseAudit }, { merge:true })
+          bgError ? f.db.collection(E.COL.state).doc("opportunities").set({ scanning:false, lastError:bgError, lastErrorAt:Date.now() }, { merge:true }) : null,
+          f.db.runTransaction(async tx => { const ref = f.db.collection(E.COL.state).doc("opportunityScanAudit"), snap = await tx.get(ref), cur = snap.exists ? (snap.data() || {}).scanAudit : null;
+            if (!cur || (cur.runId === runId && cur.status === "queued")) tx.set(ref, { scanAudit:baseAudit }, { merge:true }); })
         ]); } catch (e) {}
         const cur = await E.opportunitiesWithStatus({ cacheOnly: true });
         return Object.assign({}, cur, { scanning: !bgError, started: !bgError, runId, dispatchStatus:bgStatus, dispatchError:bgError });
@@ -539,10 +553,11 @@ async function httpHandler(event) {
   // POST → actions (auth required)
   let body = {}; try { body = JSON.parse(event.body || "{}"); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
-  const gate = authed(event, body);
+  const pc = await EP.resolve(); // one resolution per request: the gate and editPasscodeSet agree
+  const gate = await authed(event, body, pc);
   if (gate === "unset") return { statusCode: 403, headers: HEADERS, body: JSON.stringify({ ok: false, error: PASSCODE_UNSET, code: "EDIT_PASSCODE_NOT_SET" }) };
   if (!gate) return { statusCode: 401, headers: HEADERS, body: JSON.stringify({ error: "unauthorized" }) };
-  try { const out = await handleAction(body); if (body.action === "dashboard" && out && typeof out === "object") out.editPasscodeSet = !!passcode(); return ok(out); }
+  try { const out = await handleAction(body); if (body.action === "dashboard" && out && typeof out === "object") out.editPasscodeSet = !!pc.value; return ok(out); }
   catch (e) { return { statusCode: e.statusCode || 500, headers: HEADERS, body: JSON.stringify({ error: e.message }) }; }
 }
 
@@ -597,7 +612,7 @@ function render(d){
   var c=d.control||{};var bar=document.getElementById("ctrlbar");
   bar.innerHTML='<span class="pill '+(c.enabled?'on':'off')+'">'+(c.enabled?'LIVE':'STOPPED')+'</span>'+
     '<span class="pill '+(c.dryRun?'dry':'on')+'">'+(c.dryRun?'DRY-RUN':'APPLYING')+'</span>'+
-    '<span class="muted">ceiling $'+(c.maxDailyBudgetTotal)+'/day · step '+(c.maxBudgetStepPct)+'% · approve&gt;'+(c.budgetMoveApprovalPct)+'%</span>'+
+    '<span class="muted">ceiling '+(c.budgetCurrency?c.budgetCurrency+' ':'')+(c.maxDailyBudgetTotal)+'/day · step '+(c.maxBudgetStepPct)+'% · approve&gt;'+(c.budgetMoveApprovalPct)+'%</span>'+
     (c.enabled?'<button class="warn" onclick="act(\\'kill\\')">KILL</button>':'<button onclick="act(\\'resume\\')">Resume</button>')+
     '<button class="ghost" onclick="dry('+(!c.dryRun)+')">'+(c.dryRun?'Go live (apply)':'Switch to dry-run')+'</button>';
   var q=document.getElementById("queue");var p=d.pending||[];

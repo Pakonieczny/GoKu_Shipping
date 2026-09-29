@@ -171,6 +171,7 @@
   ],
   "modules": [
     "_adsCheckGate.js",
+    "_editPasscode.js",
     "_charmNestAgent.js",
     "_charmNestAsset.js",
     "_charmNestAuth.js",
@@ -209,6 +210,7 @@
     "_etsyMailVetoes.js",
     "_etsyPricingScheme.js",
     "_googleAdsClaude.js",
+    "_googleAdsServing.js",
     "_googleApiKeys.js",
     "_googleConnections.js",
     "_investorAdmin.js",

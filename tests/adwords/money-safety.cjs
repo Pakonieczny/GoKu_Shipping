@@ -1,23 +1,29 @@
-// Money safety: the console fails closed without EDIT_PASSCODE, only the server can drive the
+// Money safety: the console fails closed without a passcode, only the server can drive the
 // worker, and no enable / budget / end-date / approval / automatic change can pass Paul's daily
 // ceiling or monthly stop. No network: Google Ads, Firestore and the worker are local fakes.
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),path=require('path');
 const dir=path.resolve(__dirname,'../../netlify/functions')+'/',realRequire=require('module').createRequire(dir+'googleAdsAutopilot.js');
 const clone=x=>x==null?x:JSON.parse(JSON.stringify(x));
 let passed=0;const check=(v,msg)=>{assert(v,msg);passed++;};
-const UNSET='Set EDIT_PASSCODE in Netlify to enable changes';
+const UNSET='Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)';
 const SECRETS={GADS_REFRESH_TOKEN:'refresh',GADS_CLIENT_SECRET:'secret',GADS_DEVELOPER_TOKEN:'dev'};
 
 /* ---------- router + worker (fake engine, fake dispatch) ---------- */
-function load(file,env,E,calls){const mod={exports:{}},saved=[];const admin={firestore:()=>({collection:c=>({doc:d=>({get:async()=>({exists:false}),set:async(v,o)=>{saved.push([c+'/'+d,v]);}})})})};admin.firestore.FieldValue={serverTimestamp:()=>Date.now()};
-  const ctx={process:{env:{URL:'https://example.invalid',...env}},console,Date,Set,JSON,module:mod,exports:mod.exports,require:n=>n==='node-fetch'?async(url,opts)=>{calls.push(['dispatch',JSON.parse(opts.body)]);return {ok:true,status:202};}:n==='./googleAdsAutopilot'?E:n==='./firebaseAdmin'?admin:require(n)};
+// The passcode helper runs in its own context over the same env and fake Firestore as the file under
+// test. config/editPasscode is present with an empty passcode unless a test says otherwise: no
+// passcode anywhere, so the console is read-only (and nothing is generated over the document).
+function editPasscode(env,admin){const m={exports:{}},c={process:{env},console,Date,module:m,exports:m.exports,require:n=>n==='./firebaseAdmin'?admin:require(n)};vm.createContext(c);vm.runInContext(fs.readFileSync(dir+'_editPasscode.js','utf8'),c);return m.exports;}
+function load(file,env,E,calls,cfg={passcode:''}){const mod={exports:{}},saved=[];const pc={get:async()=>({exists:!!cfg,data:()=>({...cfg})}),create:async()=>{throw Error('unexpected create');}};
+  const admin={firestore:()=>({collection:c=>({doc:d=>c==='config'&&d==='editPasscode'?pc:({get:async()=>({exists:false}),set:async(v,o)=>{saved.push([c+'/'+d,v]);}})})})};admin.firestore.FieldValue={serverTimestamp:()=>Date.now()};
+  const penv={URL:'https://example.invalid',...env},EP=editPasscode(penv,admin);
+  const ctx={process:{env:penv},console,Date,Set,JSON,module:mod,exports:mod.exports,require:n=>n==='node-fetch'?async(url,opts)=>{calls.push(['dispatch',JSON.parse(opts.body)]);return {ok:true,status:202};}:n==='./googleAdsAutopilot'?E:n==='./firebaseAdmin'?admin:n==='./_editPasscode'?EP:require(n)};
   vm.createContext(ctx);vm.runInContext(fs.readFileSync(dir+file,'utf8'),ctx);return {api:mod.exports,ctx,saved};}
 function fakeEngine(calls,ctrl){return {COL:{state:'state',control:'control',approvals:'approvals'},control:async()=>{calls.push(['control']);return ctrl();},dashboard:async()=>({ok:true}),opportunitiesWithStatus:async()=>({opportunities:[]}),
   monthlySpendGuard:async()=>{calls.push(['monthly']);return {ok:true,tripped:false};},mineSearchTerms:async()=>{calls.push(['mine']);return {};},applyApproval:async(id,c,o)=>{calls.push(['apply',id,o]);return {ok:true};}};}
 const post=(body,headers={})=>({httpMethod:'POST',headers,body:JSON.stringify(body)});
 
 (async()=>{
- // 1. EDIT_PASSCODE unset: reads stay open, every change is refused with one clear sentence.
+ // 1. No passcode (EDIT_PASSCODE unset, config/editPasscode empty): reads stay open, every change is refused with one clear sentence.
  let calls=[],ctrl=()=>({enabled:true,dryRun:false}),E=fakeEngine(calls,()=>ctrl()),K=load('googleAdsAutopilotKick.js',{...SECRETS},E,calls);
  let r=await K.api.httpHandler(post({action:'dashboard'}));check(r.statusCode===200&&JSON.parse(r.body).editPasscodeSet===false,'dashboard readable and reports that no passcode is set');
  r=await K.api.httpHandler(post({action:'opportunities'}));check(r.statusCode===200,'cached opportunities readable');
@@ -48,8 +54,9 @@ const post=(body,headers={})=>({httpMethod:'POST',headers,body:JSON.stringify(bo
  r=await K.api.httpHandler(post({action:'dashboard'},{'x-edit-passcode':'s3cret-pass'}));check(r.statusCode===200&&JSON.parse(r.body).editPasscodeSet===true,'trimmed, unquoted passcode accepted');
  for(const h of [{},{'x-edit-passcode':'s3cret'},{'x-edit-passcode':'s3cret-pass-x'}]){r=await K.api.httpHandler(post({action:'setStatus',id:'1',status:'ENABLED'},h));assert.equal(r.statusCode,401);}
  check(true,'missing or wrong passcode refused (401)');
- const B2=load('googleAdsAutopilot-background.js',{EDIT_PASSCODE:'"s3cret-pass" ',...SECRETS},E,calls);check(K.ctx.workerToken()==='s3cret-pass','worker token is the passcode once set');
+ const B2=load('googleAdsAutopilot-background.js',{EDIT_PASSCODE:'"s3cret-pass" ',...SECRETS},E,calls);check(K.ctx.workerToken()===token&&B2.ctx.workerToken()===token,'worker token stays the server-only token once a passcode is set');
  r=await B2.api.handler(post({tasks:['publishApproval'],id:'d1',token:'wrong'}));check(r.statusCode===401,'worker refuses a wrong passcode');
+ calls.length=0;r=await B2.api.handler(post({tasks:['publishApproval'],id:'d1',token:'s3cret-pass'}));check(r.statusCode===200&&calls.some(c=>c[0]==='apply'),'worker still accepts the passcode itself');
  // Control limits are validated: an empty or invalid ceiling can no longer switch the checks off.
  const H={'x-edit-passcode':'s3cret-pass'};
  for(const patch of [{maxDailyBudgetTotal:''},{maxDailyBudgetTotal:'abc'},{maxDailyBudgetTotal:0},{maxDailyBudgetTotal:null},{maxMonthlySpend:-5},{anomalySpendMultiple:1}]){K.saved.length=0;r=await K.api.httpHandler(post({action:'setControl',patch},H));assert(r.statusCode===400&&/Nothing was saved/.test(JSON.parse(r.body).error)&&!K.saved.length,JSON.stringify(patch));}
@@ -110,6 +117,10 @@ async function engineChecks(){
  reset();W.mtdNative=800;await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00\) has reached your monthly stop threshold of USD 500/,'enable refused once month-to-date spend reached the monthly stop');
  W.rate=null;await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:5000})}),/without an exchange rate/,'no exchange rate: monthly stop cannot be verified, nothing enabled');
  f.docs.set('Brites_GAds_State/fxRates',{['CAD:'+ymd(tz,-3*86400000)]:0.7,['CAD:2020-01-01']:0.1,['EUR:'+today]:2});await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00/,'recent saved rate used when the rate service is down');
+ // Final daily rates are saved in fxRatesFinal (the reporting's store); the retired fxRates document is no longer written.
+ f.docs.delete('Brites_GAds_State/fxRates');f.docs.set('Brites_GAds_State/fxRatesFinal',{['CAD:'+ymd(tz,-2*86400000)]:0.7,['CAD:2020-01-01']:0.1,['EUR:'+today]:2});
+ await refuses(()=>E.setCampaignStatus('3','ENABLED',{ctrl:C({maxDailyBudgetTotal:500,maxMonthlySpend:500})}),/USD 560\.00/,'rates the reporting saves (fxRatesFinal) back the monthly stop when the rate service is down');
+ {const g=await E.monthlySpendGuard({ctrl:C({maxMonthlySpend:500})});check(g.tripped&&g.mtd===560&&muts.some(m=>m.ops.every(o=>o.update.status==='PAUSED')),'monthly stop still pauses with the rate service down, on the saved final rate');muts.length=0;}
  // Budgets: checked as a total, resolved server-side, lowering always allowed.
  reset();await refuses(()=>E.setCampaignBudget('1',75,{ctrl:C()}),/CAD 105\.00, over your daily ceiling/,'budget raise refused when the total would pass the ceiling');
  await E.setCampaignBudget('1',65,{ctrl:C(),budgetRes:B(999)});check(muts[0].ops[0].update.resourceName===B(11)&&muts[0].ops[0].update.amountMicros===65e6,'budget written to the live resource, never a stale browser one');
@@ -124,6 +135,11 @@ async function engineChecks(){
  reset();W.camps[4].status='ENABLED';W.budgets[B(15)]=60;const t=await E.enforceBudgetCeiling({ctrl:C()});
  check(t.total===120&&muts.length===1&&muts[0].ops.length===2&&new Set(muts[0].ops.map(o=>o.update.resourceName)).size===2,'shared budget counted and trimmed once; ended campaign ignored');
  check(muts[0].ops.reduce((n,o)=>n+o.update.amountMicros/1e6,0)<=100,'trimmed total at or under the ceiling');
+ // A budget under the 1-a-day floor is never raised by a trim; the larger budgets make the room instead.
+ reset();W.budgets[B(11)]=150;W.budgets[B(15)]=0.5;await E.enforceBudgetCeiling({ctrl:C()});
+ {const after={[B(11)]:150,[B(15)]:0.5};(muts[0]||{ops:[]}).ops.forEach(o=>{after[o.update.resourceName]=o.update.amountMicros/1e6;});
+  check(after[B(15)]===0.5&&after[B(11)]<150,'a trim never raises a budget below the floor: '+JSON.stringify(after));
+  check(after[B(11)]+after[B(15)]<=100,'and the trimmed total still fits the ceiling: '+(after[B(11)]+after[B(15)]));}
 
  // Anomaly breaker: no false trip on a launch; trips on a real spike or on spend beyond 2x the ceiling.
  reset();W.baseline=[10,10,10];W.yesterday=60;let a=await E.anomalyCheck({ctrl:C()});check(!a.tripped&&!f.docs.has('Brites_GAds_Control/control'),'launch after a quiet spell does not trip');

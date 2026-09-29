@@ -240,8 +240,9 @@ async function chromiumChecks() {
       const h = await openSorter(browser, servers, { sheets: SHEETS(300) });
       try {
         const listed = () => h.calls.filter(c => c.op === 'listSheets').length;
-        await h.page.evaluate(() => CN.setMode('library'));
-        await h.page.waitForFunction(() => document.querySelectorAll('#libBody .libCard').length >= 300, null, { timeout: 20000 });
+        // (the Sheets list: the Library opens on Sets, Paul 29 Sep)
+        await h.page.evaluate(() => { CN.setMode('library'); document.querySelector('#libKind button[data-k=sheets]').click(); });
+        await h.page.waitForFunction(() => document.querySelectorAll('#libBody [data-laser-card="sheet"] .libCard').length >= 300, null, { timeout: 20000 });
         const place = () => h.page.evaluate(() => { const st = document.getElementById('stage'), top = st.getBoundingClientRect().top; const c = [...document.querySelectorAll('#libBody .libCard')].find(n => n.getBoundingClientRect().bottom > top); return { scroll: st.scrollTop, id: c && c.dataset.id }; });
         await h.page.evaluate(() => { const st = document.getElementById('stage'); st.scrollTop = Math.round(st.scrollHeight / 2); });
         const before = await place(), n0 = listed();

@@ -83,7 +83,7 @@ const top=lines=>{const pts=lines.flat(),y=Math.min(...pts.map(p=>p[1]));return 
   store.set('Charm_Nest_Sheets/sheet-edges',{id:'sheet-edges',metal:'rose',verification:{ok:true},status:'complete',dirty:false,saving:false,draft:false,setId:'set-edges',runId:'run-edges',placements:[...b1,...b2].map(place),outputs:{ai:{url:'sheet.ai'}},
     roseProtectedJson:JSON.stringify({profile:old.profile,lines:legacy,shapes:b1,stages,placements:b1.map(place)})});
   const sheet=()=>store.get('Charm_Nest_Sheets/sheet-edges');
-  const saved=JSON.parse((await api.rosePlan({sheetId:'sheet-edges',stockId,revision:0,fingerprint:create.fingerprint(sheet()),shapesJson:JSON.stringify([...b1,...b2]),allowanceMm:.2})).planJson);
+  const saved=JSON.parse((await api.rosePlan({sheetId:'sheet-edges',stockId,revision:0,fingerprint:create.fingerprint(sheet()),shapesJson:JSON.stringify([...b1,...b2]),allowanceMm:.2,cut:true})).planJson);
   assert.deepEqual(edgeRuns(saved.lines,saved.profile),[],'the saved lines no longer run along the edge');
   assert.deepEqual(saved.stages.map(s=>[s.n,s.at,s.ids.length]),[[1,now-3600000,8],[2,now,8]],'both lines keep their dates and charms');
   const line1=saved.lines.slice(...saved.stages[0].lines),line2=saved.lines.slice(...saved.stages[1].lines);
@@ -104,6 +104,7 @@ const top=lines=>{const pts=lines.flat(),y=Math.min(...pts.map(p=>p[1]));return 
   store.set('Charm_Nest_Runs/run-full',{lines:{a:{poolIds:dense.map(s=>s.id),spec:{engraveCandidate:false}}}});
   store.set('Charm_Nest_Sheets/sheet-full',{id:'sheet-full',metal:'rose',verification:{ok:true},status:'complete',dirty:false,saving:false,draft:false,setId:'set-full',runId:'run-full',poolIds:dense.map(s=>s.id),placedCount:dense.length,placements:dense.map(place),outputs:{ai:{url:'full.ai'},preview:{url:'full.png'}},label:{files:[{path:'qr',url:'qr.png',payload:'test',orders:[]}]},orders:[]});
   const fullSheet=()=>store.get('Charm_Nest_Sheets/sheet-full');
+  // (no Cut Sheet press: a full sheet is planned by itself, since it adds no line)
   const planned=await api.rosePlan({sheetId:'sheet-full',stockId:fullClaim.stock.id,revision:0,fingerprint:create.fingerprint(fullSheet()),shapesJson:JSON.stringify(dense),allowanceMm:.2});
   const fullPlan=JSON.parse(planned.planJson);
   assert(fullPlan.full&&!fullPlan.lines.length&&!fullPlan.stages.length,'the saved plan has no green line to date');

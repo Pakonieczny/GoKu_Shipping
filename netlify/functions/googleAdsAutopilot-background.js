@@ -9,19 +9,21 @@
 // the hard safety check (kill switch ⇒ no-op).
 //
 // POST body: { tasks: ["conversions","measure","mine","prune","budgets","events","anomaly"], token }
-//   token must equal EDIT_PASSCODE (defence-in-depth; the kicker passes it).
+//   token must be the server-only worker token (the kicker passes it) or the console passcode.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const E = require("./googleAdsAutopilot");
 const fetch = require("node-fetch");
+const EP = require("./_editPasscode");
 
-// Same credential rules as googleAdsAutopilotKick.js (passcode(), sameSecret(), workerToken()):
-// EDIT_PASSCODE when set; otherwise a server-only token derived from the Google Ads secrets, so the
-// scheduled kick keeps working while no browser can drive this worker. Keep the two in step.
-function passcode(){return String(process.env.EDIT_PASSCODE||"").trim().replace(/^["']|["']$/g,"");}
-function sameSecret(a,b){a=String(a==null?"":a).trim();b=String(b==null?"":b);if(!a||!b)return false;const h=x=>require("crypto").createHash("sha256").update(x).digest();return require("crypto").timingSafeEqual(h(a),h(b));}
+// Same credential rules as googleAdsAutopilotKick.js (internalToken(), workerToken()): a server-only
+// token derived from the Google Ads secrets, so the scheduled kick keeps working while no browser can
+// drive this worker; EDIT_PASSCODE from the environment only when those secrets are absent. The
+// console passcode (_editPasscode.js: EDIT_PASSCODE, else Firestore config/editPasscode) is accepted
+// too. Keep the two files in step.
+const sameSecret=EP.sameSecret;
 function internalToken(){const key=[process.env.GADS_REFRESH_TOKEN,process.env.GADS_CLIENT_SECRET,process.env.GADS_DEVELOPER_TOKEN].filter(Boolean).join("|");return key?"internal-"+require("crypto").createHmac("sha256",key).update("brites-gads-background-worker/v1").digest("hex"):undefined;}
-function workerToken(){return passcode()||internalToken();}
+function workerToken(){return internalToken()||EP.envPasscode()||undefined;}
 
 async function continueMotion(next,task='adDesignMotion'){
  const base=process.env.URL||('https://'+(process.env.SITE_NAME||'goldenspike')+'.netlify.app');
@@ -35,9 +37,12 @@ const startedAt = () => Date.now();
 async function runEvents(ctrl, log) {
   const due = await E.dueEvents();
   if (!due.length) { log.push("events: none due"); return; }
+  // Budget: the planner's demand-sized budget unless GADS_NEW_CAMPAIGN_BUDGET is set; either way the engine
+  // keeps it inside the room left under the daily ceiling (auto), and the draft still waits for approval.
+  const envBudget = Number(process.env.GADS_NEW_CAMPAIGN_BUDGET);
   for (const d of due) {
     try {
-      const out=await E.generateForCollection(d.coll.handle,d.event.label,Number(process.env.GADS_NEW_CAMPAIGN_BUDGET||8),{ctrl,peakDate:d.event.peakDate});
+      const out=await E.generateForCollection(d.coll.handle,d.event.label,envBudget>0?envBudget:0,{ctrl,peakDate:d.event.peakDate,auto:true});
       log.push(`events: ${d.coll.handle} — ${out.ok ? "review draft prepared" : (out.reason||"no validated opportunity")}`);
     } catch (e) { log.push(`events: ${d.coll.handle} ERROR ${e.message}`); }
   }
@@ -63,15 +68,19 @@ exports.handler = async (event) => {
   const t0 = startedAt();
   const over = () => Date.now() - t0 > DEADLINE_MS;
 
-  // auth (defence-in-depth). Fails closed: with EDIT_PASSCODE unset only the server-side token
-  // (sent by the scheduled kick and the API) is accepted — never an anonymous request.
+  // auth (defence-in-depth). Fails closed: with no passcode configured only the server-side token
+  // (sent by the scheduled kick and the API) is accepted — never an anonymous request. The server
+  // token is checked first, so the scheduled path needs no Firestore read.
   let body = {};
   try { body = JSON.parse(event.body || "{}"); } catch {}
   if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
-  const pass = passcode(), internal = internalToken();
-  if (!((pass && sameSecret(body.token, pass)) || (internal && sameSecret(body.token, internal)))) {
-    if (pass) return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
-    return { statusCode: 403, headers: CORS, body: JSON.stringify({ ok: false, error: "Set EDIT_PASSCODE in Netlify to enable changes", code: "EDIT_PASSCODE_NOT_SET" }) };
+  const internal = internalToken();
+  if (!(internal && sameSecret(body.token, internal))) {
+    const pass = (await EP.resolve()).value;
+    if (!(pass && sameSecret(body.token, pass))) {
+      if (pass) return { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "unauthorized" }) };
+      return { statusCode: 403, headers: CORS, body: JSON.stringify({ ok: false, error: "Changes are locked until a passcode is saved in Firebase (Firestore config/editPasscode)", code: "EDIT_PASSCODE_NOT_SET" }) };
+    }
   }
 
   const ctrl = await E.control();
@@ -137,7 +146,9 @@ exports.handler = async (event) => {
           }
         }
       }
-      else if (task === 'adMotionPublication') {result.adMotionPublication=await E.runAdMotionPublication({workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef});}
+      else if (task === 'adMotionPublication') {const input={workspaceId:body.workspaceId,jobId:body.jobId,productId:body.productId,groupRef:body.groupRef};result.adMotionPublication=await E.runAdMotionPublication(input);
+        // YouTube processing usually takes minutes: keep checking so an approved upload reaches its attachment without another click.
+        for(let i=0;i<8&&result.adMotionPublication&&result.adMotionPublication.processing&&Date.now()-t0<DEADLINE_MS-120000;i++){await new Promise(r=>setTimeout(r,65000));result.adMotionPublication=await E.runAdMotionPublication(input);}}
       else if (task === 'adDesignMotion') {result.adDesignMotion=await E.runAdDesignMotion({workspaceId:body.workspaceId,jobId:body.jobId});if(result.adDesignMotion.continue)await continueMotion(result.adDesignMotion);} 
       else if (task === "adDesign") {
         result.adDesign=await E.runAdDesign({workspaceId:body.workspaceId,jobId:body.jobId});

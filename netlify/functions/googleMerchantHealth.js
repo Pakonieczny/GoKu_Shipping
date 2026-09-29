@@ -1,13 +1,13 @@
 // netlify/functions/googleMerchantHealth.js
 // ─────────────────────────────────────────────────────────────────────────────
 // Read-only Merchant Center health:
-//   https://goldenspike.app/.netlify/functions/googleMerchantHealth?key=<EDIT_PASSCODE>
+//   https://goldenspike.app/.netlify/functions/googleMerchantHealth?key=<passcode>
 //   …&format=json
 //
 // Answers what googleConnectionsCheck only proved reachable: which offers cannot
 // serve and why, whether Google records the advertising link, and whether store
 // conversions reach Merchant Center. Every call is a read. Needs the passcode, and
-// refuses outright while EDIT_PASSCODE is unset (_adsCheckGate.js).
+// refuses outright while no passcode is set (_adsCheckGate.js).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
@@ -85,14 +85,15 @@ function html(result) {
     '<h2 style="font-weight:600;margin:0">Merchant Center health</h2>' +
     '<p style="font-size:16px">' + (s.healthy ? 'Nothing is blocking offers from serving.' : (s.blocking.length ? 'Blocking: ' + esc(s.blocking.join(' · ')) : 'No blockers found')) +
     (s.unavailable ? '<br><span style="color:#8a4b00;font-size:13px">' + s.unavailable + ' section(s) could not be read, so those questions remain open.</span>' : '') +
+    ((s.attention || []).length ? '<br><span style="color:#8a4b00;font-size:13px">Needs attention: ' + esc(s.attention.join(' · ')) + '</span>' : '') +
     '<br><span style="color:#666;font-size:13px">Merchant ' + esc(result.merchantId) + ' · advertising account ' + esc(result.adsCustomerId || '—') + '</span></p>' +
     '<table style="border-collapse:collapse;width:100%;border:1px solid #eee">' + rows + '</table>' +
     '<p style="color:#666;font-size:12px;margin-top:14px">' + esc(result.note) + '</p></body>';
 }
 
 exports.handler = async (event) => {
-  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while EDIT_PASSCODE is unset.
-  const refused = refuse(event, 'the Merchant Center health check');
+  // Passcode only (?key=, X-Edit-Passcode or body passcode); refused while no passcode is set.
+  const refused = await refuse(event, 'the Merchant Center health check');
   if (refused) return refused;
   const params = (event && event.queryStringParameters) || {};
   let result;

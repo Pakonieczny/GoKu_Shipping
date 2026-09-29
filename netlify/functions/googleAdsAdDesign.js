@@ -560,7 +560,9 @@ function createAdDesignService(deps) {
           if(p.key!==b.key||p.width!==b.width||p.height!==b.height||typeof p.dataBase64!=='string'||p.dataBase64.length>400000||!/^([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(p.dataBase64))throw new Error('A rendered ad proof is missing or belongs to another format.');
           if(p.renderCheck?.version!==1||!Number.isFinite(p.renderCheck.visiblePhotoFraction)||p.renderCheck.visiblePhotoFraction<.005||p.renderCheck.visiblePhotoFraction>1)throw new Error('Verify visible product photography in every rendered proof before review.');
           const bytes=Buffer.from(p.dataBase64,'base64'),meta=await require('sharp')(bytes,{limitInputPixels:1000000}).metadata(),scale=Math.min(1,960/Math.max(b.width,b.height));
-          if(meta.format!=='jpeg'||Math.abs(meta.width-b.width*scale)>1||Math.abs(meta.height-b.height*scale)>1)throw new Error('A rendered proof has unexpected pixel dimensions.');
+          // Fixed-size Display proofs are published as reviewed, so they arrive at their exact size; older proofs capped at 960 px still load.
+          const exact=require('../../brites-ad-responsive').boards.some(d=>/^display_/.test(d.key)&&d.width===b.width&&d.height===b.height)&&meta.width===b.width&&meta.height===b.height;
+          if(meta.format!=='jpeg'||!exact&&(Math.abs(meta.width-b.width*scale)>1||Math.abs(meta.height-b.height*scale)>1))throw new Error('A rendered proof has unexpected pixel dimensions.');
           const asset=await deps.saveAsset(input.workspaceId,bytes,input.jobId+'_proof_'+sha([input.candidateHash,p.key,sha(bytes)]).slice(0,32),{width:meta.width,height:meta.height,mimeType:'image/jpeg',kind:'Complete ad review proof'});
           const displayWidth=b.key.includes('display_')?b.width:b.device==='desktop'?Math.min(600,b.width):Math.min(360,b.width);
           images.push({key:p.key,width:b.width,height:b.height,displayWidth,displayHeight:Math.round(displayWidth*b.height/b.width),renderCheck:p.renderCheck,asset});
@@ -1086,7 +1088,7 @@ function createAdDesignService(deps) {
       // allowance and spent were computed and never compared, so a retry could
       // dispatch past the budget. An unsettled reservation is still money at
       // risk: count it at its reserved amount until the provider settles it.
-      if (spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request: $" + spent.toFixed(2) + " of a $" + allowance.toFixed(2) + " allowance is already reserved and this step needs $" + reserve.toFixed(2) + ". Completed work is saved.");
+      if (spent + reserve > allowance) throw new Error("The remaining creative allowance cannot cover this request: US$" + spent.toFixed(2) + " of a US$" + allowance.toFixed(2) + " allowance is already reserved and this step needs US$" + reserve.toFixed(2) + ". Completed work is saved.");
       const requestId = crypto.randomUUID(); job.reservations = (job.reservations || []).concat({ key, requestId, reservedUsd: reserve, rationale: String(quote && quote.rationale || "Planning reservation; actual provider token usage is recorded separately.").slice(0, 400), at: Date.now(), settled: false });
       await saveJob({ requests: Number(job.requests || 0) + 1, inFlight: { key, at: Date.now(), requestId } });
       let output;

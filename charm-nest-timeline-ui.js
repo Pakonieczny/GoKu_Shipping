@@ -152,7 +152,7 @@
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
   const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
-  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type));
+  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -173,10 +173,82 @@
     }
     return out;
   }
+  /* ── every QR label printed is a seal of its own (Paul, 29 Sep 02:08: "Any time a label is printed whether it be
+     through this software or through the charm sorting software that must be recorded that the label was printed for
+     this order and the time it was printed. We already have the seals for the manual printing. Please use those to show
+     in the timeline."). A print is the Charm Sorter's Print QR label / Print again (a Review card or the order window:
+     the server's sealPrinted, one per line, read from its record's stamps for an older one, and the page's own
+     labelPrinted), the Sorting station's or the Design Station's (labelPrinted). One press is one seal, however many
+     events say it, numbered as the card numbers it (Print Nº n); a reprint is a seal of its own, and none ever goes. A
+     shipping label stays with Shipped. The Charm Sorter's lie on the Office lane, the Sorting station's on Sorting.
+     Drawn with the card's own seal (charm-nest-motion.js Seal.svg) where the page has it. ── */
+  const PRINT_MS = 3 * 60 * 1000;
+  const PRINT_WHERE = { charm: "Charm Sorter", sorting: "Sorting station", qr: "QR station", design: "Design Station" };
+  const isPrint = e => !!e && (e.type === "sealPrinted" || (e.type === "labelPrinted" && labelStepOf(e) === "sorted"));
+  const printPlace = e => e.type === "sealPrinted" || e.station === "sorter" || e.device === "charm-nest-1" || (!!e.data && e.data.label === "custom") ? "charm" : e.station || "other";
+  const sameHand = (a, b) => !a.by || !b.by || String(a.by).trim().toLowerCase() === String(b.by).trim().toLowerCase();
+  const lineOf = e => e.lineKey || e.transactionId || "";
+  /** The print seals, oldest first: one per press, each the event it is drawn as, with print { n, where } and the other
+   *  events of its press hung on it as `same` (so a click on any of them finds it). */
+  function printSeals(events) {
+    const press = [];
+    for (const e of events || []) {
+      if (!isPrint(e)) continue;
+      e.same = null; e.print = null;
+      const place = printPlace(e);
+      if (place !== "charm") { press.push({ place, s: [], l: e }); continue; }
+      if (e.type !== "sealPrinted") continue;
+      // each line's seal of one press (customPut, a line at a time): the press just before, when it has none of this line
+      const p = press.filter(x => x.place === "charm" && x.s.length).pop();
+      if (p && !p.s.some(x => lineOf(x) === lineOf(e)) && e.at - p.s[0].at <= PRINT_MS && sameHand(p.s[0], e)) p.s.push(e);
+      else press.push({ place, s: [e], l: null });
+    }
+    // the page's own word of a press (labelPrinted): the nearest press of the same person that has none yet
+    for (const e of events || []) {
+      if (!isPrint(e) || e.type !== "labelPrinted" || printPlace(e) !== "charm") continue;
+      let best = null;
+      for (const p of press) if (p.place === "charm" && !p.l && p.s.length && sameHand(p.s[0], e) && Math.abs(p.s[0].at - e.at) <= PRINT_MS && (!best || Math.abs(p.s[0].at - e.at) < Math.abs(best.s[0].at - e.at))) best = p;
+      if (best) best.l = e; else press.push({ place: "charm", s: [], l: e });
+    }
+    const count = {}, out = [];
+    for (const p of press.map(p => Object.assign(p, { rep: p.l || p.s[0] })).sort((a, b) => byAt(a.rep, b.rep))) {
+      // its number: the record's count at that press (the card's Print Nº), else the one the page stamped, else the next
+      const had = p.s.map(x => +(x.data && x.data.prints)).find(v => v > 0) || +(p.l && p.l.data && p.l.data.print) || 0;
+      const n = had || (count[p.place] || 0) + 1; count[p.place] = Math.max(count[p.place] || 0, n);
+      const all = (p.l ? [p.l] : []).concat(p.s), rep = p.rep;
+      if (p.place === "charm") for (const x of all) x.lane = "office";
+      rep.print = { n, where: PRINT_WHERE[p.place] || placeOf(rep) || "a station" };
+      rep.same = all.length > 1 ? all.filter(x => x !== rep) : null;
+      out.push(rep);
+    }
+    return out;
+  }
+  /** The seals drawn: the milestones and what a person did (sealsOf), and every label printed (printSeals). */
+  const withPrints = events => sealsOf(events).concat(printSeals(events)).sort(byAt);
+  /** A print's seal: on its lane the QR stamp; its full face the card's own (Seal.svg), else this file's with its words. */
+  function printSvg(e, full, opts) {
+    const n = +e.print.n || 1, plain = Object.assign({}, e, { type: "sealPrinted", print: null });
+    if (!full) return stampSvg(plain, false, opts);
+    const Sl = root.Seal;
+    if (Sl && typeof Sl.svg === "function") {
+      try {
+        const svg = Sl.svg({ how: "print", at: +e.at || 0, by: personOf(e), n }), id = opts && opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "";
+        return id ? svg.replace(/\bsl\d+([ftb])\b/g, id + "$1") : svg;   // (a uid: the same markup every time, as stampSvg's)
+      } catch (_) {}
+    }
+    plain.data = Object.assign({}, e.data, { ring: "QR label printed", foot: "PRINT Nº " + n });
+    return stampSvg(plain, true, opts);
+  }
+  const printTitle = e => `QR label printed · Print Nº ${e.print.n} · ${e.print.where}`;
+  /** The print seal in the Stamps legend. */
+  const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "Name", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
   function blockerOf(events) {
-    let hold = null; const need = new Map();
+    let hold = null; const need = new Map(), byHand = new Map();
     for (const e of events || []) {
+      // a line completed with Complete Order answers its question (a person finished it by hand); a Reopen asks it again
+      const op = opStepOf(e), l = e.lineKey;
+      if (op && l) { const [a, b] = op === "complete" ? [need, byHand] : [byHand, need]; if (a.has(l)) { b.set(l, a.get(l)); a.delete(l); } continue; }
       if (e.type === "held") hold = e;
       else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
       else if (e.type === "needsDecision") need.set(e.lineKey || e.id, e);
@@ -317,6 +389,8 @@
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
       at = Math.max(at, +e.at || 0);
+      // a Complete Order press or a Reopen moves the order on no step (derive's `hand`: completed by hand)
+      if (opStepOf(e)) { if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by; continue; }
       if (stepOf(e) != null) step = Math.max(step, stepOf(e)); else if (isDesigned(e)) step = Math.max(step, 1);
       if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; seen = e.type === "scan"; }
       if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
@@ -353,6 +427,39 @@
   // (the All · Milestones · Stations · Sheets · Holds & cancels · Messages chips are gone: only milestones are drawn
   //  now, so there is nothing left to filter. The bar keeps one quiet "Stamps" chip — the legend of the seals.)
   const CANCEL_TYPES = new Set(["cancelled", "etsyCancelled"]);
+
+  /* ── Complete Order and Reopen (Paul, 29 Sep 02:08: "The timeline also doesn't have the seals or the points for when an
+     order was manually completed by pressing the completed button in the Review tab") ──
+     Each press of Complete Order (a Review card, a Custom Orders card, the order window: charmNestLibrary customPut, a
+     sealCompleted whose data.how is "button") is a point of its own on the Office lane ("Operator"), with the green
+     scalloped "Order completed" seal the card is stamped with (Seal in charm-nest-motion.js: its ink, edge and check).
+     A Reopen or an Undo (customReopen: a note with data.reopened) is a point of its own, with its own seal: it never
+     takes the Complete point away (seals never disappear), and a later Complete adds another. The seal's rim says where
+     it was pressed (data.pressedIn; an older press: the sorter), its middle who and when. norm() dresses the event for
+     drawing and the host gets the record back as it came (pubOf). A completion by printing the label is the label's. */
+  KIND.sealCompleted = K("green", "m", "check", "office");   // (the Office lane's, not the sheet's)
+  KIND.reopened = K("velvet", "e", "undo", "office");
+  function opStepOf(x) {
+    if (!x) return "";
+    if (x.type === "sealCompleted") return x.data && x.data.how === "print" ? "" : "complete";
+    return x.type === "reopened" || (x.type === "note" && !!x.data && !!x.data.reopened) ? "reopen" : "";
+  }
+  /** A Complete press or a Reopen as it is drawn: its type, its words and where it was pressed; null for any other. */
+  function opDress(x) {
+    const k = opStepOf(x); if (!k) return null;
+    const d = x.data && typeof x.data === "object" && !Array.isArray(x.data) ? x.data : {}, where = str(d.pressedIn, 40);
+    const text = k === "complete" ? "Completed with Complete Order" : d.reopened === "undo" ? "Completion undone: back to Open" : "Reopened: back to Open";
+    return { type: k === "reopen" ? "reopened" : x.type, text: text + (where ? " · " + where : ""), data: Object.assign({}, d, where ? { foot: where } : {}) };
+  }
+  /** Completed by hand (Paul, 29 Sep: a Complete Order press reads as completed everywhere): the latest press when every
+   *  line pressed has no Reopen after its last press, else null. The steps it had not reached are skipped, not "next";
+   *  a Reopen puts the order back where it was (its Complete and Reopen seals stay), a later press completes it again. */
+  function handOf(events) {
+    const last = new Map();
+    for (const e of events || []) { const k = opStepOf(e); if (k) last.set(e.lineKey || "", k === "complete" ? e : null); }
+    const v = [...last.values()];
+    return v.length && v.every(Boolean) ? v.reduce((a, b) => (+b.at >= +a.at ? b : a)) : null;
+  }
 
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
   const arc = (r, a0, a1, sw) => { const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1), span = sw ? (a1 - a0 + 360) % 360 : (a0 - a1 + 360) % 360; return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${span > 180 ? 1 : 0} ${sw} ${x1.toFixed(2)} ${y1.toFixed(2)}`; };
@@ -400,6 +507,7 @@
    *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture; opts.uid names
    *  its inner ids (the same stamp then draws the same markup; unique in the page, as the ids are). */
   function stampSvg(e, full, opts) {
+    if (e && e.print) return printSvg(e, full, opts);
     opts = opts || {};
     const Kd = kindOf(e.type), ink = INK[Kd.ink], id = opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "tls" + (++UID), seed = (hash(String(e.key || e.id || e.type) + e.at) % 997) + 1;
     const useTex = opts.tex !== false && !opts.ghost, tex = useTex ? texOf(id, seed) : "", g = useTex ? ` filter="url(#${id}f)"` : "";
@@ -438,6 +546,7 @@
   /* ════ one event, as the timeline reads it ════ */
   function norm(x) {
     if (!x || typeof x !== "object" || !x.type) return null;
+    const was = x, op = opDress(x); if (op) x = Object.assign({}, x, op);   // (a Complete press or a Reopen, drawn)
     const type = String(x.type), at = Number(x.at) || 0, rawId = String(x.id || `${at}-${type}`);
     const e = {
       // the server keeps `${orderId}~${type}~${key}`; the page's own record (live, or still in the outbox) is `key`
@@ -448,11 +557,12 @@
       milestone: x.milestone != null ? !!x.milestone : !!(typeInfo(type) || {}).milestone, pending: !!x.pending, derived: !!x.derived
     };
     e.lane = laneOf(e);
+    if (op) e.orig = Object.fromEntries(["type", "text", "data"].filter(k => was[k] != null).map(k => [k, was[k]]));
     return e;
   }
   // an event as the host gets it (onOpen, onEvents, onNow): the record's own fields, without the drawing's
   const PUB = ["id", "key", "type", "at", "by", "source", "station", "device", "lineKey", "transactionId", "sheetId", "sheet", "setId", "text", "data", "milestone", "pending", "derived"];
-  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return o; };
+  const pubOf = (e, orderId) => { const o = { orderId }; for (const k of PUB) if (e[k] != null && e[k] !== "" && e[k] !== false) o[k] = e[k]; return e.orig ? Object.assign(o, e.orig) : o; };
   const warn = (what, err) => { try { console.warn("[OrderTimelineUI] " + what + ":", err); } catch (_) {} };
   // oldest first, as the server's byTime: at the same moment the order's arrival leads (a step the server drew at the
   // arrival, from before it, keeps its own order after it: data.recordedAt)
@@ -505,6 +615,7 @@
     return f;
   }
   const titleOf = (e, max) => {
+    if (e.print) return printTitle(e);
     if (e.type === "scan") return seenAt(e);
     const t = e.text && e.text.length <= (max || 90) ? e.text : "";
     return t || labelOf(e.type) + (e.sheet ? " — " + e.sheet : "");
@@ -514,9 +625,10 @@
   /** Where an order stands, for the rail and the Now line: its events (oldest first), its cancel record and the
    *  server's `where` (worked out here when there is none). Pure: the order view may use it too.
    *  rail: the order's (or a piece's) own steps, stagesFor(lines); every step when left out.
-   *  → { W, rail, stages[{first,last}], step, cur, stop, cancelled, hold, last } — all indexes into `rail`. step: the
-   *  furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the step
-   *  being worked towards (-1 when all are done), stop: where a cancelled order stopped. */
+   *  → { W, rail, stages[{first,last}], step, cur, stop, cancelled, hold, hand, last } — all indexes into `rail`. step:
+   *  the furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the
+   *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
+   *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
   function derive(events, cancelRec, where, rail) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
@@ -537,7 +649,8 @@
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
     const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
-    return { W, rail, stages, step, cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
+    const hand = cancelled ? null : handOf(events);
+    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null };
   }
 
   /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
@@ -563,16 +676,17 @@
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
       const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
-      if (x.D.step >= i || x.D.stages[i].first) rail[i].n += q;
+      if (x.D.step >= i || x.D.stages[i].first || x.D.hand) rail[i].n += q;
     }
-    return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => x.D.step)) : -1 };
+    // (a piece completed by hand waits on no step: the order is where its slowest other piece is)
+    return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => (x.D.hand ? STAGES.length - 1 : x.D.step))) : -1 };
   }
   /** The rail a view draws (list: its steps, oldest first), with the step being worked towards and, when cancelled,
    *  where it stopped, both on that rail. */
   function railed(D, list, sum) {
     D.rail = (list && list.length ? list : STAGES).map(s => ({ s, i: STAGES.indexOf(s) })).filter(r => r.i >= 0);
     const nx = D.rail.find(r => r.i > D.step);
-    D.cur = nx ? nx.i : -1;
+    D.cur = nx && !D.hand ? nx.i : -1;
     D.stop = D.cancelled ? (nx ? nx.i : D.rail[D.rail.length - 1].i) : -1;
     D.sum = sum || null;
     return D;
@@ -625,7 +739,7 @@
     const R = D.rail, pos = R.findIndex(r => r.i === i);
     const cx = data.context && typeof data.context === "object" ? data.context : {};
     const lines = Array.isArray(cx.lines) ? cx.lines : [], sheets = Array.isArray(cx.sheets) ? cx.sheets.filter(x => x && x.name) : [];
-    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
+    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : D.hand ? "skipped" : i === D.cur ? "now" : "later";
     const done = [], need = [], facts = [];
     // who did it, where and when (Paul, 28 Sep 23:51): "Welded · Marco R. · Welding", then its time and the station's words
     const doneOf = e => {
@@ -654,6 +768,8 @@
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
+    // completed by hand (Complete Order): nothing is owed, and who completed it and when is said
+    if (state === "skipped") { done.push({ t: "Not needed: the order was completed by hand", sub: [shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand)] : []).join(" · "), key: D.hand.key }); return out(); }
     const noLabel = () => { if (s.k === "sorted" && !labels.length) add("label", "Label not printed yet"); };
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
     // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
@@ -691,7 +807,9 @@
         if (x.cut) continue;
         const g = x.stages || {};
         if (x.placed != null) facts.push(`${x.name} holds ${x.placed} piece${x.placed === 1 ? "" : "s"}${x.pct ? ` · ${Math.round(x.pct)}% full` : ""}`);
-        if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
+        // (a Rose Gold sheet's newest charms wait for its Cut Sheet press: said by name, with what to press)
+        if (x.uncut > 0) add("person", `${x.name} has ${x.uncut} charm${x.uncut === 1 ? "" : "s"} not cut yet: press Cut Sheet`);
+        else if (g.layout === false) add("wait", `${x.name}'s layout is checked and saved`);
         if (g.front === false) add("wait", `${x.name}'s front cut file is saved`);
         if (g.approval === false) add("person", `${x.name}: ${x.waiting || "some"} engraving${x.waiting === 1 ? "" : "s"} still to approve in Review`);
         if (g.backs === false && g.approval !== false) add("wait", `${x.name} has ${x.saved || 0} of ${x.required || 0} back files saved`);
@@ -707,7 +825,7 @@
   const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "" };
   // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
   const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
-  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed" };
+  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
   /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
@@ -1030,7 +1148,7 @@
     if (doc.getElementById("tlUiCss")) return;
     const s = doc.createElement("style"); s.id = "tlUiCss"; s.textContent = CSS; (doc.head || doc.documentElement).appendChild(s);
   }
-  const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(stationName(e))}</em>${esc(whoOf(e))}</span>`;
+  const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
   // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
   //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
   const COL = 50, LANE_H = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
@@ -1240,7 +1358,7 @@
       o = o || {};
       const D = S.D = deriveNow();
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
-      S.shown = sealsOf(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
+      S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       paintNow(D, o); paintRail(D, o);
       tell();
       if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
@@ -1272,6 +1390,7 @@
       const D = derive(S.events, S.cancelled, whereNow());
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
       const sum = summary(S.every, S.pieces, S.cancelled), far = D.step;
+      if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)
       D.step = Math.min(D.step, sum.step);
       // a step that every piece taking it has passed is not what the order waits on (a stud's Welded, done, while the
       // necklaces wait on Assembled): the next step is the first one some piece still has to reach
@@ -1309,6 +1428,7 @@
     function nowText(D) {
       const W = D.W;
       if (D.cancelled) return { cls: "cx", t: "Cancelled — do not proceed" };
+      if (D.hand) return { cls: "done", t: "Order completed by hand" };
       if (!S.events.length) return { cls: "", t: "Nothing recorded yet" };
       if (D.hold) { const r = reasonOf(D.hold) || D.hold.text; return { cls: "hold", t: "On hold" + (r ? " — " + r.slice(0, 80) : "") }; }
       return { cls: W.stage === "completed" ? "done" : "", t: String(W.label || W.text || "—").slice(0, 140) };
@@ -1347,7 +1467,7 @@
         let c;
         if (!S.loaded) c = "f";
         else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
-        else c = i <= D.step ? "d" : i === D.cur ? "c" : "f";
+        else c = i <= D.step ? "d" : i === D.cur ? "c" : D.hand ? "f gone" : "f";   // (completed by hand: the rest skipped)
         // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
         const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part;
@@ -1362,7 +1482,7 @@
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
         const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
         // (who did it and where: "Welded · Marco R. · Welding · done Tuesday, Sep 29, 2026 · 10:15 AM")
-        const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
+        const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : D.hand ? `${s.l}: skipped, the order was completed by hand` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
@@ -1425,7 +1545,7 @@
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1];
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = D.cancelled ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
+      const ghosts = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
       const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
@@ -1435,7 +1555,7 @@
       let cxX = 0;
       if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + COL / 2 : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - COL * .75 }).x + COL / 2); }
       const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
-      const nowLbl = D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
+      const nowLbl = D.hand ? ["COMPLETED", shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand).toUpperCase()] : []).join(" · ") : D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
       const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
@@ -1466,6 +1586,8 @@
         cv.insertAdjacentHTML("beforeend", ghostHtml);
       }
       S.nowX = nowX;
+      // (a NOW label longer than the room before its line, "COMPLETED · TUE 3:08 AM · PAUL" early on, reads after it)
+      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * 6.7 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "8px"; }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
         [...cv.querySelectorAll(".tlSt")].forEach((b, i) => { const r = b.style.getPropertyValue("--rot"); anim(b, [{ transform: `rotate(${r}) scale(.3)`, opacity: 0 }, { transform: `rotate(${r}) scale(1)`, opacity: b.classList.contains("ghost") ? .42 : b.classList.contains("dim") ? .13 : 1 }], 420, { delay: Math.min(i * 18, 540), easing: SPRING, fill: "backwards" }); });
@@ -1509,7 +1631,7 @@
       // the legend shows the seals that are actually drawn, nothing else
       const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k }));
       const det = $(".tlDetail");
-      det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}</div>`;
+      det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}${printLegend(t)}</div>`;
       anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
     }
     /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
@@ -1638,14 +1760,14 @@
       const i = stageOfEl(b), q = i >= 0 ? reqOf(i) : null; if (!q) return;
       if (expA) { try { expA.cancel(); } catch (_) {} expA = null; }
       // an event that is not a step of its own says what it is first, then what the order needs to move on
-      const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null;
-      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 9px">Then, for the order to move on</div>` : "";
+      const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null, hand = lone && S.D.hand;
+      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : "";
       expFor = b; expT = cancelT(expT);
       // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
       const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && !z.up ? z : null;
       const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
       // (a short view puts the card beside the dot: beside its seal too, never over it)
-      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
+      expA = placeExp(exp, hand ? head : head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
       exp.classList.add("on");   // (the card takes the pointer: moving onto it keeps it)
     }
     function hideExp(now) {
@@ -1690,7 +1812,7 @@
       const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
       const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
         `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
-        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
+        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" || q.state === "skipped" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
         `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
         `<div class="tlAround"><span class="tlLbl">The path</span><div class="tlPath2">${path}</div></div></div>`;
@@ -1937,5 +2059,5 @@
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf };
 })(typeof window !== "undefined" ? window : globalThis);

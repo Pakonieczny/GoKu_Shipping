@@ -32,12 +32,15 @@ function memory() {
   return { docs, db: { collection: c => col(c), runTransaction: async fn => fn({ get: r => r.get(), set: (r, v, o) => r.set(v, o), update: (r, v) => r.update(v), delete: r => docs.delete(r.path) }),
     batch: () => { const ops = []; return { set: (r, v, o) => ops.push(() => r.set(v, o)), commit: async () => { for (const op of ops) await op(); } }; } }, FV: { serverTimestamp: () => Date.now() } };
 }
-// Router and worker with a fake engine; dispatches to the worker are recorded, never sent.
+// Router and worker with a fake engine; dispatches to the worker are recorded, never sent. The passcode
+// helper runs with the same test env (EDIT_PASSCODE), so no Firestore passcode is read.
 function load(name, env, E, calls) {
   const mod = { exports: {} }, saved = [], admin = { firestore: () => ({ collection: c => ({ doc: d => ({ get: async () => ({ exists: false }), set: async v => { saved.push([c + '/' + d, v]); } }) }) }) };
   admin.firestore.FieldValue = { serverTimestamp: () => Date.now() };
-  const ctx = { process: { env: { URL: 'https://example.invalid', ...env } }, console, Date, Set, Map, JSON, module: mod, exports: mod.exports,
-    require: n => n === 'node-fetch' ? async (url, opts) => { calls.push(['dispatch', JSON.parse(opts.body)]); return { ok: true, status: 202 }; } : n === './googleAdsAutopilot' ? E : n === './firebaseAdmin' ? admin : realRequire(n) };
+  const penv = { URL: 'https://example.invalid', ...env }, ep = { exports: {} }, epCtx = { process: { env: penv }, console, Date, module: ep, exports: ep.exports, require: n => n === './firebaseAdmin' ? admin : realRequire(n) };
+  vm.createContext(epCtx); vm.runInContext(fs.readFileSync(dir + '_editPasscode.js', 'utf8'), epCtx);
+  const ctx = { process: { env: penv }, console, Date, Set, Map, JSON, module: mod, exports: mod.exports,
+    require: n => n === 'node-fetch' ? async (url, opts) => { calls.push(['dispatch', JSON.parse(opts.body)]); return { ok: true, status: 202 }; } : n === './googleAdsAutopilot' ? E : n === './firebaseAdmin' ? admin : n === './_editPasscode' ? ep.exports : realRequire(n) };
   vm.createContext(ctx); vm.runInContext(fs.readFileSync(dir + name, 'utf8'), ctx); return { api: mod.exports, ctx, saved };
 }
 const post = (body, headers = {}) => ({ httpMethod: 'POST', headers, body: JSON.stringify(body) });
@@ -198,7 +201,7 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
     check(paid === 2 && list.find(o => o.label === 'Anniversary gifting').daysOut === 30, 'a saved list is reused at no cost, however old (no 12-hour expiry), its day counts moved on');
 
     // Studio: the scheduled refresh keeps the last AI synthesis instead of paying for a new one.
-    const e2 = engine({ OPENAI_API_KEY: 'test' }), f2 = memory(); let studioPaid = 0;
+    const e2 = engine({ ANTHROPIC_API_KEY: 'test' }), f2 = memory(); let studioPaid = 0;
     await f2.db.collection(COL.state).doc('designStudioAcquisition').set({ learning: { synthesis: { summary: 'kept' } } });
     e2.bind({ fb: () => f2, control: async () => ({ targetRoas: 0 }), openaiJSON: async () => { studioPaid++; return { summary: 'fresh' }; },
       designStudioPerformance: async () => ({ readiness: { apiOk: true, purchaseReady: true, assistCoverage: 4 }, overall: { clicks: 80, cost: 100, impressions: 2000, ctr: 0.04 },
@@ -275,6 +278,9 @@ const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\
     gen = { ok: true, occasions: [{ label: 'Stale' }] }; const stale = ui.loadOccasions(true); d.querySelector('#bColl').value = 'moon'; await ui.loadOccasions(false); await stale;
     check(![...d.querySelector('#bEvent').options].some(o => o.value === 'Stale'), 'a refresh for a collection no longer selected does not replace the list');
     check(/runs to "\+r2\.endDate/.test(html) && /days from the day you enable it/.test(html), 'the enable notice and the plan state the planned run');
+    const ap = { money: v => 'CAD ' + v, DASH: {} }; vm.createContext(ap); for (const n of ['apCurrency', 'apMoney', 'apBidding']) vm.runInContext(pick(n), ap);
+    check(ap.apBidding({ maximizeConversionValue: {} }, { meta: { biddingMode: 'MAXIMIZE_CONVERSION_VALUE_LEARNING', targetRoas: 0, targetRoasLater: 2.5 } }, {}) === 'Maximize conversion value · no target ROAS until it has about 6 weeks and 30 conversions in 30 days'
+      && /\["Schedule",esc\(m\.runDays\?m\.runDays\+" days from the day you enable it":apSchedule\(psd,ped\)\)\]/.test(html), 'the PMax approval card says no target ROAS applies at launch and counts the run from enabling');
   }
 
   console.log(passed + ' spend and paid-AI guard checks passed.');

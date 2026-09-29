@@ -422,6 +422,10 @@ async function op_putSheet(b) {
   const ref = col(SHEETS).doc(s.id);
   const refused = await db.runTransaction(async tx => {
     const ex = await tx.get(ref), old = ex.exists ? ex.data() : {};
+    // an order line goes on a sheet once (Paul, 29 Sep: a design went on its sheet twice): a record that would place one
+    // piece twice is refused, in words; one saved so before this check saves as it was, to be put right by hand
+    const twice = ids => { const seen = new Set(), dup = new Set(); for (const id of Array.isArray(ids) ? ids : []) if (id) { if (seen.has(id)) dup.add(id); seen.add(id); } return dup; };
+    if (Array.isArray(s.poolIds)) { const was = twice(old.poolIds), extra = [...twice(s.poolIds)].filter(id => !was.has(id)); if (extra.length) return { error: `Sheet ${s.id} was not saved: it would put ${extra.length === 1 ? "piece " + extra[0] : `${extra.length} pieces (${extra.slice(0, 3).join(", ")})`} on it twice — an order line goes on a sheet once`, status: 409 }; }
     if(old.roseCutAt && (s.placements || s.stock || s.sources))throw new Error('This layout was already cut. Start a new sheet to use its remnant');
     const protection=require('./_charmNestRoseStock'),guard=protection.protectedLayout(old);
     if(Object.prototype.hasOwnProperty.call(s,'placements'))protection.assertProtected(guard,s.placements);
@@ -871,7 +875,7 @@ function poolEvents(ids, p, before, b) {
 async function op_poolPut(b) {
   const rows = (Array.isArray(b.pools) ? b.pools : [b.pool]).filter(p => p && isPoolId(p.poolId)).slice(0, 400);
   if (!rows.length) return { error: "no pool rows" };
-  const out = { written: 0, contended: [] };
+  const out = { written: 0, contended: [], placed: [] };
   /* Two runs contending for one line: a row claimed by a LIVE run (fresh within 24 h, not finished) belongs to that run.
      A run that was stopped or given up is not live, whatever its rows say: yesterday's stopped run kept 152 lines
      out of today's on the strength of rows it never finished, so the run itself is asked, once per run. */
@@ -883,10 +887,19 @@ async function op_poolPut(b) {
   const byId = new Map(); for (const p of rows) byId.set(p.poolId, Object.assign(byId.get(p.poolId) || {}, p));
   const list = [...byId.values()], found = [];
   for (let i = 0; i < list.length; i += 100) found.push(...await db.getAll(...list.slice(i, i + 100).map(p => col(POOL).doc(p.poolId))));
+  /* A line already on a saved sheet is never placed again (Paul, 29 Sep: an order's design went on its sheet twice): a
+     row whose record puts it on a sheet (not taken off since: abandoned or superseded), and whose sheet's saved record
+     still lists it, is not written over by a fresh placement (no sheet id). It is answered as placed, with where it is. */
+  const onSheet = new Map(), want = new Map();
+  list.forEach((p, i) => { const cur = found[i] && found[i].exists ? found[i].data() : null; if (cur && cur.sheetId && !p.sheetId && !["abandoned", "superseded"].includes(cur.state)) want.set(p.poolId, cur); });
+  const sheetIds = [...new Set([...want.values()].map(c => String(c.sheetId)).filter(isId))], sheetsRead = new Map();
+  for (let i = 0; i < sheetIds.length; i += 100) for (const s of await db.getAll(...sheetIds.slice(i, i + 100).map(id => col(SHEETS).doc(id)), { fieldMask: ["poolIds", "archived", "fileBase"] })) if (s.exists) sheetsRead.set(s.id, s.data());
+  for (const [id, cur] of want) { const sh = sheetsRead.get(String(cur.sheetId)); if (sh && !sh.archived && (sh.poolIds || []).includes(id)) onSheet.set(id, { poolId: id, sheetId: cur.sheetId, sheetName: cur.sheetName || sh.fileBase || null, state: cur.state || null, setId: cur.setId || null }); }
   let batch = db.batch(), n = 0;
   for (const [i, p] of list.entries()) {
     const ex = found[i], cur = ex && ex.exists ? ex.data() : null;
     if (cur && cur.runId && p.runId && cur.runId !== p.runId && !["complete", "abandoned", "committed"].includes(cur.state) && (Date.now() - (ms(cur.updatedAt) || 0)) < 24 * 3600 * 1000 && await liveRun(cur.runId)) { out.contended.push({ poolId: p.poolId, runId: cur.runId }); continue; }
+    if (onSheet.has(p.poolId)) { out.placed.push(onSheet.get(p.poolId)); continue; }
     const doc = Object.assign({}, p, { poolId: p.poolId, updatedAt: FV.serverTimestamp() }); if (!cur) doc.createdAt = FV.serverTimestamp();
     batch.set(col(POOL).doc(p.poolId), doc, { merge: true }); out.written++;
     if (++n >= 400) { await batch.commit(); batch = db.batch(); n = 0; }
@@ -1997,14 +2010,17 @@ async function op_customPut(b) {
   await ref.set(doc, { merge: true });
   // the new seal on the order's timeline, as the record keeps it (its time is its id: the same seal is one event)
   await stamp(() => ({ orderId: doc.receiptId || orderOfKey(key), type: button ? "sealCompleted" : "sealPrinted", at: now, by: who, station: "sorter", lineKey: key, transactionId: doc.transactionId || key.split("_")[1] || "",
-    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120) }, id: `${key}-${now}` }), "custom seal");
+    text: [doc.sku, button ? "Complete Order" : `print ${doc.prints}`].filter(Boolean).join(" · "), data: { how: button ? "button" : "print", prints: doc.prints || (cur && +cur.prints) || 0, completed: !!doc.completedAt, sku: doc.sku, title: str(doc.title, 120), ...pressedIn(b) }, id: `${key}-${now}` }), "custom seal");
   return { ok: true, record: customRow(Object.assign({}, cur || {}, doc), false) };
 }
 const STAMPS_MAX = 2000;
+// where a Complete Order or a Reopen was pressed (the order window, a Review card: the page says so), for its point on
+// the order's timeline (Paul, 29 Sep 02:08)
+const pressedIn = b => (b && b.from ? { pressedIn: str(b.from, 40) } : {});
 /* Reopen or Undo (Paul, 29 Sep 00:35: "the seals can never ever disappear… even though you can reopen an order, the
    seal must always remain and follow that order forever"). The record is never deleted and its seals never cleared: its
    state becomes "open" (the sorter reads the line as not completed), who and when join its history, and the order's
-   timeline gets a note (not a seal). A record from before the stamps has its seals written out from what it kept, so a
+   timeline gets a note (drawn there as a Reopen point of its own, beside the Complete point it never takes away). A record from before the stamps has its seals written out from what it kept, so a
    later completion cannot take them. One already open is left as it is (a retry records nothing again). */
 async function op_customReopen(b) {
   const key = String(b.key || ""); if (!lineKeyOk(key)) return { error: "bad key" };
@@ -2012,13 +2028,13 @@ async function op_customReopen(b) {
   const cur = snap.data(); if (cur.state === "open") return { ok: true, record: customRow(cur, false) };
   const how = b.how === "undo" ? "undo" : "reopen", who = str(b.by || "operator", 80), now = Date.now();
   const doc = { state: "open", reopenedAt: now, reopenedBy: who, updatedAtMs: now, updatedAt: FV.serverTimestamp(),
-    history: (Array.isArray(cur.history) ? cur.history : []).concat({ how, at: now, by: who }).slice(-STAMPS_MAX) };
+    history: (Array.isArray(cur.history) ? cur.history : []).concat(Object.assign({ how, at: now, by: who }, b.from ? { from: str(b.from, 40) } : {})).slice(-STAMPS_MAX) };
   if (!Array.isArray(cur.stamps)) doc.stamps = legacyStamps(cur);
   await ref.set(doc, { merge: true });
   const seals = (doc.stamps || cur.stamps || []).length, what = cur.sku || cur.title || "custom line";
   await stamp(() => ({ orderId: cur.receiptId || orderOfKey(key), type: "note", at: now, by: who, station: "sorter", lineKey: key, transactionId: cur.transactionId || key.split("_")[1] || "",
     text: `Custom order ${how === "undo" ? "completion undone" : "reopened"} by ${who}: ${str(what, 80)} · back to Open (its ${seals === 1 ? "seal stays" : seals + " seals stay"})`,
-    data: { reopened: how, seals, sku: cur.sku || "" }, id: `customReopen-${key}-${now}` }), "custom reopen");
+    data: { reopened: how, seals, sku: cur.sku || "", ...pressedIn(b) }, id: `customReopen-${key}-${now}` }), "custom reopen");
   return { ok: true, record: customRow(Object.assign({}, cur, doc), false) };
 }
 /* Is a line a custom order? Claude's kept readings (only those read from exactly what the page has now) and a person's

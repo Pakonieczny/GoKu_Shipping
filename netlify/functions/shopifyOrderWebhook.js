@@ -118,23 +118,54 @@ function attributionFrom(payload) {
   let handle = null;
   try {
     const u = new URL(payload.landing_site || "", "https://x.invalid");
-    source = source || u.searchParams.get("utm_source");
-    medium = medium || u.searchParams.get("utm_medium");
-    campaign = campaign || u.searchParams.get("utm_campaign");
+    // A Shopping feed link carries its own utm_* (product_sync / sag_organic) ahead of
+    // the campaign's final-URL suffix; the suffix, last, names the ad actually clicked.
+    const last = k => u.searchParams.getAll(k).pop() || null;
+    source = source || last("utm_source");
+    medium = medium || last("utm_medium");
+    campaign = campaign || last("utm_campaign");
     const m = (u.pathname || "").match(/\/products\/([^\/?#]+)/);
     if (m) handle = m[1];
   } catch (e) {}
-  return { source: source || null, medium: medium || null, campaign: campaign || null, handle, ...require('./googleAdsCampaignStyles').attribution(payload.landing_site,note) };
+  return { source: source || null, medium: medium || null, campaign: campaign || null, handle, ...require('./googleAdsSalesEvidence').clickAttribution(payload.landing_site,note,require('./googleAdsCampaignStyles').attribution(payload.landing_site,note)) };
+}
+
+// The shopper's Google consent, as the storefront recorded it on the cart
+// (_ad_user_data / _ad_personalization = granted | denied). Never assumed.
+function consentFrom(note) {
+  const read = k => { const v = String(noteAttr(note, "_" + k) || noteAttr(note, k) || "").trim().toUpperCase().replace(/^CONSENT_/, ""); return v === "GRANTED" || v === "DENIED" ? v : null; };
+  const c = { adUserData: read("ad_user_data"), adPersonalization: read("ad_personalization") };
+  return c.adUserData || c.adPersonalization ? c : null;
+}
+// Where the buyer is decides whether Google's EU consent policy applies.
+function buyerCountryFrom(payload) {
+  const a = [payload.billing_address, payload.shipping_address, payload.customer && payload.customer.default_address].find(x => x && x.country_code);
+  return a ? String(a.country_code).toUpperCase() : null;
+}
+
+const shopMoney = (set, raw) => Number(set && set.shop_money ? set.shop_money.amount : raw) || 0;
+const cents = n => Math.round(n * 100) / 100;
+const lineTax = (payload, x) => payload.taxes_included ? (Array.isArray(x.tax_lines) ? x.tax_lines : []).reduce((s, t) => s + shopMoney(t.price_set, t.price), 0) : 0;
+// Merchandise revenue, the value Google bids on: the subtotal after every discount, without
+// shipping, taxes, duties or tips, in the shop's currency. A tax-inclusive price carries its
+// line taxes, which come off. The order's line revenue adds up to the same amount.
+function saleValueFrom(payload) {
+  const subtotal = Number(payload.subtotal_price != null ? payload.subtotal_price : payload.current_subtotal_price);
+  if (payload.subtotal_price == null && payload.current_subtotal_price == null || !isFinite(subtotal)) return null;
+  const li = Array.isArray(payload.line_items) ? payload.line_items : [];
+  return Math.max(0, cents(subtotal - li.reduce((s, x) => s + lineTax(payload, x), 0)));
 }
 
 function lineItemsFrom(payload) {
   const li = Array.isArray(payload.line_items) ? payload.line_items : [];
-  return li.map(x => {
+  const rows = li.map(x => {
     const qty = Number(x.quantity) || 1;
     const unitPrice = Number(x.price != null ? x.price : x.pre_tax_price);
-    const lineDiscount = Number(x.total_discount || 0);
+    // Every discount Shopify allocated to the line: its own, and its share of an order-level
+    // one (total_discount holds only the former).
+    const lineDiscount = Array.isArray(x.discount_allocations) ? cents(x.discount_allocations.reduce((s, d) => s + shopMoney(d.amount_set, d.amount), 0)) : Number(x.total_discount || 0);
     const gross = isFinite(unitPrice) ? unitPrice * qty : null;
-    const lineRevenue = gross != null ? Math.max(0, gross - (isFinite(lineDiscount) ? lineDiscount : 0)) : null;
+    const lineRevenue = gross != null ? Math.max(0, cents(gross - (isFinite(lineDiscount) ? lineDiscount : 0) - lineTax(payload, x))) : null;
     return {
       title: String(x.title || x.name || "").trim(),
       sku: String(x.sku || "").trim(),
@@ -145,19 +176,38 @@ function lineItemsFrom(payload) {
       lineRevenue,
       lineDiscount: isFinite(lineDiscount) ? lineDiscount : null
     };
-  }).filter(it => it.title || it.sku).slice(0, 25);
+  });
+  // Without allocations an order-level discount cannot be placed on a line, so the lines
+  // share the order's own subtotal and never add up to more than was paid for them.
+  const target = saleValueFrom(payload), sum = rows.reduce((s, r) => s + (r.lineRevenue || 0), 0);
+  if (target != null && sum > target + 0.01) rows.forEach(r => { if (r.lineRevenue == null) return; const cut = r.lineRevenue * (1 - target / sum);
+    r.lineRevenue = cents(r.lineRevenue - cut); r.lineDiscount = cents((r.lineDiscount || 0) + cut); });
+  return rows.filter(it => it.title || it.sku).slice(0, 25);
 }
 
+// In the shop's currency, like the sale it reduces (total_price). Refund transactions
+// are in the currency the buyer paid; line, shipping and adjustment amounts carry
+// both currencies, which gives the rate between them.
 function refundAmount(payload) {
+  let shop = 0, shown = 0, shopCode = "", shownCode = "";
+  const pair = set => { const s = set && set.shop_money, p = set && set.presentment_money; if (!s || !p) return;
+    shopCode = shopCode || String(s.currency_code || "").toUpperCase(); shownCode = shownCode || String(p.currency_code || "").toUpperCase();
+    shop += Math.abs(Number(s.amount) || 0); shown += Math.abs(Number(p.amount) || 0); };
+  const money = (set, raw) => set && set.shop_money ? Number(set.shop_money.amount || 0) : Number(raw || 0);
+  const li = Array.isArray(payload.refund_line_items) ? payload.refund_line_items : [], shipLines = Array.isArray(payload.refund_shipping_lines) ? payload.refund_shipping_lines : [], adjustments = Array.isArray(payload.order_adjustments) ? payload.order_adjustments : [];
+  li.forEach(x => { pair(x.subtotal_set); pair(x.total_tax_set); }); shipLines.forEach(x => pair(x.subtotal_amount_set)); adjustments.forEach(x => { pair(x.amount_set); pair(x.tax_amount_set); });
+  const rate = shopCode && shownCode && shopCode !== shownCode && shown > 0 ? shop / shown : 1;
   const txns = Array.isArray(payload.transactions) ? payload.transactions : [];
+  // A pending refund transaction is money the merchant has already sent back.
   const fromTxns = txns
-    .filter(t => String(t.kind).toLowerCase() === "refund" && String(t.status || "success").toLowerCase() === "success")
-    .reduce((s, t) => s + Number(t.amount || 0), 0);
-  if (fromTxns > 0) return fromTxns;
-  const li = Array.isArray(payload.refund_line_items) ? payload.refund_line_items : [];
-  const fromLines = li.reduce((s, x) => s + Number(x.subtotal || 0), 0);
-  const ship = (payload.order_adjustments || []).reduce((s, x) => s + Math.abs(Number(x.amount || 0)), 0);
-  return fromLines + ship;
+    .filter(t => String(t.kind).toLowerCase() === "refund" && ["success", "pending"].includes(String(t.status || "success").toLowerCase()))
+    .reduce((s, t) => s + Number(t.amount || 0) * (shopCode && String(t.currency || "").toUpperCase() === shopCode ? 1 : rate), 0);
+  if (fromTxns > 0) return Math.round(fromTxns * 100) / 100;
+  // Tax-inclusive, like the sale's value; a refund discrepancy is not a shipping refund.
+  const fromLines = li.reduce((s, x) => s + money(x.subtotal_set, x.subtotal) + money(x.total_tax_set, x.total_tax), 0);
+  const ship = shipLines.reduce((s, x) => s + Math.abs(money(x.subtotal_amount_set, 0)), 0) +
+    adjustments.filter(x => String(x.kind || "").toLowerCase() === "shipping_refund").reduce((s, x) => s + Math.abs(money(x.amount_set, x.amount)) + Math.abs(money(x.tax_amount_set, x.tax_amount)), 0);
+  return Math.round((fromLines + ship) * 100) / 100;
 }
 function refundItemsFrom(payload) {
   return (Array.isArray(payload.refund_line_items)?payload.refund_line_items:[]).map(x=>{
@@ -200,8 +250,12 @@ exports.handler = async (event) => {
         const land = clickIdsFromLanding(payload.landing_site);
         gclid = land.gclid; gbraid = land.gbraid; wbraid = land.wbraid;
       }
-      const value = Number(payload.total_price || payload.current_total_price || 0);
-      const currency = payload.currency || payload.presentment_currency || undefined;
+      // total_price is in the shop's currency (tax, shipping and discounts included);
+      // presentment_currency names the buyer's, a different amount. The order log keeps
+      // the total; Google is sent the merchandise revenue (saleValueFrom).
+      const value = Number(payload.total_price || payload.current_total_price || 0), saleValue = saleValueFrom(payload);
+      const currency = payload.currency || (((payload.total_price_set || {}).shop_money || {}).currency_code) || undefined;
+      const placedAt = Date.parse(payload.created_at || "") || undefined;
       const attr = attributionFrom(payload);
       const items = lineItemsFrom(payload);
       // Canonical Top-200 best sellers: ongoing site sales increment counts on the FIXED CSV list
@@ -240,14 +294,20 @@ exports.handler = async (event) => {
         // Organic / non-ad order: never a Google Ads conversion, but we LOG it so the store
         // intelligence layer can learn what's selling and inform future ad campaigns.
         const reason = attr.campaign === "sag_organic" ? "organic — free Google listing (sag_organic)"
+          : /^google$/i.test(attr.source || "") && /^(cpc|ppc|paid_search|paid_shopping|paid_pmax)$/i.test(attr.medium || "") ? "Google ad visit — no click id captured, so not uploaded"
           : (attr.source ? `non-ad — ${attr.source}/${attr.medium || "none"}` : "organic / no Google click id");
-        try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+        try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, ts: placedAt, value, saleValue, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: null, captured: false, reason, items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
         LOG(topic, "order", orderId, "-> 200 SKIPPED (" + reason + ")");
         return { statusCode: 200, body: JSON.stringify({ ok: true, skipped: reason, logged: true }) };
       }
+      // Only a real, paid sale becomes a Google conversion. A test order, a cancelled
+      // one, or orders/create before payment is logged but never uploaded;
+      // orders/paid uploads the sale once it is paid.
+      const notSale = payload.test === true ? "test order" : payload.cancelled_at ? "cancelled order"
+        : topic === "orders/create" && String(payload.financial_status || "").toLowerCase() !== "paid" ? "not paid yet" : null;
       const when = payload.created_at ? E.gAdsTime(new Date(payload.created_at)) : undefined;
-      const r = await E.enqueueConversion({ gclid, gbraid, wbraid, value, currency, orderId, conversionDateTime: when });
-      try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, value, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: clickId, captured: true, reason: "captured — Google ad click", items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
+      const r = notSale ? { skipped: notSale } : await E.enqueueConversion({ gclid, gbraid, wbraid, value: saleValue != null ? saleValue : value, orderTotal: value, currency, orderId, conversionDateTime: when, consent: consentFrom(note), buyerCountry: buyerCountryFrom(payload) });
+      try { await E.recordOrderEvent({ financialStatus:payload.financial_status,cancelledAt:payload.cancelled_at,test:payload.test, orderId, orderName, orderNumericId: String(payload.id || "") || null, ts: placedAt, value, saleValue, currency, source: attr.source, medium: attr.medium, campaign: attr.campaign, campaignId:attr.campaignId,adGroupId:attr.adGroupId,adId:attr.adId,pipeline:attr.pipeline,designId:attr.designId, gclid: clickId, captured: true, reason: notSale ? "Google ad click — not uploaded (" + notSale + ")" : "captured — Google ad click", items, handle: attr.handle }); } catch (e) { LOG("orderLog ERROR", e.message); }
       LOG(topic, "order", orderId, "click", clickId, "value", value, currency, "->", JSON.stringify(r));
       return { statusCode: 200, body: JSON.stringify({ ok: true, result: r, logged: true }) };
     }
