@@ -9271,7 +9271,9 @@ function _groupService(){
   if(!_groupsService)_groupsService=require('./googleAdsGroups').createGroupsService({CID,fb,COL,linkDesignScopes:input=>_designEngine().linkPublishedDesignScopes(input),buildSearch:buildSearchCampaignOps,reportContext:_reportContext,validatedRange:_validatedReportRange,reportRates:_reportRates,gaql,verifiedBasis:_verifiedCampaignAnalysisBasis,readSnapshot:_captureCampaignEditableSnapshot,loadContext:input=>_adDesignContextReader.loadContext(input),buildPmax:buildPmaxCampaignOps,enqueueApproval,listingDetails:itemIds=>merchantProducts({itemIds})});
   return _groupsService;
 }
-async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId)));return out;}
+// A deleted campaign's groups stay only as history: the reporting tree keeps those with activity in the
+// dates (historicalOnly), exactly as its Overview row keeps the spend.
+async function adGroups(input){const out=await _groupService().index(input),deleted=await _deletedCampaignIds();out.groups=(out.groups||[]).filter(g=>!deleted.has(String(g.campaignId))||g.historicalOnly);return out;}
 async function adGroupDetail(input){await _assertCampaignNotDeleted(input.campaignId);return _groupService().detail(input);}
 async function adDesignSavedWorkspaces(input={}){return require('./googleAdsGroups').savedWorkspaces({db:fb().db,stateCollection:COL.state,after:input.after,deletedCampaignIds:await _deletedCampaignIds()});}
 async function draftAdGroupSplit(input){return _groupService().draftSplit(input);}
