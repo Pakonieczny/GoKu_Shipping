@@ -1,9 +1,8 @@
 // What the browser walk (tests/adwords/browser) found, checked offline: toasts never take taps, phone controls
 // are thumb-sized, dialogs and sheets ease in (not under reduced motion), panels ease to their new height in
-// 150–400 ms, the country sheet keeps
-// Tab inside it, the sales bar tooltip flips below near the top, image alt text reads as words, the re-image
-// progress line uses what the engine sends, and the sign-in page neither scrolls sideways nor replaces the
-// console with the shop. Synthetic data only.
+// 150–400 ms, the country sheet keeps Tab inside it, the sales bar tooltip flips below near the top, image alt
+// text reads as words, group subtitles wrap on phones, the re-image progress line uses what the engine sends,
+// and the sign-in page neither scrolls sideways nor replaces the console with the shop. Synthetic data only.
 const assert = require('assert/strict'), fs = require('fs'), path = require('path'), vm = require('vm'), { JSDOM } = require('jsdom');
 const REPO = path.resolve(__dirname, '../..');
 const html = fs.readFileSync(path.join(REPO, 'brites-adwords.html'), 'utf8'), groups = fs.readFileSync(path.join(REPO, 'brites-groups.js'), 'utf8');
@@ -127,6 +126,11 @@ const settle = () => new Promise(r => setTimeout(r, 0));
     assert.equal(fieldLabel('PORTRAIT_MARKETING_IMAGE'), 'Portrait image'); assert.equal(fieldLabel('LANDSCAPE_LOGO'), 'Landscape logo');
     assert.equal(fieldLabel('BUSINESS_LOGO'), 'Business logo'); assert.equal(fieldLabel(undefined), 'Google image');
     assert.match(groups, /photoHtml\(a\.url,fieldLabel\(a\.fieldType\)\)/); assert.doesNotMatch(groups, /photoHtml\(a\.url,a\.fieldType\)/);
+  });
+
+  await test('on a phone the line under a campaign, group or listing name wraps instead of being cut off', () => {
+    const gcss = fs.readFileSync(path.join(REPO, 'brites-groups.css'), 'utf8'), at = gcss.indexOf('@media(max-width:760px){');
+    assert(at >= 0); assert.match(gcss.slice(at, gcss.indexOf('\n}', at)), /\n\.bg-name small\{white-space:normal;overflow-wrap:anywhere\}/);
   });
 
   await test('Ad Doctor fixes and the PMax re-image and upgrade runs ask in place, with the same words', () => {

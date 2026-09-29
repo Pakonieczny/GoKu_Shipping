@@ -178,7 +178,7 @@ await test('a date range popover stays on screen: presets above the calendar on 
 
 await test('one indicator per wait, shell top bar, phone channel tabs and a shadow-free closed drawer',()=>{
   assert.match(html,/BritesProgress\.own\(function\(host\)\{var scope=host===document\.body\?document\.querySelector\("\.view:not\(\.hidden\)"\):host;/);
-  assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-shell"/);
+  assert.match(html,/<script src="\/brites-progress\.js\?v=20260929-owner"/);assert.match(html,/href="\/brites-groups\.css\?v=20260929-wrap"/);
   assert.doesNotMatch(read('brites-groups.css'),/\.topbar|\.brand\b/,'the top bar is styled only by the shell');
   assert.match(html,/\.rail\{[^}]*box-shadow:none[^}]*\}\s*body\.navOpen \.rail\{transform:none;box-shadow:14px 0 40px rgba\(0,0,0,\.25\)\}/);
   assert.match(html,/@media\(max-width:420px\)\{\.growthLaneTabs button\{flex:1 1 auto;/);assert.match(html,/\.spin\.sm\{width:12px;height:12px;flex:0 0 12px\}/);
