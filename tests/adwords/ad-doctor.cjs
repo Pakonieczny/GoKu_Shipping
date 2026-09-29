@@ -40,6 +40,15 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
   {
     const e = engine(), txt = e.get('_diagReasonsText');
     check(JSON.stringify(txt(['BUDGET_CONSTRAINED', 'UNKNOWN', 'CAMPAIGN_PAUSED', 'UNSPECIFIED'])) === '["Limited by budget","Paused"]', 'status reasons use the v24 names and never show UNKNOWN');
+    e.bind({ gaql: async q => {
+      if (/campaign\.primary_status_reasons/.test(q)) return [{ campaign: { id: '42', name: 'PMax', status: 'ENABLED', primaryStatus: 'LIMITED', primaryStatusReasons: ['BUDGET_CONSTRAINED', 'UNKNOWN'], advertisingChannelType: 'PERFORMANCE_MAX' }, campaignBudget: { amountMicros: '10000000' }, metrics: {} }];
+      if (/policy_summary\.approval_status/.test(q)) return [['APPROVED_LIMITED', 'REVIEWED'], ['DISAPPROVED', 'REVIEWED'], ['APPROVED', 'REVIEW_IN_PROGRESS']].map(([a, r], i) => ({ campaign: { id: '42' }, adGroupAd: { ad: { id: String(i) }, adStrength: 'GOOD', policySummary: { approvalStatus: a, reviewStatus: r } } }));
+      if (/segments\.ad_network_type/.test(q)) { assert.match(q, /metrics\.conversions_value/); return [{ campaign: { id: '42' }, segments: { adNetworkType: 'YOUTUBE' }, metrics: { clicks: '5', costMicros: '2500000', conversions: 1, conversionsValue: 40 } }]; }
+      return [];
+    } });
+    const pulled = plain(await e.get('fetchDiagnostics')(null)).campaigns[0];
+    check(pulled.reasonsText.join() === 'Limited by budget' && pulled.limitedAds === 1 && pulled.disapprovedAds === 1 && pulled.underReviewAds === 1, 'policy-limited, disapproved and in-review ads are counted separately');
+    check(pulled.channelBreakdown[0].label === 'YouTube' && pulled.channelBreakdown[0].value === 40, 'PMax channel rows name YouTube and carry conversion value');
     const diag = { campaigns: [{ id: '42', status: 'ENABLED', budget: 10,
       keywordDetail: [{ adGroupId: '7', criterionId: '99', text: 'charm necklace', match: 'PHRASE' }],
       searchTerms: [{ term: 'personalized charm necklace', conv: 2 }, { term: 'free jewelry', conv: 0 }], adsContent: [{ adId: '555' }] }] };
@@ -116,7 +125,20 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const e = engine(), f = memory(); let mutations = 0, approvals = 0, budgets = 0;
     const rsa = [{ adGroup: { id: '7' }, adGroupAd: { ad: { id: '555', finalUrls: ['https://shop.example/p'], responsiveSearchAd: { headlines: [{ text: 'One' }, { text: 'Two' }, { text: 'Three' }], descriptions: [{ text: 'D1' }, { text: 'D2' }] } } } }];
     let gaqlReply = () => [];
-    e.bind({ fb: () => f, _campaignBaseline: async () => ({ name: 'Camp A' }), mutate: async () => { mutations++; return {}; }, _verifyLedger: async () => {},
+    // Only a current check can offer a fix: age, status and the offered fix are checked server-side.
+    const gate = e.get('_currentDiagnosis'), stored = (over = {}) => f.db.collection(COLS.state).doc('diagnostics').set({ generatedAt: Date.now(),
+      campaigns: [{ id: '42', status: 'ENABLED', recommendations: [{ recommendedBudget: 15 }] }], ai: { campaigns: [{ id: '42', action: { budget: 14 }, remedies: [{ executable: { kind: 'addNegatives', keywords: ['free'] } }] }] }, ...over });
+    let liveStatus = 'ENABLED'; e.bind({ fb: () => f, gaql: async q => (assert.match(q, /campaign\.status FROM campaign/), [{ campaign: { status: liveStatus } }]) });
+    await stored({ generatedAt: Date.now() - 74 * DAY });
+    await assert.rejects(() => gate('42', { kind: 'addNegatives', keywords: ['free'] }), /out of date/); passed++;
+    await stored(); liveStatus = 'PAUSED';
+    await assert.rejects(() => gate('42', { kind: 'addNegatives', keywords: ['free'] }), /changed since it was diagnosed/); passed++;
+    liveStatus = 'ENABLED';
+    await assert.rejects(() => gate('42', { kind: 'addNegatives', keywords: ['cheap'] }), /not part of the campaign's current diagnosis/); passed++;
+    await assert.rejects(() => gate('42', { kind: 'setBudget', budget: 39 }), /not part/); passed++;
+    await gate('42', { kind: 'addNegatives', keywords: ['free'] }); await gate('42', { kind: 'setBudget', budget: 15 }); await gate('42', { kind: 'setBudget', budget: 14 });
+    check(true, 'a stale, changed or unoffered fix is refused server-side; an offered fix from a current check passes');
+    e.bind({ fb: () => f, _currentDiagnosis: async () => {}, _campaignBaseline: async () => ({ name: 'Camp A' }), mutate: async () => { mutations++; return {}; }, _verifyLedger: async () => {},
       enqueueApproval: async item => { approvals++; const r = await f.db.collection(COLS.approvals).add({ ...item, status: 'PENDING' }); return r.id; },
       setCampaignBudget: async () => { budgets++; return { verified: true }; }, _enabledBudgetTotal: async () => 25, gaql: async q => gaqlReply(q) });
     const apply = (cid, remedy, ctrl = { maxDailyBudgetTotal: 30 }) => e.get('applyRemedy')(cid, remedy, { ctrl });
@@ -169,6 +191,26 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
       remedyHistory: async () => ({ items: [{ id: 'r1', campaignId: '42', kind: 'addNegatives', verified: true, at: now - 40 * DAY, baseline: { clicks: 400 }, executable: { keywords: ['free'] } }] }) });
     const out = plain(await e.get('distillLessons')({}));
     check(out.unchanged && /Insufficient/.test(out.reason), 'a verified fix without a measured result is not lesson evidence, and no AI request is made');
+  }
+
+  // ── A campaign analysis keeps budget and spend currencies apart ─────────
+  {
+    const e = engine(), f = memory(); let prompt = '', reply = null;
+    await f.db.collection('Brites_GAds_Metrics').add({ at: 1, snapshot: [{ id: '42', name: 'Camp A', status: 'ENABLED', channel: 'PERFORMANCE_MAX', budget: 20, cost: 45.5, value: 120, conv: 3, clicks: 40, impr: 900, currency: 'USD' }] });
+    e.bind({ fb: () => f, control: async () => ({ targetRoas: 0, maxDailyBudgetTotal: 60, budgetCurrency: 'CAD' }), conversionHealth: async () => ({ validated: true }),
+      openaiJSON: async p => { prompt = p; if (!reply) throw Error('model unavailable'); return reply; } });
+    reply = { score: 60, status: 'healthy', summary: 's', actions: [{ type: 'budget', title: 'Raise', detail: 'd', suggestedBudget: 25 }, { type: 'budget', title: 'Same', detail: 'd', suggestedBudget: 20 }] };
+    let an = plain(await e.get('analyzeCampaign')('42', { force: true }));
+    check(/dailyBudget=20 CAD/.test(prompt) && /spend14d=USD45\.5/.test(prompt) && /daily budget in CAD/.test(prompt), 'the analysis labels the budget in the account currency and spend in the reporting currency');
+    check(/Performance Max campaign/.test(prompt) && /not set by the owner/.test(prompt), 'the analysis names the campaign type and never invents a target ROAS');
+    check(an.actions[0].suggestedBudget === 25 && an.actions[1].suggestedBudget === null && an.budgetCurrency === 'CAD', 'a suggested budget equal to the current one gets no button');
+    reply = null; an = plain(await e.get('analyzeCampaign')('42', { force: true }));
+    check(an.status === 'insufficient data', 'without the AI and without a target ROAS, no health grade is claimed');
+    const html = fs.readFileSync(path.join(repo, 'brites-adwords.html'), 'utf8');
+    const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
+    const ui = vm.createContext({ DASH: { budgetCurrency: 'CAD' } });
+    for (const name of ['money', 'esc', 'optDot', 'actIcon', 'analysisHtml']) vm.runInContext(pick(name), ui);
+    check(/Set \$25 CAD\/day/.test(ui.analysisHtml({ id: '42', name: 'Camp A', status: 'ENABLED' }, { score: 60, status: 'healthy', summary: 's', budgetCurrency: 'CAD', actions: [{ type: 'budget', title: 'Raise', detail: 'd', suggestedBudget: 25 }] })), 'the Set budget button says the currency it will set');
   }
 
   // ── The diagnostic page is locked with the console passcode ────────────
@@ -231,6 +273,9 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
 
     set({ generatedAt: now, campaigns: [camp(), camp({ id: '77', name: 'Removed camp' })], ai: { campaigns: [verdict] } }, dash('ENABLED'));
     check(!/Removed camp/.test(body().textContent), 'a campaign no longer in Google Ads is not shown');
+    set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] } }, { ...dash('ENABLED'), lastMetrics: [{ id: '42', status: 'ENABLED', budget: 10 }, { id: '88', name: 'New camp', status: 'PAUSED', cost: 0, clicks: 0 }] });
+    const row = body().querySelector('[data-camp="88"]').textContent;
+    check(/NOT DIAGNOSED/.test(row) && /paused/.test(row) && !/\$|spend|clicks/.test(row), 'an undiagnosed campaign shows its status, not spend from an unlabelled window');
 
     set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] }, fixOutcomes: { '42': [{ historyId: 'h1', working: 'not enough data', note: 'Too little data to judge.' }] } }, dash('ENABLED'),
       [{ id: 'h1', campaignId: '42', issue: 'Old negatives', kind: 'addNegatives', executable: { kind: 'addNegatives', keywords: ['cheap'] }, verified: true, at: now - 30 * DAY },

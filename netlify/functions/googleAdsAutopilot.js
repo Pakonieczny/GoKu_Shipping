@@ -6256,6 +6256,12 @@ async function latestSnapshotCampaign(campaignId) {
     return snap.find(c => String(c.id) === id) || null;
   } catch (e) { return null; }
 }
+// A suggested daily budget in the account currency: within 1 and the ceiling, and a real change.
+function _suggestedBudget(value, current, ceiling) {
+  if (value == null || value === "" || !isFinite(Number(value))) return null;
+  const b = Math.round(Math.max(1, Math.min(Number(ceiling) || 9999, Number(value))) * 100) / 100;
+  return current != null && Math.abs(b - Number(current)) < 0.01 ? null : b;
+}
 // Researches one campaign's real metrics and returns a structured optimization read.
 // Honest like Google's own recommendations: if there isn't enough data, it says so.
 async function analyzeCampaign(campaignId, { force } = {}) {
@@ -6290,8 +6296,9 @@ Return ONLY JSON:
   if (!out) {
     out = {
       score: enoughData ? 55 : 25,
-      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (roas != null && target && roas >= target ? "healthy" : "underperforming") : "learning"),
-      summary: enoughData ? "Automated read from current metrics (AI analysis unavailable)." : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
+      // Without a target ROAS there is nothing to grade against, so no health label is claimed.
+      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (!target ? "insufficient data" : roas != null && roas >= target ? "healthy" : "underperforming") : "learning"),
+      summary: enoughData ? (target ? "Automated read from current metrics (AI analysis unavailable)." : "AI analysis unavailable, and no target ROAS is set to grade these results against.") : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
       actions: c.status === "PAUSED" ? [{ title: "Enable to start", detail: "Campaign is paused — enable it to begin serving and gathering data.", type: "status", suggestedBudget: null }] : []
     };
   }
@@ -6299,7 +6306,7 @@ Return ONLY JSON:
   out.actions = Array.isArray(out.actions) ? out.actions.slice(0, 5).map(a => ({
     title: String(a.title || "").slice(0, 70), detail: String(a.detail || "").slice(0, 160),
     type: ["budget", "bid", "status", "keywords", "creative", "wait"].indexOf(a.type) >= 0 ? a.type : "wait",
-    suggestedBudget: a.suggestedBudget != null ? Math.max(1, Math.min(ctrl.maxDailyBudgetTotal || 9999, Number(a.suggestedBudget))) : null
+    suggestedBudget: _suggestedBudget(a.suggestedBudget, c.budget, ctrl.maxDailyBudgetTotal)
   })) : [];
   out.campaignId = id; out.currency = ccy; out.budgetCurrency = ctrl.budgetCurrency || null; out.generatedAt = Date.now();
   if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ analysis: out, at: Date.now() }); } catch (e) {} }
@@ -7516,7 +7523,7 @@ function _improvementObservations(campaign,diagnostic,diagnosticStatus) {
     for(const g of (c.assetGroups||[]).slice(0,8))add("group:"+g.agId,"creative",g.name,"Asset group strength: "+(g.adStrength||"unknown"),{clicks:g.clicks,cost:g.cost,conversions:g.conv,value:g.value,strength:g.adStrength},w.d30,{assetGroupId:g.agId});
     for(const p of (c.products||[]).slice(0,10))add("product:"+p.itemId,"products",p.title,"Product-attributed results cover only product placements, not all PMax activity.",{clicks:p.clicks,cost:p.cost,conversions:p.conv,value:p.value},w.d30,{itemId:p.itemId});
     for(const a of (c.agAssetLabels||[]).filter(a=>a.label==="LOW").slice(0,6))add("asset:"+creativeHash(a.text).slice(0,12),"creative",a.text,"Google grades this PMax text asset LOW.",{grade:a.label},null);
-    for(const n of (c.channelBreakdown||[]))add("network:"+n.raw,"channel",n.label,"Delivery channel association, not an independent experiment.",{clicks:n.clicks,cost:n.cost,conversions:n.conv},w.d30);
+    for(const n of (c.channelBreakdown||[]))add("network:"+n.raw,"channel",n.label,"Delivery channel association, not an independent experiment.",{clicks:n.clicks,cost:n.cost,conversions:n.conv,value:n.value},w.d30);
     for(const x of (c.searchInsights||[]).slice(0,5))add("insight:"+creativeHash(x.category).slice(0,12),"search categories",x.category,"Aggregated PMax search category; it is not a Search keyword or exact query.",{clicks:x.clicks,conversions:x.conv},w.d30);
   }
   return rows;
@@ -8304,7 +8311,7 @@ async function fetchDiagnostics(campaignId) {
       // product" — the specialist should reason about channel mix (e.g. heavy Display with weak
       // conversions is a different fix than heavy Search with weak conversions).
       gaql(`SELECT campaign.id, segments.ad_network_type,
-                   metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                   metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
             FROM campaign WHERE ${report30} AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'${CF}`).catch(() => [])
     ]);
     for (const r of pmaxAgs) {
@@ -8333,7 +8340,9 @@ async function fetchDiagnostics(campaignId) {
       if (!text) continue;
       (d.agAssetLabels = d.agAssetLabels || []).push({ text, type: v.fieldType, label: v.performanceLabel || null });
     }
+    // v24 AdNetworkType reports YouTube as YOUTUBE (plus GOOGLE_TV and, for older rows, GOOGLE_OWNED_CHANNELS).
     const _CHLBL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+      YOUTUBE: "YouTube", GOOGLE_TV: "Google TV", GOOGLE_OWNED_CHANNELS: "Google-owned channels",
       YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
       GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
       MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
@@ -8342,8 +8351,8 @@ async function fetchDiagnostics(campaignId) {
       const raw = (r.segments || {}).adNetworkType || "UNKNOWN", m = r.metrics || {};
       const list = d.channelBreakdown || (d.channelBreakdown = []);
       let row = list.find(x => x.raw === raw);
-      if (!row) { row = { raw, label: _CHLBL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
-      row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+      if (!row) { row = { raw, label: _CHLBL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 }; list.push(row); }
+      row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0; row.value += +m.conversionsValue || 0;
     }
     // Per-campaign PMax search-category insights (this resource REQUIRES a per-campaign filter,
     // so it's fetched per PMax campaign — bounded to the handful that exist).
@@ -8364,7 +8373,7 @@ async function fetchDiagnostics(campaignId) {
     for (const d of Object.values(by)) {
       if (d.assetGroups) d.assetGroups.sort((a, b) => b.cost - a.cost).splice(10);
       if (d.products) d.products.sort((a, b) => b.cost - a.cost || b.clicks - a.clicks).splice(15);
-      if (d.channelBreakdown) d.channelBreakdown.forEach(r => r.cost = +r.cost.toFixed(2));
+      if (d.channelBreakdown) d.channelBreakdown.forEach(r => { r.cost = +r.cost.toFixed(2); r.value = +r.value.toFixed(2); });
     }
   } catch (e) {}
 
@@ -8694,6 +8703,21 @@ async function _campaignBaseline(campaignId) {
   } catch (e) { return null; }
 }
 
+// A fix runs only as offered by a current check of this campaign: at most 7 days old, taken
+// while the campaign had its present status, and matching a remedy or budget that check offered.
+async function _currentDiagnosis(campaignId, ex) {
+  const f = fb(); if (!f) return;
+  const snap = await f.db.collection(COL.state).doc("diagnostics").get(), d = snap.exists ? snap.data() : {};
+  const c = (d.campaigns || []).find(x => String(x.id) === campaignId), at = c && Number((c.observationWindows || {}).capturedAt || d.generatedAt);
+  if (!c || !at || Date.now() - at > 7 * 86400000) throw new Error("This campaign's diagnosis is out of date. Diagnose it again before applying a fix.");
+  const live = (((await gaql(`SELECT campaign.status FROM campaign WHERE campaign.id = ${Number(campaignId)}`))[0] || {}).campaign || {}).status;
+  if (!live || live !== c.status) throw new Error("The campaign changed since it was diagnosed. Diagnose it again before applying a fix.");
+  const v = ((d.ai || {}).campaigns || []).find(x => String(x.id) === campaignId) || {}, same = (a, b) => JSON.stringify(_stable(a)) === JSON.stringify(_stable(b));
+  const budgets = [(v.action || {}).budget].concat((c.recommendations || []).map(r => r && r.recommendedBudget)).filter(b => b != null);
+  if (!(v.remedies || []).some(r => r && same(r.executable, ex)) && !(ex.kind === "setBudget" && budgets.some(b => Math.abs(Number(b) - Number(ex.budget)) < 0.01)))
+    throw new Error("This fix is not part of the campaign's current diagnosis. Diagnose it again.");
+}
+
 async function _logRemedy(entry) {
   const f = fb(); if (!f) return null;
   const ref = await f.db.collection(COL.remedies).add({ ...entry, at: Date.now(), createdAt: new Date().toISOString() });
@@ -8709,6 +8733,7 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
   campaignId = String(campaignId || "").replace(/\D/g, "");
   if (!campaignId) throw new Error("A valid campaign is required.");
   const ex = (remedy || {}).executable || {};
+  await _currentDiagnosis(campaignId, ex);
   let result;
   const baseline=await _campaignBaseline(campaignId);
 
