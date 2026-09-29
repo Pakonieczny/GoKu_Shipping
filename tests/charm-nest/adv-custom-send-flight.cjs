@@ -1,10 +1,13 @@
-// The Custom designs window's Send to Sheet (Paul, 28 Sep: animations "not exactly visible" and "jerky"): a design put
-// on Gold and sent, the window goes back into its card and a copy of the designs flies to the Nest tab, which says "+1".
-// An adversarial check saw long tasks of 98 and 55 ms during that flight. Measured here in a real Chromium, unthrottled,
-// on the fake site (bridge-server.cjs), with requestAnimationFrame deltas, long tasks and every element.animate() call:
-//   visible · the flying copy is on screen, moves, and a "+1" rises from the tab;
-//   smooth  · from the window's close (it goes back into its card) until the copy lands: no long task over 50 ms, at
-//             most one frame in ten over 34 ms (before: the whole list was redrawn again in the task that closed it);
+// The Custom designs window's Send to Sheet, measured as the Send to Sheet tour plays it (charm-nest-tour.js, Paul 29 Sep
+// 00:25; before it, a small copy flew to the Nest tab, Paul 28 Sep: animations "not exactly visible" and "jerky"): a
+// design put on Gold and sent, the window goes back into its card, and the tour lifts the design out of the card as a
+// coin, switches to the Nest tab, lands it on its Gold sheet (queued there: the run is in Manual, "press Nest"), says
+// "+1" and comes back home to the Review tab. Measured here in a real Chromium, unthrottled, on the fake site
+// (bridge-server.cjs), with requestAnimationFrame deltas, long tasks, every element.animate() call and the tour's own
+// marks (performance.mark "tour:..."):
+//   visible · the coin is on screen and moves, and a "+1" rises where it lands;
+//   smooth  · from the window's close (it goes back into its card) until the tour is home, both tab switches included:
+//             no long task over 50 ms, at most one frame in ten over 34 ms;
 //   cheap   · only transform, opacity and clip-path animated;
 //   whole   · the line is sent and placed on a Gold sheet of the run under way, and the card says so.
 // PROFILE=1 prints what ran in each long task (a CPU profile, by the page functions on the stack); TRACE=1 what the main
@@ -41,6 +44,8 @@ function recorders() {
   requestAnimationFrame(loop);
   window.__start = () => Object.assign(M, { rec: true, frames: [], long: [], anims: [], watch: [], seen: {}, marks: [], t0: performance.now() });
   window.__mark = name => { if (M.rec) M.marks.push([name, Math.round(performance.now() - M.t0)]); };
+  // the tour's own marks (SendTour: performance.mark("tour:start" ... "tour:end"))
+  try { new PerformanceObserver(l => { if (M.rec) for (const e of l.getEntries()) if (/^tour:/.test(e.name)) M.marks.push([e.name.slice(5), Math.round(e.startTime - M.t0)]); }).observe({ entryTypes: ['mark'] }); } catch (_) {}
   window.__stop = () => { M.rec = false; const d = []; for (let i = 2; i < M.frames.length; i++) d.push([Math.round(M.frames[i]), M.frames[i] - M.frames[i - 1]]); return { d, long: M.long, anims: M.anims, seen: M.seen, marks: M.marks, t0: M.t0 }; };
 }
 const judge = (r, from = 0, to = 1e9) => {
@@ -102,11 +107,10 @@ async function scene(browser, profile) {
     // (as a person takes a moment over the window: the workspace's own save paces itself ten seconds apart, and one due
     // now is written when the send changes it, as in the shop)
     await page.waitForTimeout(+(process.env.WAIT_MS || 11000));
-    // the flight marked where it starts and ends (Motion.fly is the page's own; wrapped, not changed)
+    // (the tour marks where it starts, switches, lands and ends itself: performance.mark "tour:...")
     // (the workspace's save, written to IndexedDB, marked when it is written)
     await page.evaluate(() => { const put = IDBObjectStore.prototype.put; IDBObjectStore.prototype.put = function () { if (this.name === 'workspaces') __mark('save'); return put.apply(this, arguments); }; });
     await page.evaluate(() => { const c = Motion.dialogClose; Motion.dialogClose = function () { __mark('close'); return c.apply(this, arguments); }; });
-    await page.evaluate(() => { const f = Motion.fly; Motion.fly = function (g) { __mark('fly'); __M.flyG = g; const p = f.apply(this, arguments); Promise.resolve(p).then(() => __mark('landed')); return p; }; });
     let cdp = null;
     let trace = null;
     if (process.env.TRACE) {
@@ -118,10 +122,11 @@ async function scene(browser, profile) {
     if (profile) { cdp = await context.newCDPSession(page); await cdp.send('Profiler.enable'); await cdp.send('Profiler.setSamplingInterval', { interval: 500 }); await cdp.send('Profiler.start'); }
     const r = await page.evaluate(async () => {
       __start(); performance.mark('__t0'); (window.__syncMark = function __syncMark() { const t = performance.now(); while (performance.now() - t < 4); })();
-      __M.watch.push(['copy', () => { const g = __M.flyG; if (!g || !g.isConnected) return null; const b = g.getBoundingClientRect(); return Math.round(b.left + b.top) + '|' + getComputedStyle(g).opacity; }],
-        ['plus', () => [...document.querySelectorAll('.mPlus')].map(p => p.textContent).join(',') || null]);
+      __M.watch.push(['copy', () => { const g = document.querySelector('#tourLayer .tourPiece') || document.querySelector('#tourLayer .tourCoin'); if (!g || !g.isConnected) return null; const b = g.getBoundingClientRect(); return Math.round(b.left) + ',' + Math.round(b.top) + '|' + getComputedStyle(g).opacity; }],
+        ['plus', () => [...document.querySelectorAll('#tourLayer .tourPlus, .mPlus')].map(p => p.textContent).join(',') || null],
+        ['mode', () => CN.S.mode]);
       document.querySelector('#cuDlg [data-send]').click(); __mark('clicked');
-      const t = performance.now(); while (!__M.marks.some(m => m[0] === 'landed') && performance.now() - t < 12000) await new Promise(res => setTimeout(res, 50));
+      const t = performance.now(); while (!__M.marks.some(m => m[0] === 'end') && performance.now() - t < 16000) await new Promise(res => setTimeout(res, 50));
       await new Promise(res => setTimeout(res, 400));
       const out = __stop(); out.origin = performance.timeOrigin; return out;
     });
@@ -138,8 +143,8 @@ async function scene(browser, profile) {
     }
     let prof = null;
     if (cdp) { prof = (await cdp.send('Profiler.stop')).profile; }
-    const end = await page.evaluate(() => { const row = B.orders.byKey.get('4175423829_41754238291'); return { state: row.state, onGold: allSheets().filter(p => p.metal === 'gold').reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), sent: !!CustomSheet.sentOf(row), strip: !!document.querySelector('#rvList .reviewListRow[data-rid="4175423829"] .cuDesigns.sent'), dlg: document.querySelector('#cuDlg').open, ghosts: document.querySelectorAll('#motionLayer .mGhost').length }; });
-    const fly = (r.marks.find(m => m[0] === 'fly') || [])[1], landed = (r.marks.find(m => m[0] === 'landed') || [])[1];
+    const end = await page.evaluate(() => { const row = B.orders.byKey.get('4175423829_41754238291'); return { state: row.state, onGold: allSheets().filter(p => p.metal === 'gold').reduce((n, p) => n + p.charms.filter(c => c.custom).length, 0), sent: !!CustomSheet.sentOf(row), strip: !!document.querySelector('#rvList .reviewListRow[data-rid="4175423829"] .cuDesigns.sent'), dlg: document.querySelector('#cuDlg').open, ghosts: document.querySelectorAll('#motionLayer .mGhost').length + document.querySelectorAll('#tourLayer > *').length, mode: CN.S.mode }; });
+    const fly = (r.marks.find(m => m[0] === 'start') || [])[1], landed = (r.marks.find(m => m[0] === 'end') || [])[1];
     let blamed = null;
     if (prof && fly != null) {
       // the long tasks, and the frames that took over 30 ms (a task under 50 ms is not reported as long, yet drops a frame)
@@ -157,23 +162,26 @@ async function scene(browser, profile) {
   let s;
   try { s = await scene(browser, !!process.env.PROFILE); } finally { await browser.close(); }
   const { r, fly, landed, end } = s;
-  // the flights: the window going back into its card (from its close) and the copy going to the Nest tab, until it lands
+  // the flights: the window going back into its card (from its close), and the tour, from its start until it is home
   const close = (r.marks.find(m => m[0] === 'close') || [])[1];
   const during = fly != null && landed != null ? judge(r, close != null ? close : fly, landed) : null, before = judge(r, 0, close != null ? close : fly);
   const props = [...new Set(r.anims.filter(a => fly != null && a.t >= fly - 5).flatMap(a => a.props))];
   const layout = props.filter(p => LAYOUT.test(p)), paint = props.filter(p => PAINT.test(p));
   const copy = (r.seen.copy || []).map(x => x[1]).filter(Boolean), pos = new Set(copy.map(v => v.split('|')[0])), plus = (r.seen.plus || []).map(x => x[1]).filter(Boolean);
   console.log(`\n  load per core ${load.toFixed(2)} (${quiet ? 'quiet: timing gates are hard' : 'busy: timing gates only warn'})`);
-  console.log(`  clicked at 0, window closed at ${close} ms, flight ${fly}–${landed} ms; all long tasks ${JSON.stringify(r.long)}; workspace saved at ${JSON.stringify(r.marks.filter(m => m[0] === 'save').map(m => m[1]))} ms`);
-  if (during) console.log(`  during the flights (close → landed): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}; slow frames ${JSON.stringify(r.d.filter(([t, v]) => v > 30 && t >= (close ?? fly) && t <= landed).map(([t, v]) => [t, Math.round(v)]))}`);
+  const at = n => r.marks.filter(m => m[0] === n).map(m => m[1]);
+  console.log(`  clicked at 0, window closed at ${close} ms, tour ${fly}–${landed} ms (to the Nest tab ${at('switch:nest')}, landed ${at('land')}, home ${at('switch:review')}); modes ${JSON.stringify((r.seen.mode || []).filter((x, i, a) => !i || a[i - 1][1] !== x[1]))}; all long tasks ${JSON.stringify(r.long)}; workspace saved at ${JSON.stringify(r.marks.filter(m => m[0] === 'save').map(m => m[1]))} ms`);
+  for (const n of ['switch:nest', 'switch:review']) for (const t0 of at(n)) { const j = judge(r, t0 - 20, t0 + 400); console.log(`  the tab switch to ${n.slice(7)} (${t0} ms, +400 ms): worst ${j.worst} ms, >34 ms ${j.over34}/${j.frames}, long ${JSON.stringify(j.long)}`); }
+  if (during) console.log(`  during the flights (close → home): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}; slow frames ${JSON.stringify(r.d.filter(([t, v]) => v > 30 && t >= (close ?? fly) && t <= landed).map(([t, v]) => [t, Math.round(v)]))}`);
   if (before) console.log(`  click → close:    worst ${before.worst} ms, long ${JSON.stringify(before.long)}`);
   if (s.blamed) for (const b of s.blamed.list) { console.log(`\n  long task at ${b.at} ms, ${b.ms} ms:`); for (const [k, n] of b.stacks) console.log(`    ${String(n).padStart(4)} ${k}`); console.log('    self: ' + b.self.map(([k, n]) => `${k} ${n}`).join(' · ')); }
   console.log('');
-  check(fly != null && landed != null && landed - fly >= 1200, `the copy flies to the Nest tab (${fly}–${landed} ms)`);
-  check(pos.size >= 10 && plus.some(p => /\+1/.test(p)), `the copy is seen moving (${pos.size} positions) and "+1" rises (${[...new Set(plus)].join(' ')})`);
+  const modes = (r.seen.mode || []).map(x => x[1]).filter((x, i, a) => !i || a[i - 1] !== x);
+  check(fly != null && landed != null && landed - fly >= 2400 && at('switch:nest').length === 1 && at('land').length === 1 && at('switch:review').length === 1 && modes.includes('nest') && modes[modes.length - 1] === 'review', `the tour takes the design to the Nest tab, lands it once and comes home (${fly}–${landed} ms; modes ${modes.join(' → ')})`);
+  check(pos.size >= 20 && plus.some(p => /\+1/.test(p)), `the coin is seen moving (${pos.size} positions) and "+1" rises (${[...new Set(plus)].join(' ')})`);
   check(!layout.length && !paint.length, `only transform, opacity and clip-path animated in the flight (${props.join(',')})`);
-  check(end.sent && end.strip && !end.dlg && !end.ghosts && end.state === 'pooled' && end.onGold === 1, `sent, placed on a Gold sheet, the card says so, the window closed, no copy left (${JSON.stringify(end)})`);
-  if (during) check(!during.long.length && during.over34 <= during.frames / 10, `the window's way back and the flight are smooth (from the close to the landing): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}`, quiet);
+  check(end.sent && end.strip && !end.dlg && !end.ghosts && end.state === 'pooled' && end.onGold === 1 && end.mode === 'review', `sent, placed on a Gold sheet, the card says so, the window closed, no copy left, home (${JSON.stringify(end)})`);
+  if (during) check(!during.long.length && during.over34 <= during.frames / 10, `the window's way back and the tour are smooth, both tab switches included (from the close until home): worst ${during.worst} ms, >34 ms ${during.over34}/${during.frames}, long ${JSON.stringify(during.long)}`, quiet);
   check(!s.errors.length, 'no page errors: ' + s.errors.join(' | '));
   if (fails.length) { console.log(`\n${fails.length} failed`); process.exit(1); }
   console.log('\nall passed');
