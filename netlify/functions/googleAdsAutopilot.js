@@ -2981,32 +2981,37 @@ async function _accountCurrency() {
   if(!/^[A-Z]{3}$/.test(String(currency||"")))throw new Error("Google Ads account currency could not be verified.");
   _acctCurrencyCache=currency;return currency;
 }
-const _fxMemCache = new Map(); // per-invocation memo; Firestore doc persists the rate across invocations (historical rates never change, so caching indefinitely is correct)
+// Frankfurter answers a date the ECB has not published yet (today, before ~16:00 CET) with the
+// PREVIOUS business day's rate. Saving that under the requested date made every weekday keep the
+// prior day's rate forever. Only a rate published for exactly that date, or the answer for a date
+// old enough that nothing newer can be published for it (weekend/holiday), is final and saved.
+// The earlier "fxRates" document holds such lagged weekday rates, so final rates use a new one.
+const _fxMemCache = new Map(); // key -> { rate, until }: final rates never expire; provisional rates and failures do
 async function _fxRateToUsd(dateYmd) {
   const acct = await _accountCurrency();
   if (acct === "USD") return 1; // nothing to convert
-  const key = acct + ":" + dateYmd;
-  if (_fxMemCache.has(key)) return _fxMemCache.get(key);
+  const key = acct + ":" + dateYmd, now = Date.now(), memo = _fxMemCache.get(key);
+  if (memo && memo.until > now) return memo.rate;
   const f = fb();
   if (f) {
     try {
-      const doc = await f.db.collection(COL.state).doc("fxRates").get();
+      const doc = await f.db.collection(COL.state).doc("fxRatesFinal").get();
       const v = doc.exists ? (doc.data() || {})[key] : null;
-      if (v != null) { _fxMemCache.set(key, v); return v; }
+      if (v != null) { _fxMemCache.set(key, { rate: v, until: Infinity }); return v; }
     } catch (e) {}
   }
-  let rate = null;
+  let rate = null, final = false;
   try {
     // ECB-based daily rates (Frankfurter) — a very close proxy for Google's own "average daily FX
     // rate"; not guaranteed bit-identical to Google's internal number, but the same class of
     // real market rate for that specific date, not a rough approximation.
-    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`);
-    const data = await res.json();
+    const res = await fetch(`https://api.frankfurter.app/${dateYmd}?from=${acct}&to=USD`, { timeout: 8000 });
+    const data = res.ok ? await res.json() : null;
     const v = data && data.rates && Number(data.rates.USD);
-    if (v && isFinite(v)) rate = v;
+    if (v && isFinite(v) && v > 0) { rate = v; final = data.date === dateYmd || dateYmd < new Date(now - 4 * 86400000).toISOString().slice(0, 10); }
   } catch (e) {}
-  if (rate != null && f) { try { await f.db.collection(COL.state).doc("fxRates").set({ [key]: rate }, { merge: true }); } catch (e) {} }
-  _fxMemCache.set(key, rate); // caches null too, so a bad date doesn't get refetched every call within this invocation
+  if (final && f) { try { await f.db.collection(COL.state).doc("fxRatesFinal").set({ [key]: rate }, { merge: true }); } catch (e) {} }
+  _fxMemCache.set(key, { rate, until: final ? Infinity : now + (rate == null ? 60000 : 1800000) });
   return rate;
 }
 
@@ -3139,8 +3144,11 @@ async function metricsRange({ start, end } = {}) {
   }
   if (!scheduleAvailable) warnings.push("Campaign schedules could not be refreshed. Performance dates remain the selected reporting range.");
   const activeInRange = new Set(report.rows.filter(r => { const m = r.metrics || {}; return [m.impressions, m.clicks, m.costMicros, m.conversions, m.conversionsValue, m.conversionsByConversionDate, m.conversionsValueByConversionDate].some(v => Number(v) !== 0 && Number.isFinite(Number(v))); }).map(r => String((r.campaign || {}).id)));
-  const deleted=await _deletedCampaignIds();
-  const snapshot = Object.values(byId).filter(c => !deleted.has(c.id)&&(c.status !== "REMOVED" || activeInRange.has(c.id))); snapshot.forEach(c => c.opportunityLane = _campaignOpportunityLane(c));
+  // A campaign deleted from the console is removed in Google, but its spend in these dates was
+  // real money. Keep it (flagged) whenever it has activity, so account totals still equal the
+  // daily series and Google's own account total; only inactive deleted campaigns are hidden.
+  const deleted=await _deletedCampaignIds().catch(()=>{warnings.push("Deleted-campaign labels could not be loaded. Totals still include every campaign with activity in these dates.");return new Set();});
+  const snapshot = Object.values(byId).filter(c => activeInRange.has(c.id) || (!deleted.has(c.id) && c.status !== "REMOVED")); snapshot.forEach(c => { c.opportunityLane = _campaignOpportunityLane(c); if (deleted.has(c.id)) { c.deleted = true; c.historicalOnly = true; } });
   await _attachCampaignVersions(snapshot);
   return { ok: true, snapshot, range, ...context, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: report.cd, scheduleAvailable, includesRemovedWithActivity: true, warnings };
 }
@@ -7035,12 +7043,12 @@ async function dailyStats({ start, end, campaignId } = {}) {
                  metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM ad_group_ad WHERE ${RANGE}`),
     optional("keywords", `SELECT campaign.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM keyword_view WHERE ${RANGE}`),
     // PMax equivalents. Asset groups are the closest thing PMax has to "ads" (each carries its own
     // creative set + ad strength); asset_group supports metrics + date segmentation in v24.
     optional("assetGroups", `SELECT campaign.id, asset_group.id, asset_group.name, asset_group.status, asset_group.ad_strength,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM asset_group WHERE ${RANGE}`),
     // Per-product performance (feed-based PMax serves from Merchant Center products) — the PMax
     // analog of the Search campaigns' "Top keywords" chips.
@@ -7056,7 +7064,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     // any product (text/display/video surfaces) — not everything, but a genuine breakdown instead
     // of an unexplained remainder.
     optional("channels", `SELECT campaign.id, segments.ad_network_type,
-                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions
+                 metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value
           FROM campaign WHERE ${RANGE} AND campaign.advertising_channel_type = 'PERFORMANCE_MAX'`)
   ]);
 
@@ -7115,7 +7123,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
   const kwRows = kws.map(r => {
     const m = r.metrics || {}, k = ((r.adGroupCriterion || {}).keyword) || {};
     return { campaignId: String((r.campaign || {}).id), text: k.text || "", match: k.matchType || "", status: (r.adGroupCriterion || {}).status || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).filter(k => k.impr > 0 || k.clicks > 0).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   // PMax rows (same deliberate native-currency caveat as ads/keywords above — no per-day segment here)
@@ -7123,7 +7131,7 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const m = r.metrics || {}, g = r.assetGroup || {};
     return { campaignId: String((r.campaign || {}).id), agId: String(g.id || ""), name: g.name || "(asset group)",
              status: g.status || null, strength: g.adStrength || null,
-             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0 };
+             impr: +m.impressions || 0, clicks: +m.clicks || 0, cost: fromMicros(m.costMicros), conv: +m.conversions || 0, value: +m.conversionsValue || 0 };
   }).sort((a, b) => b.clicks - a.clicks || b.impr - a.impr);
 
   const productPurchaseAvailable = !!coverage.productPurchases.ok, productCdAvailable = !!productData.cd;
@@ -7170,7 +7178,9 @@ async function dailyStats({ start, end, campaignId } = {}) {
   // PMax channel breakdown — real answer to "what do we know about clicks shopping_performance_view
   // can't attribute to a product": Search/YouTube/Display/Discover/Gmail/Maps/Search Partners, not
   // an unexplained remainder. MIXED means the click predates the Jun-1-2025 v23 cutover.
+  // v24 AdNetworkType reports YouTube as YOUTUBE (plus GOOGLE_TV and, for older rows, GOOGLE_OWNED_CHANNELS).
   const CHANNEL_LABEL = { SEARCH: "Search", SEARCH_PARTNERS: "Search Partners", CONTENT: "Display",
+    YOUTUBE: "YouTube", GOOGLE_TV: "Google TV", GOOGLE_OWNED_CHANNELS: "Google-owned channels",
     YOUTUBE_WATCH: "YouTube", YOUTUBE_SEARCH: "YouTube Search", YOUTUBE_SHORTS: "YouTube Shorts",
     GMAIL: "Gmail", DISCOVER: "Discover", DISPLAY: "Display", MAPS: "Maps",
     MIXED: "Mixed (pre-channel-reporting)", UNSPECIFIED: "Unspecified", UNKNOWN: "Unknown" };
@@ -7180,10 +7190,10 @@ async function dailyStats({ start, end, campaignId } = {}) {
     const raw = (r.segments || {}).adNetworkType || "UNKNOWN";
     const list = channelTotals[cid] || (channelTotals[cid] = []);
     let row = list.find(x => x.raw === raw);
-    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0 }; list.push(row); }
-    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0;
+    if (!row) { row = { raw, label: CHANNEL_LABEL[raw] || raw, impr: 0, clicks: 0, cost: 0, conv: 0, value: 0 }; list.push(row); }
+    row.impr += +m.impressions || 0; row.clicks += +m.clicks || 0; row.cost += fromMicros(m.costMicros); row.conv += +m.conversions || 0; row.value += +m.conversionsValue || 0;
   });
-  Object.values(channelTotals).forEach(list => { list.forEach(r => r.cost = +r.cost.toFixed(2)); list.sort((a, b) => b.clicks - a.clicks); });
+  Object.values(channelTotals).forEach(list => { list.forEach(r => { r.cost = +r.cost.toFixed(2); r.value = +r.value.toFixed(2); }); list.sort((a, b) => b.clicks - a.clicks); });
   // Exact product population totals, before any UI search/sort/page. Google product
   // reports count advertised offers; a purchase attributed to an offer does not prove
   // that same offer was the item bought. Preserve that distinction in the response.
@@ -8884,18 +8894,19 @@ async function campaignTimeline({ id } = {}) {
       });
     } catch (e) {}
   }
-  const days = [];
+  // Same money rules as metricsRange: one currency for the whole strip (a day without an exchange
+  // rate keeps every day in the account currency), and no conversion-date figures when Google did
+  // not supply them, rather than click-date figures relabelled.
+  const fx = await _reportRates(dayRows, dayRows.length ? await _accountCurrency() : "USD"), days = [];
   for (const r of dayRows) {
-    const cv = _rowConv(r.metrics);
-    const costNative = fromMicros(r.metrics.costMicros || 0), valueNative = cv.value;
-    const rate = await _fxRateToUsd(r.segments.date);
-    days.push({ date: r.segments.date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
+    const cv = _rowConv(r.metrics), date = _dateOnly(r.segments.date), rate = fx.rate(date);
+    days.push({ date, impressions: Number(r.metrics.impressions || 0), clicks: Number(r.metrics.clicks || 0),
       conversions: cv.conv,
-      conversionsCd: dayCd ? cv.convCd : cv.conv,
-      value: rate != null ? valueNative * rate : valueNative,
-      valueCd: dayCd ? (rate != null ? cv.valueCd * rate : cv.valueCd) : (rate != null ? valueNative * rate : valueNative),
-      cost: rate != null ? costNative * rate : costNative,
-      fxIncomplete: rate == null });
+      conversionsCd: dayCd ? cv.convCd : null,
+      value: cv.value * rate,
+      valueCd: dayCd ? cv.valueCd * rate : null,
+      cost: fromMicros(r.metrics.costMicros || 0) * rate,
+      fxIncomplete: fx.fxIncomplete });
   }
   const firstOf = k => (days.find(d => d[k] > 0) || {}).date || null;
   const reasons = (c.primaryStatusReasons || []).map(String);
@@ -8912,12 +8923,12 @@ async function campaignTimeline({ id } = {}) {
     { key: "learning", label: "Bid strategy", state: learning ? "active" : (notServing ? "pending" : "done"),
       detail: learning ? "Learning — needs ~2-3 weeks or ~30 conversions to stabilize" : (notServing ? null : "Learned / stable") },
     { key: "conversions", label: "Conversion value", state: totals.conversions > 0 ? "done" : (totals.clicks > 10 ? "warn" : "pending"),
-      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · $${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
+      date: firstOf("conversions"), detail: totals.conversions > 0 ? `${totals.conversions.toFixed(1)} conv · ${fx.currency} ${totals.value.toFixed(0)} in 14d` : "No conversions yet" },
     { key: "eligibility", label: "Serving status", state: notServing ? "error" : (limited ? "warn" : "done"),
       detail: String(c.primaryStatus || "").replace(/_/g, " ").toLowerCase() + (reasons.length ? " — " + reasons.map(r => r.replace(/_/g, " ").toLowerCase()).join(", ") : "") }
   ];
   return { campaign: { id: cid, name: c.name, status: c.status, primaryStatus: c.primaryStatus, reasons, channel: c.advertisingChannelType, biddingStrategy: c.biddingStrategyType, startDate: _dateOnly(c.startDateTime) || null, endDate: _dateOnly(c.endDateTime) || null },
-    steps, adStrength, days, totals, fetchedAt: new Date().toISOString() };
+    steps, adStrength, days, totals, currency: fx.currency, fxIncomplete: fx.fxIncomplete, cdAvailable: dayCd, fetchedAt: new Date().toISOString() };
 }
 /* ====================== Reviewed creative production ======================
  * Drafts are immutable at approval: the review hashes the payload and every
@@ -9731,7 +9742,7 @@ async function _adDesignDeliveryFresh({workspaceId,start,end}={}){
   }
   return {ok:true,available:true,verification,verificationError,metricsError,deviceAvailable,deviceError,deviceRows:deviceMetrics,shapeRows,shapeError,totals,totalsError,range,currency:ctx.budgetCurrency,timeZone:ctx.accountTimezone,basis:'Google Ads interaction date',scope:group.channel==='search'?'Ad group image assets; shared by ads in this group':'This asset group',checkedAt:Date.now(),publications:safePublications,
     rows:rows.filter(r=>(r.asset||{}).imageAsset).map(r=>{const a=r.asset||{},link=r.assetGroupAsset||r.adGroupAsset||{},m=r.metrics||{},receipt=mapped.find(p=>p.resourceName===a.resourceName);return {assetId:a.resourceName,url:((a.imageAsset||{}).fullSize||{}).url||null,hash:receipt&&receipt.hash||null,fieldType:link.fieldType,..._assetShape(a),status:link.primaryStatus||link.status||'UNKNOWN',reasons:link.primaryStatusReasons||[],impressions:Number(m.impressions)||0,clicks:Number(m.clicks)||0,ctr:m.ctr==null?(Number(m.impressions)>0?Number(m.clicks)/Number(m.impressions):null):Number(m.ctr),conversions:Number(m.conversions)||0,value:Number(m.conversionsValue)||0,cost:fromMicros(m.costMicros)};}),
-    shapeNote:'Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
+    shapeScope:'campaign',shapeNote:'Covers the whole campaign, not only this group: the shape report is read per campaign. Grouped by the slot each asset filled, which is how Google reports a shape. One impression can combine several assets, so shapes must be compared with each other, never summed into a total.',note:'Group totals include all assets. Individual image outcomes can overlap when images and text serve together. Compare like periods; do not add asset conversions or interpret them as isolated image lift. Google does not expose separate Merchant Center traffic for each product image.'};
 }
 async function _prepareFirstAdDesignApproval({workspaceId,w,product,group,result,id,sourceHash}){
   if(!_copyValid(result.copy,true))throw new Error('Complete the headlines and descriptions before publication.');
