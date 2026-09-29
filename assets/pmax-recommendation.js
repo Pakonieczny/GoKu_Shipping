@@ -29,7 +29,8 @@
     return r;
   }
   function forecast(candidate, offers, scope, budget, days) {
-    var currency = candidate.budgetCurrencyVerified === false ? 'Unverified' : candidate.budgetCurrency || 'USD', missing = [], exact = paidTotal(offers.map(function (x) { return x.paidPerformance || {}; }), candidate.paidPerformance);
+    // A budget currency that was never verified or recorded is not assumed to be USD.
+    var unverified = candidate.budgetCurrencyVerified === false || !candidate.budgetCurrency, currency = unverified ? 'Unverified' : candidate.budgetCurrency, missing = [], exact = paidTotal(offers.map(function (x) { return x.paidPerformance || {}; }), candidate.paidPerformance);
     var choices = [];
     if (!scope.legacy) choices.push(Object.assign({}, exact, { scope: 'selected_products', label: 'Selected products · paid PMax history' }));
     (candidate.forecastBaselines || []).forEach(function (b) { choices.push(b); });
@@ -41,8 +42,8 @@
       if (x.currency === 'USD' && currency !== 'USD' && fx > 0) return Object.assign({}, x, { currency: currency, sourceCurrency: 'USD', cost: x.cost == null ? null : x.cost / fx, value: x.value == null ? null : x.value / fx, budgetFxDate: candidate.budgetFxDate || null, budgetToEvidenceFx: fx });
       return x;
     });
-    if (candidate.budgetCurrencyVerified === false) missing.push('The Google Ads budget currency could not be verified. Refresh evidence before comparing the planned spend with reported revenue or projecting performance.');
-    var valid = choices.filter(function (x) { return candidate.budgetCurrencyVerified !== false && x.available === true && x.monetaryComplete !== false && x.currency === currency && number(x.clicks) >= 20 && number(x.cost) > 0; });
+    if (unverified) missing.push('The Google Ads budget currency could not be verified. Refresh evidence before comparing the planned spend with reported revenue or projecting performance.');
+    var valid = choices.filter(function (x) { return !unverified && x.available === true && x.monetaryComplete !== false && x.currency === currency && number(x.clicks) >= 20 && number(x.cost) > 0; });
     var b = valid.find(function (x) { return number(x.clicks) >= 50 && number(x.conversions) >= 5 && number(x.conversions) <= number(x.clicks); }) || valid[0] || null;
     var rates = { ctr: null, cpc: null, cvr: null, aov: null };
     if (b) {
@@ -51,7 +52,7 @@
       if (number(b.clicks) >= 50 && number(b.conversions) >= 5 && number(b.conversions) <= number(b.clicks)) rates.cvr = number(b.conversions) / number(b.clicks);
       if (rates.cvr != null && number(b.value) > 0) rates.aov = number(b.value) / number(b.conversions);
     }
-    if (currency !== 'USD' && !fx && !choices.some(function (x) { return x.currency === currency; })) missing.push('A current ' + currency + ' to USD exchange rate is unavailable; USD evidence is not compared with a different-currency budget.');
+    if (!unverified && currency !== 'USD' && !fx && !choices.some(function (x) { return x.currency === currency; })) missing.push('A current ' + currency + ' to USD exchange rate is unavailable; USD evidence is not compared with a different-currency budget.');
     if (rates.cpc == null) missing.push('A paid CPC needs at least 20 observed clicks, verified spend and matching currency. Organic clicks cannot supply an ad auction price.');
     if (rates.ctr == null) missing.push('A paid CTR needs at least 100 reported impressions with consistent click counts.');
     if (rates.cvr == null) missing.push('Conversion projections need at least 50 paid clicks and 5 reported conversions in the same history. Free-listing conversions are never divided by organic clicks to manufacture a paid conversion rate.');

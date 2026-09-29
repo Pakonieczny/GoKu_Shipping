@@ -2844,8 +2844,8 @@ function _windowSearches(keywords, start, end) {
 // The whole research output for one campaign: CPC cap, daily budget, run window, expected
 // outcome, plus plain-language rationale strings the console surfaces on every opportunity.
 function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBidding, research, aov, cvrInfo, market, economics, confidence, currency, nativeToUsd } = {}) {
-  const ccy = currency || CURRENCY;
-  if(ccy!=="USD")aov=Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
+  const ccy = currency || "UNVERIFIED", usd = (currency || CURRENCY) === "USD"; // texts name an unverified currency as such; the math keeps its basis
+  if(!usd)aov=Number(nativeToUsd)>0?Number(aov||0)/Number(nativeToUsd):0; const smart = !!smartBidding;
   const tier = _cpcTier(title, occasion);
   const tierLabel = _TIER_LABEL[tier];
   // CPC: REAL Keyword Planner top-of-page bids when we have them, tier heuristic otherwise.
@@ -2862,7 +2862,7 @@ function planCampaign({ title, occasion, peakDate, ceiling, headroom, smartBiddi
     cpcSource = bidsMeasured ? (research.source || "google_keyword_planner") : "competition_estimate";
   } else {
     // Tier benchmarks are US-dollar figures; express them in the account currency.
-    const t = CPC_TIERS[tier], fx = ccy !== "USD" && Number(nativeToUsd) > 0 ? 1 / Number(nativeToUsd) : 1;
+    const t = CPC_TIERS[tier], fx = !usd && Number(nativeToUsd) > 0 ? 1 / Number(nativeToUsd) : 1;
     cpc = { low: _r2(t.low * fx), max: _r2(t.max * fx) }; cpcSource = "estimate";
   }
   // ---- ONE projection chain. Every number on the card derives from these three inputs. ----
@@ -5309,8 +5309,8 @@ async function designStudioPerformance({ days = 30 } = {}) {
   const tz = await _accountTz(), end = _acctDateYmd(tz, 0), start = _acctDateYmd(tz, -(days - 1) * 86400000);
   const readiness = await designStudioConversionReadiness();
   const exactNames = [`BA · ${DESIGN_STUDIO_TAGS.pmax}`, `BA · ${DESIGN_STUDIO_TAGS.search}`];
-  const all = await metricsRange({ start, end });
-  const campaigns = (Array.isArray(all) ? all : []).filter(x => exactNames.includes(x.name)).map(x => ({
+  const all = await metricsRange({ start, end }); // { snapshot: campaign rows, currency }
+  const campaigns = (Array.isArray(all) ? all : (all && Array.isArray(all.snapshot) ? all.snapshot : [])).filter(x => exactNames.includes(x.name)).map(x => ({
     ...x, lane: x.name === exactNames[0] ? "pmax" : "search",
     metrics: _studioMetricSummary([x])
   }));
@@ -5388,7 +5388,7 @@ async function designStudioPerformance({ days = 30 } = {}) {
     cpa: funnel.apiOk && funnel.purchase ? overall.cost / funnel.purchase : null,
     roas: funnel.apiOk && overall.cost ? funnel.value / overall.cost : null,
     fxIncomplete: !!funnel.fxIncomplete };
-  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: "USD", accountCurrency: await _accountCurrency().catch(() => null),
+  const result = { ok: true, engineVersion: DESIGN_STUDIO_ENGINE_VERSION, landingUrl: DESIGN_STUDIO_URL, currency: (all && all.currency) || "USD", accountCurrency: await _accountCurrency().catch(() => null),
     start, end, days, campaigns, overall, purchase, readiness, daily, funnel, rates, assetGroups, channelMix, searchInsights, fetchedAt: Date.now() };
   const f = fb(); if (f) { try { await f.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).set({ performance: result }, { merge: true }); } catch (e) {} }
   return result;
