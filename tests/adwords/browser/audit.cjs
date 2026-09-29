@@ -82,6 +82,7 @@ function pageAudit(opts) {
     const over = Math.max(r.right - (pr.right - padR), (pr.left + padL) - r.left);
     if (over <= 3) return; // icon nudges and sub-pixel rounding
     if (parseFloat(s.marginLeft) < 0 || parseFloat(s.marginRight) < 0) return; // deliberate bleed
+    if (s.transform !== 'none' && r.width <= 40) return; // a turned icon (an open row's chevron) takes no layout room
     const key = sel(p); if (seenC.has(key)) return; seenC.add(key);
     out.overflow.push({ sel: sel(el), container: key, overBy: Math.round(over), text: snippet(el.innerText || el.textContent, 70) });
   }));
