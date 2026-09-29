@@ -109,7 +109,7 @@ async function engineChecks(){
  try{
   bind({_creativeImageOps:async()=>({ops:[],groups:{'customers/123/assetGroups/-3':{square:['sq'],landscape:['ls'],portrait:[],logo:'lg'}}}),_buildPmaxTextAssetOps:()=>({ops:[],ids:{headlines:[],longHeadlines:[],descriptions:[],businessName:'bn'}})});
   const b=await get('buildDesignStudioPmaxCampaignOps')({dailyBudget:5,groups:[{name:'Gifts',angle:'a',searchThemes:[],headlines:[],longHeadlines:[],descriptions:[]}],reviewedCreative:{}},{ctrl:clone(ctrl)}),c=b.ops.find(o=>o.campaignOperation).campaignOperation.create;
-  check(!c.startDateTime&&c.endDateTime==='20261228 23:59:59','Studio draft starts today and ends 90 days later on the account calendar ('+[c.startDateTime,c.endDateTime]+')');
+  check(!c.startDateTime&&c.endDateTime==='2026-12-28 23:59:59','Studio draft starts today and ends 90 days later on the account calendar, as "yyyy-MM-dd HH:mm:ss" ('+[c.startDateTime,c.endDateTime]+')');
  }finally{Date.now=realNow;}
 }
 
