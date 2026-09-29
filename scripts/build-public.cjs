@@ -57,6 +57,8 @@ const assets = [
   "assets/brites-brand/icon-blue.png",
   "brites-progress.js",
   "brites-progress.css",
+  "brites-flow.js",
+  "brites-flow.css",
   "brites-ad-responsive.js",
   "brites-groups.js",
   "brites-groups.css",

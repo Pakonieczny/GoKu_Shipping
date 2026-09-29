@@ -12,7 +12,11 @@ https://goldenspike.app/.netlify/functions/googleConnectionsCheck?format=json
 https://goldenspike.app/.netlify/functions/googleConnectionsCheck?write=1  # adds the validateOnly write probe
 ```
 
-If `EDIT_PASSCODE` is set, add `?key=<EDIT_PASSCODE>`. The default run is
+Add `?key=<EDIT_PASSCODE>` (or send the `X-Edit-Passcode` header). This check,
+`googleMerchantHealth`, `shopifyAttributionCheck`, `googleAdsAuthCheck` and
+`googleAdsDiag` show account IDs, credential shapes or order values, so they
+answer only with the passcode; while `EDIT_PASSCODE` is unset in Netlify they
+refuse with "Set EDIT_PASSCODE in Netlify to run this check". The default run is
 read-only: every probe is a `SELECT` or a `GET`. The write probe is opt-in and
 uses `validateOnly`, which Google documents as non-mutating.
 

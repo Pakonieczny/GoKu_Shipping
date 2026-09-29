@@ -55,6 +55,11 @@ for (const s of styles.STYLES) {
   check(s.recommendedDaily >= s.minimumSensibleDaily && s.minimumSensibleDaily > 0, s.key + ' has a recommended budget at or above its sensible minimum');
   check(typeof s.budgetNote === 'string' && s.budgetNote.length > 40, s.key + ' explains why that budget, rather than asserting a number');
 }
+check(/3× your cost per conversion/.test(styles.byKey.pmax.budgetNote) && styles.byKey.pmax.evaluationDays === 42, 'Performance Max budget guidance is Google\'s published rule (3× cost per conversion, 6 weeks), not an invented threshold');
+check(styles.budgetCeilingMessage(40, 28, 100, 'CAD') === null, 'budgets inside the free part of the ceiling pass');
+const overCeiling = styles.budgetCeilingMessage(90, 28, 100, 'CAD');
+check(/CAD 90\.00/.test(overCeiling) && /CAD 72\.00/.test(overCeiling) && /Controls/.test(overCeiling), 'budgets over the ceiling are refused in the account currency, naming what is free and where to change it');
+check(styles.budgetCeilingMessage(500, 0, 0, 'CAD') === null, 'no ceiling configured means no refusal');
 check(/data-style-recommend/.test(html) && /data-recommended=/.test(html), 'the recommendation can be taken in one click');
 check(/aria-describedby="budget-hint-/.test(html), 'the hint is associated with its input for a screen reader');
 check(/A daily budget is an average/.test(html), 'the page states what a daily budget actually means');
@@ -63,7 +68,7 @@ check(/A daily budget is an average/.test(html), 'the page states what a daily b
 //    publishing code. An invented reassurance is worse than none.
 const publisher = fs.readFileSync(path.join(REPO, 'netlify/functions/googleAdsCampaignStyles.js'), 'utf8');
 const autopilot = fs.readFileSync(path.join(REPO, 'netlify/functions/googleAdsAutopilot.js'), 'utf8');
-check(/What we set up for you/.test(html), 'the chooser discloses what is configured on the operator\'s behalf');
+check(/what we set up for you/i.test(html), 'the chooser discloses what is configured on the operator\'s behalf');
 for (const s of styles.STYLES) {
   check(s.autoSettings.length >= 4, s.key + ' discloses its automatic settings');
   check(s.autoSettings.some(l => /paused/i.test(l)), s.key + ' states that it starts paused');
@@ -72,8 +77,19 @@ for (const s of styles.STYLES) {
 check(/status:'PAUSED'/.test(publisher) && /status: ?"PAUSED"/.test(autopilot), 'the publishing code really does create campaigns paused');
 check(/explicitlyShared:false/.test(publisher) && /explicitlyShared: ?false/.test(autopilot), 'budgets really are unshared');
 check(/maximizeConversions:\{\}/.test(publisher), 'Display bidding really is maximize conversions, as disclosed');
-check(/brandGuidelinesEnabled: ?false/.test(autopilot), 'Performance Max brand guidelines really are off, as disclosed');
+check(/brandGuidelinesEnabled: ?false/.test(autopilot), 'Performance Max brand guidelines really are off, so both logos may link to the asset group');
 check(/assetAutomationStatus: ?"OPTED_OUT"/.test(autopilot), 'automatically generated creative really is opted out, as disclosed');
+// Bidding is disclosed for every style, and matches what each builder sends.
+check(styles.byKey.pmax.autoSettings.some(l => /conversion value/i.test(l)) && /maximizeConversionValue:/.test(autopilot), 'Performance Max discloses the conversion-value bidding its builder sends');
+for (const key of ['responsive_display', 'fixed_display']) {
+  check(styles.byKey[key].autoSettings.some(l => /maximize conversions/i.test(l)), key + ' discloses maximize-conversions bidding');
+  check(styles.byKey[key].autoSettings.some(l => /no audience or placement targeting/i.test(l)), key + ' discloses that it has no audience or placement targeting');
+}
+const displayLane = server.displayOps({ customerId: '1', style: 'responsive_display', name: 'n', dailyBudget: 5, countries: ['2124'], destination: 'https://britesjewelry.com/products/x', images: [{ shape: 'square', resourceName: 'a/1' }, { shape: 'landscape', resourceName: 'a/2' }], copy: { headlines: ['H'], descriptions: ['D'], longHeadlines: ['L'] }, logo: 'a/3' });
+check(!displayLane.some(o => o.adGroupCriterionOperation), 'the Display builder really adds no audience or placement targeting, as disclosed');
+// PMax may not promise that only approved assets serve: the feed and a generated video can.
+check(!styles.byKey.pmax.autoSettings.some(l => /only the assets you approved/i.test(l)) && styles.byKey.pmax.autoSettings.some(l => /product feed/i.test(l) && /video/i.test(l)), 'Performance Max states that feed data and a generated video can still serve');
+check(!styles.STYLES.some(s => s.autoSettings.some(l => /standard delivery/i.test(l))), 'filler with no alternative (standard delivery) is not disclosed as a choice');
 
 // 7. The page still parses.
 for (const [, js] of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)) if (js.trim()) new vm.Script(js);

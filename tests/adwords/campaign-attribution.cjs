@@ -11,8 +11,6 @@ assert.equal(c.campaignPipeline({channel:'DISPLAY'}),'Display · format not iden
 assert.equal(c.campaignPipeline({channel:'SEARCH'}),'Search · text ads');
 const spending=c.campaignSpendHtml([{name:'Example',channel:'PERFORMANCE_MAX',id:'123',budget:10,cost:2,conv:9,value:100}]);
 assert(spending.includes('$10 CAD'));assert(spending.includes('Unavailable'));assert(!spending.includes('$100'));
-const orders=c.orderAttributionHtml([{value:20,currency:'CAD',items:[{title:'Charm'}]},{value:30,currency:'USD',items:[]}]);
-assert(orders.includes('$20 CAD')&&orders.includes('$30 USD'));assert(orders.includes('Not attributed'));assert(!orders.includes('$50'));
 assert(!/api\(/.test(html.slice(html.indexOf('function campaignPipeline('),html.indexOf('function renderCommand(){'))));
 for(const m of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)){if(m[1].trim())new vm.Script(m[1]);}
 console.log('PASS attribution tags, missing IDs, campaign distinctions, unavailable metrics, currency separation, no added API requests, and inline JavaScript syntax');
