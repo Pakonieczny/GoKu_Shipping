@@ -2104,7 +2104,8 @@ const BRAND = {
 };
 function brandSafe(text) {
   const t = String(text).toLowerCase();
-  return !BRAND.termExclusions.some(x => x && t.includes(x.toLowerCase()));
+  // A term matches from the start of a word ("cure" blocks cure and cures, not secure or manicure).
+  return !BRAND.termExclusions.some(x => x && new RegExp("(?:^|[^a-z0-9])" + x.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(t));
 }
 function textGuidelinesOp() {
   return { termExclusions: BRAND.termExclusions, messagingRestrictions: BRAND.messagingRestrictions };
