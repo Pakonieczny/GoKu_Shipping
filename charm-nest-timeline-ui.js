@@ -244,8 +244,11 @@
   const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "Name", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
   function blockerOf(events) {
-    let hold = null; const need = new Map();
+    let hold = null; const need = new Map(), byHand = new Map();
     for (const e of events || []) {
+      // a line completed with Complete Order answers its question (a person finished it by hand); a Reopen asks it again
+      const op = opStepOf(e), l = e.lineKey;
+      if (op && l) { const [a, b] = op === "complete" ? [need, byHand] : [byHand, need]; if (a.has(l)) { b.set(l, a.get(l)); a.delete(l); } continue; }
       if (e.type === "held") hold = e;
       else if (e.type === "released" || e.type === "restored" || e.type === "cancelRestored") hold = null;
       else if (e.type === "needsDecision") need.set(e.lineKey || e.id, e);
@@ -386,6 +389,8 @@
     const enter = (st, e) => { if (st !== stage) since = +e.at || 0; stage = st; };
     for (const e of list) {
       at = Math.max(at, +e.at || 0);
+      // a Complete Order press or a Reopen moves the order on no step (derive's `hand`: completed by hand)
+      if (opStepOf(e)) { if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by; continue; }
       if (stepOf(e) != null) step = Math.max(step, stepOf(e)); else if (isDesigned(e)) step = Math.max(step, 1);
       if (e.station && e.type !== "arrived") { station = e.station; device = e.device || ""; seen = e.type === "scan"; }
       if (!PEOPLE_OUT.has(String(e.by || "").trim().toLowerCase())) by = e.by;
@@ -445,6 +450,15 @@
     const d = x.data && typeof x.data === "object" && !Array.isArray(x.data) ? x.data : {}, where = str(d.pressedIn, 40);
     const text = k === "complete" ? "Completed with Complete Order" : d.reopened === "undo" ? "Completion undone: back to Open" : "Reopened: back to Open";
     return { type: k === "reopen" ? "reopened" : x.type, text: text + (where ? " · " + where : ""), data: Object.assign({}, d, where ? { foot: where } : {}) };
+  }
+  /** Completed by hand (Paul, 29 Sep: a Complete Order press reads as completed everywhere): the latest press when every
+   *  line pressed has no Reopen after its last press, else null. The steps it had not reached are skipped, not "next";
+   *  a Reopen puts the order back where it was (its Complete and Reopen seals stay), a later press completes it again. */
+  function handOf(events) {
+    const last = new Map();
+    for (const e of events || []) { const k = opStepOf(e); if (k) last.set(e.lineKey || "", k === "complete" ? e : null); }
+    const v = [...last.values()];
+    return v.length && v.every(Boolean) ? v.reduce((a, b) => (+b.at >= +a.at ? b : a)) : null;
   }
 
   const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
@@ -611,9 +625,10 @@
   /** Where an order stands, for the rail and the Now line: its events (oldest first), its cancel record and the
    *  server's `where` (worked out here when there is none). Pure: the order view may use it too.
    *  rail: the order's (or a piece's) own steps, stagesFor(lines); every step when left out.
-   *  → { W, rail, stages[{first,last}], step, cur, stop, cancelled, hold, last } — all indexes into `rail`. step: the
-   *  furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the step
-   *  being worked towards (-1 when all are done), stop: where a cancelled order stopped. */
+   *  → { W, rail, stages[{first,last}], step, cur, stop, cancelled, hold, hand, last } — all indexes into `rail`. step:
+   *  the furthest step reached (W.step counts the full rail: a step this order does not take is passed over), cur: the
+   *  step being worked towards (-1 when all are done, or it was completed by hand), stop: where a cancelled order
+   *  stopped, hand: the Complete Order press that completed it by hand (handOf; the steps after `step` are skipped). */
   function derive(events, cancelRec, where, rail) {
     events = events || [];
     rail = Array.isArray(rail) && rail.length ? rail : STAGES;
@@ -634,7 +649,8 @@
     else if (lastCancel && lastCancel.type !== "cancelRestored" && W.cancelled !== false) cancelled = { at: lastCancel.at, by: whoOf(lastCancel), why: reasonOf(lastCancel) || lastCancel.text, source: lastCancel.type === "etsyCancelled" ? "etsy" : lastCancel.source };
     else if (W.cancelled) cancelled = { at: +W.since || +W.at || 0, by: str(W.by, 80), why: "", source: "" };
     const hold = !cancelled && W.stage === "held" ? (lastHold && lastHold.type === "held" ? lastHold : { type: "held", at: +W.since || 0, text: "", data: null }) : null;
-    return { W, rail, stages, step, cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, last: events[events.length - 1] || null };
+    const hand = cancelled ? null : handOf(events);
+    return { W, rail, stages, step, cur: hand ? -1 : cur, stop: cancelled ? Math.min(step + 1, rail.length - 1) : -1, cancelled, hold, hand, last: events[events.length - 1] || null };
   }
 
   /* ════ orders of several pieces (Paul, 28 Sep: "very convoluted and confusing especially on multipiece orders") ════
@@ -660,16 +676,17 @@
     for (const x of each) for (const s of x.steps) {
       const i = STAGES.indexOf(s); if (i < 0) continue;
       const q = Math.max(1, Math.round(+x.p.qty || 1)); rail[i].of += q;
-      if (x.D.step >= i || x.D.stages[i].first) rail[i].n += q;
+      if (x.D.step >= i || x.D.stages[i].first || x.D.hand) rail[i].n += q;
     }
-    return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => x.D.step)) : -1 };
+    // (a piece completed by hand waits on no step: the order is where its slowest other piece is)
+    return { each, rail: rail.filter(r => r.of), step: each.length ? Math.min(...each.map(x => (x.D.hand ? STAGES.length - 1 : x.D.step))) : -1 };
   }
   /** The rail a view draws (list: its steps, oldest first), with the step being worked towards and, when cancelled,
    *  where it stopped, both on that rail. */
   function railed(D, list, sum) {
     D.rail = (list && list.length ? list : STAGES).map(s => ({ s, i: STAGES.indexOf(s) })).filter(r => r.i >= 0);
     const nx = D.rail.find(r => r.i > D.step);
-    D.cur = nx ? nx.i : -1;
+    D.cur = nx && !D.hand ? nx.i : -1;
     D.stop = D.cancelled ? (nx ? nx.i : D.rail[D.rail.length - 1].i) : -1;
     D.sum = sum || null;
     return D;
@@ -722,7 +739,7 @@
     const R = D.rail, pos = R.findIndex(r => r.i === i);
     const cx = data.context && typeof data.context === "object" ? data.context : {};
     const lines = Array.isArray(cx.lines) ? cx.lines : [], sheets = Array.isArray(cx.sheets) ? cx.sheets.filter(x => x && x.name) : [];
-    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : i === D.cur ? "now" : "later";
+    const state = pos < 0 ? "none" : D.cancelled ? (i < D.stop ? "done" : i === D.stop ? "stopped" : "gone") : i <= D.step ? "done" : D.hand ? "skipped" : i === D.cur ? "now" : "later";
     const done = [], need = [], facts = [];
     // who did it, where and when (Paul, 28 Sep 23:51): "Welded · Marco R. · Welding", then its time and the station's words
     const doneOf = e => {
@@ -751,6 +768,8 @@
     const add = (kind, t) => { if (t && !need.some(n => n.t === t)) need.push({ kind, t: String(t).slice(0, 220) }); };
     if (state === "none") { facts.push(`${s.none || "Not a step"} for ${lines.length === 1 ? "this piece" : "this order"}`); return out(); }
     if (state === "gone" || state === "stopped") { add("stop", D.cancelled && D.cancelled.source === "etsy" ? "Cancelled on Etsy: this step will not happen" : "Cancelled: this step will not happen"); return out(); }
+    // completed by hand (Complete Order): nothing is owed, and who completed it and when is said
+    if (state === "skipped") { done.push({ t: "Not needed: the order was completed by hand", sub: [shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand)] : []).join(" · "), key: D.hand.key }); return out(); }
     const noLabel = () => { if (s.k === "sorted" && !labels.length) add("label", "Label not printed yet"); };
     const name = l => [l.sku ? "SKU " + l.sku : "", l.form ? `(${l.form})` : ""].filter(Boolean).join(" ") || l.title || "a piece";
     // the pieces not on a sheet yet: an order travels whole, so they hold back the step being worked on too, and they show
@@ -804,7 +823,7 @@
   const REQ_WORD = { wait: "Waiting", person: "Needs a person", next: "Next", after: "After", stop: "Stopped", label: "" };
   // (a label not printed yet is said, but a step that is done stays done: only a real need makes it "Part done")
   const partDone = q => q.state === "done" && q.need.some(n => n.kind !== "label");
-  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed" };
+  const STATE_WORD = { done: "Done", now: "Next", later: "To come", stopped: "Stopped here", gone: "Won't happen", none: "Not needed", skipped: "Skipped" };
   const CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
   const cap1 = t => { t = String(t || ""); return t.charAt(0).toUpperCase() + t.slice(1); };
   /** A step's lines: what is done with a check, what is missing with an open circle (full: every one, and the quiet facts). */
@@ -1369,6 +1388,7 @@
       const D = derive(S.events, S.cancelled, whereNow());
       if (S.pieces.length < 2) return railed(D, railNow(S.events));
       const sum = summary(S.every, S.pieces, S.cancelled), far = D.step;
+      if (D.hand && !sum.each.every(x => x.D.hand)) D.hand = null;   // (completed by hand: every piece of it)
       D.step = Math.min(D.step, sum.step);
       // a step that every piece taking it has passed is not what the order waits on (a stud's Welded, done, while the
       // necklaces wait on Assembled): the next step is the first one some piece still has to reach
@@ -1406,6 +1426,7 @@
     function nowText(D) {
       const W = D.W;
       if (D.cancelled) return { cls: "cx", t: "Cancelled — do not proceed" };
+      if (D.hand) return { cls: "done", t: "Order completed by hand" };
       if (!S.events.length) return { cls: "", t: "Nothing recorded yet" };
       if (D.hold) { const r = reasonOf(D.hold) || D.hold.text; return { cls: "hold", t: "On hold" + (r ? " — " + r.slice(0, 80) : "") }; }
       return { cls: W.stage === "completed" ? "done" : "", t: String(W.label || W.text || "—").slice(0, 140) };
@@ -1444,7 +1465,7 @@
         let c;
         if (!S.loaded) c = "f";
         else if (D.cancelled) c = i < D.stop ? "d" : i === D.stop ? "x" : "f gone";
-        else c = i <= D.step ? "d" : i === D.cur ? "c" : "f";
+        else c = i <= D.step ? "d" : i === D.cur ? "c" : D.hand ? "f gone" : "f";   // (completed by hand: the rest skipped)
         // a step passed with no event of its own (an older order, or one done off the record) still shows as done
         const ev = c === "d" ? st.first : null;
         const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part;
@@ -1459,7 +1480,7 @@
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
         const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
         // (who did it and where: "Welded · Marco R. · Welding · done Tuesday, Sep 29, 2026 · 10:15 AM")
-        const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
+        const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : D.hand ? `${s.l}: skipped, the order was completed by hand` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
         if ((c === "d" || c === "x") && !was.startsWith(c)) {
           if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
@@ -1522,7 +1543,7 @@
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1];
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = D.cancelled ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
+      const ghosts = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
       const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
@@ -1532,7 +1553,7 @@
       let cxX = 0;
       if (D.cancelled) { const ce = evs.filter(e => CANCEL_TYPES.has(e.type)).pop(); cxX = ce ? ce.x + COL / 2 : ((evs.filter(e => e.at <= D.cancelled.at).pop() || { x: nowX - COL * .75 }).x + COL / 2); }
       const Wh = D.W, stn = Wh.station && !["sheet", "waiting", "review", "held"].includes(Wh.stage) ? STATION_NAME[Wh.station] || Wh.station : "";
-      const nowLbl = D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
+      const nowLbl = D.hand ? ["COMPLETED", shortWhen(D.hand.at)].concat(personOf(D.hand) ? [personOf(D.hand).toUpperCase()] : []).join(" · ") : D.hold ? "NOW · ON HOLD" : Wh.stage === "completed" || (D.cur < 0 && last) ? "COMPLETED" : stn ? "NOW · AT " + stn.toUpperCase() : last ? "NOW · " + String(Wh.label || "").toUpperCase() : "NOW";
       cv.style.width = W + "px"; cv.style.height = H + "px";
       const back = dayCols + lines +
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
@@ -1563,6 +1584,8 @@
         cv.insertAdjacentHTML("beforeend", ghostHtml);
       }
       S.nowX = nowX;
+      // (a NOW label longer than the room before its line, "COMPLETED · TUE 3:08 AM · PAUL" early on, reads after it)
+      const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * 6.7 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "8px"; }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
         [...cv.querySelectorAll(".tlSt")].forEach((b, i) => { const r = b.style.getPropertyValue("--rot"); anim(b, [{ transform: `rotate(${r}) scale(.3)`, opacity: 0 }, { transform: `rotate(${r}) scale(1)`, opacity: b.classList.contains("ghost") ? .42 : b.classList.contains("dim") ? .13 : 1 }], 420, { delay: Math.min(i * 18, 540), easing: SPRING, fill: "backwards" }); });
@@ -1735,14 +1758,14 @@
       const i = stageOfEl(b), q = i >= 0 ? reqOf(i) : null; if (!q) return;
       if (expA) { try { expA.cancel(); } catch (_) {} expA = null; }
       // an event that is not a step of its own says what it is first, then what the order needs to move on
-      const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null;
-      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 9px">Then, for the order to move on</div>` : "";
+      const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null, hand = lone && S.D.hand;
+      const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : "";
       expFor = b; expT = cancelT(expT);
       // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
       const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && !z.up ? z : null;
       const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
       // (a short view puts the card beside the dot: beside its seal too, never over it)
-      expA = placeExp(exp, head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
+      expA = placeExp(exp, hand ? head : head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
       exp.classList.add("on");   // (the card takes the pointer: moving onto it keeps it)
     }
     function hideExp(now) {
@@ -1787,7 +1810,7 @@
       const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
       const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
         `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
-        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
+        `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" || q.state === "skipped" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
         `<div class="tlActs">${ev ? `<button type="button" class="btn ghost sm" data-open-ev="${esc(ev.key)}">Show the step</button>` : ""}${sheet && opts.onSheet ? `<button type="button" class="btn ghost sm tlOpenSheet" data-sheet="${esc(sheet.sheetId)}" data-pool="${esc(poolOf(sheet))}">Open sheet</button>` : ""}<button type="button" class="btn ghost sm" data-unpin>Close</button></div></div>` +
         `<div class="tlAround"><span class="tlLbl">The path</span><div class="tlPath2">${path}</div></div></div>`;
@@ -2034,5 +2057,5 @@
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf };
 })(typeof window !== "undefined" ? window : globalThis);

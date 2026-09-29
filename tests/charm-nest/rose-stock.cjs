@@ -18,7 +18,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  const saved=sheet('sheet-first',shapes);store.set('Charm_Nest_Sheets/sheet-first',saved);
  const planArgs={sheetId:saved.id,stockId,revision:0,fingerprint:create.fingerprint(saved),shapesJson:JSON.stringify(shapes),allowanceMm:.2};
  await assert.rejects(()=>api.rosePlan({...planArgs,fingerprint:'stale'}),/layout changed/);
- const p=await api.rosePlan(planArgs);assert(JSON.parse(p.planJson).lines.length);
+ const p=await api.rosePlan({...planArgs,cut:true});assert(JSON.parse(p.planJson).lines.length);
  const cutArgs={sheetId:saved.id,stockId,revision:0,planHash:p.planHash};
  const actual=store.get('Charm_Nest_Sheets/sheet-first');
  assert(Readiness.sheet({...actual,engraving:Readiness.decisions(Object.values(store.get('Charm_Nest_Runs/run-test').lines))}).ready,'fixture passes actual production checks');
@@ -31,7 +31,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  await assert.rejects(()=>api.roseClaim({sheetId:'sheet-next',stockId,revision:0,wPt:100,hPt:50}),/changed/);
  await assert.rejects(()=>api.roseClaim({sheetId:'sheet-next',stockId,wPt:120,hPt:50}),/size/);
  const laterShapes=[shape('pool-2',25,2,8,25)],later=sheet('sheet-next',laterShapes);store.set('Charm_Nest_Sheets/sheet-next',later);
- const p2=await api.rosePlan({sheetId:later.id,stockId,revision:1,fingerprint:create.fingerprint(later),shapesJson:JSON.stringify(laterShapes),allowanceMm:.2});
+ const p2=await api.rosePlan({sheetId:later.id,stockId,revision:1,fingerprint:create.fingerprint(later),shapesJson:JSON.stringify(laterShapes),allowanceMm:.2,cut:true});
  const before=JSON.parse(next.stock.profileJson),after=JSON.parse(p2.planJson).profile;assert(after.values.every((v,i)=>v>=before.values[i]));
  await api.roseClaim({sheetId:'sheet-next',stockId,revision:1,wPt:100,hPt:50,nesting:true});
  await assert.rejects(()=>api.roseRecordCut({sheetId:'sheet-next',stockId,revision:1,planHash:p2.planHash}),/changed/,'re-nesting invalidates the old cut plan');
@@ -50,7 +50,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  vm.runInContext(library.slice(library.indexOf('async function op_deleteSheet('),library.indexOf('/* A calibration row'))+';this.del=op_deleteSheet;',ctx);
  vm.runInContext(library.slice(library.indexOf('async function op_archiveEmptySheet('),library.indexOf('// ── arrival ledger'))+';this.archive=op_archiveEmptySheet;',ctx);
     const args={sheetId:planned.id,stockId:claim.stock.id,revision:0,fingerprint:create.fingerprint(planned),shapesJson:JSON.stringify(plannedShapes),allowanceMm:.2};
-    const original=await api.rosePlan(args),originalPlan=JSON.parse(original.planJson);
+    const original=await api.rosePlan({...args,cut:true}),originalPlan=JSON.parse(original.planJson);
     store.get('Charm_Nest_Sheets/'+planned.id).draft=true;
     await assert.rejects(()=>ctx.archive({id:planned.id,runId:planned.runId}),/planned or protected/,'intake cannot archive a saved green contour');
     await assert.rejects(()=>ctx.del({id:planned.id,code:'975311'}),/planned or protected/,'deleting a planned sheet cannot erase its contour or outputs');
@@ -69,7 +69,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
     await assert.rejects(()=>api.rosePlan({...nextArgs,shapesJson:JSON.stringify([shape('locked-1',35,2,8,30),incoming])}),/protected Rose Gold charm outlines/,'the old charm cannot move by changing only its submitted vector');
  // A reloaded layout rebuilds its saved outline from 3-decimal positions.
  const nudged=plannedShapes.map(s=>({...s,paths:s.paths.map(path=>path.map(([x,y])=>[+(x+.0004).toFixed(4),+(y-.0003).toFixed(4)]))}));
- const reloaded=JSON.parse((await api.rosePlan({...nextArgs,shapesJson:JSON.stringify([...nudged,incoming])})).planJson);
+ const reloaded=JSON.parse((await api.rosePlan({...nextArgs,shapesJson:JSON.stringify([...nudged,incoming]),cut:true})).planJson);
  assert.deepEqual(reloaded.shapes[0].paths,plannedShapes[0].paths,'a reloaded layout keeps the stored protected outline');
  const added=JSON.parse((await api.rosePlan(nextArgs)).planJson);
  assert.deepEqual(added.lines.slice(0,originalPlan.lines.length),originalPlan.lines,'original green line is preserved exactly');
@@ -90,7 +90,7 @@ const sheet=(id,shapes)=>({id,metal:'rose',verification:{ok:true},status:'comple
  third.placements=third.placements.map(p=>({...p,cxPt:+(p.cxPt+.0004).toFixed(3),cyPt:+(p.cyPt-.0004).toFixed(3)}));
  third.placements.push({id:'new-2',cxPt:50,cyPt:12,angle:0,scale:1});
  const shift=s=>({...s,paths:s.paths.map(path=>path.map(([x,y])=>[+(x+.0004).toFixed(4),+(y-.0004).toFixed(4)]))});
- const thirdPlan=JSON.parse((await api.rosePlan({...args,fingerprint:create.fingerprint(third),shapesJson:JSON.stringify([...plannedShapes.map(shift),shift(incoming),shape('new-2',46,8,8,8)])})).planJson);
+ const thirdPlan=JSON.parse((await api.rosePlan({...args,fingerprint:create.fingerprint(third),shapesJson:JSON.stringify([...plannedShapes.map(shift),shift(incoming),shape('new-2',46,8,8,8)]),cut:true})).planJson);
  assert.deepEqual(thirdPlan.lines.slice(0,added.lines.length),added.lines,'both earlier green lines are preserved exactly');
  assert(thirdPlan.lines.length>added.lines.length,'the third upload adds its own green line');
  assert.deepEqual(thirdPlan.shapes.slice(0,2),added.shapes,'stored outlines stay authoritative');
