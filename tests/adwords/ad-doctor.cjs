@@ -51,7 +51,8 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(pulled.channelBreakdown[0].label === 'YouTube' && pulled.channelBreakdown[0].value === 40, 'PMax channel rows name YouTube and carry conversion value');
     const diag = { campaigns: [{ id: '42', status: 'ENABLED', budget: 10,
       keywordDetail: [{ adGroupId: '7', criterionId: '99', text: 'charm necklace', match: 'PHRASE' }],
-      searchTerms: [{ term: 'personalized charm necklace', conv: 2 }, { term: 'free jewelry', conv: 0 }], adsContent: [{ adId: '555' }] }] };
+      searchTerms: [{ term: 'personalized charm necklace', conv: 2 }, { term: 'free jewelry', conv: 0 }], adsContent: [{ adId: '555' }] }],
+      negativeGuard: { '42': { converting: ['personalized charm necklace'], keywords: ['charm necklace'] } } };
     const ai = { campaigns: [{ id: '999', severity: 'bogus', verdict: 'maybe', googleSays: 'none', headline: 'h', aiSays: 'a', findings: ['1', '2', '3', '4', '5', '6'],
       fixReview: [{ working: 'working' }], action: { kind: 'raiseBudget', budget: 25, urgency: 'now' }, remedies: [
         { issue: 'same budget', fix: 'x', impact: 'high', executable: { kind: 'setBudget', budget: 10 } },
@@ -76,6 +77,11 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(ex[5].kind === 'addNegatives' && ex[5].keywords.join() === 'free' && ex[5].skipped.includes('charm necklace') && ex[5].skipped.includes('personalized'), 'negatives that would block converting searches or active keywords are left out');
     check(other[0].kind === 'none' && ex[6].keywords.length === 1 && ex[6].keywords[0].text === 'mom gift', 'keywords go only to evidence ad groups and are not re-added');
     check(other[1].kind === 'none' && ex[7].kind === 'none', 'unknown ads and invented actions are advice only');
+    const neg = { campaigns: [{ id: '42', remedies: [{ issue: 'n', executable: { kind: 'addNegatives', keywords: ['free', 'engraved locket'] } }] }] };
+    const unguarded = plain(e.get('_diagSanitize')(neg, { campaigns: diag.campaigns }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(unguarded.kind === 'none', 'without the full converting-terms read, a proposed negative is advice only');
+    const wide = plain(e.get('_diagSanitize')(neg, { ...diag, negativeGuard: { '42': { converting: ['engraved locket for mom'], keywords: [] } } }, { maxDailyBudgetTotal: 30 }, 20)).campaigns[0].remedies[0].executable;
+    check(wide.kind === 'addNegatives' && wide.keywords.join() === 'free' && wide.skipped.includes('engraved locket'), 'a converting search outside the top terms still blocks the negative that would stop it');
   }
 
   // ── Applied fixes are measured by the console, 14 days either side ──────
@@ -123,6 +129,7 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
   // ── Fixes do exactly what their button says ─────────────────────────────
   {
     const e = engine(), f = memory(); let mutations = 0, approvals = 0, budgets = 0;
+    const realSetBudget = e.get('setCampaignBudget');
     const rsa = [{ adGroup: { id: '7' }, adGroupAd: { ad: { id: '555', finalUrls: ['https://shop.example/p'], responsiveSearchAd: { headlines: [{ text: 'One' }, { text: 'Two' }, { text: 'Three' }], descriptions: [{ text: 'D1' }, { text: 'D2' }] } } } }];
     let gaqlReply = () => [];
     // Only a current check can offer a fix: age, status and the offered fix are checked server-side.
@@ -155,11 +162,14 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     check(r.queued && approvals === 1 && mutations === 0 && logged && logged.queued && logged.approvalId === r.approvalId, 'an ad rewrite is sent to Approvals and logged as queued, never applied directly');
     r = plain(await apply('42', rewrite));
     check(r.reused && approvals === 1, 'a second click returns the draft already waiting in Approvals');
-    gaqlReply = () => [{ campaign: { status: 'ENABLED' }, campaignBudget: { amountMicros: String(5e6) } }];
-    await assert.rejects(() => apply('42', { executable: { kind: 'setBudget', budget: 12 } }), /ceiling/); passed++;
-    check(budgets === 0, 'a budget that would take enabled budgets over the ceiling is refused before any write');
-    r = plain(await apply('42', { executable: { kind: 'setBudget', budget: '9.999' } }));
-    check(budgets === 1 && r.budget === 10, 'a budget within the ceiling is applied at a clean amount');
+    // The real setCampaignBudget: enabled budgets 25 (this campaign's 5 among them), ceiling 30.
+    const b5 = 'customers/123/campaignBudgets/5';
+    e.bind({ setCampaignBudget: realSetBudget, _enabledBudgets: async () => ({ total: 25, budgets: new Map([[b5, 5]]) }) });
+    gaqlReply = () => [{ campaign: { id: '42', status: 'ENABLED' }, campaignBudget: { resourceName: b5, amountMicros: String(5e6) } }];
+    await assert.rejects(() => apply('42', { executable: { kind: 'setBudget', budget: 12 } }, { maxDailyBudgetTotal: 30, budgetCurrency: 'CAD' }), /CAD 32\.00, over your daily ceiling of CAD 30\.00/); passed++;
+    check(mutations === 0, 'a budget that would take the budgets that can spend over the ceiling is refused before any write, with the total in the account currency');
+    r = plain(await apply('42', { executable: { kind: 'setBudget', budget: '9.999' } }, { maxDailyBudgetTotal: 30, budgetCurrency: 'CAD' }));
+    check(mutations === 1 && r.budget === 10, 'a budget within the ceiling is applied at a clean amount');
   }
 
   // ── Dismissing a Google recommendation ──────────────────────────────────

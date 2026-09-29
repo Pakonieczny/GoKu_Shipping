@@ -146,6 +146,7 @@ async function control() {
   // invalid stored value falls back to the default ceiling; it never reads as "no ceiling".
   const envCeil = Number(ENV.GADS_MAX_DAILY_BUDGET_TOTAL), storedCeil = Number(c.maxDailyBudgetTotal), envOk = isFinite(envCeil) && envCeil > 0;
   c.maxDailyBudgetTotal = Math.min(isFinite(storedCeil) && storedCeil > 0 ? storedCeil : (envOk ? envCeil : 100), envOk ? envCeil : Infinity);
+  c.maxDailyBudgetLimit = envOk ? envCeil : null; // the highest ceiling this site accepts (Controls slider max); null = no site limit
   c.autoApproveVettedTemplates=false;
   try {c.budgetCurrency=await _accountCurrency();c.budgetCurrencyVerified=true;}catch(e){c.budgetCurrency=null;c.budgetCurrencyVerified=false;}
   return c;
@@ -1774,9 +1775,14 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     const budgetOps=(ops||[]).filter(o=>o.campaignBudgetOperation&&o.campaignBudgetOperation.create);
     if(budgetOps.length&&Number(ctrl.maxDailyBudgetTotal)>0){
       const want=budgetOps.reduce((n,o)=>n+fromMicros(o.campaignBudgetOperation.create.amountMicros),0);
-      const current=await _enabledBudgetTotal();
-      if(current+want>Number(ctrl.maxDailyBudgetTotal)+0.001)throw new Error("This draft no longer fits the daily budget ceiling. Adjust its budget and review it again; approved budgets are never silently changed.");
+      // Same figures and wording as the plan and the browser: what this draft adds, what is free, what enabled campaigns use.
+      const over=require('./googleAdsCampaignStyles').CAMPAIGN_STYLES.budgetCeilingMessage(want,await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);
+      if(over)throw new Error(over+" Nothing was published; approved budgets are never changed silently.");
     }
+    // A planned run length counts from publication (and again from enabling, in setCampaignStatus), never
+    // from the day the draft was prepared: only the end date moves, to keep the reviewed number of days.
+    const plannedDays=(p.meta||{}).plannedDays||{},runStart=ops&&Object.keys(plannedDays).length?_acctDateYmd(await _accountTz(),0):null;
+    if(runStart)ops.forEach(o=>{const c=o.campaignOperation&&o.campaignOperation.create,start=c&&_dateOnly(c.startDateTime);if(c&&Number(plannedDays[c.resourceName])>0)c.endDateTime=_toGAdsDateTime(_runEndDate(start&&start>runStart?start:runStart,plannedDays[c.resourceName]),"23:59:59");});
     // Preserve every approved byte and group. No late generic-copy injection,
     // auto-crop substitution or silent image dropping after the visual review.
     if(ops){
@@ -1794,7 +1800,8 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
         if(res.some(r=>!baseline.has(r)||!now.has(r)||Math.abs(now.get(r)-baseline.get(r))>=0.01))throw new Error("A budget changed after this proposal was made, so its reviewed amounts no longer apply. Nothing was changed. Delete this draft; the next weekly review proposes fresh amounts.");
         const budgets=(await _enabledBudgets()).budgets; // spendable only: ENDED excluded, shared budgets once
         p.operations.forEach(o=>{if(o.update&&budgets.has(o.update.resourceName))budgets.set(o.update.resourceName,fromMicros(o.update.amountMicros));});
-        if(!([...budgets.values()].reduce((a,b)=>a+b,0)<=Number(ctrl.maxDailyBudgetTotal)+0.001))throw new Error("Budget conditions changed; this proposal would exceed the account ceiling.");
+        const after=[...budgets.values()].reduce((a,b)=>a+b,0),money=v=>(ctrl.budgetCurrency?ctrl.budgetCurrency+" ":"")+Number(v).toFixed(2);
+        if(!(after<=Number(ctrl.maxDailyBudgetTotal)+0.001))throw new Error(`Budget conditions changed: these moves would take the daily budgets that can spend to ${money(after)}, over your daily ceiling of ${money(ctrl.maxDailyBudgetTotal)}. Nothing was changed.`);
       }
       if(_isAdVersionApproval(it)&&!ctrl.dryRun){await mutate(p.service,p.operations,{ctrl,validateOnly:true,label:"validate-version:"+id});await _guardAdVersionApproval(it);}
       publicationResult=await mutate(p.service,p.operations,{ctrl,label:"reviewed-approval:"+id,onDispatch:()=>{dispatched=true;}});}
@@ -1803,6 +1810,12 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     const assetReceipts=[],publishedCampaignIds=[],groupReceipts=[];
     if(!ctrl.dryRun)(publicationResult&&publicationResult.mutateOperationResponses||[]).forEach((response,index)=>{const createdGroup=ops&&ops[index]&&(ops[index].assetGroupOperation?.create||ops[index].adGroupOperation?.create),publishedGroup=(response.assetGroupResult||response.adGroupResult||{}).resourceName;if(createdGroup&&publishedGroup&&p.groupSplitGuard){const planned=(p.meta.assetGroups||[]).find(g=>g.ref===createdGroup.resourceName);if(planned)groupReceipts.push({ref:publishedGroup,temporaryRef:planned.ref,productId:planned.productId});}const campaign=(response.campaignResult||{}).resourceName;if(campaign)publishedCampaignIds.push(campaign.split('/').pop());const asset=(response.assetResult||{}).resourceName,created=ops&&ops[index]&&ops[index].assetOperation&&ops[index].assetOperation.create,entry=created&&(p.generatedAssets||[]).find(e=>e.tempResourceName===created.resourceName);if(asset&&created&&created.imageAsset&&created.imageAsset.data)assetReceipts.push({resourceName:asset,hash:entry?entry.asset.hash:creativeHash(created.imageAsset.data),...(entry?{path:entry.asset.path}:{})});});
     await ref.update({status:ctrl.dryRun?"APPROVED":"APPLIED",appliedAt:ctrl.dryRun?null:f.FV.serverTimestamp(),validatedAt:ctrl.dryRun?Date.now():null,applyAttempt:null,lastError:null,...(assetReceipts.length?{assetReceipts}:{}),...(groupReceipts.length?{groupSplitPublication:{groups:groupReceipts,at:Date.now()}}:{}),...(publishedCampaignIds.length?{publishedCampaignIds}:{}),...(learningPublication?{learningPublication}:{}),...(_isAdVersionApproval(it)?{versionPublication:{campaignId:p.versionGuard.campaignId,sourceVersion:p.versionGuard.expectedVersion,confirmed:!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null}}:{})});
+    // Remember each new campaign's planned days, so its first enable from Campaigns starts the full run.
+    if(!ctrl.dryRun&&runStart)for(const [index,response] of (publicationResult&&publicationResult.mutateOperationResponses||[]).entries()){
+      const c=ops[index]&&ops[index].campaignOperation&&ops[index].campaignOperation.create,campaign=(response.campaignResult||{}).resourceName;
+      if(c&&campaign&&Number(plannedDays[c.resourceName])>0)try{await _flightRef(campaign.split('/').pop()).set({days:Number(plannedDays[c.resourceName]),approvalId:String(id),endDate:_dateOnly(c.endDateTime),publishedAt:Date.now()});}
+      catch(e){await ref.update({flightWarning:"The planned run length could not be saved. Check the end date after enabling."}).catch(()=>{});}
+    }
     if(!ctrl.dryRun&&groupReceipts.length)try{await _designEngine().linkPublishedDesignScopes({campaignId:p.groupSplitGuard.campaignId,sourceGroupRef:p.groupSplitGuard.sourceGroupRef,groups:groupReceipts});}catch(e){await ref.update({designLinkWarning:String(e.message||e).slice(0,250)}).catch(()=>{});}
     if(!ctrl.dryRun)for(const campaignId of (learningPublication&&learningPublication.campaignIds||[]))_invalidateCampaignImprovement(campaignId);
     return {ok:true,id,status:ctrl.dryRun?"VALIDATED":"APPLIED",dryRun:!!ctrl.dryRun,versionWarning:publicationResult&&publicationResult.versionWarning||null};
@@ -4289,12 +4302,18 @@ async function uploadImageAssets(imgs, ctrl) {
   return { square, landscape, portrait, logo: null, complete: !!(square.length && landscape.length) };
 }
 
+// A target ROAS needs the campaign's own results first (about six weeks and 30 conversions in 30
+// days); before that it only throttles learning. New campaigns therefore launch on Maximize
+// conversion value without one, and their plans say so in these words.
+const TARGET_ROAS_LATER = "no target ROAS until it has about 6 weeks and 30 conversions in 30 days";
+
 // mutateOperations for a retail Performance Max campaign. Exact Merchant Center
 // item IDs are preferred so the campaign amplifies the products that already sold
 // through free listings. Product-type scoping remains a safe fallback only.
 function buildPmaxCampaignOps(coll, { dailyBudget, startDate, endDate, targetRoas, merchantId, feedLabel, itemIds, types, countries, offerDetails, searchThemes, audienceResource, imageAssets, adCopy, relatedCollections, combinedCreativeGroup = false, productDestination = null, productTitle = null } = {}) {
   const tag=_pmaxTag(coll.handle+(productDestination?'-'+creativeHash(productDestination).slice(0,8):''),feedLabel), bRes=`customers/${CID}/campaignBudgets/-1`, cRes=`customers/${CID}/campaigns/-2`;
-  const finalUrl=productDestination||`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||ENV.GADS_TARGET_ROAS||0);
+  // No GADS_TARGET_ROAS fallback: a new campaign has no history of its own, so it launches without a target (TARGET_ROAS_LATER).
+  const finalUrl=productDestination||`https://britesjewelry.com/collections/${coll.handle}`, _sched=_campaignScheduleFields(startDate,endDate), tRoas=Number(targetRoas||0);
   const shoppingSetting={merchantId:Number(merchantId)};if(feedLabel)shoppingSetting.feedLabel=String(feedLabel);
   const ops=[
     {campaignBudgetOperation:{create:{resourceName:bRes,name:`BA · ${tag} · ${Date.now()}`,amountMicros:micros(dailyBudget),deliveryMethod:"STANDARD",explicitlyShared:false}}},
@@ -4639,7 +4658,9 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
     else if(auto&&auto.warning&&!audienceCheck.warning)audienceCheck.warning=auto.warning;
   }else audienceCheck.source="configured audience";
   audienceResource=audienceCheck.resource;
-  const budget=Math.max(3,Number(dailyBudget)||10), start=new Date(), end=days?new Date(Date.now()+Number(days)*86400000):null;
+  // The planned run counts from the day the campaign is enabled: publishing and enabling move this end
+  // date (meta.plannedDays). Until then it only bounds a campaign enabled directly in Google Ads.
+  const budget=Math.max(3,Number(dailyBudget)||10), start=new Date(), runDays=Number(days)>0?Math.ceil(Number(days)):null, end=runDays?new Date(Date.now()+(runDays-1)*86400000):null;
   let countries=(Array.isArray(ctrl.defaultCountries)&&ctrl.defaultCountries.length)?ctrl.defaultCountries:["2124"];
   // Feed labels in this store represent CA/US markets. Align location targeting to
   // that market so a CA feed campaign cannot accidentally spend against US traffic,
@@ -4647,7 +4668,9 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   if (liveFeedLabel) {
     try { const all=await listCountries({}); const hit=all.find(c=>String(c.code||"").toUpperCase()===String(liveFeedLabel).toUpperCase()); if(hit&&hit.id)countries=[String(hit.id)]; } catch(e) {}
   }
-  const safeTargetRoas=Math.max(0,Number(targetRoas)||0);
+  // A new campaign has no results of its own, so it launches on Maximize conversion value; a requested
+  // or account target (GADS_TARGET_ROAS) is recorded for later and the summary says so (TARGET_ROAS_LATER).
+  const laterTargetRoas=Math.max(0,Number(targetRoas)||Number(ctrl.targetRoas)||0)||null;
   // Source real product photos (preferring close-up/detail shots) and upload
   // square/landscape/portrait variants so small Display/Discover placements
   // render tailored creative instead of a raw auto-crop of the feed's hero
@@ -4663,10 +4686,10 @@ async function generatePmaxApproval({ handle, dailyBudget, targetRoas, days, ite
   const relatedCollections = design.productDestination?[]:(typeof COLLECTIONS !== "undefined" ? COLLECTIONS : []).filter(c => c && c.handle && c.handle !== handle && c.handle !== "best-sellers").slice(0, 2);
   const destination=design.productDestination?require('./googleAdsAdDesignContext').destination(design.productDestination):null;
   if(design.productDestination&&(!destination||destination.kind!=='product'))throw new Error('The design requires its exact product destination.');
-  const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:safeTargetRoas,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
+  const built=buildPmaxCampaignOps(coll,{productDestination:destination&&destination.url,productTitle:design.productTitle,dailyBudget:budget,startDate:start,endDate:end,targetRoas:0,merchantId,feedLabel:liveFeedLabel,itemIds:exactIds,types,countries,offerDetails:liveDetails,searchThemes:themes,audienceResource,imageAssets,adCopy,relatedCollections,combinedCreativeGroup:!!design.combinedCreativeGroup});
   const scope=built.scopedItemIds.length?`${built.scopedItemIds.length} proven GMC offers`:(built.scopedTypes.length?built.scopedTypes.join("/"):"all feed products");
-  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId}`,
-    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:safeTargetRoas,biddingMode:safeTargetRoas>0?"MAXIMIZE_CONVERSION_VALUE_TARGET_ROAS":"MAXIMIZE_CONVERSION_VALUE_LEARNING",scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
+  const id=await enqueueApproval({type:"pmax",vetted:false,summary:`PMax · ${coll.title} · $${budget}/day · ${scope} · ${built.assetMode} assets${imageAssets&&imageAssets.square&&imageAssets.square.length?` (${(imageAssets.square||[]).length}sq/${(imageAssets.landscape||[]).length}ls/${(imageAssets.portrait||[]).length}pt custom images)`:""} · ${built.textAssets.headlines}hl/${built.textAssets.longHeadlines}lh/${built.textAssets.descriptions}ds copy · GMC ${merchantId} · ${runDays?runDays+' days from enabling':'runs until paused'} · ${TARGET_ROAS_LATER}`,
+    payload:{mutateOperations:built.ops,countries:built.countries,meta:{kind:"pmax",...(design.designId?{adDesignId:design.designId}:{}),handle,collectionTitle:coll.title,dailyBudget:budget,targetRoas:0,targetRoasLater:laterTargetRoas,biddingMode:"MAXIMIZE_CONVERSION_VALUE_LEARNING",runDays,...(runDays?{plannedDays:{[built.ops.find(o=>o.campaignOperation).campaignOperation.create.resourceName]:runDays}}:{}),scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,productTitles:chosenTitles,images:imageAssets?(imageAssets.square||[]).length+(imageAssets.landscape||[]).length+(imageAssets.portrait||[]).length:0,textAssets:built.textAssets,assetMode:built.assetMode,merchantId,feedLabel:liveFeedLabel,countries:built.countries,tag:built.tag,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null}}},{id:design.approvalId,guard:design.guard});
   return {approvalId:id,tag:built.tag,scopedTypes:built.scopedTypes,itemIds:built.scopedItemIds,products:chosenTitles,assetMode:built.assetMode,textAssets:built.textAssets,countries:built.countries,merchantId,assetGroups:built.assetGroups,searchThemes:built.searchThemes,audienceSignal:built.audienceSignal,audienceSignalName:audienceCheck.name||null,audienceSignalSource:audienceCheck.source||null,audienceSignalWarning:audienceCheck.warning||null};
 }
 
@@ -5251,7 +5274,9 @@ function _studioRecommendation(priority, area, observation, action, evidence, ga
   return { priority, area, observation, action, evidence: evidence || null, gate: gate || "Review before applying; never auto-applied" };
 }
 
-async function refreshDesignStudioLearning({ days = 30 } = {}) {
+// withAI=false (the daily scheduled refresh) recomputes the rule-based reading at no cost and keeps
+// the last AI synthesis; only the explicit Analyze asks the AI.
+async function refreshDesignStudioLearning({ days = 30, withAI = true } = {}) {
   const performance = await designStudioPerformance({ days });
   const ctrl = await control(), readiness = performance.readiness || await designStudioConversionReadiness();
   const m = performance.overall, purchase = performance.purchase || { conversions: 0, value: 0, cpa: null, roas: null }, f = performance.funnel, r = performance.rates, recs = [];
@@ -5272,7 +5297,8 @@ async function refreshDesignStudioLearning({ days = 30 } = {}) {
   performance.assetGroups.filter(x => /poor|average/i.test(x.adStrength) && x.impressions >= 500).forEach(x => recs.push(_studioRecommendation("medium", "PMax assets", `${x.name} has ${x.adStrength.toLowerCase()} asset strength after meaningful delivery.`, "Replace the weakest asset type with Studio-specific proof; do not change the intent theme at the same time.", `${Math.round(x.impressions)} impressions · ${x.conversions.toFixed(1)} conversions`)));
   if (minData && !recs.some(x => ["critical", "high"].includes(x.priority))) recs.push(_studioRecommendation("observe", "Learning", "No high-confidence funnel break is visible yet.", "Keep the structure stable and collect another evidence window before making a major change.", `${Math.round(m.clicks)} clicks · $${m.cost.toFixed(2)} spend · ${purchase.conversions.toFixed(1)} purchases`, `Review every ${Math.max(14, Number((_designStudioBaseBlueprint().learning || {}).holdDays || 14))} days`));
   let ai = null;
-  if (ENV.OPENAI_API_KEY && hasCampaigns && minData) {
+  if (!withAI) { const store = fb(); if (store) { try { const s = await store.db.collection(COL.state).doc(DESIGN_STUDIO_STATE_DOC).get(); ai = (s.exists && ((s.data() || {}).learning || {}).synthesis) || null; } catch (e) {} } }
+  else if (ENV.OPENAI_API_KEY && hasCampaigns && minData) {
     try {
       ai = await openaiJSON(`You are auditing a separate paid-acquisition engine for Brites Charm Studio. The fixed landing page is ${DESIGN_STUDIO_URL}. Interpret this compact evidence without inventing facts: ${JSON.stringify({ overall: m, purchase, funnel: f, rates: r, assets: performance.assetGroups, searchInsights: performance.searchInsights.slice(0, 15), currentRecommendations: recs })}
 Return ONLY JSON: {"summary":"<=180 chars","nextTest":{"lane":"pmax|search|landing|measurement","hypothesis":"<=180 chars","change":"one controlled change <=180 chars","successMetric":"one named metric and threshold","holdDays":14},"warnings":["0-3 concise warnings"]}. Never recommend optimizing to page views, removing the fixed landing URL, simultaneous major changes, or automatic application.`, { maxTokens: 1600, effort: "medium" });
@@ -5994,25 +6020,30 @@ async function attributeOccasionsFromSnapshot(snapshot) {
   } catch (e) {}
 }
 
-// AI-generated, memory-weighted occasion suggestions for a collection. Cached 12h; force re-rolls.
+// Occasion suggestions for a collection. Opening the bench or switching collection never pays: it shows
+// the last saved AI list (day counts and proven marks refreshed from records), or the standard list until
+// one exists. Only the explicit refresh (force, run by the background worker) asks the AI; a failed
+// refresh throws and keeps the saved list.
 async function suggestOccasions(handle, { force } = {}) {
   const f = fb(); const cacheKey = "occasions_" + (handle || "global");
-  if (f && !force) {
-    try {
-      const s = await f.db.collection(COL.state).doc(cacheKey).get();
-      if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 12 * 60 * 60 * 1000 && Array.isArray(x.list) && x.list.length) return x.list; }
-    } catch (e) {}
-  }
-  let memory = [];
+  let memory = [], saved = null;
   if (f) {
     try { const snap = await f.db.collection(COL.occasions).get(); snap.forEach(d => { const x = d.data(); memory.push({ occasion: x.occasion, timesUsed: x.timesUsed || 0, outcome: x.outcome || "untested", roas: (x.agg && x.agg.roas) || null }); }); } catch (e) {}
+    if (!force) { try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); const x = s.exists ? s.data() : null; if (x && Array.isArray(x.list) && x.list.length) saved = x; } catch (e) {} }
   }
-  const collTitle = handle ? (await collectionMeta(handle)).title : "the store";
   const dateStr = _acctDateYmd(await _accountTz().catch(() => "America/Toronto"));
-  const memText = memory.length
-    ? memory.map(m => `- ${m.occasion}: used ${m.timesUsed}x, outcome ${m.outcome}${m.roas ? `, ROAS ${m.roas}x` : ""}`).join("\n")
-    : "(no history yet — nothing has run)";
-  const prompt =
+  let list = null;
+  if (!force) {
+    // A saved model-estimated day count is moved on by the days since it was saved.
+    const aged = saved ? Math.max(0, Math.floor((Date.now() - (Number(saved.at) || Date.now())) / 86400000)) : 0;
+    list = saved ? saved.list.map(o => Object.assign({}, o, o.daysOut != null && isFinite(o.daysOut) ? { daysOut: Math.max(0, Number(o.daysOut) - aged) } : {}))
+      : OCCASIONS.map(o => ({ label: o, daysOut: null, recommendation: "test", proven: false, why: "" }));
+  } else {
+    const collTitle = handle ? (await collectionMeta(handle)).title : "the store";
+    const memText = memory.length
+      ? memory.map(m => `- ${m.occasion}: used ${m.timesUsed}x, outcome ${m.outcome}${m.roas ? `, ROAS ${m.roas}x` : ""}`).join("\n")
+      : "(no history yet — nothing has run)";
+    const prompt =
 `Today is ${dateStr}. Plan Google Ads occasions for Brites, a handcrafted personalized charm-jewelry brand (gift- and emotion-led). Target collection: "${collTitle}".
 Occasion memory (what we've run and how it did):
 ${memText}
@@ -6022,15 +6053,15 @@ Suggest 8-12 occasions/events to advertise over the NEXT ~90 DAYS from today, ra
 - occasions memory marks "success" (repeat the winners).
 Avoid occasions memory marks "fail" or that are out of season right now. Always include an "Evergreen gifting" option.
 Return ONLY JSON: {"occasions":[{"label":"","daysOut":<int>,"recommendation":"push|test|skip","proven":<bool>,"why":"<=90 chars"}]}`;
-  let list = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 4000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
-  if (!list || !list.length) list = OCCASIONS.map(o => ({ label: o, daysOut: null, recommendation: "test", proven: false, why: "" }));
+    try { const j = await openaiJSON(prompt, { maxTokens: 4000 }); if (j && Array.isArray(j.occasions)) list = j.occasions.filter(o => o && o.label).slice(0, 12); } catch (e) {}
+    if (!list || !list.length) throw new Error("The AI did not return occasions. The saved list is unchanged.");
+  }
   // The star and the day count come from records, not the model: proven means memory marks the occasion
   // a success, and an occasion with a calendar rule is counted to its real date.
   list.forEach(o => { const m = memory.find(x => String(x.occasion || "").toLowerCase() === String(o.label).toLowerCase()), pk = _nextOccasionPeak(o.label, dateStr);
     o.proven = !!(m && m.outcome === "success"); if (pk) o.daysOut = _daysBetween(_parseYmd(dateStr), _parseYmd(pk)); });
   if (!list.some(o => /evergreen/i.test(o.label))) list.unshift({ label: "Evergreen gifting", daysOut: 0, recommendation: "test", proven: false, why: "always-on baseline" });
-  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ list, at: Date.now() }); } catch (e) {} }
+  if (force && f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ list, at: Date.now() }); } catch (e) {} }
   return list;
 }
 
@@ -6110,6 +6141,16 @@ async function deleteProposedAd({id}={}){
     tx.set(archive,{original:d,sourcePath:ref.path,deletedAt:Date.now(),historyPreserved:true});tx.update(ref,{status:'REJECTED',deletedAt:Date.now(),priorStatus:d.status});
   });return {ok:true,id,status:'REJECTED',historyPreserved:true};
 }
+// A reviewed run length (days) belongs to the campaign, not to the day its draft was prepared.
+// applyApproval records it per published campaign; the first enable from Campaigns moves the end
+// date so the full run starts that day. An explicit end date change settles it instead.
+function _flightRef(id) { const f = fb(); return f ? f.db.collection(COL.state).doc("plannedFlight_" + String(id).replace(/\D/g, "")) : null; }
+function _runEndDate(from, days) { return _ymd(new Date(Date.parse(from + "T12:00:00Z") + (Math.ceil(Number(days)) - 1) * 86400000)); }
+async function _plannedFlight(id) {
+  try { const ref = _flightRef(id), s = ref && await ref.get(), d = s && s.exists ? s.data() : null;
+        return d && Number(d.days) > 0 && !d.startedAt && !d.settledAt ? { ref, days: Number(d.days) } : null; } catch (e) { return null; }
+}
+
 // Flip a single campaign ENABLED/PAUSED. Same update+updateMask shape as the
 // (working) budget reallocation path, on the campaigns service. Honors dry-run.
 async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
@@ -6122,11 +6163,21 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
   if (!id) throw new Error("missing campaign id");
   if (status === "ENABLED") await _assertSpendLimits(id, { ctrl, enabling: true }); // daily ceiling + monthly stop
   const resourceName = `customers/${CID}/campaigns/${id}`;
+  // First enable of a campaign published with a planned run: the same update sets the end date so the
+  // run starts today (or at its later scheduled start) and lasts the reviewed number of days.
+  const flight = status === "ENABLED" ? await _plannedFlight(id) : null;
+  let endDate = null;
+  if (flight) {
+    const today = _acctDateYmd(await _accountTz(), 0); let from = today;
+    try { const r = await gaql(`SELECT campaign.id, campaign.start_date_time FROM campaign WHERE campaign.id = ${id}`), s = _dateOnly(((r[0] || {}).campaign || {}).startDateTime); if (s && s > today) from = s; } catch (e) {}
+    endDate = _runEndDate(from, flight.days);
+  }
   // REMOVED is a terminal state reached via a remove operation — Google Ads rejects
   // an update of status=REMOVED ("Enum value 'REMOVED' cannot be used"). ENABLED/PAUSED
   // are valid status updates.
   const op = status === "REMOVED"
     ? { remove: resourceName }
+    : endDate ? { update: { resourceName, status, endDateTime: _toGAdsDateTime(endDate, "23:59:59") }, updateMask: "status,end_date_time" }
     : { update: { resourceName, status }, updateMask: "status" };
   const res = await mutate("campaigns", [op], { ctrl, label: "setStatus:" + status });
   // mutate() uses partialFailure, so an operation Google Ads rejects returns HTTP 200
@@ -6135,7 +6186,8 @@ async function setCampaignStatus(campaignId, status, { ctrl } = {}) {
     const msg = (res.partialFailureError.message || JSON.stringify(res.partialFailureError)).slice(0, 400);
     throw new Error(`Google Ads rejected ${status} for campaign ${id}: ${msg}`);
   }
-  return { ok: true, id, status, dryRun: !!ctrl.dryRun };
+  if (flight && !ctrl.dryRun) try { await flight.ref.update({ startedAt: Date.now(), endDate }); } catch (e) {}
+  return { ok: true, id, status, dryRun: !!ctrl.dryRun, ...(endDate ? { endDate, plannedDays: flight.days } : {}) };
 }
 
 // "Start now": move a scheduled (PENDING) campaign's start date to today in the ACCOUNT'S
@@ -6253,6 +6305,8 @@ async function setCampaignEndDate(campaignId, { endDate, addDays, ctrl } = {}) {
         : { expected: target, found: live };
     } catch (e) { out.verified = null; out.verification = { error: String(e.message || e).slice(0, 200) }; }
   }
+  // An end date chosen here replaces the planned run length: a later first enable keeps this date.
+  if (!ctrl.dryRun) { const flight = await _plannedFlight(id); if (flight) try { await flight.ref.update({ settledAt: Date.now(), endDate: out.endDate }); } catch (e) {} }
   // An ENDED campaign needs its status flipped back too — extending the date alone won't serve.
   if (String(cur.status).toUpperCase() === "PAUSED") out.note = "Date extended. This campaign is PAUSED — hit Enable for it to start serving again.";
   await ledger({ kind: "setEndDate", campaignId: id, previousEndDate: cur.endDate, endDate: out.endDate,
@@ -7160,8 +7214,6 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
     types: (mine && Array.isArray(mine.typesDetail)) ? mine.typesDetail.slice(0, 6).map(t => `${t.type}${(t.priceLow != null && t.priceHigh != null) ? ` $${t.priceLow}\u2013$${t.priceHigh}` : ""}`) : null,
     personalization: (mine && mine.personalization) || null
   };
-  const assets = await generateRSAAssets(coll, event, rsaContext);
-  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   // Research-grounded plan: gives a custom build the SAME costed treatment as a scanned one —
   // a learning-aware run length, a CPC cap, and a budget that fits the ceiling — even when the
   // console sends nothing but collection + occasion. Explicit values from the caller win.
@@ -7207,6 +7259,10 @@ async function generateForCollection(handle, eventLabel, budget, { ctrl, startDa
   const grounded=groundKeywordPlan(keywordPlan,mine,eventLabel,{min:4,max:18});
   if(grounded.keywords.filter(k=>k.real&&Number(k.searches)>0).length<4) return {ok:false,reason:"Fewer than four inventory-matched keywords have measured demand. Refresh keyword research before generating a campaign."};
   if(!grounded.ok)return {ok:false,reason:`generation stopped safely — only ${grounded.keywords.length} inventory-grounded purchase-intent keywords survived; no broad fallback campaign was created`,keywordValidation:grounded};
+  // Paid copy is written only once the keyword plan has passed, so a build stopped above (the daily
+  // events run retries due occasions) costs nothing.
+  const assets = await generateRSAAssets(coll, event, rsaContext);
+  if (!assets) return { ok: false, reason: "generation rejected — copy failed brand-safety or fell under RSA minimums" };
   const groupAssets=await Promise.all(grounded.groups.map(async(g,i)=>{
     try{return (await generateRSAAssets(coll,event,Object.assign({},rsaContext,{intentGroup:{label:g.label,keywords:g.keywords.map(k=>k.text)}})))||assets;}catch(e){return assets;}
   }));
@@ -8203,10 +8259,12 @@ function playbookText(slice, header) {
   return `\n${header || "ACCOUNT LEARNING — scoped observations, not causal proof. Use supported patterns as testable guidance; hypotheses must not justify scaling spend. Never override factual product or approval requirements."}\nRanked for ad planning ${slice.context && slice.context.startDate || "an unverified account date"} through ${slice.context && slice.context.endDate || "an unknown end date"}. Priority is a selection heuristic, not predicted performance. Seasonal hypotheses only describe a proposed calendar scope; apply them only if the specific ad's actual delivery dates overlap the labelled months. Overlapping 30/90-day reports never demonstrate a repeat or seasonal uplift. Preserve applicable lesson IDs in your reasoning and explain the concrete keyword, product, creative or landing-page choice affected.\n${L}${A}\n`;
 }
 
-// The distiller. Runs after each diagnosis (background) — one LLM pass that
-// UPDATES the playbook from the newest evidence, with pruning rules enforced
-// in the prompt and re-enforced structurally after parsing.
-async function distillLessons({onProgress = null, refreshEvidence = false} = {}) {
+// The distiller — one LLM pass that UPDATES the playbook from the newest evidence, with pruning
+// rules enforced in the prompt and re-enforced structurally after parsing. It runs on "Update from
+// results", and after a diagnosis only when an applied fix has a new measured result (auto): the
+// 30/90-day windows move every day, so a fresh diagnosis alone is not new evidence to pay for.
+const LEARNING_OUTCOMES_DOC = "learningOutcomesSeen";
+async function distillLessons({onProgress = null, refreshEvidence = false, auto = false} = {}) {
   const progress=async(pct,label)=>{if(onProgress)await onProgress({pct,label,updatedAt:Date.now()});};
   const f = fb(); if (!f) throw new Error("Learning storage is unavailable.");
   await progress(10,"Reading the current playbook and campaign evidence");
@@ -8219,6 +8277,12 @@ async function distillLessons({onProgress = null, refreshEvidence = false} = {})
   try { outcomes = await _remedyOutcomes(remedies, { currency: await _accountCurrency().catch(() => null) }); } catch (e) {}
   const judged = Object.values(outcomes).flat().filter(o => ["working", "not working", "no clear change", "not enough data"].includes(o.working));
   const outcomeBy = new Map(judged.map(o => [o.historyId, { result: o.working, note: o.note }]));
+  // Measured results (a direction called on enough data) already sent to a model; "not enough data" is not a result.
+  const measured = [...new Set(judged.filter(o => o.working !== "not enough data").map(o => o.historyId + ":" + o.working))].sort(), seenRef = f.db.collection(COL.state).doc(LEARNING_OUTCOMES_DOC);
+  if (auto) {
+    let seen = new Set(); try { const s = await seenRef.get(); seen = new Set((s.exists && (s.data() || {}).outcomes) || []); } catch (e) {}
+    if (!measured.some(k => !seen.has(k))) return {ok:true,unchanged:true,version:prev.version,lessons:(prev.lessons||[]).length,reason:"No new measured fix result; lessons update from Update from results, or once a fix is measured."};
+  }
 
   // Compact evidence: outcomes first (fixReviews), then the raw signals.
   const campaigns = ((diag || {}).campaigns || []).map(c => ({
@@ -8287,6 +8351,8 @@ Rules (hard):
 Return STRICT JSON: {"lessons":[...],"retired":[...],"changeLog":"<=200 chars what changed and why"}`;
 
   await progress(55,"Separating lessons by ad type and supporting evidence");
+  // Recorded before the request: an automatic run never pays twice for the same measured results, even if this one fails.
+  try { await seenRef.set({ outcomes: measured, at: Date.now() }); } catch (e) {}
   const out = await openaiJSON(prompt, { maxTokens: 7000, effort: "high" });
   if(!out||!Array.isArray(out.lessons))throw new Error("The learning response was incomplete. Existing guidance has been retained.");
   await progress(85,"Validating lesson sources and saving the new version");
@@ -8456,6 +8522,24 @@ async function fetchDiagnostics(campaignId) {
       break;
     } catch (e) {}
   }
+
+  // Full reads for the negative-keyword guard, in parallel with the evidence below: EVERY search term
+  // that converted in the last year and every enabled keyword, not only the top-cost evidence (25
+  // terms, 20 keywords). Kept out of the saved report; unread, no negative is offered as a button.
+  const guardRead = (async () => {
+    const [conv, kwAll] = await Promise.all([
+      gaql(`SELECT campaign.id, search_term_view.search_term, metrics.conversions FROM search_term_view
+            WHERE segments.date BETWEEN '${_learningShiftDate(today, -364)}' AND '${today}' AND metrics.conversions > 0${CF}`),
+      gaql(`SELECT campaign.id, ad_group_criterion.keyword.text FROM ad_group_criterion
+            WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = FALSE AND ad_group_criterion.status = 'ENABLED'${CF}`)
+    ]);
+    const guard = {}, add = (id, key, t) => { if (guard[id] && t) guard[id][key].add(t); };
+    for (const id of Object.keys(by)) guard[id] = { converting: new Set(), keywords: new Set() };
+    conv.forEach(r => add((r.campaign || {}).id, "converting", (r.searchTermView || {}).searchTerm));
+    kwAll.forEach(r => add((r.campaign || {}).id, "keywords", (((r.adGroupCriterion || {}).keyword) || {}).text));
+    for (const g of Object.values(guard)) { g.converting = [...g.converting]; g.keywords = [...g.keywords]; }
+    return guard;
+  })().catch(() => null);
 
   // ---- Deep evidence for the remedy engine (enabled campaigns only) ----
   // Per-keyword QS COMPONENTS (which of expected CTR / ad relevance / landing
@@ -8643,7 +8727,8 @@ async function fetchDiagnostics(campaignId) {
     d.lowQualityKeywords = d.qualityScores.filter(q => q <= 4).length;
     delete d.qualityScores;
   }
-  return { campaigns: Object.values(by), account };
+  const negativeGuard = await guardRead;
+  return { campaigns: Object.values(by), account, ...(negativeGuard ? { negativeGuard } : {}) };
 }
 
 // Senior-specialist LLM pass. Gets the FULL picture: Google's own diagnostics
@@ -8785,14 +8870,18 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
   for (const v of ai.campaigns) {
     const c = v && byId.get(only || String(v.id)); if (!c || seen.has(String(c.id))) continue; seen.add(String(c.id));
     const kw = new Map((c.keywordDetail || []).map(k => [k.adGroupId + "~" + k.criterionId, k])), groups = new Set((c.keywordDetail || []).map(k => k.adGroupId).filter(Boolean));
-    const ads = new Set((c.adsContent || []).map(a => a.adId).filter(Boolean)), active = (c.keywordDetail || []).map(k => words(k.text));
-    const converting = (c.searchTerms || []).filter(t => Number(t.conv) > 0).map(t => words(t.term));
+    // Negatives are checked against the full reads (every term that converted in the last year, every
+    // enabled keyword), not only the top-cost evidence the model saw; without those reads none is offered.
+    const guard = ((diag && diag.negativeGuard) || {})[String(c.id)] || null;
+    const ads = new Set((c.adsContent || []).map(a => a.adId).filter(Boolean)), active = (c.keywordDetail || []).map(k => k.text).concat(guard ? guard.keywords : []).map(words);
+    const converting = (c.searchTerms || []).filter(t => Number(t.conv) > 0).map(t => t.term).concat(guard ? guard.converting : []).map(words);
     const clean = ex => {
       ex = ex && typeof ex === "object" ? ex : {}; const none = { kind: "none" };
       if (ex.kind === "setBudget") { const budget = budgetFor(c, ex.budget); return budget ? { kind: "setBudget", budget } : none; }
       if (ex.kind === "pauseKeywords") { const keywords = [...new Map(list(ex.keywords).map(k => kw.get(text((k || {}).adGroupId) + "~" + text((k || {}).criterionId))).filter(Boolean).map(k => [k.adGroupId + "~" + k.criterionId, { adGroupId: k.adGroupId, criterionId: k.criterionId, text: k.text }])).values()].slice(0, 25); return keywords.length ? { kind: "pauseKeywords", keywords } : none; }
       if (ex.kind === "addNegatives") {
         // A phrase negative blocks every query containing it: never one that would block a converting term or an active keyword.
+        if (!guard) return none;
         const all = [...new Set(list(ex.keywords).map(k => text(k).toLowerCase()).filter(k => k && k.length <= 80))], blocks = k => { const w = words(k); return w.trim() !== "" && (converting.some(t => t.includes(w)) || active.some(t => t.includes(w))); };
         const keywords = all.filter(k => !blocks(k)).slice(0, 25), skipped = all.filter(blocks);
         return { kind: keywords.length ? "addNegatives" : "none", ...(keywords.length ? { keywords } : {}), ...(skipped.length ? { skipped } : {}) };
@@ -9119,13 +9208,9 @@ async function applyRemedy(campaignId, remedy, { ctrl } = {}) {
   } else if (ex.kind === "setBudget") {
     const budget = Math.round(Number(ex.budget) * 100) / 100;
     if (!(budget > 0) || !isFinite(budget)) throw new Error("no budget supplied");
-    // The ceiling caps the SUM of enabled daily budgets, so check the total this change produces.
-    const ceiling = Number(ctrl.maxDailyBudgetTotal) || 0;
-    if (ceiling) {
-      const [total, rows] = await Promise.all([_enabledBudgetTotal(), gaql(`SELECT campaign.status, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${Number(campaignId)}`)]);
-      const c = rows[0] || {}, next = total - ((c.campaign || {}).status === "ENABLED" ? fromMicros((c.campaignBudget || {}).amountMicros) || 0 : 0) + budget;
-      if (next > ceiling + 0.001) throw new Error(`This would take daily budgets to ${Math.round(next * 100) / 100}${ctrl.budgetCurrency ? " " + ctrl.budgetCurrency : ""}, above the ${ceiling} ceiling in Controls.`);
-    }
+    // setCampaignBudget refuses before any write when the budgets that can spend (ENDED excluded, a
+    // shared budget once) would pass the ceiling or the monthly stop is reached: the one check and
+    // message every budget change uses, in the account currency.
     const r = await setCampaignBudget(campaignId, budget, { ctrl }); // verifies + patches the ledger entry itself
     result = { ok: true, kind: ex.kind, budget, dryRun: !!ctrl.dryRun, detail: r, verified: r.verified, verification: r.verification };
   } else {
@@ -10338,7 +10423,7 @@ async function publishAdDesignSubmission(input={}){
 }
 async function _prepareCampaignStyles({item,context,choice,identity}){
   const routing=require('./googleAdsCampaignStyles'),design=require('./googleAdsAdDesign'),{w,product}=context,r=item.designReview,workspaceId=r.workspaceId;
-  const generatedAssets=[],ops=[],summaries=[],placements=design.chosenPlacements(w);let next=-900000;
+  const generatedAssets=[],ops=[],summaries=[],plannedDays={},placements=design.chosenPlacements(w);let next=-900000;
   const add=async(asset,shape,fixed=false)=>{routing.validatePhoto && !fixed && routing.validatePhoto(asset,shape);const bytes=await _loadCreativeAsset(asset),meta=await require('sharp')(bytes).metadata();if(bytes.length!==asset.bytes||meta.width!==asset.width||meta.height!==asset.height)throw Error('A reviewed image changed.');const resourceName=`customers/${CID}/assets/${next--}`;generatedAssets.push({tempResourceName:resourceName,asset,fixed});return {resourceName,shape,width:asset.width,height:asset.height};};
   const photos=[];
   if(choice.styles.some(s=>s!=='fixed_display'))for(const shape of ['square','landscape',...(choice.styles.includes('pmax')?['portrait']:[])]){
@@ -10388,13 +10473,16 @@ async function _prepareCampaignStyles({item,context,choice,identity}){
     // Keep temporary IDs disjoint between campaign lanes while sharing image assets.
     const offset=(choice.styles.indexOf(style)+1)*10000;
     lane=JSON.parse(JSON.stringify(lane).replace(/(customers\/\d+\/(?:campaigns|campaignBudgets|adGroups|assetGroups|assets)\/)-(\d+)/g,(m,p,n)=>Number(n)>=900000?m:p+'-'+(Number(n)+offset)).replace(/(assetGroupListingGroupFilters\/)-(\d+)~-(\d+)/g,(m,p,a,b)=>p+'-'+(Number(a)+offset)+'~-'+(Number(b)+offset)));
-    const days=Number(choice.durations?.[style]??w.context.days),endDate=Number.isFinite(days)&&days>0?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(Math.ceil(days)-1)*86400000).toISOString().slice(0,10):null;
+    // The run length counts from the day the campaign is enabled: publishing and enabling move this end date
+    // (meta.plannedDays), so a plan approved days before it starts still runs its full length.
+    const days=Number(choice.durations?.[style]??w.context.days),runDays=Number.isFinite(days)&&days>0?Math.ceil(days):null,endDate=runDays?new Date(Date.parse((report.accountToday||new Date().toISOString().slice(0,10))+'T12:00:00Z')+(runDays-1)*86400000).toISOString().slice(0,10):null;
     Object.assign(lane.find(o=>o.campaignOperation).campaignOperation.create,_campaignScheduleFields(null,endDate),{finalUrlSuffix:'utm_source=google&utm_medium=cpc&utm_campaign={campaignid}&bt_pipeline='+style+'&bt_design='+identity+(style==='pmax'?'':'&bt_group={adgroupid}&bt_ad={creative}')});
     // The plan states the bidding exactly as sent to Google, including any target ROAS.
-    const bid=lane.find(o=>o.campaignOperation).campaignOperation.create,bidding=bid.maximizeConversionValue?'Maximize conversion value'+(bid.maximizeConversionValue.targetRoas?' · target ROAS '+Math.round(bid.maximizeConversionValue.targetRoas*100)+'%':''):bid.maximizeConversions?'Maximize conversions':'';
-    ops.push(...lane);summaries.push({style,name,endDate,dailyBudget:choice.budgets[style],bidding,...(style==='pmax'?{audienceSignal}:{}),formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
+    const bid=lane.find(o=>o.campaignOperation).campaignOperation.create,bidding=bid.maximizeConversionValue?'Maximize conversion value'+(bid.maximizeConversionValue.targetRoas?' · target ROAS '+Math.round(bid.maximizeConversionValue.targetRoas*100)+'%':' · '+TARGET_ROAS_LATER):bid.maximizeConversions?'Maximize conversions':'';
+    if(runDays)plannedDays[bid.resourceName]=runDays;
+    ops.push(...lane);summaries.push({style,name,endDate,days:runDays,dailyBudget:choice.budgets[style],bidding,...(style==='pmax'?{audienceSignal}:{}),formats:style==='fixed_display'?fixed.map(p=>p.width+'×'+p.height):style==='pmax'?photos.map(p=>p.shape):['square','landscape']});
   }
-  const payload={mutateOperations:ops,generatedAssets,meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles}},hash=creativeHash(payload);
+  const payload={mutateOperations:ops,generatedAssets,meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles,...(Object.keys(plannedDays).length?{plannedDays}:{})}},hash=creativeHash(payload);
   return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,videoStatus:videoLinks.length?'Your reviewed YouTube video is included.':choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. Publish this design’s animation first to use your own.':choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note:'Existing campaigns are unchanged.'}};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){

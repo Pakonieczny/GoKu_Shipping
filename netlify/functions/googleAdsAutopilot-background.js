@@ -81,7 +81,7 @@ exports.handler = async (event) => {
     : ["anomaly", "monthly", "conversions", "adjustments", "measure", "mine", "prune", "budgets", "ceiling", "events", "pruneLedger"];
 
   // Draft work and explicit operator publication remain available with scheduled automation off.
-  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn"]); // publishApproval independently enforces exact operator approval
+  const MANUAL_OR_DRAFT = new Set(["adEvaluation", "adMotionPublication", "adDesignMotion", "adDesignEditorAI", "adDesign", "analyzeAd", "creativePrepare", "publishApproval", "scanOpportunities", "pmaxGenerate", "pmaxBackfillImages", "pmaxUpgradeAdStrength", "pruneLedger", "bestSellers", "diagnostics", "distill", "generate", "designStudioScan", "designStudioGenerate", "designStudioAnalyze", "designStudioLearn", "suggestOccasions"]); // publishApproval independently enforces exact operator approval
   // The monthly stop is Paul's hard spending limit, not optimisation: it keeps checking with automation
   // off (e.g. after the anomaly breaker trips) and can only pause campaigns once his threshold is reached.
   const allReadOnly = tasks.every(t => MANUAL_OR_DRAFT.has(t) || t === "monthly");
@@ -182,7 +182,8 @@ exports.handler = async (event) => {
         const gId = String(body.genId || `studio-learning-${Date.now()}`);
         if (task === "designStudioAnalyze") { try { await E.setGenStatus(gId, { phase: "running", kind: "design-studio-analysis", startedAt: Date.now() }); } catch (e) {} }
         try {
-          const out = await E.refreshDesignStudioLearning({ days: Math.max(1, Math.min(180, Number(body.days) || 30)) });
+          // The scheduled refresh (designStudioLearn) never pays: only the explicit Analyze asks the AI.
+          const out = await E.refreshDesignStudioLearning({ days: Math.max(1, Math.min(180, Number(body.days) || 30)), withAI: task === "designStudioAnalyze" });
           result[task] = { ok: true, phase: out.phase, recommendations: (out.recommendations || []).length, generatedAt: out.generatedAt };
           if (task === "designStudioAnalyze") { try { await E.setGenStatus(gId, { phase: "done", ok: true, learningPhase: out.phase, recommendations: (out.recommendations || []).length, generatedAt: out.generatedAt }); } catch (e) {} }
         } catch (e) {
@@ -241,6 +242,20 @@ exports.handler = async (event) => {
           try { await E.setGenStatus(gId, { ok: false, error: msg }); } catch (e2) {}
         }
       }
+      else if (task === "suggestOccasions") {
+        // Suggest (the explicit occasion refresh) asks the paid model: it can outrun the 26s gateway,
+        // so it runs here and the console polls genStatus. The list is saved, so reopening is free.
+        const gId = String(body.genId || "occasions-" + Date.now());
+        try { await E.setGenStatus(gId, { phase: "running", kind: task, startedAt: Date.now() }); } catch (e) {}
+        try {
+          const occasions = await E.suggestOccasions(body.coll, { force: true });
+          result[task] = { ok: true, n: occasions.length };
+          try { await E.setGenStatus(gId, { phase: "done", ok: true, kind: task, occasions, coll: body.coll || null }); } catch (e) {}
+        } catch (e) {
+          const msg = String(e.message || e).slice(0, 400); result[task] = { ok: false, error: msg };
+          try { await E.setGenStatus(gId, { phase: "done", ok: false, kind: task, error: msg }); } catch (e2) {}
+        }
+      }
       else if (task === "diagnostics") {
         // Self-reporting run: the console polls diag-<runId> and gets either
         // {ok:true, generatedAt} or {ok:false, error} — no more silent deaths.
@@ -257,8 +272,9 @@ exports.handler = async (event) => {
           try { await E.setGenStatus("diag-" + dRunId, { ok: false, error: msg }); } catch (e2) {}
         }
         // Learning loop AFTER the status doc lands — distill latency must not
-        // keep the console waiting. Best-effort.
-        try { result.distill = await E.distillLessons(); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
+        // keep the console waiting. Best-effort, and paid only when a fix has a
+        // new measured result (the daily-moving windows alone are not new evidence).
+        try { result.distill = await E.distillLessons({ auto: true }); } catch (e) { result.distill = { error: String(e.message || e).slice(0, 200) }; }
       }
       else if (task === "distill") {
         const genId=String(body.genId||Date.now());
