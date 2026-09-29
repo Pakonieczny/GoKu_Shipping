@@ -656,6 +656,8 @@ svg rect.bc-bar[data-tip]:hover{filter:brightness(.85);stroke:var(--ink);stroke-
 .growthLaneTabs button[aria-selected="true"]{background:var(--ink);color:var(--paper)}
 #v-bench:not([data-lane="studio"]) #growthStudio,#v-bench:not([data-lane="learning"]) #growthLearning,#v-bench[data-lane="studio"] #growthStore,#v-bench[data-lane="learning"] #growthStore,#v-bench:not([data-lane="product"]) #pmaxSec,#v-bench[data-lane="product"] #oppList,#v-bench[data-lane="product"] #customWrap{display:none!important}
 #v-bench:not([data-lane="search"]) #searchResearchSettings,#v-bench:not([data-lane="product"]) #existingProductCampaigns{display:none!important}
+#v-bench:not([data-lane="search"]):not([data-lane="product"]) #campaignOptions{display:none!important}
+.coOpt{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);margin:0 0 10px}.coOpt:last-child{margin-bottom:0}.coOpt h4{font-size:13px;margin:0 0 4px}.coOpt>p{font-size:12px;line-height:1.5;margin:0 0 8px}.coRow{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}.coRow label{display:grid;gap:4px;font-size:11px;color:var(--ink-70)}.coRow input,.coRow select{font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);min-width:0;max-width:100%}.coRow input[type=number]{width:110px}.coCamps{display:grid;gap:4px;margin:8px 0;font-size:12px}.coCamps label{display:flex;gap:7px;align-items:center}.coNote{font-size:11.5px!important;margin:6px 0 0!important}.coMsg{font-size:12px;margin:8px 0 0}.coMsg.bad{color:var(--clay)}.coWait{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--ink-70)}
 .researchHealth{margin:0 0 18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--card)}.researchHealthHead{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.researchHealthHead h4{font-size:14px;margin:0;flex:1}.researchHealth p{font-size:12px;line-height:1.55;margin:8px 0;color:var(--ink-70);overflow-wrap:anywhere}.researchHealthState{font-size:11px;font-weight:700;padding:4px 9px;border-radius:20px;background:var(--paper-2)}.researchHealthState.ready{color:var(--sage);background:var(--sage-soft)}.researchHealthState.stale,.researchHealthState.partial,.researchHealthState.running{color:#7a5a1d;background:var(--gold-soft)}.researchHealthState.error{color:var(--clay);background:var(--clay-soft)}.researchChecks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:13px 0}.researchCheck{min-width:0;padding:10px;background:var(--card-2);border-radius:8px;font-size:11px}.researchCheck b{display:block;font-size:12px;margin-bottom:3px}.researchCheck span{display:flex;gap:6px;align-items:center;color:var(--ink-70)}.researchTechnical>summary{cursor:pointer;color:var(--ink-45);font-size:11px;padding-top:6px}.researchTechnical .auditRows{margin-top:12px}.researchTechnical .auditMeta{white-space:normal;overflow-wrap:anywhere;max-width:240px}.researchTechnical .auditDetail,.researchTechnical .auditLabel,.pmxEvidenceBody,.pmxRationale{overflow-wrap:anywhere;min-width:0}.researchTechnical .auditRow>div{min-width:0}.researchTechnical pre,.pmxEvidenceBody pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:180px;overflow:auto;font:10px/1.5 var(--mono)}.researchTechnical .auditRow{grid-template-columns:22px minmax(140px,1fr) minmax(0,2fr) minmax(90px,.8fr)}.researchNotice{margin:10px 0;padding:10px 12px;background:var(--gold-soft);border-radius:8px;color:#7a5a1d;font-size:12px;line-height:1.5}.existingCampaign{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;padding:17px 18px;border-top:1px solid var(--line-2)}.existingCampaign:first-child{border-top:0}.existingCampaignTitle{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.existingCampaign h4{font-size:16px;margin:0;overflow-wrap:anywhere}.existingCampaignFacts{display:flex;gap:20px;flex-wrap:wrap;margin:12px 0 0}.existingCampaignFacts div{font-size:12px;color:var(--ink-45)}.existingCampaignFacts b{display:block;font:600 18px var(--mono);color:var(--ink);margin-bottom:2px}.existingCampaignActions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.existingCampaignNotes{font-size:12px;color:var(--ink-70);line-height:1.5;margin:7px 0 0}.oppStoreStatus{flex-wrap:wrap}.oppStatusDot[data-state="stale"],.oppStatusDot[data-state="partial"],.oppStatusDot[data-state="running"]{background:var(--gold);box-shadow:0 0 0 4px var(--gold-soft)}.oppStatusDot[data-state="error"]{background:var(--clay);box-shadow:0 0 0 4px var(--clay-soft)}.oppStatusDot[data-state="missing"]{background:var(--ink-25);box-shadow:none}
 @media(max-width:760px){.researchChecks{grid-template-columns:1fr}.researchCheck{display:flex;justify-content:space-between;gap:12px}.researchCheck b{margin:0}.researchTechnical .auditRow{grid-template-columns:20px minmax(0,1fr)}.researchTechnical .auditMeta{max-width:none}.existingCampaign{grid-template-columns:1fr;padding:14px 12px}.existingCampaignActions .btn{flex:1}.researchHealth{padding:13px}.existingCampaignFacts{gap:15px}}
 #v-bench .oppZoneNumber,#v-bench .oppZoneBadge,#v-bench .oppStoreHeadText p,#v-bench .oppChannelHeadText .eyebrow,#v-bench .oppChannelHeadText p{display:none}
@@ -1027,6 +1029,10 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
               <div class="oppPlaybook" id="pbCard"><div class="oppPlaybookHead"><h4>Advertising lessons</h4><span class="sub" id="pbSub"></span><button class="btn ghost sm" id="pbRelearn">Update from results</button></div><div id="pbBody"><div class="muted" style="font-size:12.5px;padding:6px 0">Loading playbook…</div></div></div>
             </div>
           </details>
+          <details class="oppToolbox" id="campaignOptions">
+            <summary><span><b>Campaign options</b><small>Brand Search, sale-day bid adjustments and the new-customer goal · each is a draft in Approvals</small></span><span class="oppOptional">Optional</span></summary>
+            <div class="oppToolBody" id="coBody"></div>
+          </details>
       <div id="oppErr" style="display:none"></div>
       <div id="scanProg" style="display:none"></div>
       <div id="scanAudit" style="display:none"></div>
@@ -1250,6 +1256,11 @@ var LOADINFO={
   metricsRange:{verb:"Loading campaign metrics",detail:"",eta:"2\u20136s"}
 };
 function loadInfo(key,over){return Object.assign({verb:"Working",detail:"",eta:""},LOADINFO[key]||{},over||{});}
+Object.assign(LOADINFO,{campaignOptions:{verb:"Checking campaigns and goals",detail:"Bidding, new-customer settings and last year's sale days",eta:"A few seconds"},
+  draftBrandSearch:{verb:"Drafting the brand Search campaign",detail:"Sent to Approvals; it starts paused",eta:"A few seconds"},
+  draftSeasonalityAdjustment:{verb:"Drafting the sale-day adjustment",detail:"Sent to Approvals for your review",eta:"A few seconds"},
+  draftCustomerGoal:{verb:"Drafting the new-customer goal",detail:"Sent to Approvals for your review",eta:"A few seconds"},
+  setApprovalTotalBudget:{verb:"Changing the budget type",detail:"Same spend over the draft's dates",eta:"A few seconds"}});
 
 /* --- global activity bar: a stack so concurrent ops still read clearly --- */
 var ACT={stack:[],seq:0};
@@ -1322,6 +1333,7 @@ async function api(action, extra){
    whatever the user has open. Read-only actions (dashboard, dailyStats, genStatus polling, …)
    never trigger this. */
 var API_MUTATING=new Set(["deleteCampaign","deleteOpportunity","adDesignWorkspace","adDesignGalleryPage","saveAdDesign","uploadAdDesignReference","startAdDesign","beginAnalyzeAd","reviewAdVersion","createCampaignRestoreDraft","createImprovementDraft","creativePrepare","creativeRevise","reviewCreative","restorePlaybook","distill","approve","reject","apply","applyRec","applyRemedy","dismissRec","setBudget","setStatus","setCountries","setApprovalCountries","setApprovalDates","setControl","startNow","syncConversions","saveDataManagerConnection","generate","generatePmax","designStudioGenerate","reconcileApproval","releaseOpportunity","kill","resume","dryRun","backfillOrders","clearLedger","enforceCeiling","runNow","pmaxUpgradeAdStrength","pmaxBackfillImages"]);
+["draftBrandSearch","draftSeasonalityAdjustment","draftCustomerGoal","setApprovalTotalBudget"].forEach(function(a){API_MUTATING.add(a);});
 var _rlFast=null,_rlSettle=null;
 function scheduleReload(){
   if(syncBlocked)return;               // nothing to re-sync while the API is refusing us
@@ -2889,7 +2901,7 @@ function timeago(ms){var s=Math.floor((Date.now()-ms)/1000);if(s<60)return s+"s"
 
 /* ---- render: approvals ---- */
 function parseCreative(ops){var o={headlines:[],descriptions:[],keywords:[],kwDetail:[],negatives:[],sitelinks:0,callouts:0,snippets:0,sitelinkNames:[],calloutNames:[],snippetHeader:null,snippetValues:[],budget:null,finalUrl:null};(ops||[]).forEach(function(op){
-  if(op.campaignBudgetOperation&&op.campaignBudgetOperation.create)o.budget=(+op.campaignBudgetOperation.create.amountMicros||0)/1e6;
+  if(op.campaignBudgetOperation&&op.campaignBudgetOperation.create){var bc0=op.campaignBudgetOperation.create;if(bc0.period==="CUSTOM_PERIOD")o.totalBudget=(+bc0.totalAmountMicros||0)/1e6;else o.budget=(+bc0.amountMicros||0)/1e6;}
   if(op.campaignOperation&&op.campaignOperation.create){var cc0=op.campaignOperation.create;
     var gd=function(v){if(!v)return null;var m=String(v).match(/^(\d{4})(\d{2})(\d{2})/);return m?(m[1]+"-"+m[2]+"-"+m[3]):String(v).slice(0,10);};
     o.startDate=gd(cc0.startDateTime||cc0.startDate||cc0.start_date);o.endDate=gd(cc0.endDateTime||cc0.endDate||cc0.end_date);}
@@ -2900,7 +2912,7 @@ function parseCreative(ops){var o={headlines:[],descriptions:[],keywords:[],kwDe
     if(ac.sitelinkAsset){o.sitelinks++;if(ac.sitelinkAsset.linkText)o.sitelinkNames.push(ac.sitelinkAsset.linkText);}
     else if(ac.calloutAsset){o.callouts++;if(ac.calloutAsset.calloutText)o.calloutNames.push(ac.calloutAsset.calloutText);}
     else if(ac.structuredSnippetAsset){o.snippets++;o.snippetHeader=ac.structuredSnippetAsset.header||"Types";o.snippetValues=(ac.structuredSnippetAsset.values||[]).slice();}}
-});return o;}
+});if(o.totalBudget!=null){var d0=coTotalDays(o.startDate,o.endDate);o.budget=d0?Math.round(o.totalBudget/d0*100)/100:o.totalBudget;}return o;}
 // One-line summary of the ad extensions + exclusions baked into a generated campaign.
 function adExtrasLine(c){var bits=[];if(c.sitelinks)bits.push(c.sitelinks+" sitelinks");if(c.callouts)bits.push(c.callouts+" callouts");if(c.snippets)bits.push("structured snippets");if(c.negatives&&c.negatives.length)bits.push("excludes "+c.negatives.length+" non-buyer terms");if(!bits.length)return "";
   var sl=(c.sitelinkNames&&c.sitelinkNames.length)?c.sitelinkNames.join(" \u00b7 "):"extra links that lift CTR";
@@ -2989,7 +3001,9 @@ function approvalAction(a,dry){var pl=a.payload||{},ops=pl.mutateOperations||[],
   else if(pl.service==="ads")v=["Ad refresh",owner,"Google Ads · live ad updated","Update the live ad"];
   else if(pl.note==="operator-review")v=["Ad text","Google asset ratings","Your review",""];
   else if(a.type==="studio")v=["Design Studio","Opportunities","Google Ads · created paused","Publish paused campaign"];
-  else if(isNew)v=[a.type==="pmax"?"Product ads":"Search","Opportunities","Google Ads · created paused","Publish paused campaign"];
+  else if(pl.seasonalityAdjustment)v=["Sale days","Campaign options","Google Ads · bidding adjusted for the dates","Apply sale-day adjustment"];
+  else if(pl.lifecycleGoal)v=["New customers","Campaign options","Google Ads · "+apCampaignName(pl.lifecycleGoal.campaignId),"Apply new-customer goal"];
+  else if(isNew)v=[a.type==="pmax"?"Product ads":a.type==="brand"?"Brand Search":"Search",a.type==="brand"?"Campaign options":"Opportunities","Google Ads · created paused","Publish paused campaign"];
   else v=["Ad refresh",owner,"Google Ads · live ads updated","Publish ad refresh"];
   return {tag:v[0],from:v[1],to:v[2],publish:dry&&v[3]?"Validate draft":v[3]};}
 function approvalTitle(a){var pl=a.payload||{},camp=null,n=(pl.operations||[]).length;(pl.mutateOperations||[]).forEach(function(o){if(!camp&&o.campaignOperation&&o.campaignOperation.create)camp=o.campaignOperation.create;});if(camp&&camp.name)return camp.name;if(a.type==="studio")return "Design Studio · "+(((pl.meta||{}).kind||"")==="designStudioPmax"?"Performance Max":"Search");if(pl.service==="campaignBudgets")return "Daily budgets for "+n+" campaign"+(n===1?"":"s");return String(a.summary||"Campaign draft").split(" — ")[0];}
@@ -3081,6 +3095,7 @@ function renderApprovals(){var list=$("#apprList");var scope=window.BritesGroups
       else body+=apFacts([["Changes",esc(n+" change"+(n===1?"":"s")+(pl.service?" to "+String(pl.service).replace(/([a-z])([A-Z])/g,"$1 $2").toLowerCase():""))]]);
     } else if(pl.note==="operator-review"){var weak=pl.weak||{},wc=Object.keys(weak),nw=wc.reduce(function(s,k){return s+(weak[k]||[]).length;},0);glance=[nw+" low-rated text asset"+(nw===1?"":"s")];
       body+=apFacts([["What",esc(nw+" headline"+(nw===1?" or description is":"s or descriptions are")+" rated Low by Google")],["Next","Refresh the copy from the campaign’s performance view. Nothing is published from this card."]])+wc.map(function(k){return '<div class="eyebrow" style="margin:12px 0 4px">'+esc(k)+'</div>'+(weak[k]||[]).map(function(w){return '<p class="apNote">'+esc((w.field==="HEADLINE"?"Headline":w.field==="DESCRIPTION"?"Description":"Text")+": “"+(w.text||"")+"” · "+Number(w.impr||0).toLocaleString()+" impressions")+'</p>';}).join('');}).join('');}
+    body+=campaignOptionApprovalHtml(a);
     body+=adApprovalDesignReviewHtml(a);
     var dryApproval=((((typeof DASH!=="undefined"&&DASH)||{}).control||{}).dryRun);
     var info=pl.note==="operator-review",needsReview=!info&&requiresCreative(a),ready=!needsReview||reviewed,view=approvalAction(a,dryApproval);
@@ -3111,6 +3126,7 @@ function renderApprovals(){var list=$("#apprList");var scope=window.BritesGroups
       else{msg.textContent=(r&&r.error)||"failed";msg.style.color="var(--clay)";}}
     catch(x){msg.textContent=x.message;msg.style.color="var(--clay)";}
     actEnd(aid);done();};});
+  coWireTotals(list);
   list.querySelectorAll(".apcty-edit").forEach(function(b){b.onclick=function(e){e.stopPropagation();var sel=(b.dataset.sel||"").split(",").filter(Boolean);openCountryEditor({selected:sel,title:"Target countries",subtitle:b.dataset.note||"Where this ad will run \u2014 applied when you approve it.",saveLabel:"Save countries",onSave:async function(ids,done){try{var r=await api("setApprovalCountries",{id:b.dataset.id,countries:ids});if(r&&r.ok){toast("Countries updated \u2713",true);done();await reload();}else{toast("Failed: "+((r&&r.error)||"unknown"));done();}}catch(x){toast(x.message);done();}}});};});
   approvalSwap(list,keep);
 }
@@ -5015,7 +5031,7 @@ async function openAdDesignApproval(id){closeAdDesign();closeAdAnalysis();closeA
 
 /* Reviewed production: saved work, actual assets, explicit operator sign-off. */
 var creativeViewId=null,creativePoll=null,creativeData=null;
-function requiresCreative(a){if(isAdVersionApproval(a))return false;var p=a.payload||{};return !!(p.designStudioSpec||["creative","pmax","studio"].includes(a.type)||(p.mutateOperations||[]).some(function(o){return o.assetGroupOperation||o.adGroupAdOperation||o.adOperation;}));}
+function requiresCreative(a){if(isAdVersionApproval(a)||a.type==="brand")return false;var p=a.payload||{};return !!(p.designStudioSpec||["creative","pmax","studio"].includes(a.type)||(p.mutateOperations||[]).some(function(o){return o.assetGroupOperation||o.adGroupAdOperation||o.adOperation;}));}
 function creativeClose(){clearTimeout(creativePoll);var id=creativeViewId;creativeViewId=null;var d=document.getElementById("creativeDialog");if(d.open)d.close();if(id&&typeof approvalReveal==='function')approvalReveal(id);}
 async function creativeOpen(id){var saved=(DASH.pending||[]).concat(DASH.stuck||[]).find(function(a){return a.id===id;}),payload=saved&&saved.payload||{},workspace=payload.adDesign&&payload.adDesign.workspaceId||payload.meta&&payload.meta.adDesignWorkspaceId;if(workspace)return openAdDesign({workspaceId:workspace});creativeViewId=id;var d=document.getElementById("creativeDialog");if(!d.open)d.showModal();document.getElementById("creativeBody").innerHTML='<p class="cr-sub" role="status"><span class="spin sm" aria-hidden="true"></span> Loading saved creative…</p>';await creativeRefresh();}
 async function creativeRefresh(){var id=creativeViewId;if(!id)return;clearTimeout(creativePoll);try{var r=await api("creativeStatus",{id:id});if(r.error)throw new Error(r.error);if(creativeViewId!==id)return;creativeData=r;renderCreativeReview(r);if(r.creative.phase==="running"&&r.leaseUntil>Date.now())creativePoll=setTimeout(creativeRefresh,5000);}catch(e){if(creativeViewId===id)document.getElementById("creativeBody").innerHTML='<p role="alert">'+esc(e.message)+'</p><button class="btn ghost" onclick="creativeRefresh()">Retry loading</button>';}}
@@ -5069,6 +5085,80 @@ async function loadPlaybookHistory(){
   }catch(e){box.innerHTML='<div class="learningNotice error"><b>Version history could not be loaded.</b><p>'+esc(e.message||e)+'</p><button class="btn ghost sm" id="pbRetryHistory">Retry history</button></div>';var retry=document.getElementById('pbRetryHistory');if(retry)retry.onclick=loadPlaybookHistory;}
   finally{if(button)button.disabled=false;}
 }
+
+/* ---- Campaign options (Opportunities): brand Search, sale-day bid adjustments, the new-customer goal.
+   Each creates a draft in Approvals; nothing reaches Google until it is approved there. ---- */
+var CO={data:null,loading:false,error:null,f:{},msg:{}};
+function coV(k,d){return CO.f[k]!=null?CO.f[k]:d;}
+function coMsg(k){var m=CO.msg[k];return m?'<p class="coMsg'+(m.ok?'':' bad')+'" role="status">'+esc(m.text)+'</p>':'';}
+async function coLoad(){if(CO.loading)return;CO.loading=true;CO.error=null;if(!CO.data)coRender();
+  try{var r=await api("campaignOptions");if(!r||r.ok===false||r.error)throw new Error((r&&r.error)||"Campaign options could not be loaded.");CO.data=r;}catch(e){CO.error=e.message;}
+  CO.loading=false;coRender();}
+function coRender(){var el=document.getElementById("coBody");if(!el)return;
+  if(!CO.data){el.innerHTML=CO.loading?'<div class="coWait"><span class="spin sm" aria-hidden="true"></span>Checking campaigns and goals…</div>':'<p class="coMsg bad">'+esc(CO.error||"Not loaded yet.")+'</p><button type="button" class="btn ghost sm" data-co="retry">Try again</button>';coWire(el);return;}
+  var d=CO.data,cur=d.currency?" ("+d.currency+")":"",h=(CO.error?'<p class="coMsg bad">'+esc(CO.error)+'</p>':'')+(d.warnings&&d.warnings.length?'<p class="coMsg">'+esc(d.warnings.join(" "))+'</p>':'');
+  var b=d.brand;
+  h+='<section class="coOpt"><h4>Brand Search</h4><p class="muted">'+esc("Buys searches for "+b.keywords.join(", ")+" at Search brand prices, from people located in "+apCountries(b.countries)+". "+b.pairing)+'</p>';
+  if(b.campaign)h+='<p class="coMsg">'+esc("Already in Google Ads as “"+b.campaign.name+"” ("+String(b.campaign.status||"").toLowerCase()+").")+'</p>';
+  else if(b.draft)h+='<p class="coMsg">A brand Search draft is waiting in Approvals.</p>';
+  else h+='<div class="coRow"><label>Daily budget'+esc(cur)+'<input type="number" data-cof="bBudget" min="'+b.limits.dailyBudget[0]+'" max="'+b.limits.dailyBudget[1]+'" step="0.01" value="'+adAttr(coV("bBudget",b.defaults.dailyBudget))+'"></label><label>Max cost per click'+esc(cur)+'<input type="number" data-cof="bCpc" min="'+b.limits.maxCpc[0]+'" max="'+b.limits.maxCpc[1]+'" step="0.01" value="'+adAttr(coV("bCpc",b.defaults.maxCpc))+'"></label><button type="button" class="btn gold sm" data-co="brand">Draft brand campaign</button></div>';
+  h+=coMsg("brand")+'</section>';
+  var s=d.sale,occ=s.occasions||[],o=occ.find(function(x){return x.key===CO.f.sOcc;})||occ[0];
+  h+='<section class="coOpt"><h4>Sale-day bid adjustment</h4><p class="muted">Tells Smart Bidding to expect a different conversion rate during a short sale, then bidding returns to normal. Smart-bidding campaigns only.</p>';
+  if(!o)h+='<p class="coMsg">No upcoming occasion dates were found.</p>';
+  else{var camps=o.campaigns||[],sel=CO.f.sCamps||camps.filter(function(c){return c.status==="ENABLED";}).map(function(c){return c.id;});
+    h+='<div class="coRow"><label>Occasion<select data-cof="sOcc">'+occ.map(function(x){return '<option value="'+adAttr(x.key)+'"'+(x.key===o.key?' selected':'')+'>'+esc(x.label)+'</option>';}).join("")+'</select></label><label>First day<input type="date" data-cof="sStart" value="'+adAttr(coV("sStart",o.start))+'"></label><label>Last day<input type="date" data-cof="sEnd" value="'+adAttr(coV("sEnd",o.end))+'"></label><label>Expected conversion rate, %<input type="number" data-cof="sPct" min="'+s.limits.pct[0]+'" max="'+s.limits.pct[1]+'" step="1" value="'+adAttr(coV("sPct",o.estimate.pct))+'"></label></div>';
+    h+='<p class="muted coNote">'+esc(o.estimate.basis)+'</p>';
+    h+=camps.length?'<div class="coCamps">'+camps.map(function(c){return '<label><input type="checkbox" data-cocamp value="'+adAttr(c.id)+'"'+(sel.indexOf(c.id)>=0?' checked':'')+'>'+esc(c.name+(c.status==="PAUSED"?" (paused)":""))+'</label>';}).join("")+'</div><button type="button" class="btn gold sm" data-co="sale">Draft sale-day adjustment</button>':'<p class="coMsg">No campaign uses bidding Google adjusts for sale days: target ROAS or target CPA, or Performance Max.</p>';
+    if((s.upcoming||[]).length)h+='<p class="muted coNote">'+esc("Already in Google Ads: "+s.upcoming.map(function(u){return u.name+" ("+u.start+" to "+u.end+")";}).join("; "))+'</p>';}
+  h+=coMsg("sale")+'</section>';
+  var cu=d.customers,cs=cu.campaigns||[],c=cs.find(function(x){return x.id===CO.f.cCamp;})||cs[0];
+  h+='<section class="coOpt"><h4>New-customer goal</h4><p class="muted">'+esc(cu.tradeoff)+'</p>';
+  if(!c)h+='<p class="coMsg">No Search, Performance Max, Shopping or Demand Gen campaign yet.</p>';
+  else{var mode=cu.modes[CO.f.cMode]?CO.f.cMode:c.mode,why=c.allowed[mode];
+    h+='<div class="coRow"><label>Campaign<select data-cof="cCamp">'+cs.map(function(x){return '<option value="'+adAttr(x.id)+'"'+(x.id===c.id?' selected':'')+'>'+esc(x.name)+'</option>';}).join("")+'</select></label><label>Setting<select data-cof="cMode">'+Object.keys(cu.modes).map(function(m){return '<option value="'+adAttr(m)+'"'+(m===mode?' selected':'')+'>'+esc(cu.modes[m])+'</option>';}).join("")+'</select></label>'+(mode==="BID_HIGHER_FOR_NEW_CUSTOMER"?'<label>Extra value per new customer'+esc(cur)+'<input type="number" data-cof="cValue" min="0.01" step="0.01" value="'+adAttr(coV("cValue",c.value!=null?c.value:""))+'"></label>':'')+'<button type="button" class="btn gold sm" data-co="customers"'+(why===true?'':' disabled')+'>Draft new-customer goal</button></div>';
+    h+='<p class="muted coNote">'+esc("Now: "+cu.modes[c.mode]+(why===true?"":" · "+why))+'</p><p class="muted coNote">'+esc(cu.prerequisite)+'</p>';}
+  h+=coMsg("customers")+'</section>';
+  el.innerHTML=h;coWire(el);}
+function coWire(el){
+  el.querySelectorAll("[data-cof]").forEach(function(i){i.oninput=i.onchange=function(){var k=i.dataset.cof;CO.f[k]=i.value;
+    if(k==="sOcc"){delete CO.f.sStart;delete CO.f.sEnd;delete CO.f.sPct;delete CO.f.sCamps;coRender();}
+    else if(k==="cCamp"){delete CO.f.cMode;delete CO.f.cValue;coRender();}else if(k==="cMode")coRender();};});
+  el.querySelectorAll("[data-cocamp]").forEach(function(i){i.onchange=function(){CO.f.sCamps=[].slice.call(el.querySelectorAll("[data-cocamp]:checked")).map(function(x){return x.value;});};});
+  el.querySelectorAll("[data-co]").forEach(function(btn){btn.onclick=function(){var k=btn.dataset.co,d=CO.data;
+    if(k==="retry")return coLoad();
+    if(k==="brand")return coDraft(k,btn,"draftBrandSearch",{dailyBudget:coV("bBudget",d.brand.defaults.dailyBudget),maxCpc:coV("bCpc",d.brand.defaults.maxCpc)},"Drafting…");
+    if(k==="sale"){var o=(d.sale.occasions||[]).find(function(x){return x.key===CO.f.sOcc;})||d.sale.occasions[0];
+      return coDraft(k,btn,"draftSeasonalityAdjustment",{occasion:o.key,startDate:coV("sStart",o.start),endDate:coV("sEnd",o.end),changePct:coV("sPct",o.estimate.pct),campaignIds:[].slice.call(el.querySelectorAll("[data-cocamp]:checked")).map(function(x){return x.value;})},"Drafting…");}
+    if(k==="customers"){var cs=d.customers.campaigns||[],c=cs.find(function(x){return x.id===CO.f.cCamp;})||cs[0],mode=d.customers.modes[CO.f.cMode]?CO.f.cMode:c.mode;
+      return coDraft(k,btn,"draftCustomerGoal",{campaignId:c.id,mode:mode,value:mode==="BID_HIGHER_FOR_NEW_CUSTOMER"?coV("cValue",c.value):null},"Drafting…");}};});}
+async function coDraft(key,btn,action,body,label){var done=btnBusy(btn,label),aid=actStart(action);CO.msg[key]=null;
+  try{var r=await api(action,body);if(!r||r.ok===false||r.error)throw new Error((r&&r.error)||"No draft was created.");
+    CO.msg[key]={ok:true,text:"Draft created. Review and approve it in Approvals; nothing changes in Google Ads until then."};toast("Draft created in Approvals ✓",true);actEnd(aid);await coLoad();}
+  catch(e){CO.msg[key]={ok:false,text:e.message};actEnd(aid);done();coRender();}}
+(function(){var d=document.getElementById("campaignOptions");if(d)d.addEventListener("toggle",function(){if(d.open)coLoad();});})();
+// Approval cards: what a campaign option does, the total-budget switch, and the purchase-only goals note.
+function coTotalDays(s,e){if(!e)return 0;var t=new Date(),today=t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0"),from=s&&s>today?s:today,n=Math.round((Date.parse(e+"T00:00:00Z")-Date.parse(from+"T00:00:00Z"))/864e5)+1;return n>0?n:0;}
+var CO_TOTAL_BIDDING={SEARCH:["manualCpc","maximizeConversionValue","maximizeConversions","targetSpend","targetImpressionShare","targetRoas","targetCpa"],PERFORMANCE_MAX:["maximizeConversionValue","maximizeConversions","targetRoas","targetCpa"]};
+function coTotalBudgetHtml(a){var pl=a.payload||{},ops=pl.mutateOperations||[];if(a.status&&a.status!=="PENDING"||pl.designStudioSpec||a.type==="studio"||pl.service||pl.groupSplitGuard||pl.groupActivationGuard)return "";
+  var bs=ops.filter(function(x){return x.campaignBudgetOperation&&x.campaignBudgetOperation.create;}),cs=ops.filter(function(x){return x.campaignOperation&&x.campaignOperation.create;});if(bs.length!==1||cs.length!==1)return "";
+  var b=bs[0].campaignBudgetOperation.create,c=cs[0].campaignOperation.create,ok=CO_TOTAL_BIDDING[c.advertisingChannelType];if(!ok||c.campaignBudget!==b.resourceName||!ok.some(function(k){return c[k]!==undefined;}))return "";
+  var pc=parseCreative(ops),days=coTotalDays(pc.startDate,pc.endDate),m=pl.meta||{};
+  if(b.period==="CUSTOM_PERIOD")return apFacts([["Budget type",esc("Total "+apMoney(pc.totalBudget,m)+(days?" for "+days+" day"+(days===1?"":"s")+" to "+apDay(pc.endDate):""))+'<small>'+esc("Counts as "+apMoney(pc.budget,m)+" a day toward the daily ceiling. Google spends at most the total.")+'</small><button type="button" class="apLink co-total" data-id="'+adAttr(a.id)+'" data-on="0">Use a daily budget</button>']]);
+  if(!pc.endDate||!days||days>90||!(pc.budget>0))return "";
+  return apFacts([["Budget type",esc("Daily")+'<small>'+esc("For a fixed-length promotion, a total budget of "+apMoney(Math.round(pc.budget*days*100)/100,m)+" covers these "+days+" days with the same spend.")+'</small><button type="button" class="apLink co-total" data-id="'+adAttr(a.id)+'" data-on="1">Use a total budget</button>']]);}
+function coPurchaseGoalsNote(a){var pl=a.payload||{},ch=function(t){return (pl.mutateOperations||[]).some(function(x){var c=x.campaignOperation&&x.campaignOperation.create;return c&&c.advertisingChannelType===t;});},
+  pmax=!!pl.designStudioSpec&&((pl.meta||{}).kind==="designStudioPmax")||ch("PERFORMANCE_MAX"),nw=!!pl.designStudioSpec||pmax||ch("SEARCH");
+  return nw?'<p class="apNote">Bids for purchases only: Add to cart, Begin checkout and the other conversion goals are switched off for this new campaign.'+(pmax?' Brand exclusions on your other Performance Max campaigns apply to it too.':'')+'</p>':"";}
+function campaignOptionApprovalHtml(a){var pl=a.payload||{},o=pl.campaignOption||{},h="",sg=function(v){v=Number(v)||0;return (v>0?"+":"")+v+"%";};
+  if(o.kind==="seasonality"){var cs=o.campaigns||[],e=o.estimate||{};h+=apFacts([["Adjusts",esc("Smart bidding in "+cs.length+" campaign"+(cs.length===1?"":"s"))+'<small>'+esc(cs.map(function(c){return c.name;}).join(", "))+'</small>'],["Dates",esc(apDay(o.start)+" → "+apDay(o.end)+" · "+o.days+" day"+(o.days===1?"":"s"))],["Expected conversion rate",esc(sg(o.changePct)+" (an estimate)")+'<small>'+esc(e.basis||"")+'</small>'],["After the sale","Bidding returns to normal on its own"]]);}
+  else if(o.kind==="acquisition"){var g=pl.lifecycleGoal||{},M={TARGET_ALL_EQUALLY:"Off",BID_HIGHER_FOR_NEW_CUSTOMER:"Bid higher for new customers",TARGET_NEW_CUSTOMER:"Only new customers"};
+    h+=apFacts([["Campaign",esc(g.campaignName||apCampaignName(g.campaignId))],["New customers",esc(M[(g.previous||{}).mode||"TARGET_ALL_EQUALLY"]+" → "+M[g.mode])+(g.value!=null?'<small>'+esc("Extra value per new customer: "+apMoney(g.value,pl.meta||{}))+'</small>':"")],["Tradeoff",esc(o.tradeoff||"")],["Needs",esc(o.prerequisite||"")]]);}
+  else if(o.kind==="brand")h+='<p class="apNote">'+esc(o.pairing||"")+'</p>';
+  return h+coTotalBudgetHtml(a)+coPurchaseGoalsNote(a);}
+function coWireTotals(list){list.querySelectorAll(".co-total").forEach(function(b){b.onclick=async function(e){e.stopPropagation();var on=b.dataset.on==="1",done=btnBusy(b,on?"Switching to a total budget…":"Switching to a daily budget…"),aid=actStart("setApprovalTotalBudget");
+  try{var r=await api("setApprovalTotalBudget",{id:b.dataset.id,on:on});if(r&&r.ok){actEnd(aid);toast(on?"Total budget set ✓":"Daily budget set ✓",true);await reload();return;}toast((r&&r.error)||"The budget type could not be changed.");}catch(x){toast(x.message);}
+  actEnd(aid);done();};});}
 
 setupGrowthLanes();
 document.getElementById('creativeDialog').addEventListener('cancel',creativeClose);

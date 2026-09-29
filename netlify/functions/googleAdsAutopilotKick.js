@@ -70,6 +70,7 @@ const PASSCODE_UNSET = "Changes are locked until a passcode is saved in Firebase
 // Pure reads (plus caches/observations): no Google Ads change, spend, paid AI, deletion or control
 // change. Every other action — including any action not listed here — is treated as a change.
 const READ_ACTIONS = new Set(["dashboard", "pmaxRecommendationEvidence", "adGroups", "adDesignSavedWorkspaces", "adGroupDetail", "adDesignEditorSource", "adDesignEditorState", "adDesignResponsiveState", "adDesignMotionStatus", "adDesignSavedDesigns", "adDesignGooglePreview", "adDesignStatus", "adDesignDelivery", "adDesignEditorAIStatus", "adEvaluationStatus", "analyzeAdStatus", "adVersionApprovalStatus", "campaignVersionDetail", "campaignVersions", "metricsRange", "keywordDiag", "conversionHealth", "approvalStatus", "creativeStatus", "playbookVersions", "dailyStats", "diagnostics", "diagRunStatus", "playbook", "adReviewStatus", "remedyHistory", "campaignTimeline", "countries", "designStudioStatus", "collections", "genStatus"]);
+READ_ACTIONS.add("campaignOptions"); // the Campaign options panel: GAQL reads and saved drafts only
 function isReadAction(a, body) { return READ_ACTIONS.has(a) || (a === "opportunities" && !(body && body.force)); }
 // true = allowed · "unset" = a change was requested while no passcode is configured · false = wrong passcode
 async function authed(event, body, resolved) {
@@ -395,6 +396,13 @@ async function handleAction(body) {
     try { return await E.setApprovalCountries(body.id, body.countries || []); }
     catch (e) { return { ok: false, error: e.message }; }
   }
+  // Campaign options: brand Search, sale-day bid adjustments, the new-customer goal and total budgets.
+  // Each draft waits in Approvals; nothing reaches Google until Paul approves it there.
+  if (a === "campaignOptions") { try { return await E.campaignOptionsStatus(); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftBrandSearch") { try { return await E.draftBrandSearch({ dailyBudget: body.dailyBudget, maxCpc: body.maxCpc }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftSeasonalityAdjustment") { try { return await E.draftSeasonalityAdjustment({ occasion: body.occasion, startDate: body.startDate, endDate: body.endDate, changePct: body.changePct, campaignIds: body.campaignIds }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "draftCustomerGoal") { try { return await E.draftCustomerGoal({ campaignId: body.campaignId, mode: body.mode, value: body.value }); } catch (e) { return { ok: false, error: e.message }; } }
+  if (a === "setApprovalTotalBudget") { try { return await E.setApprovalTotalBudget({ id: body.id, on: body.on === true }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "clearLedger") {
     try { return await E.clearLedger({}); }
     catch (e) { return { ok: false, error: e.message }; }
