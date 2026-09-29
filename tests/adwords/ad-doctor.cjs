@@ -262,8 +262,9 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     const pick = name => { const m = new RegExp('^(?:async )?function ' + name + '\\(', 'm').exec(html); assert(m, name); const rest = html.slice(m.index), next = /\n(?:async )?function \w+\(/.exec(rest); return next ? rest.slice(0, next.index) : rest; };
     const dom = new JSDOM('<span id="diagSub"></span><button id="diagToggleAll"></button><button id="diagRun"></button><div id="diagBody"></div>', { url: 'https://console.example/', runScripts: 'outside-only' });
     const w = dom.window;
-    w.eval('var DASH=null,__calls=[],__replies={},__toasts=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
-      'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function confirm(){return true;}');
+    // Each fix asks in place (askInline); here every question is answered yes and its words are kept.
+    w.eval('var DASH=null,__calls=[],__replies={},__toasts=[],__asked=[];function api(a,b){__calls.push([a,b]);var r=__replies[a];return Promise.resolve(typeof r==="function"?r(b):r||{});}' +
+      'function toast(m){__toasts.push(m);}function uiSnapshot(){return null;}function uiRestore(){}function askInline(b,o){__asked.push(o.q+(o.note?" "+o.note:""));return Promise.resolve(b);}');
     for (const name of ['money', 'esc', 'btnBusy', 'timeago']) w.eval(pick(name));
     w.eval(html.slice(html.indexOf('/* ---- Fix History'), html.indexOf('// full schedule line + Start-now button')));
     const now = Date.now(), body = () => w.document.getElementById('diagBody');
@@ -307,12 +308,12 @@ const COLS = { state: 'Brites_GAds_State', remedies: 'Brites_GAds_Remedies', app
     w.__replies.dismissRec = { ok: true };
     set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] } }, dash('ENABLED'));
     body().querySelector('.dg-dismiss').click(); await new Promise(r => setTimeout(r, 20));
-    check(!w.__calls.some(c => c[0] === 'runDiagnostics') && !w.DIAG.campaigns[0].recommendations.some(r => r.resourceName === 'customers/123/recommendations/b1'), 'dismissing updates the card without a paid re-diagnosis');
+    check(w.__asked.pop() === 'Dismiss this Google recommendation in Google Ads?' && !w.__calls.some(c => c[0] === 'runDiagnostics') && !w.DIAG.campaigns[0].recommendations.some(r => r.resourceName === 'customers/123/recommendations/b1'), 'dismissing asks in place, then updates the card without a paid re-diagnosis');
 
     w.__replies.applyRemedy = { ok: true, queued: true, approvalId: 'ap1', note: 'Sent to Approvals for review. No live ad was changed.' };
     set({ generatedAt: now, campaigns: [camp()], ai: { campaigns: [verdict] } }, dash('ENABLED'));
     [...body().querySelectorAll('.dg-remedy')].find(b => /Send to review/.test(b.textContent)).click(); await new Promise(r => setTimeout(r, 20));
-    check(/Sent to Approvals/.test(w.__toasts.join(' ')) && !/Send to review/.test(body().textContent) && /IN APPROVALS/.test(body().textContent), 'a sent rewrite moves to past fixes as waiting in Approvals');
+    check(w.__asked.pop() === 'Send 1 new headline(s) and 0 description(s) for this ad to Approvals? Nothing changes in Google Ads until you approve the draft there.' && /Sent to Approvals/.test(w.__toasts.join(' ')) && !/Send to review/.test(body().textContent) && /IN APPROVALS/.test(body().textContent), 'a sent rewrite asks with the same words, then moves to past fixes as waiting in Approvals');
 
     w.__replies.runDiagnostics = { queued: true };
     w.__replies.diagRunStatus = { ok: false, phase: 'running', done: 0, total: 1 };
