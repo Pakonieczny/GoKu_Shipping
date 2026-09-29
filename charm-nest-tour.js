@@ -24,16 +24,18 @@
   "use strict";
   const doc = root.document;
   // one soft ease-in-out for every move; a view fades out gathering pace and in settling (so the stage is bare briefly)
-  // (GROW: the app's own curve for a window, used as the order window steps aside and comes back)
-  const SOFT = "cubic-bezier(.42,0,.18,1)", OUT = "cubic-bezier(.4,0,1,1)", IN = "cubic-bezier(0,0,.2,1)", GROW = "cubic-bezier(.3,0,.1,1)", RING = "#b8893a";
+  // (ASIDE: the order window's move as it steps aside and back, soft at both ends and never fast in between; its fade and
+  // its backdrop's run evenly beside it, the least change the screen can take in any one frame)
+  const SOFT = "cubic-bezier(.42,0,.18,1)", OUT = "cubic-bezier(.4,0,1,1)", IN = "cubic-bezier(0,0,.2,1)", ASIDE = "cubic-bezier(.25,0,.75,1)", RING = "#b8893a";
   /** How long each part takes (ms): the same whatever the tour starts from and wherever a sheet stands. */
   const TIME = Object.freeze({
+    aside: 560,     //     the order window steps aside as the designs rise (and comes back, the same motion reversed)
     rise: 700,      // 1 · the designs rise out of the card as a coin
     toNest: 1150,   // 2 · the coin glides up into the Nest tab
     side: 220,      //     the rail's own things and the top bar's tools go first, while the view still stands
     fade: 520,      //     the view held in its place and the one coming in dissolve into each other
     glide: 650,     // 3 · a further sheet glides into view and takes the light
-    beat: 600,      //     the sheet named, before the first piece comes down
+    beat: 600,     //     the sheet named, before the first piece comes down
     fly: 1050,      //     a piece flies from the Nest tab onto its place
     gap: 300,       //     between pieces going onto one sheet (closer when there are many)
     read: 1400,     //     the least time a caption stands, to be read
@@ -71,7 +73,7 @@
 .tourPiece{transform-origin:50% 50%;filter:drop-shadow(0 6px 10px rgba(60,40,90,.26))}
 .tourRing{border-radius:50%;border:2px solid ${RING};box-shadow:0 0 14px rgba(184,137,58,.45)}
 .tourHole{border-radius:16px;box-shadow:0 0 0 200vmax rgba(34,31,27,.26),0 0 0 2px rgba(202,168,97,.8),0 24px 60px rgba(30,24,16,.3)}
-#stage>.tourHold{position:fixed!important;margin:0!important;z-index:1;pointer-events:none}
+#stage>.tourHold{position:fixed!important;margin:0!important;z-index:1;pointer-events:none;contain:strict}
 #modeSeg.tourTabs>button{transition:background-color .5s ease,color .5s ease}
 @media (prefers-reduced-motion:reduce){#modeSeg.tourTabs>button{transition:none}}`;
   function sheet() { if ($("#tourCss")) return; const s = doc.createElement("style"); s.id = "tourCss"; s.textContent = CSS; doc.head.appendChild(s); }
@@ -90,18 +92,19 @@
   /** Keyframes along one gentle arc from a to b: it bows by `bend` of its length (up, or right when it goes straight up
    *  or down: never a zig-zag), eased by `ease`; opacity and scale go from a's to b's, `swell` lifts it a little in the
    *  middle, and it keeps its turn until `turn` of the way, then turns to b's as it comes down. */
-  function path(a, b, { bend = 0, ease = EASE.soft, n = 24, oa = 1, ob = 1, swell = 0, turn = 0, ramp = 1.6 } = {}) {
+  function path(a, b, o = {}) { return frames(curve(a, b, o), o.n || 24); }
+  /** The same arc as a point at each moment u (0…1) of it: x, y, r, s and its opacity o. */
+  function curve(a, b, { bend = 0, ease = EASE.soft, oa = 1, ob = 1, swell = 0, turn = 0, ramp = 1.6 } = {}) {
     const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
     let nx = dy / d, ny = -dx / d; if (ny > .2 || (Math.abs(ny) <= .2 && nx < 0)) { nx = -nx; ny = -ny; }
-    const k = Math.min(110, d * bend), cx = (a.x + b.x) / 2 + nx * k, cy = (a.y + b.y) / 2 + ny * k, out = [];
-    for (let i = 0; i <= n; i++) {
-      const u = i / n, t = ease(u), q = 1 - t, tr = turn ? smooth((t - turn) / (1 - turn)) : t;
-      const x = q * q * a.x + 2 * q * t * cx + t * t * b.x, y = q * q * a.y + 2 * q * t * cy + t * t * b.y;
-      const s = (a.s + (b.s - a.s) * t) * (1 + swell * Math.sin(Math.PI * t));
-      out.push({ offset: u, transform: tf({ x, y, r: (a.r || 0) + ((b.r || 0) - (a.r || 0)) * tr, s }), opacity: oa + (ob - oa) * Math.min(1, t * ramp) });
-    }
-    return out;
+    const k = Math.min(110, d * bend), cx = (a.x + b.x) / 2 + nx * k, cy = (a.y + b.y) / 2 + ny * k;
+    return u => {
+      const t = ease(u), q = 1 - t, tr = turn ? smooth((t - turn) / (1 - turn)) : t;
+      return { x: q * q * a.x + 2 * q * t * cx + t * t * b.x, y: q * q * a.y + 2 * q * t * cy + t * t * b.y, r: (a.r || 0) + ((b.r || 0) - (a.r || 0)) * tr,
+        s: (a.s + (b.s - a.s) * t) * (1 + swell * Math.sin(Math.PI * t)), o: oa + (ob - oa) * Math.min(1, t * ramp) };
+    };
   }
+  const frames = (f, n) => Array.from({ length: n + 1 }, (_, i) => { const p = f(i / n); return { offset: i / n, transform: tf(p), opacity: p.o }; });
   const at = (x, y, s = 1, r = 0) => ({ x, y, s, r });
   const mid = r => at(r.left + r.width / 2, r.top + r.height / 2);
   const rectOf = e => { const r = e && e.isConnected ? e.getBoundingClientRect() : null; return r && r.width > 0 && r.height > 0 ? r : null; };
@@ -112,7 +115,7 @@
   /* ── one tour at a time ── */
   let T = null;
   function make() {
-    const t = { ff: false, userTab: false, anims: new Set(), wakes: new Set(), nodes: new Set(), off: [] };
+    const t = { ff: false, userTab: false, anims: new Set(), wakes: new Set(), nodes: new Set(), flying: new Set(), off: [] };
     t.wait = ms => t.ff || !(ms > 0) ? Promise.resolve() : new Promise(res => { const w = () => { clearTimeout(h); t.wakes.delete(w); res(); }, h = setTimeout(w, ms); t.wakes.add(w); });
     // until the caption shown has stood long enough to be read
     t.hold = ms => t.wait((t.capSince || 0) + (ms || (t.gentle ? GENTLE.read : TIME.read)) - performance.now());
@@ -134,7 +137,7 @@
     const tabOf = e => e.target && e.target.closest && e.target.closest(".topbar [data-mode], #moreMenu [data-mode]");
     let swallow = 0;
     const down = e => {
-      if (tabOf(e)) { t.userTab = true; t.forward(); return; }
+      if (tabOf(e)) { t.userTab = true; unpark(t); t.forward(); return; }
       if (t.ff) return;
       // a press on the view it goes home to, while that view is still in sight, is the person's own: it goes through
       // (not while a window waits to come back over it: it would open a second one)
@@ -144,7 +147,7 @@
     };
     const click = e => { if (Date.now() < swallow && !tabOf(e)) { e.preventDefault(); e.stopPropagation(); swallow = 0; } };
     const key = e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); } t.forward(); };
-    const hash = () => { t.userTab = true; t.forward(); };
+    const hash = () => { t.userTab = true; unpark(t); t.forward(); };
     addEventListener("pointerdown", down, true); addEventListener("click", click, true); addEventListener("keydown", key, true); addEventListener("popstate", hash);
     t.off.push(() => { removeEventListener("pointerdown", down, true); removeEventListener("keydown", key, true); removeEventListener("popstate", hash); setTimeout(() => removeEventListener("click", click, true), 750); });
   }
@@ -182,16 +185,40 @@
     // (a space between the parts: read aloud and copied as words; a flex box draws none of it)
     if (o.plus) { const e = doc.createElement("em"); e.textContent = o.plus; n.append(" ", e); }
     if (small) { const s = doc.createElement("small"); s.textContent = small; n.append(" ", s); }
-    const still = !!t.gentle, y = t.capAt.y;
+    const still = !!t.gentle;
     n.style.opacity = "0"; layer().appendChild(n); t.nodes.add(n);
-    // one place, the foot of the view — kept inside the window, however long the words and however narrow it is
-    const w = n.offsetWidth || 320, x = Math.min(Math.max(t.capAt.x, w / 2 + 10), Math.max(w / 2 + 10, innerWidth - w / 2 - 10));
-    const place = dy => `translate(${x.toFixed(1)}px,${(y + dy).toFixed(1)}px) translate(-50%,-50%)`;
+    const place = dy => capPlace(t, n, dy);
     n.style.transform = place(0);
     const lag = old ? 90 : 0;
     t.anim(n, [{ opacity: 0, transform: place(still ? 0 : 8) }, { opacity: 1, transform: place(0) }], { duration: still ? GENTLE.fade : TIME.cap, delay: lag, easing: SOFT, fill: "both" });
     if (old) unsay(t, old, still ? GENTLE.fade : 260);
     t.cap = n; t.capSince = performance.now() + lag;
+  }
+  /** One place, the foot of the view — kept inside the window, however long the words and however narrow it is. */
+  function capPlace(t, n, dy) {
+    const w = n.offsetWidth || 320, x = Math.min(Math.max(t.capAt.x, w / 2 + 10), Math.max(w / 2 + 10, innerWidth - w / 2 - 10));
+    return `translate(${x.toFixed(1)}px,${(t.capAt.y + dy).toFixed(1)}px) translate(-50%,-50%)`;
+  }
+  const capAtOf = () => { const r = rectOf($("#stage")); return r ? { x: r.left + r.width / 2, y: Math.min(innerHeight, r.bottom) - 54 } : { x: innerWidth / 2, y: innerHeight - 54 }; };
+  /** The window resized: the caption standing goes with the foot of the view (as the page does), and each piece still
+   *  coming down is re-aimed. */
+  function resized(t) {
+    t.capAt = capAtOf();
+    // (each glides there from where it is drawn now, in a moment: set there at once, it jumped across the screen)
+    const glide = (n, to, op) => {
+      const cs = getComputedStyle(n), from = { transform: cs.transform === "none" ? to : cs.transform, opacity: cs.opacity };
+      for (const a of n.getAnimations()) tryDo(() => a.cancel());
+      Object.assign(n.style, { transform: to, opacity: op });
+      if (!t.ff && !t.gentle) t.anim(n, [from, { transform: to, opacity: op }], { duration: 320, easing: SOFT, fill: "none" });
+    };
+    const n = t.cap; if (n && n.isConnected) glide(n, capPlace(t, n, 0), "1");
+    // the coin waiting in the Nest tab stays hanging from it (the pieces still to go leave from there)
+    const c = t.coin, d = t.dock;
+    if (c && c.isConnected && d && c._at === d && c.getAnimations().every(a => a.playState === "finished")) {
+      const d1 = dockOf();
+      if (Math.hypot(d1.x - d.x, d1.y - d.y) > 1) { glide(c, tf(d1), "1"); c._at = t.dock = d1; }
+    }
+    reaim(t);
   }
   function unsay(t, n, ms = 300) {
     if (!n || !n.isConnected) return Promise.resolve();
@@ -265,8 +292,10 @@
    *  and clipped to the stage, it keeps the screen filled until the new view has been drawn. */
   function holdView(t, n, mode) {
     const r = rectOf(n), st = rectOf($("#stage")); if (!r) return null;
-    const h = { n, mode, style: n.getAttribute("style") || "" };
+    const h = { n, mode, style: n.getAttribute("style") || "" }, disp = getComputedStyle(n).display;
     n.classList.add("tourHold");
+    // (it keeps its box while its tab is changed: hidden and shown again, it was laid out anew in the switch's own frame)
+    if (disp && disp !== "none") n.style.setProperty("display", disp, "important");
     const clip = st ? `inset(${Math.max(0, st.top - r.top)}px ${Math.max(0, r.right - st.right)}px ${Math.max(0, r.bottom - st.bottom)}px ${Math.max(0, st.left - r.left)}px)` : "none";
     Object.assign(n.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", clipPath: clip });
     // (fixed to the window, unless something up the tree makes it its own: then by the difference it landed off by)
@@ -274,12 +303,20 @@
     if (Math.abs(r2.left - r.left) > .5 || Math.abs(r2.top - r.top) > .5) Object.assign(n.style, { left: 2 * r.left - r2.left + "px", top: 2 * r.top - r2.top + "px" });
     t.held = h; return h;
   }
-  /** It lets go: back into the layout, and hidden again unless its own tab is the one showing. */
-  function letGo(t, h) {
+  /** It lets go: back into the layout, and hidden again unless its own tab is the one showing. park: the view the tour
+   *  comes home to stays laid out where it stood, unseen (opacity 0, no pointer), until it is switched back to: shown
+   *  again, it was laid out anew in that switch's own frame (a long list: 30-40 ms). */
+  function letGo(t, h, park) {
     h = h || t.held; if (!h) return; if (t.held === h) t.held = null;
+    if (park && modeNow() !== h.mode) { h.n.classList.add("hidden"); h.n.style.opacity = "0"; h.n.setAttribute("aria-hidden", "true"); t.parked = h; return; }
     h.n.classList.remove("tourHold");
     if (h.style) h.n.setAttribute("style", h.style); else h.n.removeAttribute("style");
     if (modeNow() !== h.mode) h.n.classList.add("hidden");
+  }
+  /** The parked view back in its place (shown by its tab, or hidden as ever). */
+  function unpark(t) {
+    const h = t.parked; if (!h) return; t.parked = null;
+    h.n.removeAttribute("aria-hidden"); letGo(t, h);
   }
   /** A view (or a part of one) fades; .done once it has. */
   function fadeView(t, n, a, b, ms) {
@@ -302,6 +339,7 @@
     if (t.userTab) { for (const x of outs) x.cancel(); letGo(t, held); return; }
     mark("switch:" + mode); setMode(mode);
     if (held) held.n.classList.remove("hidden");   // hidden by the tab change: it stays in sight where it stands
+    if (t.parked && t.parked.n === viewOf(mode)) unpark(t);   // (laid out as it was left: back in its place)
     // what shows now is held out of sight (paused on its first frame) before any of it can paint; what was faded out
     // lets go only then (the rail's foot is in both)
     const ins = [];
@@ -311,6 +349,9 @@
     }
     const fin = ins.map(a => a.finished.catch(() => {}).then(() => { t.anims.delete(a); a.cancel(); }));
     for (const x of outs) x.cancel();
+    // the new view's first layout (the tab change) has this frame to itself; what it is set up with comes after it is
+    // painted (a frame, then a task of its own: the switch itself runs in the frame's animation update)
+    if (prepare && !t.ff) await new Promise(res => requestAnimationFrame(() => setTimeout(res, 0)));
     if (prepare) await Promise.resolve(tryDo(prepare)).catch(() => {});
     if (mode === "nest") drawNow();
     await painted(t);
@@ -319,7 +360,7 @@
     if (shown) tryDo(shown);
     await Promise.all(fin.concat(bye ? [bye.done] : []));
     if (bye) bye.cancel();
-    letGo(t, held);
+    letGo(t, held, !!held && held.mode === t.homeMode && !t.ff && !t.userTab);
   }
 
   /* ── the tour ── */
@@ -351,9 +392,14 @@
     const t = T = make(); t.gentle = reduced(); t.legs = legs; t.waits = waiting;
     if (t.gentle && s0) s0.ghost.remove();
     let finish; t.done = new Promise(r => { finish = r; });
-    const home = { mode: modeNow() || "review", scroll: scroller() ? scroller().scrollTop : 0 };
-    const sr = rectOf($("#stage")); t.capAt = sr ? { x: sr.left + sr.width / 2, y: Math.min(innerHeight, sr.bottom) - 54 } : { x: innerWidth / 2, y: innerHeight - 54 };
+    // the card its list holds where it stood while the tour carries it (CustomSheet.send: Motion.carry), let go home
+    t.holdKey = (s0 && s0.mkey) || (o.home && o.home.dataset && o.home.dataset.mkey) || "";
+    const home = { mode: modeNow() || "review", scroll: scroller() ? scroller().scrollTop : 0 }; t.homeMode = home.mode;
+    home.anchors = home.mode === "review" ? tryDo(() => anchorsOf(t.holdKey)) || [] : [];
+    t.capAt = capAtOf();
     listen(t, home);
+    let rz = 0; const onResize = () => { cancelAnimationFrame(rz); rz = requestAnimationFrame(() => resized(t)); };
+    addEventListener("resize", onResize); t.off.push(() => { removeEventListener("resize", onResize); cancelAnimationFrame(rz); });
     // pressed in a window (the order window, on any of its tabs): it steps out of the way, alive, and the design lifts
     // off the button pressed; a copy of a card made while a window was open over it shows once that window is back in it.
     // (A window opened while the designs were read, over the card pressed, steps aside too: nothing is flown under it.
@@ -387,9 +433,10 @@
     } catch (e) { tryDo(() => console.warn("send tour", e)); if (!t.userTab && modeNow() !== home.mode) setMode(home.mode); }
     finally {
       clearTimeout(guard); t.forward();
-      letGo(t);
+      letGo(t); unpark(t);
       for (const n of t.nodes) n.remove(); if (s0 && s0.ghost) s0.ghost.remove();
-      if (s0 && s0.mkey) tryDo(() => root.Motion.carry && root.Motion.carry(s0.mkey, 0));   // the list has its row back
+      // the list has its row back (home, it was laid out anew already; a tab picked: the next time it is drawn)
+      for (const k of [s0 && s0.mkey, t.holdKey]) if (k) tryDo(() => root.Motion.carry && root.Motion.carry(k, 0));
       dropTour([viewOf("nest"), viewOf("review"), ...doc.querySelectorAll(RAIL), ...barOf()]);
       for (const f of t.off) tryDo(f);
       // each Nest card back on the sheet it showed before the tour (it switched them to the sheets it opened); home,
@@ -457,12 +504,14 @@
     await switching;
   }
   const fromTf = n => { const m = /translate\(([-\d.]+)px,\s*([-\d.]+)px\).*?rotate\(([-\d.]+)deg\).*?scale\(([-\d.]+)\)/.exec(n.style.transform || ""); return m ? at(+m[1], +m[2], +m[4], +m[3]) : at(innerWidth / 2, innerHeight / 2); };
+  /** What the window's foot keeps for the caption (px from its bottom): a landing is brought into view above it. */
+  const footOf = t => Math.max(0, Math.round(innerHeight - (t.capAt ? t.capAt.y : innerHeight - 54) + 30));
   /** A sheet taken into the light (NestFocus, or here); the one before hands its light over. instant: out of sight. */
   async function openLeg(t, leg, o, instant) {
     const NF = root.NestFocus, prev = t.focus;
     if (prev && prev.here) tryDo(() => prev.close());
     let f = null;
-    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption: leg.label || `${leg.metal} · Sheet ${leg.page || 1}`, noCaption: true, instant, ms: TIME.glide, metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
+    if (NF && typeof NF.open === "function") f = await t.within(tryDo(() => NF.open(leg.sheetId || leg.metal, { poolIds: leg.poolIds.slice(), caption: leg.label || `${leg.metal} · Sheet ${leg.page || 1}`, noCaption: true, instant, ms: TIME.glide, foot: footOf(t), metal: leg.metal, page: leg.page || 1, rid: o.rid })), 2600);
     if (t.ff) { if (f) tryDo(() => f.close()); return null; }
     if (!f) f = await openHere(t, leg, instant);
     if (f) t.focus = f;
@@ -523,17 +572,40 @@
     Object.assign(box.style, { width: w + "px", height: h + "px", margin: `${-h / 2}px 0 0 ${-w / 2}px` });
     Object.assign(face.style, { left: (w - D) / 2 + "px", top: (h - D) / 2 + "px" });
     box.appendChild(fl.el); box.appendChild(face); fl.el.style.opacity = 0;
-    const d = t.dock || dockOf(), r = fl.r || cvr;
-    const start = at(d.x, d.y, 72 * d.s / D, 0), end = at(r.left + r.width / 2, r.top + r.height / 2, 1, fl.placed ? +(fl.s && fl.s.rot) || 0 : 0);
+    // its place read as it leaves (the window may have changed since the sheet was opened), at the size drawn for it
+    const d = t.dock || dockOf(), r0 = fl.r || cvr, now = fl.placed && f.spot ? tryDo(() => f.spot(fl.id)) : null, r = now && now.rect && now.rect.width ? now.rect : r0;
+    const start = at(d.x, d.y, 72 * d.s / D, 0), end = at(r.left + r.width / 2, r.top + r.height / 2, r.width / r0.width || 1, fl.placed ? +(now ? now.rot : fl.s && fl.s.rot) || 0 : 0);
     box.style.transform = tf(start);
     if (asCoin && t.coin) { t.coin.style.visibility = "hidden"; t.coinSpent = true; } else countDown(t);
-    const go = t.anim(box, path(start, end, { bend: .14, n: 28, swell: .08, turn: .4, ease: EASE.glide }), { duration: TIME.fly, easing: "linear" });
+    const fly = { box, fl, f, r, end, t0: performance.now(), way: curve(start, end, { bend: .14, swell: .08, turn: .4, ease: EASE.glide }) };
+    fly.go = t.anim(box, frames(fly.way, 28), { duration: TIME.fly, easing: "linear" });
+    t.flying.add(fly);
     t.anim(face, [{ opacity: 1 }, { opacity: 1, offset: .5 }, { opacity: 0, offset: .86 }, { opacity: 0 }], { duration: TIME.fly, easing: "linear" });
     t.anim(fl.el, [{ opacity: 0 }, { opacity: 0, offset: .44 }, { opacity: 1, offset: .86 }, { opacity: 1 }], { duration: TIME.fly, easing: "linear" });
-    await go;
+    // (re-aimed on a resize: its animation is swapped for one bending onto its new place, in the time it had left)
+    for (let go = null; go !== fly.go;) { go = fly.go; await go; }
+    t.flying.delete(fly);
     mark("land"); const landing = t.within(tryDo(() => f.land(fl.id)), 1200);
-    if (f.here || !fl.placed) ring(t, r);
+    if (f.here || !fl.placed) ring(t, fly.r);
     after.push(t.anim(box, [{ opacity: 1 }, { opacity: 0 }], { duration: fl.placed ? 240 : 300, easing: "ease" }).then(() => { box.remove(); t.nodes.delete(box); }), landing);
+  }
+  /** The window resized while pieces come down: each still flying bends, from where it is, onto where its place stands
+   *  now (and its size there), in the time it had left; no jump, and it lands on its place. */
+  function reaim(t) {
+    if (t.ff) return;
+    const now = performance.now();
+    for (const fly of t.flying) {
+      const s = fly.fl.placed && fly.f.spot ? tryDo(() => fly.f.spot(fly.fl.id)) : null, r = s && s.rect && s.rect.width ? s.rect : null;
+      const u0 = Math.min(1, (now - fly.t0) / TIME.fly); if (!r || u0 > .96) continue;
+      const e = fly.end, e1 = at(r.left + r.width / 2, r.top + r.height / 2, e.s * r.width / fly.r.width, e.r);
+      if (Math.hypot(e1.x - e.x, e1.y - e.y) < 1 && Math.abs(e1.s / e.s - 1) < .01) continue;
+      const old = fly.way, rest = u => { const p = old(u0 + (1 - u0) * u), w = smooth(u); return Object.assign({}, p, { x: p.x + (e1.x - e.x) * w, y: p.y + (e1.y - e.y) * w, s: p.s * (1 + (e1.s / e.s - 1) * w) }); };
+      fly.way = u => u <= u0 ? old(u) : rest((u - u0) / (1 - u0));
+      fly.end = e1; fly.r = r;
+      // (the one running is cancelled and the next set going in the same moment: no frame between them)
+      for (const a of fly.box.getAnimations()) tryDo(() => a.cancel());
+      fly.go = t.anim(fly.box, frames(rest, 20), { duration: Math.max(60, TIME.fly * (1 - u0)), easing: "linear" });
+    }
   }
   /** The coin gives one away: it counts down what it still holds. */
   function countDown(t) {
@@ -564,7 +636,7 @@
   /** Where a metal's waiting pieces go: NestFocus glides its card into view and says where the place will stand (the
    *  coin flies there meanwhile); without it the card is brought into view at once. */
   function waitPlace(t, w, instant) {
-    const NF = root.NestFocus, got = NF && typeof NF.waiting === "function" ? tryDo(() => NF.waiting(w.metal, { instant, ms: TIME.glide })) : null;
+    const NF = root.NestFocus, got = NF && typeof NF.waiting === "function" ? tryDo(() => NF.waiting(w.metal, { instant, ms: TIME.glide, foot: footOf(t) })) : null;
     if (got && got.rect && got.rect.width) return got;
     const card = nestCard(w.metal); if (!card) return null;
     const r0 = rectOf(card); if (!onScreen(r0) || r0.top < 60 || r0.bottom > innerHeight - 20) card.scrollIntoView({ block: "center", behavior: "auto" });
@@ -595,17 +667,49 @@
     await t.anim(c, [{ transform: tf(p), opacity: 1 }, { transform: tf(at(p.x, p.y, p.s * .6, p.r)), opacity: 0 }], { duration: 360, easing: SOFT });
     c.remove(); t.nodes.delete(c);
   }
+  /** The Review list as the user sees it as the tour starts: the cards in sight (not the one sent), each by its key and
+   *  where it stands in the list's window; the sent card's neighbours first (the one just above, just below, and on out;
+   *  with no sent card in the list, from the top of the window down). */
+  function anchorsOf(sentKey) {
+    const sc = scroller(), host = $("#rvList"); if (!sc || !host) return [];
+    const box = sc.getBoundingClientRect(), rows = [...host.children].filter(n => n.dataset && n.dataset.mkey && n.getClientRects().length);
+    const at = sentKey ? rows.findIndex(n => n.dataset.mkey === sentKey) : -1;
+    const rank = i => at < 0 ? i : i < at ? (at - i) * 2 - 1 : (i - at) * 2;
+    return rows.map((n, i) => ({ n, i, r: n.getBoundingClientRect() })).filter(x => x.n.dataset.mkey !== sentKey && x.r.bottom > box.top + 1 && x.r.top < box.bottom - 1)
+      .sort((a, b) => rank(a.i) - rank(b.i)).map(x => ({ key: x.n.dataset.mkey, dy: x.r.top - box.top }));
+  }
+  /** The list scrolled so the cards the user was looking at stand where they stood, the sent one gone from among them:
+   *  the nearest one that can stand there (at the list's foot, one below it); else its scroll as it was. */
+  function anchor(home) {
+    const sc = scroller(), host = $("#rvList"); if (!sc) return;
+    const max = sc.scrollHeight - sc.clientHeight, top = sc.getBoundingClientRect().top;
+    for (const a of (host && home.anchors) || []) {
+      const n = host.querySelector(`[data-mkey="${CSS_ESC(a.key)}"]`), r = rectOf(n); if (!r) continue;
+      const want = Math.round(sc.scrollTop + r.top - top - a.dy);
+      if (want >= -1 && want <= max + 1) { sc.scrollTop = want; return; }
+    }
+    sc.scrollTop = home.scroll;
+  }
+  /** Home, the list the tour held still lets go of the card it carried and is laid out anew: out of sight (still), in
+   *  one go and scrolled to the cards the user was looking at; in sight (a skip before the Nest tab), as the list moves. */
+  function settleList(t, home, still) {
+    const k = t.holdKey; t.holdKey = "";
+    if (k) tryDo(() => root.Motion.carry(k, 0));
+    if (home.mode !== "review") return;
+    if (k) tryDo(() => root.Review && root.Review.render(still ? { still: true } : undefined));
+    if (still) tryDo(() => anchor(home));
+  }
   /** 5 · home: the Review tab as it was left (its sub-tab, scroll and filters), and where the card went answers. */
   async function goHome(t, home, o, s0) {
     if (t.userTab) return;
     if (modeNow() !== home.mode) {
       say(t, `Back to ${{ review: "Review" }[home.mode] || home.mode}`, "");
       // (the light is let go after the switch, once the Nest tab is out of sight: it is still seen during the dissolve)
-      await switchTo(t, home.mode, () => { const sc = scroller(); if (sc && home.mode === "review") sc.scrollTop = home.scroll; });
-    }
+      await switchTo(t, home.mode, () => settleList(t, home, true));
+    } else settleList(t, home, false);
     endFocus(t);
     if (modeNow() !== home.mode) return;
-    // a window held: it grows back out of its card first (and, when the press was its own, says there what went where)
+    // a window held: it comes back first (and, when the press was its own, says there what went where)
     if (t.win && await backHome(t, o)) return;
     const M = root.Motion; if (!M) return;
     const live = liveOf(s0);
@@ -648,11 +752,13 @@
 
   /* ── the start and the way home, from a window (Paul, 29 Sep 01:30: "half the animation is not visible because it's
      blocked by the pop-up and it doesn't engage smoothly and it looks broken and disjointed"). Send to Sheet pressed in
-     the order window, on any of its tabs: the window is never closed, only stepped out of the way. It shrinks and fades
-     toward its card (its backdrop fading with it) as the design lifts off the button pressed, and waits out of sight,
+     the order window, on any of its tabs: the window is never closed, only stepped out of the way. In one soft motion
+     (TIME.aside) it eases part of the way toward its card, a little smaller, and fades, its backdrop in step, as the
+     design lifts off the button pressed in the same frame; then it waits out of sight,
      its order, tab, scroll, focus and typed text untouched. The flight runs in a clear, bare modal layer of the tour's
      own, over everything, the window included: nothing covers it, and nothing under it takes a press (a press or a key
-     skips, as always). Home, the window grows back out of its card exactly as it was and says there what went where.
+     skips, as always). Home, the same motion reversed brings the window back exactly as it was, and it says there what
+     went where.
      Transform and opacity only. A card's own Send to Sheet starts from the card itself. ── */
   // (the window over the page as the flight starts, not one already going: the order window's own close, or a copy)
   const popOf = () => [...doc.querySelectorAll("dialog[open]")].reverse().find(d => d.id !== "tourTop" && !d._mdClosing && !(d.id === "orderWin" && root.OrderWin && !OrderWin.isOpen()) && tryDo(() => d.matches(":modal"))) || null;
@@ -664,43 +770,73 @@
       top.appendChild(l); if (!top.open) tryDo(() => top.showModal());
     } else { if (l.parentNode !== doc.body) doc.body.appendChild(l); if (top && top.open) tryDo(() => top.close()); }
   }
-  /** Where the window goes back into: its card, when in sight; else the button pressed. The window keeps its shape,
-   *  scaled between the two sizes, centred on it. */
+  /** Where the window steps toward: its card, when in sight; else the button pressed. */
   const aimOf = k => { const h = rectOf(k.home); return h && onScreen(h) ? h : k.R; };
-  function tuckTf(D, A) {
-    const s = Math.max(.04, Math.min(1, Math.sqrt((A.width / D.width) * (A.height / D.height))));
-    return `translate(${(A.left + A.width / 2 - D.width * s / 2 - D.left).toFixed(1)}px,${(A.top + A.height / 2 - D.height * s / 2 - D.top).toFixed(1)}px) scale(${s.toFixed(4)})`;
+  /** The window's own box as laid out, whatever transform it is drawn with now. */
+  const LAG = 160;   // (ms: how far the frames on screen may trail the page's own clock while a window moves)
+  const boxOf = d => d.offsetWidth && d.offsetHeight ? { left: d.offsetLeft, top: d.offsetTop, width: d.offsetWidth, height: d.offsetHeight } : d.getBoundingClientRect();
+  /** Stepped aside: a fifth of the way toward its card and a little smaller (at most an eighth), its shape kept. Only
+   *  part of the way: the whole screen never sweeps down into a card in a few frames, and the eye stays on the design. */
+  function asideTf(D, A) {
+    const full = Math.max(.04, Math.min(1, Math.sqrt((A.width / D.width) * (A.height / D.height)))), s = Math.max(.875, 1 - (1 - full) * .14), way = .2;
+    const x = D.left + D.width / 2 + (A.left + A.width / 2 - D.left - D.width / 2) * way, y = D.top + D.height / 2 + (A.top + A.height / 2 - D.top - D.height / 2) * way;
+    return `translate(${(x - D.width * s / 2 - D.left).toFixed(1)}px,${(y - D.height * s / 2 - D.top).toFixed(1)}px) scale(${s.toFixed(4)})`;
+  }
+  /** One soft motion (Paul, 29 Sep 01:30, "it doesn't engage smoothly and it looks broken and disjointed"): the window
+   *  eases toward its card as it scales a little down and fades, and its backdrop fades in step with it, on one clock
+   *  (made in one task: they start on the same frame). The fade is even: the window is light and the rail under it dark,
+   *  so an eased fade changed a third of the screen in a frame at its fastest. Back is the very same motion in reverse, landing
+   *  on the window exactly as it was (nothing is left on it). With reduced motion only the short fade. Transform and
+   *  opacity only: the window is laid out once, at its own size, and never reflows on the way. */
+  function aside(t, k, back, ms) {
+    const d = k.d, g = !!t.gentle, o = { duration: ms, easing: g ? "ease" : "linear", fill: "forwards", direction: back ? "reverse" : "normal" };
+    const fade = [{ opacity: 1 }, { opacity: 0 }];
+    return [
+      d.animate(fade, o),
+      g ? null : d.animate([{ transform: "none" }, { transform: asideTf(boxOf(d), aimOf(k)) }], Object.assign({}, o, { easing: ASIDE })),
+      tryDo(() => d.animate(fade, Object.assign({ pseudoElement: "::backdrop" }, o)))
+    ].filter(Boolean);
   }
   function tuck(t, d, o) {
-    const D = d.getBoundingClientRect(), R = rectOf(o.from) || (o.from && o.from.rect) || { left: innerWidth / 2 - 20, top: innerHeight / 2 - 12, width: 40, height: 24 };
-    const k = { d, D, R, from: o.from, inside: !!(o.from && o.from.nodeType && d.contains(o.from)), home: o.home && o.home.nodeType ? o.home : null, focus: doc.activeElement, st: {} };
+    const R = rectOf(o.from) || (o.from && o.from.rect) || { left: innerWidth / 2 - 20, top: innerHeight / 2 - 12, width: 40, height: 24 };
+    const k = { d, R, from: o.from, inside: !!(o.from && o.from.nodeType && d.contains(o.from)), home: o.home && o.home.nodeType ? o.home : null, focus: doc.activeElement, st: {} };
     for (const p of ["transformOrigin", "willChange", "visibility"]) k.st[p] = d.style[p];
     // where the design lifts off: the button pressed, as it stood
     k.spot = t.node("tourSpot"); Object.assign(k.spot.style, { width: R.width + "px", height: R.height + "px", transform: `translate(${R.left}px,${R.top}px)`, opacity: 0 });
     over(true); mark("tuck"); d._tourHeld = true;
     Object.assign(d.style, { transformOrigin: "0 0", willChange: "transform,opacity" });
-    // (with reduced motion it only fades, as the gentle version's views do: nothing shrinks or moves)
-    const g = !!t.gentle, ms = g ? GENTLE.fade : 480;
-    k.a = d.animate(g ? [{ opacity: 1 }, { opacity: 0 }] : [{ transform: "none", opacity: 1 }, { opacity: .45, offset: .4 }, { transform: tuckTf(D, aimOf(k)), opacity: 0 }], { duration: ms, easing: g ? "ease" : GROW, fill: "forwards" });
-    k.b = tryDo(() => d.animate([{ opacity: 1 }, { opacity: 0 }], { pseudoElement: "::backdrop", duration: g ? ms : 440, easing: "ease", fill: "forwards" }));
-    // (out of sight once gone: nothing of it drawn under the flight)
-    k.a.finished.then(() => { if (!k.returning) d.style.visibility = "hidden"; }, () => {});
+    k.anims = aside(t, k, false, t.gentle ? GENTLE.fade : TIME.aside);
+    // (out of sight once gone, nothing of it drawn under the flight: hidden once the frames drawn off the main thread,
+    // which come a little after it has finished here, are in)
+    k.anims[0].finished.then(() => setTimeout(() => { if (!k.returning && !k.ready) d.style.visibility = "hidden"; }, LAG), () => {});
     return k;
   }
-  /** The window back as it was, grown out of its card (fast: a skip, a tab picked; with reduced motion, faded in). */
+  /** Before it comes back: what changed meanwhile is drawn (the order window: its Send to Sheet gone) and the window
+   *  is laid out and painted, still held out of sight (the step aside holds it at nothing), so its return starts on a
+   *  window ready to draw: drawn only as it came back, its first frames came late and it jumped in. */
+  function ready(k) {
+    if (!k || k.ready) return; k.ready = true;
+    const d = k.d; if (!d.isConnected || !d.open) return;
+    tryDo(() => d.dispatchEvent(new CustomEvent("tour:back")));
+    d.style.visibility = k.st.visibility;
+  }
+  /** The window back as it was: the step aside reversed (fast: a skip, a tab picked; with reduced motion, faded in). */
   async function back(t, fast) {
     const k = t.win; if (!k) return; t.win = null; k.returning = true;
-    const d = k.d, g = !!t.gentle, ms = g ? GENTLE.fade : fast ? 320 : 560, drop = () => { tryDo(() => k.a.cancel()); tryDo(() => k.b && k.b.cancel()); };
+    const d = k.d, ms = t.gentle ? GENTLE.fade : fast ? 320 : TIME.aside, drop = () => { for (const a of k.anims) tryDo(() => a.cancel()); };
     if (d.isConnected && d.open) {
-      // what changed meanwhile is drawn while it is still out of sight (the order window: its Send to Sheet gone)
-      tryDo(() => d.dispatchEvent(new CustomEvent("tour:back")));
-      d.style.visibility = k.st.visibility; mark("back");
-      const a = d.animate(g ? [{ opacity: 0 }, { opacity: 1 }] : [{ transform: tuckTf(k.D, aimOf(k)), opacity: 0 }, { opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], { duration: ms, easing: g ? "ease" : GROW });
-      tryDo(() => d.animate([{ opacity: 0 }, { opacity: 1 }], { pseudoElement: "::backdrop", duration: ms, easing: "ease" }));
+      ready(k); mark("back");
+      // (the reverse is set going before the step aside lets go: no frame between them)
+      const run = aside(t, k, true, ms);
       drop();
-      await Promise.race([a.finished.catch(() => {}), new Promise(r => setTimeout(r, ms + 400))]);
+      await Promise.race([Promise.all(run.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, ms + 400))]);
+      // (landed, held there as it ends: the frames drawn off the main thread come a little after it has finished here, and
+      // let go at once it jumped the last of the way; it stays on its own layer a moment longer too)
+      await new Promise(r => setTimeout(r, LAG));
+      for (const a of run) tryDo(() => a.cancel());
     } else drop();
-    for (const [p, v] of Object.entries(k.st)) d.style[p] = v;
+    for (const [p, v] of Object.entries(k.st)) if (p !== "willChange") d.style[p] = v;
+    const wc = k.st.willChange; setTimeout(() => { if (!d._tourHeld && d.style.willChange === "transform,opacity") d.style.willChange = wc; }, 700);
     d._tourHeld = false;
     // (the tour's layer closing gives the focus back where it was; set again in case it went elsewhere)
     over(false);
@@ -709,7 +845,10 @@
   /** 5 · home, into the window: it is back as it was, and says, where the button stood, what went where. True when it
    *  said it there; false when the press was not its own (a card's, under it), so home is said on the card as ever. */
   async function backHome(t, o) {
-    const k = t.win; await back(t, t.ff);
+    const k = t.win;
+    // "Back to Review" stands its time to be read (the window made ready meanwhile), and goes as it comes back over it
+    if (!t.ff && t.cap) { ready(k); await t.hold(); if (!t.ff) unsay(t, t.cap, 360); }
+    await back(t, t.ff);
     const d = k && k.d, M = root.Motion; if (!k || !k.inside) return false;
     if (!d || !d.open || !M || !o.words) return true;
     const held = (o.waiting || []).find(w => w.held), words = o.words + (held ? ` · ${held.why}` : ""), ms = held ? 9000 : 7000, R = k.R;

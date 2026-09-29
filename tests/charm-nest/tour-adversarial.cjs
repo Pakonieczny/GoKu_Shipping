@@ -24,8 +24,10 @@
 //   integrity no piece of the order twice on the sheets, no Rose Gold green line or cut made by the send or the tour
 //   motion    only transform, opacity and clip-path animated
 //   errors    no page errors
-//   skip / reduced / press   Esc and a click end the tour at once with everything shown; reduced motion plays no
-//             tour but says where the order went; how Send to Sheet was pressed (a real button, or a call)
+//   skip / reduced / press   Esc and a click end the tour at once with everything shown; reduced motion plays the
+//             gentle version (nothing flies or glides: the Nest tab and the sheet shown, the same captions over short
+//             fades, then home with a note); how Send to Sheet was pressed (a real button, or a call)
+//   (pacing allows one arc: up into the Nest tab and down onto the sheet; any other turn back is flagged)
 // and, across the starting points that send the same order (one piece, GF): the same total and phases (consistency).
 // No Etsy calls, no AI calls, no live data: the fake's Rose Gold cloud calls are recorded to prove none were made.
 //
@@ -466,7 +468,11 @@ function analyse(res) {
       const p = mv[i - 1], q = mv[i], gap = q.from - (p.from + p.ms);
       if (gap >= 80) stops.push({ at: R(p.from + p.ms), ms: R(gap), phase: phaseAt(p.from + p.ms) });
       const u = [p.b[0] - p.a[0], p.b[1] - p.a[1]], w = [q.b[0] - q.a[0], q.b[1] - q.a[1]], nu = Math.hypot(...u), nw = Math.hypot(...w);
-      if (nu > 20 && nw > 20) { const ang = Math.acos(Math.max(-1, Math.min(1, (u[0] * w[0] + u[1] * w[1]) / nu / nw))) * 180 / Math.PI; if (ang > 100) turns.push({ at: q.from, deg: R(ang), phase: phaseAt(q.from), from: p.cls + ' ' + p.a.join(',') + '→' + p.b.join(','), to: q.cls + ' →' + q.b.join(',') }); }
+      // (the tour's own shape is one arc: up into the Nest tab, then down onto the sheet from where it stopped there. That
+      // turn, its apex at the tab, is marked: the pacing check lets one of it through, and every other turn counts)
+      if (nu > 20 && nw > 20) { const ang = Math.acos(Math.max(-1, Math.min(1, (u[0] * w[0] + u[1] * w[1]) / nu / nw))) * 180 / Math.PI;
+        const apex = u[1] < -20 && w[1] > 20 && Math.hypot(q.a[0] - p.b[0], q.a[1] - p.b[1]) < 40;
+        if (ang > 100) turns.push({ at: q.from, deg: R(ang), phase: phaseAt(q.from), apex, from: p.cls + ' ' + p.a.join(',') + '→' + p.b.join(','), to: q.cls + ' →' + q.b.join(',') }); }
     }
     out.metrics.path = { moves: mv.length, stops, turns }; }
   const bigJumps = jumps.filter(j => j.kind !== 'too fast to follow');
@@ -600,7 +606,8 @@ function analyse(res) {
   if (L.views) lo.push(`${L.views} view animation(s) running`); if (L.inert.length) lo.push('a view left faded: ' + L.inert.join(',')); if (res.sheets1.hidden.length) lo.push('pieces still held back on ' + res.sheets1.hidden.join(','));
   check('leftovers', lo.length ? 'FAIL' : 'PASS', lo.length ? lo.join('; ') : 'nothing left over');
   // ── pacing ──
-  if (tourOn) {
+  // (reduced motion: nothing flies by design; its gentle version is judged under reduced, below)
+  if (tourOn && !sc.reduced) {
     const legs = (res.sheets1.mine || []).reduce((s, m) => { m.where.forEach(w => s.add(w)); return s; }, new Set()).size || 1;
     const shortMoves = out.metrics.moves.filter(m => m.ms < 280 && m.px > 60);
     const want = [3000 + (legs - 1) * 1200, 9000 + (legs - 1) * 2500];
@@ -613,11 +620,13 @@ function analyse(res) {
     // (every piece on a sheet is seen landing unless the user skipped: fewer landings is a tour cut short, its watchdog)
     const onSheets = (res.sheets1.mine || []).filter(m => m.where.length).length;
     if (!sc.act && lands.length < onSheets) bad.push(`only ${lands.length} of ${onSheets} pieces seen landing: the tour was cut short (its watchdog fires after 6000 + legs × 3200 ms)`);
-    if (pth.turns.length) bad.push(`the path turns back on itself ${pth.turns.length}× (${pth.turns.slice(0, 3).map(x => `${x.deg}° at ${x.phase}`).join(', ')})`);
+    // (one up-then-down arc through the Nest tab is the tour's shape: allowed once; any other turn back is not)
+    const arcs = pth.turns.filter(x => x.apex), backs = pth.turns.filter(x => !x.apex).concat(arcs.slice(1));
+    if (backs.length) bad.push(`the path turns back on itself ${backs.length}× (${backs.slice(0, 3).map(x => `${x.deg}° at ${x.phase}`).join(', ')})`);
     if (pth.stops.length > 2 + legs) bad.push(`${pth.moves} separate moves with ${pth.stops.length} stops between them: a chain of hops, not one flight`);
     if (shortMoves.length) bad.push(`${shortMoves.length} move(s) under 280 ms: ` + shortMoves.slice(0, 3).map(m => `${m.cls} ${m.px} px in ${m.ms} ms at ${m.phase}`).join(', '));
     if (ph.liftToNest != null && ph.liftToNest < 1000) bad.push(`from the lift to the Nest tab in ${ph.liftToNest} ms: where it started is barely seen`);
-    check('pacing', bad.length ? 'FAIL' : 'PASS', `press→start ${ph.pressToStart} ms, lift→Nest ${ph.liftToNest ?? '-'} ms, Nest→first landing ${ph.nestToFirstLanding ?? '-'} ms${ph.landingGaps ? ', landings ' + ph.landingGaps.join('/') + ' ms apart' : ''}, last landing→home ${ph.lastLandingToHome ?? '-'} ms, home→end ${ph.homeSwitchToEnd ?? '-'} ms, total ${ph.total} ms; top speed ${R(top)} px/s; ${out.metrics.moves.length} moves, ${out.metrics.path.stops.length} stops (${out.metrics.path.stops.map(x => x.ms).join('/')} ms), ${out.metrics.path.turns.length} turn-backs` + (bad.length ? ' — ' + bad.join('; ') : ''));
+    check('pacing', bad.length ? 'FAIL' : 'PASS', `press→start ${ph.pressToStart} ms, lift→Nest ${ph.liftToNest ?? '-'} ms, Nest→first landing ${ph.nestToFirstLanding ?? '-'} ms${ph.landingGaps ? ', landings ' + ph.landingGaps.join('/') + ' ms apart' : ''}, last landing→home ${ph.lastLandingToHome ?? '-'} ms, home→end ${ph.homeSwitchToEnd ?? '-'} ms, total ${ph.total} ms; top speed ${R(top)} px/s; ${out.metrics.moves.length} moves, ${out.metrics.path.stops.length} stops (${out.metrics.path.stops.map(x => x.ms).join('/')} ms), ${backs.length} turn-backs${arcs.length ? ' (and the one arc up into the Nest tab and down onto the sheet)' : ''}` + (bad.length ? ' — ' + bad.join('; ') : ''));
   } else if (!sc.reduced) check('pacing', 'FAIL', 'no tour played' + (res.notes.length ? ' (' + res.notes.join('; ') + ')' : ''));
   // ── landing: each piece where its sheet has it ──
   const landed = [];
@@ -636,7 +645,7 @@ function analyse(res) {
   // (pieces sent but never seen landing: the order's pieces on the sheets against the pieces flown)
   const nPieces = (res.sheets1.mine || []).length;
   out.metrics.landing = { landed, nPieces };
-  if (tourOn) {
+  if (tourOn && !sc.reduced) {   // (reduced motion: nothing flies, so nothing lands; judged under reduced)
     const far = landed.filter(l => l.err || l.off || l.px > 6 || (l.kind === 'placed' && (l.size > 1.6 || l.size < .6)));
     const skipped = sc.act && /esc|skip/.test(sc.act.kind);
     check('landing', far.length ? 'FAIL' : !skipped && res.sheets0 && landed.length < nPieces && (res.sheets1.rows || []).some(r => r.state === 'pooled') ? 'WARN' : 'PASS',
@@ -657,10 +666,21 @@ function analyse(res) {
   // ── motion: only transform, opacity, clip-path ──
   const props = [...new Set(rec.anims.filter(a => tStart == null || a.t >= tStart - 5).flatMap(a => a.props))], layout = props.filter(p => LAYOUT.test(p)), other = props.filter(p => !['transform', 'opacity', 'clipPath', 'offsetDistance'].includes(p) && !LAYOUT.test(p));
   check('motion', layout.length ? 'FAIL' : other.length ? 'WARN' : 'PASS', `animated: ${props.join(', ') || 'nothing'}` + (layout.length ? ` (layout: ${layout.join(', ')}, by ${[...new Set(rec.anims.filter(a => a.props.some(p => LAYOUT.test(p))).map(a => a.cls))].join(', ')})` : '') + (other.length ? ` (paint: ${other.join(', ')}, by ${[...new Set(rec.anims.filter(a => a.props.some(p => other.includes(p))).map(a => a.cls))].slice(0, 4).join(', ')})` : ''));
-  // ── reduced motion: no tour, a quick fade and a note ──
+  // ── reduced motion: the gentle version (Paul, 29 Sep 01:30: the same story, calmer): nothing flies or glides; the
+  // same captions, over short fades, name each sheet and what arrived; the tabs dissolve (judged under tabs); home, a
+  // note says where the order went; and it takes about as long as the full tour's captions need to be read ──
   if (sc.reduced) {
-    const notes = capList.filter(c => /mNote|toast|mPlus/.test(c.cls));
-    check('reduced', !tourOn && !Object.keys(info).some(id => /^tour/.test(info[id].cls)) && notes.length ? 'PASS' : 'FAIL', `${tourOn ? 'a tour played' : 'no tour'}, ${Object.keys(info).filter(id => /^tour/.test(info[id].cls)).length} tour node(s), note: ${notes.map(n => '"' + (n.text || '').slice(0, 60) + '"').join('; ') || 'none'}`);
+    const notes = capList.filter(c => /mNote|toast|mPlus/.test(c.cls)), said = capList.filter(c => c.cls === 'tourCap');
+    const flown = Object.keys(info).filter(id => /^tour(Coin|Piece|Card)$|nfPiece/.test(info[id].cls));
+    const named = said.filter(c => /(Placed|Queued) on Sheet \d|· waiting/.test(c.text || ''));
+    const bad = [];
+    if (!tourOn) bad.push('no tour: its gentle version did not play');
+    if (flown.length || out.metrics.moves.length) bad.push(`${flown.length} thing(s) flying (${[...new Set(flown.map(id => info[id].cls))].join(', ')}), ${out.metrics.moves.length} move(s)`);
+    if (tourOn && sw[0] == null) bad.push('the Nest tab never shown');
+    if (!named.length) bad.push('no caption names the sheet');
+    if (!notes.length) bad.push('home, nothing says where the order went');
+    if (tourOn && (ph.total < 3000 || ph.total > 9000)) bad.push(`${ph.total} ms: ${ph.total < 3000 ? 'too short to read' : 'too long'}`);
+    check('reduced', bad.length ? 'FAIL' : 'PASS', (bad.length ? bad.join('; ') + ' · ' : '') + `${tourOn ? 'the gentle version' : 'no tour'}: ${said.map(c => '"' + (c.text || '').slice(0, 34) + '" ' + c.readableMs + ' ms').join('; ') || 'no captions'}; nothing flying (${flown.length}); ${tourOn ? ph.total + ' ms; ' : ''}note: ${notes.map(n => '"' + (n.text || '').slice(0, 60) + '"').join('; ') || 'none'}`);
   }
   // ── skip / Esc: home at once, everything shown ──
   if (sc.act && /esc|skip/.test(sc.act.kind)) {
@@ -765,8 +785,8 @@ const KB = {
     sees: 'Pressing Esc or clicking during the tour does not end it straight away, or leaves pieces hidden.',
     fix: 'forward() should finish every animation, close NestFocus with everything shown, and go home within about 300 ms.' },
   reduced: { w: 6, owner: () => 'other', title: 'Reduced motion still animates, or says nothing',
-    sees: 'With reduced motion on, the tour plays anyway, or nothing tells the user where the order went.',
-    fix: 'Under prefers-reduced-motion, show no tour: a short fade and a note ("Order N: k pieces on GF · Sheet 1", with Show).' },
+    sees: 'With reduced motion on, something still flies or glides, or the gentle version does not show and say where the order went.',
+    fix: 'Under prefers-reduced-motion, play the gentle version: nothing flies or glides; the same captions over short fades ("Order N", then "Placed on Sheet 1 · GF"), the Nest tab shown with the sheet in the light, then home with the note on the card (with Show). About 3–9 s in all.' },
   motion: { w: 3, owner: () => 'pacing', title: 'A property other than transform, opacity or clip-path is animated',
     sees: 'Nothing directly, but these animations run on the main thread and are the first to stutter.', fix: 'Animate only transform, opacity and clip-path.' },
   errors: { w: 9, owner: () => 'other', title: 'Page errors during the tour', sees: 'Something failed during the tour.', fix: 'See the error text.' },

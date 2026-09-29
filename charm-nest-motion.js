@@ -179,7 +179,9 @@
   const take = (m, k) => { const e = m.get(k); if (!e) return null; m.delete(k); return e.until > Date.now() ? e : null; };
   const pending = (k) => { const e = leaves.get(String(k)); return !!(e && e.until > Date.now()); };
   /* A row another animation is already carrying (the Send to Sheet tour lifts the card itself): its list makes no copy
-     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node. */
+     of its own for it, however often it redraws while it is away. By its key, not its node: a redraw makes a new node.
+     A list may also hold such a row where it stood while it is carried (carrying(k): the Review list does), so nothing
+     moves under the carrier; the carrier lets go (carry(k, 0)) once the list is out of sight. */
   const carried = new Map();
   function carry(mkey, ms = 8000) { const k = String(mkey || ""); if (!k) return; if (ms > 0) carried.set(k, Date.now() + ms); else carried.delete(k); }
   const isCarried = k => { const u = carried.get(String(k)); if (!u) return false; if (u > Date.now()) return true; carried.delete(String(k)); return false; };
@@ -190,7 +192,9 @@
   function reconcile(host, nodes, opts = {}) {
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
-    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (k && !n._mLeaving && !isCarried(k)) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
+    // (a carried row the list holds where it stood: not glided, not copied as it leaves, and not new either)
+    const held = new Set();
+    if (on) for (const n of host.children) { const k = n.dataset && n.dataset.mkey; if (!k) continue; if (isCarried(k)) held.add(k); else if (!n._mLeaving) before.set(k, { node: n, rect: n.getBoundingClientRect() }); }
     const keep = new Set(nodes);
     nodes.forEach((node, i) => { if (host.children[i] !== node) host.insertBefore(node, host.children[i] || null); });
     for (const n of [...host.children]) if (!keep.has(n)) n.remove();
@@ -223,7 +227,7 @@
     }
     // what is new: from where it came, or opening its own room
     for (const [k, n] of now) {
-      if (before.has(k)) continue;
+      if (before.has(k) || held.has(k)) continue;
       const spec = take(arrivals, k);
       if (spec && spec.from) flyIn(spec.from, n, spec); else if (seen(n.getBoundingClientRect())) grow(n, { delay: hold ? hold + 120 : 0, room: false });
     }
@@ -977,6 +981,6 @@
     wait();
   }
 
-  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
+  root.Motion = { T, ghost, fly, flyIn, grow, shut, fade, arrive, pulse, note, expect, expectIn, pending, carry, carrying: isCarried, reconcile, reduced, wait, layer, dialogOpen, dialogClose, from, popIn, turner, landIn };
   root.Seal = Seal;
 })(typeof window !== "undefined" ? window : globalThis);
