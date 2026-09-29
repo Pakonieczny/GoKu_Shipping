@@ -147,6 +147,10 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert(lib.neverStarted(stuck, seen(openai("in_progress")), START), "four hours, nothing done");
   assert(lib.neverStarted(stuck, seen(openai("validating")), START), "still validating after four hours");
   assert(lib.neverStarted({ ...stuck, stallRestarts: 4 }, seen(openai("in_progress")), START), "a fifth restart is allowed");
+  // While validating, OpenAI has not counted the job's requests yet (seen
+  // live on 2026-09-29: one job validating from 17:35 UTC, total 0).
+  const validating = () => ({ status: "validating", request_counts: { total: 0, completed: 0, failed: 0 } });
+  assert(lib.neverStarted(stuck, seen(validating()), START), "stuck validating, before OpenAI counts its requests");
   for (const [why, record, raw] of [
     ["under three hours", { ...stuck, createdAt: at(START - 2.9 * HOUR) }, openai("in_progress")],
     ["one image done", stuck, openai("in_progress", 1)],
@@ -157,6 +161,8 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     ["a two-set job", { ...stuck, sets: [set(1), set(2)] }, openai("in_progress")],
     ["five restarts used", { ...stuck, stallRestarts: 5 }, openai("in_progress")],
     ["no send time", { ...stuck, createdAt: null }, openai("in_progress")],
+    ["validating under three hours", { ...stuck, createdAt: at(START - 2.9 * HOUR) }, validating()],
+    ["running with no requests counted", stuck, openai("in_progress", 0, 0, { request_counts: { total: 0, completed: 0, failed: 0 } })],
     ["a queued record", { ...stuck, batchName: `batch_local_${"a".repeat(40)}`, locallyQueued: true }, openai("in_progress")],
   ]) assert(!lib.neverStarted(record, seen(raw), START), `not restarted: ${why}`);
 
@@ -279,7 +285,25 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.deepEqual(c.cancels, ["batch_s22"], "a job whose stop did not reach OpenAI is cancelled there");
   assert.equal(c.get("batch_s22").stallRestartBlocked, true);
 
-  // 5. The Batch Progress card.
+  // 5. A job stuck in validation: not waited on, then restarted at three hours.
+  const v = world({
+    records: [job("batch_val_old", 30, { state: "JOB_STATE_PENDING", providerStatus: "validating" }),
+      job("batch_val_new", 31, { state: "JOB_STATE_PENDING", providerStatus: "validating", createdAt: at(START - 20 * 60 * 1000) })],
+    jobs: { batch_val_old: validating(), batch_val_new: validating() },
+  });
+  const round = await v.call({ kind: "batch_sweep" });
+  assert.equal(round.statusCode, 200, round.error?.message);
+  assert.deepEqual(v.cancels, ["batch_val_old"], "a job validating for four hours is cancelled at no cost");
+  assert.equal(v.calls.filter((c) => c.kind === "batch_status" && c.batchName === "batch_val_new").length, 1,
+    "a job validating for twenty minutes is read once, not waited on");
+  v.live.get("batch_val_old").status = "cancelled";
+  v.later(10 * 60 * 1000);
+  const again = await v.call({ kind: "batch_sweep" });
+  assert.equal(again.stalledRestarted, 1, "its set is queued again once OpenAI confirms the cancel");
+  assert.equal(v.submits.length, 1);
+  assert.equal(v.submits[0].sets[0].setN, 30);
+
+  // 6. The Batch Progress card.
   const render = cut(page, "    function _renderSessionBlock(session) {", "    async function _cancelSession(sessionId) {");
   const helper = cut(page, "    function _awaitingStallRestart(b) {", "    function _formatDuration(ms) {");
   const card = (batches) => vm.runInNewContext(`${helper}; ${render}; _renderSessionBlock({ sessionId: "sess_1", batches, earliest: Date.now(), latest: Date.now() })`, {

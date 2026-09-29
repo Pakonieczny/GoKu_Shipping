@@ -22,6 +22,12 @@ const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha2
 // 2 hours.
 const STALL_RESTART_MS = 3 * 60 * 60 * 1000;
 const STALL_RESTART_LIMIT = 5;
+// OpenAI validates a new job in a minute or two, and a token-limit refusal
+// comes then. Past this age a job still validating tells nothing more: the
+// collector stops waiting for it and admission sends the next set (on
+// 2026-09-29 one sat in validation for over half an hour and every queued set
+// waited behind it). It is cancelled and sent again at STALL_RESTART_MS.
+const VALIDATION_WAIT_MS = 15 * 60 * 1000;
 const toMillis = (value) => typeof value?.toMillis === 'function' ? value.toMillis() : Number(value || 0);
 // A one-set listing job that has done nothing at all since it was sent.
 // `live` is a fresh provider answer: { providerStatus, batchStats }.
@@ -30,7 +36,8 @@ function neverStarted(record, live, now) {
   const sentAt = toMillis(record?.createdAt);
   return String(record?.batchName || '').startsWith('batch_') && !record.locallyQueued && !record.collected &&
     ['validating', 'in_progress'].includes(live?.providerStatus) &&
-    Number(stats.requestCount || 0) > 0 &&
+    // OpenAI counts a job's requests only once it has validated the file.
+    (live.providerStatus === 'validating' || Number(stats.requestCount || 0) > 0) &&
     !Number(stats.successfulRequestCount || 0) && !Number(stats.failedRequestCount || 0) &&
     sentAt > 0 && now - sentAt >= STALL_RESTART_MS &&
     Number(record.stallRestarts || 0) < STALL_RESTART_LIMIT &&
@@ -57,7 +64,9 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
       if (g.probeName) {
         const probe = await tx.get(batches.doc(g.probeName));
         const p = probe.data();
-        if (!p || p.state === 'JOB_STATE_PENDING') return { queued: true, reason: 'Waiting for provider validation' };
+        const sentAt = toMillis(p?.createdAt);
+        if (!p || p.state === 'JOB_STATE_PENDING' && !(sentAt > 0 && now() - sentAt >= VALIDATION_WAIT_MS))
+          return { queued: true, reason: 'Waiting for provider validation' };
       }
       if (active >= 30) return { queued: true, reason: 'Waiting for an active job to finish' };
       if (g.blockedAtActive != null && active >= g.blockedAtActive &&
@@ -124,4 +133,4 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, STALL_RESTART_MS, STALL_RESTART_LIMIT };
+  neverStarted, STALL_RESTART_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS };

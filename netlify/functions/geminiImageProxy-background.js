@@ -5,7 +5,7 @@
 
 const admin = require("./firebaseAdmin");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted } = require("./lib/listingBatchAdmission.cjs");
+  neverStarted, VALIDATION_WAIT_MS } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14194,17 +14194,23 @@ async function _handlerImpl(event) {
       }, { merge: true });
 
       const admission = admissionControl(db, BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp());
-      await admission.reconcile(async (inputFileName) => {
-        let after = "";
-        for (let page = 0; page < 5; page++) {
-          const result = await openAIBatchRequest(batchApiKey("batch_probe"), `/batches?limit=100${after ? `&after=${encodeURIComponent(after)}` : ""}`);
-          const match = result.data?.find((b) => b.input_file_id === inputFileName);
-          if (match) return match;
-          if (!result.has_more || !result.data?.length) break;
-          after = result.data[result.data.length - 1].id;
-        }
-        return null;
-      });
+      try {
+        await admission.reconcile(async (inputFileName) => {
+          let after = "";
+          for (let page = 0; page < 5; page++) {
+            const result = await openAIBatchRequest(batchApiKey("batch_probe"), `/batches?limit=100${after ? `&after=${encodeURIComponent(after)}` : ""}`);
+            const match = result.data?.find((b) => b.input_file_id === inputFileName);
+            if (match) return match;
+            if (!result.has_more || !result.data?.length) break;
+            after = result.data[result.data.length - 1].id;
+          }
+          return null;
+        });
+      } catch (err) {
+        // Admission stays paused on that submission until a later run
+        // confirms it; collecting finished jobs goes on.
+        console.warn("[batch_sweep] submission not reconciled:", err?.message || err);
+      }
 
       const normState = (st) => {
         const x = String(st || "");
@@ -14212,14 +14218,31 @@ async function _handlerImpl(event) {
       };
       const isFinal = (st) => ["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(st));
       const isSucceeded = (st) => normState(st) === "JOB_STATE_SUCCEEDED";
-      const checkValidation = async (batchName, initialStatus) => {
-        let status = initialStatus || await inProcess({ kind: "batch_status", batchName });
-        if (normState(status?.state) === "JOB_STATE_PENDING") {
+      // OpenAI's edge sometimes answers one status check with "upstream
+      // connect error ... connection timeout". Ask again; only three failed
+      // answers in a row leave the job's state unknown.
+      const readStatus = async (batchName) => {
+        let status = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt) await new Promise((resolve) => setTimeout(resolve, 5000));
+          status = await inProcess({ kind: "batch_status", batchName });
+          if (status?.ok && status.state) break;
+        }
+        return status;
+      };
+      // Waits while OpenAI validates a job, so the next queued set can go in
+      // this run. A job sent `sentAt` is waited for only until it is
+      // VALIDATION_WAIT_MS old; one stuck in validation must not hold every
+      // run for its whole budget.
+      const checkValidation = async (batchName, initialStatus, sentAt = 0) => {
+        const canWait = () => Date.now() - sweepStart + 5000 < SWEEP_BUDGET_MS &&
+          !(sentAt > 0 && Date.now() - sentAt >= VALIDATION_WAIT_MS);
+        let status = initialStatus || await readStatus(batchName);
+        if (normState(status?.state) === "JOB_STATE_PENDING" && canWait()) {
           await guardRef.set({ stage: "validating new job" }, { merge: true });
-          while (normState(status?.state) === "JOB_STATE_PENDING" &&
-                 Date.now() - sweepStart + 5000 < SWEEP_BUDGET_MS) {
+          while (normState(status?.state) === "JOB_STATE_PENDING" && canWait()) {
             await new Promise((resolve) => setTimeout(resolve, 5000));
-            status = await inProcess({ kind: "batch_status", batchName });
+            status = await readStatus(batchName);
           }
         }
         if (!status?.ok || !status.state) {
@@ -14261,7 +14284,11 @@ async function _handlerImpl(event) {
         let state = b.state;
         if (!isSucceeded(state)) {
           let st = await inProcess({ kind: "batch_status", batchName: b.batchName });
-          if (normState(st?.state) === "JOB_STATE_PENDING") st = await checkValidation(b.batchName, st);
+          if (normState(st?.state) === "JOB_STATE_PENDING") {
+            // Unconfirmed, it simply stays validating; admission keeps treating it so.
+            try { st = await checkValidation(b.batchName, st, b.createdAt?.toMillis?.() || 0); }
+            catch (err) { console.warn("[batch_sweep] validation not confirmed:", b.batchName, err?.message || err); }
+          }
           statusChecked++;
           state = st?.state || state;
           // Admission below must use the state we just fetched, not the
@@ -14353,7 +14380,7 @@ async function _handlerImpl(event) {
         !b.collected && !b.responsesFile &&
         ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(normState(b.state)) && b.batchName &&
         Number(b.retryAttempt || 0) < 5);
-      let refillNeedsContinuation = false;
+      let refillNeedsContinuation = false, validationUnconfirmed = null;
       for (const b of waiting) {
         if (activeCount >= 30) {
           // Other jobs can finish while new ones validate. Recount before
@@ -14382,7 +14409,15 @@ async function _handlerImpl(event) {
           // A newly created job normally starts in validation. Keep this
           // background worker alive until validation finishes, so the next
           // queued set does not have to wait for another ten-minute cron.
-          const fresh = await checkValidation(retry.batchName);
+          let fresh;
+          try { fresh = await checkValidation(retry.batchName); }
+          catch (err) {
+            // OpenAI did not answer, so its outcome is unknown: nothing more
+            // is sent in this run, and admission waits on this job as usual.
+            console.warn("[batch_sweep] validation not confirmed:", retry.batchName, err?.message || err);
+            validationUnconfirmed = retry.batchName;
+            break;
+          }
           if (isFinal(fresh.state)) {
             console.warn("[batch_sweep] provider rejected retry:", retry.batchName,
               fresh.providerError || "reason pending");
@@ -14436,7 +14471,7 @@ async function _handlerImpl(event) {
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
-          refillContinuing: refillNeedsContinuation },
+          refillContinuing: refillNeedsContinuation, validationUnconfirmed },
       }, { merge: true });
       // Continue with a fresh background budget. The same shared admission
       // guard still validates every job and enforces the global 30-job cap.

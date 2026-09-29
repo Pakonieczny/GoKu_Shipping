@@ -57,6 +57,29 @@ async function unitScenarios() {
   assert(quotaFailure('Enqueued token limit reached; limit 1,000,000'));
   assert(!quotaFailure('Invalid image format'));
 }
+async function staleProbeScenario() {
+  // OpenAI validates a job in a minute or two. One stuck in validation
+  // (2026-09-29: over half an hour) must not hold every queued set.
+  let now=1000000;
+  const db=database(10), gate=admissionControl(db,'batches',()=>now,()=>now);
+  for(const id of ['source0','source1','source2']) db.data.set('batches/'+id,clone(sourceRecord));
+  const claim=await gate.reserve('source0');
+  await gate.beforeCreate(claim,{inputFileName:'file-a',sets:[]});
+  await gate.complete(claim,'batch_probe',{inputFileName:'file-a',sets:[]},{id:'batch_probe'});
+  now+=14*60000;
+  assert.equal((await gate.reserve('source1')).reason,'Waiting for provider validation','a job validating for fourteen minutes still holds admission');
+  now+=60000;
+  const next=await gate.reserve('source1');
+  assert(next.token,'a job validating for fifteen minutes no longer holds admission');
+  await gate.beforeCreate(next,{inputFileName:'file-b',sets:[]});
+  await gate.complete(next,'batch_after',{inputFileName:'file-b',sets:[]},{id:'batch_after'});
+  assert.equal((await gate.reserve('source2')).reason,'Waiting for provider validation','the job sent next is waited for as usual');
+  assert.equal(db.data.get('batches/batch_probe').state,'JOB_STATE_PENDING','the stuck job is left as it is');
+  db.data.set('batches/batch_orphan_probe',{state:'JOB_STATE_PENDING',collected:false});
+  await db.collection('LG1_Config').doc('batchAdmission').set({probeName:'batch_orphan_probe'});
+  now+=60*60000;
+  assert.equal((await gate.reserve('source2')).reason,'Waiting for provider validation','a probe with no send time is still waited for');
+}
 async function originalSubmissionScenario() {
   const db=database(35); let uploads=0, creates=0, now=1000000;
   const body={kind:'batch_submit',sessionId:'sess_original',displayName:'lg1-Beady_Necklace-300sets-test-part282of300',
@@ -163,4 +186,4 @@ async function submitRefusalCountScenario() {
   assert.equal(result.queued,true);
   assert.deepEqual(db.data.get('batches/batch_src').capacityRefusals,{increment:1});
 }
-(async()=>{await unitScenarios();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{await unitScenarios();await staleProbeScenario();await originalSubmissionScenario();await quotaRecoveryScenario();await cancellationFeedbackScenario();await submitRefusalCountScenario();console.log('Shared admission: concurrency, capacity, validation, stuck validation, quota cooldown, durable original queue, idempotency, timeout reconciliation and cancellation feedback passed');})().catch(e=>{console.error(e);process.exitCode=1;});
