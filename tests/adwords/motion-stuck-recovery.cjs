@@ -35,9 +35,9 @@ vm.runInContext(source+'\nglobalThis.mem=memory;',ctx);
  const service=createMotionService(D);
  const start=await service.start({workspaceId:'design_test',...scope});
  // Recreate the exact stored production state: both films paid for and saved,
- // framing measured, square master never chosen, stopped by the old rule.
+ // framing measured, square master never chosen, stopped by the old rule. That job is a version 2 job (start() now makes version 3).
  const jobRef=ref.collection('motionJobs').doc(start.jobId);
- await jobRef.update({phase:'needs_attention',compositionBlocked:true,inFlight:null,leaseUntil:0,owner:null,quality:null,squareMaster:null,
+ await jobRef.update({pipelineVersion:2,renderVersion:10,phase:'needs_attention',compositionBlocked:true,inFlight:null,leaseUntil:0,owner:null,quality:null,squareMaster:null,
   creativeDirection:Object.fromEntries(['rationale','setting','props','lighting','opening','middle','ending','portrait','landscape','identity','limitations'].map(k=>[k,'saved '+k])),
   composition:{portrait:{x:.05,y:.05,w:.9,h:.9,note:'large subject'},landscape:{x:.02,y:.05,w:.95,h:.9,note:'large subject'}},
   masters:{portrait:{id:'v1_p',status:'completed',progress:100,size:'720x1280',asset:{path:'m_portrait',hash:'m_portrait'}},landscape:{id:'v1_l',status:'completed',progress:100,size:'1280x720',asset:{path:'m_landscape',hash:'m_landscape'}}},

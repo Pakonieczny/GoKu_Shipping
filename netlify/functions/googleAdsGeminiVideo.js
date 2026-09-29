@@ -1,10 +1,12 @@
 // Gemini Omni uses Interactions, not the Veo operations or OpenAI videos API.
 const MODEL='gemini-omni-1.1-flash',SECONDS=10,OUTPUT_USD_PER_SECOND=5792*17.5/1e6;
 const API='https://generativelanguage.googleapis.com/v1beta/';
+// Gemini offers only 9:16 and 16:9. The square film is asked for at 16:9; its middle square is the 1:1 format.
+const ASPECT={portrait:'9:16',square:'16:9',landscape:'16:9'};
 function requestBody(image,prompt,orientation){
  if(!Buffer.isBuffer(image)||!image.length)throw Error('A product reference is required for animation.');
- if(!['portrait','landscape'].includes(orientation))throw Error('Choose a supported video orientation.');
- return {model:MODEL,background:true,store:true,input:[{type:'image',mime_type:'image/jpeg',data:image.toString('base64')},{type:'text',text:prompt}],response_format:{type:'video',aspect_ratio:orientation==='portrait'?'9:16':'16:9',resolution:'720p',delivery:'uri'}};
+ if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
+ return {model:MODEL,background:true,store:true,input:[{type:'image',mime_type:'image/jpeg',data:image.toString('base64')},{type:'text',text:prompt}],response_format:{type:'video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
 }
 function outputVideo(data){return (data.steps||[]).filter(s=>s.type==='model_output').flatMap(s=>s.content||[]).find(c=>c.type==='video'&&(c.uri||c.data))||null;}
 function createGeminiVideo({apiKey,fetch}){

@@ -17,7 +17,7 @@
    'Use image-only or video-only compositions when additional text would obscure the product. Google responsive copy and native CTA remain separate assets.',
    'Make the clip understandable without sound. No claims requiring music or voiceover; never invent product benefits.',
    'Keep Merchant photos and videos free of promotional graphics. Ads may use concise editorial captions; never draw pretend clickable controls.',
-   'Generate two coordinated 10-second video masters: vertical and horizontal. Export exactly three formats: portrait, square and landscape, used across devices.',
+   'Generate three coordinated 10-second video masters, each made for its own format: vertical, square and horizontal. Export exactly three formats: portrait, square and landscape, used across devices.',
    'Use a product-specific camera progression and realistic moving reflections, not morphing jewelry or invented rotating surfaces. Keep the whole item inside the crop-safe area.',
    'A provider receipt, Google upload acceptance, policy approval and actual serving are distinct states.'
   ],sources:[
