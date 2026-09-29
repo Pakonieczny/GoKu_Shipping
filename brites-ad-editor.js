@@ -877,7 +877,7 @@
     await loadedFonts.get(font);
   }
   api.openAllSizes=async ({scope,request,reviewed=false,host=null})=>{
-    const preview=Object.create(Editor.prototype);Object.assign(preview,{F:root.fabric,preferCurrentLayouts:!reviewed,aiRuns:new Map(),sources:new Map(),board:{width:2048,height:2048},key:()=>'',input:()=>scope,request,inlineHost:host});
+    const preview=Object.create(Editor.prototype);Object.assign(preview,{F:root.fabric,preferCurrentLayouts:false,aiRuns:new Map(),sources:new Map(),board:{width:2048,height:2048},key:()=>'',input:()=>scope,request,inlineHost:host});
     return preview.reviewProofsPanel();
   };
   api.openReview=async ({scope,request,staticState,animatedState,onStaticSizes,onAnimatedSizes})=>{
