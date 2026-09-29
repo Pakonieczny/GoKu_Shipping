@@ -203,4 +203,5 @@ const removes=ops=>ops.filter(o=>o.remove).map(o=>o.remove).join(),json=v=>JSON.
   const kick=fs.readFileSync(path.join(FN,'googleAdsAutopilotKick.js'),'utf8');
   check(/\["measure", "mine", "prune", "events", "designStudioLearn"\]\.forEach\(t => tasks\.add\(t\)\); ranDaily = true;/.test(kick)&&/onclick="runNow\(\['mine','prune'\],this\)"[^>]*removal of Search exclusions that stop buyers[^>]*>Mine search terms</.test(html),'it runs daily and from the "Mine search terms" button, whose tip says so');
   console.log('PASS '+n+' Search "Stop excluding" checks: the draft with its replacement phrases, its publication and its card');
+  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exit(1);});
