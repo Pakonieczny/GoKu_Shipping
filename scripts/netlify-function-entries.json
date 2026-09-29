@@ -207,6 +207,7 @@
     "_etsyMailTrackingResolve.js",
     "_etsyMailVetoes.js",
     "_etsyPricingScheme.js",
+    "_googleAdsClaude.js",
     "_googleApiKeys.js",
     "_googleConnections.js",
     "_investorAdmin.js",

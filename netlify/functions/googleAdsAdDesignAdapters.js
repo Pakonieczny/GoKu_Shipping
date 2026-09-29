@@ -138,9 +138,10 @@ function createAdDesignAdapters(D){
     const scale=withoutEnlargement?Math.min(1,width/dimensions[0],height/dimensions[1]):1,outputWidth=Math.min(dimensions[0],Math.max(1,Math.floor(dimensions[0]*scale))),outputHeight=Math.min(dimensions[1],Math.max(1,Math.floor(dimensions[1]*scale)));
     let pipeline=sharp(oriented.data,{raw:oriented.info}).extract({left,top,width,height});
     if(width!==outputWidth||height!==outputHeight)pipeline=pipeline.resize(outputWidth,outputHeight,{fit:'fill',kernel:'lanczos3'});
-    const output=await pipeline.flatten({background:'#ffffff'}).jpeg({quality:100,chromaSubsampling:'4:4:4'}).toBuffer();
-    const final=meta.xmp?attachXmp(output,meta.xmp):output;
-    if(final.length>5120000)throw new Error('This maximum-quality crop exceeds Google’s 5 MB image limit. Choose a less detailed crop; the original is retained.');
+    // Maximum quality first, so a crop that fits keeps its exact bytes; a grainy or highly detailed
+    // photo steps down only as far as Google's 5 MB image limit requires instead of failing.
+    let final;for(const [quality,chromaSubsampling] of [[100,'4:4:4'],[95,'4:4:4'],[92,'4:4:4'],[90,'4:2:0'],[85,'4:2:0']]){const output=await pipeline.clone().flatten({background:'#ffffff'}).jpeg({quality,chromaSubsampling}).toBuffer();final=meta.xmp?attachXmp(output,meta.xmp):output;if(final.length<=5120000)break;}
+    if(final.length>5120000)throw new Error('This crop exceeds Google’s 5 MB image limit even at reduced JPEG quality. Choose a less detailed crop; the original is retained.');
     return {bytes:final,width:outputWidth,height:outputHeight,crop:rect,sourceWidth:w,sourceHeight:h,cropWidth:width,cropHeight:height,upscaled:width<outputWidth||height<outputHeight,mimeType:'image/jpeg',originalMimeType:'image/'+(meta.format==='jpeg'?'jpeg':meta.format)};
   }
   async function prepareReferences({sources}={}){

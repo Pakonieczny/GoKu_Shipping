@@ -178,7 +178,9 @@
     const landed = leave(kind, id, done, ids, setOfSheet), landAt = Date.now() + landed;
     const unbump = bump(kind === 'set' ? 'sets' : 'sheets', done ? 1 : -1, false, done && L.tab !== 'done' ? landed : 0);
     try {
-      const r = await api('charmNestLibrary', { op: 'laserDone', kind, id, done, by: by || undefined }, { label: done ? 'Marking completed' : 'Moving back to Current' });
+      // (where it was marked goes on every order's laserDone: this page, and the view it was pressed in)
+      const via = o.via || (o.undo ? 'undo' : L.tab === 'done' ? 'Library Completed' : 'Library');
+      const r = await api('charmNestLibrary', { op: 'laserDone', kind, id, done, by: by || undefined, device: 'charm-nest-1', via }, { label: done ? 'Marking completed' : 'Moving back to Current' });
       const t = r.at || at;
       for (const x of r.sheetIds || []) note('sheet:' + x, done, t, r.by);
       if (r.setId && r.setDone != null) note('set:' + r.setId, !!r.setDone, t, r.by);

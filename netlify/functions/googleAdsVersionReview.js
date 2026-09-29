@@ -97,7 +97,7 @@ function assertVersionOperationScope(item, snapshot, customerId, savedTargetSnap
       if(snapshot.channel!=="SEARCH"||!Array.isArray(c.searchImageLinks))throw new Error("Verified Search image links are required before updating Search images.");
       if(op.remove)known(searchImages,op.remove,"Search image link");
       else if(op.update){known(searchImages,row.resourceName,"Search image link");fields(row,["resourceName","status"]);mask(op,["status"]);status(row);}
-      else{fields(row,["resourceName","adGroup","asset","fieldType","status"]);if(!adGroups.has(row.adGroup)||row.fieldType!=="IMAGE"||!own(row.asset,"assets")||!assets.has(row.asset)&&!temporaryAssets.has(row.asset))throw new Error("The Search image does not belong to this verified ad group or saved version.");usedAssets.add(row.asset);if(row.status!=null)status(row);}
+      else{fields(row,["resourceName","adGroup","asset","fieldType","status"]);if(!adGroups.has(row.adGroup)||row.fieldType!=="AD_IMAGE"||!own(row.asset,"assets")||!assets.has(row.asset)&&!temporaryAssets.has(row.asset))throw new Error("The Search image does not belong to this verified ad group or saved version.");usedAssets.add(row.asset);if(row.status!=null)status(row);}
     }else if(type==="assetGroupListingGroupFilterOperation"){
       if(!restoring)throw new Error("Product filter updates require a saved restoration plan.");
       if(op.remove)known(filters,op.remove,"product filter");
