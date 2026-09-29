@@ -2,7 +2,7 @@
 // storage. A syntax check cannot catch a function that is called but never
 // defined — that exact defect shipped once, in the transport row — and only
 // running the handler finds it.
-const assert = require('assert/strict'), path = require('path'), Module = require('module');
+const assert = require('assert/strict'), fs = require('fs'), path = require('path'), Module = require('module');
 const FN = path.resolve(__dirname, '../../netlify/functions');
 let passed = 0;
 const check = (cond, name) => { assert.ok(cond, name); passed++; console.log('PASS', name); };
@@ -143,16 +143,11 @@ const CHECKS = ['googleConnectionsCheck.js', 'googleMerchantHealth.js', 'shopify
     }
   }
 
-  // googleAdsRepair stays open to GET, so its self-check must not reveal the account ID; its
-  // retired POST still compares the passcode, and neither reaches Google.
-  const repair = require(path.join(FN, 'googleAdsRepair.js'));
-  const self = await quiet('googleAdsRepair ?check=1', () => repair.handler({ httpMethod: 'GET', queryStringParameters: { check: '1' }, headers: {} }));
-  check(self.statusCode === 200 && JSON.parse(self.body).customerIdSet === true && !/1234567890/.test(self.body), 'googleAdsRepair self-check says an account is set without naming it');
-  process.env.EDIT_PASSCODE = 'secret';
-  const guess = await quiet('googleAdsRepair POST', () => repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': 'guess' }, body: '{}' }));
-  const retired = await quiet('googleAdsRepair POST', () => repair.handler({ httpMethod: 'POST', queryStringParameters: {}, headers: { 'x-edit-passcode': 'secret' }, body: '{}' }));
-  check(guess.statusCode === 401 && retired.statusCode === 409, 'googleAdsRepair refuses a wrong passcode and creates nothing with the right one');
-  delete process.env.EDIT_PASSCODE;
+  // googleAdsRepair created campaigns straight from approved drafts, around Approvals and its money
+  // checks. It is retired: no source and no build entry, so a merge or deploy cannot bring it back.
+  const manifest = require('../../scripts/netlify-function-entries.json');
+  check(!fs.existsSync(path.join(FN, 'googleAdsRepair.js')) && ![...manifest.endpoints, ...manifest.modules].includes('googleAdsRepair.js'),
+    'googleAdsRepair is retired: no function source and no build manifest entry');
 
   console.log(passed + ' endpoint smoke checks passed.');
 })().catch(e => { console.error(e); process.exitCode = 1; });
