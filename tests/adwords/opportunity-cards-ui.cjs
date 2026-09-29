@@ -77,5 +77,9 @@ await test('a research start failure keeps saved results and never polls',async(
   assert.equal(ctx.OPPS.length,1);assert.equal(ctx.OPP_SCANNING,false);assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start.*Saved results are unchanged/);
   ctx.api=async()=>({opportunities:[base()],scannedAt:1,scanning:false,started:false,dispatchError:'background dispatch HTTP 502',lastError:'background dispatch HTTP 502'});await ctx.loadOpportunities(true);
   assert.equal(ctx.oppPollTimer,null);assert.match(toasts.pop(),/could not start/);assert.equal(node('oppScan').disabled,false);});
+await test('a plan forecast to lose money names that blocker and never tops Best match',()=>{ctx.RESEARCH_STATUS={search:{status:'ready',checkedAt:Date.now()}};const r='Projected ROAS 0.8x (0.6–1.0x with conversion uncertainty) is below the 2.5x break-even at a 40% margin: this plan is forecast to lose CAD 120 over the run.';
+  const b=ctx.oppBlock(Object.assign(base(),{eligibility:{ready:false,measuredKeywords:5,expectedSales:2,reason:r}}));assert.deepEqual([b.kind,b.label,b.text],['evidence','Forecast below break-even',r]);
+  vm.runInContext(pick('oppSorters'),ctx);const loss={o:{rank:90,eligibility:{ready:false}}},ok={o:{rank:40,eligibility:{ready:true}}},old={o:{rank:60}};
+  assert.deepEqual([loss,old,ok].sort(ctx.oppSorters('best')).map(x=>x.o.rank),[40,90,60],'launchable first, then by rank');});
 console.log(`${passed} opportunity card checks passed.`);
 })().catch(e=>{console.error(e);process.exitCode=1;});

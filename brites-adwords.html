@@ -3184,7 +3184,8 @@ function researchCheckChannel(x){if(['search','pmax','shared'].includes(x.channe
 function oppSorters(mode){
   if(mode==="urgent")return function(a,b){var d=(a.o.daysOut||0)-(b.o.daysOut||0); if(d)return d; d=(a.o.durationDays||99)-(b.o.durationDays||99); if(d)return d; return (b.o.score||0)-(a.o.score||0);};
   if(mode==="reach")return function(a,b){return (((b.o.research||{}).searchVolume)||0)-(((a.o.research||{}).searchVolume)||0);};
-  return function(a,b){return ((b.o.rank||b.o.score||0)-(a.o.rank||a.o.score||0));};
+  // Launchable ideas first, as the engine ranks them: one that cannot launch (a forecast loss, too little evidence) never tops Best match.
+  return function(a,b){var ra=a.o.eligibility&&a.o.eligibility.ready?1:0,rb=b.o.eligibility&&b.o.eligibility.ready?1:0;return (rb-ra)||((b.o.rank||b.o.score||0)-(a.o.rank||a.o.score||0));};
 }
 var oppOverride={}; // per-opportunity {maxCpc, smart} overrides of the global defaults, keyed by tag so a re-sort or delete never moves an edit to another card
 function oppKey(i){ var o=OPPS[i]; return o&&o.tag?String(o.tag):'#'+i; }
@@ -3205,7 +3206,7 @@ function oppBlock(o){ var x=oppExpiry(o),el=o.eligibility||{},n=Number(el.measur
   if(!el.ready&&!stale)gap=('expectedSales' in el)&&why?why:(n<4?('Only '+n+' of the 4 required keywords have measured Google search volume, so this is not ready for a paid test.'):'The account budget ceiling, or its budget currency check, leaves no room for this test yet.');
   // Stale research blocks every card; the lane header already says so, so a card only adds its own evidence gap.
   if(stale||researchNeedsRefresh('search'))return {kind:'refresh',label:'Refresh research first',text:gap,toast:'Refresh Search research before creating a draft.'};
-  if(!el.ready)return {kind:'evidence',label:/measured Google search/i.test(gap)?'Needs more evidence':/expected sale/i.test(gap)?'Too few expected sales':/headroom|ceiling/i.test(gap)?'Needs budget room':/currency/i.test(gap)?'Currency unverified':'Not ready yet',text:gap||'The research does not support a paid test yet.'};
+  if(!el.ready)return {kind:'evidence',label:/measured Google search/i.test(gap)?'Needs more evidence':/expected sale/i.test(gap)?'Too few expected sales':/headroom|ceiling/i.test(gap)?'Needs budget room':/currency/i.test(gap)?'Currency unverified':/break-even/i.test(gap)?'Forecast below break-even':'Not ready yet',text:gap||'The research does not support a paid test yet.'};
   return null; }
 function oppCpd(n){ n=Number(n)||0; return n<10?String(Math.round(n*10)/10):Math.round(n).toLocaleString(); }
 function oppCpdLine(pr){ return '≈'+oppCpd(pr.cpd)+' clicks/day '+(pr.limited?'(the most measured searches supply)':'at the expected CPC'); }
