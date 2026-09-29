@@ -1876,6 +1876,7 @@ async function applyApproval(id, ctrl, { waitForLeaseMs = 0 } = {}) {
     if(p.groupActivationGuard)await _guardProductGroupActivation(it);
     if((p.meta||{}).budgetCurrency && p.meta.budgetCurrency!==await _accountCurrency())throw new Error("Account currency differs from the reviewed budget. Regenerate the draft.");
     let ops=await materializeReviewedCreative(it);
+    await _guardRefreshBrandSetting(it,ops);
     const newNames=(ops||[]).map(o=>o.campaignOperation&&o.campaignOperation.create&&o.campaignOperation.create.name).filter(Boolean);
     if(newNames.length){const live=await gaql("SELECT campaign.name FROM campaign WHERE campaign.status != 'REMOVED'");if(live.some(r=>newNames.includes((r.campaign||{}).name)))throw new Error("A campaign with this draft's name already exists. Review the existing campaign instead of creating a duplicate.");}
     // Campaigns are only ever enabled from Campaigns, where the ceiling and monthly stop are checked.
@@ -4674,7 +4675,11 @@ async function _productShotsByIds(productIds) {
 function _productIdFromItemId(itemId) { const m = String(itemId || "").match(/^shopify_[^_]+_(\d+)_/i); return m ? m[1] : null; }
 async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgress}={}) {
   const ids=(campaignIds||[]).map(String).filter(x=>/^\d+$/.test(x));
-  const campaigns=await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED'${ids.length?` AND campaign.id IN (${ids.join(",")})`:""}`);
+  // Brand guidelines keep BUSINESS_NAME and LOGO on the campaign; a refresh must then not link them to the asset group.
+  const from=`FROM campaign WHERE campaign.advertising_channel_type = 'PERFORMANCE_MAX' AND campaign.status != 'REMOVED'${ids.length?` AND campaign.id IN (${ids.join(",")})`:""}`;
+  let campaigns,brandKnown=true;
+  try{campaigns=await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name, campaign.brand_guidelines_enabled ${from}`);}
+  catch(e){if(_isGadsQuotaError(e))throw e;brandKnown=false;campaigns=await gaql(`SELECT campaign.id, campaign.resource_name, campaign.name ${from}`);}
   const results=[];let queued=0;
   for(const r of campaigns.slice(0,20)) {
     const c=r.campaign;
@@ -4685,6 +4690,9 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         const tag="creative-refresh-"+g.id,taken=await fb().db.collection(COL.approvals).where("tag","==",tag).get();
         if(taken.docs.some(d=>["PENDING","APPROVED","APPLYING","APPLY_UNKNOWN"].includes(d.data().status))){results.push({campaign:c.name,skipped:"A creative refresh is already awaiting review."});continue;}
         const links=await gaql(`SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset.text_asset.text FROM asset_group_asset WHERE asset_group.resource_name = '${g.resourceName}'`);
+        // Google omits false booleans. Unreadable setting: a group linking its own business name or logo proves it is off.
+        const brand=brandKnown?c.brandGuidelinesEnabled===true:(links.some(x=>["BUSINESS_NAME","LOGO"].includes((x.assetGroupAsset||{}).fieldType))?false:null);
+        if(brand===null)throw new Error("Google did not confirm whether this campaign uses brand guidelines, so no refresh was prepared. Try again shortly.");
         const themes=await gaql(`SELECT asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
         const filters=await gaql(`SELECT asset_group_listing_group_filter.type, asset_group_listing_group_filter.case_value.product_item_id.value FROM asset_group_listing_group_filter WHERE asset_group.resource_name = '${g.resourceName}'`).catch(()=>[]);
         // Only UNIT_INCLUDED nodes are advertised products; an excluded item ID is not.
@@ -4698,12 +4706,22 @@ async function draftPmaxRefresh({campaignIds,assetGroupIds,improvement,onProgres
         ops.push({campaignOperation:{update:{resourceName:c.resourceName,assetAutomationSettings:CREATIVE_AUTOMATIONS.map(assetAutomationType=>({assetAutomationType,assetAutomationStatus:"OPTED_OUT"}))},updateMask:"asset_automation_settings"}});
         const copy=field=>links.filter(x=>(x.assetGroupAsset||{}).fieldType===field).map(x=>(x.asset&&x.asset.textAsset||{}).text).filter(Boolean);
         const reviewGroups=[{key:"g0",ref:g.resourceName,name:g.name,channel:"pmax",url:(g.finalUrls||[])[0],itemIds,keywords:themes.map(x=>((x.assetGroupSignal||{}).searchTheme||{}).text).filter(Boolean),original:{headlines:copy("HEADLINE"),longHeadlines:copy("LONG_HEADLINE"),descriptions:copy("DESCRIPTION")}}];
-        const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
+        const id=await enqueueApproval({type:"creative",vetted:false,tag,summary:`Creative refresh · ${c.name} · ${g.name}`,payload:{mutateOperations:ops,reviewGroups,...(improvement?{improvement}:{}),meta:{existingCampaignId:String(c.id),brandGuidelinesEnabled:brand,studioSource:studio,sourceProducts,productTitles:sourceProducts.map(x=>x.title),assetGroups:[{name:g.name,itemIds}],landingUrl:(g.finalUrls||[])[0]}}});
         results.push({campaign:c.name,assetGroup:g.name,approvalId:id});queued++;
       } catch(e){results.push({campaign:c.name,assetGroup:g.name,error:String(e.message||e).slice(0,300)});}
     }
   }
   return {ok:true,queued,results,campaigns:campaigns.length};
+}
+// A refresh links the business name and logo to its asset group only while the campaign keeps them
+// there. Google can switch an existing campaign to brand guidelines, which moves them to the campaign.
+async function _guardRefreshBrandSetting(it,ops){
+  const m=(it.payload||{}).meta||{},id=String(m.existingCampaignId||"");
+  if(it.type!=="creative"||!/^creative-refresh-/.test(String(it.tag||""))||!/^\d+$/.test(id))return;
+  let rows;try{rows=await gaql(`SELECT campaign.id, campaign.brand_guidelines_enabled FROM campaign WHERE campaign.id = ${id}`);}catch(e){if(_isGadsQuotaError(e))throw e;return;}
+  if(!rows.length)return;
+  const live=(rows[0].campaign||{}).brandGuidelinesEnabled===true,links=(ops||[]).some(o=>{const x=o.assetGroupAssetOperation&&o.assetGroupAssetOperation.create;return !!x&&["BUSINESS_NAME","LOGO","LANDSCAPE_LOGO"].includes(x.fieldType);});
+  if(typeof m.brandGuidelinesEnabled==="boolean"?m.brandGuidelinesEnabled!==live:live&&links)throw new Error("This refresh was prepared for a different brand guidelines setting than the campaign now has. Nothing was changed. Delete this draft and prepare the refresh again.");
 }
 async function backfillPmaxCreative(options) {return draftPmaxRefresh(options);}
 async function upgradePmaxAdStrength(options) {return draftPmaxRefresh(options);}
