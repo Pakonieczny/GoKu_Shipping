@@ -505,6 +505,28 @@
     </div>
   </div>
 
+  <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). Here the sign-in is the
+       "Sorting as" name: at midnight (New York) it is cleared and the chip asks for a name again; the batch on screen
+       and the scanner stay as they are. -->
+  <script src="station-session.js?v=20260928-ss-j"></script>
+  <script>
+    try {
+      StationSession.init({
+        station: "sorting", device: "sorting-1",
+        person: () => { try { const n = (localStorage.getItem("sorting.employee") || "").trim(); return n ? { name: n, id: null } : null; } catch (_) { return null; } },
+        signOut: () => {
+          let was = "";
+          try { was = localStorage.getItem("sorting.employee") || ""; localStorage.removeItem("sorting.employee"); } catch (_) {}
+          try {
+            const btn = document.querySelector("#sortingAsChip .st-as-name");
+            if (btn) { btn.textContent = "Set your name"; btn.classList.add("st-unset"); btn.title = "Click to set who is sorting"; }
+          } catch (_) {}
+          if (was) { try { window.M && M.toast && M.toast({ html: "Signed out at midnight. Click “Set your name” to sign in for the new day." }); } catch (_) {} }
+        }
+      });
+    } catch (_) {}
+  </script>
+
     <!-- 1) Firebase (compat mode) – must be above your main sorting code -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -1506,6 +1528,7 @@ window.SortTL = (function () {
       if (inp.hidden) return;
       const v = inp.value.replace(/\s+/g, " ").trim().slice(0, 40);
       if (save && v) lsSet(EMP_KEY, v);
+      if (save && v) { try { window.StationSession && StationSession.signedIn({ name: v, id: null }); } catch (_) {} }
       inp.hidden = true; btn.hidden = false;
       renderChip();
     };

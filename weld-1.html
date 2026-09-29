@@ -982,6 +982,29 @@
     </div>
   </div>
 
+  <!-- Sign-in time per person and computer, and the midnight sign-out (station-session.js). The PIN is never kept or sent:
+       the session carries the name only. At midnight (New York) the PIN box comes back; the order, the fields and the chat
+       stay on screen. -->
+  <script src="station-session.js?v=20260928-ss-j"></script>
+  <script>
+    try {
+      StationSession.init({
+        station: "welding", device: "weld-1",
+        person: () => { try { const n = localStorage.getItem("employee_name"); return localStorage.getItem("employee_id") && n ? { name: n, id: null } : null; } catch (_) { return null; } },
+        signOut: () => {
+          try { localStorage.removeItem("employee_id"); localStorage.removeItem("employee_name"); } catch (_) {}
+          if (window.isEmployeeLoggedIn !== true) return;          // still loading: the page shows the PIN box itself
+          window.isEmployeeLoggedIn = false;
+          try { const pin = document.getElementById("employeeNumberInput"); if (pin) { pin.dataset.raw = ""; pin.value = ""; } } catch (_) {}
+          try { const nm = document.getElementById("employeeName"); if (nm) nm.value = ""; } catch (_) {}
+          try { M.Modal.getInstance(document.getElementById("userLoginModal")).open(); } catch (_) {}
+          try { M.toast({ html: "Signed out at midnight. Please sign in with your Employee Number for the new day." }); } catch (_) {}
+        },
+        labelHost: "#userLoginModal", labelCss: "position:absolute;right:10px;bottom:6px;max-width:150px;text-align:right;"
+      });
+    } catch (_) {}
+  </script>
+
   <!-- jQuery & Materialize -->
   <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
   <script
@@ -2393,6 +2416,7 @@ function metalToBadge(label){
               /* remember the current employee for future reloads */
               localStorage.setItem("employee_id",  empNumber);
               localStorage.setItem("employee_name", nameFound);
+              try { window.StationSession && StationSession.signedIn({ name: nameFound, id: null }); } catch (_) {}   // the name only, never the PIN
 
               document.getElementById("employeeName").value = nameFound;
               userLoginModal.close();
@@ -2495,6 +2519,7 @@ function metalToBadge(label){
         /* clear employee & login state */
         localStorage.removeItem("employee_id");
         localStorage.removeItem("employee_name");
+        try { window.StationSession && StationSession.signedOut("signOut"); } catch (_) {}
         window.isEmployeeLoggedIn = false;
         if (chatUnsub) chatUnsub();                 // stop Brites listener
         /* show modal again */
