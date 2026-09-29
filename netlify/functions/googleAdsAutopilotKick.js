@@ -360,20 +360,6 @@ async function handleAction(body) {
   if (a === "applyRemedy")   { try { return await E.applyRemedy(body.campaignId, body.remedy, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "applyRec")       { try { return await E.applyGoogleRecommendation(body.resourceName, { ctrl }); } catch (e) { return { ok: false, error: e.message }; } }
   if (a === "dismissRec")     { try { return await E.dismissGoogleRecommendation(body.resourceName); } catch (e) { return { ok: false, error: e.message }; } }
-  if (a === "analyzeCampaign") {
-    // A fresh analysis is a paid high-effort AI call that can outlast the ~26 s gateway, so the background worker
-    // runs it and the console polls genStatus; a saved analysis (under 6 h) still returns at once. A request while
-    // that campaign's analysis is running (10 min) joins it instead of paying for a second one.
-    try {
-      const id = String(body.id || "").replace(/\D/g, ""); if (!id) return { error: "Campaign id missing." };
-      if (!body.force) { const saved = await E.analyzeCampaign(id, { cacheOnly: true }); if (saved) return saved; }
-      const genId = "analysis-" + id, run = await E.getGenStatus(genId).catch(() => null);
-      if (run && run.phase === "running" && Date.now() - Number(run.at || 0) < 10 * 60000) return { queued: true, genId, joined: true };
-      await E.setGenStatus(genId, { phase: "running", kind: "campaign-analysis", campaignId: id, startedAt: Date.now() });
-      try { return await dispatchTask("analyzeCampaign", { genId, campaignId: id, force: !!body.force }); }
-      catch (e) { await E.setGenStatus(genId, { phase: "done", ok: false, kind: "campaign-analysis", campaignId: id, error: e.message }).catch(() => {}); throw e; }
-    } catch (e) { return { error: e.message }; }
-  }
   // Overview's Google serving check: the serving check alone (read-only; kept for the badge).
   if (a === "servingCheck") {
     try { return await E.servingCheck({ id: body.id }); }

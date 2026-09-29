@@ -651,9 +651,15 @@ async function _recordMutationVersions(service, inputOps, result, label, eventId
   }
 }
 async function _observeCampaignCreative(id, { servingSource = null, settling = false } = {}) {
-  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
+  const rows = await gaql(`SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign_budget.amount_micros, campaign_budget.period, campaign_budget.total_amount_micros FROM campaign WHERE campaign.id = ${id}`);
   if (!rows.length) throw new Error("Campaign was not found in this account.");
-  const row = rows[0], channel = row.campaign.advertisingChannelType, values = { "Campaign settings": rows.map(r => r.campaign), Budget: rows.map(r => r.campaignBudget) }, warnings = [];
+  // Budget keeps the fields it always fingerprinted, so reading the period and total records no false
+  // change on any campaign. A campaign total budget (fixed dates) also gets its own fingerprint, so a
+  // changed total is noticed like a changed daily amount.
+  const budgets = rows.map(r => r.campaignBudget), totals = budgets.filter(b => _campaignOptions().isTotalBudget(b));
+  const row = rows[0], channel = row.campaign.advertisingChannelType, warnings = [], values = { "Campaign settings": rows.map(r => r.campaign),
+    Budget: budgets.map(b => { if (!b) return b; const { period, totalAmountMicros, ...kept } = b; return kept; }) };
+  if (totals.length) values["Total budget"] = totals.map(b => ({ period: b.period, totalAmountMicros: b.totalAmountMicros }));
   const read = async (category, query) => {
     try { values[category] = await gaql(query); }
     catch (error) {
@@ -6844,75 +6850,6 @@ async function setCampaignBudget(campaignId, dailyBudget, { ctrl, budgetRes } = 
   return out;
 }
 
-/* ===================== Per-campaign AI optimization analysis ===================== */
-async function latestSnapshotCampaign(campaignId) {
-  const f = fb(); if (!f) return null;
-  try {
-    const mt = await f.db.collection(COL.metrics).orderBy("at", "desc").limit(1).get();
-    let snap = null; mt.forEach(d => snap = d.data().snapshot);
-    if (!snap) return null;
-    const id = String(campaignId).replace(/\D/g, "");
-    return snap.find(c => String(c.id) === id) || null;
-  } catch (e) { return null; }
-}
-// A suggested daily budget in the account currency: within 1 and the ceiling, and a real change.
-function _suggestedBudget(value, current, ceiling) {
-  if (value == null || value === "" || !isFinite(Number(value))) return null;
-  const b = Math.round(Math.max(1, Math.min(Number(ceiling) || 9999, Number(value))) * 100) / 100;
-  return current != null && Math.abs(b - Number(current)) < 0.01 ? null : b;
-}
-// Researches one campaign's real metrics and returns a structured optimization read.
-// Honest like Google's own recommendations: if there isn't enough data, it says so.
-async function analyzeCampaign(campaignId, { force, cacheOnly } = {}) {
-  const f = fb(); const ctrl = await control();
-  const id = String(campaignId).replace(/\D/g, "");
-  const cacheKey = "analysis_" + id;
-  if (f && !force) {
-    try { const s = await f.db.collection(COL.state).doc(cacheKey).get(); if (s.exists) { const x = s.data(); if (x.at && (Date.now() - x.at) < 6 * 60 * 60 * 1000 && x.analysis) return x.analysis; } } catch (e) {}
-  }
-  if (cacheOnly) return null; // the console's quick check: a fresh analysis is a paid AI call, run by the background worker
-  const c = await latestSnapshotCampaign(id);
-  if (!c) return { score: null, status: "unknown", summary: "No snapshot for this campaign yet — run Measure first.", actions: [], campaignId: id, currency: CURRENCY };
-  const roas = c.cost > 0 ? c.value / c.cost : null, ctr = c.impr > 0 ? c.clicks / c.impr * 100 : null, cpa = c.conv > 0 ? c.cost / c.conv : null;
-  // Spend and value are converted to the reporting currency; budgets stay in the Google Ads account currency.
-  const target = ctrl.targetRoas || 0, ccy = c.currency || CURRENCY, bccy = ctrl.budgetCurrency || "the Google Ads account currency";
-  const kind = { SEARCH: "Search", PERFORMANCE_MAX: "Performance Max", SHOPPING: "Shopping", DISPLAY: "Display", VIDEO: "Video", DEMAND_GEN: "Demand Gen" }[c.channel] || "Google Ads";
-  const enoughData = c.conv >= 15 || c.cost >= 50;
-  const _convH = await conversionHealth().catch(() => ({ validated: false, healthy: false }));
-  const convNote = _convH.validated ? "" :
-    `\nCRITICAL: account conversion tracking is ${_convH.healthy ? "configured but has recorded no sales yet" : "NOT confirmed to be recording sales"}. Any ROAS/CPA above may be undercounted or zero for that reason — treat performance as UNVALIDATED. Do NOT recommend scaling on ROAS; if conversions are 0, prioritize verifying conversion tracking over campaign changes.`;
-  const metrics = `status=${c.status}, dailyBudget=${c.budget} ${bccy}, spend14d=${ccy}${c.cost}, impressions=${c.impr}, clicks=${c.clicks}, ctr=${ctr == null ? "n/a" : ctr.toFixed(2) + "%"}, conversions=${c.conv}, convValue=${ccy}${c.value}, roas=${roas == null ? "n/a" : roas.toFixed(2) + "x"}, cpa=${cpa == null ? "n/a" : ccy + cpa.toFixed(2)}`;
-  const prompt =
-`You are a senior Google Ads strategist optimizing a ${kind} campaign for Brites, a handcrafted personalized charm-jewelry brand (gift/emotion-led). Spend and conversion value are in ${ccy}; budgets are in ${bccy}. Account target ROAS: ${target || "not set by the owner (do not assume one)"}. Account ceiling for the total of enabled daily budgets: ${ctrl.maxDailyBudgetTotal} ${bccy}.
-Campaign "${c.name}" — last 14 days: ${metrics}.${convNote}
-Give an honest optimization assessment. If there isn't enough data to optimize responsibly (Google Smart Bidding generally needs ~15+ conversions), SAY SO and recommend gathering data rather than inventing changes. Otherwise recommend concrete, prioritized actions (budget, bidding, keywords, creative, or status).
-Return ONLY JSON:
-{"score": <0-100 optimization/health score>,
- "status": "<one of: not serving | learning | limited by budget | underperforming | healthy | scaling | insufficient data>",
- "summary": "<2 plain-language sentences>",
- "actions": [{"title":"<short>","detail":"<why + expected effect, <=140 chars>","type":"<budget|bid|status|keywords|creative|wait>","suggestedBudget": <daily budget in ${bccy} or null>}]}`;
-  let out = null;
-  try { const j = await openaiJSON(prompt, { maxTokens: 3500 }); if (j && j.summary) out = j; } catch (e) {}
-  if (!out) {
-    out = {
-      score: enoughData ? 55 : 25,
-      // Without a target ROAS there is nothing to grade against, so no health label is claimed.
-      status: c.status === "PAUSED" ? "not serving" : (c.cost > 0 ? (!target ? "insufficient data" : roas != null && roas >= target ? "healthy" : "underperforming") : "learning"),
-      summary: enoughData ? (target ? "Automated read from current metrics (AI analysis unavailable)." : "AI analysis unavailable, and no target ROAS is set to grade these results against.") : "Not enough conversion data yet to optimize responsibly — let it gather conversions first.",
-      actions: c.status === "PAUSED" ? [{ title: "Enable to start", detail: "Campaign is paused — enable it to begin serving and gathering data.", type: "status", suggestedBudget: null }] : []
-    };
-  }
-  out.score = Math.max(0, Math.min(100, Number(out.score) || 0));
-  out.actions = Array.isArray(out.actions) ? out.actions.slice(0, 5).map(a => ({
-    title: String(a.title || "").slice(0, 70), detail: String(a.detail || "").slice(0, 160),
-    type: ["budget", "bid", "status", "keywords", "creative", "wait"].indexOf(a.type) >= 0 ? a.type : "wait",
-    suggestedBudget: _suggestedBudget(a.suggestedBudget, c.budget, ctrl.maxDailyBudgetTotal)
-  })) : [];
-  out.campaignId = id; out.currency = ccy; out.budgetCurrency = ctrl.budgetCurrency || null; out.generatedAt = Date.now();
-  if (f) { try { await f.db.collection(COL.state).doc(cacheKey).set({ analysis: out, at: Date.now() }); } catch (e) {} }
-  return out;
-}
-
 /* ===================== Opportunity engine (the planner) ===================== */
 // Pulls the store's best-selling products (bounded) so the AI can reference real heroes.
 async function fetchTopProducts() {
@@ -8933,7 +8870,7 @@ async function fetchDiagnostics(campaignId) {
       reasonsText: _diagReasonsText(c.primaryStatusReasons),
       channel: c.advertisingChannelType || null,
       startDate: null, endDate: null, // filled by the version-tolerant fetch below
-      budget: budgetOf(r), budgetRes: b.resourceName,
+      budget: budgetOf(r), ..._budgetKind(b), budgetRes: b.resourceName,
       googleRecommendedBudget: b.hasRecommendedBudget ? fromMicros(b.recommendedBudgetAmountMicros) : null,
       impressionShare: _pct(m.searchImpressionShare),
       lostISBudget: _pct(m.searchBudgetLostImpressionShare),
@@ -9355,7 +9292,9 @@ function _diagSanitize(ai, diag, ctrl, enabledTotal) {
   const byId = new Map((diag.campaigns || []).map(c => [String(c.id), c])), seen = new Set(), campaigns = [], list = x => Array.isArray(x) ? x : [];
   const ceiling = Number(ctrl && ctrl.maxDailyBudgetTotal) || 0, text = x => String(x == null ? "" : x).trim();
   const words = s => " " + text(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() + " ";
+  // A campaign total budget (fixed dates) is never set as a daily amount: its budget advice stays advice.
   const budgetFor = (c, value, dir) => {
+    if (c.budgetPeriod === "CUSTOM_PERIOD") return null;
     const b = Math.round(Number(value) * 100) / 100, cur = Number(c.budget), known = c.budget != null && isFinite(cur);
     if (!(b > 0) || !isFinite(b) || (known && Math.abs(b - cur) < 0.5) || (dir && known && (dir > 0 ? b <= cur : b >= cur))) return null;
     const total = enabledTotal != null ? enabledTotal - (c.status === "ENABLED" && known ? cur : 0) + b : b;
@@ -11504,7 +11443,7 @@ module.exports = {
   generateRSAAssets, buildSearchCampaignOps, buildCampaignAssets, planCampaign, accountCvr, collectionProfiles, productSalesMap, bumpBestSellers, keywordResearch, keywordResearchPool, researchOpportunity, mergeKeywordResearch, keywordDiag, metricsRange, textGuidelinesOp, brandSafe,
   generateForCollection, COLLECTIONS, OCCASIONS,
   getCollections, suggestOccasions, recordOccasionUse,
-  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget, analyzeCampaign,
+  deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
   generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
