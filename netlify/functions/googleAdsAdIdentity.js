@@ -32,9 +32,18 @@ async function framed(source,objects,D){
  const asset=await D.saveAsset(D.workspaceId,out.data,source.id+'_framed_'+D.sha([frame.x,frame.y,frame.width,frame.height]).slice(0,16),{width:out.info.width,height:out.info.height,mimeType:'image/png',kind:'operator-framed identity reference'});
  return {...source,asset,width:out.info.width,height:out.info.height,framedFrom:source.id,frame};
 }
+// True when a saved photo is declared to belong to a different listing than productId.
+// A film is only ever made from the photographs of the ad's own listing.
+function foreign(source,productId){
+ if(!source)return true;
+ if(source.source?.kind==='product')return productKey(source.source.productId)!==productKey(productId);
+ if((source.productIds||[]).length)return !owns(source.productIds,productId);
+ if(source.productId)return productKey(source.productId)!==productKey(productId);
+ return false;
+}
 async function resolve({sources,objects,productId},D){
  const identity=[];
  for(const source of sources||[])if(await verified(source,productId,D.library))identity.push(await framed(source,objects,D));
  return identity;
 }
-module.exports={POLICY:'verified-product-v2',productKey,owns,cropQualifies,verified,frameOf,framed,resolve};
+module.exports={POLICY:'verified-product-v2',productKey,owns,cropQualifies,verified,foreign,frameOf,framed,resolve};

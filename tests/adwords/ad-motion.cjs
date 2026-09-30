@@ -330,6 +330,24 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  const savedRun=await saved.service.run({workspaceId:'design_test',jobId:savedStart.jobId}),savedStatus=await saved.service.status({workspaceId:'design_test',...bunnyScope});
  ok(savedRun.ok&&savedStatus.phase==='ready'&&savedStatus.variants.length===3,'the film made from a saved design runs to three finished sizes ('+savedRun.error+')');
 
+ // The film uses exactly the saved design's photos of this listing, in the static ads' order; another listing's photo is never used, at start or on a re-run.
+ {
+  const mine=(id,path)=>({id,asset:{path},width:100,height:100,source:{kind:'product',productId:'gid://shopify/Product/b',imageId:id}}),theirs={id:'photo_duck',asset:{path:'duck'},width:100,height:100,source:{kind:'product',productId:'other-duck',imageId:'x'}};
+  const mixed=await setup();await mixed.ref.set({settings:bunnyScope},{merge:true});mixed.D.context=async()=>({ref:mixed.ref,w:(await mixed.ref.get()).data(),products});
+  mixed.D.motionBasis=async()=>({design:{id:'saved_design_2',name:'Bunny'},sources:[theirs,mine('photo_a','bunny-a'),mine('photo_b','bunny-b')],originalSources:[theirs,mine('photo_a','bunny-a'),mine('photo_b','bunny-b')]});
+  const mixedStart=await mixed.service.start({workspaceId:'design_test',...bunnyScope}),mixedJob=(await mixed.ref.collection('motionJobs').doc(mixedStart.jobId).get()).data();
+  ok(mixedJob.originalSources.map(x=>x.id).join()==='photo_a,photo_b'&&mixedJob.sourceImages.map(x=>x.id).join()==='photo_a,photo_b','another listing\'s photo is dropped and the saved design\'s own photos keep their order');
+  const alien=await setup();await alien.ref.set({settings:bunnyScope},{merge:true});alien.D.context=async()=>({ref:alien.ref,w:(await alien.ref.get()).data(),products});
+  alien.D.motionBasis=async()=>({design:{id:'saved_design_3',name:'Bunny'},sources:[theirs],originalSources:[theirs]});
+  await assert.rejects(()=>alien.service.start({workspaceId:'design_test',...bunnyScope}),/no photograph of its own listing/);n++;
+  ok((await alien.ref.collection('motionJobs').get()).docs.length===0,'a design holding only another listing\'s photo queues no film');
+  // A re-run re-validates a saved film that already holds the wrong photo.
+  await mixed.service.run({workspaceId:'design_test',jobId:mixedJob.id});
+  const mixedRef=mixed.ref.collection('motionJobs').doc(mixedJob.id);await mixedRef.update({originalSources:[theirs,mine('photo_a','bunny-a')],sourceImages:[theirs,mine('photo_a','bunny-a')]});
+  const mixedState=await mixed.service.status({workspaceId:'design_test',...bunnyScope,jobId:mixedJob.id}),rerunMixed=await mixed.service.start({workspaceId:'design_test',...bunnyScope,rerunOf:mixedJob.id,repairReviewHash:mixedState.repairReviewHash}),rerunMixedJob=(await mixed.ref.collection('motionJobs').doc(rerunMixed.jobId).get()).data();
+  ok(rerunMixedJob.originalSources.map(x=>x.id).join()==='photo_a'&&rerunMixedJob.sourceImages.map(x=>x.id).join()==='photo_a','a re-run drops another listing\'s photo from the saved film');
+ }
+
   // A reviewed defect in the square format regenerates only the square master.
   {
    const sf=await setup();sf.D.reviewImages=async()=>{sf.calls.review++;return {pass:false,productFaithful:true,mobileReadable:true,score:85,scores:{messaging:100,layout:100,relevance:100,visualAppeal:85,productRecognition:100},categoryReviews:{messaging:{summary:'',deductions:[]},layout:{summary:'',deductions:[]},visualAppeal:{summary:'',deductions:[{points:15,reason:'Flat lighting',evidence:'mobile_square at 3.5s',correction:'Add a travelling reflection across the metal',kind:'required',formats:['mobile_square']}]},relevance:{summary:'',deductions:[]},productRecognition:{summary:'',deductions:[]}},issues:[]};};

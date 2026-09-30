@@ -406,7 +406,8 @@ function createAdDesignService(deps) {
     }
     for(const design of designs.slice(0,6)){
       const owner=design.workspaceId&&token(design.workspaceId)?design.workspaceId:input.workspaceId,sources=[];
-      for(const id of design.sourceIds||[]){const row=await refFor(owner).collection('editorSources').doc(id).get();if(row.exists&&row.data().asset)sources.push(clean({id:row.data().id||id,asset:row.data().asset,width:row.data().width,height:row.data().height,title:row.data().title,source:row.data().source,productIds:row.data().productIds}));}
+      // A saved design can hold a photo of another listing; it never becomes this ad's film source.
+      for(const id of design.sourceIds||[]){const row=await refFor(owner).collection('editorSources').doc(id).get();if(row.exists&&row.data().asset&&!require('./googleAdsAdIdentity').foreign(row.data(),input.productId))sources.push(clean({id:row.data().id||id,asset:row.data().asset,width:row.data().width,height:row.data().height,title:row.data().title,source:row.data().source,productId:row.data().productId,productIds:row.data().productIds}));}
       if(sources.length){const product=sources.filter(x=>x.source?.kind==='product');return {design:{id:design.id,name:design.name||''},sources,originalSources:product};}
     }
     return null;

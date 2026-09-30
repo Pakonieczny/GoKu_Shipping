@@ -220,6 +220,14 @@ function createMotionService(D){
   if(!D.identityFor||!editorJobId)return null;
   try{const rows=await D.identityFor(workspaceId,editorJobId);return Array.isArray(rows)&&rows.length?rows:null;}catch{return null;}
  };
+ // A film is made only from the saved design's own photographs, in the order the static ads use them: the same source images of the
+ // ad's listing. A photo declared to belong to another listing is dropped, and nothing freshly picked ever replaces them; if none are
+ // left the run stops with a clear message.
+ const foreign=(s,productId)=>require('./googleAdsAdIdentity').foreign(s,productId),usable=(list,productId)=>(Array.isArray(list)?list:[]).filter(s=>s&&s.asset&&!foreign(s,productId));
+ function ownSources(product,...lists){
+  for(const list of lists){const own=usable(list,product.id);if(own.length)return own;}
+  throw new Error('The saved design for this ad has no photograph of its own listing ('+String(product.title||product.id).slice(0,80)+'), so no animated ad was made. Reopen this ad in the Static ads tab, save its design with the charm photo, then generate again.');
+ }
  const jobs=ref=>ref.collection('motionJobs'),scope=(w,p)=>{if(w.archivedAt||String(w.settings.productId)!==String(p.productId)||w.settings.groupRef!==p.groupRef)throw new Error('This animated ad belongs to another product or group.');};
  async function start(input){
   if(input.discardJobId){
@@ -287,7 +295,7 @@ function createMotionService(D){
   if(!ownFilm){
    editor=home.collection('editorAIJobs').doc(editorId);[record,saved,request]=await Promise.all([editor.get(),editor.collection('data').doc('result').get(),editor.collection('data').doc('request').get()]);
    if(!record.exists||record.data().phase!=='ready'||!saved.exists||!saved.data().responsive||!request.exists)throw new Error('The product scene is still being designed. Its animation will follow when ready.');
-   editorScope=record.data().scope;if(!input.fromEditorWorker&&!sameProduct(record.data()))throw new Error('This animated ad belongs to another product or group.');
+   editorScope=record.data().scope;if((!input.fromEditorWorker||input.productId)&&!sameProduct(record.data())||input.fromEditorWorker&&bare(w.settings?.productId)!==bare(editorScope?.productId))throw new Error('This animated ad belongs to another product or group.');
   }
   const groupRef=input.fromEditorWorker?editorScope.groupRef:input.groupRef,product=products.find(p=>bare(p.id)===bare(editorScope.productId)),group=(w.context.groups||[]).find(g=>g.ref===groupRef);if(!product||!group)throw Error('The saved animation product or group is no longer available.');
   const basisId=ownFilm?basis.design.id:null,editorWorkspaceId=home===ref?input.workspaceId:home.id,crossGroup=!ownFilm&&group.ref!==editorScope.groupRef,priorJobs=await jobs(ref).get(),lastDiscard=priorJobs.docs.map(d=>d.data()).filter(j=>(j.editorJobId||null)===(editorId||null)&&(j.basisDesignId||null)===basisId&&j.resetAt&&String(j.productId)===String(product.id)&&j.groupRef===group.ref).sort((a,b)=>b.resetAt-a.resetAt)[0];
@@ -296,15 +304,19 @@ function createMotionService(D){
    const said=w.messaging&&bare(w.messaging.productId)===bare(product.id)&&w.messaging.groupRef===group.ref&&w.messaging.copy||{},pick=(list,max)=>(Array.isArray(list)?list:[]).map(v=>String(v?.text||v||'').replace(/\s+/g,' ').trim()).find(v=>v&&v.length<=max)||'';
    const title=String(product.title||'').replace(/\s+/g,' ').trim(),shortHeadline=pick(said.headlines,30)||title.slice(0,30),headline=pick(said.longHeadlines,72)||pick(said.headlines,72)||title.slice(0,72),description=pick(said.descriptions,90);
    plan={copy:{headline,shortHeadline,description,cta:'Shop now'},nativeCopy:{headlines:(Array.isArray(said.headlines)?said.headlines:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,15),longHeadlines:(Array.isArray(said.longHeadlines)?said.longHeadlines:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,5),descriptions:(Array.isArray(said.descriptions)?said.descriptions:[]).map(v=>String(v?.text||v||'')).filter(Boolean).slice(0,5)},style:{background:'#fff9f0',ink:'#302318'},imageDirections:[],layouts:[]};
-   sourceImages=basis.sources;originalSources=basis.originalSources?.length?basis.originalSources:basis.sources;
+   originalSources=ownSources(product,basis.originalSources,basis.sources);sourceImages=usable(basis.sources,product.id);if(!sourceImages.length)sourceImages=originalSources;
   }else{
    const refreshed=await identityFor(editorWorkspaceId,editorId),evidenceRow=await editor.collection('data').doc('evidence').get();
-   plan=saved.data().responsive.plan;sourceImages=saved.data().sources;originalSources=refreshed||request.data().identitySources||request.data().sources;research=evidenceRow.exists?evidenceRow.data():null;
+   plan=saved.data().responsive.plan;originalSources=ownSources(product,refreshed,request.data().identitySources,request.data().sources);sourceImages=usable(saved.data().sources,product.id);if(!sourceImages.length)sourceImages=originalSources;research=evidenceRow.exists?evidenceRow.data():null;
   }
   const idFor=version=>'motion_'+hash((ownFilm?'design:'+basisId:editorId)+(crossGroup?':for:'+group.ref:'')+':v'+version+(lastDiscard?':after:'+lastDiscard.id:'')).slice(0,40),id=idFor(PIPELINE),target=jobs(ref).doc(id);
   // A film already saved for this design under the two-master pipeline stays the current one: opening it again never buys three more masters.
   const legacy=await jobs(ref).doc(idFor(2)).get();if(legacy.exists&&!legacy.data().resetAt)return {ok:true,workspaceId:input.workspaceId,jobId:idFor(2),queued:true};
-  await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),existing=await tx.get(target);if(current.data().archivedAt)throw Error('This ad was deleted.');if(!input.fromEditorWorker)scope(current.data(),input);if(existing.exists)return;
+  await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),existing=await tx.get(target);if(current.data().archivedAt)throw Error('This ad was deleted.');if(!input.fromEditorWorker)scope(current.data(),input);
+   if(existing.exists){const old=existing.data();
+    // An unstarted saved film that holds another listing's photo is corrected before any master is bought.
+    if(!old.resetAt&&!old.inFlight&&!Object.keys(old.masters||{}).length&&[...(old.originalSources||[]),...(old.sourceImages||[])].some(x=>foreign(x,product.id)))tx.update(target,{originalSources,sourceImages,updatedAt:Date.now()});
+    return;}
    captionCopy({...plan,renderVersion:10});
    tx.set(target,{id,pipelineVersion:PIPELINE,renderVersion:11,research,productFacts:{title:product.title,description:String(product.description||'').slice(0,6000),url:product.url},editorJobId:editorId||null,...(basisId?{basisDesignId:basisId}:{}),...(!ownFilm&&home!==ref?{editorWorkspaceId}:{}),workspaceId:input.workspaceId,productId:product.id,groupRef:group.ref,title:product.title,destination:product.url,phase:'queued',createdAt:Date.now(),updatedAt:Date.now(),leaseUntil:0,owner:null,progress:{pct:0,label:'Preparing product research and brand direction'},plan,sourceImages,originalSources,masters:{},variants:[],estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,costEstimated:true,provider:MODEL,seconds:SECONDS,inFlight:null,error:null});
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
@@ -334,12 +346,15 @@ function createMotionService(D){
  async function repair(input){
   const {ref,w}=await D.context(input.workspaceId);scope(w,input);if(!/^motion_[a-f0-9]{40}$/.test(input.repairOf||''))throw Error('Choose the saved animation to repair.');
   const source=await jobs(ref).doc(input.repairOf).get(),refreshed=source.exists&&source.data().editorJobId?await identityFor(source.data().editorWorkspaceId||input.workspaceId,source.data().editorJobId):null;
+  // Every repair or re-run re-validates the photographs: only the listing's own photos, never a neighbouring listing's.
+  const saved=source.exists?source.data():null;let originals=refreshed,images=null;
+  if(saved){const product={id:saved.productId,title:saved.title};originals=ownSources(product,refreshed,saved.originalSources,saved.sourceImages);images=usable(saved.sourceImages,product.id);if(!images.length)images=originals;}
   const parentRef=jobs(ref).doc(input.repairOf),id='motion_'+hash((input.explicitRerun?'rerun:':'repair:')+'v'+PIPELINE+':'+input.repairOf).slice(0,40),target=jobs(ref).doc(id);
   await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),source=await tx.get(parentRef),existing=await tx.get(target);scope(current.data(),input);if(!source.exists)throw Error('The original animation was not found.');const parent=source.data();scope(current.data(),parent);
    if(parent.resetAt||(!input.explicitRerun&&((parent.repairOf&&parent.pipelineVersion>=BOUNDED_REPAIR)||qualityPass(parent.quality)))||!['needs_attention','ready'].includes(parent.phase)||(!input.explicitRerun&&!parent.quality)||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Only a completed, failed quality review can receive this bounded repair.');
    if(input.repairReviewHash!==hash({id:parent.id,quality:parent.quality}))throw Error('The animation review changed. Refresh before approving a repair.');if(existing.exists)return;
    captionCopy({...parent.plan,renderVersion:10});
-   tx.set(target,{...clone(parent),...(refreshed?{originalSources:refreshed}:{}),id,pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:parent.quality?.issues||(parent.error?[parent.error]:[]),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:'Preparing one reviewed animation repair'}});
+   tx.set(target,{...clone(parent),...(originals?{originalSources:originals,sourceImages:images}:{}),id,pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:parent.quality?.issues||(parent.error?[parent.error]:[]),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:'Preparing one reviewed animation repair'}});
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
  }
  async function recompose(input){
