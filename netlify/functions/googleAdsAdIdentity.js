@@ -47,12 +47,12 @@ async function resolve({sources,objects,productId},D){
  return identity;
 }
 // Per-format identity of a film. Every format is filmed as its own take from the one identity reference, so the charm can drift in a single
-// format: a feature added that the reference lacks (an eye, wing lines, engraving, a moulded look) or one it shows taken away. The set-level
+// format: a feature added that the reference lacks (a boundary feature, engraving, surface detail or changed construction) or one it shows taken away. The set-level
 // identity boolean and the 5% product-recognition weight do not catch that; the review returns one verdict per format and a failing format is named.
 // Both directions are judged against the reference alone: a plain blank reference must stay plain and blank.
 const CHECKS=[
- {field:'sameOutline',when:'the silhouette, beak or proportions differ from the SOURCE',fault:'a different outline, beak or proportions',need:'the same outline and proportions'},
- {field:'noAddedDetail',when:'the charm shows any feature the SOURCE lacks: an eye, wing or feather lines, a beak line, engraving, texture, pattern, raised or recessed detail, or a thicker, moulded or bevelled look',fault:'a feature the reference lacks (an eye, wing or feather lines, engraving, texture, or a thicker, moulded look)',need:'no feature the reference lacks'},
+ {field:'sameOutline',when:'the silhouette, boundary features or proportions differ from the SOURCE',fault:'a different outline, boundary features or proportions',need:'the same outline and proportions'},
+ {field:'noAddedDetail',when:'the jewelry shows any feature the SOURCE lacks: a boundary projection, opening, surface marking, engraving, texture, pattern, raised or recessed detail, or changed thickness or construction',fault:'a feature, surface detail or construction the reference lacks',need:'no feature the reference lacks'},
  {field:'noMissingDetail',when:'a detail the SOURCE clearly shows is missing or simplified',fault:'a detail the reference clearly shows that is missing or simplified',need:'every detail the reference clearly shows'},
  {field:'sameFeatures',when:'a cutout, ring, bail or loop the SOURCE shows is missing or changed, or one it does not show is added',fault:'cutouts, ring or loop that are missing, changed or added',need:'the same cutouts, ring and loop'}
 ];

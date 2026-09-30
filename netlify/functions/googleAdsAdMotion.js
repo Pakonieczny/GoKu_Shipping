@@ -2,9 +2,10 @@
 const crypto=require('crypto'),fs=require('fs/promises'),path=require('path'),os=require('os'),{promisify}=require('util'),execFile=promisify(require('child_process').execFile),sharp=require('sharp');
 const policy=require('../../brites-ad-format-policy'),{MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,referenceRequestBody,sceneryRequestBody,outputVideo}=require('./googleAdsGeminiVideo'),MAX_BYTES=100000000;
 const clone=v=>JSON.parse(JSON.stringify(v)),hash=v=>crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),integrity=require('./googleAdsMotionIntegrity'),references=require('./googleAdsMotionReferences'),PIPELINE=6,BOUNDED_REPAIR=2,REFERENCE_PIXELS=2048,POLL_FAULT_ROUNDS=3,RERUN_REPEAT_MS=30000;
+const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),integrity=require('./googleAdsMotionIntegrity'),references=require('./googleAdsMotionReferences'),PIPELINE=7,BOUNDED_REPAIR=2,REFERENCE_PIXELS=2048,POLL_FAULT_ROUNDS=3,RERUN_REPEAT_MS=30000;
 // A saved provider interaction that is still being made (or only waiting on Google to answer) is already paid for: it is resumed, never replaced by a second purchase.
 const paidUnfinished=job=>Object.values(job?.masters||{}).some(m=>m?.id&&!String(m.id).startsWith('photograph_')&&!['completed','failed','cancelled','requires_action'].includes(m.status));
+// Version 7 adds counted shape landmarks and motif-specific staging.
 // Version 6 generates the jewelry itself from explicit original-photo subject
 // references and a photo-derived geometry brief. No masking or product layer.
 const mastersFor=version=>version>=3?['portrait','square','landscape']:['portrait','landscape'],masterSize=o=>o==='portrait'?'720x1280':'1280x720';
@@ -488,7 +489,7 @@ function createMotionService(D){
    const masters=clone(parent.masters||{}),composition=parent.composition?clone(parent.composition):null,replaced=(parent.variants||[]).filter(v=>plan.formats.includes(v.key)),old=masters[plan.orientation];
    delete masters[plan.orientation];if(composition)delete composition[plan.orientation];
    const history=replaced.length||old?[{jobId:parent.id,at:Date.now(),format,formats:plan.formats,orientation:plan.orientation,master:old?{id:old.id||null,asset:old.asset||null}:null,variants:replaced.map(v=>({key:v.key,device:v.device,format:v.format,width:v.width,height:v.height,seconds:v.seconds,master:v.master,asset:v.asset,poster:v.poster||null}))}]:[];
-   const doc={...clone(parent),id,redoOf:parent.id,redoFormat:format,redoAttempt:attempt,fixOf:null,fixTarget:{kind:'master',category:'redo',index:0,formats:plan.formats,orientation:plan.orientation,estimatedUsd:plan.estimatedUsd,label:'Redone '+format+' video',reason:'Redone on request',evidence:'',correction:''},repairOf:null,recomposeOf:null,photoMotionOf:null,repairIssues:[],masters,composition,variants:(parent.variants||[]).filter(v=>!plan.formats.includes(v.key)),previousVersions:[...(parent.previousVersions||[]),...history],letteringBlocked:false,compositionNotes:(parent.compositionNotes||[]).filter(n=>!plan.formats.some(k=>String(n).startsWith(k))&&!/^Lettering was detected inside the footage/.test(String(n))),stageUsage:[],createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,completedAt:null,quality:null,publication:null,error:null,errorDetail:null,providerWait:false,sceneMotionBlocked:null,compositionBlocked:false,estimatedUsd:plan.estimatedUsd,progress:{pct:0,label:'Preparing one new '+format+' video'}};
+   const doc={...clone(parent),id,redoOf:parent.id,redoFormat:format,redoAttempt:attempt,fixOf:null,fixTarget:{kind:'master',category:'redo',index:0,formats:plan.formats,orientation:plan.orientation,estimatedUsd:plan.estimatedUsd,label:'Redone '+format+' video',reason:'Redone on request',evidence:'',correction:''},repairOf:null,recomposeOf:null,photoMotionOf:null,repairIssues:references.redoFindings(parent,format),masters,composition,variants:(parent.variants||[]).filter(v=>!plan.formats.includes(v.key)),previousVersions:[...(parent.previousVersions||[]),...history],letteringBlocked:false,compositionNotes:(parent.compositionNotes||[]).filter(n=>!plan.formats.some(k=>String(n).startsWith(k))&&!/^Lettering was detected inside the footage/.test(String(n))),stageUsage:[],createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,completedAt:null,quality:null,publication:null,error:null,errorDetail:null,providerWait:false,sceneMotionBlocked:null,compositionBlocked:false,estimatedUsd:plan.estimatedUsd,progress:{pct:0,label:'Preparing one new '+format+' video'}};
    tx.set(target,doc);making=outstanding(doc)?.compose||null;
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true,redo:plan,making};
  }
@@ -614,12 +615,12 @@ function createMotionService(D){
       await receipt.set({response,at:Date.now()});
      }
      await save({stageUsage:[...(job.stageUsage||[]).filter(u=>u.key!==key),{key,estimatedUsd:Number(response?.estimatedUsd)||0}]});
-     try{direction=references.read(response,originals.length);break;}catch(error){
+     try{direction=references.read(response,originals.length,{requireShapePlan:job.pipelineVersion>=7});break;}catch(error){
       if(error.providerPending)throw error;
       const recoverable=references.recoverable(error);
       await save({referencePreparationInvalid:recoverable,referencePreparationIssue:String(error.message).slice(0,800),inFlight:null});
       if(!recoverable)throw error;
-      if(attempt)throw Object.assign(Error('The product geometry could not be completed from the original photographs. No video has been purchased. Open the error details for the specific preparation issue.'),{definiteResponse:true,technical:error.message});
+      if(attempt)throw Object.assign(Error('The product and scene preparation could not be completed from the original photographs. No video has been purchased. Open the error details for the specific preparation issue.'),{definiteResponse:true,technical:error.message});
       previous=response;problem=error;
      }
     }
@@ -627,7 +628,7 @@ function createMotionService(D){
    }
 
    const selected=[0,...job.creativeDirection.supportingReferenceIndices],generationReferences=selected.map(i=>({source:originals[i].source.asset,sourceHash:originals[i].sourceHash,preparedHash:references.hash(originals[i].bytes)}));
-   const referenceHash=hash({references:generationReferences,geometry:job.creativeDirection.geometry});
+   const referenceHash=hash({references:generationReferences,geometry:job.creativeDirection.geometry,...(job.creativeDirection.shapePlan?{shapePlan:job.creativeDirection.shapePlan}:{})});
    if(job.referenceHash&&job.referenceHash!==referenceHash)throw Error('The saved video reference specification changed. Start a new animation.');
    await save({referenceHash,generationReferences});
    const masterList=mastersFor(job.pipelineVersion);

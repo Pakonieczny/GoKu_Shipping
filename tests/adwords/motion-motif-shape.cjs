@@ -1,0 +1,43 @@
+const assert=require('node:assert/strict');
+const refs=require('../../netlify/functions/googleAdsMotionReferences');
+let checks=0;const check=(v,m)=>{assert(v,m);checks++;},clone=v=>JSON.parse(JSON.stringify(v));
+const required={requireShapePlan:true};
+const geometry={jewelryType:'Necklace',assembly:'One pendant and one fine chain',outline:'Rounded head, four splayed legs, curved body and one compact looped tail',negativeSpace:'One open centre in the curled tail',surfaceDetails:'Smooth gold front with no visible eye or engraving',attachment:'Small jump ring at the head',chain:'Fine linked chain, ends not visible',material:'Flat gold sheet',proportions:'Compact asymmetric outline; preserve the photograph',physicalSize:'Unknown',supportedViews:'Front only'};
+const plan={geometry,setting:'The pendant rests on warm textured stone with a soft green background.',props:'One small leaf beside the stone, clear of the pendant.',opening:'Close on the complete front face.',middle:'The leaf moves gently as the camera slides a little.',ending:'The movement settles.',shapePlan:{contour:'From the head, follow upper right leg, lower right leg, circular tail curl, lower left leg, upper left leg and return to the head.',features:[{name:'Legs',count:4,positions:'Upper left, upper right, lower right, lower left',appearance:'Four rigid splayed projections with fine toe ends'},{name:'Tail',count:1,positions:'Below the body',appearance:'A continuous compact curve enclosing one open space'},{name:'Toes per foot',count:null,positions:'At the ends of the four legs',appearance:'Fine ends are visible but their individual count is unresolved'}],confusionRisks:'The tail is not a fifth leg. The separate jump ring is not a second tail loop.'},sceneStory:{motif:'Gecko',connection:'Warm stone and a small moving leaf suggest the habitat without adding another gecko.',propMotion:'The leaf moves beside the unobstructed pendant.'},supportingReferenceIndices:[]};
+const accepted=refs.validate(plan,1,required);
+check(accepted.shapePlan.features[0].count===4&&accepted.shapePlan.features[2].count===null,'observed counts and unresolved details retain distinct meanings');
+const job={creativeDirection:accepted,generationReferences:[{}]};
+for(const format of ['portrait','square','landscape']){
+ const prompt=refs.prompt(job,format);
+ check(prompt.includes('Legs: 4.')&&prompt.includes('Tail: 1.')&&prompt.includes(plan.shapePlan.contour),'each provider prompt carries positions, exact observed counts and the contour');
+ check(prompt.includes(plan.sceneStory.connection)&&prompt.includes(plan.sceneStory.propMotion),'the actual motif and physical prop action reach every provider request');
+}
+const other=clone(plan);other.geometry={...geometry,jewelryType:'Earring pair',assembly:'Two matching floral earrings',outline:'Three irregular petals per earring',chain:'None'};other.shapePlan.features=[{name:'Earrings',count:2,positions:'Left and right',appearance:'Matching supplied pair'},{name:'Petals per earring',count:3,positions:'Three uneven positions around each centre',appearance:'Irregular rounded lobes'},{name:'Chain',count:0,positions:'Absent',appearance:'No chain supplied'}];other.shapePlan.contour='Three unequal lobes around each flower centre';other.shapePlan.confusionRisks='Do not add two more petals to make a conventional five-petal flower.';other.sceneStory={motif:'Three-petal flowers',connection:'The irregular petal shape is echoed by nearby soft botanical forms.',propMotion:'A leaf moves beside the pair.'};
+const pair=refs.validate(other,1,required);check(refs.prompt({...job,creativeDirection:pair},'portrait').includes('Petals per earring: 3.'),'counts come from the supplied item rather than gecko anatomy or a conventional motif');
+check(pair.shapePlan.features[2].count===0,'an absent chain stays absent');
+for(const [name,outline,count,scene] of [['Cloud','Five unequal rounded lobes and a shallow flat lower edge',5,'An airy set with softly moving translucent fabric'],['Garbage can','A rectangular body with two short side tabs and a trapezoidal lid',2,'An urban still life with subtle movement in a nearby paper prop']]){
+ const object=clone(plan);object.geometry={...geometry,jewelryType:'Charm',assembly:'One charm',outline,negativeSpace:'No enclosed opening visible',surfaceDetails:'The reference surface marks',attachment:'The supplied top attachment',chain:'None'};object.shapePlan={contour:outline,features:[{name:'Distinct boundary features',count,positions:'As placed in the original photograph',appearance:outline}],confusionRisks:'Keep the asymmetric boundary; do not replace it with a familiar idealized version.'};object.sceneStory={motif:name,connection:scene,propMotion:'A relevant nearby prop moves without obscuring the product.'};object.setting=scene;object.props='Only context-appropriate props clear of the jewelry.';object.middle=object.sceneStory.propMotion;
+ const prompt=refs.prompt({...job,creativeDirection:refs.validate(object,1,required)},'square');
+ check(prompt.includes(scene)&&prompt.includes(outline)&&!(/\b(?:gecko|tail|limb|anatomy|petal|splayed)\b/i.test(prompt)),'non-animal '+name+' receives only its own geometry and setting, without anatomy rules');
+}
+for(const mutate of [p=>delete p.shapePlan,p=>p.shapePlan.features[0].count='4',p=>p.shapePlan.features[0].count=-1,p=>p.shapePlan.features[0].positions='',p=>delete p.sceneStory,p=>p.sceneStory.connection='']){
+ const bad=clone(plan);mutate(bad);assert.throws(()=>refs.validate(bad,1,required),/shape plan|scene story/);checks++;
+}
+for(const stage of ['a matte warm-ivory plaster display bust','a mannequin','a velvet display pad']){
+ const bad={...plan,setting:'The necklace is draped over '+stage+'.'};assert.throws(()=>refs.validate(bad,1,required),/mannequin or retail display/);checks++;
+}
+const old={geometry,setting:'The necklace is draped over a matte warm-ivory plaster display bust.',opening:'The pendant is small in the lower centre of the frame.',middle:'The necklace sways against the bust.',portrait:'Show the bust neckline.',supportingReferenceIndices:[]};
+const saved=JSON.stringify(old),legacy=refs.validate(old,1),legacyPrompt=refs.prompt({...job,creativeDirection:legacy},'portrait');
+check(!legacyPrompt.includes('matte warm-ivory plaster')&&!legacyPrompt.includes(old.opening)&&!legacyPrompt.includes(old.portrait),'redo removes the entire old bust staging and distant opening, not just a word');
+check(legacyPrompt.includes(JSON.stringify(geometry))&&JSON.stringify(old)===saved,'safe redo staging preserves the saved original geometry and historical plan');
+check(legacyPrompt.includes('A necklace chain may continue out of frame')&&legacyPrompt.includes('Start close and remain close'),'macro framing no longer forces the whole chain into view');
+const noDisplay=refs.validate({...plan,props:'No mannequin. A leaf moves beside the pendant.'},1,required);check(noDisplay.props.startsWith('No mannequin'),'a ban is not mistaken for an instruction to add a display');
+const sculptural=refs.validate({...plan,setting:'The bust-shaped charm rests on folded fabric.',sceneStory:{motif:'Bust',connection:'The bust-shaped charm has a classical-art theme, echoed by the fabric folds.',propMotion:'The fabric moves slightly.'}},1,required);check(sculptural.sceneStory.motif==='Bust','a depicted design is not mistaken for forbidden display furniture');
+const findings={quality:{categoryReviews:{productRecognition:{deductions:[{kind:'required',formats:['mobile_square'],reason:'Extra projection.',correction:'Preserve exactly four legs.'},{kind:'required',formats:['mobile_portrait'],reason:'Wrong tail.',correction:'Keep the compact loop.'}]},visualAppeal:{deductions:[{kind:'required',formats:['mobile_square'],reason:'Generic display.',correction:'Use stone and a leaf.'},{kind:'optional',reason:'Optional colour change.'}]}}}};
+const redo=refs.redoFindings(findings,'square');check(redo.length===2&&redo.join(' ').includes('four legs')&&!redo.join(' ').includes('Wrong tail'),'one-format redo uses known identity and scene failures for that format');
+const request=refs.directionRequest({title:'Generic jewelry'},[{bytes:Buffer.from('original'),mimeType:'image/jpeg'}]);
+const schema=request.text.format.schema;
+check(schema.required.includes('shapePlan')&&schema.required.includes('sceneStory'),'new preparation must supply both shape and motif plans');
+const bridge=require('../../netlify/functions/_googleAdsClaude').fromResponsesRequest(request);
+check(bridge.messages.flatMap(m=>m.content).some(c=>c.type==='image'),'the actual connected planner receives the original photograph with the new schema');
+console.log('PASS '+checks+' motif, counted geometry and saved-scene regression checks');
