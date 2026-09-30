@@ -2,7 +2,9 @@
 const crypto=require('crypto'),fs=require('fs/promises'),path=require('path'),os=require('os'),{promisify}=require('util'),execFile=promisify(require('child_process').execFile),sharp=require('sharp');
 const policy=require('../../brites-ad-format-policy'),{MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,outputVideo}=require('./googleAdsGeminiVideo'),MAX_BYTES=100000000;
 const clone=v=>JSON.parse(JSON.stringify(v)),hash=v=>crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),PIPELINE=3,BOUNDED_REPAIR=2,REFERENCE_PIXELS=2048,POLL_FAULT_ROUNDS=3;
+const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),PIPELINE=3,BOUNDED_REPAIR=2,REFERENCE_PIXELS=2048,POLL_FAULT_ROUNDS=3,RERUN_REPEAT_MS=30000;
+// A saved provider interaction that is still being made (or only waiting on Google to answer) is already paid for: it is resumed, never replaced by a second purchase.
+const paidUnfinished=job=>Object.values(job?.masters||{}).some(m=>m?.id&&!String(m.id).startsWith('photograph_')&&!['completed','failed','cancelled','requires_action'].includes(m.status));
 // Version 3 films each format on its own: portrait, square (a 16:9 master whose middle square is the format) and landscape.
 // Earlier jobs keep their two masters; every version check below leaves them exactly as they were saved.
 const mastersFor=version=>version>=3?['portrait','square','landscape']:['portrait','landscape'],masterSize=o=>o==='portrait'?'720x1280':'1280x720';
@@ -292,7 +294,7 @@ function createMotionService(D){
   if(input.recomposeOf)return recompose(input);
   if(input.photoMotionOf)return photograph(input);
   if(input.rerunOf)return repair({...input,repairOf:input.rerunOf,explicitRerun:true});
-  if(input.repairOf)return repair(input);
+  if(input.repairOf)return repair({...input,explicitRerun:false});
   const {ref,w,products}=await D.context(input.workspaceId);if(!input.fromEditorWorker)scope(w,input);
   // Use this product's own finished AI design: this ad group's first, then an earlier version of the same ad, then the
   // same product under another group. The workspace's editorAI pointer names whichever design ran last, so it can name
@@ -378,15 +380,37 @@ function createMotionService(D){
   // Every repair or re-run re-validates the photographs: only the listing's own photos, never a neighbouring listing's.
   const saved=source.exists?source.data():null;let originals=refreshed,images=null;
   if(saved){const product={id:saved.productId,title:saved.title};originals=ownSources(product,refreshed,saved.originalSources,saved.sourceImages);images=usable(saved.sourceImages,product.id);if(!images.length)images=originals;}
-  const parentRef=jobs(ref).doc(input.repairOf),id='motion_'+hash((input.explicitRerun?'rerun:':'repair:')+'v'+PIPELINE+':'+input.repairOf).slice(0,40),target=jobs(ref).doc(id);
-  await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),source=await tx.get(parentRef),existing=await tx.get(target);scope(current.data(),input);if(!source.exists)throw Error('The original animation was not found.');const parent=source.data();scope(current.data(),parent);
-   if(parent.resetAt||(!input.explicitRerun&&((parent.repairOf&&parent.pipelineVersion>=BOUNDED_REPAIR)||qualityPass(parent.quality)))||!['needs_attention','ready'].includes(parent.phase)||(!input.explicitRerun&&!parent.quality)||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Only a completed, failed quality review can receive this bounded repair.');
+  // A bounded repair keeps one deterministic job per parent. An explicit re-run never lands on an earlier job: each real request is a NEW attempt,
+  // its number folded into the job id and saved on the job, its films made from scratch. The parent and every earlier re-run stay exactly as saved.
+  // A separate small attempt record under the parent is the compare-and-set: the same request key (the panel sends one per confirmed press), or a
+  // keyless repeat within seconds, shares the one new job instead of buying twice. A discarded job never counts as an answer to a new request.
+  const explicit=input.explicitRerun===true,parentRef=jobs(ref).doc(input.repairOf),counterRef=parentRef.collection('reruns').doc('attempts'),rerunKey=/^[A-Za-z0-9_-]{8,64}$/.test(String(input.rerunKey||''))?String(input.rerunKey):null;
+  const attemptId=n=>'motion_'+hash('rerun:v'+PIPELINE+':'+input.repairOf+':attempt:'+n).slice(0,40),earlierId='motion_'+hash('rerun:v'+PIPELINE+':'+input.repairOf).slice(0,40),repairId='motion_'+hash('repair:v'+PIPELINE+':'+input.repairOf).slice(0,40);
+  let result;
+  await D.fb().db.runTransaction(async tx=>{result=null;const current=await tx.get(ref),source=await tx.get(parentRef),existing=explicit?null:await tx.get(jobs(ref).doc(repairId));scope(current.data(),input);if(!source.exists)throw Error('The original animation was not found.');const parent=source.data();scope(current.data(),parent);
+   if(parent.resetAt||(!explicit&&((parent.repairOf&&parent.pipelineVersion>=BOUNDED_REPAIR)||qualityPass(parent.quality)))||!['needs_attention','ready'].includes(parent.phase)||(!explicit&&!parent.quality)||parent.inFlight||parent.leaseUntil>Date.now())throw Error('Only a completed, failed quality review can receive this bounded repair.');
    // A saved interaction that is still being made (or only waiting on Google to answer) is resumed, never replaced by a second purchase.
-   if(!existing.exists&&Object.values(parent.masters||{}).some(m=>m?.id&&!String(m.id).startsWith('photograph_')&&!['completed','failed','cancelled','requires_action'].includes(m.status)))throw Error('A film for this animation is still being made and is already paid for. Resume the saved animation instead of starting another.');
-   if(input.repairReviewHash!==hash({id:parent.id,quality:parent.quality}))throw Error('The animation review changed. Refresh before approving a repair.');if(existing.exists)return;
+   if(!existing?.exists&&paidUnfinished(parent))throw Error('A film for this animation is still being made and is already paid for. Resume the saved animation instead of starting another.');
+   // Every read of the attempt record happens before the first write.
+   const seen=explicit?((await tx.get(counterRef)).data()||{}):{},lastId=seen.lastJobId||earlierId,repeatId=!rerunKey&&seen.lastJobId&&Date.now()-(Number(seen.lastAt)||0)<RERUN_REPEAT_MS?seen.lastJobId:null,shareId=explicit?(rerunKey?seen.keys?.[rerunKey]:repeatId)||null:null;
+   const last=explicit?await tx.get(jobs(ref).doc(lastId)):null,shared=shareId?(shareId===lastId?last:await tx.get(jobs(ref).doc(shareId))):null;
+   let attempt=(Number(seen.attempts)||0)+1;
+   if(explicit)while(attempt<(Number(seen.attempts)||0)+50&&(await tx.get(jobs(ref).doc(attemptId(attempt)))).exists)attempt++;
+   if(input.repairReviewHash!==hash({id:parent.id,quality:parent.quality}))throw Error('The animation review changed. Refresh before approving a repair.');if(existing?.exists)return;
+   if(explicit){
+    // The same press sent twice (or a keyless repeat within seconds) shares its one new job, whatever state that job is in now.
+    if(shared?.exists&&!shared.data().resetAt){result={jobId:shared.data().id||shareId,queued:shared.data().phase==='queued',shared:true};return;}
+    // A re-run of this same film that is still being made is followed or discarded, never bought a second time.
+    const open=last?.exists&&!last.data().resetAt?last.data():null;
+    if(open&&(['queued','running'].includes(open.phase)||open.inFlight||paidUnfinished(open)))throw Error('A re-run of this animation is already being made and paid for. Follow that one, or discard it first, instead of starting another.');
+   }
+   const id=explicit?attemptId(attempt):repairId,target=jobs(ref).doc(id);
    captionCopy({...parent.plan,renderVersion:10});
-   tx.set(target,{...clone(parent),...(originals?{originalSources:originals,sourceImages:images}:{}),id,pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:parent.quality?.issues||(parent.error?[parent.error]:[]),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:'Preparing one reviewed animation repair'}});
-  });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true};
+   if(explicit)tx.set(counterRef,{attempts:attempt,lastJobId:id,lastKey:rerunKey,lastAt:Date.now(),keys:Object.fromEntries([...Object.entries(seen.keys||{}),...(rerunKey?[[rerunKey,id]]:[])].slice(-10))});
+   // A re-run is a fresh full generation: nothing about an earlier targeted fix, photograph motion, hold or framing note carries into it.
+   tx.set(target,{...clone(parent),...(originals?{originalSources:originals,sourceImages:images}:{}),...(explicit?{rerunAttempt:attempt,rerunKey,fixOf:null,fixTarget:null,photoMotionOf:null,letteringBlocked:false,compositionNotes:[]}:{}),id,pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:parent.quality?.issues||(parent.error?[parent.error]:[]),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:explicit?'Preparing a new animation · re-run '+attempt:'Preparing one reviewed animation repair'}});
+   result={jobId:id,queued:true,...(explicit?{attempt}:{})};
+  });return {ok:true,workspaceId:input.workspaceId,...(result||{jobId:repairId,queued:true})};
  }
  async function recompose(input){
   const {ref,w}=await D.context(input.workspaceId);scope(w,input);if(!/^motion_[a-f0-9]{40}$/.test(input.recomposeOf||''))throw Error('Choose saved video masters first.');
