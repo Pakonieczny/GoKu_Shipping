@@ -106,6 +106,8 @@ function usable(zones,W,H){
  const fallback=[{name:'top',x:.065*W,y:.075*H,w:.87*W,h:Math.max(120,H*.22),crowded:true}];
  fallback.crowded=true;return fallback;
 }
+// Close framing (googleAdsMotionFraming.js): a charm measured below its format's size band is enlarged by one fixed crop.
+const framing=require('./googleAdsMotionFraming');
 function geometry(format,subject,sourceOrientation='portrait',options={}){
  if(!subject||['x','y','w','h'].some(k=>!Number.isFinite(subject[k])))throw Error('Measure the saved video framing before composing captions.');
  const clearance=Number(options.clearance)||0;
@@ -124,13 +126,15 @@ function geometry(format,subject,sourceOrientation='portrait',options={}){
   if(subject[extent]>crop[extent])throw Error('The whole jewelry cannot fit a full-canvas square crop. Re-run with a tighter, centered product scene.');
   const lo=Math.max(0,subject[axis]+subject[extent]-crop[extent]),hi=Math.min(subject[axis],1-crop[extent]);if(lo>hi)throw Error('Square framing would cut the jewelry.');crop[axis]=clamp(subject[axis]+subject[extent]/2-crop[extent]*(horizontal?.68:.65),lo,hi);
  }
- const framed=centred?{...crop}:tighten(crop,subject),product={x:(subject.x-framed.x)/framed.w,y:(subject.y-framed.y)/framed.h,w:subject.w/framed.w,h:subject.h/framed.h};
+ const base={...crop},close=framing.closeUp(format,centred?{...crop}:tighten(crop,subject),subject,base),framed=close.crop;
+ // A close crop may cut the chain that already ran out of the frame; the part still in view stays protected.
+ const product=(box=>({x:(box.x-framed.x)/framed.w,y:(box.y-framed.y)/framed.h,w:box.w/framed.w,h:box.h/framed.h}))(close.moved?framing.within(subject,framed):subject);
  Object.assign(crop,framed);
  if(product.x<-.001||product.y<-.001||product.x+product.w>1.001||product.y+product.h>1.001)throw Error('The requested crop would cut the jewelry.');
  const W=format.width,H=format.height;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=format.key==='landscape'?['left','right','top']:['top','left','right'];
- return {mode:'full',crop,product,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
+ return {mode:'full',crop,product,framing:close.framing,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
 }
 // Band fallback: the whole film is scaled beside a reserved brand band, so a
 // large product never loses a caption or a crop. It costs nothing and is
@@ -150,12 +154,12 @@ function bandGeometry(format,subject,sourceOrientation){
  const hero=top?{x:0,w:W,h:even(H-Math.round(H*share))}:{y:0,h:H,w:even(W-Math.round(W*share))};
  if(top){hero.y=H-hero.h;}else{hero.x=W-hero.w;}
  const A=hero.w/hero.h,S=srcW/srcH,cw=S>A?A/S:1,ch=S>A?1:S/A;
- const crop=tighten({x:clamp2(subject.x+subject.w/2-cw/2,0,1-cw),y:clamp2(subject.y+subject.h/2-ch/2,0,1-ch),w:cw,h:ch},subject);
- const product={x:(hero.x+((subject.x-crop.x)/crop.w)*hero.w)/W,y:(hero.y+((subject.y-crop.y)/crop.h)*hero.h)/H,w:(subject.w/crop.w)*hero.w/W,h:(subject.h/crop.h)*hero.h/H};
+ const base={x:clamp2(subject.x+subject.w/2-cw/2,0,1-cw),y:clamp2(subject.y+subject.h/2-ch/2,0,1-ch),w:cw,h:ch},close=framing.closeUp(format,tighten(base,subject),subject,base),crop=close.crop,seen=close.moved?framing.within(subject,crop):subject;
+ const product={x:(hero.x+((seen.x-crop.x)/crop.w)*hero.w)/W,y:(hero.y+((seen.y-crop.y)/crop.h)*hero.h)/H,w:(seen.w/crop.w)*hero.w/W,h:(seen.h/crop.h)*hero.h/H};
  const hx=hero.x,hy=hero.y,hw=hero.w,hh=hero.h;
  const zones={top:{x:.065*W,y:.075*H,w:.87*W,h:(product.y-.055-.075)*H},left:{x:.065*W,y:.12*H,w:(product.x-.05-.065)*W,h:.68*H},right:{x:(product.x+product.w+.05)*W,y:.12*H,w:(.935-product.x-product.w-.05)*W,h:.68*H}};
  const order=top?['top','left','right']:['left','top','right'];
- return {mode:'band',seam:top?{edge:'top',at:hy}:{edge:'left',at:hx},crop,hero:{x:hx,y:hy,w:hw,h:hh},product,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
+ return {mode:'band',seam:top?{edge:'top',at:hy}:{edge:'left',at:hx},crop,hero:{x:hx,y:hy,w:hw,h:hh},product,framing:close.framing,zones:usable(order.map(name=>({...zones[name],name})),W,H)};
 }
 let fonts;
 async function fontOptions(){if(fonts)return fonts;const fontFiles=[];for(const name of ['CormorantGaramond.ttf','OpenSans-Regular.ttf','OpenSans-Bold.ttf']){let file;for(const dir of [path.join(__dirname,'fonts'),path.join(process.cwd(),'netlify/production-functions/fonts'),path.join(process.cwd(),'netlify/functions/fonts')]){try{const p=path.join(dir,name);await fs.access(p);file=p;break;}catch{}}if(!file)throw Error('Video caption font is missing: '+name);fontFiles.push(file);}return fonts={font:{fontFiles,loadSystemFonts:false,defaultFontFamily:'Open Sans'}};}

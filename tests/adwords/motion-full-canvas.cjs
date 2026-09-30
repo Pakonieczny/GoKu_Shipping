@@ -146,6 +146,65 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
    const [r,g,b]=[1,3,5].map(i=>parseInt(shots[0].fadeColor.slice(i,i+2),16));assert(g>r+40&&g>b+30,'the fade colour is the film green, not the brand cream: '+shots[0].fadeColor);
   }finally{await fs.rm(tmp2,{recursive:true,force:true});}
  }
+ // Close framing: a charm measured (from the master's own pixels) below its format's size band is enlarged by one fixed
+ // crop about the charm, never past 2x, keeping the copy area and the wordmark inside the fade; nothing is bought.
+ {
+  const F=require('../../netlify/functions/googleAdsMotionFraming'),LAND={key:'landscape',width:1280,height:720},PORT={key:'portrait',width:720,height:1280},SQ={key:'square',width:720,height:720};
+  const body=(x,y,w,h)=>({x,y,w,h,mw:w,mh:h,n:8,of:8}),inFrame=c=>c.x>=-1e-9&&c.y>=-1e-9&&c.x+c.w<=1+1e-9&&c.y+c.h<=1+1e-9;
+  const holds=(c,b)=>b.x>=c.x&&b.y>=c.y&&b.x+b.w<=c.x+c.w&&b.y+b.h<=c.y+c.h;
+  // The landscape Duck case: the charm hangs on a chain from the top edge and fills about a quarter of the frame height.
+  const duck=(mh,b=body(.70,.41,.13,mh))=>({x:.66,y:0,w:.22,h:.72,body:b});
+  {
+   const plain=geometry(LAND,{x:.66,y:0,w:.22,h:.72},'landscape',{mode:'full'});assert.equal(plain.framing,null,'no pixel measurement, no enlargement: the existing framing stands');
+   const g=geometry(LAND,duck(.27),'landscape',{mode:'full'}),b=duck(.27).body;
+   assert.equal(g.framing.status,'zoomed');assert(inFrame(g.crop),'the window stays inside the frame');assert(Math.abs(g.crop.w-.5)<1e-9&&Math.abs(g.crop.h-.5)<1e-9,'a charm at 27% needs more than 2x, so it is enlarged by the 2x limit exactly');
+   assert(holds(g.crop,b),'the whole charm stays in the window');assert(Math.abs(g.framing.zoom-2)<1e-9);assert(/enlarged 2\.0x/.test(g.framing.note));
+   assert(b.mh/g.crop.h>=.53&&b.mh/g.crop.h<=.56,'charm share after the enlargement: '+b.mh/g.crop.h);
+   const cx=(b.x+b.w/2-g.crop.x)/g.crop.w,cy=(b.y+b.h/2-g.crop.y)/g.crop.h;assert(cx>.6&&cx<.8&&Math.abs(cy-.5)<.06,'the charm sits right of centre and the left stays open for the copy: '+cx+','+cy);
+   assert(g.product.x>=0&&g.product.y>=0&&g.product.x+g.product.w<=1+1e-9&&g.product.y+g.product.h<=1+1e-9,'the protected product box is the part still in view (the chain leaves at the top)');
+   assert(g.zones[0].name==='left'&&!g.zones.crowded&&g.zones[0].w>=LAND.width*.3,'the copy keeps a left area beside the enlarged charm');
+   const mid=geometry(LAND,duck(.40),'landscape',{mode:'full'});assert.equal(mid.framing.status,'zoomed');assert(Math.abs(.40/mid.crop.h-.66)<.005&&Math.abs(mid.framing.zoom-1.65)<.01,'a charm at 40% is enlarged 1.65x to the 66% target (a visible 55-60% of the height)');
+   const small=geometry(LAND,duck(.22),'landscape',{mode:'full'});assert.equal(small.framing.status,'too-small');assert(Math.abs(small.crop.w-.5)<1e-9&&/still small and distant/.test(small.framing.note),'beyond the 2x limit the film is enlarged as far as allowed and flagged for the review');
+   const big=geometry(LAND,duck(.62),'landscape',{mode:'full'});assert.equal(big.framing.status,'ok');assert.equal(big.framing.note,undefined);assert.deepEqual(big.crop,geometry(LAND,{x:.66,y:0,w:.22,h:.72},'landscape',{mode:'full'}).crop,'a charm already in the size band is left exactly as framed');
+   const band=geometry(LAND,duck(.27),'landscape',{mode:'band'});assert.equal(band.framing.status,'zoomed');assert(band.product.x>=-.002&&band.product.y>=-.002&&band.product.x+band.product.w<=1.002&&band.product.y+band.product.h<=1.002,'the band layout is enlarged too and keeps its product box on the canvas');
+  }
+  // A whole jewelry that is not hanging out of the frame is never cut: the enlargement stops at its box.
+  {const g=geometry(LAND,{x:.6,y:.15,w:.25,h:.7,body:body(.62,.4,.2,.25)},'landscape',{mode:'full'});assert(g.framing.zoom<1.3,'a whole visible jewelry limits the enlargement: '+g.framing.zoom);assert(holds(g.crop,{x:.6,y:.15,w:.25,h:.7}),'the complete product box stays in the window');}
+  // A pendant on a wide necklace box is not the charm to enlarge.
+  assert.equal(geometry(LAND,{x:.2,y:.25,w:.6,h:.4,body:body(.45,.4,.1,.15)},'landscape',{mode:'full'}).framing,null,'a measurement that is small against the product box is not trusted');
+  {// Portrait sizes the charm by frame width, square by height.
+   const p=geometry(PORT,{x:.3,y:.5,w:.4,h:.34,body:body(.32,.53,.36,.28)},'portrait',{mode:'full'});assert.equal(p.framing.status,'zoomed');assert(p.crop.w<.6&&inFrame(p.crop)&&.36/p.crop.w>=.66&&.36/p.crop.w<=.72,'portrait share of the width: '+.36/p.crop.w);assert(p.zones[0].name==='header'||p.zones[0].name==='top','portrait keeps its copy above the charm');
+   const q=geometry(SQ,{x:.4,y:.3,w:.3,h:.42,body:body(.42,.36,.17,.3)},'square',{mode:'full'});assert.equal(q.framing.status,'zoomed');assert(inFrame(q.crop)&&q.crop.w<.5625&&Math.abs(q.crop.w*1280-q.crop.h*720)<1e-6,'the square window stays square and inside the wide frame');assert(.3/q.crop.h>=.55&&.3/q.crop.h<=.62);
+  }
+  // Pixels: rock, a gold duck on a chain from the top edge at about a quarter of the frame height.
+  const rng=seed=>{let s=seed>>>0;return()=>{s=(s*1664525+1013904223)>>>0;return s/4294967296;};};
+  const scene=async(H_,hgt)=>{
+   const r=rng(7),tiny=Buffer.alloc(40*23*3);for(let i=0;i<tiny.length;i+=3){const v=90+r()*70,warm=r()*22;tiny[i]=v+warm;tiny[i+1]=v*.92+warm*.5;tiny[i+2]=v*.82;}
+   const base=await sharp(tiny,{raw:{width:40,height:23,channels:3}}).resize(1280,H_,{kernel:'cubic'}).raw().toBuffer(),fine=Buffer.alloc(base.length);for(let i=0;i<base.length;i++)fine[i]=Math.max(0,Math.min(255,base[i]+(r()-.5)*36));
+   const u=hgt/100,cx=980,cy=400,svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="${H_}"><g transform="translate(${cx},${cy}) scale(${u})"><path d="M 0 ${-cy/u} L 0 -62" stroke="#a9a08a" stroke-width="3" fill="none"/><circle cx="0" cy="-56" r="7" fill="none" stroke="#c99b30" stroke-width="3"/><ellipse cx="0" cy="12" rx="44" ry="38" fill="#d9a92f" stroke="#8d6414" stroke-width="2"/><circle cx="-14" cy="-30" r="24" fill="#e2b53c" stroke="#8d6414" stroke-width="2"/><path d="M -34 -28 L -58 -20 L -34 -14 Z" fill="#cf8f22"/></g></svg>`;
+   return sharp(fine,{raw:{width:1280,height:H_,channels:3}}).composite([{input:Buffer.from(svg)}]).png().toBuffer();
+  };
+  // Height share of the gold pixels (the charm, not the grey chain or the rock) in an image.
+  const goldShare=async input=>{const {data,info}=await sharp(input).removeAlpha().raw().toBuffer({resolveWithObject:true});let y0=1e9,y1=-1;for(let y=0;y<info.height;y++){let n=0;for(let x=0;x<info.width;x++){const i=(y*info.width+x)*3;if(data[i]-data[i+2]>100&&data[i]>150)n++;}if(n>=4){y0=Math.min(y0,y);y1=Math.max(y1,y);}}return {share:(y1-y0+1)/info.height,top:y0,bottom:y1,height:info.height};};
+  const tmp3=await fs.mkdtemp(path.join(os.tmpdir(),'close-framing-'));
+  try{
+   const png=await scene(720,190),before=await goldShare(png);assert(before.share>.25&&before.share<.32,'the generated charm is small: '+before.share);
+   const {data,info}=await sharp(png).resize({width:320,height:320,fit:'inside'}).removeAlpha().raw().toBuffer({resolveWithObject:true}),frames=[0,1,2,3,4,5].map(()=>({data,width:info.width,height:info.height,channels:info.channels}));
+   const found=F.charmBody(frames,{x:.68,y:0,w:.17,h:.75},{maxSide:320});assert(found&&found.mh>=before.share&&found.mh<=before.share+.09&&found.n===6,'the charm body is measured from pixels, without its chain: '+JSON.stringify(found));
+   assert.equal(F.charmBody(frames.slice(0,2),{x:.68,y:0,w:.17,h:.75}),null,'too few frames is not a measurement');assert.equal(F.charmBody(frames,{x:.05,y:.05,w:.2,h:.2}),null,'nothing is found where the product box points at bare rock');
+   const jpg=path.join(tmp3,'duck.jpg'),mp4=path.join(tmp3,'duck.mp4');await fs.writeFile(jpg,await sharp(png).jpeg({quality:95}).toBuffer());await exec(require('@ffmpeg-installer/ffmpeg').path,['-y','-loop','1','-i',jpg,'-t','10','-r','24','-pix_fmt','yuv420p',mp4]);
+   const layout=validateBounds({landscape:{bounds:[.69,0,.14,.66],complete:true,confidence:.99,note:'fixture'}},['landscape']).landscape,v11={...plan,pipelineVersion:3,renderVersion:11,fadeColor:'#e9dcc4'};
+   const rows=await renderVariants(await fs.readFile(mp4),'landscape',{...v11,composition:layout});assert.equal(rows.length,1);const row=rows[0];
+   assert(row.composition.notes.some(n=>/landscape film: the charm fills about \d+% of the height.*enlarged 2\.0x/.test(n)),'the enlargement is reported: '+row.composition.notes);
+   const out=path.join(tmp3,'out.mp4'),still=path.join(tmp3,'out.png');await fs.writeFile(out,row.bytes);await exec(require('@ffmpeg-installer/ffmpeg').path,['-y','-ss','5','-i',out,'-frames:v','1',still]);
+   const after=await goldShare(still);assert(after.share>=before.share*1.8&&after.share>=.5&&after.share<=.7,'the finished film shows the charm large: '+before.share+' to '+after.share);assert(after.top>=8&&after.bottom<=after.height-8,'the enlarged charm is whole inside the film');
+   // Copy and wordmark still sit wholly inside the fade, clear of the enlarged charm.
+   const layers=await captionLayers({...v11,composition:{...layout,body:found},sourceOrientation:'landscape'},LAND),base=layers.find(l=>l.persistent),gp=layers.geometry.product;assert.equal(layers.geometry.framing.status,'zoomed');
+   const inside=(b,r)=>b.x>=r.x-.5&&b.y>=r.y-.5&&b.x+b.w<=r.x+r.w+.5&&b.y+b.h<=r.y+r.h+.5,product={x:gp.x*LAND.width,y:gp.y*LAND.height,w:gp.w*LAND.width,h:gp.h*LAND.height};
+   assert(base.fades.some(f=>inside(base.logoBox,f)),'the wordmark stays inside a fade');
+   for(const layer of layers.filter(l=>!l.persistent)){assert(inside(layer.textBox,layer.fade),'headline inside its fade');assert(!(layer.textBox.x<product.x+product.w&&layer.textBox.x+layer.textBox.w>product.x&&layer.textBox.y<product.y+product.h&&layer.textBox.y+layer.textBox.h>product.y),'headline clear of the enlarged charm');}
+  }finally{await fs.rm(tmp3,{recursive:true,force:true});}
+ }
  console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam, a standard primary-colour fade and protected jewelry in all three ratios');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

@@ -330,6 +330,7 @@
     "googleAdsGroups.js",
     "googleAdsMerchantVersion.js",
     "googleAdsMotionComposition.js",
+    "googleAdsMotionFraming.js",
     "googleAdsMotionPublication.js",
     "googleAdsSalesEvidence.js",
     "googleAdsSinglePiece.js",

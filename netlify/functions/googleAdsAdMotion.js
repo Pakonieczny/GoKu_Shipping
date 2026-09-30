@@ -26,8 +26,11 @@ async function renderVariants(bytes,orientation,plan={}){
    const filter=closeFrame?closeFilter:photoMotion?`scale=${Math.floor(format.width*.95/2)*2}:${Math.floor(format.height*.95/2)*2}:force_original_aspect_ratio=decrease,pad=${format.width}:${format.height}:(ow-iw)/2:(oh-ih)/2:color=0xf7f2ea,zoompan=z='1+0.02*on/239':x='(iw-iw/zoom)/2':y='(ih-ih/zoom)/2':d=240:s=${format.width}x${format.height}:fps=24,setsar=1`:cropFilter(format.width,format.height,zoom)+',tpad=stop_mode=clone:stop_duration=10';
    if((plan.skipKeys||[]).includes(name))continue;
    const fullCanvas=plan.renderVersion>=5&&!photoMotion;
+   // Close framing (renderVersion 11 and later): the charm is measured once per master and its pixel body rides on the product box, so every format cut from it can be enlarged about the charm.
+   if(fullCanvas&&plan.renderVersion>=11&&plan.composition&&plan.composition.body===undefined)plan={...plan,composition:{...plan.composition,body:await measureCharm(input,dir,plan.composition)}};
    // Captions are planned before the base clip so the crop, band and text share one geometry.
    const planned=fullCanvas&&plan.pipelineVersion>=2?await captionLayers({...plan,sourceOrientation:orientation},format):null,geo=fullCanvas?(planned?.geometry||composition.geometry(format,plan.composition,orientation)):null;
+   if(planned&&geo?.framing?.note)planned.notes=[...(planned.notes||[]),geo.framing.note];
    const bandSource=plan.renderVersion>=11&&plan.fadeColor?plan.fadeColor:plan.style?.background,bgColor='0x'+(/^#[a-f0-9]{6}$/i.test(bandSource||'')?bandSource.slice(1):'f7f2ea');
    const fullFilter=geo?(geo.mode==='band'?`crop=trunc(iw*${geo.crop.w}/2)*2:trunc(ih*${geo.crop.h}/2)*2:trunc(iw*${geo.crop.x}/2)*2:trunc(ih*${geo.crop.y}/2)*2,scale=${geo.hero.w}:${geo.hero.h},pad=${format.width}:${format.height}:${geo.hero.x}:${geo.hero.y}:color=${bgColor},setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`:`crop=trunc(iw*${geo.crop.w}/2)*2:trunc(ih*${geo.crop.h}/2)*2:trunc(iw*${geo.crop.x}/2)*2:trunc(ih*${geo.crop.y}/2)*2,scale=${format.width}:${format.height},setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`):null;
    const safeFilter=!fullCanvas&&plan.renderVersion>=3&&!photoMotion?`[0:v]split=2[bg][hero];[bg]scale=16:16,boxblur=4:3,scale=${format.width}:${format.height}[back];[hero]scale=${format.width}:${Math.floor(format.height*.70/2)*2}:force_original_aspect_ratio=decrease[front];[back][front]overlay=(W-w)/2:(${Math.floor(format.height*.70/2)*2}-h)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=10`:null;
@@ -47,6 +50,17 @@ async function renderVariants(bytes,orientation,plan={}){
 }
 async function sampleMotionFrames(bytes,orientation){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brites-framing-'));try{const file=path.join(dir,'source.mp4');await fs.writeFile(file,bytes);const frames=[];for(const second of composition.TIMES){const output=path.join(dir,String(second)+'.jpg');await ffmpeg(['-y','-ss',String(second),'-i',file,'-frames:v','1','-vf','scale=640:640:force_original_aspect_ratio=decrease',output]);frames.push({orientation,second,bytes:await fs.readFile(output)});}return frames;}finally{await fs.rm(dir,{recursive:true,force:true});}
+}
+// Free close framing: where the charm really is in a saved master, from its own pixels. Eight frames are spread over the film and
+// go through the pixel measurement that already checks the static ads, started from the product box the layout stage saved.
+// Returns null (no enlargement is attempted) when that box was only assumed or the charm is not found consistently.
+async function measureCharm(input,dir,box){
+ if(!box||box.assumed||['x','y','w','h'].some(k=>!Number.isFinite(box[k])))return null;
+ try{
+  await ffmpeg(['-y','-i',input,'-vf','fps=0.8,scale=320:320:force_original_aspect_ratio=decrease','-frames:v','8',path.join(dir,'charm_%02d.png')]);
+  const frames=[];for(const name of (await fs.readdir(dir)).filter(n=>/^charm_\d+\.png$/.test(n)).sort()){const {data,info}=await sharp(path.join(dir,name)).removeAlpha().raw().toBuffer({resolveWithObject:true});frames.push({data,width:info.width,height:info.height,channels:info.channels});}
+  return require('./googleAdsMotionFraming').charmBody(frames,box,{maxSide:320});
+ }catch{return null;}
 }
 // A dedicated motion treatment uses the product research already paid for by
 // the static design. It may choose a different scene, never a different item.
