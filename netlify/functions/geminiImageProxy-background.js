@@ -14981,6 +14981,8 @@ async function _handlerImpl(event) {
               batchName: sourceName, docId: sourceName, displayName, sessionId: submitSessionId,
               state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true,
               retryAttempt: 0, collected: false, model: batchModel, imageSize, sets,
+              setKeys: sets.map(s => s.outputBasePath), setsCount: sets.length,
+              requestCount: sets.reduce((n, s) => n + s.tasks.filter(t => t.type !== "copy").length, 0),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
@@ -15238,6 +15240,7 @@ async function _handlerImpl(event) {
         imageSize,
         inputFileName: fileName,
         inputJsonlBytes: jsonlBytes,
+        setKeys: sets.map(s => s.outputBasePath), setsCount: sets.length, requestCount: routes.length,
         // sets metadata (so we can route + write manifests later)
         sets: sets.map((s) => ({
           category: s.category,
@@ -15591,6 +15594,7 @@ async function _handlerImpl(event) {
           contentRepairAttempt: Number(saved.contentRepairAttempt || 0),
           collected: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
           sets: [{ ...set, tasks: missingTasks, allTasks }], retryOf: batchName,
+          setKeys: [set.outputBasePath], setsCount: 1, requestCount: toGenerate.length,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -16171,8 +16175,23 @@ async function _handlerImpl(event) {
       // half as many again, leave those pointers out, and let a record that
       // pointed at one point at the job it led to.
       const fetchLimit = limit >= 200 ? Math.min(Math.ceil(limit * 1.5), 1500) : limit;
-      let q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(fetchLimit);
-      const snap = await q.get();
+      // Historical records contain large prompts, manifests and prepared
+      // submissions. Loading 1500 whole documents can exceed the 24s request
+      // budget. Read only the small fields that the dashboard actually uses.
+      const listFields = ["batchName", "displayName", "sessionId", "model", "state", "providerStatus",
+        "locallyQueued", "collected", "batchStats", "providerError", "responsesFile", "retryOf",
+        "retryBatchName", "retryRequested", "retryAttempt", "capacityRefusals", "stallCancelRequestedAt",
+        "stallRestartBlocked", "stallRestartClosed", "stallRestarts", "retryStatus", "retryError",
+        "createdAt", "updatedAt", "collectedAt", "setsCount", "setKeys", "setComplete",
+        "collectionPending", "repairPending", "recoveryStatus", "recoveryReason", "requestCount", "results"];
+      const q = db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(fetchLimit).select(...listFields);
+      const [snap, sweepSnap, admissionSnap] = await Promise.all([
+        q.get(),
+        db.collection("LG1_Config").doc("batchSweep").get().catch(err => {
+          console.warn("[batch_list] sweep status unavailable:", err?.message || err); return null;
+        }),
+        db.collection("LG1_Config").doc("batchAdmission").get(),
+      ]);
       const isPointer = (d) => !!(d.locallyQueued && d.retryBatchName);
       const pointsTo = new Map();
       snap.forEach((doc) => {
@@ -16217,21 +16236,22 @@ async function _handlerImpl(event) {
           createdAt: d.createdAt?.toMillis ? d.createdAt.toMillis() : null,
           updatedAt: d.updatedAt?.toMillis ? d.updatedAt.toMillis() : null,
           collectedAt: d.collectedAt?.toMillis ? d.collectedAt.toMillis() : null,
-          setsCount: Array.isArray(d.sets) ? d.sets.length : 0,
-          setKeys: (d.sets || []).map(s => s.outputBasePath).filter(Boolean),
+          // Legacy history without compact metadata remains visible. Session
+          // audits provide exact listing counts independently of job history.
+          setsCount: d.setsCount ?? null,
+          setKeys: d.setKeys || [],
           setComplete: d.setComplete === true,
           collectionPending: !!d.collectionPending,
           repairPending: !!d.repairPending,
           recoveryStatus: d.recoveryStatus || null,
           recoveryReason: d.recoveryReason || null,
-          requestCount: Array.isArray(d.routes) ? d.routes.length : 0,
+          requestCount: d.requestCount ?? d.batchStats?.requestCount ?? null,
           results: d.results || null,
         });
       });
       let sweep = null;
       try {
-        const sweepSnap = await db.collection("LG1_Config").doc("batchSweep").get();
-        if (sweepSnap.exists) {
+        if (sweepSnap?.exists) {
           const d = sweepSnap.data();
           const millis = (v) => v?.toMillis?.() || null;
           sweep = {
@@ -16246,7 +16266,6 @@ async function _handlerImpl(event) {
       } catch (err) {
         console.warn("[batch_list] sweep status unavailable:", err?.message || err);
       }
-      const admissionSnap = await db.collection("LG1_Config").doc("batchAdmission").get();
       const admissionInfo = admissionSnap.data() || {};
       // Cron runs at :04, :14, :24, :34, :44, :54 UTC. Date.now() is
       // timezone-independent; the browser formats this in the user's zone.
@@ -16255,11 +16274,9 @@ async function _handlerImpl(event) {
       // Older records may exist beyond what was read: only then is the
       // oldest submission shown as a partial view.
       const truncated = snap.size >= fetchLimit || out.length > limit;
-      const sessions = [];
-      for (const sessionId of [...new Set(out.map(b => b.sessionId).filter(id => /^sess_/.test(id || "")))].slice(0, 10)) {
-        const summary = (await db.collection(SESSIONS_COLL).doc(sessionId).get()).data();
-        if (summary) sessions.push(summary);
-      }
+      const sessionIds = [...new Set(out.map(b => b.sessionId).filter(id => /^sess_/.test(id || "")))].slice(0, 10);
+      const sessions = (await Promise.all(sessionIds.map(async sessionId =>
+        (await db.collection(SESSIONS_COLL).doc(sessionId).get()).data()))).filter(Boolean);
       return json(200, { ok: true, batches: out.slice(0, limit), sessions, truncated, sweep, nextSweepAt,
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }

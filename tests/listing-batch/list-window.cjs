@@ -30,20 +30,22 @@ const at = (ms) => ({ toMillis: () => ms });
 // Newest first, as the query returns them.
 function list(docs, body) {
   const asked = [];
+  let selectedFields = [];
   const sorted = [...docs].sort((a, b) => b.createdAt - a.createdAt);
   const db = { collection: (name) => ["LG1_Config", "sessions"].includes(name)
     ? { doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }) }
-    : { orderBy: () => ({ limit: (n) => ({ get: async () => {
+    : { orderBy: () => ({ limit: (n) => ({ select: (...fields) => { selectedFields = fields; return { get: async () => {
         asked.push(n);
-        const rows = sorted.slice(0, n).map((d) => ({ id: d.batchName, data: () => ({ ...d, createdAt: at(d.createdAt) }) }));
+        const rows = sorted.slice(0, n).map((d) => ({ id: d.batchName, data: () => Object.fromEntries(
+          Object.entries({ ...d, createdAt: at(d.createdAt) }).filter(([key]) => fields.includes(key))) }));
         return { size: rows.length, forEach: (fn) => rows.forEach(fn) };
-      } }) }) } };
+      } }; } }) }) } };
   return vm.runInNewContext(`(async () => { ${branch} })()`, {
     kind: "batch_list", SESSIONS_COLL: "sessions", body, getDb: () => db, BATCHES_COLL: "batches", clampNumber: (n, min, max, fb) => {
       const v = Number(n); return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fb; },
     capacityRefusals: () => 0, preferredCharmRenderModelId: () => "m", json: (statusCode, value) => ({ statusCode, ...value }),
     console: { warn: () => {} },
-  }).then((res) => JSON.parse(JSON.stringify({ ...res, asked })));
+  }).then((res) => JSON.parse(JSON.stringify({ ...res, asked, selectedFields })));
 }
 
 const job = (n, createdAt, extra = {}) => ({ batchName: `batch_${n}`, sessionId: "sess_1", state: "JOB_STATE_RUNNING",
@@ -63,6 +65,10 @@ const pointer = (n, createdAt, target) => ({ batchName: `batch_local_${n}`, sess
   ];
   const r = await list(docs, { limit: 50, includeCollected: true });
   assert.equal(r.statusCode, 200);
+  for (const heavy of ['sets', 'routes', 'preparedSubmission', 'inputJsonl'])
+    assert(!r.selectedFields.includes(heavy), `progress never downloads ${heavy}`);
+  for (const compact of ['setKeys', 'setsCount', 'requestCount', 'results', 'repairPending'])
+    assert(r.selectedFields.includes(compact), `progress retains ${compact}`);
   assert.deepEqual(r.batches.map((b) => b.batchName), ["batch_Q", "batch_C", "batch_B", "batch_A"],
     "the pointers are left out; the record still waiting to be sent stays");
   assert.equal(r.batches.find((b) => b.batchName === "batch_A").retryBatchName, "batch_B", "A now points at the job that followed it");

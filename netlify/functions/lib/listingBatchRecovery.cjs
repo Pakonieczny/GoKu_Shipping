@@ -63,6 +63,15 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
   // Submitted parents are history, not waiting work. Clear old queue markers
   // so the bounded repair query always has room for genuinely pending jobs.
   for (const record of records) {
+    // Backfill compact dashboard metadata while the background audit already
+    // has the task records. Progress reads must never download their prompts.
+    const setKeys = (record.sets || []).map(set => set.outputBasePath).filter(Boolean);
+    const metadata = { setKeys, setsCount: (record.sets || []).length,
+      requestCount: record.routes?.length ?? (record.sets || []).reduce((n, set) =>
+        n + (set.tasks || []).filter(task => task.type !== 'copy').length, 0) };
+    if (JSON.stringify(record.setKeys) !== JSON.stringify(setKeys) ||
+        record.setsCount !== metadata.setsCount || record.requestCount !== metadata.requestCount)
+      updates.push({ ref: record.ref, patch: metadata });
     if (record.retryBatchName && record.repairPending)
       updates.push({ ref: record.ref, patch: { repairPending: false, retryRequested: false } });
   }
@@ -126,6 +135,13 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     await batch.commit();
   }
   summary.unregistered = Math.max(0, summary.planned - summary.registered);
+  summary.issues = summary.blocked + summary.cancelled;
+  summary.processed = summary.complete + summary.issues;
+  summary.pending = summary.active + summary.queued + summary.saving + summary.unregistered;
+  const finished = summary.planned > 0 && summary.processed === summary.planned && summary.pending === 0;
+  summary.status = finished ? (summary.issues ? 'completed_with_issues' : 'completed') : 'in_progress';
+  summary.finishedAt = finished ? Math.max(0, ...records.map(record =>
+    Math.max(stampMs(record.collectedAt), stampMs(record.updatedAt), stampMs(record.createdAt)))) : null;
   await db.collection(SESSIONS_COLL).doc(sessionId).set(summary);
   return summary;
 }

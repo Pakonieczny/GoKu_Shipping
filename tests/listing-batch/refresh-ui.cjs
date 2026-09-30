@@ -12,19 +12,22 @@ const helperStart = source.indexOf("    function _awaitingStallRestart(b) {");
 const _awaitingStallRestart = vm.runInNewContext(`${source.slice(helperStart,
   source.indexOf("    function _formatDuration(ms) {", helperStart))}; _awaitingStallRestart`, {});
 
-async function check({ queued = false, automatic = false } = {}) {
+async function check({ queued = false, automatic = false, blocked = false } = {}) {
   const btn = { disabled: false, textContent: "↻ Refresh" };
   const status = { textContent: "", style: {}, changes: [] };
   Object.defineProperty(status, "textContent", {
     get() { return this.value; },
     set(value) { this.value = value; this.changes.push(value); },
   });
-  const jobs = queued
+  const jobs = blocked ? [{ batchName: 'batch_issue', state: 'JOB_STATE_SUCCEEDED', collected: true,
+      setComplete: false, recoveryStatus: 'blocked', results: { failedCount: 1 } },
+      { batchName: 'batch_old_failure', state: 'JOB_STATE_FAILED', collected: false,
+        retryBatchName: 'batch_issue', results: { failedCount: 1 } }] : queued
     ? [{ batchName: "batch_failed", state: "JOB_STATE_FAILED", collected: false, retryRequested: true }]
     : [{ batchName: "batch_running", state: "JOB_STATE_RUNNING", collected: false }];
   const sweep = { lastSweepAt: 0, lastResult: null };
   let serverState = jobs[0].state;
-  let statusCalls = 0, sweepCalls = 0, collects = 0;
+  let statusCalls = 0, sweepCalls = 0, collects = 0, listCalls = 0;
   const context = {
     _batchPollInFlight: false,
     _lastBatchList: jobs,
@@ -36,7 +39,8 @@ async function check({ queued = false, automatic = false } = {}) {
     _normBatchState: (value) => value,
     _awaitingStallRestart,
     refreshBatchJobsPanel: async () => {
-      context._lastBatchList = jobs.map((job) => ({ ...job, state: serverState }));
+      listCalls++;
+      context._lastBatchList = jobs.map((job) => ({ ...job, state: blocked ? job.state : serverState }));
       return { ok: true, batches: context._lastBatchList };
     },
     postJson: async (_fn, payload) => {
@@ -59,7 +63,7 @@ async function check({ queued = false, automatic = false } = {}) {
     console: { warn: () => {} },
   };
   await vm.runInNewContext(`(async () => { ${source.slice(start, end)} await _checkBatchJobsNow(${!automatic}); })()`, context);
-  return { btn, status, statusCalls, sweepCalls, collects };
+  return { btn, status, statusCalls, sweepCalls, collects, listCalls };
 }
 
 (async () => {
@@ -76,6 +80,11 @@ async function check({ queued = false, automatic = false } = {}) {
   assert.match(retry.status.textContent, /1 retries admitted by collector/);
   const automatic = await check({ automatic: true });
   assert.match(automatic.status.textContent, /Checked .*Saving images from 1 job/);
+  const terminal = await check({ blocked: true });
+  assert.equal(terminal.listCalls, 1, 'completed refresh reads saved progress once');
+  assert.equal(terminal.statusCalls + terminal.sweepCalls + terminal.collects, 0,
+    'terminal issues and old failures never restart the worker or paid generation');
+  assert.match(terminal.status.textContent, /Batch processing finished/);
 
   const renderStart = source.indexOf("    function _renderSessionBlock(session) {");
   const renderEnd = source.indexOf("    async function _cancelSession(sessionId) {", renderStart);

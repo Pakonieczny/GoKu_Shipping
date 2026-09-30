@@ -13201,6 +13201,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (b.updatedAt) s.latest = Math.max(s.latest, b.updatedAt);
           if (b.collectedAt) s.latest = Math.max(s.latest, b.collectedAt);
         }
+        // Pre-index history has no per-job listing metadata. Keep it visible
+        // as history without inventing counts; audited sessions remain exact.
+        for (const s of sessions.values()) {
+          if (!s.summary && s.batches.some(b => b.setsCount === null)) s.historyTruncated = true;
+        }
         // The API returns the newest records and says when older ones were
         // left out. Then the oldest visible session may have earlier records
         // outside the page; don't label those unseen jobs as unsubmitted.
@@ -13237,7 +13242,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
         _startBatchAutoPoll();
         const checkStatus = document.getElementById("batchRefreshStatus");
-        if (checkStatus && checkStatus.textContent.includes("Loading saved"))
+        if (checkStatus && /Loading saved|Could not load saved|Check failed|Saved progress loaded/.test(checkStatus.textContent))
           checkStatus.textContent = `Saved progress loaded · Refresh checks OpenAI now.`;
         return { ok: true, batches };
       } catch (err) {
@@ -13296,7 +13301,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const finished = audit?.complete ?? [...uniqueEffective.values()].filter((b) => b.setComplete ||
         b.collected && !b.results?.failedCount).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
-      const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
+      const activeJobs = effective.filter((b) => !b.collected && !b.setComplete &&
+        ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
       // Jobs OpenAI never started, which the collector cancels and queues again.
       const restarting = effective.filter(_awaitingStallRestart).length;
@@ -13375,7 +13381,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
       const startStr = session.earliest && isFinite(session.earliest)
         ? new Date(session.earliest).toLocaleString() : "—";
-      const allDone = finished === plannedSets && plannedSets > 0 && notSubmitted === 0;
+      // Completion describes whether processing has finished, not whether
+      // every image succeeded. Terminal exceptions never hold saved sets open.
+      const issueCount = attention + (audit?.cancelled ?? [...uniqueEffective.values()].filter(b =>
+        !b.setComplete && !b.collected && !_awaitingStallRestart(b) && _normBatchState(b.state) === "JOB_STATE_CANCELLED").length);
+      const processed = Math.min(plannedSets, finished + issueCount);
+      const allDone = plannedSets > 0 && processed === plannedSets && notSubmitted === 0 &&
+        !running && !waitingRetries && !restarting && !audit?.saving &&
+        (!session.historyTruncated || !!audit);
       const elapsedMs = allDone && session.latest
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
@@ -13389,6 +13402,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       let headline, headlineColor;
       if (session.historyTruncated && !audit) {
         headline = "Earlier history · partial view"; headlineColor = "#a3a3a3";
+      } else if (allDone && issueCount) {
+        headline = `Completed with ${issueCount} issue${issueCount === 1 ? "" : "s"}`; headlineColor = "#fde68a";
       } else if (cancelled === total && total > 0 && !running && !waitingRetries) {
         headline = "All batches cancelled"; headlineColor = "#a3a3a3";
       } else if (allDone && failed > 0 && !audit) {
@@ -13432,7 +13447,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets planned", String(plannedSets)]);
-      if (partNumbers.size || audit) rows.push(["Registered sets", session.historyTruncated
+      if (partNumbers.size || audit) rows.push(["Registered sets", session.historyTruncated && !audit
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
         : `${originalSubmitted}/${plannedSets} unique sets registered${notSubmitted ? ` · ${notSubmitted} not registered` : ""}`]);
       rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${restarted ? ` · ${restarted} restarted` : ""}${attention ? ` · ${attention} need review` : ""}`]);
@@ -13453,7 +13468,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         if (_batchNextSweepAt) rows.push(["Next sweep", new Date(_batchNextSweepAt).toLocaleTimeString()]);
       }
       if (totalImagesGen) rows.push(["Images delivered", String(totalImagesGen)]);
-      if (totalImagesFailed) rows.push(["Images failed", String(totalImagesFailed)]);
+      if (totalImagesFailed) rows.push(["Failed image attempts (history)", String(totalImagesFailed)]);
       if (totalCharmsMoved) rows.push(["Charms used", String(totalCharmsMoved)]);
       rows.push([session.historyTruncated ? "First visible" : "Started", startStr]);
       if (!session.historyTruncated && allDone && endStr) rows.push(["Finished", endStr]);
@@ -13462,19 +13477,23 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const statsHtml = rows.map(([k, v]) =>
         `<div class="batch-stat"><span>${_batchSafeText(k)}</span><span>${_batchSafeText(v)}</span></div>`
       ).join("");
-      const progressPct = plannedSets ? Math.min(100, Math.round(100 * finished / plannedSets)) : 0;
+      const progressCount = allDone ? processed : finished;
+      const progressPct = plannedSets ? Math.min(100, Math.round(100 * progressCount / plannedSets)) : 0;
       const progressHtml = plannedSets && (!session.historyTruncated || audit) ? `
-        <div class="batch-count"><strong>${finished} / ${plannedSets}</strong> sets saved</div>
-        <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
+        <div class="batch-count"><strong>${progressCount} / ${plannedSets}</strong> ${allDone ? "listings processed" : "sets saved"}</div>
+        <div class="batch-track" role="progressbar" aria-label="${allDone ? "Listings processed" : "Sets saved"}" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${progressCount}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const activity = [audit ? `${Math.max(0, plannedSets - finished)} sets remaining` : "", cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
+      const activity = allDone ? `${finished} saved${issueCount ? ` · ${issueCount} need${issueCount === 1 ? "s" : ""} attention` : ""}` :
+        [audit ? `${Math.max(0, plannedSets - processed)} sets remaining` : "", cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
         running > cancelling + restartingActive ? `${running - cancelling - restartingActive} active jobs` : "",
         waitingRetries ? `${waitingRetries} queued` : "", restarted ? `${restarted} restarted` : "",
         attention ? `${attention} need review` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
+      let explanation = allDone
+        ? `Batch finished. Saved listings are available in Review and Approved Sets.${issueCount ? " The issues below can be handled separately." : ""}`
+        : cancelling ? "Waiting for OpenAI to confirm cancellation."
         : restarting ? `OpenAI never started ${restarting} job(s) within ${stallMinutes} minutes. They are cancelled at no cost and their sets are queued again.`
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
@@ -13539,7 +13558,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       }
       const unresolved = (audit?.sets || []).filter(set => ["blocked", "saving", "cancelled"].includes(set.status));
       const unresolvedHtml = unresolved.length ? `<div class="batch-alert">${unresolved.map(set =>
-        `<div><strong>Set_${set.setN}</strong> · ${_batchSafeText(set.status)} · slots ${set.missingSlots.join(", ")}${set.note ? ` · ${_batchSafeText(set.note)}` : ""}</div>`).join("")}</div>` : "";
+        `<div><strong>Set_${set.setN}</strong> · ${_batchSafeText(set.category.replace(/_/g, " "))} · ${set.status === "blocked" ? "needs attention" : _batchSafeText(set.status)} · missing slots ${set.missingSlots.join(", ")}${set.note ? ` · ${_batchSafeText(set.note)}` : ""}</div>`).join("")}</div>` : "";
       const buttonsHtml = buttons.length
         ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
         : "";
@@ -13574,13 +13593,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
           ${progressHtml}
           ${activity ? `<div>${_batchSafeText(activity)}</div>` : ""}
           ${queueExplanation}
+          ${allDone ? unresolvedHtml : ""}
           ${lastSavedAt ? `<div class="batch-meta">Last set saved ${Date.now() - lastSavedAt > 86400000 ? new Date(lastSavedAt).toLocaleDateString() : `${shortTime(lastSavedAt)} · ${Math.floor((Date.now() - lastSavedAt) / 60000)} min ago`}</div>` : ""}
           ${alertHtml}
           <details class="batch-details" data-batch-detail="${_batchSafeText(session.sessionId)}">
             <summary>Details &amp; actions</summary>
             <div class="batch-stats">${statsHtml}</div>
             ${buttonsHtml}
-            ${unresolvedHtml}
+            ${allDone ? "" : unresolvedHtml}
             <details data-batch-detail="${_batchSafeText(session.sessionId)}-jobs" style="margin-top:18px; font-size:14px;">
               <summary>Individual jobs (${session.batches.length})</summary>
               <div style="max-height:360px; overflow:auto; margin-top:12px;">${stateDetail}</div>
@@ -13815,7 +13835,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           if (!initial?.ok) throw initial?.error || new Error("Could not load saved jobs");
         }
         const beforeSaved = _lastBatchList.filter((b) => b.collected).length;
-        const pendingChecks = _lastBatchList.filter((b) => !b.collected && !b.locallyQueued &&
+        const pendingChecks = _lastBatchList.filter((b) => !b.collected && !b.setComplete && !b.retryBatchName && !b.locallyQueued &&
           !["JOB_STATE_FAILED", "JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED", "JOB_STATE_SUCCEEDED"]
             .includes(_normBatchState(b.state)));
         _showBatchCheck(pendingChecks.length
@@ -13839,13 +13859,17 @@ Click the button again to permanently delete eligible temporary files, or cancel
           }
         }));
 
-        const loaded = await refreshBatchJobsPanel();
-        if (!loaded?.ok) throw loaded?.error || new Error("Could not refresh saved jobs");
+        // A manual refresh already loaded the snapshot. Avoid reading the
+        // same completed history twice when no provider job needed checking.
+        if (!manual || pendingChecks.length) {
+          const loaded = await refreshBatchJobsPanel();
+          if (!loaded?.ok) throw loaded?.error || new Error("Could not refresh saved jobs");
+        }
 
         // A state that became SUCCEEDED in this check can be collected now,
         // without waiting for the next minute-long polling cycle.
         for (const b of _lastBatchList) {
-          if (b.collected || _normBatchState(b.state) !== "JOB_STATE_SUCCEEDED") continue;
+          if (b.collected || b.setComplete || b.retryBatchName || _normBatchState(b.state) !== "JOB_STATE_SUCCEEDED") continue;
           if (_autoCollectsInFlight.has(b.batchName) || _autoCollectsInFlight.size >= 3) continue;
           _autoCollectsInFlight.add(b.batchName);
           saving++;
@@ -13862,7 +13886,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) || b.repairPending ||
           _awaitingStallRestart(b) && ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
         let sweepNote = "";
-        if (manual && ((queued && active < _batchRetryLimit) || _lastBatchList.some(b => !b.setComplete && b.results?.failedCount))) {
+        const pendingRecovery = _lastBatchList.some(b => !b.retryBatchName && !b.setComplete &&
+          (b.collectionPending || b.repairPending));
+        if (manual && ((queued && active < _batchRetryLimit) || pendingRecovery)) {
           _showBatchCheck(`Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to fill them…`);
           const previousSweepAt = _batchSweepInfo?.lastSweepAt || 0;
           await postJson("geminiImageProxy-background", { kind: "batch_sweep" });
@@ -13885,7 +13911,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         const outcome = savedNow > 0 ? `${savedNow} newly saved.` : saving ? `Saving images from ${saving} job(s).` :
           changed ? `${changed} job(s) updated.` : active || queued ? "Waiting for queued images." :
-          _lastBatchList.some(b => !b.setComplete && b.results?.failedCount) ? "No jobs running. Missing images need recovery or review." : "No jobs running.";
+          _lastBatchList.some(b => !b.retryBatchName && !b.setComplete && b.recoveryStatus === "blocked")
+            ? "Batch processing finished. Listing issues are shown below." : "No jobs running.";
         _showBatchCheck(`Checked ${time} · ${outcome}${checkErrors ? ` ${checkErrors} checks failed: ${firstCheckError}` : ""}${sweepNote ? ` ${sweepNote}` : ""}`,
           !!checkErrors || sweepNote.startsWith("Collector error"));
         const charmPanel = document.getElementById("charmBatchJobsPanel");
