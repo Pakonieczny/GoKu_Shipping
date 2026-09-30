@@ -273,6 +273,39 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok(copyFixes===1&&fx.calls.create===beforeCopy.create&&cpfState.variants.length===3&&cpfJob.plan.copy.headline==='For the foodie who has everything'&&cpfJob.copyFixed,'copy fix revises the message once and re-composes every format without new video');
  await fx.service.run({workspaceId:'design_test',jobId:cpf.jobId});ok(copyFixes===1&&fx.calls.create===beforeCopy.create,'completed fixes never charge twice');
  ok((await fx.service.status({workspaceId:'design_test',...fx.scope})).jobId===cpf.jobId,'the latest fix becomes the current animation');
+ // Redo one film on demand: any format of a finished job, exactly one new master, every other film kept as saved.
+ {
+  const rd=await setup(),W={workspaceId:'design_test'},first=await rd.service.start({...W,...rd.scope});await rd.service.run({...W,jobId:first.jobId});
+  const rdState=await rd.service.status({...W,...rd.scope}),parentRef=rd.ref.collection('motionJobs').doc(first.jobId),parentBefore=JSON.stringify((await parentRef.get()).data());
+  ok(rdState.phase==='ready'&&rdState.variants.length===3&&rdState.redoOptions.map(o=>o.format).join()==='portrait,square,landscape'&&rdState.redoOptions.every(o=>o.hasFilm),'a ready job offers a redo for each of its three films');
+  const sq=rdState.redoOptions.find(o=>o.format==='square');
+  ok(sq.formats.join()==='mobile_square'&&sq.kept.join()==='mobile_portrait,desktop_landscape'&&Math.abs(sq.estimatedUsd*3-rdState.estimatedUsd)<.02&&sq.estimatedUsd>1&&sq.estimatedUsd<1.1,'redoing one film costs a third of the set (one master) and keeps the other two');
+  const input={...W,...rd.scope,redoOf:first.jobId,redoFormat:'square',confirmRedo:true},create0=rd.calls.create,bodies0=rd.calls.bodies.length,renders0=rd.calls.renders.length,review0=rd.calls.review,download0=rd.calls.download;
+  await assert.rejects(()=>rd.service.start({...input,confirmRedo:false}),/Confirm the video to redo/);n++;
+  await assert.rejects(()=>rd.service.start({...input,redoFormat:'widescreen'}),/Choose the portrait, square or landscape/);n++;
+  const started=await rd.service.start(input);
+  ok(started.queued&&started.jobId!==first.jobId&&(await rd.service.start(input)).jobId===started.jobId&&rd.calls.create===create0,'the redo is a distinct, idempotent job and starting it buys nothing');
+  ok((await rd.service.run({...W,jobId:started.jobId})).ok,'the redo completes');
+  const done=await rd.service.status({...W,...rd.scope}),job=(await rd.ref.collection('motionJobs').doc(started.jobId).get()).data();
+  ok(rd.calls.create===create0+1&&rd.calls.aspects.slice(3).join()==='16:9'&&rd.calls.download===download0+1,'exactly one new master is bought and downloaded');
+  ok(rd.calls.renders.length===renders0+1&&rd.calls.renders[renders0].orientation==='square'&&rd.calls.renders[renders0].plan.renderVersion===11&&rd.calls.renders[renders0].plan.composition.w>0&&rd.calls.review===review0+1,'only the square film is composed again, with the same render version and its own measured framing, then the set is reviewed');
+  ok(rd.calls.bodies[bodies0].input[0].data===rd.calls.bodies[0].input[0].data&&rd.calls.bodies[bodies0].input[1].text===rd.calls.bodies[1].input[1].text,'the new film is made from the same reference photograph and the same square prompt');
+  const byKey=(s,k)=>s.variants.find(v=>v.key===k);
+  ok(done.jobId===started.jobId&&done.redoOf===first.jobId&&done.phase==='ready'&&done.variants.length===3&&['mobile_portrait','desktop_landscape'].every(k=>JSON.stringify(byKey(done,k))===JSON.stringify(byKey(rdState,k))),'the other two videos are unchanged byte for byte');
+  ok(byKey(done,'mobile_square').asset.hash!==byKey(rdState,'mobile_square').asset.hash&&byKey(done,'mobile_square').master==='square'&&job.masters.square.id==='v1_'+(create0+1)&&job.masters.portrait.id===JSON.parse(parentBefore).masters.portrait.id&&job.masters.landscape.id===JSON.parse(parentBefore).masters.landscape.id,'the new square film replaces the old one as the current version and the other masters are the saved ones');
+  ok(Math.abs(done.estimatedUsd-1.0136)<.02&&done.fixTarget.category==='redo'&&done.fixOf===null,'the redo reports one master of cost and is not presented as a review fix');
+  ok(JSON.stringify((await parentRef.get()).data())===parentBefore&&done.previousFilms.length===1&&done.previousFilms[0].key==='mobile_square'&&done.previousFilms[0].url.endsWith(first.jobId+'_mobile_square')&&job.previousVersions[0].master.id==='v1_2','the earlier job and its paid square film stay saved and are linked as the previous version');
+  await assert.rejects(()=>rd.service.start({...input,redoFormat:'portrait'}),/changed since it was loaded/);n++;
+  // Never while another paid film is unfinished; a failed film with no video is offered on its own.
+  const current=rd.ref.collection('motionJobs').doc(started.jobId);
+  await current.update({masters:{...job.masters,landscape:{...job.masters.landscape,status:'in_progress'}}});
+  await assert.rejects(()=>rd.service.start({...W,...rd.scope,redoOf:started.jobId,redoFormat:'portrait',confirmRedo:true}),/still being made and is already paid for/);n++;
+  ok((await rd.service.status({...W,...rd.scope})).redoOptions.length===0,'no redo is offered while a paid film is unfinished');
+  await current.update({phase:'needs_attention',quality:null,variants:[],error:'landscape animation failed: Provider rejected the scene.',masters:{...job.masters,landscape:{...job.masters.landscape,status:'failed'}}});
+  const failed=await rd.service.status({...W,...rd.scope});ok(failed.redoOptions.map(o=>o.format).join()==='landscape'&&failed.redoOptions[0].hasFilm===false,'a size whose film failed offers a redo of that size alone');
+  const create1=rd.calls.create,again=await rd.service.start({...W,...rd.scope,redoOf:started.jobId,redoFormat:'landscape',confirmRedo:true});await rd.service.run({...W,jobId:again.jobId});
+  const healed=await rd.service.status({...W,...rd.scope}),healedJob=(await rd.ref.collection('motionJobs').doc(again.jobId).get()).data();ok(rd.calls.create===create1+1&&healed.variants.length===3&&healed.phase==='ready'&&healedJob.masters.portrait.id===job.masters.portrait.id&&healedJob.masters.square.id===job.masters.square.id,'redoing the failed size buys one film, keeps the saved masters and completes the set');
+ }
  // Nothing the video model could render as text is ever put in front of it.
  {
   const motion=require('../../netlify/functions/googleAdsAdMotion');
