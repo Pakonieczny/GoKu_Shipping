@@ -8,6 +8,14 @@ function requestBody(image,prompt,orientation){
  if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
  return {model:MODEL,background:true,store:true,input:[{type:'image',mime_type:'image/jpeg',data:image.toString('base64')},{type:'text',text:prompt}],response_format:{type:'video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
 }
+// Explicit subject references avoid treating the catalogue photograph as a
+// literal first frame. All images describe the same product/assembly.
+// https://ai.google.dev/gemini-api/docs/omni#tasks-parameter
+function referenceRequestBody(references,prompt,orientation){
+ if(!Array.isArray(references)||!references.length||references.length>3||references.some(r=>!Buffer.isBuffer(r.bytes)||!r.bytes.length||!['image/jpeg','image/png','image/webp'].includes(r.mimeType)))throw Error('Original product photographs are required for reference-guided animation.');
+ if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
+ return {model:MODEL,background:true,store:true,input:[...references.map(r=>({type:'image',mime_type:r.mimeType,data:r.bytes.toString('base64')})),{type:'text',text:prompt}],generation_config:{video_config:{task:'reference_to_video'}},response_format:{type:'video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
+}
 // Scenery-only films use text-to-video. Sending an empty image would pin a
 // blank first frame; sending product pixels would invite a generated redraw.
 // https://ai.google.dev/gemini-api/docs/omni#text-to-video-generation
@@ -181,4 +189,4 @@ function createGeminiVideo({apiKey,fetch,sleep=wait}){
  }
  return {request,content};
 }
-module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,sceneryRequestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};
+module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,referenceRequestBody,sceneryRequestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};

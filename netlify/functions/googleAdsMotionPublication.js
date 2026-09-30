@@ -6,7 +6,7 @@ const clone = value => JSON.parse(JSON.stringify(value));
 const rubric=require('./googleAdsAdQuality');
 const KEYS = ['mobile_portrait', 'mobile_square', 'desktop_landscape'];
 function selection(job) {
-  if(!require('./googleAdsMotionIntegrity').complete(job))throw Error('Rebuild these videos with the original charm protected before publication.');
+  if(!require('./googleAdsMotionReferences').complete(job))throw Error('Generate these videos from the original product references before publication.');
   if(!require('./googleAdsAdMotion').qualityPass(job.quality))throw Error('Exact product identity and the complete-ad quality target must both pass before publication.');
   if (job.phase !== 'ready' || job.quality?.pass !== true || job.quality?.productFaithful !== true) throw Error('The animation must pass its jewelry quality review before Google publication.');
   const variants = KEYS.map(key => job.variants.find(v => v.key === key));
@@ -94,7 +94,7 @@ function createPublicationService(D) {
       await free(() => D.assertTarget(job, p.target || null));
       // Dry run starts no YouTube upload: the saved films are checked and nothing is sent to Google.
       if (p.videos.some(v => !v.resourceName) && D.dryRun && await free(() => D.dryRun())) {
-        for (const video of p.videos) {if (video.resourceName) continue; const variant=selection(job).find(v => v.key === video.key),bytes = await D.loadVideo(variant.asset); require('./googleAdsMotionIntegrity').assertVideo(variant,bytes); if (!bytes.length || bytes.length > 100000000) throw Error('The saved video size is invalid.');}
+        for (const video of p.videos) {if (video.resourceName) continue; const variant=selection(job).find(v => v.key === video.key),bytes = await D.loadVideo(variant.asset); require('./googleAdsMotionReferences').assertVideo(variant,bytes); if (!bytes.length || bytes.length > 100000000) throw Error('The saved video size is invalid.');}
         await save({phase:'validated', leaseUntil:0, validation:{dryRun:true, uploaded:false, validatedAt:Date.now()}});
         return {ok:true, dryRun:true, validated:true, uploaded:false};
       }
@@ -102,7 +102,7 @@ function createPublicationService(D) {
         if (video.resourceName) continue;
         const variant = selection(job).find(v => v.key === video.key);
         const bytes = await D.loadVideo(variant.asset);
-        require('./googleAdsMotionIntegrity').assertVideo(variant,bytes);
+        require('./googleAdsMotionReferences').assertVideo(variant,bytes);
         if (!bytes.length || bytes.length > 100000000) throw Error('The saved video size is invalid.');
         if (!video.sessionUrl) {
           if (video.inFlight) throw Error('The previous upload has no confirmed session receipt. Reconcile it before another upload.');
