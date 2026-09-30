@@ -115,7 +115,10 @@ function createGeminiVideo({apiKey,fetch,sleep=wait}){
   }
   const busy=http>=500||http===408||http===429||BUSY.test(String(facts.status||(typeof facts.code==='string'?facts.code:'')))||[429,500,502,503,504].includes(Number(facts.code)),kind=busy?'busy':'unreadable';
   // A refusal the service answered outright (HTTP 4xx) never reached the film queue; anything else leaves a create unconfirmed.
-  const definite=!r.ok&&http>=400&&http<500;
+  // The one exception is Google's own structured capacity answer (503 with an UNAVAILABLE / "high demand" error body, not a gateway page, an empty
+  // body or an event stream): the request was turned away at the front door, so no film was queued and asking again on Resume cannot buy twice.
+  const atCapacity=create&&http===503&&!reply.sse&&reply.json!==undefined&&reply.error!=null&&(/^unavailable$/i.test(String(facts.status||''))||/high demand|overloaded|try again later/i.test(String(facts.message||'')));
+  const definite=(!r.ok&&http>=400&&http<500)||atCapacity;
   throw problem({kind,transient:true,definite,message:plain(kind,create?'start':'poll',definite),technical:label,retryAfter});
  }
  async function request(route,method='GET',body){

@@ -351,6 +351,58 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   const create1=rd.calls.create,again=await rd.service.start({...W,...rd.scope,redoOf:started.jobId,redoFormat:'landscape',confirmRedo:true});await rd.service.run({...W,jobId:again.jobId});
   const healed=await rd.service.status({...W,...rd.scope}),healedJob=(await rd.ref.collection('motionJobs').doc(again.jobId).get()).data();ok(rd.calls.create===create1+1&&healed.variants.length===3&&healed.phase==='ready'&&healedJob.masters.portrait.id===job.masters.portrait.id&&healedJob.masters.square.id===job.masters.square.id,'redoing the failed size buys one film, keeps the saved masters and completes the set');
  }
+ // A re-run, a redo of any one film and a resume ask Google for exactly what a first run asks for: the same URL, method, headers and body (reference photograph, prompt,
+ // aspect ratio, output settings) for each orientation. Every new film has its own interaction and its own request id, a resume only polls the saved interaction, a
+ // discarded redo never answers a new press, and every start names the job the background worker must be dispatched to.
+ {
+  const wire=await setup(),W={workspaceId:'design_test'},sent=[],saved=new Set(['v1_pending']);let created=0,busyNow=false;
+  const answer=(status,body)=>({ok:status>=200&&status<300,status,headers:{get:()=>null},text:async()=>typeof body==='string'?body:JSON.stringify(body)}),same=(a,b,m)=>{assert.deepStrictEqual(a,b,m);n++;};
+  const capacity={error:{code:503,status:'UNAVAILABLE',message:'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.'}};
+  const provider=createGeminiVideo({apiKey:'fixture',sleep:async()=>{},fetch:async(url,o)=>{
+   if(url.startsWith('https://storage.googleapis.com/'))return {ok:true,status:200,headers:{get:()=>'video/mp4'},buffer:async()=>Buffer.from('mp4')};
+   sent.push({method:o.method,url,headers:o.headers,body:o.body?JSON.parse(o.body):null});
+   if(o.method==='POST'){if(busyNow)return answer(503,capacity);const id='v1_wire'+(++created);saved.add(id);return answer(200,{id,status:'in_progress'});}
+   const id=url.split('/').pop();return saved.has(id)?answer(200,{id,status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/'+id+'.mp4'}]}]}):answer(404,{error:{code:404,message:'Interaction not found',status:'NOT_FOUND'}});}});
+  wire.D.videoRequest=provider.request;wire.D.videoContent=provider.content;wire.D.sleep=async()=>{};
+  const posts=()=>sent.filter(r=>r.method==='POST'),latest=()=>wire.service.status({...W,...wire.scope}),jobRef=id=>wire.ref.collection('motionJobs').doc(id),dispatchable=r=>r.ok===true&&r.queued===true&&r.workspaceId==='design_test'&&/^motion_[a-f0-9]{40}$/.test(r.jobId);
+  const first=await wire.service.start({...W,...wire.scope});ok(dispatchable(first),'a first run names the job to dispatch');await wire.service.run({...W,jobId:first.jobId});
+  const original=posts().slice(),POST_URL='https://generativelanguage.googleapis.com/v1beta/interactions',byOrientation={portrait:original[0],square:original[1],landscape:original[2]};
+  ok(original.length===3&&original.map(r=>r.body.response_format.aspect_ratio).join()==='9:16,16:9,16:9'&&original.every(r=>r.url===POST_URL&&r.headers['x-goog-api-key']==='fixture'&&r.headers['Api-Revision']),'a first run creates one interaction per orientation');
+  // Re-run: a new job whose three create requests equal the first run's.
+  let state=await latest();const rerun=await wire.service.start({...W,...wire.scope,rerunOf:state.jobId,repairReviewHash:state.repairReviewHash,rerunKey:'wire-rerun-1'});ok(dispatchable(rerun)&&rerun.jobId!==first.jobId,'a re-run is a new job that names itself for dispatch');await wire.service.run({...W,jobId:rerun.jobId});
+  same(posts().slice(3),original,'a re-run asks Google for exactly what a first run asks for');
+  ok(!/CORRECT THESE EARLIER ISSUES/.test(posts()[3].body.input[1].text),'a fresh re-run carries no earlier-findings instruction, empty or otherwise');
+  // Redo of each film: one create, identical to the first run's request for that orientation.
+  for(const format of ['portrait','square','landscape']){
+   state=await latest();const before=posts().length,redo=await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:format,confirmRedo:true});ok(dispatchable(redo),'a redo of the '+format+' film names the job to dispatch');
+   ok((await wire.service.run({...W,jobId:redo.jobId})).ok,'the '+format+' redo completes');
+   same(posts().slice(before),[byOrientation[format]],'the '+format+' redo asks Google for exactly the first run\'s request for that orientation');
+  }
+  // Every created film has its own interaction and its own request id; a redo keeps the other films' saved ids and never reuses one.
+  const films=new Map();for(const row of (await wire.ref.collection('motionJobs').get()).docs)for(const m of Object.values(row.data().masters||{}))films.set(m.id,m.requestId);
+  ok(films.size===created&&created===9&&new Set(films.values()).size===9&&[...films.values()].every(v=>/^[0-9a-f-]{36}$/.test(v)),'nine films, nine interactions, nine unique request ids');
+  // Resume (Check saved progress) of a redo whose film is still being made at Google polls that saved interaction, with the same headers, and buys nothing.
+  state=await latest();const pend=await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:'portrait',confirmRedo:true}),pj=(await jobRef(pend.jobId).get()).data();
+  await jobRef(pend.jobId).update({masters:{...pj.masters,portrait:{id:'v1_pending',status:'in_progress',progress:0,size:'720x1280',requestId:'saved',estimatedUsd:1.0136}}});
+  const at=sent.length,resumed=await wire.service.start({...W,...wire.scope,resumeJobId:pend.jobId});ok(dispatchable(resumed)&&resumed.jobId===pend.jobId,'a resume names the same job to dispatch');
+  ok((await wire.service.run({...W,jobId:pend.jobId})).ok&&sent.length>at&&sent.slice(at).every(r=>r.method==='GET'&&r.url===POST_URL+'/v1_pending')&&created===9,'a resume only polls the saved interaction');
+  same(sent[at].headers,original[0].headers,'a poll carries the same headers as a create');ok((await latest()).phase==='ready','the resumed redo completes');
+  // Google refusing a create outright for capacity (503 with its own UNAVAILABLE error) never queued the film: the redo stops resumable, and Resume asks again once.
+  state=await latest();busyNow=true;const busy=await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:'landscape',confirmRedo:true}),refused=await wire.service.run({...W,jobId:busy.jobId});busyNow=false;
+  const stopped=await latest();ok(refused.ok===false&&stopped.jobId===busy.jobId&&stopped.phase==='needs_attention'&&stopped.canResume&&!stopped.providerWait&&/did not accept the film request/.test(stopped.error)&&created===9,'a capacity refusal leaves the redo resumable with nothing bought');
+  await wire.service.start({...W,...wire.scope,resumeJobId:busy.jobId});ok((await wire.service.run({...W,jobId:busy.jobId})).ok&&created===10&&(await latest()).phase==='ready','Resume asks Google again and buys exactly one film');
+  const gateway=createGeminiVideo({apiKey:'fixture',sleep:async()=>{},fetch:async()=>answer(503,'<html>Bad gateway</html>')});
+  await assert.rejects(()=>gateway.request('interactions','POST',{}),e=>e.transient===true&&e.definiteResponse===false&&/nothing is requested again/.test(e.message));n++;
+  // A redo that was discarded (for example while its create was unconfirmed) never answers the next press: that press is a new attempt that buys one film.
+  state=await latest();const stuck=await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:'square',confirmRedo:true});
+  ok((await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:'square',confirmRedo:true})).jobId===stuck.jobId,'the same press sent twice shares its one job');
+  await jobRef(stuck.jobId).update({phase:'needs_attention',inFlight:{orientation:'square',requestId:'unconfirmed',at:1},error:'Google did not confirm the film request.'});
+  await wire.service.start({...W,...wire.scope,discardJobId:stuck.jobId,confirmDiscard:true});
+  state=await latest();const c0=created,again=await wire.service.start({...W,...wire.scope,redoOf:state.jobId,redoFormat:'square',confirmRedo:true});
+  ok(dispatchable(again)&&again.jobId!==stuck.jobId&&!(await jobRef(again.jobId).get()).data().resetAt,'a redo after a discarded one is a new job, not the cancelled one');
+  ok((await wire.service.run({...W,jobId:again.jobId})).ok&&created===c0+1&&(await latest()).jobId===again.jobId&&(await latest()).phase==='ready','the new attempt buys one film and becomes the current animation');
+  same(posts().slice(-1),[byOrientation.square],'and its request is the first run\'s square request');
+ }
  // Nothing the video model could render as text is ever put in front of it.
  {
   const motion=require('../../netlify/functions/googleAdsAdMotion');

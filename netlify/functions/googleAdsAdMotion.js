@@ -145,6 +145,8 @@ function scrubDirection(job,orientation){
 }
 function motionPrompt(job,orientation,fallback){
  const d=scrubDirection(job,orientation);
+ // Earlier findings are appended only when a targeted fix or bounded repair really names some: never an empty instruction, and never in a fresh full run.
+ const earlier=job.repairOf||job.fixOf?scrubText((job.repairIssues||[]).join(' '),[],[{find:String(job.title||''),to:'piece'}]):'';
  return `Create a ${SECONDS}-second product film of the piece of jewelry in the attached photograph.
 The attached photograph is the product identity reference only. It is not the first frame. Never show it, or any plain studio cut-out of the piece, as a frame of the film.
 
@@ -190,7 +192,7 @@ While the piece stays steady, one to three supporting things from the scene move
 Keep it subtle and never excessive, like a light breeze: it gives the scene life and never draws focus from the piece.
 Nothing covers or touches the front face of the piece, and nothing passes in front of it. The tight framing still shows this scenery beside, behind and below the piece.
 
-${singlePiece.FILM_RULE}${job.repairOf||job.fixOf?'\n\nCORRECT THESE EARLIER ISSUES without altering the piece: '+scrubText((job.repairIssues||[]).join(' '),[],[{find:String(job.title||''),to:'piece'}]):''}`;
+${singlePiece.FILM_RULE}${earlier?'\n\nCORRECT THESE EARLIER ISSUES without altering the piece: '+earlier:''}`;
 }
 const xml=v=>String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function captionCopy(plan){
@@ -245,7 +247,7 @@ function validateCopyFix(value,saved={}){
 // Redo one film on demand. Any format of a finished or stopped animation can be made again, whether or not a review named it: the sizes a
 // person sees, keyed as the saved variants are. A film with no saved master of its own (a failed one) is offered too; one whose master is
 // saved and only awaits composing is not, because resuming composes it for free.
-const REDO_KEYS={portrait:'mobile_portrait',square:'mobile_square',landscape:'desktop_landscape'};
+const REDO_KEYS={portrait:'mobile_portrait',square:'mobile_square',landscape:'desktop_landscape'},REDO_ATTEMPTS=50;
 function redoBlock(job){
  if(!job||job.resetAt)return 'The saved animation was not found.';
  if(!['ready','needs_attention'].includes(job.phase)||job.inFlight||job.leaseUntil>Date.now())return 'Wait for the current video work to finish before redoing a video.';
@@ -406,14 +408,19 @@ function createMotionService(D){
   if(!/^motion_[a-f0-9]{40}$/.test(input.redoOf||''))throw Error('Choose the saved animation to redo a video of.');
   const format=String(input.redoFormat||'');if(!Object.hasOwn(REDO_KEYS,format))throw Error('Choose the portrait, square or landscape video to redo.');
   if(input.confirmRedo!==true)throw Error('Confirm the video to redo before a new film is bought.');
-  const parentRef=jobs(ref).doc(input.redoOf),id='motion_'+hash('redo:v1:'+input.redoOf+':'+format).slice(0,40),target=jobs(ref).doc(id);let plan;
+  // The first press keeps the deterministic id (the same press sent twice shares its one job). A discarded earlier redo of this same film never answers a
+  // new request: it is cancelled and would hand back a job that buys nothing, so the next press is a new attempt, exactly as a re-run's is.
+  const parentRef=jobs(ref).doc(input.redoOf),redoId=n=>'motion_'+hash('redo:v1:'+input.redoOf+':'+format+(n?':attempt:'+n:'')).slice(0,40);let plan,attempt=0;
+  while(attempt<REDO_ATTEMPTS){const earlier=await jobs(ref).doc(redoId(attempt)).get();if(!earlier.exists||!earlier.data().resetAt)break;attempt++;}
+  if(attempt>=REDO_ATTEMPTS)throw Error('This video was discarded and redone too many times. Refresh the panel and redo it from the current animation.');
+  const id=redoId(attempt),target=jobs(ref).doc(id);
   // Only the animation the panel is showing can be redone: another film made since (a fix, a re-run) would otherwise be lost from the copy.
   if(!(await target.get()).exists){
    const shown=await parentRef.get(),pj=shown.exists?shown.data():null;
    if(pj){const latest=(await jobs(ref).get()).docs.map(d=>d.data()).filter(j=>j.productId===pj.productId&&j.groupRef===pj.groupRef&&!j.resetAt).sort((a,b)=>b.createdAt-a.createdAt)[0];if(latest&&latest.id!==pj.id)throw Error('This animation changed since it was loaded. Refresh the panel, then redo the video you want.');}
   }
   await D.fb().db.runTransaction(async tx=>{const current=await tx.get(ref),source=await tx.get(parentRef),existing=await tx.get(target);scope(current.data(),input);if(!source.exists)throw Error('The saved animation was not found.');const parent=source.data();scope(current.data(),parent);
-   if(existing.exists)return;
+   if(existing.exists){if(existing.data().resetAt)throw Error('That redo was discarded a moment ago. Press Redo again.');return;}
    const blocked=redoBlock(parent);if(blocked)throw Error(blocked);
    plan=redoOptions(parent).find(o=>o.format===format);if(!plan)throw Error('The other films of this animation are not all saved yet, so one cannot be redone on its own. Resume the saved animation first.');
    // The same photograph of this listing that made the other films: never a neighbouring listing's.
@@ -421,7 +428,7 @@ function createMotionService(D){
    const masters=clone(parent.masters||{}),composition=parent.composition?clone(parent.composition):null,replaced=(parent.variants||[]).filter(v=>plan.formats.includes(v.key)),old=masters[plan.orientation];
    delete masters[plan.orientation];if(composition)delete composition[plan.orientation];
    const history=replaced.length||old?[{jobId:parent.id,at:Date.now(),format,formats:plan.formats,orientation:plan.orientation,master:old?{id:old.id||null,asset:old.asset||null}:null,variants:replaced.map(v=>({key:v.key,device:v.device,format:v.format,width:v.width,height:v.height,seconds:v.seconds,master:v.master,asset:v.asset,poster:v.poster||null}))}]:[];
-   tx.set(target,{...clone(parent),id,redoOf:parent.id,redoFormat:format,fixOf:null,fixTarget:{kind:'master',category:'redo',index:0,formats:plan.formats,orientation:plan.orientation,estimatedUsd:plan.estimatedUsd,label:'Redone '+format+' video',reason:'Redone on request',evidence:'',correction:''},repairOf:null,recomposeOf:null,photoMotionOf:null,repairIssues:[],masters,composition,variants:(parent.variants||[]).filter(v=>!plan.formats.includes(v.key)),previousVersions:[...(parent.previousVersions||[]),...history],letteringBlocked:false,compositionNotes:(parent.compositionNotes||[]).filter(n=>!plan.formats.some(k=>String(n).startsWith(k))&&!/^Lettering was detected inside the footage/.test(String(n))),stageUsage:[],createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,completedAt:null,quality:null,publication:null,error:null,errorDetail:null,providerWait:false,compositionBlocked:false,estimatedUsd:plan.estimatedUsd,progress:{pct:0,label:'Preparing one new '+format+' video'}});
+   tx.set(target,{...clone(parent),id,redoOf:parent.id,redoFormat:format,redoAttempt:attempt,fixOf:null,fixTarget:{kind:'master',category:'redo',index:0,formats:plan.formats,orientation:plan.orientation,estimatedUsd:plan.estimatedUsd,label:'Redone '+format+' video',reason:'Redone on request',evidence:'',correction:''},repairOf:null,recomposeOf:null,photoMotionOf:null,repairIssues:[],masters,composition,variants:(parent.variants||[]).filter(v=>!plan.formats.includes(v.key)),previousVersions:[...(parent.previousVersions||[]),...history],letteringBlocked:false,compositionNotes:(parent.compositionNotes||[]).filter(n=>!plan.formats.some(k=>String(n).startsWith(k))&&!/^Lettering was detected inside the footage/.test(String(n))),stageUsage:[],createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,completedAt:null,quality:null,publication:null,error:null,errorDetail:null,providerWait:false,compositionBlocked:false,estimatedUsd:plan.estimatedUsd,progress:{pct:0,label:'Preparing one new '+format+' video'}});
   });return {ok:true,workspaceId:input.workspaceId,jobId:id,queued:true,redo:plan};
  }
  async function repair(input){
@@ -457,8 +464,8 @@ function createMotionService(D){
    const id=explicit?attemptId(attempt):repairId,target=jobs(ref).doc(id);
    captionCopy({...parent.plan,renderVersion:10});
    if(explicit)tx.set(counterRef,{attempts:attempt,lastJobId:id,lastKey:rerunKey,lastAt:Date.now(),keys:Object.fromEntries([...Object.entries(seen.keys||{}),...(rerunKey?[[rerunKey,id]]:[])].slice(-10))});
-   // A re-run is a fresh full generation: nothing about an earlier targeted fix, photograph motion, hold or framing note carries into it.
-   tx.set(target,{...clone(parent),...(originals?{originalSources:originals,sourceImages:images}:{}),...(explicit?{rerunAttempt:attempt,rerunKey,fixOf:null,fixTarget:null,photoMotionOf:null,letteringBlocked:false,compositionNotes:[]}:{}),id,redoOf:null,redoFormat:null,previousVersions:[],pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:parent.quality?.issues||(parent.error?[parent.error]:[]),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:explicit?'Preparing a new animation · re-run '+attempt:'Preparing one reviewed animation repair'}});
+   // A re-run is a fresh full generation: nothing about an earlier targeted fix, photograph motion, hold, framing note or review finding carries into it, so its planning and film requests read exactly like a first run's.
+   tx.set(target,{...clone(parent),...(originals?{originalSources:originals,sourceImages:images}:{}),...(explicit?{rerunAttempt:attempt,rerunKey,fixOf:null,fixTarget:null,photoMotionOf:null,letteringBlocked:false,compositionNotes:[]}:{}),id,redoOf:null,redoFormat:null,previousVersions:[],pipelineVersion:PIPELINE,renderVersion:11,motionMode:'generated',compositionBlocked:false,squareMaster:null,composition:null,recomposeOf:null,creativeDirection:null,stageUsage:[],repairOf:parent.id,repairIssues:explicit?[]:(parent.quality?.issues||(parent.error?[parent.error]:[])),createdAt:Date.now(),updatedAt:Date.now(),phase:'queued',owner:null,leaseUntil:0,inFlight:null,masters:{},variants:[],completedAt:null,quality:null,publication:null,error:null,estimatedUsd:mastersFor(PIPELINE).length*SECONDS*OUTPUT_USD_PER_SECOND,progress:{pct:0,label:explicit?'Preparing a new animation · re-run '+attempt:'Preparing one reviewed animation repair'}});
    result={jobId:id,queued:true,...(explicit?{attempt}:{})};
   });return {ok:true,workspaceId:input.workspaceId,...(result||{jobId:repairId,queued:true})};
  }
