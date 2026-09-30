@@ -83,8 +83,12 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
       const missingKeys = new Set(missing.map(t => `s0_slot${Number(t.slotIndex)}`));
       const failures = (latest.results?.failures || []).filter(f => missingKeys.has(f.key) || String(f.key).startsWith('manifest:'));
       const kinds = new Set(failures.map(f => failureKind(f.error)));
+      const failedKeys = new Set((latest.results?.failures || []).map(f => f.key));
+      const paidTasks = latest.sets?.find(s => s.outputBasePath === path)?.tasks || [];
+      const missingPaidOutput = paidTasks.some(task => missingKeys.has(`s0_slot${Number(task.slotIndex)}`) &&
+        !failedKeys.has(`s0_slot${Number(task.slotIndex)}`));
       // A result already paid for must be recovered, never regenerated.
-      if (latest.responsesFile && (kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent)) {
+      if (latest.responsesFile && (missingPaidOutput || kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent)) {
         status = 'saving'; summary.saving++;
         patch = { collected: false, collectionPending: true, recoveryStatus: 'saving', setComplete: false };
       } else if (latest.collected && Number(latest.retryAttempt || 0) < 5 &&

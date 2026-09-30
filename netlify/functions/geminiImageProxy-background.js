@@ -14313,9 +14313,9 @@ async function _handlerImpl(event) {
             retryQueuedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           b.retryRequested = true;
         }
-        if (!b.batchName || b.collected || b.locallyQueued || b.retryBatchName || isFinal(b.state)) continue;
+        if (!b.batchName || b.collected || b.locallyQueued || b.retryBatchName || isFinal(b.state) && !b.collectionPending) continue;
         let state = b.state;
-        if (!isSucceeded(state)) {
+        if (!isSucceeded(state) && !b.collectionPending) {
           let st = await inProcess({ kind: "batch_status", batchName: b.batchName });
           if (normState(st?.state) === "JOB_STATE_PENDING") {
             // Unconfirmed, it simply stays validating; admission keeps treating it so.
@@ -14345,9 +14345,9 @@ async function _handlerImpl(event) {
             }
           }
         }
-        if (isSucceeded(state)) {
-          const col = await inProcess({ kind: "batch_collect", batchName: b.batchName });
-          if (col?.ok) { collected++; b.collected = true; } else collectErrors++;
+        if (isSucceeded(state) || b.collectionPending && b.responsesFile) {
+          const col = await inProcess({ kind: "batch_collect", batchName: b.batchName, force: !isSucceeded(state) });
+          if (col?.ok) { if (col.collected !== false) collected++; b.collected = col.collected !== false; } else collectErrors++;
         }
       }
       // Queue the set of each job cancelled because OpenAI never started it,

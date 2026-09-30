@@ -13,13 +13,14 @@ const { VALIDATION_WAIT_MS } = require("../../netlify/functions/lib/listingBatch
 
 async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 2,
   finishOne = true, validationPolls = 0, existingPending = false, pendingSentAgo = 0,
-  neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [] } = {}) {
+  neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [], extraJobs = [] } = {}) {
   const T0 = Date.parse("2026-09-29T17:00:00Z");
   let clock = T0;
   let providerActive = activeCount;
   let originalFinished = false;
   class Clock extends Date { static now() { return clock; } }
   const jobs = [
+    ...extraJobs,
     ...Array.from({ length: activeCount }, (_, i) => ({ batchName: `batch_running_${i}`,
       state: i === 0 && existingPending ? "JOB_STATE_PENDING" : "JOB_STATE_RUNNING", collected: false,
       ...(i === 0 && pendingSentAgo ? { createdAt: { toMillis: () => T0 - pendingSentAgo } } : {}) })),
@@ -74,6 +75,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
         response = { ok: false, error: { message: "Provider status unavailable" } };
     } else if (payload.kind === "batch_collect") {
       collections.push(payload.batchName);
+      if (payload.batchName === 'batch_cancelled_paid') assert.equal(payload.force, true, 'recover a cancelled job\'s saved output');
       response = { ok: true };
     } else if (payload.kind === "batch_retry_missing") {
       // Admission waits on the job being validated, until it is VALIDATION_WAIT_MS old.
@@ -112,6 +114,11 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
 }
 
 (async () => {
+  const paidRecovery = await runSweep({activeCount:0,waitingCount:0,extraJobs:[{
+    batchName:'batch_cancelled_paid',state:'JOB_STATE_CANCELLED',collected:false,
+    collectionPending:true,responsesFile:'file-paid-results'}]});
+  assert.deepEqual(paidRecovery.collections,['batch_cancelled_paid']);
+  assert.equal(paidRecovery.submissions.length,0,'paid recovery never requests generation');
   const healthy = await runSweep();
   assert.equal(healthy.result.statusCode, 200);
   assert.equal(healthy.result.statusChecked, 30);

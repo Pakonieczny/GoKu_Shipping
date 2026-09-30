@@ -11,7 +11,8 @@ const job = (n, extra = {}) => ({ batchName: `batch_${n}`, sessionId, displayNam
   results:{failedCount:1,failures:[{key:'s0_slot1',error:'Your request was rejected by the safety system'}]}, ...extra });
 async function run() {
   const records = [job(1), job(2), job(3,{results:{failedCount:1,failures:[{key:'s0_slot1',error:'socket hang up'}]}}),
-    job(4,{contentRepairAttempt:1}),job(5,{state:'JOB_STATE_RUNNING',collected:false}),job(6,{state:'JOB_STATE_QUEUED',locallyQueued:true,collected:false,retryRequested:true})];
+    job(4,{contentRepairAttempt:1}),job(5,{state:'JOB_STATE_RUNNING',collected:false}),job(6,{state:'JOB_STATE_QUEUED',locallyQueued:true,collected:false,retryRequested:true}),
+    job(7,{results:{failedCount:0,failures:[],succeededCount:2}}),job(8)];
   // An old pointer and duplicate provider job refer to set 1, not extra listings.
   records.push({...job(1),batchName:'batch_duplicate',createdAt:0,retryBatchName:'batch_1'});
   const files = new Set([`${path(1)}/manifest.json`,`${path(1)}/Slot_1.png`,`${path(1)}/Slot_2.png`,`${path(2)}/Slot_1.png`,`${path(3)}/Slot_1.png`,`${path(4)}/Slot_1.png`]);
@@ -21,8 +22,10 @@ async function run() {
     batch:()=>({set:(ref,value)=>Object.assign(ref,value),commit:async()=>{}}) };
   const bucket = {getFiles:async({prefix})=>[[...files].filter(name=>name.startsWith(prefix)).map(name=>({name}))]};
   const summary = await reconcileSession({db,bucket,collection:'batches',sessionId,timestamp:()=>123,now:()=>123});
-  assert.equal(summary.registered,6);assert.equal(summary.planned,6);
-  assert.equal(summary.complete,1);assert.equal(summary.queued,2);assert.equal(summary.saving,1);assert.equal(summary.blocked,1);assert.equal(summary.active,1);
+  assert.equal(summary.registered,8);assert.equal(summary.planned,8);
+  assert.equal(summary.complete,1);assert.equal(summary.queued,2);assert.equal(summary.saving,3);assert.equal(summary.blocked,1);assert.equal(summary.active,1);
+  assert.equal(records[6].collectionPending,true,'lost successful output is restored without another generation');
+  assert.equal(records[7].collectionPending,true,'recover paid successes before repairing rejected slots');
   assert.equal(records[2].collectionPending,true,'save errors recover existing output');
   assert.equal(records[2].collected,false,'a failed upload stays in the collector');
   assert.equal(records[1].repairPending,true,'partial moderation result gets one substantially clothed correction');
