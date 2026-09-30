@@ -56,7 +56,7 @@ if(require.main===module)(async()=>{
    // The full charm remains inside every crop, including its off-center position.
    const fx=photo.focus.x*photo.width,fy=photo.focus.y*photo.height,fw=photo.focus.width*photo.width,fh=photo.focus.height*photo.height;
    ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');
-   const share=Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height);ok(share>=.35&&share<=.72,board.key+' keeps the charm readable with visible scene context');
+   const share=Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height);ok(share>=.70&&share<=.85,board.key+' keeps the original close product scale with a slight extra margin');
    ok(imageBox.top<=1,board.key+' removes the empty band above the photograph');
    const action=text.find(o=>o.editorRole==='button')?.getObjects().find(o=>'text'in o);
    ok(!action||action.textLines.length===1,board.key+' action stays on one line');
@@ -107,7 +107,7 @@ if(require.main===module)(async()=>{
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
  const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
  // The compact crop preserves scene context instead of filling it with the charm.
- ok(small.height>=focused.height*focused.focus.height*1.4&&small.cropY<focused.height*focused.focus.y,'small placement retains additional context above the complete charm');
+ ok(small.height>=focused.height*focused.focus.height*1.18&&small.height<=focused.height*focused.focus.height*1.22&&small.cropY<focused.height*focused.focus.y,'small placement adds only a modest margin around the complete charm');
  assert.throws(()=>research.validateSubjectFocus({x:.95,y:.8,width:.1,height:.1,confident:true}),/reliably/);checks++;
  assert.throws(()=>research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:false}),/reliably/);checks++;
  ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'},width:1024,height:536}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');
