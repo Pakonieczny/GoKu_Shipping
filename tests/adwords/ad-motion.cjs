@@ -330,6 +330,19 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  const savedRun=await saved.service.run({workspaceId:'design_test',jobId:savedStart.jobId}),savedStatus=await saved.service.status({workspaceId:'design_test',...bunnyScope});
  ok(savedRun.ok&&savedStatus.phase==='ready'&&savedStatus.variants.length===3,'the film made from a saved design runs to three finished sizes ('+savedRun.error+')');
 
+  // One product per film: the prompt forbids a second piece, a photo of side-by-side pieces is cropped to one, and a review that sees two fails the set into the bounded repair.
+  {
+   const solo=require('../../netlify/functions/googleAdsSinglePiece'),motion=require('../../netlify/functions/googleAdsAdMotion');
+   const shapes=async(boxes,bg='#ffffff')=>sharp({create:{width:600,height:300,channels:3,background:bg}}).composite(boxes.map(([left,top,width,height])=>({input:{create:{width,height,channels:3,background:'#8a6a1f'}},left,top}))).jpeg().toBuffer();
+   const pair=await solo.isolate(await shapes([[60,70,140,160],[390,70,140,160]])),one=await solo.isolate(await shapes([[220,70,160,160]])),busy=await solo.isolate(await shapes([[60,70,140,160],[390,70,140,160]],'#b69b74').then(b=>sharp(b).composite([{input:{create:{width:600,height:40,channels:3,background:'#203040'}},left:0,top:0}]).jpeg().toBuffer()));
+   ok(pair&&pair.pieces===2&&(await sharp(pair.buffer).metadata()).width<400,'a photograph of two pieces side by side is cropped to one');
+   ok(one===null&&busy===null,'a single piece, or a scene with no plain background, is sent as it is');
+   const prompt=motion.motionPrompt({title:'Pendant',plan:{},creativeDirection:{setting:'a sunlit riverbank'}},'square','');
+   ok(/ONE PIECE ONLY/.test(prompt)&&/Never two, never a pair, never a set, never side by side/.test(prompt)&&/No grid, no collage, no split frame/.test(prompt)&&/area beyond its middle holds none either/.test(prompt),'every film prompt allows exactly one piece, including beyond the square crop');
+   const two=await setup();two.D.reviewImages=async()=>({pass:true,productFaithful:true,mobileReadable:true,score:98,issues:[],multipleProducts:true});
+   const st=await two.service.start({workspaceId:'design_test',...two.scope});await two.service.run({workspaceId:'design_test',jobId:st.jobId});const state=await two.service.status({workspaceId:'design_test',...two.scope});
+   ok(state.quality.pass===false&&!state.qualityTargetMet&&state.canRepair&&state.quality.issues.some(i=>/more than one piece/.test(i)),'a review that sees two pieces fails a high-scoring set and offers the bounded repair');
+  }
   // A reviewed defect in the square format regenerates only the square master.
   {
    const sf=await setup();sf.D.reviewImages=async()=>{sf.calls.review++;return {pass:false,productFaithful:true,mobileReadable:true,score:85,scores:{messaging:100,layout:100,relevance:100,visualAppeal:85,productRecognition:100},categoryReviews:{messaging:{summary:'',deductions:[]},layout:{summary:'',deductions:[]},visualAppeal:{summary:'',deductions:[{points:15,reason:'Flat lighting',evidence:'mobile_square at 3.5s',correction:'Add a travelling reflection across the metal',kind:'required',formats:['mobile_square']}]},relevance:{summary:'',deductions:[]},productRecognition:{summary:'',deductions:[]}},issues:[]};};
