@@ -331,6 +331,7 @@
     "googleAdsMotionComposition.js",
     "googleAdsMotionPublication.js",
     "googleAdsSalesEvidence.js",
+    "googleAdsSinglePiece.js",
     "googleAdsVersionReview.js",
     "googleAdsVersionSnapshots.js",
     "googleAdsVideoUpload.js",
