@@ -90,6 +90,7 @@ async function originalSubmissionScenario() {
   const submit=async payload=>vm.runInNewContext(`(async()=>{ ${src.slice(start,end)} })()`,{
     kind:'batch_submit', body:clone(payload), modelConfig:{id:'gpt-image-2.5-sunburst',supportsBatch:true},
     apiKeyForImageModel:()=> 'test', batchDocIdFromName:x=>x, getDb:()=>db, BATCHES_COLL:'batches', admissionControl, queuedName,
+    batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
     normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>now}}},
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}),
@@ -173,6 +174,7 @@ async function submitRefusalCountScenario() {
   const result=await vm.runInNewContext(`(async()=>{ ${src.slice(start,end)} })()`,{
     kind:'batch_submit', body, modelConfig:{id:'gpt-image-2.5-sunburst',supportsBatch:true},
     apiKeyForImageModel:()=> 'test', batchDocIdFromName:x=>x, getDb:()=>db, BATCHES_COLL:'batches', admissionControl, queuedName, quotaFailure,
+    batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
     normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>1,increment:n=>({increment:n})}}},
     process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}),

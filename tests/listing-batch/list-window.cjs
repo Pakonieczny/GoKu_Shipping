@@ -103,16 +103,18 @@ const pointer = (n, createdAt, target) => ({ batchName: `batch_local_${n}`, sess
 
   // ---- page: partial view only when the server says so -------------------------
   const loader = cut(page, "    async function refreshBatchJobsPanel() {", "    // Normalize state for both legacy");
+  const dashboard = cut(page, "    function _renderBatchDashboard(sessions, response) {", "    async function refreshBatchJobsPanel() {");
   const shown = async (resp) => {
     const seen = [];
     const el = { innerHTML: "", querySelectorAll: () => [] };
     const nodes = { batchJobsList: el, batchRefreshStatus: { textContent: "", style: {} } };
     const api = vm.runInNewContext(`let _batchListSeq = 0, _batchListDataSeq = 0, _batchPanelSeq = 0, _lastBatchList = [],
       _batchSweepInfo = null, _batchNextSweepAt = null, _batchRetryLimit = 30, _batchListLoadedAt = 0;
-      ${loader}; ({ refresh: refreshBatchJobsPanel })`, {
+      ${dashboard}\n${loader}; ({ refresh: refreshBatchJobsPanel })`, {
       document: { getElementById: (id) => nodes[id] || null }, postJson: async () => resp, console, Date,
       _renderSessionBlock: (s) => { seen.push({ id: s.sessionId, truncated: !!s.historyTruncated }); return ""; },
       _startBatchAutoPoll: () => {}, _batchSafeText: String,
+      _normBatchState: x => x, _awaitingStallRestart: () => false, _batchInFlight: false,
     });
     await api.refresh();
     return JSON.parse(JSON.stringify(seen));

@@ -2683,6 +2683,12 @@ html.gs-locked body > *:not(#gate){display:none!important}
 /* Batch progress: readable summary first, diagnostics on demand. */
 #batchJobsPanel { font-size:15px; line-height:1.6; }
 #batchJobsPanel .batch-card { padding:24px; border:1px solid var(--line); border-radius:12px; background:var(--card-2); }
+#batchJobsPanel .batch-ready { padding:20px; border:1px solid #3d7752; border-radius:12px; background:#152b20; }
+#batchJobsPanel .batch-ready strong { display:block; font-size:21px; color:#a3edb6; }
+#batchJobsPanel .batch-ready p { margin:8px 0 0; }
+#batchJobsPanel .batch-history { margin-top:16px; }
+#batchJobsPanel .batch-history > summary { font-weight:650; font-size:17px; }
+#batchJobsPanel .batch-history .batch-card { margin-top:12px; }
 #batchJobsPanel .batch-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px 20px; }
 #batchJobsPanel .batch-status { font-size:19px; font-weight:650; }
 #batchJobsPanel .batch-date { color:var(--text-2); font-size:14px; }
@@ -12110,6 +12116,21 @@ These requirements take precedence over any instruction to duplicate a reference
     //   3. Build per-set task list.
     // Then call batch_submit ONCE with all sets. Server handles JSONL.
     // ------------------------------------------------------------
+    async function prepareBatchSources(category, slotPlan) {
+      await ensureStorageSignedIn();
+      // Validate once before allocating anything. A 300-set batch previously
+      // repeated these same listings/download-URL lookups 2,400 times each.
+      const folders = [...new Set(slotPlan.map(spec => `${ROOT}/${category}/${spec.folder}`))];
+      const files = new Map(await Promise.all(folders.map(async folder => {
+        const result = await listAll(ref(storage, folder));
+        const items = (result.items || []).filter(item => /\.(png|jpe?g|webp)$/i.test(item.name));
+        if (!items.length) throw new Error(`No source images in ${folder}/. Add images before queueing this batch.`);
+        return [folder, items];
+      })));
+      const prompts = slotPlan.map((spec, index) => spec.type === "copy" ? null : buildSlotPrompt(category, spec.folder, index + 1));
+      return { files, prompts };
+    }
+
     async function runBatchModeSubmission() {
       if (_batchInFlight) return;
       const count = parseInt(batchGenerateCountInput?.value || "0", 10);
@@ -12154,6 +12175,8 @@ These requirements take precedence over any instruction to duplicate a reference
 
       _batchInFlight = true;
       _batchCancelRequested = false;
+      const readyNotice = document.getElementById("batchReadiness");
+      if (readyNotice) readyNotice.hidden = true;
       if (imageModelSelect) imageModelSelect.disabled = true;
       batchProgress.style.display = "block";
       cancelBatchBtn.style.display = "none"; // batch submit is fast, no cancel mid-flight
@@ -12164,6 +12187,8 @@ These requirements take precedence over any instruction to duplicate a reference
       _setBatchProgress(0, count, "Allocating Set_N for each…");
 
       try {
+        _setBatchProgress(0, count, "Checking source images and prompts…");
+        const sources = await prepareBatchSources(category, slotPlan);
         // Pick UNIQUE charms — one per set — from the shared pool.
         // The server returns charms not currently reserved by any
         // other in-flight batch, ensuring no two sets share a charm
@@ -12233,8 +12258,8 @@ These requirements take precedence over any instruction to duplicate a reference
           for (let s = 0; s < slotPlan.length; s++) {
             const spec = slotPlan[s];
             const srcFolder = `${ROOT}/${category}/${spec.folder}`;
-            const srcRandom = await listRandomFile(srcFolder);
-            if (!srcRandom) throw new Error(`No files in ${srcFolder}/`);
+            const choices = sources.files.get(srcFolder);
+            const srcRandom = choices[Math.floor(Math.random() * choices.length)];
             if (spec.type === "copy") {
               tasks.push({
                 type: "copy",
@@ -12248,7 +12273,7 @@ These requirements take precedence over any instruction to duplicate a reference
                 input_storage_path: srcRandom.fullPath,
                 input_charm_storage_path:
                   await charmPathForSlot(charmPathForSet, category, spec.folder, s + 1),
-                prompt: buildSlotPrompt(category, spec.folder, s + 1),
+                prompt: sources.prompts[s],
               });
             }
           }
@@ -13164,6 +13189,31 @@ Click the button again to permanently delete eligible temporary files, or cancel
     const _batchSafeText = (value) => String(value ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
+    function _renderBatchDashboard(sessions, response) {
+      const hasWork = b => !b.retryBatchName && !b.setComplete && (b.collectionPending || b.repairPending ||
+        !b.collected && (b.retryRequested || _awaitingStallRestart(b) ||
+          ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "JOB_STATE_SUCCEEDED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))));
+      const finished = s => /^completed(?:_with_issues)?$/.test(s.summary?.status || "") &&
+        !s.summary.pending && !s.batches.some(hasWork);
+      const history = sessions.filter(s => finished(s) || s.historyTruncated && !s.summary && !s.batches.some(hasWork));
+      const active = sessions.filter(s => !history.includes(s));
+      const latestFinished = sessions.find(finished);
+      const pending = sessions.some(s => s.batches.some(hasWork) || Number(s.summary?.pending || 0) > 0);
+      const healthy = response.sweep?.lastSweepAt && Date.now() - response.sweep.lastSweepAt < 25 * 60000 &&
+        !response.sweep.lastError && !response.admissionError && !response.admission?.busy &&
+        !(response.admission?.cooldownUntil > Date.now());
+      const ready = latestFinished && !pending && healthy && !_batchInFlight;
+      const issues = latestFinished?.summary?.sets?.filter(s => s.status === "blocked" || s.status === "cancelled") || [];
+      const notice = ready ? `<div id="batchReadiness" class="batch-ready" role="status" aria-live="polite">
+        <strong>✓ Ready for another batch</strong>
+        <p>All batch processing is finished. Choose your set count above, then select <b>Queue sets</b>.</p>
+        <p>Last batch: ${latestFinished.summary.processed} processed · ${latestFinished.summary.complete} saved${issues.length ? ` · ${issues.length} issue${issues.length === 1 ? "" : "s"}` : ""}.</p>
+        ${issues.length ? `<p>${issues.slice(0, 3).map(s => `Set_${s.setN}`).join(", ")}${issues.length > 3 ? " and other listings" : ""} need${issues.length === 1 ? "s" : ""} attention. Previous issues do not block a new batch; details are saved in batch history.</p>` : ""}
+      </div>` : "";
+      return notice + active.map(_renderSessionBlock).join("") + (history.length
+        ? `<details class="batch-history" data-batch-detail="history"><summary>Batch history (${history.length})${latestFinished ? " · ✓ Latest batch completed" : ""}</summary>${history.map(_renderSessionBlock).join("")}</details>` : "");
+    }
+
     async function refreshBatchJobsPanel() {
       const listEl = document.getElementById("batchJobsList");
       if (!listEl) return;
@@ -13219,7 +13269,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const sessionList = [...sessions.values()].sort((a, b) => b.earliest - a.earliest);
         const expanded = new Set([...listEl.querySelectorAll("details[data-batch-detail][open]")]
           .map((el) => el.getAttribute("data-batch-detail")));
-        listEl.innerHTML = sessionList.map((s) => _renderSessionBlock(s)).join("");
+        listEl.innerHTML = _renderBatchDashboard(sessionList, resp);
         listEl.querySelectorAll("details[data-batch-detail]").forEach((el) => {
           el.open = expanded.has(el.getAttribute("data-batch-detail"));
         });
@@ -13389,10 +13439,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const allDone = plannedSets > 0 && processed === plannedSets && notSubmitted === 0 &&
         !running && !waitingRetries && !restarting && !audit?.saving &&
         (!session.historyTruncated || !!audit);
-      const elapsedMs = allDone && session.latest
-        ? session.latest - session.earliest
+      const finishedAt = audit?.finishedAt || session.latest;
+      const elapsedMs = allDone && finishedAt
+        ? finishedAt - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
-      const endStr = allDone && session.latest ? new Date(session.latest).toLocaleString() : null;
+      const endStr = allDone && finishedAt ? new Date(finishedAt).toLocaleString() : null;
       const sweep = _batchSweepInfo;
       const sweepIsRunning = !!sweep?.runningSince && Date.now() - sweep.runningSince < 12 * 60 * 1000;
       const refilling = waitingRetries > 0 && running < _batchRetryLimit && sweepIsRunning &&
@@ -13587,14 +13638,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
       return `
         <section class="batch-card">
           <div class="batch-heading">
-            <div class="batch-status" style="color:${headlineColor};">${headline}</div>
+            <div class="batch-status" style="color:${headlineColor};">${allDone ? '<span aria-label="Completed">✓</span> ' : ""}${headline}</div>
             <div class="batch-date">${_batchSafeText(sessionLabel)}</div>
           </div>
           ${progressHtml}
           ${activity ? `<div>${_batchSafeText(activity)}</div>` : ""}
           ${queueExplanation}
           ${allDone ? unresolvedHtml : ""}
-          ${lastSavedAt ? `<div class="batch-meta">Last set saved ${Date.now() - lastSavedAt > 86400000 ? new Date(lastSavedAt).toLocaleDateString() : `${shortTime(lastSavedAt)} · ${Math.floor((Date.now() - lastSavedAt) / 60000)} min ago`}</div>` : ""}
+          ${allDone && endStr ? `<div class="batch-meta">Completed ${_batchSafeText(endStr)} · Saved in batch history</div>` : lastSavedAt ? `<div class="batch-meta">Last set saved ${Date.now() - lastSavedAt > 86400000 ? new Date(lastSavedAt).toLocaleDateString() : `${shortTime(lastSavedAt)} · ${Math.floor((Date.now() - lastSavedAt) / 60000)} min ago`}</div>` : ""}
           ${alertHtml}
           <details class="batch-details" data-batch-detail="${_batchSafeText(session.sessionId)}">
             <summary>Details &amp; actions</summary>

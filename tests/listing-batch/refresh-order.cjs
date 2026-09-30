@@ -31,6 +31,7 @@ function page() {
     _renderSessionBlock: (s) => `[${s.batches.filter((b) => b.collected).length} saved]`,
     _startBatchAutoPoll: () => {},
     _isCharmMakerBatch: () => false,
+    _normBatchState: x => x, _awaitingStallRestart: () => false, _batchInFlight: false,
     console,
     Date,
   };

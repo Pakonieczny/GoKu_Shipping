@@ -1,4 +1,5 @@
 'use strict';
+const { batchCharmPaths } = require('./listingBatchReservations.cjs');
 
 const SESSIONS_COLL = 'ListingGenerator1Sessions';
 const ACTIVE = new Set(['JOB_STATE_PENDING', 'JOB_STATE_RUNNING']);
@@ -66,10 +67,11 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     // Backfill compact dashboard metadata while the background audit already
     // has the task records. Progress reads must never download their prompts.
     const setKeys = (record.sets || []).map(set => set.outputBasePath).filter(Boolean);
-    const metadata = { setKeys, setsCount: (record.sets || []).length,
+    const metadata = { setKeys, charmPaths: batchCharmPaths(record), setsCount: (record.sets || []).length,
       requestCount: record.routes?.length ?? (record.sets || []).reduce((n, set) =>
         n + (set.tasks || []).filter(task => task.type !== 'copy').length, 0) };
     if (JSON.stringify(record.setKeys) !== JSON.stringify(setKeys) ||
+        JSON.stringify(record.charmPaths) !== JSON.stringify(metadata.charmPaths) ||
         record.setsCount !== metadata.setsCount || record.requestCount !== metadata.requestCount)
       updates.push({ ref: record.ref, patch: metadata });
     if (record.retryBatchName && record.repairPending)

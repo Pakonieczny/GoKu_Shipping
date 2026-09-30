@@ -113,6 +113,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     if (!branches[body.kind]) throw new Error(`unexpected call ${body.kind}`);
     try {
       return await vm.runInNewContext(`(async () => { ${branches[body.kind]} })()`, { ...lib, ...provider,
+        batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
         kind: body.kind, body, getDb: () => db, BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
         batchDocIdFromName: (x) => x, batchApiKey: () => "key", firestoreRetry: (fn) => fn(),
         getGeminiBatchJob: async (_key, name) => provider.normalizeOpenAIBatch(live.get(name)),

@@ -6,6 +6,7 @@
 const admin = require("./firebaseAdmin");
 const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
+const { batchCharmPaths, readReservedCharms } = require("./lib/listingBatchReservations.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
   neverStarted, VALIDATION_WAIT_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
@@ -14714,24 +14715,10 @@ async function _handlerImpl(event) {
         return json(200, { ok: true, charms: [], poolSize: 0, reservedCount: 0 });
       }
 
-      // Step 2: enumerate reservations from uncollected batches.
+      // Step 2: verify live reservations using compact metadata. Old failed
+      // attempts must not load their prompts or reserve charms indefinitely.
       const db = getDb();
-      const reservedSet = new Set();
-      try {
-        const snap = await db.collection(BATCHES_COLL)
-          .where("collected", "==", false).get();
-        snap.forEach((doc) => {
-          const sets = Array.isArray(doc.data()?.sets) ? doc.data().sets : [];
-          for (const s of sets) {
-            for (const t of (s.tasks || [])) {
-              const p = t?.input_charm_storage_path;
-              if (p) reservedSet.add(p);
-            }
-          }
-        });
-      } catch (e) {
-        console.warn("charm_pool_pick: failed to enumerate reservations", e?.message || e);
-      }
+      const reservedSet = await readReservedCharms(db, BATCHES_COLL);
 
       // Step 3: filter and return.
       const available = poolPaths.filter((p) => !reservedSet.has(p));
@@ -14748,7 +14735,7 @@ async function _handlerImpl(event) {
         ok: true,
         charms: picked,
         poolSize: poolPaths.length,
-        reservedCount: reservedSet.size,
+        reservedCount: poolPaths.filter(path => reservedSet.has(path)).length,
         availableCount: available.length,
       });
     }
@@ -14982,6 +14969,7 @@ async function _handlerImpl(event) {
               state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true,
               retryAttempt: 0, collected: false, model: batchModel, imageSize, sets,
               setKeys: sets.map(s => s.outputBasePath), setsCount: sets.length,
+              charmPaths: batchCharmPaths({ sets }),
               requestCount: sets.reduce((n, s) => n + s.tasks.filter(t => t.type !== "copy").length, 0),
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -15241,6 +15229,7 @@ async function _handlerImpl(event) {
         inputFileName: fileName,
         inputJsonlBytes: jsonlBytes,
         setKeys: sets.map(s => s.outputBasePath), setsCount: sets.length, requestCount: routes.length,
+        charmPaths: batchCharmPaths({ sets }),
         // sets metadata (so we can route + write manifests later)
         sets: sets.map((s) => ({
           category: s.category,
@@ -15595,6 +15584,7 @@ async function _handlerImpl(event) {
           collected: false, model: saved.model || null, imageSize: saved.imageSize || "2K",
           sets: [{ ...set, tasks: missingTasks, allTasks }], retryOf: batchName,
           setKeys: [set.outputBasePath], setsCount: 1, requestCount: toGenerate.length,
+          charmPaths: batchCharmPaths({ sets: [{ ...set, tasks: missingTasks, allTasks }] }),
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -16278,6 +16268,9 @@ async function _handlerImpl(event) {
       const sessions = (await Promise.all(sessionIds.map(async sessionId =>
         (await db.collection(SESSIONS_COLL).doc(sessionId).get()).data()))).filter(Boolean);
       return json(200, { ok: true, batches: out.slice(0, limit), sessions, truncated, sweep, nextSweepAt,
+        admission: { busy: !!admissionInfo.owner && (admissionInfo.phase === "creating" ||
+          Date.now() - Number(admissionInfo.startedAt || 0) < 15 * 60000),
+          cooldownUntil: admissionInfo.blockedAtActive === 0 ? Number(admissionInfo.blockedAt || 0) + 15 * 60000 : null },
         retryActiveLimit: 30, admissionError: admissionInfo.lastError || null });
     }
 
