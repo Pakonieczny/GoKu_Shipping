@@ -212,6 +212,7 @@
     "_etsyPricingScheme.js",
     "_googleAdsCampaignOptions.js",
     "_googleAdsClaude.js",
+    "_googleAdsPmaxCatalog.js",
     "_googleAdsPmaxKeywords.js",
     "_googleAdsPmaxResearch.js",
     "_googleAdsPmaxStructure.js",

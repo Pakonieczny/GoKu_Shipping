@@ -160,6 +160,32 @@ test('an open panel stays open when the card is drawn again', () => {
   ctx.PMAX_UI = {};
 });
 
+test('a catalogue-scan idea shows its label, the measured basis, each factor and the facts for each ticked listing', () => {
+  const o = fresh(), id0 = o.itemIds[0];
+  o.opportunity = { version: 1, kind: 'new', label: 'New idea', rankScore: 59.2, confidence: { score: 60, label: 'Medium' }, season: null,
+    factors: [{ key: 'season', label: 'Season fit', points: 16, max: 20, available: true, detail: 'Christmas is 87 days away (Dec 25).' }, { key: 'demand', label: 'Search demand', points: 0, max: 15, available: false, detail: 'Search volumes were not available.' }],
+    reasons: ['Christmas is 87 days away (Dec 25).', 'Its median price is USD 38.00, about 65% margin.', 'None of its 6 listings has shown in a product campaign in the last 90 days.', 'A fourth reason that is not drawn.'],
+    cautions: ['No order of these products has been recorded yet.'], testPlan: { dailyBudget: 10, days: 30, budgetNote: 'USD 10 a day for 30 days.', success: ['Orders at or above the break-even return of 1.54'], stop: ['USD 60 spent with no purchase'] },
+    listings: [{ itemId: id0, title: 'Silver Star Necklace', facts: ['Price USD 38.00, about 65% margin', 'No product-ad impressions in 90 days'] }, { itemId: 'not-ticked', title: 'Hidden Listing', facts: ['Has a listing photo'] }] };
+  const markup = drawn([o]), head = cardHead(markup);
+  has(head, 'pmxKind is-new', 'NEW IDEA', '>Basis<', 'Christmas is 87 days away (Dec 25).', 'about 65% margin');
+  assert(!text(head).includes('A fourth reason') && head.includes('+1 more'), 'the card shows the first three reasons');
+  assert(markup.includes('The strongest few from your whole product feed'), 'header names what the scan does');
+  const plain = text(ctx.pmaxRecommendationHtml(o, ctx.pmaxRecommendation(o, [id0], 10)));
+  assert.match(plain, /New idea . scored 59 of 100/); assert.match(plain, /Season fit 16 of 20 points Christmas is 87 days away/);
+  assert.match(plain, /Search demand not measured Search volumes were not available/);
+  assert.match(plain, /What to watch No order of these products has been recorded yet\./);
+  assert.match(plain, /How to run the test USD 10 a day for 30 days\..*Keep going if Orders at or above.*Stop if USD 60 spent/);
+  assert.match(plain, /Facts for each listing Silver Star Necklace Price USD 38\.00, about 65% margin . No product-ad impressions in 90 days/);
+  assert(!plain.includes('Hidden Listing'), 'only ticked listings show their facts');
+  tags(markup);
+  const none = text(ctx.pmaxRecommendationHtml(o, ctx.pmaxRecommendation(o, [], 10)));
+  assert.match(none, /None of these listings is selected\. Tick a listing under Products to feature to see its facts\./);
+  const proven = fresh(); proven.opportunity = Object.assign(clone(o.opportunity), { kind: 'proven', label: 'Proven seller' });
+  has(drawn([proven]), 'pmxKind is-proven', 'PROVEN SELLER');
+  assert(!drawn([legacy()]).includes('pmxKind') && !cardHead(drawn([fresh()])).includes('>Basis<'), 'cards without a measured opportunity are unchanged');
+});
+
 test('the fold opens with the dated reasoning above the existing evidence and forecast', () => {
   const o = fresh(), r = ctx.pmaxRecommendation(o, o.itemIds, 12), fold = ctx.pmaxRecommendationHtml(o, r), plain = text(fold);
   const order = ['>Why now<', '>Listings that fit<', '>Search themes<', '>Creative angles<', '>What we could not check<', '>Purchases support a reach test<', '>Your sales history<', '>What this test could deliver<'].map(k => fold.indexOf(k));

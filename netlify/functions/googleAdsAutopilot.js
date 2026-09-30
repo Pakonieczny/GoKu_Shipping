@@ -2672,7 +2672,7 @@ const _RESEARCH_SOURCE_NAMES = {
   pmax_shopify_backfill: "Recent Shopify orders", pmax_store_signals: "Store sales signals", pmax_merchant_catalogue: "Product catalogue",
   pmax_paid_product_reporting: "Paid product history", pmax_merchant_organic_30d: "Merchant free-listing reports", pmax_merchant_organic_90d: "Merchant free-listing reports",
   pmax_organic_offer_discovery: "Extra free-listing sellers", pmax_candidate_scoring: "Product matching", pmax_ai_selector: "Idea selection", pmax_selector_fallback: "Idea selection",
-  pmax_interim_save: "Saving results", pmax_pipeline: "Product ads scan", pmax_calendar: "Season calendar", pmax_keyword_research: "Keyword volumes", pmax_ai_research: "AI research"
+  pmax_interim_save: "Saving results", pmax_pipeline: "Product ads scan", pmax_calendar: "Season calendar", pmax_keyword_research: "Keyword volumes", pmax_ai_research: "AI research", pmax_catalogue_read: "Full product catalogue", pmax_catalogue_ideas: "Untested catalogue ideas"
 };
 function _researchSourceKey(id) {
   id = String(id || "");
@@ -4063,6 +4063,28 @@ async function merchantProducts({ force = false, itemIds = [], signals = [], tit
   return list;
 }
 
+// The whole linked catalogue, one bounded read per market feed, so products that never sold can be ideas too. Read-only Google Ads
+// shopping_product queries of the same kind merchantProducts already makes; no Etsy, no Shopify and no model call. Optional: the caller
+// treats a failure as "only sold products were considered" and says so.
+async function merchantCatalogue({ markets = [], known = [], limit = 8000 } = {}) {
+  const merchantId = String(await merchantCenterId()).replace(/\D/g, ""), labels = new Set();
+  (markets || []).forEach(m => { const v = String(m || "").trim().toUpperCase(); if (/^[A-Z]{2}$/.test(v)) labels.add(v === "GB" ? "UK" : v); });
+  (known || []).forEach(p => { const v = String((p && p.feedLabel) || "").trim().toUpperCase(); if (v) labels.add(v); });
+  if (!labels.size) { labels.add("CA"); labels.add("US"); }
+  const found = new Map(), diag = { merchantId, labels: [...labels].slice(0, 4), rows: 0, truncated: false, errors: [] };
+  for (const label of [...labels].slice(0, 4)) {
+    try {
+      const rows = await _merchantGaql(`shopping_product.merchant_center_id = ${merchantId} AND shopping_product.feed_label = ${_gaqlString(label)}`, limit);
+      diag.rows += rows.length; if (rows.length >= limit) diag.truncated = true;
+      rows.forEach(r => { const row = _merchantProductRow(r.shoppingProduct || {}, merchantId); if (row) found.set(String(row.feedLabel || "").toUpperCase() + "|" + row.itemId.toLowerCase(), row); });
+    } catch (e) { diag.errors.push(_auditText(e && e.message || e, 200)); if (_isGadsQuotaError(e)) break; }
+  }
+  const list = [...found.values()];
+  list._diag = diag;
+  if (!list.length && diag.errors.length) throw new Error(diag.errors[0]);
+  return list;
+}
+
 // Product-level paid feedback loop for retail PMax. This is the missing bridge
 // between what the feed sold organically and what paid Shopping/PMax traffic has
 // already proven or wasted. Failures are non-fatal so opportunity scans still run.
@@ -4585,17 +4607,18 @@ async function _pmaxAttachResearch(selected, o) {
     detail: mains.length ? `Today is ${today}. Main occasion${mains.length === 1 ? "" : "s"}: ${mains.map(m => `${m.label} on ${m.date}${m.daysAway != null ? ` (${m.daysAway} days away)` : ""}`).join("; ")}.` : `Today is ${today}. No dated occasion fits the run window for these markets, so the ideas are treated as evergreen.`,
     meta: { today, ideas: n, main: mains.map(m => ({ label: m.label, date: m.date, daysAway: m.daysAway })) } });
   // 2) Keywords: candidate phrases from the listings and the season, one read-only Keyword Planner call for every idea together (cached).
-  const todo = per.filter(p => !p.reuse), seeds = [], geo = [];
+  const todo = per.filter(p => !p.reuse), seeds = [], geo = [], perSeeds = Math.max(5, Math.min(20, Math.floor(60 / Math.max(1, todo.length))));
   todo.forEach(p => {
     const prof = (o.profiles || []).find(x => x && x.handle === p.c.handle) || {};
     const tags = (Array.isArray(prof.listingTags) ? prof.listingTags : []).map(x => x && (x.t || x)).filter(x => typeof x === "string" && x).slice(0, 10);
     try { p.cands = K.keywordCandidates(p.c, { today, timing: p.timing, tags, markets: p.mk, brandSafe }) || []; } catch (e) { p.cands = []; p.kwErr = e; }
-    try { (K.plannerSeeds(p.cands, 20) || []).forEach(s => { if (s && !seeds.includes(s)) seeds.push(s); }); } catch (e) {}
+    try { (K.plannerSeeds(p.cands, perSeeds) || []).forEach(s => { if (s && !seeds.includes(s)) seeds.push(s); }); } catch (e) {}
     p.geo.forEach(g => { if (!geo.includes(g)) geo.push(g); });
   });
-  const kwT = Date.now(), kwSeeds = seeds.slice(0, 60);
-  let pool = null, kwFail = null;
-  if (kwSeeds.length) {
+  // The planner answer read before the strongest ideas were chosen is reused, so one Generate press makes one planner request.
+  const pre = o.preKeywords || null, kwT = pre ? pre.startedAt : Date.now(), kwSeeds = pre ? pre.seeds : seeds.slice(0, 60);
+  let pool = pre ? pre.pool : null, kwFail = pre ? pre.fail : null;
+  if (!pre && kwSeeds.length) {
     try { pool = await _withTimeout(keywordResearchPool(kwSeeds, geo.length ? geo : (o.geoIds || undefined)), 90000, "Keyword volumes"); } catch (e) { kwFail = e; }
     if (pool && !pool.ok) kwFail = kwFail || new Error(pool.error || "Google returned no data");
   }
@@ -4650,39 +4673,127 @@ async function _pmaxAttachResearch(selected, o) {
 // test). `days` follows the schedule, so the card's planned spend (daily budget x days) is the spend of the run it describes.
 function _pmaxAttachSchedule(selected, { today, orderCutoffDays }) {
   (selected || []).forEach(c => {
-    const main = (Array.isArray(c._timing) ? c._timing : []).find(t => t && t.role === "main");
-    let s = main ? _scheduleFor({ kind: "pmax", today, event: { label: main.label, date: main.date, market: main.market }, orderCutoffDays }) : null;
+    const main = (Array.isArray(c._timing) ? c._timing : []).find(t => t && t.role === "main"), own = c.opportunity && c.opportunity.season;
+    // An idea whose own theme has a dated occasion still ahead (Mother's Day for a family charm) is scheduled for that occasion, not the market's nearest one.
+    let s = own && (own.role === "main" || own.role === "also") && own.daysAway <= 150 ? _scheduleFor({ kind: "pmax", today, event: { label: own.label, date: own.date, market: own.market }, orderCutoffDays }) : null;
+    if (s && s.verdict === "too_short") s = null;
+    if (!s) s = main ? _scheduleFor({ kind: "pmax", today, event: { label: main.label, date: main.date, market: main.market }, orderCutoffDays }) : null;
     if (!s || s.verdict === "too_short") s = _scheduleFor({ kind: "pmax", today, event: null, orderCutoffDays });
     if (!s) return;
     c.schedule = s; c.days = Math.max(21, Math.min(45, Math.round(Number(s.days)) || Number(c.days) || 42));
   });
 }
+// ---- Product ads ideas from the whole catalogue: the same measured facts score every idea, proven or untested ----
+function _pmaxCatalogModule() { try { return require("./_googleAdsPmaxCatalog"); } catch (e) { return null; } }
+// Everything the ideas are scored on comes from data the scan already holds: the feed rows, the sales, the occasion calendar, the paid
+// and free-listing reports and (once read) Keyword Planner volumes. Nothing here calls Google, Shopify, Etsy or a model.
+function _pmaxCatalogBrain(o) {
+  const { PC, catalogue, merchant, candidates, collections, profiles, taken, setup, paid, free30, free90, sig30, sig90, sig365, prevList, bc } = o, R = (_pmaxResearchModules() || {}).R || null;
+  const key = PC.offerKey, excludeIds = new Set(), coveredIds = new Set(), cur = bc && bc !== "account-currency" ? bc : "";
+  candidates.forEach(c => (c.itemIds || []).forEach(id => excludeIds.add(key({ feedLabel: c.feedLabel, itemId: id }))));
+  (prevList || []).forEach(x => { if (!x || !Array.isArray(x.itemIds)) return; const t = taken[_pmaxTag(x.handle, x.feedLabel)] || taken[_pmaxTag(x.handle, null)]; if (t && t.status !== "REMOVED") x.itemIds.forEach(id => coveredIds.add(key({ feedLabel: x.feedLabel, itemId: id }))); });
+  const paidOk = !!(paid && paid.complete && !paid.error), paidById = paidOk ? (paid.byId || {}) : null;
+  if (paidById) catalogue.forEach(p => { const r = paidById[String(p.itemId).toLowerCase()]; if (r && ((Number(r.impressions) || 0) > 0 || (Number(r.clicks) || 0) > 0)) coveredIds.add(key(p)); });
+  const cat = PC.prepare({ offers: catalogue, helpers: { isEligible: _pmaxIsEligible, brandSafe, titleProblem: _merchantTitleProblem }, excludeIds, coveredIds, profiles, collections, today: setup.today, defaults: setup.defaults });
+  const occ = {}, marketsUsed = new Set(cat.units.map(u => u.market)); candidates.forEach(c => marketsUsed.add(_pmaxMarketsOf(c, setup.defaults)[0]));
+  if (R) marketsUsed.forEach(m => { occ[m] = {}; _pmaxUpcomingOccasions(setup.today, [m]).forEach(x => { try { const t = (R.timingWindows({ today: setup.today, occasions: [x], markets: [m], orderCutoffDays: setup.orderCutoffDays }) || [])[0]; if (t) occ[m][x.label] = t; } catch (e) {} }); });
+  let accountRoas = null;
+  if (paid && paid.monetaryComplete && Array.isArray(paid.rows)) { const cost = paid.rows.reduce((n, x) => n + (Number(x.cost) || 0), 0), value = paid.rows.reduce((n, x) => n + (Number(x.value) || 0), 0); if (cost > 0) accountRoas = _r2(value / cost); }
+  const ctx = { today: setup.today, currency: cur, marginFor: _marginRateForText, occ: R ? occ : null, gifting: ["Black Friday", "Cyber Monday", "Christmas", "Valentine's Day", "Mother's Day", "Galentine's Day"], freshCut: cat.freshCut, paidById,
+    free30ById: (free30 && free30.byId) || null, accountRoas, titleProblem: _merchantTitleProblem, breakEven: _r2(1 / MARGIN_RATES.default) };
+  const offerBy = new Map(merchant.map(p => [key(p), p])), offersOf = c => (c.itemIds || []).map(id => offerBy.get(key({ feedLabel: c.feedLabel, itemId: id }))).filter(Boolean);
+  const priceCur = offers => (offers.find(x => Number(x.price) > 0 && x.currency) || {}).currency || cur;
+  const scoreUnit = (u, kw) => PC.score({ kind: "new", offers: u.offers, market: u.market, theme: u.theme, typeLabel: u.label, keywords: kw || null, priceCurrency: priceCur(u.offers) }, ctx);
+  const scoreProven = (c, kw) => {
+    const dom = PC.dominant(c.productTitles || []), et = c.evidenceTotals || {}, fp = (c.freePerformance && c.freePerformance.days30) || {}, pp = c.paidPerformance || {}, offers = offersOf(c);
+    return PC.score({ kind: "proven", offers, market: _pmaxMarketsOf(c, setup.defaults)[0], theme: dom.theme, typeLabel: PC.unitLabel(dom.theme, dom.type), keywords: kw || null, priceCurrency: priceCur(offers), confidence: c.confidence,
+      sales: { orders: et.orders, orders30: et.orders30d, free30: fp.conversions, paidConv: pp.conversions }, paid: pp, free30conv: fp.conversions }, ctx);
+  };
+  // The facts about each chosen listing: its own feed row, its own sales (proven), its own product-ad and free-listing history.
+  const listingsOf = c => {
+    const sold = new Map(); (c.demandEvidence || []).forEach(r => (r.itemIds || []).forEach(id => { const x = sold.get(String(id)) || { orders: 0, orders30: 0 }; x.orders += Number(r.orders) || 0; x.orders30 += Number(r.orders30d) || 0; sold.set(String(id), x); }));
+    const offers = offersOf(c).sort((a, b) => ((sold.get(String(b.itemId)) || {}).orders || 0) - ((sold.get(String(a.itemId)) || {}).orders || 0));
+    return offers.slice(0, 8).map(mp => ({ itemId: mp.itemId, title: String(mp.title).slice(0, 120), facts: PC.listingFacts(mp, ctx, sold.get(String(mp.itemId))) }));
+  };
+  const days = paid && paid.days || 90, freeSum = (rep, list) => { const a = { impressions: 0, clicks: 0, conversions: 0, value: 0, valueCurrency: "USD", valueComplete: true, valuesByCurrency: {}, conversionRate: null, available: !!(rep && rep.complete && !rep.error) };
+    list.forEach(mp => { const x = ((rep && rep.byId) || {})[String(mp.itemId).toLowerCase()]; if (!x) return; a.impressions += Number(x.impressions) || 0; a.clicks += Number(x.clicks) || 0; a.conversions += Number(x.conversions) || 0; a.value += Number(x.value) || 0; if (x.valueComplete === false) a.valueComplete = false; });
+    a.conversions = _r2(a.conversions); a.value = a.valueComplete ? _r2(a.value) : null; return a; };
+  const ideaFrom = (u, col, opp) => {
+    const scoped = u.offers, ids = scoped.map(mp => mp.itemId), avail = paidOk, econ = opp.econ, idOf = mp => (String(mp.itemId).match(/^shopify_[A-Z]{2}_(\d+)_(\d+)$/i) || [])[1] || null;
+    const paidPerf = { impressions: 0, clicks: 0, conversions: 0, cost: avail ? 0 : null, value: avail ? 0 : null, available: avail, monetaryComplete: avail, currency: "USD", days, roas: null, cpa: null };
+    const f30 = freeSum(free30, scoped), f90 = freeSum(free90, scoped);
+    return { handle: col.handle, collectionTitle: u.label, pageTitle: col.title, feedLabel: u.feedLabel || null, score: opp.rankScore, merchantScore: 0, confidence: opp.confidence.score, itemIds: ids,
+      productTitles: [...new Set(scoped.map(mp => mp.title))].slice(0, 30), evidence: [], demandEvidence: [], recommendationSchema: 1, salesCurrency: CURRENCY,
+      demandCoverage: { days30: !!(sig30 && sig30.complete), days90: !!(sig90 && sig90.complete), monetaryComplete: !!(sig30 && sig30.monetaryComplete && sig90 && sig90.monetaryComplete) },
+      seasonalityCoverage: { days: 365, complete: !!(sig365 && sig365.complete && sig365.historicalImport && sig365.historicalImport.complete), historyComplete: false, coverage: sig365 && sig365.historyCoverage || "Monthly history is unavailable", startAt: sig365 && sig365.startAt || null, endAt: sig365 && sig365.endAt || null },
+      evidenceDays: sig90 ? 90 : 30, evidenceTotals: { orders: 0, revenue: 0, orders30d: 0, revenue30d: 0 }, estimatedProfit30d: 0, evidenceRevenue30d: 0, marginRate: econ ? _r2(econ.margin) : MARGIN_RATES.default,
+      breakEvenRoas: econ ? econ.breakEven : ctx.breakEven, recommendedTargetRoas: 0, biddingMode: "MAXIMIZE_CONVERSION_VALUE_LEARNING", paidPerformance: paidPerf,
+      freePerformance: { days30: f30, days90: f90, source: f30.available && f90.available ? "Merchant API reports" : "No free-listing report" }, opportunityClass: "untested_catalog_idea",
+      offerDetails: scoped.map(mp => ({ itemId: mp.itemId, title: mp.title, productTitle: mp.title, productId: idOf(mp), type1: mp.type1 || null, type2: mp.type2 || null, feedLabel: mp.feedLabel, customLabels: mp.customLabels || [], evidenceIds: [], ..._offerPreviewFields(mp),
+        paidPerformance: { impressions: 0, clicks: 0, conversions: 0, cost: 0, value: 0, currency: "USD", available: avail }, freePerformance: { days30: { ...freeSum(free30, [mp]) }, days90: { ...freeSum(free90, [mp]) } } })),
+      forecastBaselines: _pmaxForecastBaselines(scoped, paid), types: [], opportunity: opp };
+  };
+  return { cat, ctx, scoreUnit, scoreProven, listingsOf, ideaFrom, offersOf };
+}
+// One read-only Keyword Planner call for the ideas being compared, before the strongest are chosen. The research step reuses this answer,
+// so a Generate press still makes a single planner request. Returns null when the helper modules are missing.
+async function _pmaxPreKeywords(ideas, setup, profiles, geoIds, isoByGeo) {
+  const mods = _pmaxResearchModules(); if (mods.error || !ideas.length) return null;
+  const { R, K } = mods, per = Math.max(3, Math.min(20, Math.floor(60 / ideas.length))), seeds = [], geo = [], byKey = new Map();
+  ideas.forEach(c => {
+    const mk = _pmaxMarketsOf(c, setup.defaults), g = _pmaxGeoIds(mk, isoByGeo || setup.isoByGeo), prof = (profiles || []).find(x => x && x.handle === c.handle) || {};
+    const tags = (Array.isArray(prof.listingTags) ? prof.listingTags : []).map(x => x && (x.t || x)).filter(x => typeof x === "string" && x).slice(0, 10);
+    let timing = []; try { timing = R.timingWindows({ today: setup.today, occasions: _pmaxUpcomingOccasions(setup.today, mk), markets: mk, orderCutoffDays: setup.orderCutoffDays }) || []; } catch (e) {}
+    let cands = []; try { cands = K.keywordCandidates(c, { today: setup.today, timing, tags, markets: mk, brandSafe }) || []; } catch (e) {}
+    try { (K.plannerSeeds(cands, per) || []).forEach(x => { if (x && !seeds.includes(x)) seeds.push(x); }); } catch (e) {}
+    g.forEach(x => { if (!geo.includes(x)) geo.push(x); });
+    byKey.set(String(c.handle) + "|" + String(c.feedLabel || ""), cands);
+  });
+  const startedAt = Date.now(), kwSeeds = seeds.slice(0, 60); let pool = null, fail = null;
+  if (kwSeeds.length) { try { pool = await _withTimeout(keywordResearchPool(kwSeeds, geo.length ? geo : (geoIds || undefined)), 90000, "Keyword volumes"); } catch (e) { fail = e; } if (pool && !pool.ok) fail = fail || new Error(pool.error || "Google returned no data"); }
+  const ideasByText = (pool && pool.ideasByText) || {};
+  return { pool, fail, seeds: kwSeeds, geo, startedAt, ideasByText, keywordsOf: c => { try { return mods.K.rankKeywords(byKey.get(String(c.handle) + "|" + String(c.feedLabel || "")) || [], ideasByText, { limit: 12 }) || []; } catch (e) { return []; } } };
+}
 // "Why so few (or no) ideas": real counts at each rule, plus a plain reason for each collection left out.
-function _pmaxFunnelBuild({ funnel = null, freeCount = 0, allTaken = false, shown = 0, rows = [], blocker = null, at = Date.now() } = {}) {
+function _pmaxFunnelBuild({ funnel = null, freeCount = 0, allTaken = false, shown = 0, rows = [], blocker = null, at = Date.now(), catalog = null, newShown = 0, heldCount = null } = {}) {
   const f = Object.assign({ collections: 0, withSales: 0, noOffers: 0, matched: 0, afterOverlap: 0, kept: 0, overlapDropped: 0, capDropped: 0 }, funnel || {});
   const num = v => Math.max(0, Math.round(Number(v) || 0)), pl = (k, w) => `${k} ${w}${k === 1 ? "" : "s"}`;
-  const noSales = num(f.collections) - num(f.withSales), inUse = num(f.kept) - num(freeCount), pool = allTaken ? num(f.kept) : num(freeCount), held = Math.max(0, pool - num(shown));
+  const noSales = num(f.collections) - num(f.withSales), inUse = num(f.kept) - num(freeCount), pool = allTaken ? num(f.kept) : num(freeCount), held = heldCount != null ? num(heldCount) : Math.max(0, pool - num(shown));
+  const cs = catalog && typeof catalog === "object" ? catalog : null, cst = (cs && cs.stats) || {};
   const stages = [
     { key: "collections", label: "Collections looked at", count: num(f.collections), note: "Each collection's best-selling and newest listings are checked against store sales." },
     { key: "sales", label: "With sales in the last 90 days", count: num(f.withSales), note: noSales > 0 ? `${pl(noSales, "collection")} had no sale that matched one of its products.` : "Every collection had a matching sale." },
     { key: "products", label: "Ideas matched to a live, eligible product", count: num(f.matched), note: "Counted per collection and feed market." + (num(f.noOffers) ? ` ${pl(num(f.noOffers), "collection")} sold but had no product that is in stock and approved.` : "") },
     { key: "overlap", label: "After removing overlaps with a stronger idea", count: num(f.kept), note: num(f.overlapDropped) || num(f.capDropped) ? [num(f.overlapDropped) ? `${num(f.overlapDropped)} dropped for sharing products with a stronger idea.` : "", num(f.capDropped) ? `${num(f.capDropped)} cut to keep the strongest.` : ""].filter(Boolean).join(" ") : "No overlaps." },
-    { key: "free", label: "Not already in use by a campaign or draft", count: allTaken ? 0 : num(freeCount), note: allTaken && num(f.kept) ? "All of them already have a campaign or review draft, so they are shown as in use." : inUse > 0 ? `${inUse} already ${inUse === 1 ? "has" : "have"} a campaign or review draft.` : "None are in use yet." },
-    { key: "shown", label: "Shown as ideas", count: num(shown), note: held > 0 ? `Only the best 3 are shown; ${held} held back.` : "Best first." }
+    { key: "free", label: "Not already in use by a campaign or draft", count: allTaken ? 0 : num(freeCount), note: allTaken && num(f.kept) ? "All of them already have a campaign or review draft, so they are shown as in use." : inUse > 0 ? `${inUse} already ${inUse === 1 ? "has" : "have"} a campaign or review draft.` : "None are in use yet." }
   ];
+  if (cs) {
+    stages.push(
+      { key: "catalogue", label: "Catalogue products in stock and approved", count: num(cst.eligible), note: cs.readError ? `The full catalogue could not be read: ${cs.readError}.` : `${num(cst.read).toLocaleString("en-US")} products read from the feed; ${num(cst.eligible).toLocaleString("en-US")} are in stock and approved${num(cst.unsafe) + num(cst.offMarket) ? `, ${num(cst.unsafe) + num(cst.offMarket)} of them failed the brand-safety or market check` : ""}.` },
+      { key: "themes", label: "Untested themes from products not yet advertised", count: num(cst.units), note: `Left after removing ${num(cst.sold)} that already sold and ${num(cst.covered)} already in a campaign or draft. ${num(cst.thin) ? pl(num(cst.thin), "theme") + " had a single listing." : ""}`.trim() },
+      { key: "evidence", label: "Ideas with measured facts behind them", count: num(cs.grounded), note: cs.weakNote || "Each needs measured search volume or a dated occasion, plus a usable listing set." });
+  }
+  stages.push({ key: "shown", label: "Shown as ideas", count: num(shown), note: held > 0 ? `Only the strongest five (six at most) are shown; ${held} held back.` : "Best first." });
   // One row per left-out idea that could have been shown; the many "nothing sold" collections share one row per reason.
-  const order = { taken: 0, overlap: 1, held: 2, cap: 3, no_offers: 4, no_sales: 5 }, single = rows.filter(r => !["no_sales", "no_offers"].includes(r.kind)), skipped = [];
+  const order = { taken: 0, overlap: 1, held: 2, cap: 3, cat_weak: 4, cat_taken: 5, cat_same: 6, cat_nocoll: 7, no_offers: 8, no_sales: 9 }, grouped = ["no_offers", "no_sales", "cat_weak", "cat_taken", "cat_same", "cat_nocoll"], single = rows.filter(r => !grouped.includes(r.kind)), skipped = [];
   single.sort((a, b) => (order[a.kind] - order[b.kind])).forEach(r => skipped.push({ title: String(r.title || "").slice(0, 80), feedLabel: r.feedLabel || null, reason: String(r.reason || "").slice(0, 140) }));
-  ["no_offers", "no_sales"].forEach(kind => {
+  grouped.forEach(kind => {
     const g = rows.filter(r => r.kind === kind); if (!g.length) return;
     const names = g.slice(0, 3).map(r => r.title).join(", ") + (g.length > 3 ? ` and ${g.length - 3} more` : "");
     skipped.push({ title: names.slice(0, 80), feedLabel: null, reason: String(g[0].reason).slice(0, 140) });
   });
   let verdict;
   if (num(shown) > 0) {
-    verdict = `${pl(num(shown), "idea")} shown from ${pl(num(f.collections), "collection")}.`;
-    if (allTaken) verdict += " All of them already have a campaign or review draft.";
-    else if (num(shown) < 3 && skipped.length) verdict += " The rest were left out for the reasons listed.";
+    if (cs) {
+      const np = num(shown) - num(newShown);
+      verdict = `${pl(num(shown), "idea")} shown: ${pl(np, "proven seller")} and ${pl(num(newShown), "new idea")}, each with its facts.`;
+      if (cs.readError) verdict += ` Only products that sold were considered: the full catalogue could not be read (${cs.readError}).`;
+      else if (num(shown) < 5 && cs.limit) verdict += ` Fewer than five because ${cs.limit}.`;
+    } else {
+      verdict = `${pl(num(shown), "idea")} shown from ${pl(num(f.collections), "collection")}.`;
+      if (allTaken) verdict += " All of them already have a campaign or review draft.";
+      else if (num(shown) < 3 && skipped.length) verdict += " The rest were left out for the reasons listed.";
+    }
   } else verdict = `None qualified: ${String(blocker || "no collection met every rule").replace(/[\s.]+$/, "")}.`;
   return { at, stages, skipped: skipped.slice(0, 8), verdict: verdict.slice(0, 240) };
 }
@@ -4753,6 +4864,15 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
       if(verified.filter(_pmaxIsEligible).length&&!merchantErr)await emit({id:"pmax_merchant_catalogue",category:"Google Ads API",label:"Linked Merchant Center catalogue",status:"ok",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,detail:`${merchant.length} total verified offers; ${merchant.filter(_pmaxIsEligible).length} eligible/in-stock. Includes additional sellers discovered from direct organic conversions.`,source:"Google Ads shopping_product",meta:{merchantOffers:merchant.length,organicDiscoveryOffers:verified.length}});
     }catch(e){await emit({id:"pmax_organic_offer_discovery",category:"Merchant API",label:"Verify additional organic sellers",status:"warning",startedAt:discoveryAt,endedAt:Date.now(),tookMs:Date.now()-discoveryAt,error:_auditText(e&&e.message,220),detail:"Additional converting offers could not be verified; their performance remains reported but they are not guessed into a new campaign.",source:"Google Ads shopping_product"});}
   }
+  // The whole linked catalogue, read-only, so products that never sold can become ideas too. A failed read leaves the sold-product ideas.
+  let catalogue = [], catalogueErr = null; const catT = Date.now();
+  await emit({id:"pmax_catalogue_read",category:"Google Ads API",label:"Full catalogue read",status:"running",startedAt:catT,detail:"Reading every product in the linked feed to find untested ideas beyond recent sales."});
+  try { catalogue = (await _withTimeout(merchantCatalogue({ markets: markets || [], known: merchant }), 170000, "Merchant catalogue")) || [];
+    const cd = catalogue._diag || {};
+    await emit({id:"pmax_catalogue_read",category:"Google Ads API",label:"Full catalogue read",status:cd.errors&&cd.errors.length?"warning":"ok",startedAt:catT,endedAt:Date.now(),tookMs:Date.now()-catT,detail:`${catalogue.length} products read${cd.labels?" from feed"+(cd.labels.length===1?"":"s")+" "+cd.labels.join(", "):""}${cd.truncated?"; the read stopped at its row limit":""}.`,source:"Google Ads shopping_product (read-only)",error:(cd.errors&&cd.errors[0])||null,fallback:cd.errors&&cd.errors.length?"Feeds that could not be read are left out.":null,meta:{rows:catalogue.length,labels:cd.labels||[],truncated:!!cd.truncated}});
+  } catch (e) { catalogueErr = _plainReason(e); await emit({id:"pmax_catalogue_read",category:"Google Ads API",label:"Full catalogue read",status:"warning",startedAt:catT,endedAt:Date.now(),tookMs:Date.now()-catT,error:catalogueErr,detail:"The full catalogue could not be read.",fallback:"Only products that already sold are considered."}); }
+  if (catalogue.length) { const offerId = p => String(p.feedLabel||"").toUpperCase()+"|"+String(p.itemId||"").toLowerCase(), seen = new Set(merchant.map(offerId)), extra = catalogue.filter(p => !seen.has(offerId(p)));
+    if (extra.length) { const diag = merchant._diag; merchant = merchant.concat(extra); merchant._diag = diag; } }
   const candidates = pmaxCandidatesFromSignals({ collections, profiles, sig30, sig90, sig365, merchant, paid, merchantFree30, merchantFree90 });
   await emit({id:"pmax_candidate_scoring",category:"Ranking",label:"PMax candidate matching and scoring",status:candidates.length?"ok":"warning",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,
     detail:`${candidates.length} market-specific candidate(s) built from ${merchant.length} verified offers.`,source:"Deterministic product/economic scoring",meta:{candidates:candidates.length,merchantOffers:merchant.length}});
@@ -4762,10 +4882,20 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
     return { list: [], error: merchantErr ? ("Merchant Center catalogue read failed: " + merchantErr) : "The linked Merchant Center catalogue returned no products", at: Date.now(),
       pmaxFunnel: _pmaxFunnelBuild({ funnel: funnelIn, blocker: merchantErr ? `the Merchant Center product read failed (${why})` : `the Merchant Center product read returned no products${why ? " (" + why + ")" : ", so check that the feed is linked to Google Ads and holds products"}` }) };
   }
-  if (!candidates.length) {
-    const f0 = funnelIn || {};
+  let taken = {}; try { taken = await takenTags(); } catch (e) {}
+  const isTaken = c => !!(taken[_pmaxTag(c.handle,c.feedLabel)] || taken[_pmaxTag(c.handle,null)]);
+  const setup = await _pmaxResearchSetup({ today, markets, isoByGeo, geoIds, orderCutoffDays });
+  // Every idea, proven or untested, is scored on the same measured facts (sales, season dates, search volume, price and margin, listing
+  // quality, newness, catalogue gap, known performance). The catalogue module is pure; when it is missing the sold-product ideas stand alone.
+  const PC = _pmaxCatalogModule();
+  let brain = null;
+  if (PC) { try { brain = _pmaxCatalogBrain({ PC, catalogue, merchant, candidates, collections, profiles, taken, setup, paid, free30: merchantFree30, free90: merchantFree90, sig30, sig90, sig365, prevList: await _pmaxPreviousList(), bc }); } catch (e) { brain = null; catalogueErr = catalogueErr || _plainReason(e); } }
+  const unitsLeft = brain ? brain.cat.units.filter(u => !u.noCollection).length : 0;
+  if (!candidates.length && !unitsLeft) {
+    const f0 = funnelIn || {}, cst = brain ? brain.cat.stats : null;
     const blocker = !(profiles || []).length ? "no collections were available to check"
       : (!sig30 && !sig90) ? "the store's recent order history could not be read"
+      : (cst && cst.read && !catalogueErr) ? PC.limiter(cst, { noCollectionOffers: brain.cat.units.filter(u => u.noCollection).reduce((n, u) => n + u.offers.length, 0) })
       : !f0.withSales ? "no sales in the last 90 days matched a product in your collections"
       : "the products that sold are out of stock, not approved or missing from the Merchant Center feed";
     return { list: [], error: "No eligible Merchant Center offers could be matched to recent store sales", at: Date.now(), pmaxFunnel: _pmaxFunnelBuild({ funnel: funnelIn, blocker }) };
@@ -4773,11 +4903,9 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
   // Preserve every qualified source of real product demand. A free-listing winner
   // must not hide a different product with stronger direct or unknown-source sales.
   const qualified = candidates;
-  let taken = {}; try { taken = await takenTags(); } catch (e) {}
-  const isTaken = c => !!(taken[_pmaxTag(c.handle,c.feedLabel)] || taken[_pmaxTag(c.handle,null)]);
   const unused = qualified.filter(c => !isTaken(c)), allTaken = !unused.length;
   const pool = (unused.length ? unused : qualified).slice(0, 6);
-  const setup = await _pmaxResearchSetup({ today, markets, isoByGeo, geoIds, orderCutoffDays }), timingText = _pmaxSelectorTiming(setup, pool);
+  const timingText = _pmaxSelectorTiming(setup, pool);
   const merchantOrders30 = Number(sig30 && sig30.merchantOrganicOrders) || 0;
   const merchantRevenue30 = Math.round(Number(sig30 && sig30.merchantOrganicRevenue) || 0);
   const fallbackOrganic30 = Math.round(Number(sig30 && sig30.organicRevenue) || 0);
@@ -4786,8 +4914,8 @@ async function proposePmaxOpportunities({ collections = [], profiles = [], ceili
     orders:s.orders,verifiedPurchaseOrders:s.verifiedPurchaseOrders,purchaseStatusUnknownOrders:s.purchaseStatusUnknownOrders,totalRevenue:s.totalRevenue,organicOrders:s.organicOrders,organicRevenue:s.organicRevenue,merchantOrganicOrders:s.merchantOrganicOrders,merchantOrganicRevenue:s.merchantOrganicRevenue,paidOrders:s.paidOrders,paidRevenue:s.paidRevenue,directOrUnknownOrders:s.directOrUnknownOrders,otherNonpaidOrUnknownOrders:s.otherNonpaidOrUnknownOrders,monetaryComplete:s.monetaryComplete,valuesByCurrency:s.valuesByCurrency,
     topProducts:(s.topProducts||[]).slice(0,8).map(p=>({name:p.name,productId:p.productId,variantId:p.variantId,orders:p.orders,units:p.units,revenue:p.revenue,organic:p.organic,paid:p.paid,directOrUnknown:p.directOrUnknown}))}:null;
   let selected = [], pmaxLearning = null;
-  t = Date.now(); await emit({id:"pmax_ai_selector",category:"AI",label:"PMax opportunity selector",status:"running",startedAt:t,detail:`Selecting up to 3 non-overlapping campaigns from ${pool.length} deterministic candidate(s).`});
-  try {
+  t = Date.now(); if (pool.length) await emit({id:"pmax_ai_selector",category:"AI",label:"PMax opportunity selector",status:"running",startedAt:t,detail:`Selecting up to 3 non-overlapping campaigns from ${pool.length} deterministic candidate(s).`});
+  if (pool.length) try {
     const pmaxBook = await playbookSlice({channel:"pmax",horizonDays:30,collections:pool.map(c=>c.handle),categories:["copy","creative","products","audience","landingPage","budget","structure"]});
     const promptData = pool.map(c => ({ handle:c.handle, feedLabel:c.feedLabel, collectionTitle:c.collectionTitle, score:c.score, merchantScore:c.merchantScore,
       itemCount:c.itemIds.length, productTitles:c.productTitles, evidence:c.evidence.slice(0,5), confidence:c.confidence,
@@ -4831,9 +4959,55 @@ Choose 3 market-specific, non-overlapping candidates when the list above holds 3
   } else {
     await emit({id:"pmax_selector_fallback",category:"Ranking",label:"PMax deterministic fallback",status:"skipped",startedAt:Date.now(),endedAt:Date.now(),tookMs:0,detail:"Not needed; AI selections were valid."});
   }
+  // ---- The strongest five (six at most): proven sellers and untested catalogue ideas, scored on the same measured facts ----
+  // The selector above names proven sellers; every other sold-product candidate and every untested theme that has a free collection page is
+  // scored too. Only ideas with facts behind them are kept (see grounded() in _googleAdsPmaxCatalog.js); weak ones are dropped, never used as filler.
+  const selKeys = new Set(selected.map(pickKey)), extraProven = (allTaken ? [] : unused).filter(c => !selKeys.has(pickKey(c))).map(c => ranked(c));
+  let newIdeas = [], preKw = null, heldRows = [], weakRows = [], unitRows = [], consideredCount = 0, groundedNew = 0, weakNew = [];
+  const scoreOf = (c, kw) => { try { return c._unit ? brain.scoreUnit(c._unit, kw) : brain.scoreProven(c, kw); } catch (e) { return null; } };
+  if (brain) {
+    const units = brain.cat.units; units.forEach(u => { u._opp = brain.scoreUnit(u, null); });
+    units.sort((a, b) => b._opp.rankScore - a._opp.rankScore || b.total - a.total || a.label.localeCompare(b.label));
+    const asg = PC.assign(units, { isTaken: (h, f) => !!(taken[_pmaxTag(h, f)] || taken[_pmaxTag(h, null)]), usedKeys: qualified.map(c => _pmaxTag(c.handle, c.feedLabel)), tagOf: _pmaxTag });
+    asg.dropped.forEach(d => unitRows.push({ kind: d.kind === "taken" ? "cat_taken" : d.kind === "same_collection" ? "cat_same" : "cat_nocoll", title: d.unit.label, feedLabel: d.unit.feedLabel || null,
+      reason: d.kind === "taken" ? "its collection page already has a campaign or review draft" : d.kind === "same_collection" ? "shares its collection page with a stronger idea" : "no collection page matches this theme to link an ad to" }));
+    newIdeas = asg.picked.slice(0, 12).map(({ unit, collection }) => {
+      const c = brain.ideaFrom(unit, collection, unit._opp); Object.defineProperty(c, "_unit", { value: unit, enumerable: false, writable: true, configurable: true });
+      c.dailyBudget = 6; c.days = 28; c.searchThemes = _derivePmaxSearchThemes(c); c.rationale = String(unit._opp.reasons[0] || unit.label).slice(0, 150); c.angle = "Test an untested catalogue idea"; return c;
+    });
+    const proven = (allTaken && newIdeas.length ? [] : selected.concat(extraProven));
+    if (newIdeas.length) preKw = await _pmaxPreKeywords(proven.slice(0, 8).concat(newIdeas), setup, profiles, geoIds, isoByGeo);
+    const everyone = proven.concat(newIdeas); consideredCount = everyone.length;
+    everyone.forEach(c => { const o = scoreOf(c, preKw ? preKw.keywordsOf(c) : null); if (o) c.opportunity = o; });
+    const sel = PC.select(everyone.filter(c => c.opportunity).map(c => ({ kind: c.opportunity.kind, opportunity: c.opportunity, c })));
+    selected = sel.shown.map(w => w.c);
+    sel.held.forEach(w => heldRows.push({ kind: "held", title: w.c.collectionTitle, feedLabel: w.c.feedLabel || null, reason: "held back: only the strongest five (six at most) are shown" }));
+    sel.weak.forEach(w => { const why = (w.opportunity.grounded && w.opportunity.grounded.why) || "too few facts could be measured";
+      if (w.kind === "new") { weakNew.push(why); weakRows.push({ kind: "cat_weak", title: w.c.collectionTitle, feedLabel: w.c.feedLabel || null, reason: "not enough measured facts: " + why }); }
+      else heldRows.push({ kind: "held", title: w.c.collectionTitle, feedLabel: w.c.feedLabel || null, reason: "left out: " + why }); });
+    groundedNew = newIdeas.filter(c => c.opportunity && c.opportunity.grounded && c.opportunity.grounded.ok).length;
+    if (allTaken && newIdeas.length) qualified.forEach(c => heldRows.push({ kind: "taken", title: c.collectionTitle, feedLabel: c.feedLabel || null, reason: "already has a campaign or review draft" }));
+    if (preKw) await emit({ id: "pmax_catalogue_ideas", category: "Ranking", label: "Untested catalogue ideas", status: "ok", startedAt: preKw.startedAt, endedAt: Date.now(), tookMs: Date.now() - preKw.startedAt, source: "Deterministic facts from the feed, sales, season calendar and Keyword Planner",
+      detail: `${newIdeas.length} untested theme(s) and ${proven.length} proven seller(s) compared; ${sel.shown.length} kept with facts behind them.`, meta: { themes: units.length, compared: everyone.length, kept: sel.shown.length } });
+  }
+  if (!selected.length && brain) {
+    const wk = {}; weakNew.forEach(w => { wk[w] = (wk[w] || 0) + 1; }); const weakWhy = Object.keys(wk).sort((a, b) => wk[b] - wk[a])[0] || null, cst = brain.cat.stats;
+    const blocker = catalogueErr ? `the full catalogue could not be read (${catalogueErr}) and the products that sold have too little sales evidence to rank`
+      : PC.limiter(cst, { weakUnits: weakNew.length, weakWhy, takenUnits: unitRows.filter(r => r.kind === "cat_taken").length, sameUnits: unitRows.filter(r => r.kind === "cat_same").length, noCollectionOffers: brain.cat.units.filter(u => u.noCollection).reduce((n, u) => n + u.offers.length, 0) });
+    return { list: [], error: "No product had enough measured facts to recommend a Product ads test", at: Date.now(), pmaxFunnel: _pmaxFunnelBuild({ funnel: funnelIn, freeCount: unused.length, allTaken, shown: 0, rows: unitRows.concat(weakRows, heldRows), blocker, heldCount: 0, catalog: (catalogue.length || catalogueErr) ? { stats: cst, readError: catalogueErr, grounded: groundedNew } : null }) };
+  }
   // Season timing, keywords and the reasoning for each idea: this is what the card shows.
-  await _pmaxAttachResearch(selected, { ...setup, profiles, emit });
+  await _pmaxAttachResearch(selected, { ...setup, profiles, emit, preKeywords: preKw });
   _pmaxAttachSchedule(selected, setup);
+  // The final facts use the keyword volumes the research step ranked, the run length the schedule chose, and each chosen listing's own numbers.
+  if (brain) {
+    selected.forEach(c => { if (!c.opportunity) return; const kw = c.research && Array.isArray(c.research.keywords) && c.research.keywords.length ? c.research.keywords : (preKw ? preKw.keywordsOf(c) : null), o = scoreOf(c, kw); if (!o) return;
+      o.listings = brain.listingsOf(c);
+      if (o.kind === "new") { o.testPlan = PC.testPlan(o, { currency: brain.ctx.currency, days: c.days, dailyBudget: c.dailyBudget, judgeAfter: c.schedule && c.schedule.judgeAfter, today: setup.today, accountRoas: brain.ctx.accountRoas }); c.confidence = o.confidence.score; c.score = o.rankScore; }
+      c.opportunity = o; });
+    selected.sort((a, b) => ((b.opportunity && b.opportunity.rankScore) || 0) - ((a.opportunity && a.opportunity.rankScore) || 0));
+    selected.forEach((c, i) => { const next = selected[i + 1]; c.rankingContext = { rank: i + 1, candidateCount: Math.max(consideredCount, selected.length), alternative: next ? { title: next.collectionTitle, score: next.opportunity ? next.opportunity.rankScore : next.score } : null }; });
+  }
   const reportContext=await _reportContext().catch(()=>null),budgetToEvidenceFx=reportContext?await _withTimeout(_fxRateToUsd(reportContext.accountToday),8000,"Current budget exchange rate").catch(()=>null):null;
   const list = selected.map(c => {
     const ev = c.evidence || [], merchantEv = ev.filter(x => String(x.source).indexOf("merchant-free") >= 0);
@@ -4847,6 +5021,7 @@ Choose 3 market-specific, non-overlapping candidates when the list above holds 3
       offerDetails:c.offerDetails, searchThemes:c.searchThemes||_derivePmaxSearchThemes(c),
       ...(c.research ? { research:c.research, researchFingerprint:c.researchFingerprint||null } : {}),
       ...(c.schedule ? { schedule:c.schedule } : {}),
+      ...(c.opportunity ? { opportunity:c.opportunity } : {}), ...(c.pageTitle ? { pageTitle:c.pageTitle } : {}),
       merchantReportsConfigured:!!merchantFree30.configured,merchantReportWarning:merchantFree30.error||merchantFree90.error||null,merchantReportCode:merchantFree30.errorCode||merchantFree90.errorCode||null,
       salesEvidence:{source:"Shopify order log",attributionBasis:"Shopify order date",currency:CURRENCY,days30:salesEvidenceUtil.compactPeriod(sig30),days90:salesEvidenceUtil.compactPeriod(sig90),overlap:"Merchant conversions and Shopify orders are separate, potentially overlapping measures."},
       organic:{ evidenceDays:c.evidenceDays, matchedProductOrders:orders, matchedProductRevenue:Math.round(revenue), orders30d:sig30?Number(c.evidenceTotals&&c.evidenceTotals.orders30d)||0:null, organicRevenue30d:sig30?Number(c.evidenceTotals&&c.evidenceTotals.revenue30d)||0:null, merchantMatchedProducts:merchantEv.length,
@@ -4856,8 +5031,18 @@ Choose 3 market-specific, non-overlapping candidates when the list above holds 3
   // Why these ideas and not others: the real count at each rule, and a plain reason for each collection left out.
   const shownKeys = new Set(selected.map(pickKey)), freePool = allTaken ? qualified : unused, fRows = ((funnelIn && funnelIn.skipped) || []).slice();
   if (!allTaken) qualified.filter(isTaken).forEach(c => fRows.push({ kind:"taken", title:c.collectionTitle, feedLabel:c.feedLabel||null, reason:"already has a campaign or review draft" }));
-  freePool.filter(c => !shownKeys.has(pickKey(c))).forEach(c => fRows.push({ kind:"held", title:c.collectionTitle, feedLabel:c.feedLabel||null, reason:"held back: only the best 3 are shown" }));
-  const pmaxFunnel = _pmaxFunnelBuild({ funnel:funnelIn, freeCount:unused.length, allTaken, shown:list.length, rows:fRows });
+  let catInfo = null, heldCount = null;
+  if (brain) {
+    heldCount = heldRows.filter(r => r.kind === "held").length;
+    heldRows.concat(weakRows, unitRows).forEach(r => fRows.push(r));
+    if (catalogue.length || catalogueErr) {
+      const wk = {}; weakNew.forEach(w => { wk[w] = (wk[w] || 0) + 1; }); const weakWhy = Object.keys(wk).sort((a, b) => wk[b] - wk[a])[0] || null, cst = brain.cat.stats;
+      catInfo = { stats: cst, readError: catalogueErr, grounded: groundedNew,
+        weakNote: weakNew.length ? `${weakNew.length} untested theme${weakNew.length === 1 ? "" : "s"} left out: ${weakWhy}.` : null,
+        limit: PC.limiter(cst, { weakUnits: weakNew.length, weakWhy, takenUnits: unitRows.filter(r => r.kind === "cat_taken").length, sameUnits: unitRows.filter(r => r.kind === "cat_same").length, noCollectionOffers: brain.cat.units.filter(u => u.noCollection).reduce((n, u) => n + u.offers.length, 0) }) };
+    }
+  } else freePool.filter(c => !shownKeys.has(pickKey(c))).forEach(c => fRows.push({ kind:"held", title:c.collectionTitle, feedLabel:c.feedLabel||null, reason:"held back: only the strongest five (six at most) are shown" }));
+  const pmaxFunnel = _pmaxFunnelBuild({ funnel:funnelIn, freeCount:unused.length, allTaken, shown:list.length, rows:fRows, catalog:catInfo, newShown:selected.filter(c => c.opportunity && c.opportunity.kind === "new").length, heldCount });
   return { list, pmaxFunnel, learning:pmaxLearning, error:null, at:Date.now(), merchantProducts:merchant.length, merchantOrders30, merchantRevenue30,
     paidProductRows:(paid.rows||[]).length, paidPerformanceError:paid.error||null,
     merchantReportsConfigured:!!merchantFree30.configured,merchantReportRows30:(merchantFree30.rows||[]).length,
@@ -12456,7 +12641,7 @@ module.exports = {
   getCollections, suggestOccasions, recordOccasionUse,
   deleteCampaign, deleteOpportunity, deleteProposedAd, scanOpportunities, opportunitiesWithStatus, takenTags, releaseOpportunity, fetchTopProducts, setCampaignStatus, startCampaignNow, setCampaignEndDate, setCampaignBudget,
   scanDesignStudioOpportunity, designStudioOpportunityStatus, generateDesignStudioApprovals, refreshDesignStudioLearning, designStudioPerformance, buildDesignStudioPmaxCampaignOps, buildDesignStudioSearchCampaignOps,
-  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
+  generatePmaxApproval, pmaxRecommendationEvidence, pmaxPreviewData, backfillPmaxCreative, upgradePmaxAdStrength, servingCheck, servingSweep, merchantCenterId, merchantProducts, merchantCatalogue, pmaxCandidatesFromSignals, proposePmaxOpportunities, buildPmaxCampaignOps, pmaxProductPerformance, merchantFreeProductPerformance,
   listCountries, campaignCountries, setCampaignCountries, setApprovalCountries, setApprovalDates,
   loadCalendar, dueEvents,
   measure, pruneAssets, mineSearchTerms, minePmaxSearchTerms, draftSearchNegativeRemovals, pmaxCampaignTargets, reallocateBudgets, anomalyCheck,

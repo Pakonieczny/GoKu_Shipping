@@ -73,7 +73,7 @@ function engine(mocks = {}) {
       : real(n) };
   vm.createContext(ctx);
   vm.runInContext(source + '\nmodule.exports.testResearchStatus=_opportunityResearchStatus;module.exports.testOccasions=_pmaxUpcomingOccasions;module.exports.testSrc={scan:scanOpportunities.toString(),propose:proposePmaxOpportunities.toString()};', ctx);
-  vm.runInContext('fb=mocks.fb||(()=>null);if(mocks.tz)_accountTz=mocks.tz;if(mocks.backfillOrders)backfillOrders=mocks.backfillOrders;if(mocks.storeSignals)storeSignals=mocks.storeSignals;if(mocks.merchantProducts)merchantProducts=mocks.merchantProducts;if(mocks.pmaxProductPerformance)pmaxProductPerformance=mocks.pmaxProductPerformance;if(mocks.merchantFreeProductPerformance)merchantFreeProductPerformance=mocks.merchantFreeProductPerformance;if(mocks.playbookSlice)playbookSlice=mocks.playbookSlice;if(mocks.openaiJSON)openaiJSON=mocks.openaiJSON;if(mocks.takenTags)takenTags=mocks.takenTags;if(mocks.keywordResearchPool)keywordResearchPool=mocks.keywordResearchPool;if(mocks.deleted)_deletedOpportunityTags=mocks.deleted;', ctx);
+  vm.runInContext('fb=mocks.fb||(()=>null);if(mocks.tz)_accountTz=mocks.tz;if(mocks.backfillOrders)backfillOrders=mocks.backfillOrders;if(mocks.storeSignals)storeSignals=mocks.storeSignals;if(mocks.merchantProducts)merchantProducts=mocks.merchantProducts;if(mocks.pmaxProductPerformance)pmaxProductPerformance=mocks.pmaxProductPerformance;if(mocks.merchantFreeProductPerformance)merchantFreeProductPerformance=mocks.merchantFreeProductPerformance;if(mocks.playbookSlice)playbookSlice=mocks.playbookSlice;if(mocks.openaiJSON)openaiJSON=mocks.openaiJSON;if(mocks.takenTags)takenTags=mocks.takenTags;if(mocks.keywordResearchPool)keywordResearchPool=mocks.keywordResearchPool;if(mocks.merchantCatalogue)merchantCatalogue=mocks.merchantCatalogue;if(mocks.deleted)_deletedOpportunityTags=mocks.deleted;', ctx);
   return ctx.module.exports;
 }
 
@@ -114,8 +114,8 @@ function run(over = {}, args = {}) {
   });
   const x = engine({ real: !!over.real, R: over.noModules ? null : R, K: over.noModules ? null : K, tz: over.tz || (async () => 'America/Toronto'), fb: over.fb,
     backfillOrders: async () => ({ fetched: 0 }), storeSignals: over.storeSignals || (async ({ days }) => sigs[days] || null), merchantProducts: over.merchantProducts || (async a => a.itemIds ? [] : offers),
-    pmaxProductPerformance: async () => ({ complete: true, monetaryComplete: true, rows: [], byId: {} }), merchantFreeProductPerformance: async () => free, playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
-    takenTags: over.takenTags || (async () => ({})), openaiJSON,
+    pmaxProductPerformance: over.pmaxProductPerformance || (async () => ({ complete: true, monetaryComplete: true, rows: [], byId: {} })), merchantFreeProductPerformance: async () => free, playbookSlice: async () => ({ lessons: [], antiPatterns: [] }),
+    takenTags: over.takenTags || (async () => ({})), openaiJSON, merchantCatalogue: over.merchantCatalogue || (async () => []),
     keywordResearchPool: over.keywordResearchPool || (async (seeds, geo) => { spy.pools.push({ seeds, geo }); return { ok: true, cached: false, status: 200, ideasByText: Object.fromEntries(seeds.map(s => [s, { text: s, searches: 320, competition: 'LOW' }])), seedCount: seeds.length, chunkCount: 1 }; }) });
   const promise = x.proposePmaxOpportunities({ collections: over.collections || collections, profiles: over.profiles || profiles, ceiling: 100, currency: 'USD', onAudit: async e => { audits.push(plain(e)); }, ...args });
   return promise.then(result => ({ result, spy, audits, x }));
@@ -386,18 +386,19 @@ let pass = 0; async function test(name, fn) { try { await fn(); pass++; } catch 
     assert.ok(!g.skipped.some(s => /already has a campaign/.test(s.reason)));
   });
 
-  await test('funnel, overlap and the top-3 limit: a weaker idea over the same products is dropped naming the stronger one; extra candidates say why they were held back', async () => {
+  await test('funnel, overlap: a weaker idea over the same products is dropped naming the stronger one; the strongest ideas are all shown', async () => {
     const dup = profiles.concat([{ handle: 'allj', topProducts: [{ title: 'Silver bird necklace', productId: '999001' }] }]), colls = collections.concat([{ handle: 'allj', title: 'All jewelry' }]);
     const o = await run({ profiles: dup, collections: colls, picks: [{ handle: 'birds', feedLabel: 'US' }, { handle: 'pets', feedLabel: 'CA' }, { handle: 'moon', feedLabel: 'US' }] });
     const f = plain(o.result.pmaxFunnel);
     assert.deepEqual(f.stages.map(s => s.count), [6, 5, 4, 3, 3, 3]); assert.match(f.stages[3].note, /1 dropped for sharing products with a stronger idea/);
     const row = f.skipped.find(s => /overlaps the stronger idea/.test(s.reason)); assert.ok(row); assert.equal(row.title, 'All jewelry'); assert.equal(row.feedLabel, 'US'); assert.equal(row.reason, "overlaps the stronger idea 'Bird jewelry' (US) (same products)");
-    // Four qualifying ideas, three shown.
+    // Four qualifying ideas, all four shown: the list is the strongest five (six at most), not a fixed three.
     const four = await run({ profiles: profiles.concat([{ handle: 'wave', topProducts: [{ title: 'Star wave ring', productId: '999005' }] }]), collections: collections.concat([{ handle: 'wave', title: 'Ring jewelry' }]),
       merchantProducts: async a => a.itemIds ? [] : offers.concat([{ itemId: 'shopify_US_999005_111005', title: 'Star wave ring', feedLabel: 'US', availability: 'IN_STOCK', status: 'ELIGIBLE' }]),
       storeSignals: async ({ days }) => aggregate(rows.concat([order(900, item('111005', 'Star wave ring', '999005'), 3)]), days), picks: [{ handle: 'birds', feedLabel: 'US' }, { handle: 'pets', feedLabel: 'CA' }, { handle: 'moon', feedLabel: 'US' }] });
-    assert.equal(four.result.list.length, 3); const h = plain(four.result.pmaxFunnel);
-    assert.deepEqual(h.stages.map(s => s.count), [6, 5, 4, 4, 4, 3]); assert.ok(h.skipped.some(s => s.title === 'Ring jewelry' && s.reason === 'held back: only the best 3 are shown')); assert.match(h.stages[5].note, /1 held back/);
+    assert.equal(four.result.list.length, 4); const h = plain(four.result.pmaxFunnel);
+    assert.deepEqual(h.stages.map(s => s.count), [6, 5, 4, 4, 4, 4]); assert.ok(!h.skipped.some(s => /held back/.test(s.reason))); assert.equal(h.stages[5].note, 'Best first.');
+    assert.ok(four.result.list.every(o => o.opportunity && o.opportunity.kind === 'proven' && o.opportunity.label === 'Proven seller' && o.opportunity.reasons.length >= 1), 'every idea states its facts and its label');
   });
 
   await test('funnel: pmaxCandidatesFromSignals keeps returning a plain array; the funnel rides along without being enumerable', () => {
@@ -428,6 +429,97 @@ let pass = 0; async function test(name, fn) { try { await fn(); pass++; } catch 
     const x = engine({ fb, tz: async () => 'America/Toronto', merchantProducts: async () => [live], storeSignals: async ({ days }) => sigs[days] || null, pmaxProductPerformance: async () => ({ complete: true, monetaryComplete: true, rows: [], byId: {} }), merchantFreeProductPerformance: async () => free });
     const r = await x.pmaxRecommendationEvidence({ handle: 'birds', feedLabel: 'US' });
     assert.equal(r.candidate.rationale, saved.research.headline); assert.deepEqual(plain(r.candidate.searchThemes), saved.searchThemes); assert.ok(r.candidate.research.listingFit.every(f => f.itemId === keep));
+  });
+
+
+  /* ---- the whole catalogue, not only what sold: a ~30 offer feed where only 2 products have sales ---- */
+  await test('catalogue: ideas come from the whole eligible feed, ranked on measured facts; only the strongest five or six show, each with its facts', async () => {
+    const IMG = 'https://cdn.shopify.com/s/files/1/0001/x.jpg';
+    let nextPid = 7000000000000; const mk = (title, o = {}) => { const pid = o.pid || (nextPid += 1000000000); return { itemId: `shopify_${o.market || 'US'}_${pid}_${pid + 5}`, title, feedLabel: o.market || 'US', availability: o.stock || 'IN_STOCK', status: o.status || 'ELIGIBLE', merchantId: '123', price: o.price === undefined ? 48 : o.price, currency: 'USD', imageUrl: o.img === undefined ? IMG : o.img, issues: o.issues || [], issueDetails: o.issueDetails || [], targetCountries: o.countries || [o.market || 'US'], type1: 'Jewelry', type2: o.type2 || null }; };
+    const sold1 = mk('Silver bird necklace with a small engraved charm', { pid: 999001 }), sold2 = mk('Gold dog charm in solid gold with a jump ring', { pid: 999002, market: 'CA', price: 62 });
+    const group = (titles, o) => titles.map(t => mk(t, o));
+    const family = group(['Mama bear charm necklace in gold filled with a chain', 'Mother and daughter heart necklace in sterling silver', 'Grandma initial necklace in sterling silver, a keepsake'], { price: 58 });
+    const xmas = group(['Snowflake charm necklace in gold filled with a chain', 'Christmas tree charm necklace in sterling silver, gift boxed'], { price: 44 });
+    const birthFlower = group(['Birth flower necklace January carnation in gold filled', 'Birth flower necklace February violet in gold filled', 'Birth flower necklace March daffodil in gold filled'], { price: 52 });
+    const moon = group(['Moon phase necklace in gold filled with a chain', 'Crescent moon and star necklace in gold filled', 'Sun and moon necklace in sterling silver for her'], { price: 40 });
+    const halloween = group(['Pumpkin charm bracelet in gold filled with a clasp', 'Spooky bat charm bracelet in sterling silver, gift boxed'], { price: 38 });
+    const wildlife = group(['Gold filled hummingbird necklace with a chain', 'Sterling silver owl necklace with a chain'], { price: 46 });
+    const pets = group(['Dachshund charm necklace in gold filled with a chain', 'Labrador charm necklace in sterling silver, gift boxed'], { price: 50 });
+    const ocean = group(['Wave charm necklace in sterling silver with a chain', 'Seashell charm necklace in gold filled with a chain', 'Anchor charm necklace in sterling silver with chain'], { price: 45 });
+    const excluded = [mk('Cheap clearance charm necklace with a chain, gold filled'), mk('CafÃ© charm bracelet in gold filled with a clasp'), mk('Rose flower charm necklace in gold filled', { stock: 'OUT_OF_STOCK' }), mk('Daisy flower charm necklace in gold filled', { stock: 'OUT_OF_STOCK' }),
+      mk('Lily flower charm necklace in gold filled', { status: 'NOT_ELIGIBLE', issues: ['Missing price'], issueDetails: [{ description: 'Missing price', severity: 'ERROR', code: 'x' }] }), mk('Tulip flower charm necklace in gold filled, other market', { countries: ['CA'] }), mk('Anchor ring in sterling silver with a plain band')];
+    const all = [sold1, sold2, ...family, ...xmas, ...birthFlower, ...moon, ...halloween, ...wildlife, ...pets, ...ocean, ...excluded];
+    assert.ok(all.length >= 29 && all.length <= 32, 'a catalogue of about 30 offers: ' + all.length);
+    const colls = [['birds', 'Bird jewelry'], ['pets', 'Pet jewelry'], ['mothers-day', "Mother's Day gifts"], ['christmas', 'Christmas jewelry'], ['halloween', 'Halloween jewelry'], ['celestial', 'Celestial jewelry'], ['birth-flowers', 'Birth flower jewelry'], ['ocean', 'Ocean jewelry'], ['all', 'All products']].map(([handle, title]) => ({ handle, title }));
+    const profs = colls.map(c => ({ handle: c.handle, title: c.title, topProducts: c.handle === 'birds' ? [{ title: 'Silver bird necklace with a small engraved charm', productId: '999001' }] : c.handle === 'pets' ? [{ title: 'Gold dog charm in solid gold with a jump ring', productId: '999002' }] : [], listingTags: [] }));
+    const sales = []; let so = 100; [[sold1, 5], [sold2, 4]].forEach(([o, n]) => { const pid = o.itemId.split('_')[2], vid = o.itemId.split('_')[3]; for (let i = 0; i < n; i++) sales.push(order(++so, item(vid, o.title, pid), 1 + i)); });
+    const signals = { 30: aggregate(sales, 30), 90: aggregate(sales, 90), 365: aggregate(sales, 365) };
+    const paidRow = o => ({ itemId: o.itemId, title: o.title, impressions: 900, clicks: 30, conversions: 1, cost: 60, value: 63, currency: 'USD', monetaryComplete: true }), paidRows = ocean.map(paidRow);
+    const paid = { complete: true, monetaryComplete: true, rows: paidRows, byId: Object.fromEntries(paidRows.map(r => [r.itemId.toLowerCase(), r])), days: 90, currency: 'USD' };
+    const vol = s => /mama|mother|grandma/.test(s) ? 1400 : /birth flower/.test(s) ? 800 : /snowflake|christmas/.test(s) ? 900 : 20;
+    const poolCalls = [], over = { merchantProducts: async a => a.itemIds ? [] : [sold1, sold2], merchantCatalogue: async () => all.slice(), storeSignals: async ({ days }) => signals[days] || null, pmaxProductPerformance: async () => paid, collections: colls, profiles: profs,
+      keywordResearchPool: async seeds => { poolCalls.push(seeds); return { ok: true, cached: false, status: 200, ideasByText: Object.fromEntries(seeds.map(s => [s, { text: s, searches: vol(s), competition: 'LOW' }])), seedCount: seeds.length }; } };
+    const { result, spy, audits } = await run(over, { today: '2026-09-29', markets: ['US', 'CA'] }), list = result.list;
+    const opp = o => o.opportunity, kinds = list.map(o => opp(o).kind);
+    // More than the two that sold; five or six at most; both kinds present and labelled.
+    assert.ok(list.length > 2 && list.length >= 4 && list.length <= 6, 'ideas: ' + list.map(o => o.collectionTitle).join(' | '));
+    assert.ok(kinds.includes('new') && kinds.includes('proven'), 'proven sellers and untested ideas are mixed: ' + kinds);
+    assert.equal(list.filter(o => opp(o).kind === 'proven').length, 2, 'both sold products are still there');
+    list.forEach(o => { assert.equal(opp(o).label, opp(o).kind === 'proven' ? 'Proven seller' : 'New idea'); noUndefined(o); });
+    // Ranked by score, several factors each, reasons with numbers or dates, and confidence.
+    assert.deepEqual(list.map(o => opp(o).rankScore), list.map(o => opp(o).rankScore).slice().sort((a, b) => b - a), 'strongest first');
+    list.forEach(o => {
+      const P = opp(o), measured = P.factors.filter(f => f.available);
+      assert.ok(measured.length >= 4, o.collectionTitle + ' is scored on several measured factors: ' + measured.map(f => f.key));
+      assert.ok(P.rankScore > 0 && P.rankScore <= 100 && ['low', 'medium', 'high'].includes(P.confidence.label) && P.confidence.score > 0);
+      assert.ok(P.reasons.length >= 1 && P.reasons.every(r => /\d/.test(r)), 'reasons cite numbers or dates: ' + JSON.stringify(P.reasons));
+      assert.ok(P.listings.length >= 1 && P.listings.every(l => l.title && l.facts.length >= 2 && l.facts.every(f => typeof f === 'string' && f.length < 140)), 'each chosen listing carries its own facts');
+      assert.ok(P.factors.every(f => f.available ? f.detail : true) && !/shopify_|undefined|NaN/.test(JSON.stringify([P.reasons, P.cautions, P.factors.map(f => f.detail), P.listings.map(l => [l.title, l.facts]), P.testPlan])), 'no ids or placeholders in the facts');
+    });
+    // Untested ideas: no sale is claimed, a small test, and clear success and stop rules that respect the account's economics.
+    const fresh = list.filter(o => opp(o).kind === 'new');
+    fresh.forEach(o => {
+      const P = opp(o), proven = P.factors.find(f => f.key === 'proven');
+      assert.equal(proven.points, 0); assert.match(proven.detail, /No store sale has matched/); assert.equal(o.evidenceTotals, undefined); assert.equal(o.dailyBudget, 6, 'conservative test budget');
+      assert.ok(P.testPlan && P.testPlan.dailyBudget === 6 && P.testPlan.days === o.days && P.testPlan.success.length && P.testPlan.stop.length);
+      assert.match(P.testPlan.stop[0], /Stop early if USD \d+(\.\d+)? is spent with no order/); assert.match(P.testPlan.stop.join(' '), /Do not raise the budget until it beats break-even/);
+      assert.match(P.testPlan.budgetNote, /returns 1\.05 on ad spend against a 1\.\d+ break-even, so this stays at the minimum budget of USD 6/, 'ROAS 1.05 against break-even holds the budget');
+      assert.ok(P.factors.find(f => f.key === 'demand').available && P.factors.find(f => f.key === 'season').available && P.factors.find(f => f.key === 'margin').available);
+    });
+    const fam = fresh.find(o => /Mother and family/.test(o.collectionTitle)); assert.ok(fam, 'the Mother\'s Day theme is an idea: ' + fresh.map(o => o.collectionTitle));
+    assert.equal(fam.handle, 'mothers-day'); assert.ok(fam.itemIds.length === 3 && fam.itemIds.every(id => family.some(f => f.itemId === id)));
+    assert.match(opp(fam).factors.find(f => f.key === 'season').detail, /Mother's Day on May 9, 2027 \(2\d\d days away\)/); assert.match(opp(fam).factors.find(f => f.key === 'demand').detail, /gets about 1,400 searches a month/);
+    assert.ok(opp(fam).season && opp(fam).season.label === "Mother's Day" && opp(fam).season.date === '2027-05-09' && fam.schedule, 'its own occasion is recorded with its date; May is beyond the 150-day planning lead, so the run follows the market\'s nearest window');
+    const xm = fresh.find(o => /Christmas/.test(o.collectionTitle)); assert.ok(xm, 'the Christmas theme is an idea'); assert.ok(opp(xm).season && opp(xm).season.label === 'Christmas' && xm.schedule.event && xm.schedule.event.label === 'Christmas' && xm.schedule.event.date === '2026-12-25', 'a theme with its own occasion inside the lead is scheduled for it');
+    assert.ok(opp(fam).listings.every(l => l.facts.some(f => /^Price USD 58/.test(f)) && l.facts.some(f => /In stock and approved/.test(f)) && l.facts.some(f => /No product-ad impressions/.test(f))), 'listing facts come from the feed row and history');
+    // Excluded products stay out; a product in a campaign or sold is not offered twice; weak themes are dropped, not used as filler.
+    const shownIds = new Set(list.flatMap(o => o.itemIds)), idOf = o => o.itemId;
+    excluded.forEach(o => assert.ok(!shownIds.has(idOf(o)), 'excluded: ' + o.title)); ocean.forEach(o => assert.ok(!shownIds.has(idOf(o)), 'already in a live product campaign: ' + o.title));
+    list.forEach(o => assert.equal(new Set(o.itemIds).size, o.itemIds.length)); const seen = new Set(); list.forEach(o => o.itemIds.forEach(id => { assert.ok(!seen.has(id + o.feedLabel), 'offered once: ' + id); seen.add(id + o.feedLabel); }));
+    assert.ok(!list.some(o => /Halloween/.test(o.collectionTitle)), 'Halloween is too close for Google to learn in time, so it is not recommended'); assert.ok(!list.some(o => /Moon and stars/.test(o.collectionTitle)), 'no volume and no dated occasion: dropped');
+    assert.ok(!list.some(o => /Birds and wildlife/.test(o.collectionTitle)), 'shares its collection page with the bird seller');
+    // The "why so few" answer names the limiting step in words and the counts are real.
+    const f = plain(result.pmaxFunnel), keys = f.stages.map(s => s.key); assert.deepEqual(keys, ['collections', 'sales', 'products', 'overlap', 'free', 'catalogue', 'themes', 'evidence', 'shown']);
+    assert.equal(f.stages.find(s => s.key === 'shown').count, list.length); assert.ok(f.stages.find(s => s.key === 'catalogue').count >= 20); assert.match(f.stages.find(s => s.key === 'catalogue').note, /products read from the feed; \d+ are in stock and approved/);
+    assert.match(f.verdict, new RegExp(`^${list.length} ideas shown: 2 proven sellers and ${fresh.length} new ideas?, each with its facts\\.`)); if (list.length < 5) assert.match(f.verdict, /Fewer than five because /);
+    assert.ok(f.skipped.some(s => /not enough measured facts/.test(s.reason)) && f.skipped.some(s => /shares its collection page with a stronger idea/.test(s.reason)), JSON.stringify(f.skipped)); assert.ok(f.verdict.length <= 240);
+    // One planner request for the whole comparison; the model wrote no more than one answer per idea shown; nothing paid beyond that design.
+    assert.equal(poolCalls.length, 1); assert.ok(poolCalls[0].length <= 60); assert.ok(spy.research.length <= list.length && spy.research.length >= 1);
+    assert.ok(audit(audits, 'pmax_catalogue_read').status === 'ok' && audit(audits, 'pmax_catalogue_ideas').status === 'ok'); assert.ok(!JSON.stringify(list).includes('_unit'));
+    // Old saved cards without `opportunity` still read: the recommendation builder accepts them.
+    const oldCard = plain(list[0]); delete oldCard.opportunity; delete oldCard.pageTitle; assert.ok(require('../../assets/pmax-recommendation').buildRecommendation(oldCard).summary);
+  });
+
+  await test('catalogue: an unreadable catalogue says so and keeps the proven sellers; a feed with nothing usable explains the limiting step', async () => {
+    const down = await run({ merchantCatalogue: async () => { throw new Error('PERMISSION_DENIED 403 for https://googleads.googleapis.com/v17/customers/5550001234'); } });
+    assert.equal(down.result.list.length, 3); const f = plain(down.result.pmaxFunnel);
+    assert.match(f.verdict, /Only products that sold were considered: the full catalogue could not be read \(access was refused/); assert.equal(f.stages.find(s => s.key === 'catalogue').count, 0);
+    assert.equal(audit(down.audits, 'pmax_catalogue_read').status, 'warning'); assert.ok(!/5550001234|https?:/.test(JSON.stringify(audit(down.audits, 'pmax_catalogue_read'))));
+    assert.ok(down.result.list.every(o => o.opportunity.kind === 'proven' && o.opportunity.factors.filter(x => x.available).length >= 3));
+    // A catalogue with one usable product and no sales: nothing weak fills the list, and the verdict names the limiting step.
+    const thin = [{ itemId: 'shopify_US_7100000000001_7100000000006', title: 'Lonely anchor ring in sterling silver', feedLabel: 'US', availability: 'IN_STOCK', status: 'ELIGIBLE', merchantId: '123', price: 40, currency: 'USD', imageUrl: 'https://cdn.shopify.com/s/x.jpg' }];
+    const none = await run({ merchantProducts: async () => [], merchantCatalogue: async () => thin, storeSignals: async () => ({ ...sigs[90], productRows: [], topProducts: [], topMerchantProducts: [], topOrganicProducts: [] }) });
+    assert.equal(none.result.list.length, 0); assert.match(plain(none.result.pmaxFunnel).verdict, /^None qualified: /); assert.match(none.result.error, /No product had enough measured facts|No eligible Merchant Center offers/);
   });
 
   console.log('PMax opportunity research: ' + pass + ' focused checks passed');
