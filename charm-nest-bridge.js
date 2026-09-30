@@ -5097,13 +5097,14 @@ const Engrave = window.Engrave = (() => {
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
-  const R=window.CharmNestReadiness, records=new Map();let frame=0,polling=false,lastPoll=0;
+  const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0;
   function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
     const live=allSheets().find(x=>x.sheetId===id && !x.recalled);
     const ids=base.poolIds || (live?.placements || []).map(p=>live.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean);
     const d={...base,poolIds:ids,engraving:{...base.engraving},backPool:(base.backPool || base.backs || []).slice()};
+    if(window.LibraryDone)d.laserDoneAt=LibraryDone.isDone(base)?(base.laserDoneAt || 1):null;
     const rows=R.decisions(Orders.rows());
     for(const pid of ids)if(rows[pid] && !d.engraving[pid])d.engraving[pid]=rows[pid];
     for(const j of Engrave.items().values())for(const pid of j.copies || [])if(ids.includes(pid)) {
@@ -5116,7 +5117,11 @@ const LaserReview = window.LaserReview = (()=>{
     return d;
   }
   const sheet=s=>R.sheet(projected(s));
-  const group=(st,sheets)=>R.set(st,sheets.map(projected));
+  const group=(st,sheets)=>{if(st.setId)sets.set(st.setId,st);return R.laserGroup(st,sheets.map(projected));};
+  function canCut(s){
+    if(!s.setId || s.draft || s.solidIncluded===false)return sheet(s).ready;
+    const st=sets.get(s.setId);return !!st && group(st,(st.sheetIds || []).map(id=>records.get(id)).filter(Boolean)).ready;
+  }
   function labels(s,files){
     const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
     // a sheet still filling has no label to wait for: every card in progress carried an empty "QR label pending" box
@@ -5132,12 +5137,13 @@ const LaserReview = window.LaserReview = (()=>{
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
-      const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):sheet(sheets[0] || {});
+      const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s));if(n.innerHTML!==html)n.innerHTML=html;}});
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
     });
+    if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
   }
   function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
@@ -5146,7 +5152,7 @@ const LaserReview = window.LaserReview = (()=>{
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
     const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
     polling=true;lastPoll=Date.now();
-    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || [])for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds};const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
+    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || []){sets.set(set.setId,set);for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds,laserDoneAt:set.laserDoneAt};}const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
     catch(e){console.warn('Production readiness refresh',e);}
     finally{polling=false;}
   }
@@ -5156,9 +5162,9 @@ const LaserReview = window.LaserReview = (()=>{
   }
   // Paul, 24 Sep: nothing may pile up on a page left open. The records are the Library's, read again each time it opens
   // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
-  setInterval(()=>{if(S.mode!=='library')records.clear();poll();},60000);
+  setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();}poll();},60000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
-  return {record,sheet,group,labels,sections,place,changed,saved,poll,projected};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -5534,14 +5540,14 @@ const Sets = window.Sets = (() => {
       // Current: a set the laser has cut, and a group each of whose sheets it has cut, are under Completed
       let sets = _cache.sets.filter(st => !done(st) && st.sheets.some(r => !done(r)));
       if (metal) sets = sets.filter(st => (st.materials || []).includes(metal));
-      if (focus) sets = sets.filter(st => st.sheets.some(r => !done(r) && focus.test(r)));
+      if (focus) sets = sets.filter(st => st.sheets.some(r => focus.test(r)));
       else if (q) sets = sets.filter(st => `${st.setId ? O.completedTitle(st) : st.name || ""} ${st.setId || ""} ${st.setId ? O.completionDay(st) : st.day || ""} ${st.runId || ""} ${Object.keys(st.orders || {}).join(" ")} ${(st.sheets || []).flatMap(r=>[r.fileBase,r.names,(r.listings || []).join(" "),...(r.backs || []).map(b=>b.text)]).join(" ")}`.toLowerCase().includes(q));
       if (!sets.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : q || metal ? "No sets match this filter." : "No sets yet."}</div>`; if (LD) LD.decorate(body); return; }
       LaserReview.sections(body);
       for (const st of sets) {
         const all = st.sheets.slice().sort((a, b) => (a.metal || "").localeCompare(b.metal || "") || (a.sheetIndex || 0) - (b.sheetIndex || 0));
         // (after Undo set the view is read again, and each card glides from where it was rather than being redrawn in one go)
-        const card = libraryCard(st, all, all.filter(x => (!metal || x.metal === metal) && !done(x)), {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
+        const card = libraryCard(st, all, all, {onUndo: () => LD && LD.glide ? LD.glide(body, () => renderLibrary(body)) : renderLibrary(body)});
         LaserReview.place(card,LaserReview.group(st,all).ready,body);
       }
       LaserReview.changed();
@@ -8131,7 +8137,7 @@ const Review = window.Review = (() => {
   };
   // cseg: Open or Completed, the one switch at the front of the bar, for every filter (Paul, 27 Sep: one global Completed
   // folder, no longer Custom Orders' own); filter: the kind chip, shared by both
-  const RV = { filter: null, limit:40, open:null, cseg:"open" };
+  const RV = { filter: null, limit:40, open:null, cseg:"open", q:"" };
   // where things go (Paul, 27 Sep 20:09-20:24): the Open and Completed switches, the Orders tab
   const DONE_SW = '#reviewView .rvSeg [data-cseg="done"]', OPEN_SW = '#reviewView .rvSeg [data-cseg="open"]', ORDERS_TAB = '#modeSeg [data-mode="orders"]', NEST_TAB = '#modeSeg [data-mode="nest"]';
   const chipSel = k => `#reviewView .ordBar .egTab[data-k="${k}"]`;
@@ -8346,7 +8352,7 @@ const Review = window.Review = (() => {
     // the old Decided chip is Completed now
     if (RV.filter === "done") { RV.filter = null; RV.cseg = "done"; }
     const doneMode = RV.cseg === "done";
-    const view = RV.cseg + "|" + (RV.filter || "");
+    const view = RV.cseg + "|" + (RV.filter || "") + "|" + (RV.q || "");
     let oldScroll=v.querySelector(".egPane.scroll")?.scrollTop || 0;
     if(reviewFilter!==view){RV.limit=Math.max(40,RV.keep||0);reviewFilter=view;oldScroll=0;}
     RV.keep=0;
@@ -8380,8 +8386,10 @@ const Review = window.Review = (() => {
     // what asks nothing comes after what does, in Everything as under Custom Orders; one just completed there stays in
     // place while its card offers Undo (not counted as open)
     const customOpen = all.filter(it => it.kind === "customOrder").concat(cl.open);
-    const list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
+    let list = doneMode ? (f ? finished.filter(it => tabOf(it) === f) : finished)
       : f === "customOrder" ? customOpen : f ? all.filter(it => tabOf(it) === f) : all.concat(cl.open);
+    const orderQ=O.orderQuery(RV.q);
+    if(orderQ)list=list.filter(it=>[it.rid,...(it.settled?.orders || []),...(it.settled ? [it.settled.row,...(it.settled.rows || [])] : rowsOf(it)).filter(Boolean).map(r=>r.order?.receiptId)].some(id=>O.orderMatches(id,orderQ)));
     // Show: drawn in pages of 40 down to the card it names (the cards are all here already: nothing is read for it)
     if (RV.want) { const i = list.findIndex(it => (it.settled ? "settled:" + it.settled.key + ":" + it.settled.t : mkeyOf(it)) === RV.want); if (i >= RV.limit) RV.limit = Math.ceil((i + 1) / 40) * 40; RV.want = null; }
     // a card just reopened (or its completion undone: CustomPrint sets RV.back) is found at its place the next time Open
@@ -8397,7 +8405,11 @@ const Review = window.Review = (() => {
       : k === "customOrder" ? chip(k, "Custom Orders", customN, customAsk ? "warn" : "info", `${customAsk} need a decision · ${cl.open.length} listed with nothing to decide`) : chip(k, KIND_WORDS[k] || k, kinds.get(k))).join("");
     if(!v.querySelector('#rvList'))v.innerHTML='<div class="ordBar egBar"></div><div class="egPane grow scroll"><div class="rvList" id="rvList"></div></div>';
     // no Everything chip (it always read the same as Open): Open or Completed, pressed, is everything in it
-    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    const keptFind=v.querySelector('#rvOrderFind')?.closest('label');
+    v.querySelector('.ordBar').innerHTML = `${seg}${chips}<span class="spacer"></span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="rvOrderFind" type="search" inputmode="numeric" placeholder="Order #" aria-label="Search order numbers in Review" aria-controls="rvList" autocomplete="off" spellcheck="false"></label>${CustomRead.count() ? `<span class="aiReading" title="Claude reads lines with no design of their own to tell custom orders from regular listings"><span class="spin"></span>Claude reading ${CustomRead.count()}</span>` : ""}<button class="btn ghost xs" id="rvName" title="every decision is recorded under this name — click to change it">${esc(employeeName() || "set your name")}</button>`;
+    if(keptFind)v.querySelector('#rvOrderFind').closest('label').replaceWith(keptFind);
+    const find=v.querySelector('#rvOrderFind');find.value=RV.q || '';
+    find.oninput=()=>{RV.q=find.value;render({still:true});};
     v.querySelector("#rvName").onclick = () => { askEmployee(); render(); };
     // a chip pressed again lets go of its filter
     v.querySelectorAll("[data-k]").forEach(b => b.onclick = () => { RV.filter = b.dataset.k === f ? null : b.dataset.k; render(); });
@@ -8430,8 +8442,9 @@ const Review = window.Review = (() => {
       }
       return null;
     };
-    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
+    const empty = () => { const n = el("div", "libEmpty"); n.innerHTML = `${orderQ ? "No matching order numbers." : doneMode ? (f === "customOrder" ? "No custom order completed yet. Print its QR label or press Complete Order under Open." : f ? `Nothing completed under ${esc(what)} yet.` : "Nothing completed yet.") : f === "customOrder" ? "No custom order is open." : "Nothing waits for a decision."}`; return n; };
     const desired = list.length ? list.slice(0,RV.limit).map(it=>({it,node:it.settled?settledRow(it.settled):reviewRow(it)})) : [];
+    for(const {node} of desired)node.classList.toggle('orderMatch',!!orderQ);
     // A card the Send to Sheet tour is carrying (Motion.carry) stays where it stood, however the list sorts it now: sent,
     // a custom order moves to the foot of its list, and one answered leaves it, its place held empty. Nothing moves
     // under the coin (Paul, 29 Sep 01:30); the tour lets go once home, out of sight, and the list is laid out anew then.
@@ -8456,7 +8469,7 @@ const Review = window.Review = (() => {
     {const sc=v.querySelector('.egPane.scroll');if(sc.scrollTop!==oldScroll)sc.scrollTop=oldScroll;}
     if(back){const n=desired.find(x=>x.it===back)?.node;if(n?.isConnected)bringBack(n,back.key);}
     if(active?.isConnected)active.focus({preventScroll:true});
-    const notices = doneMode ? [] : items().filter(isNotice);
+    const notices = doneMode ? [] : items().filter(it=>isNotice(it) && O.orderMatches(it.rid,orderQ));
     if (notices.length) {
       host.insertAdjacentHTML("beforeend", `<div class="rvNotices"><div class="nHead">Left open on the station — no decision needed here</div>${notices.map(n => `<div class="nRow"><b class="mono">${esc(n.rid)}</b><span class="w">${esc(n.note || String(n.why || "").replace(n.rid + " held — ", ""))}</span><button class="btn ghost xs" data-open="${esc(n.line || "")}" title="open this order on the cards">Open order ↗</button></div>`).join("")}</div>`);
       host.querySelectorAll("[data-open]").forEach(b => b.onclick = () => { if (b.dataset.open) OrderWin.open(b.dataset.open); });
@@ -9781,11 +9794,11 @@ const OrderWin = window.OrderWin = (() => {
   /* ── the Sheet view: the order's sheet(s) drawn large, its pieces in gold and ringed, every other charm on the sheet
      drawn whole and sharp beside them — nothing is ever laid over the sheet (SheetWin.drawOrder),
      its back engraving and every piece of the order; "Open full sheet" hands over to the sheet window and comes back ── */
-  const SV = { rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null, fade: null };
+  const SV = { q: "", rid: null, list: null, at: 0, tok: 0, info: null, pools: null, focus: null, finding: null, fade: null };
   // while a sheet is read the plate steps back a little; only one such fade at a time, and it is always let go of, so a
   // sheet switched while the last was still reading never leaves the plate half-faded (a haze over the charms)
   function plateFade(a) { if (SV.fade) tryDo(() => SV.fade.cancel()); SV.fade = a || null; }
-  function sheetReset() { SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; plateFade(null); const tip = byId("owPlateTip"); if (tip) tip.hidden = true; unpick();
+  function sheetReset() { SV.q = ""; SV.rid = null; SV.list = null; SV.at = 0; SV.tok++; SV.info = null; SV.pools = null; SV.focus = null; SV.finding = null; plateFade(null); const tip = byId("owPlateTip"); if (tip) tip.hidden = true; unpick();
     // (the way back holds only while the view shows the order it led to: closed, or walked to another order, it is let go of)
     const b = BK[BK.length - 1]; if (b && (!W.dlg || !W.dlg.open || W.closing || b.to !== W.rid)) BK.length = 0; }
   /* another order's charm on the sheet (Paul, 28 Sep): a click offers "Open order" for it, and that moves this view to it
@@ -9894,6 +9907,7 @@ const OrderWin = window.OrderWin = (() => {
   /** The panel beside the plate: the sheets, the order, its charm, its back engraving and every piece of it. */
   function paintPanel(inf) {
     const panel = byId("owSheetPanel"), r = rowOf(W.key); if (!panel || !r) return;
+    const oldFind=panel.querySelector('#owSheetOrderFind'),findActive=document.activeElement===oldFind;
     const rid = String(r.order.receiptId), list = SV.list || [];
     const o = r.order, placed = +o.createTs ? new Date(+o.createTs * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
     let ship = ""; try { const s = Orders.shipTxt(r); ship = s && s !== "—" ? "ship by " + s : ""; } catch (_) {}
@@ -9925,7 +9939,8 @@ const OrderWin = window.OrderWin = (() => {
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
     const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.sheetId ? `<em style="--c:${esc(colorOf(it.metal))}">${esc(sheetName({ metal: it.metal, n: it.n }))}</em>` : SV.list ? `<em>not on a sheet yet</em>` : `<em></em>`;   // (nothing said while its sheets are still being found)
     panel.innerHTML =
-      (list.length ? `<section><span class="fLabel">Sheet</span><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
+      (list.length ? `<section><div class="owSheetFindRow"><span class="fLabel">Sheet</span><label class="cnOrderFind"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3 3"/></svg><input id="owSheetOrderFind" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" aria-controls="owSheetMatches" autocomplete="off" spellcheck="false"></label></div><div class="owShTabs">${list.map((s, i) => `<button type="button" data-at="${i}" class="${i === SV.at ? "on" : ""}" style="--c:${esc(colorOf(s.metal))}"><i></i>${esc(sheetName(s))}</button>`).join("")}</div>${facts ? `<div class="sub" style="margin-top:8px">${esc(facts)}</div>` : ""}</section>` : "") +
+      `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
       `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
       `<section>${engHtml}</section>` +
@@ -9954,6 +9969,19 @@ const OrderWin = window.OrderWin = (() => {
     const bb = panel.querySelector("[data-ow-back]"); if (bb) bb.onclick = () => goBack();
     const full = panel.querySelector("[data-full]"); if (full) full.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
     const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
+    if(oldFind)panel.querySelector('#owSheetOrderFind')?.replaceWith(oldFind);
+    const find=byId('owSheetOrderFind');if(find){find.value=SV.q;find.oninput=()=>{SV.q=find.value;paintSheetMatches();};if(findActive)find.focus({preventScroll:true});}
+    paintSheetMatches();
+  }
+  function paintSheetMatches(){
+    const panel=byId('owSheetPanel'),host=byId('owSheetMatches');if(!panel || !host)return;
+    const q=O.orderQuery(SV.q),inf=SV.info;
+    panel.classList.toggle('searching',!!q);host.hidden=!q;
+    const groups=inf?.search ? inf.search(q) : O.orderGroups(inf?.pieces || [],q);
+    if(!q){host.replaceChildren();return;}
+    unpick();
+    host.innerHTML=groups.length ? groups.map(([rid,xs])=>`<button type="button" data-order-rid="${esc(rid)}" role="listitem"><b>${esc(rid)}</b><small>${xs.length} piece${xs.length===1?'':'s'} · ${esc([...new Set(xs.map(x=>x.sku))].join(', '))}</small></button>`).join('') : `<span class="sub">${inf?'No matching order numbers on this sheet.':'Loading sheet orders…'}</span>`;
+    host.querySelectorAll('[data-order-rid]').forEach(b=>b.onclick=()=>{const x=groups.find(([rid])=>rid===b.dataset.orderRid)?.[1][0];if(!x)return;if(String(x.rid)===W.rid){SV.q='';SV.focus=x.poolId;paintPanel(inf);inf.focus(x.poolId);}else jumpTo({x,rid:String(x.rid),poolId:x.poolId || x.id});});
   }
   function drawCharmInto(cv, c) {
     const ctx = cv.getContext("2d"), k = Math.min(cv.width / c.widthPt, cv.height / c.heightPt) * .82, cx = c.centerPt[0], cy = c.centerPt[1];

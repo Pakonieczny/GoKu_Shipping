@@ -94,14 +94,15 @@ Module._load = function (req, ...rest) {
 };
 const lib = require(path.join(fnDir, 'charmNestLibrary.js'));
 const post = body => lib.handler({ httpMethod: 'POST', headers: {}, body: JSON.stringify(body), queryStringParameters: {} }).then(r => ({ status: r.statusCode, body: JSON.parse(r.body || '{}') }));
-const ok = async body => { const r = await post(body); assert.strictEqual(r.status, 200, body.op + ': ' + JSON.stringify(r.body)); return r.body; };
+const ok = async body => { const r = await post(body.op==='laserDone'?{stage:'laser',...body}:body); assert.strictEqual(r.status, 200, body.op + ': ' + JSON.stringify(r.body)); return r.body; };
 const doc = (c, id) => store.get(c + '/' + id);
 
 /* ── a shop: two sets and a sheet on its own, with orders, listings and the run lines that bought them ── */
 const DAY = '2026-09-24', T = Date.parse(DAY + 'T15:00:00Z');
 function sheet(id, o) {
+  const poolIds=Array.from({length:12},(_,i)=>id+'-copy-'+i);
   store.set('Charm_Nest_Sheets/' + id, Object.assign({ id, metal: 'gold', metalLabel: 'GF 14/20', day: DAY, status: 'complete', placedCount: 12, charmCount: 12, density: 0.7, freePt2: 100, verification: { ok: true },
-    outputs: { preview: { path: `charmnest/x/${id}/preview.png`, url: `https://example.test/${id}.png` } }, poolIds: [], orders: [], names: '', archived: false, updatedAt: ts(T), createdAt: ts(T),
+    outputs: { ai:{path:id+'.ai',url:`https://example.test/${id}.ai`}, preview: { path: `charmnest/x/${id}/preview.png`, url: `https://example.test/${id}.png` } }, poolIds,backPool:poolIds.map(poolId=>({poolId,sheetId:id,approvedAt:T,approvedBy:'Paul',verified:{geometry:{ok:true},file:{ok:true}},outputs:{ai:{path:poolId+'.ai',url:`https://example.test/${poolId}.ai`}}})),label:{files:[{path:id+'-qr.png',url:`https://example.test/${id}-qr.png`,payload:id,orders:o.orders || []}]}, orders: [], names: '', archived: false, updatedAt: ts(T), createdAt: ts(T),
     charms: [{ id: 'c1', name: 'heavy outline data' }], placements: [{ id: 'c1' }] }, o));
 }
 store.set('Charm_Nest_Sets/set-A', { setId: 'set-A', seq: 1, day: DAY, runId: 'run-A', name: 'Set-1', sheetIds: ['shA1', 'shA2', 'shA3'], materials: ['gold', 'silver'], status: 'nesting', orders: {}, updatedAt: ts(T), createdAt: ts(T) });
@@ -112,7 +113,7 @@ sheet('shA3', { setId: 'set-A', setSeq: 1, sheetIndex: 1, runId: 'run-A', metal:
 // set B is older: its sheets were saved before `listings` was written, and only its run's lines say what was bought
 sheet('shB1', { setId: 'set-B', setSeq: 2, sheetIndex: 1, runId: 'run-B', metal: 'rose', metalLabel: 'RG', fileBase: 'RG_Sep.24.26_Set-2_Sheet-1', orders: ['3700000010'], names: '3700000010 · BR-TST-09' });
 sheet('shB2', { setId: 'set-B', setSeq: 2, sheetIndex: 2, runId: 'run-B', metal: 'rose', metalLabel: 'RG', fileBase: 'RG_Sep.24.26_Set-2_Sheet-2', orders: ['3700000011', '3700000012'], names: '3700000011 · BR-TST-09 3700000012 · BR-TST-05' });
-sheet('shS1', { runId: 'run-C', draft: true, fileBase: 'GF_Sep.24.26_Sheet-1', orders: ['3700000020'], names: '3700000020 · BR-TST-07' });
+sheet('shS1', { runId: 'run-C', draft: false, fileBase: 'GF_Sep.24.26_Sheet-1', orders: ['3700000020'], names: '3700000020 · BR-TST-07' });
 const line = (orderId, tx, listingId) => ({ orderId, transactionId: tx, sku: 'BR', state: 'written', snap: { listingId: String(listingId), title: 't' } });
 // run B keeps some lines in its record, some beside it (live) and the rest in its line archive
 const liveJson = JSON.stringify({ '3700000011_2': line('3700000011', '2', 1719999) });
@@ -131,7 +132,7 @@ store.set('Charm_Nest_Runs/run-A', { runId: 'run-A', day: DAY, status: 'complete
   assert.strictEqual((await post({ op: 'laserDone', kind: 'set', id: 'set-none', by: 'Paul' })).status, 404);
   let r = await ok({ op: 'laserDone', kind: 'sheet', id: 'shA1', done: true, by: 'Paul' });
   assert(r.at > 0 && r.by === 'Paul' && r.setId === 'set-A' && r.setDone === false && r.setChanged === false, JSON.stringify(r));
-  assert.deepStrictEqual(r.counts, { sheets: 1, sets: 0 });
+  assert.deepStrictEqual(r.counts, { sheets: 0, sets: 0 },'a partial set is not filed in Completed');
   assert.strictEqual(doc('Charm_Nest_Sheets', 'shA1').laserDoneBy, 'Paul');
   assert.strictEqual(doc('Charm_Nest_Sheets', 'shA1').laserDoneAt, r.at, 'a time in ms');
   assert(!doc('Charm_Nest_Sets', 'set-A').laserDoneAt, 'a set is not completed while a sheet of it is not');

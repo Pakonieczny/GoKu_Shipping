@@ -2204,6 +2204,34 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 @keyframes ldFade{from{opacity:0;transform:translateY(3px)}}
 /* the mark on each card: a check in a circle at its corner, shown on hover or focus, and always on a touch screen */
 #libBody .libCard,#libDone .libCard{position:relative}
+/* Local order searches sit with their list, without another toolbar. */
+.cnOrderFind{display:inline-flex;align-items:center;gap:5px;min-width:88px;max-width:170px;border-bottom:1px solid var(--line);color:var(--ink45)}
+.cnOrderFind svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6}
+.cnOrderFind input{width:100%;min-width:0;border:0;border-radius:0;background:transparent;padding:5px 2px;color:var(--ink);font:12px var(--mono)}
+.cnOrderFind:focus-within{border-color:var(--slate);color:var(--slate)}
+.cnOrderFind input:focus{outline:none;box-shadow:none}
+#reviewView .cnOrderFind{flex:0 1 160px;margin-left:auto}
+#reviewView .reviewListRow.orderMatch{box-shadow:inset 3px 0 var(--gold2);background:var(--goldSoft)}
+.owSheetFindRow{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
+.owSheetFindRow .fLabel{margin:0}
+.owSheetFindRow .cnOrderFind{flex:1;max-width:180px}
+.owPanel.searching>section:not(:first-child),.owPanel.searching>.acts{display:none}
+.owSheetMatches[hidden]{display:none}
+.owSheetMatches{display:grid;gap:5px;max-height:55vh;overflow:auto}
+.owSheetMatches button{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:center;text-align:left;padding:8px 10px;border:1px solid var(--gold2);border-radius:8px;background:var(--goldSoft);color:var(--ink);cursor:pointer}
+.owSheetMatches b{font:600 13px var(--mono)}
+.owSheetMatches small{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:700px){#reviewView .cnOrderFind{flex-basis:120px}}
+/* Half-size production stamps straddle the sheet edge and stay visible at rest. */
+.sheetProcessSeal{position:absolute;right:20px;bottom:-28px;z-index:3;width:56px;height:56px;color:#22408f;transform:rotate(-8deg);pointer-events:auto;isolation:isolate}
+.sheetProcessSeal.cut{color:#19663f;transform:rotate(7deg)}
+.sheetProcessSeal svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:currentColor;stroke-width:2}
+.sheetProcessSeal svg>circle:first-child{fill:var(--card,#fffdf8);fill-opacity:.96;stroke-width:3}
+.sheetProcessSeal path{stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.sheetProcessSeal text{fill:currentColor;stroke:none;text-anchor:middle;font:800 9px Arial,sans-serif;letter-spacing:.25px}
+.sheetProcessSeal .sealStage{font-size:6.4px;letter-spacing:1px}
+.librarySheet:has(.sheetProcessSeal){padding-bottom:28px}
+.librarySheet:has(.sheetProcessSeal)>.productionRow{margin-top:30px}
 .ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
 .ldMark svg{width:14px;height:14px;display:block}
 .libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
@@ -2832,10 +2860,10 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
-<script src="charm-nest-readiness.js?v=20260925-audit"></script>
+<script src="charm-nest-readiness.js?v=20260930-laser-stages"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
-<script src="charm-nest-orders.js?v=20260928-a4-8"></script>
+<script src="charm-nest-orders.js?v=20260930-live-search"></script>
 <script src="charm-nest-background.js?v=20260924-followup"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
@@ -6141,7 +6169,7 @@ function renderLibrary() {
   const LD = window.LibraryDone; if (LD && LD.tab() === "done") return;
   const q = ($("#libSearch").value || "").trim().toLowerCase(), focus = LD ? LD.focus() : null;
   // a number searched for (an order, a listing) shows the sheets that hold it, those loaded and those the search found
-  const rows0 = (LD ? LD.rows(S.library.rows, focus) : S.library.rows).filter(r => !(LD && LD.isDone(r)) && (focus ? focus.test(r) : !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")} ${(r.orders || []).join(" ")} ${(r.listings || []).join(" ")}`.toLowerCase().includes(q)));
+  const rows0 = (LD ? LD.rows(S.library.rows, focus) : S.library.rows).filter(r => !(LD && LD.isFiled(r)) && (focus ? focus.test(r) : !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")} ${(r.orders || []).join(" ")} ${(r.listings || []).join(" ")}`.toLowerCase().includes(q)));
   // one record per sheet name, the newest: a re-nested sheet keeps its name, and the library could hold its stale twin
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
   const rows = [...newest.values()];
@@ -6154,11 +6182,12 @@ function renderLibrary() {
     const item=document.createElement('article');item.className='librarySheet';item.dataset.laserCard='sheet';item._laserSheets=[r.id];
     item.innerHTML=card(r,0)+LaserReview.labels(r);
     item.querySelector('.libCard').onclick=()=>openLibrarySheet(r.id);
-    LaserReview.place(item,LaserReview.sheet(r).ready,body);
+    LaserReview.place(item,LaserReview.canCut(r),body);
   }
   LaserReview.changed();
   libraryReturn(place);
   if (LD) LD.decorate(body);
+  LaserReview.poll(true);
 }
 async function openLibrarySheet(id) {
   if (window.SheetWin) return SheetWin.open(id);   // the sheet window (charm-nest-sheetwin.js); the dialog below is its fallback
@@ -6518,13 +6547,13 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260929-nc"></script>
-<script src="charm-nest-sheetwin.js?v=20260929-m11"></script>
+<script src="charm-nest-bridge.js?v=20260930-laser-stages"></script>
+<script src="charm-nest-sheetwin.js?v=20260930-laser-stages"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260929-m5"></script>
+<script src="charm-nest-library.js?v=20260930-laser-stages"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

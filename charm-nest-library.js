@@ -1,7 +1,7 @@
 /* The Library's two tabs, Current | Completed (Paul, 25 Sep).
    The laser operator marks a sheet, or a whole set, completed with the check at its corner. It leaves Current (the
-   Laser cutting and In progress lists) and is filed under Completed: every sheet or set the laser has done, newest first,
-   by the day it was done, read a page at a time as the list is scrolled. A set there opens in place into the same card
+   Laser cutting and In progress lists) only once its entire set is finished. Until then its completion is a seal.
+   Completed is grouped by completion day and read a page at a time as the list is scrolled. A set there opens in place into the same card
    Current shows, and a sheet opens as it does in Current. A number in the search box is looked up as an order and as a
    listing, however old the sheet: the sheets that hold it are lit and brought into view, in either tab.
    The page's own Library (charm-nest-1.html: loadLibrary, renderLibrary; the bridge's Sets view) draws Current and asks
@@ -115,6 +115,22 @@
     const m = L.marks.get(keyOf(r));
     return m ? m.done : +(r.laserDoneAt || (r.kind ? r.at : 0)) > 0;       // (a Completed row says when as `at`)
   }
+  function isFiled(r) {
+    if (!isDone(r)) return false;
+    if (!r.setId || r.kind === 'set' || Array.isArray(r.sheetIds) || r.draft || r.solidIncluded === false) return true;
+    const mark = L.marks.get('set:' + r.setId);
+    return mark ? mark.done : !r.laserSetPending;
+  }
+  function canComplete(kind, id) {
+    const root = byId('libBody');
+    if (S.mode !== 'library' || L.tab === 'done' || !root) return false;
+    const card = kind === 'set' ? [...root.querySelectorAll('.setCard')].find(c=>c._laserSet?.setId===id)
+      : root.querySelector(`.libCard[data-id="${CSS.escape(id)}"]`);
+    const group = card && (card.closest('[data-laser-card]') || card);
+    if (!card || !card.closest('[data-laser-area="ready"]') || !group._laserSheets) return false;
+    const sheets = group._laserSheets.map(recordOf).filter(Boolean);
+    return group._laserSet ? LaserReview.group(group._laserSet,sheets).ready : sheets.length===1 && LaserReview.canCut(sheets[0]);
+  }
   function note(key, done, at, by) { L.marks.delete(key); L.marks.set(key, { done, at: at || null, by: by || null, t: Date.now() }); }
   /** A run's pages that are these sheets: a sheet the laser has done is closed to more charms (layoutFixed, LiveNest). */
   function pages(ids, at) {
@@ -128,7 +144,8 @@
   /** The Library's own records of these sheets say so too, until they are read again. */
   function records(ids, at) {
     const want = new Set(ids);
-    for (const r of S.library.rows || []) if (want.has(r.id)) r.laserDoneAt = at || null;
+    const all = [...(S.library.rows || []), ...[...doc.querySelectorAll('.setCard')].flatMap(c=>c._sheets || [])];
+    for (const r of all) if (want.has(r.id)) { r.laserDoneAt = at || null; LaserReview.record(r); }
     for (const x of L.extra.values()) if (want.has(x.r.id)) x.r.laserDoneAt = at || null;
     S.library.loadedAt = 0;     // Current is read again when it is next shown
   }
@@ -157,55 +174,50 @@
   }
 
   /* ── marking ── */
-  /** Marks a sheet or a set completed (done), or takes the mark back, with who and when. The card leaves at once and the
-      cloud is told; if it says no, the card comes back and the reason is shown. Resolves to the cloud's answer. */
+  /** Records laser completion, or undoes it, with who and when. A sheet keeps its
+      place until the server confirms that every member of its set is completed. */
   async function mark(kind, id, done = true, o = {}) {
     kind = kind === 'set' ? 'set' : 'sheet'; done = done !== false; id = String(id || '');
     if (!id) throw new Error('No sheet or set to mark');
     const key = kind + ':' + id;
-    if (L.busy.has(key)) return null;               // a second click while the first is on its way
+    if (L.busy.has(key)) return null;
+    if (done && !canComplete(kind,id)) {
+      const message = 'Complete sheets from Laser cutting once every remaining sheet in the set is ready';
+      toast(message,'bad',5000); throw new Error(message);
+    }
     const staff = window.CNEmployee || { name: () => '', ask: () => '' };
     let by = o.by || staff.name();
     if (done && !by) by = staff.ask();
-    if (done && !by) { toast('Nothing was marked: say who you are first', 'bad', 5000); throw new Error('No name given'); }
-    if (!S.cloud.ok) { toast('Nothing was marked: the cloud is offline', 'bad', 5000); throw new Error('The cloud is offline'); }
+    if (done && !by) throw new Error('Say who marked it completed');
+    if (!S.cloud.ok) throw new Error('The cloud is offline');
     L.busy.add(key);
-    const ids = kind === 'sheet' ? [id] : setSheets(id), was = new Map([key, ...ids.map(x => 'sheet:' + x)].map(k => [k, L.marks.get(k)]));
-    const at = Date.now(), name = o.name || nameOf(kind, id), setOfSheet = kind === 'sheet' ? ((recordOf(id) || {}).setId || null) : null;
-    note(key, done, at, by); for (const x of ids) note('sheet:' + x, done, at, by);
-    pages(ids, done ? at : null); records(ids, done ? at : null);
-    // it leaves at once (seen going to the tab that now holds it); the Completed tab counts it as it lands there
-    const landed = leave(kind, id, done, ids, setOfSheet), landAt = Date.now() + landed;
-    const unbump = bump(kind === 'set' ? 'sets' : 'sheets', done ? 1 : -1, false, done && L.tab !== 'done' ? landed : 0);
+    const ids = kind === 'sheet' ? [id] : setSheets(id), name = o.name || nameOf(kind,id);
     try {
-      // (where it was marked goes on every order's laserDone: this page, and the view it was pressed in)
-      const via = o.via || (o.undo ? 'undo' : L.tab === 'done' ? 'Library Completed' : 'Library');
-      const r = await api('charmNestLibrary', { op: 'laserDone', kind, id, done, by: by || undefined, device: 'charm-nest-1', via }, { label: done ? 'Marking completed' : 'Moving back to Current' });
-      const t = r.at || at;
-      for (const x of r.sheetIds || []) note('sheet:' + x, done, t, r.by);
-      if (r.setId && r.setDone != null) note('set:' + r.setId, !!r.setDone, t, r.by);
-      pages(r.sheetIds || [], done ? t : null); records(r.sheetIds || [], done ? t : null);
+      const via = o.via || (o.undo ? 'undo' : done ? 'Laser cutting' : 'Library Completed');
+      // Nothing disappears or gains a seal until the server accepts the laser-stage check.
+      const r = await api('charmNestLibrary',{op:'laserDone',kind,id,done,by:by || undefined,stage:done?'laser':undefined,device:'charm-nest-1',via},{label:done?'Marking completed':'Moving back to Current'});
+      const t = r.at || Date.now();
+      for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by);
+      if (kind === 'set') note(key,done,t,r.by);
+      if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by);
+      pages(r.sheetIds || [],done?t:null); records(r.sheetIds || [],done?t:null);
+      let landed = 0;
+      if (done && r.setId) {
+        if (r.setDone) landed=leave('set',r.setId,true,ids,r.setId);
+        else { cards(byId('libBody'),'current'); partials(byId('libBody')); LaserReview.changed(); }
+      } else landed=leave(kind,id,done,ids,r.setId);
       if (r.counts) setCounts(r.counts);
-      // the Completed lists not on screen are read again when next shown; the one on screen was changed in place (leave)
-      for (const [k, st] of L.lists) if (st !== L.list || L.tab !== 'done') dropList(k);
-      if (!done && r.setId && r.setChanged && L.list && L.list.kind === 'sets') removeRows(L.list, ['set:' + r.setId]);
+      for (const [k,st] of L.lists) if (st!==L.list || L.tab!=='done') dropList(k);
+      if (!done && r.setId && r.setChanged && L.list && L.list.kind==='sets') removeRows(L.list,['set:'+r.setId]);
       if (!done) keepCurrent(r.sheetIds || ids);
-      // (marked again from Completed, an Undo of a move back: its row comes in at the top, from the Current tab)
-      if (L.tab === 'done' && done && L.list) { expectRows([key, ...(r.sheetIds || ids).map(x => 'sheet:' + x), r.setId && r.setDone ? 'set:' + r.setId : ''], 'current'); freshen(L.list, true); }
-      // a set's sheets this page did not know of until the cloud said: their cards leave as well
-      if (done && L.tab !== 'done' && S.mode === 'library') for (const x of r.sheetIds || []) if (!ids.includes(x)) leave('sheet', x, true, [x], null);
-      if (!o.undo) undoNote(kind, id, done, r, name, ids, landAt);
-      else said(done ? `${name} is completed again` : `${name} is back in Current`, done ? 'done' : 'current', [key, ...(r.sheetIds || ids).map(x => 'sheet:' + x), r.setId ? 'set:' + r.setId : '']);
+      if (L.tab==='done' && done && L.list) { expectRows([key,r.setId && r.setDone?'set:'+r.setId:''],'current'); freshen(L.list,true); }
+      if (done && r.setId && !r.setDone) {
+        toast(`${name} completed · stays with its unfinished set`,'ok',5000);
+      } else if (!o.undo) undoNote(kind,id,done,r,name,ids,Date.now()+landed);
+      else said(done?`${name} is completed again`:`${name} is back in Current`,done?'done':'current',[key]);
       return r;
-    } catch (e) {
-      for (const [k, m] of was) { if (m) L.marks.set(k, m); else L.marks.delete(k); }
-      const back = ids.filter(x => !(was.get('sheet:' + x) || {}).done);
-      pages(done ? back : ids, done ? null : at); records(done ? back : ids, done ? null : at);
-      unbump(); bump(kind === 'set' ? 'sets' : 'sheets', done ? -1 : 1, true);
-      if (L.tab === 'done') { dropList(L.list && L.list.key); showDone(true); } else renderCurrent();
-      toast(`${done ? 'Not marked completed' : 'Not moved back'}: ${e.message}`, 'bad', 8000);
-      throw e;
-    } finally { L.busy.delete(key); }
+    } catch(e) { toast(`${done?'Not marked completed':'Not moved back'}: ${e.message}`,'bad',8000); throw e; }
+    finally { L.busy.delete(key); }
   }
   /** "Sheet 2 marked completed · Undo", under the tab it went to, once it has landed there (Paul, 27 Sep 20:09-20:24:
       the tab says what arrived; one Undo, no toast beside it). With the Library out of sight, or under an open window,
@@ -256,10 +268,10 @@
     if (!ids || !ids.length) return;
     try {
       const r = await api('charmNestLibrary', { op: 'laserStatus', sheetIds: ids.slice(0, 200) }, { quiet: true });
-      for (const s of r.sheets || []) { LaserReview.record(s); if (!isDone(s)) L.extra.set(s.id, { r: s, t: Date.now() }); }
-      const body = byId('libBody'), shown = body && (r.sheets || []).every(s => isDone(s) || body.querySelector(`.libCard[data-id="${CSS.escape(s.id)}"]`));
+      for (const s of r.sheets || []) { LaserReview.record(s); if (!isFiled(s)) L.extra.set(s.id, { r: s, t: Date.now() }); }
+      const body = byId('libBody'), shown = body && (r.sheets || []).every(s => isFiled(s) || body.querySelector(`.libCard[data-id="${CSS.escape(s.id)}"]`));
       // (drawn now: it comes in from Completed as it would have at once)
-      if (L.tab !== 'done' && S.mode === 'library' && !shown) comeBack(body, (r.sheets || []).filter(s => !isDone(s)).map(s => s.id), 'done');
+      if (L.tab !== 'done' && S.mode === 'library' && !shown) comeBack(body, (r.sheets || []).filter(s => !isFiled(s)).map(s => s.id), 'done');
     } catch (_) { /* Current reads it at its next refresh if it is among the newest */ }
   }
 
@@ -340,9 +352,13 @@
       const body = byId('libBody'); if (!body) return 0;
       if (!done) { comeBack(body, ids, 'done'); return 0; }
       const gone = [];
-      if (kind === 'set') { for (const c of body.querySelectorAll('.setCard')) if (c._laserSet && c._laserSet.setId === id) gone.push(c); }
+      if (kind === 'set') {
+        for (const c of body.querySelectorAll('.setCard')) if (c._laserSet && c._laserSet.setId === id) gone.push(c);
+        for (const c of body.querySelectorAll('.libCard[data-id]')) if (!c.closest('.setCard') && recordOf(c.dataset.id)?.setId===id) gone.push(c.closest('.librarySheet') || c);
+      }
       else for (const c of body.querySelectorAll(`.libCard[data-id="${CSS.escape(id)}"]`)) {
         const item = c.closest('.librarySheet') || c, set = item.closest('.setCard');
+        if (set && !isDone(set._laserSet)) { cards(body,'current'); partials(body); continue; }
         const left = set ? [...set.querySelectorAll('.librarySheet')].filter(x => x !== item && !gone.includes(x) && !x.dataset.leaving).length : 1;
         gone.push(left ? item : set);
       }
@@ -455,7 +471,7 @@
   function partials(root) {
     for (const card of root.querySelectorAll('.setCard')) {
       const head = card.querySelector(':scope > .sh'); if (!head) continue;
-      const all = (card._sheets || []).filter(r => !r.archived), n = all.filter(isDone).length;
+      const all = (card._sheets || []).filter(r => !r.archived), n = all.map(LaserReview.projected).filter(isDone).length;
       let tag = head.querySelector('.ldPartial');
       if (!n || n >= all.length) { if (tag) tag.remove(); continue; }
       if (!tag) { tag = doc.createElement('span'); tag.className = 'ldPartial'; (head.querySelector('.ldMarkSet') || head.querySelector('.nm')).after(tag); }
@@ -464,23 +480,29 @@
   }
   /** The check at each card's corner, and the set's own at its head: Mark completed in Current, Move back in Completed. */
   function cards(root, mode) {
-    const done = mode === 'done';
+    if (!root) return;
     for (const c of root.querySelectorAll('.libCard[data-id]')) {
-      let b = c.querySelector(':scope > .ldMark');
-      if (b && b.dataset.done === (done ? '1' : '0')) continue;
-      if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'ldMark'; c.appendChild(b); }
-      b.dataset.ld = 'sheet:' + c.dataset.id; b.dataset.done = done ? '1' : '0'; b.innerHTML = done ? ICON.undo : ICON.check;
-      b.title = done ? 'Move back to Current' : 'Mark completed · the laser has cut this sheet'; b.setAttribute('aria-label', done ? 'Move this sheet back to Current' : 'Mark this sheet completed');
+      const r=LaserReview.projected(recordOf(c.dataset.id) || {}), done=isDone(r), ready=!done && LaserReview.sheet(r).ready;
+      let seal=c.querySelector(':scope > .sheetProcessSeal');
+      const phase=done?'cut':ready?'ready':'';
+      if (seal && !seal.classList.contains(phase || 'none')) {seal.remove();seal=null;}
+      if (phase && !seal) c.insertAdjacentHTML('beforeend',CharmNestReadiness.processSeal(done,done?`Completed${r.laserDoneBy?' by '+r.laserDoneBy:''}`:null));
+      let b=c.querySelector(':scope > .ldMark');
+      const allowed=done || canComplete('sheet',c.dataset.id);
+      if (!allowed) { if(b)b.remove(); continue; }
+      if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark';c.appendChild(b);}
+      b.dataset.ld='sheet:'+c.dataset.id;b.dataset.done=done?'1':'0';b.innerHTML=done?ICON.undo:ICON.check;
+      b.title=done?'Undo sheet completion':'Mark completed · the laser has cut this sheet';b.setAttribute('aria-label',done?'Undo sheet completion':'Mark this sheet completed');
     }
     for (const card of root.querySelectorAll('.setCard')) {
-      const st = card._laserSet, head = card.querySelector(':scope > .sh');
-      if (!st || !st.setId || st.standalone || st.working || !head) continue;
-      let b = head.querySelector(':scope > .ldMarkSet');
-      if (b && b.dataset.done === (done ? '1' : '0')) continue;
-      if (!b) { b = doc.createElement('button'); b.type = 'button'; b.className = 'ldMark ldMarkSet'; (head.querySelector('.nm') || head.firstChild).after(b); }
-      b.dataset.ld = 'set:' + st.setId; b.dataset.done = done ? '1' : '0';
-      b.innerHTML = (done ? ICON.undo : ICON.check) + `<span>${done ? 'Move set back' : 'Mark set completed'}</span>`;
-      b.title = done ? 'Move the set and its sheets back to Current' : 'Mark the set and each of its sheets completed';
+      const st=card._laserSet,head=card.querySelector(':scope > .sh');if(!head)continue;
+      let b=head.querySelector(':scope > .ldMarkSet');
+      const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId));
+      if(!allowed){if(b)b.remove();continue;}
+      if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
+      b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
+      b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Move set back':'Mark set completed'}</span>`;
+      b.title=done?'Move the set and its sheets back to Current':'Confirm laser cutting is finished for every remaining sheet';
     }
   }
   function act(kind, id, done, btn) {
@@ -616,7 +638,7 @@
       else if (f.error) html = `<span class="ldFoundT">Could not look up <b>${esc(f.q)}</b>: ${esc(f.error.message)}</span><button type="button" class="ldGo" data-ld-refind="${esc(f.q)}">Retry</button>`;
       else {
         const metal = metalNow(), res = f.res, word = matchWord(res);
-        const cur = (res.sheets || []).filter(r => !isDone(r) && metalOk(r, metal)), done = (res.rows || []).filter(r => isDone(r) && metalOk(r, metal));
+        const cur = (res.sheets || []).filter(r => !isFiled(r) && metalOk(r, metal)), done = (res.rows || []).filter(r => isDone(r) && metalOk(r, metal));
         const mine = tab === 'done' ? done : cur, other = tab === 'done' ? cur : done;
         const sets = new Set(mine.map(r => r.setId).filter(Boolean)).size;
         const kind = tab === 'done' ? 'completed sheet' : 'sheet';
@@ -999,6 +1021,6 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, canComplete, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();

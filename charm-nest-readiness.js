@@ -47,6 +47,20 @@
     const stages=Object.fromEntries(['layout','front','approval','backs','qr'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
     return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready),sheets:unique.length};
   }
+  // Laser work keeps a set together. A sheet already cut satisfies its stage even if older
+  // engraving evidence is unavailable; every remaining sheet must still pass the full policy.
+  function laserGroup(s,sheets){
+    const unique=[...new Map((sheets || []).filter(x=>!x.archived).map(x=>[x.id || x.sheetId,x])).values()];
+    const expected=[...new Set(s.sheetIds || unique.map(x=>x.id || x.sheetId))];
+    const complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
+    return {...set(s,unique),ready:complete && unique.every(x=>+x.laserDoneAt>0 || sheet(x).ready)};
+  }
+  const filed=s=>+s.laserDoneAt>0 && !s.laserSetPending;
+  // 56px: half the application's 112px order seals. Words and symbols distinguish both stages.
+  function processSeal(done,label){
+    const title=escape(label || (done?'Completed · laser cutting finished':'Laser ready · ready for cutting'));
+    return `<span class="sheetProcessSeal ${done?'cut':'ready'}" role="img" aria-label="${title}" title="${title}"><svg viewBox="0 0 112 112" aria-hidden="true"><circle cx="56" cy="56" r="51"/><circle cx="56" cy="56" r="45" stroke-dasharray="${done?'2 3':'0'}"/><circle cx="56" cy="56" r="35"/>${done?'<path d="m39 46 12 12 23-25"/>':'<path d="M47 29h18l-5 12h-8zM56 44v11m-10 4 5-4m15 4-5-4M36 65h40"/>'}<text x="56" y="79">${done?'COMPLETED':'LASER READY'}</text><text class="sealStage" x="56" y="24">${done?'CUT &amp; CHECKED':'NEXT PROCESS'}</text></svg></span>`;
+  }
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const icon=ready=>`<svg viewBox="0 0 32 38" aria-hidden="true"><path d="M8 24 5 36l11-5 11 5-3-12"/><circle cx="16" cy="15" r="12"/>${ready?'<path d="m10 15 4 4 8-9"/>':'<path d="M16 9v7m0 5v.1"/>'}</svg>`;
   // The badge stays visible; only verified readiness lights it up.
@@ -58,5 +72,5 @@
     // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
     return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope);
   }
-  return {idsOf,decisions,sheet,set,seal,counter};
+  return {idsOf,decisions,sheet,set,laserGroup,filed,processSeal,seal,counter};
 });

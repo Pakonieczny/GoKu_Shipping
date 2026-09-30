@@ -223,7 +223,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swNav .swBackBtn{display:inline-flex;align-items:center;gap:4px;border:0;background:transparent;border-radius:8px;padding:5px 8px 5px 4px;font:600 12.5px var(--sans);color:var(--ink70);cursor:pointer}
 .swNav .swBackBtn svg{width:15px;height:15px}
 .swNav .swBackBtn:hover{background:var(--paper2);color:var(--ink)}
-.swNav .pos{margin-left:auto;font:10.5px var(--mono);color:var(--ink45)}
+.swNav .pos{display:none}
+.swNav .swPieceFind{flex:1;min-width:70px;max-width:190px;margin-left:auto}
+.swNav .swPieceFind input{padding-top:4px;padding-bottom:4px;font-size:12px;background:transparent;border-color:transparent}
+.swNav .swPieceFind input:focus{border-color:var(--line)}
+.swOrd.orderMatch{background:var(--goldSoft);box-shadow:inset 2px 0 var(--gold2)}
 .swNav .swIcon{width:28px;height:28px}
 .swDetail{padding:14px 16px 18px;display:grid;gap:16px;align-content:start}
 .swOrderHead{display:grid;gap:3px}
@@ -432,14 +436,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
           <div class="swName" data-r="name" role="group" aria-label="Your name" hidden></div>
           <div class="swSkel" data-r="skel" aria-hidden="true" hidden></div>
           <div class="swPane" data-pane="sheet">
-            <div class="swPaneHead"><div class="swFindRow"><label class="swFind">${ICON.search}<input data-r="find" type="search" placeholder="Find an order or SKU on this sheet" autocomplete="off" spellcheck="false"></label><button type="button" class="swIcon" data-r="addBtn" title="Add an order to this sheet" aria-label="Add an order to this sheet" hidden>${ICON.add}</button></div><div class="swSeg" data-r="seg" role="group" aria-label="Show"></div></div>
+            <div class="swPaneHead"><div class="swFindRow"><label class="swFind">${ICON.search}<input data-r="find" type="search" placeholder="Order # or SKU on this sheet" aria-label="Search orders on this sheet" autocomplete="off" spellcheck="false"></label><button type="button" class="swIcon" data-r="addBtn" title="Add an order to this sheet" aria-label="Add an order to this sheet" hidden>${ICON.add}</button></div><div class="swSeg" data-r="seg" role="group" aria-label="Show"></div></div>
             <div class="swSheetMsg" data-r="work" hidden></div>
             <div class="swSheetMsg" data-r="fill" hidden></div>
             <div class="swScroll"><ol class="swOrders" data-r="orders"></ol></div>
             <div class="swFoot" data-r="foot"></div>
           </div>
           <div class="swPane" data-pane="piece" hidden>
-            <div class="swNav"><button class="swBackBtn" data-r="toSheet">${ICON.back}<span>All orders</span></button><span class="pos" data-r="pos"></span><button class="swIcon" data-r="prev" title="Previous charm (←)" aria-label="Previous charm">${ICON.back}</button><button class="swIcon" data-r="next" title="Next charm (→)" aria-label="Next charm">${ICON.next}</button></div>
+            <div class="swNav"><button class="swBackBtn" data-r="toSheet">${ICON.back}<span>All orders</span></button><label class="swFind swPieceFind">${ICON.search}<input data-r="findPiece" type="search" inputmode="numeric" placeholder="Order # on sheet" aria-label="Search order numbers on this sheet" autocomplete="off" spellcheck="false"></label><span class="pos" data-r="pos"></span><button class="swIcon" data-r="prev" title="Previous charm (←)" aria-label="Previous charm">${ICON.back}</button><button class="swIcon" data-r="next" title="Next charm (→)" aria-label="Next charm">${ICON.next}</button></div>
             <div class="swScroll" data-r="pieceScroll"><div class="swDetail" data-r="detail"></div></div>
             <div></div>
           </div>
@@ -456,7 +460,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     d.addEventListener("close", () => { orderRecs.clear(); cleanup(); });
     d.addEventListener("click", e => { if (e.target === d) close(); if (!E.menu.hidden && !e.target.closest(".swMenuWrap")) menu(false); });
     E.moreBtn.onclick = () => menu(E.menu.hidden);
-    E.find.oninput = () => { W.q = E.find.value.trim().toLowerCase(); renderOrders(); paintFx(); };
+    const search = input => {
+      W.q=input.value.trim().toLowerCase();E.find.value=input.value;E.findPiece.value=input.value;
+      W.hover=null;W.sel=null;W.fx=[];tip(null);
+      if(W.view==='piece'){showSheetPane();E.find.focus({preventScroll:true});}
+      else {renderOrders();paintFx();}
+    };
+    E.find.oninput=()=>search(E.find);
+    E.findPiece.oninput=()=>search(E.findPiece);
     E.toSheet.onclick = () => showSheetPane();
     E.prev.onclick = () => step(-1);
     E.next.onclick = () => step(1);
@@ -1100,7 +1111,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     }
   }
   function resetView() {
-    W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = "";
+    W.view = "sheet"; W.q = ""; W.filter = "all"; W.el.find.value = ""; W.el.findPiece.value = "";
     W.face = "front"; W.shown = "front"; W.backs = null; W.backsList = null; W.backsAsked = false; W.backsWait = "";
     W.el.side.querySelector('[data-pane="sheet"]').hidden = false; W.el.side.querySelector('[data-pane="piece"]').hidden = true;
   }
@@ -1165,7 +1176,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       E.state.className = "swState" + (done ? " done" : ready ? " ready" : "");
       st.textContent = done ? "Completed" : ready ? "Ready for laser" : (r.releaseFull || r.intakeFinalized) ? "Released" : "In progress";
       // a sheet still filling is not cut yet: it can be marked completed once it is released (or taken back when it was)
-      E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && working && !ready);
+      E.done.hidden = !window.LibraryDone || !window.LibraryDone.mark || (!done && !LibraryDone.canComplete('sheet',r.id || r.sheetId));
       E.done.textContent = done ? "Move back to current" : "Mark completed";
       E.done.onclick = () => markDone(!done);
     }
@@ -1174,13 +1185,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function markDone(done) {
     const b = W.el.done, id = W.id; b.disabled = true; const was = b.textContent; b.innerHTML = `<span class="spin"></span>${done ? "Completing…" : "Moving back…"}`;
     try {
-      await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
+      const result = await LibraryDone.mark("sheet", id, done, { via: "Sheet window" });
       if (W.id !== id) return;
       W.rec.laserDoneAt = done ? Date.now() : null; head(W.rec, false);
       // where the sheet went, said slowly where the eye already is (Paul, 27 Sep): the state pops, and a note under it
       // names the Library tab that holds the sheet now, with Undo
       animate(W.el.state, [{ transform: "scale(.8)", opacity: .4 }, { transform: "scale(1.1)", opacity: 1, offset: .45 }, { transform: "none", opacity: 1 }], 700, { fill: "none" });
-      swNote(W.el.state, { text: done ? "Moved to Library › Completed" : "Back in Library › Current", actions: [{ label: "Undo", title: done ? "Move it back to Current" : "Mark it completed again", fn: () => { if (W.id === id && W.dlg.open && W.rec) markDone(!done); } }] });
+      swNote(W.el.state, { text: done ? (result?.setId && !result.setDone ? "Completed · stays with its unfinished set" : "Moved to Library › Completed") : "Back in Library › Current", actions: [{ label: "Undo", title: done ? "Move it back to Current" : "Mark it completed again", fn: () => { if (W.id === id && W.dlg.open && W.rec) markDone(!done); } }] });
     } catch (e) { toast("Could not mark the sheet: " + e.message, "bad", 6000); b.textContent = was; }
     finally { b.disabled = false; }
   }
@@ -1439,9 +1450,9 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
     const t1 = now || performance.now();
     const q = W.q, matches = q ? W.pieces.filter(x => matchesQ(x, q)) : null;
-    const fs = focusSet();
+    const fs = q ? null : focusSet();
     let u = 1;
-    if (W.geom && (fs || (matches && matches.length < W.pieces.length))) {
+    if (W.geom && (fs || matches)) {
       // the charms in hand come forward in their own lines, each in its colour and ringed (the first time after an
       // opening it comes gently, the sheet having just arrived). Nothing is laid over the sheet: every other charm on it
       // stays whole and sharp (Paul, 28 Sep: "no weird semi-transparent haze over the sheet").
@@ -1618,7 +1629,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const ids = new Set(); for (const l of linesOf(W.set.orders[rid])) for (const c of l.copies || []) if (c.sheetId && c.sheetId !== W.id) ids.add(c.sheetId);
     return [...ids].map(id => W.setSheets.find(s => s.id === id) || { id, metal: "", n: "?" });
   }
-  const matchesQ = (x, q) => `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
+  const matchesQ = (x, q) => /^[\d\s#-]+$/.test(q) ? CharmNestOrders.orderMatches(x.rid,q) : `${x.rid} ${x.sku} ${x.name}`.toLowerCase().includes(q);
 
   /* ── engraving of a piece ── */
   function jobOfPiece(x) {
@@ -1760,7 +1771,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const tags = (live.some(x => x.c && x.c.custom) ? `<span class="swTag cust" title="A custom order: its own designs, tinted plum on the sheet">Custom</span>` : "") +
         (need ? `<span class="swTag eng" title="Back engraving still to approve">${need > 1 ? need + " backs" : "back"}</span>` : ok ? `<span class="swTag engOk" title="Back engraving approved">back</span>` : "") +
         other.map(s => `<span class="swTag" style="--c:${colorOf(s.metal)}" title="Also on ${esc(s.name || "")}"><i></i>${esc(CODE[s.metal] || "")} ${s.n}</span>`).join("");
-      return `<li class="swOrd${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
+      return `<li class="swOrd${q ? " orderMatch" : ""}${go && go.keep ? " going" + (go.how === "cancel" ? " cancel" : "") : ""}" data-rid="${esc(rid)}" data-mkey="o:${esc(rid)}"><span class="no">${rid === "—" ? "No order" : esc(rid)}</span><span class="what" title="${esc(what)}">${esc(what)}</span><span class="tags">${tags}</span></li>`;
     }).join(""));
     E.orders.querySelectorAll(".swOrd").forEach(li => {
       const xs = W.orders.get(li.dataset.rid) || [];
@@ -4102,10 +4113,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   }
   /** Everything that stands still, drawn once into its own layer: the rulers, the sheet, every other charm drawn whole and
       sharp, and this order's charms in gold, ringed (the one pointed at in a firmer line). */
+  const orderHighlights = G => G.search ? G.pieces.filter(x=>!x.gone && CharmNestOrders.orderMatches(x.rid,G.search)) : G.mine;
   function paintOrderBase(G) {
     if (!layoutOrder(G)) return false;
     const cv = G.cv, b = G.base || (G.base = document.createElement("canvas")); if (b.width !== cv.width || b.height !== cv.height) { b.width = cv.width; b.height = cv.height; }
-    const ctx = b.getContext("2d"), R = G.R, dpr = G.dpr, mine = new Set(G.mine), drawn = G.pieces.some(x => x.c);
+    const ctx = b.getContext("2d"), R = G.R, dpr = G.dpr, mine = new Set(orderHighlights(G)), drawn = G.pieces.some(x => x.c);
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, b.width, b.height);
     ctx.fillStyle = "#fffefb"; ctx.fillRect(0, 0, b.width, b.height);
     if (!G.thumb && !G.bare) tryDo(() => drawRulers(ctx, R, G.k, G.Wp, G.Hp));
@@ -4126,7 +4138,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     // (Paul, 28 Sep: "make sure that everything is always perfectly visible and there's no weird semi-transparent haze
     //  over the sheet" — nothing is ever laid over the sheet: the order's pieces are told apart by their own gold and one
     //  gold line round each along its own outline (orderHalos, over this layer), never by washing the rest of the sheet out)
-    for (const x of G.mine) {
+    for (const x of orderHighlights(G)) {
       const on = G.focus && (x.poolId === G.focus || x.id === G.focus);
       orderPiece(ctx, G, x, () => {
         ctx.fillStyle = on ? "rgba(202,168,97,.58)" : "rgba(202,168,97,.42)"; orderOutline(ctx, G, x, true); ctx.fill("evenodd");
@@ -4167,7 +4179,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const cv = G.cv; if (!G.base || !cv.isConnected || cv._order !== G) return;
     const ctx = cv.getContext("2d"), t1 = now || performance.now(), calm = still();
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(G.base, 0, 0);
-    if (!G.mine.length) return;
+    if (!orderHighlights(G).length) return;
     const b = calm ? 0 : (1 - Math.cos(2 * Math.PI * (((t1 - (G.t0 || 0)) % BREATH_MS) / BREATH_MS))) / 2;
     const land = calm || !G.t0 ? 1 : Math.min(1, (t1 - G.t0) / 900);
     orderHalos(ctx, G, b, land < 1 ? .08 * Math.sin(Math.PI * Math.min(1, land * 2.6)) : 0);
@@ -4176,7 +4188,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   /** Each of the order's pieces ringed along its own outline (haloOf), the one pointed at in a firmer line; b: how far
       into its breath (0 at rest, 1 at its widest and softest), pop: the landing's swell. */
   function orderHalos(ctx, G, b, pop) {
-    for (const x of G.mine) {
+    for (const x of orderHighlights(G)) {
       const on = !!G.focus && (x.poolId === G.focus || x.id === G.focus), h = haloOf(x, G.k, G.dpr, G.backSide, { w: on ? 1.9 : 1.5 });
       const X = G.R + (G.backSide ? G.Wp - x.p.cxPt * G.k : x.p.cxPt * G.k), Y = G.R + x.p.cyPt * G.k;
       layHalo(ctx, h, X, Y, 1 + 1.8 * G.dpr * b / h.r + pop, (on ? 1 : .8) * (1 - .45 * b));
@@ -4217,6 +4229,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const redraw = () => { if (paintOrderBase(G)) paintOrder(G); };
     const info = {
       rec, pieces, mine: G.mine, stock: G.st, sheet: { id: rec.id || id || null, metal: rec.metal, n: sheetNoOf(rec), name: rec.folder || rec.fileBase || "" },
+      search: value => { G.search=CharmNestOrders.orderQuery(value);redraw();return CharmNestOrders.orderGroups(G.pieces,G.search); },
       redraw, focus: poolId => { G.focus = poolId || null; redraw(); },
       // the back side: the sheet's own backs and the engraving font, asked for once, and the plate drawn again as they land
       back: on => { G.backSide = !!on; if (G.backSide) ensureBacks(G, opts); redraw(); },

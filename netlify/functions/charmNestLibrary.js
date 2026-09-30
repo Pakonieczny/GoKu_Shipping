@@ -143,7 +143,7 @@ function slim(d) {
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
-    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, listings: (d.listings || []).slice(0, 500),
+    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, laserSetPending: !!d.laserSetPending, listings: (d.listings || []).slice(0, 500),
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
@@ -183,7 +183,14 @@ async function sheetEntries(rows, budget) {
 
 // One run read per batch supplies the exact per-copy engraving decisions.
 // Old/incomplete records remain pending until evidence is available.
+// Set membership controls filing, independently of an individual sheet's completion badge.
+async function filingRecords(records) {
+  const ids=[...new Set(records.filter(s=>s.setId && !s.draft && s.solidIncluded!==false).map(s=>s.setId))].filter(isId), sets=new Map();
+  for(let i=0;i<ids.length;i+=100) for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SETS).doc(id)),{fieldMask:["laserDoneAt"]})) sets.set(d.id,d.exists?d.data():null);
+  return records.map(s=>({...s,laserSetPending:!!(s.setId && !s.draft && s.solidIncluded!==false && !(num(sets.get(s.setId)?.laserDoneAt)>0))}));
+}
 async function readinessRecords(records) {
+  records=await filingRecords(records);
   const runIds=[...new Set(records.map(s=>s.runId).filter(isId))], runs=new Map();
   for(let i=0;i<runIds.length;i+=100) {
     const docs=await db.getAll(...runIds.slice(i,i+100).map(id=>col(RUNS).doc(id)));
@@ -306,7 +313,11 @@ async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
   for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
-  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs)sets.push({setId:d.id,sheetIds:d.exists?(d.data().sheetIds || []):[]});}
+  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs)sets.push({setId:d.id,sheetIds:d.exists?(d.data().sheetIds || []):[],laserDoneAt:d.exists?(num(d.data().laserDoneAt) || null):null});}
+  // The Sheets view may show only one metal or one member in the viewport. Read its
+  // siblings too, so it follows the same complete-set gate as the Sets view.
+  const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
+  for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
   return {sheets:(await readinessRecords(records)).map(slim),sets,checkedAt:Date.now()};
 }
 
@@ -472,7 +483,8 @@ async function op_listSheets(b) {
     if (b.to && /^\d{4}-\d{2}-\d{2}$/.test(b.to)) q = q.where("day", "<=", b.to);
     const snap = await q.limit(limit).select(...SLIM_SHEET).get();
     // (excludeDone: the Library's Current tab, which leaves out what the laser has cut, and its readiness is not worked out)
-    rows = snap.docs.map(d => [d.id, d.data()]).filter(([, d]) => !d.archived && !(b.excludeDone && num(d.laserDoneAt) > 0));
+    const records=await filingRecords(snap.docs.map(d=>({...d.data(),id:d.id})));
+    rows = records.filter(d=>!d.archived && !(b.excludeDone && Readiness.filed(d))).map(d=>[d.id,d]);
     if (b.metal && /^(gold|silver|rose|gold10k|gold14k)$/.test(b.metal)) rows = rows.filter(([, d]) => d.metal === b.metal);
     if (b.setId) rows = rows.filter(([, d]) => d.setId === b.setId);
     if (b.runId) rows = rows.filter(([, d]) => d.runId === b.runId);
@@ -1683,8 +1695,9 @@ async function doneMembers(sets, fields) {
    and one archived with a mark keeps it as archivedLaserDoneAt/By (op_archiveEmptySheet; laserDoneList moves one marked
    before that as it reads it), so the one-field count below holds no archived sheet, with no composite index. */
 async function doneCounts() {
-  const [s, t] = await Promise.all([SHEETS, SETS].map(name => col(name).where("laserDoneAt", ">", 0).count().get()));
-  return { sheets: s.data().count, sets: t.data().count };
+  const [s,t]=await Promise.all([col(SHEETS).where("laserDoneAt",">",0).select("setId","draft","solidIncluded","laserDoneAt","archived").get(),col(SETS).where("laserDoneAt",">",0).count().get()]);
+  const records=await filingRecords(s.docs.map(d=>d.data()));
+  return {sheets:records.filter(d=>!d.archived && Readiness.filed(d)).length,sets:t.data().count};
 }
 /** Marks a sheet or a set cut on the laser (done), or takes the mark back (done:false), in one transaction. A set marks
     each of its sheets; a sheet marked earlier keeps its own time and name. The set of a sheet is completed with its last
@@ -1705,19 +1718,29 @@ async function op_laserDone(b) {
     if (own && done && own.data().archived) return { error: "That sheet was repacked into other sheets: it is no longer in the Library", status: 409 };
     if (kind === "set") setRef = col(SETS).doc(id);
     else if (isId(own.data().setId) && !own.data().draft && own.data().solidIncluded !== false) setRef = col(SETS).doc(own.data().setId);
-    if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set") return { error: "There is no such set", status: 404 }; else setRef = null; }
+    if (setRef) { const s = await tx.get(setRef); if (s.exists) set = s.data(); else if (kind === "set" || done) return { error: "There is no such set", status: 404 }; else setRef = null; }
     const ids = set ? [...new Set(set.sheetIds || [])].filter(isId).slice(0, 300) : [];
     // (with what the orders' timelines say of each sheet: its orders, its label and the mark it had)
-    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: ["laserDoneAt", "laserDoneBy", "archived", "orders", "poolIds", "metal", "sheetIndex", "page", "fileBase", "folder"] }) : [];
+    const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: SLIM_SHEET.concat(["placements"]) }) : [];
+    if (done) {
+      if (b.stage !== "laser") return {error:"Complete sheets from the Laser cutting section only",status:409};
+      const records=members.filter(m=>m.exists && !m.data().archived).map(m=>({...m.data(),id:m.id}));
+      if (set && (!ids.length || members.some(m=>!m.exists || m.data().archived) || (own && !ids.includes(id)))) return {error:"The complete set must be present in Laser cutting first",status:409};
+      if (!set && own) records.push({...own.data(),id});
+      const pending=records.filter(s=>!(num(s.laserDoneAt)>0)), runIds=[...new Set(pending.map(s=>s.runId).filter(isId))],decided=new Map();
+      for(const runId of runIds){const run=await tx.get(col(RUNS).doc(runId));decided.set(runId,await decisionsOfRun(runId,run.exists?run.data():{},pending.filter(s=>s.runId===runId).flatMap(s=>s.poolIds || [])));}
+      for(const s of pending)s.engraving=decided.get(s.runId) || {};
+      if (!records.length || pending.some(s=>!Readiness.sheet(s).ready)) return {error:"Not ready for Laser cutting: every remaining sheet needs approved engraving, verified files and QR labels",status:409};
+    }
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     // every read is made: the writes follow
     const touched = [], write = ref => tx.set(ref, Object.assign({}, mark, { updatedAt: FV.serverTimestamp() }), { merge: true });
-    if (kind === "sheet") { write(col(SHEETS).doc(id)); touched.push(id); if (state.has(id) || !set) state.set(id, done); }
+    if (kind === "sheet") { if (!done || !(num(own.data().laserDoneAt)>0)) { write(col(SHEETS).doc(id)); touched.push(id); } if (state.has(id) || !set) state.set(id, done); }
     else for (const [sid, was] of state) if (!done || !was) { write(col(SHEETS).doc(sid)); touched.push(sid); state.set(sid, done); }
     let setDone = null, setChanged = false;
     if (setRef) {
-      const all = state.size > 0 && [...state.values()].every(Boolean), was = num(set.laserDoneAt) > 0;
-      setDone = kind === "set" ? done : all; setChanged = setDone !== was;
+      const all = state.size > 0 && state.size === ids.length && [...state.values()].every(Boolean), was = num(set.laserDoneAt) > 0;
+      setDone = all; setChanged = setDone !== was;
       if (setDone !== was) tx.set(setRef, Object.assign({}, setDone ? { laserDoneAt: at, laserDoneBy: by || set.laserDoneBy || null } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() }, { updatedAt: FV.serverTimestamp() }), { merge: true });
     }
     const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
@@ -1750,12 +1773,13 @@ async function op_laserDoneList(b) {
   const counts = cur ? null : await doneCounts();
   if (b.countOnly) return { counts };
   const limit = Math.min(200, Math.max(1, Math.floor(num(b.limit)) || 60)), q = foldText(str(b.q, 120)), metal = isMetal(b.metal) ? b.metal : null;
-  const cap = q || metal ? DONE_SCAN[kind] : limit, fields = kind === "sets" ? DONE_SET : q ? DONE_FIND : DONE_SHEET;
+  const cap = kind === "sheets" || q || metal ? DONE_SCAN[kind] : limit, fields = kind === "sets" ? DONE_SET : q ? DONE_FIND : DONE_SHEET;
   const rows = [], repair = []; let at = cur ? cur.at : null, skip = cur ? cur.skip : 0, scanned = 0, end = false;
   while (rows.length < limit && scanned < cap && !end) {
     const want = Math.max(1, Math.min(cap - scanned, q || metal ? Math.max(100, limit) : limit - rows.length)), skipped = skip;
     const snap = await col(name).where("laserDoneAt", at == null ? ">" : "<=", at == null ? 0 : at).orderBy("laserDoneAt", "desc").limit(skipped + want).select(...fields).get();
     let pass = skipped; const docs = snap.docs.filter(d => !(at != null && num(d.data().laserDoneAt) === at && pass-- > 0));
+    const filing = kind === "sheets" ? await filingRecords(docs.map(d=>d.data())) : null;
     const members = kind === "sets" ? await doneMembers(docs.map(d => [d.id, d.data()]).filter(([, d]) => !metal || !(d.materials || []).length || d.materials.includes(metal)), q ? DONE_MEMBER.concat(["names", "fileBase", "folder", "listings", "day", "setSeq"]) : DONE_MEMBER) : null;
     let i = 0;
     for (; i < docs.length && rows.length < limit; i++) {
@@ -1763,6 +1787,7 @@ async function op_laserDoneList(b) {
       if (t === at) skip++; else { at = t; skip = 1; }
       if (kind === "sheets") {
         if (d.archived) { if (repair.length < 20) repair.push([docs[i].id, d, t]); continue; }
+        if (!Readiness.filed(filing[i])) continue;
         if ((metal && d.metal !== metal) || (q && !foldText(sheetHay(docs[i].id, d)).includes(q))) continue;
         rows.push(doneSheetRow(docs[i].id, d));
       } else {
@@ -1857,7 +1882,9 @@ async function op_findSheets(b) {
     const wrote = await Promise.all(fill.map(([id, listings]) => col(SHEETS).doc(id).update({ listings }).then(() => { found.get(id).d.listings = listings; return 1; }, () => 0)));
     fallback.filled = wrote.reduce((n, x) => n + x, 0);
   }
-  const all = [...found.entries()], isDone = f => num(f.d.laserDoneAt) > 0;
+  const filing=await filingRecords([...found.values()].map(f=>f.d));let fi=0;
+  for(const f of found.values())f.d=filing[fi++];
+  const all = [...found.entries()], isDone = f => Readiness.filed(f.d);
   // one answer's room for all of it, in the order the page needs it: the cards, the completed rows, then the sets
   const budget = answerBudget(); let cut = false;
   const fitting = list => { let n = 0; while (n < list.length && budget.fits(list[n])) n++; if (n < list.length) cut = true; return list.slice(0, n); };
