@@ -22,6 +22,8 @@ const src=fs.readFileSync('charm-nest-bridge.js','utf8'),a=src.indexOf('  functi
   assert(panel.querySelector('.egApproveWrap .seal'),'latest approval rests half over the approved button');assert.equal(panel.querySelectorAll('.seal').length,2,'new approval does not erase the old seal');assert(panel.querySelector('.egApproveButton').disabled);
   const sh=d.getElementById('sheetEng');sh.innerHTML=E.panel({kind:'approved',back:{approvedAt:2000,approvedBy:'Seth',engravingSeals:[old,latest],png:'/saved.png'},text:'I\ndissent'});
   assert.deepEqual([...sh.querySelectorAll('.seal')].map(s=>s.getAttribute('aria-label')).sort(),[...panel.querySelectorAll('.seal')].map(s=>s.getAttribute('aria-label')).sort(),'saved-back and active-job inspectors show identical approval provenance');
+  E.wirePanel(sh,{kind:'approved',back:{png:'https://example.com/saved.png'}},{imageUrl:url=>'/image-proxy?url='+encodeURIComponent(url)});
+  assert.equal(sh.querySelector('.pv img').getAttribute('src'),'/image-proxy?url=https%3A%2F%2Fexample.com%2Fsaved.png','saved images use the inspector image proxy');
   // The other green button also passes itself to the same approval and waits before repainting.
   let repaints=0;job.state='review';x.eng=eng;sh.innerHTML=E.panel(eng);const sheetButton=sh.querySelector('[data-e=approve]');
   const sw=fs.readFileSync('charm-nest-sheetwin.js','utf8'),sa=sw.indexOf('  async function approveHere('),sb=sw.indexOf('  /* ── the order',sa);

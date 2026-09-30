@@ -1983,7 +1983,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
     host.innerHTML = CNEngravingSeals.panel(e);
-    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b)});
+    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b),imageUrl:url=>/^https?:/.test(url)?cors(url):url});
     if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
 

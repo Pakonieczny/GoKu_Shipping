@@ -17,6 +17,8 @@
 .btn.sm.egApproveButton{font-size:24px;padding:12px 20px;min-width:170px;min-height:56px;border-radius:12px;white-space:nowrap}
 .egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:32px;overflow:visible}
 .egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - 28px);top:calc(50% - 28px);width:56px;height:56px;margin:0;padding:0;z-index:4}
+.egApproveWrap .egApproveButton{padding-right:42px}
+.egButtonSeal>.seal{background:var(--card,#fffdf8);border-radius:50%;mix-blend-mode:normal}
 .sealRow.engravingSeals{display:inline-flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0;padding:7px 4px;max-width:240px;min-height:56px;overflow:visible}
 .sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 56px;margin:0;width:56px;height:56px;max-width:none;max-height:none}
 .decisionStatus:has(.engravingSeals){gap:2px;overflow:visible}

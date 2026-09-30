@@ -31,14 +31,14 @@
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     return `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${esc(kind)}"><div class="top"><b>${title}</b>${states[kind]?`<span>${states[kind]}</span>`:''}</div>${preview}${e.text?`<div class="words">${esc(e.text)}</div>`:''}${e.note?`<div class="by">${esc(e.note)}</div>`:''}<div class="acts">${approve}${open}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
   }
-  function wirePanel(host,e,{approve,open}={}){
+  function wirePanel(host,e,{approve,open,imageUrl}={}){
     host.querySelector('[data-e=approve]')?.addEventListener('click',ev=>approve?.(ev.currentTarget));
     host.querySelector('[data-e=engrave]')?.addEventListener('click',ev=>open?.(ev.currentTarget));
     const slot=host.querySelector('[data-engraving-preview]');if(!slot)return;
     const job=e.job,img=e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
     // A fresh placement must use the current fit; an old approved thumbnail must not disguise edits.
     if(job?.fit && job?.view && root?.Engrave?.renderBack){try{const cv=root.Engrave.renderBack(job,600,{hatch:false,grid:false});cv.setAttribute('role','img');cv.setAttribute('aria-label','The full back engraving');slot.replaceChildren(cv);return;}catch(_){}}
-    if(img){const im=root.document.createElement('img');im.alt='The full approved back engraving';im.src=/^https?:/.test(img) && root.cors?root.cors(img):img;slot.replaceChildren(im);return;}
+    if(img){const im=root.document.createElement('img');im.alt='The full approved back engraving';im.crossOrigin='anonymous';im.src=imageUrl?imageUrl(img):img;slot.replaceChildren(im);return;}
     slot.innerHTML='<span class="by">Open in Engrave to see the back</span>';
   }
   async function press(button,stamp){

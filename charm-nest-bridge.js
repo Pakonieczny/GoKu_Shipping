@@ -9985,6 +9985,7 @@ const OrderWin = window.OrderWin = (() => {
       };
     });
     CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
+      imageUrl:url=>/^https?:/.test(url)?cors(url):url,
       approve:async ap=>{
         const who=me() || askEmployee();if(!who)return;
         ap.disabled=true;ap.innerHTML='<span class="spin"></span>Approving…';
