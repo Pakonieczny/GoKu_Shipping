@@ -14,6 +14,10 @@
   }
   function list(job){const seals=merge(job,job?.row?.engrave,...(job?.backs || []),job?.editOriginal);if(!seals.length && (['approved','written','skipped'].includes(job?.state) || job?.needed && job?.approved))seals.push({id:'legacy:'+job.key,how:job.state==='skipped'?'engravePlain':'engraveApproved',at:0,by:job.approvedBy || job.decision?.by || ''});return seals;}
   function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
+  function fromEvents(events,row){
+    const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
+    return merge({seals:(events || []).filter(e=>e.type==='engraveApproved' && (!e.orderId || String(e.orderId)===rid) && (e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId))).map(e=>({id:e.id,how:'engraveApproved',at:+e.at || 0,by:e.by || ''}))});
+  }
   function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,56,'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -48,5 +52,5 @@
     row.innerHTML=root.Seal.html(stamp,56,'engravingSeal pending');button.disabled=true;
     try{await root.Seal.press(row.firstElementChild);}finally{button.disabled=false;}
   }
-  return {merge,list,keep,add,html,press,record,panel,wirePanel};
+  return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents};
 });

@@ -7,6 +7,7 @@ let previews=0,approvedButton,finish,approval;
 const row={key:'order_line',order:{receiptId:'4170837249',buyer:{name:'Test buyer'}},line:{sku:'MIDDLE'},spec:{designSku:'MIDDLE'},engrave:{needed:true,state:'review',seals:[old]},poolIds:['p1']};
 const job={key:row.key,row,state:'review',fit:{},view:{},text:'I\ndissent',engravingSeals:[old]};
 const eng={kind:'approve',job,text:job.text};
+assert.deepEqual(Array.from(E.fromEvents([{type:'engraveApproved',orderId:row.order.receiptId,lineKey:row.key,at:1000,by:'Paul'},{type:'engraveApproved',orderId:row.order.receiptId,lineKey:'another-piece',at:2000,by:'Seth'}],row),s=>s.by),['Paul'],'legacy timeline signatures belong only to their exact order line');
 w.Engrave={jobOf:()=>job,renderBack(){previews++;const cv=d.createElement('canvas');cv.width=300;cv.height=600;return cv;},async approve(j,who,b){approvedButton=b;approval=new Promise(r=>finish=r);await approval;j.state='approved';j.approvedBy=who;j.approvedAt=2000;E.add(j,'engraveApproved',who,2000);}};
 const x={poolId:'p1',rid:row.order.receiptId,sku:'MIDDLE',eng},rec={id:'sheet1',metal:'rose',status:'complete',setSeq:2},inf={rec,mine:[x],sheet:{n:1}};
 const SV={info:inf,list:[{id:'sheet1',metal:'rose',n:1}],at:0,q:'',pools:[]};

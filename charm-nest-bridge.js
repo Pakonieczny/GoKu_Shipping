@@ -9665,6 +9665,16 @@ const OrderWin = window.OrderWin = (() => {
   }
   function paintNow(r) {
     if (!r) return;
+    // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
+    const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
+    if(historical.length){
+      r.engrave ||= {};r.engrave.seals=CNEngravingSeals.merge(r.engrave,{seals:historical});
+      const job=Engrave.jobOf(r);if(job)CNEngravingSeals.keep(job);
+      const meta=byId('owMeta');
+      let cell=meta && [...meta.querySelectorAll('.m')].find(m=>m.querySelector('i')?.textContent==='Engraving');
+      if(meta && !cell){cell=el('div','m');meta.appendChild(cell);}
+      if(cell){const markup=`<i>Engraving</i><span>${esc((r.engrave.approved?'approved':r.engrave.state || 'Approval history')+(r.engrave.text?' · '+r.engrave.text:''))}</span>${CNEngravingSeals.html(job || r.engrave)}`;if(cell._history!==markup){cell.innerHTML=markup;cell._history=markup;}}
+    }
     const n = nowOf(r), pill = byId("owNow");
     W.dlg.classList.toggle("owCancelled", !!n.cancelled);
     // (the Sheet view's "no sheet" line follows the cancel record once it is read)
