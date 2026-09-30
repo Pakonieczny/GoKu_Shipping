@@ -146,7 +146,9 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   const seen = (raw) => { const n = provider.normalizeOpenAIBatch(raw); return { providerStatus: n.providerStatus, batchStats: n.metadata.batchStats }; };
   assert(lib.neverStarted(stuck, seen(openai("in_progress")), START), "four hours, nothing done");
   assert(lib.neverStarted(stuck, seen(openai("validating")), START), "still validating after four hours");
-  assert(lib.neverStarted({ ...stuck, stallRestarts: 4 }, seen(openai("in_progress")), START), "a fifth restart is allowed");
+  assert(lib.STALL_RESTART_LIMIT > 5, "sets OpenAI keeps not starting get more than five tries");
+  assert(lib.neverStarted({ ...stuck, stallRestarts: lib.STALL_RESTART_LIMIT - 1 }, seen(openai("in_progress")), START),
+    "the last allowed restart");
   // While validating, OpenAI has not counted the job's requests yet (seen
   // live on 2026-09-29: one job validating from 17:35 UTC, total 0).
   const validating = () => ({ status: "validating", request_counts: { total: 0, completed: 0, failed: 0 } });
@@ -159,7 +161,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     ["already stopping", stuck, openai("cancelling")],
     ["a Charm Maker job", { ...stuck, sets: [set(1, "charm_maker")] }, openai("in_progress")],
     ["a two-set job", { ...stuck, sets: [set(1), set(2)] }, openai("in_progress")],
-    ["five restarts used", { ...stuck, stallRestarts: 5 }, openai("in_progress")],
+    ["every restart used", { ...stuck, stallRestarts: lib.STALL_RESTART_LIMIT }, openai("in_progress")],
     ["no send time", { ...stuck, createdAt: null }, openai("in_progress")],
     ["validating under three hours", { ...stuck, createdAt: at(START - 2.9 * HOUR) }, validating()],
     ["running with no requests counted", stuck, openai("in_progress", 0, 0, { request_counts: { total: 0, completed: 0, failed: 0 } })],
@@ -366,6 +368,17 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.match(requeued, /never started · queued again/);
   assert.match(requeued, /1 queued/);
   assert.match(requeued, /1 restarted/, "the card shows the restart until the set is saved");
+  // Nothing left to send: fewer than thirty running is the end of the batch, not a queue that failed to fill.
+  const tail = card([
+    row("batch_t1", { state: "JOB_STATE_RUNNING", providerStatus: "in_progress", setsCount: 1 }),
+    row("batch_t2", { state: "JOB_STATE_RUNNING", providerStatus: "in_progress", setsCount: 1 }),
+  ]);
+  assert.match(tail, /Every set has been sent, so only the last 2 run at once/);
+  const backlog = card([
+    row("batch_t1", { state: "JOB_STATE_RUNNING", providerStatus: "in_progress" }),
+    row("batch_local_w", { batchName: "batch_local_w", state: "JOB_STATE_QUEUED", retryRequested: true, batchStats: null }),
+  ]);
+  assert.doesNotMatch(backlog, /Every set has been sent/, "not said while sets still wait to be sent");
   assert.match(requeued, /1 set\(s\) OpenAI never started were cancelled at no cost and sent again/);
   assert.doesNotMatch(requeued, /need attention|All batches cancelled/);
   console.log("Listing batch: a job OpenAI never started is cancelled after three hours and only its missing images are queued again, once, with every guard and the card");

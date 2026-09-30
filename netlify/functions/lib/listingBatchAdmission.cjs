@@ -20,8 +20,15 @@ const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha2
 // made, so nothing is billed) and queues its set again, at most
 // STALL_RESTART_LIMIT times per set. Normal jobs finish in 5 minutes to about
 // 2 hours.
+// Roughly two jobs in five are never started, whichever set they carry, so a
+// few sets in a big batch need five or six tries (on 2026-09-29 the last
+// seven of 300 sets had each been restarted four or five times, and the four
+// on their fifth restart were no longer watched, so they would have sat until
+// OpenAI expired them a day later). A restart costs nothing, and one takes
+// about three hours, so the limit is only a stop for something badly wrong:
+// about three days of tries.
 const STALL_RESTART_MS = 3 * 60 * 60 * 1000;
-const STALL_RESTART_LIMIT = 5;
+const STALL_RESTART_LIMIT = 24;
 // OpenAI validates a new job in a minute or two, and a token-limit refusal
 // comes then. Past this age a job still validating tells nothing more: the
 // collector stops waiting for it and admission sends the next set (on
@@ -31,7 +38,7 @@ const VALIDATION_WAIT_MS = 15 * 60 * 1000;
 // A person can ask the collector to restart stalled jobs sooner than
 // STALL_RESTART_MS (Paul, 2026-09-29: "please restart" on a queue where most
 // jobs had made nothing for over an hour), never sooner than this: a job
-// under half an hour old is normal, and each restart uses one of the five.
+// under half an hour old is normal, and each restart uses one of the tries.
 const STALL_RESTART_MIN_MS = 30 * 60 * 1000;
 const stallCutoffMs = (requested) => {
   const ms = Number(requested);
