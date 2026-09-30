@@ -14173,10 +14173,13 @@ async function _handlerImpl(event) {
     const SWEEP_BUDGET_MS = 11 * 60 * 1000;
     const sweepStart = Date.now();
     const guardRef = db.collection("LG1_Config").doc("batchSweep");
-    // How long a job may have done nothing before this run restarts it: three
-    // hours, unless a person asked for sooner ({ kind: "batch_sweep",
-    // restartStalledAfterMs }), never under 30 minutes. The cron never asks.
-    const stallAfterMs = stallCutoffMs(body?.restartStalledAfterMs);
+    // How long a job may have done nothing before this run restarts it: 45
+    // minutes, unless a person asked for sooner ({ kind: "batch_sweep",
+    // restartStalledAfterMs }), never under 30 minutes. { resetNow: true } is
+    // a person saying "reset them now": every one-set job with nothing done is
+    // cancelled whatever its age (free, nothing was made). The cron never asks.
+    const resetNow = body?.resetNow === true;
+    const stallAfterMs = resetNow ? 0 : stallCutoffMs(body?.restartStalledAfterMs);
 
     const inProcess = async (payload) => {
       const res = await module.exports.handler({ httpMethod: "POST", headers: {}, body: JSON.stringify(payload) });
@@ -14307,7 +14310,7 @@ async function _handlerImpl(event) {
           // still holds a place (cancelling counts as running until OpenAI
           // confirms); its set is queued again below once it is cancelled.
           if (neverStarted(b, st, Date.now(), stallAfterMs)) {
-            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs });
+            const stop = await inProcess({ kind: "batch_stall_cancel", batchName: b.batchName, minAgeMs: stallAfterMs, resetNow });
             if (stop?.cancelRequested) {
               stalledCancelled++;
               b.stallCancelRequestedAt = true;
@@ -15417,7 +15420,7 @@ async function _handlerImpl(event) {
       const apiKey = batchApiKey(batchName);
       const live = await getGeminiBatchJob(apiKey, batchName);
       if (!neverStarted(saved, { providerStatus: live?.providerStatus, batchStats: live?.metadata?.batchStats },
-          Date.now(), stallCutoffMs(body?.minAgeMs))) {
+          Date.now(), body?.resetNow === true ? 0 : stallCutoffMs(body?.minAgeMs))) {
         return json(200, { ok: true, skipped: true, state: live?.state || saved.state || null });
       }
       // Recorded before the cancel, so a cancel that lands after this worker

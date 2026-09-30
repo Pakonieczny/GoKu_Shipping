@@ -314,6 +314,15 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40" })).skipped, true, "asked directly, still the usual wait");
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40", minAgeMs: 30 * MIN })).cancelRequested, true);
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r20", minAgeMs: 1 })).skipped, true, "the half-hour floor holds here too");
+  // "Reset now" (Paul, 2026-09-30, a person's own word): every job with nothing
+  // done goes, whatever its age; a job with an image done is left alone; the
+  // cron and a plain request never do it.
+  assert.deepEqual(await sweptWith({ resetNow: true }), ["batch_r20", "batch_r40", "batch_r4h", "batch_r90"],
+    "reset now: every job with nothing done, not the one with an image done");
+  assert.deepEqual(await sweptWith({ resetNow: "yes" }), ["batch_r4h", "batch_r90"], "only a real true resets now");
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r20", resetNow: true })).cancelRequested, true);
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90_done", resetNow: true })).skipped, true,
+    "a job with an image done is never reset");
   // Its set is queued again like any stalled job, once OpenAI confirms the cancel.
   const asked = recent();
   await asked.call({ kind: "batch_sweep", restartStalledAfterMs: 30 * MIN });
