@@ -192,7 +192,7 @@ async function filingRecords(records) {
 async function readinessRecords(records) {
   records=await filingRecords(records);
   await productionReadiness(records);
-  return records.map(s=>({...s,laser:Readiness.sheet(s)}));
+  return records.map(s=>({...s,laser:Readiness.laserSheet(s)}));
 }
 // Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
 // The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
@@ -415,8 +415,9 @@ async function recordProcessReadiness(kind,id,by){
       if(!Array.isArray(old.processSeals) || !!old.processReady!==ready || JSON.stringify(old.processSeals)!==JSON.stringify(processSeals))tx.set(col(k==='set'?SETS:SHEETS).doc(key),{...patch,updatedAt:FV.serverTimestamp()},{merge:true});
       records.push(processRecord(k,key,{...old,...patch}));
     };
-    for(const s of sheets)save('sheet',s.id,s,!num(s.laserDoneAt) && Readiness.sheet(s).ready);
-    if(kind==='set')save('set',id,d,!num(d.laserDoneAt) && sheets.every(s=>s.setId===id) && Readiness.laserGroup(d,sheets).ready);
+    const approved=sheets.map(s=>({...s,processSeals:recovered.get('sheet:'+s.id)}));
+    for(const s of sheets)save('sheet',s.id,s,!num(s.laserDoneAt) && Readiness.laserSheet(approved.find(x=>x.id===s.id)).ready);
+    if(kind==='set')save('set',id,d,!num(d.laserDoneAt) && sheets.every(s=>s.setId===id) && Readiness.laserGroup(d,approved).ready);
     return {records,added};
   });
 }
@@ -1816,22 +1817,24 @@ async function op_laserDone(b) {
     const ids = set ? [...new Set(set.sheetIds || [])].filter(isId).slice(0, 300) : [];
     // (with what the orders' timelines say of each sheet: its orders, its label and the mark it had)
     const members = ids.length ? await tx.getAll(...ids.map(x => col(SHEETS).doc(x)), { fieldMask: SLIM_SHEET.concat(["placements"]) }) : [];
-    if (done) {
-      if (b.stage !== "laser") return {error:"Complete sheets from the Laser cutting section only",status:409};
-      const records=members.filter(m=>m.exists && !m.data().archived).map(m=>({...m.data(),id:m.id}));
-      if (set && (!ids.length || members.some(m=>!m.exists || m.data().archived) || (own && !ids.includes(id)))) return {error:"The complete set must be present in Laser cutting first",status:409};
-      if (!set && own) records.push({...own.data(),id});
-      await processDecisions(tx,records);
-      const pending=records.filter(s=>!num(s.laserDoneAt)),blocked=records.flatMap(Readiness.orderBlockers);
-      if(blocked.length)return {error:`Not ready for Laser cutting: order ${blocked[0].id} — ${blocked[0].why}`,status:409};
-      if (!records.length || pending.some(s=>!Readiness.sheet(s).ready)) return {error:"Not ready for Laser cutting: every remaining sheet needs approved engraving, verified files and QR labels",status:409};
-    }
-    const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
     const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
-    // every read is made: the writes follow. Reopening changes the current flag, never the seal history.
-    const touched = [], process = [], added = [], recovered=new Map();
+    const recovered=new Map();
     for(const [sid,s] of facts)recovered.set('sheet:'+sid,await processHistory('sheet',sid,s));
     if(setRef)recovered.set('set:'+setRef.id,await processHistory('set',setRef.id,set));
+    if (done) {
+      if (b.stage !== "laser") return {error:"Complete sheets from the Laser cutting section only",status:409};
+      const records=members.filter(m=>m.exists && !m.data().archived).map(m=>({...m.data(),id:m.id,processSeals:recovered.get('sheet:'+m.id)}));
+      if (set && (!ids.length || members.some(m=>!m.exists || m.data().archived) || (own && !ids.includes(id)))) return {error:"The complete set must be present in Laser cutting first",status:409};
+      if (!set && own) records.push({...own.data(),id,processSeals:recovered.get('sheet:'+id)});
+      await processDecisions(tx,records);
+      const blocked=records.filter(s=>!Readiness.completedBefore(s)).flatMap(Readiness.orderBlockers);
+      if(blocked.length)return {error:`Not ready for Laser cutting: order ${blocked[0].id} — ${blocked[0].why}`,status:409};
+      const ready=set ? records.every(s=>s.setId===setRef.id) && Readiness.laserGroup(set,records).ready : records.length===1 && Readiness.laserSheet(records[0]).ready;
+      if (!ready) return {error:"Not ready for Laser cutting: every remaining sheet needs approved engraving, verified files and QR labels",status:409};
+    }
+    const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
+    // every read is made: the writes follow. Reopening changes the current flag, never the seal history.
+    const touched = [], process = [], added = [];
     const write = (k,key,old,completed) => {
       const processSeals=recovered.get(k+':'+key).slice();
       const add=how=>{const event=processEvent(how,at,by,processSeals.length);processSeals.push(event);added.push({kind:k,id:key,eventId:event.id});};

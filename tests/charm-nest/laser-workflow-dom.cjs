@@ -49,8 +49,15 @@ const root=path.join(__dirname,'../..');
   assert(held.length>0,'the last completion invokes the same wooden press');
   assert.equal(body.querySelectorAll('.setCard').length,1,'the set stays on screen while its seals are stamped');
   held.forEach(release=>release());await finish;w.Seal.press=realPress;await tick();assert.equal(body.querySelectorAll('.setCard').length,0,'the whole set leaves after stamping');
-  await w.LibraryDone.mark('sheet','ready-sheet',false);await tick();await w.Sets.renderLibrary(body);await tick();assert.equal(body.querySelectorAll('.libCard').length,3,'undo restores all members');
+  for(const l of Object.values(srv.st.doc('Charm_Nest_Runs','run-fixture').lines)){l.state='unmatched';l.problems=['unmatchedSku'];}
+  await w.LibraryDone.mark('set','set-fixture',false);await tick();await w.Sets.renderLibrary(body);await tick();assert.equal(body.querySelectorAll('.libCard').length,3,'undo restores all members');
+  assert.equal(body.querySelectorAll('[data-laser-area="ready"] .libCard').length,3,'reopening a completed set returns it to Laser despite changed intake data');
+  assert.equal(body.querySelectorAll('[data-laser-area="ready"] .ldMark[data-done="0"]').length,4,'every sheet and the whole set can be completed again');
   assert.equal(body.querySelectorAll('.libCard[data-id="ready-sheet"] .seal-laserDone').length,1,'undo never erases the completion seal');
+  await w.LibraryDone.mark('set','set-fixture');await tick();assert.equal(body.querySelectorAll('.setCard').length,0,'the reapproved whole set returns to Completed');
+  await w.LibraryDone.mark('sheet','ready-sheet',false);await tick();await w.Sets.renderLibrary(body);await tick();
+  assert.equal(body.querySelectorAll('[data-laser-area="ready"] .libCard').length,3,'reopening one member also restores the whole set to Laser');
+  assert.equal(body.querySelectorAll('.libCard[data-id="ready-sheet"] .seal-laserDone').length,2,'both approval cycles remain stamped');
   console.log('PASS: actual set cards, laser-only buttons, live seals, refresh, metal filter, whole-set removal and undo');
  }finally{w.close();srv.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

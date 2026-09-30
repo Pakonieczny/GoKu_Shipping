@@ -5116,7 +5116,7 @@ const LaserReview = window.LaserReview = (()=>{
     if(live?.dirty || live?.runHold || live?.saving || ['nesting','finishing'].includes(live?.status))d.dirty=true;
     return d;
   }
-  const sheet=s=>R.sheet(projected(s));
+  const sheet=s=>R.laserSheet(projected(s));
   const group=(st,sheets)=>{if(st.setId)sets.set(st.setId,st);return R.laserGroup(st,sheets.map(projected));};
   function canCut(s){
     if(!s.setId || s.draft || s.solidIncluded===false)return sheet(s).ready;

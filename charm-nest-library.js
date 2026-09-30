@@ -196,7 +196,7 @@
     try {
       const via = o.via || (o.undo ? 'undo' : done ? 'Laser cutting' : 'Library Completed');
       // Nothing disappears or gains a seal until the server accepts the laser-stage check.
-      const r = await api('charmNestLibrary',{op:'laserDone',kind,id,done,by:by || undefined,stage:done?'laser':undefined,device:'charm-nest-1',via},{label:done?'Marking completed':'Moving back to Current'});
+      const r = await api('charmNestLibrary',{op:'laserDone',kind,id,done,by:by || undefined,stage:done?'laser':undefined,device:'charm-nest-1',via},{label:done?'Marking completed':'Returning to Laser cutting'});
       const t = r.at || Date.now();
       for (const x of r.sheetIds || []) note('sheet:' + x,done,t,r.by);
       if (kind === 'set') note(key,done,t,r.by);
@@ -226,7 +226,7 @@
       if (done && r.setId && !r.setDone) {
         toast(`${name} completed · stays with its unfinished set`,'ok',5000);
       } else if (!o.undo) undoNote(kind,id,done,r,name,ids,Date.now()+landed);
-      else said(done?`${name} is completed again`:`${name} is back in Current`,done?'done':'current',[key]);
+      else said(done?`${name} is completed again`:`${name} is back in Laser cutting`,done?'done':'current',[key]);
       return r;
     } catch(e) { toast(`${done?'Not marked completed':'Not moved back'}: ${e.message}`,'bad',8000); throw e; }
     finally { L.busy.delete(key); }
@@ -235,8 +235,8 @@
       the tab says what arrived; one Undo, no toast beside it). With the Library out of sight, or under an open window,
       the toast says it as before. Undoing a set marks back only the sheets this mark changed. */
   function undoNote(kind, id, done, r, name, ids, landAt) {
-    const setNote = kind === 'sheet' && r.setId && r.setChanged ? (r.setDone ? ' · its set is complete' : ' · its set is back in Current') : '';
-    const text = done ? `${name} marked completed${setNote}` : `${name} moved back to Current${setNote}`;
+    const setNote = kind === 'sheet' && r.setId && r.setChanged ? (r.setDone ? ' · its set is complete' : ' · its set is back in Laser cutting') : '';
+    const text = done ? `${name} marked completed${setNote}` : `${name} returned to Laser cutting${setNote}`;
     const undo = () => {
       if (kind === 'set' && done) {
         // (the set's sheets as they were when it was marked: its card has left since)
@@ -246,7 +246,7 @@
       }
       return mark(kind, id, !done, { undo: true, name }).catch(() => {});   // (its card may have left: the name it had)
     };
-    const tab = done ? 'done' : 'current', title = done ? 'Move it back to Current' : 'Mark it completed again';
+    const tab = done ? 'done' : 'current', title = done ? 'Return it to Laser cutting' : 'Mark it completed again';
     const show = () => {
       const n = noteOn(tab, { text, actions: [{ label: 'Undo', fn: undo, title }], ms: 8000 });
       if (n) { n.dataset.ld = kind + ':' + id; return; }
@@ -534,8 +534,8 @@
       if(!allowed){if(b)b.remove();continue;}
       if(!b){b=doc.createElement('button');b.type='button';b.className='ldMark ldMarkSet';(head.querySelector('.nm') || head.firstChild).after(b);}
       b.dataset.ld='set:'+st.setId;b.dataset.done=done?'1':'0';
-      b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Move set back':'Mark set completed'}</span>`;
-      b.title=done?'Move the set and its sheets back to Current':'Confirm laser cutting is finished for every remaining sheet';
+      b.innerHTML=(done?ICON.undo:ICON.check)+`<span>${done?'Reopen set':'Mark set completed'}</span>`;
+      b.title=done?'Return the set and its sheets to Laser cutting':'Confirm laser cutting is finished for every remaining sheet';
     }
   }
   function act(kind, id, done, btn) {
@@ -849,7 +849,7 @@
     if (m.innerHTML !== html) m.innerHTML = html;
     const empty = st.rowsEl.querySelector(':scope > .libEmpty');
     if (!st.rows.length && st.end && !st.loading && !st.error) {
-      const text = st.find || st.q ? '' : st.metal ? `No completed ${esc(metalOf({ metal: st.metal }).label || st.metal)} ${what}s yet.` : `Nothing is completed yet. <b>Mark a ${what} completed in Current with the check at its corner once the laser has cut it.</b>`;
+      const text = st.find || st.q ? '' : st.metal ? `No completed ${esc(metalOf({ metal: st.metal }).label || st.metal)} ${what}s yet.` : `Nothing is completed yet. <b>Mark a ${what} completed in Laser cutting with the check at its corner once the laser has cut it.</b>`;
       if (!empty && text) st.rowsEl.insertAdjacentHTML('beforeend', `<div class="libEmpty">${text}</div>`);
     } else if (empty) empty.remove();
   }
@@ -886,7 +886,7 @@
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
         + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Move the set and its sheets back to Current">Move back</button>${ICON.chev}`+processHtml(r,'set:'+r.setId,'ldProcessSeals')+'</div>'
+        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Return the set and its sheets to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'set:'+r.setId,'ldProcessSeals')+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
     const sn = !r.draft && r.setSeq ? r.setSeq : 0;
@@ -894,7 +894,7 @@
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Move back to Current">Move back</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,'ldProcessSeals')+'</div></div>';
+      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Return to Laser cutting">Reopen</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,'ldProcessSeals')+'</div></div>';
   }
   function dayHead(day, kind) {
     const t = realDay(Date.now()), y = realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');

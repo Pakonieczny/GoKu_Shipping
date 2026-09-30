@@ -49,13 +49,21 @@
     const stages=Object.fromEntries(['layout','front','approval','backs','qr','orders'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
     return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready),sheets:unique.length};
   }
-  // Laser work keeps a set together. A sheet already cut satisfies its stage even if older
-  // engraving evidence is unavailable; every remaining sheet must still pass the full policy.
+  // Completion is proof that this saved sheet already passed through Laser cutting.
+  // Reopening clears its current completion flag, not that approval. Blue readiness seals
+  // alone never grant this return path; first-time sheets still pass every intake check.
+  const completedBefore=s=>+s.laserDoneAt>0 || (s.processSeals || []).some(x=>x.how==='laserDone' && +x.at>0);
+  function laserSheet(s){
+    const report=sheet(s);
+    return {...report,ready:report.included && (completedBefore(s) || report.ready)};
+  }
+  // Laser work keeps a set together, including when a completed set is reopened.
+  // Missing, archived, draft or newly added unfinished members cannot borrow its old approval.
   function laserGroup(s,sheets){
     const unique=[...new Map((sheets || []).filter(x=>!x.archived).map(x=>[x.id || x.sheetId,x])).values()];
     const expected=[...new Set(s.sheetIds || unique.map(x=>x.id || x.sheetId))];
     const complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
-    return {...set(s,unique),ready:complete && unique.every(x=>sheet(x).stages.orders && (+x.laserDoneAt>0 || sheet(x).ready))};
+    return {...set(s,unique),ready:complete && unique.every(x=>laserSheet(x).ready)};
   }
   // An order travels whole: every line and copy needs its design, files, decisions and labels,
   // including a second metal on another sheet. No-design and cancelled lines require no cutting.
@@ -113,5 +121,5 @@
     // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
     return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope);
   }
-  return {idsOf,orderIds,decisions,sheet,set,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter};
+  return {idsOf,orderIds,decisions,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter};
 });
