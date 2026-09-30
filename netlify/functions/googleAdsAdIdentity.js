@@ -46,4 +46,50 @@ async function resolve({sources,objects,productId},D){
  for(const source of sources||[])if(await verified(source,productId,D.library))identity.push(await framed(source,objects,D));
  return identity;
 }
-module.exports={POLICY:'verified-product-v2',productKey,owns,cropQualifies,verified,foreign,frameOf,framed,resolve};
+// Per-format identity of a film. Every format is filmed as its own take from the one identity reference, so the charm can drift in a single
+// format (a plain silhouette with no engraving, eye or wing line) while the others stay exact. The set-level identity boolean and the
+// 5% product-recognition weight do not catch that; the review returns one verdict per format and a failing format is named.
+const CHECKS=[
+ {field:'sameOutline',fault:'a different outline or proportions',need:'the same outline and proportions'},
+ {field:'sameEngraving',fault:'engraving, eye, wing line or markings that are missing, simplified or redrawn',need:'every engraved line, eye, wing line and marking of the reference'},
+ {field:'sameFeatures',fault:'cutouts, ring or loop that are missing, changed or added',need:'the same cutouts, ring and loop'}
+];
+const familyOf=key=>String(key||'').split('_').pop();
+function formatIdentitySchema(keys){
+ const verdict=()=>({type:'object',additionalProperties:false,properties:{sameOutline:{type:'boolean'},sameEngraving:{type:'boolean'},sameFeatures:{type:'boolean'},evidence:{type:'string'}},required:[...CHECKS.map(c=>c.field),'evidence']});
+ return {type:'object',additionalProperties:false,properties:Object.fromEntries(keys.map(k=>[k,verdict()])),required:[...keys]};
+}
+const formatRule=keys=>' PER-FORMAT CHARM IDENTITY. Each rendered format was filmed as its own separate take, so the charm can drift in one format while the others stay exact. FINAL n is renderedFormats[n-1] and each names its format key ('+keys.join(', ')+'). Compare the charm in EVERY sampled frame of EACH format, one format at a time, with the SOURCE, and return formatIdentity with one verdict for every one of those keys. Judge each format on its own: an exact charm in one format never excuses another, and general resemblance is not enough; look for each engraved detail of the SOURCE in that format. Set sameOutline=false when the silhouette or proportions differ from the SOURCE. Set sameEngraving=false when any engraved or cut line, eye, wing line, texture or marking shown on the SOURCE is missing, simplified, redrawn or replaced by a plain surface: a plain silhouette of a similar piece is a DIFFERENT piece, one that could belong to another listing. Set sameFeatures=false when a cutout, ring, bail or loop the SOURCE shows is missing or changed, or one it does not show is added. A chain or cord the piece hangs from is scenery, never a difference. Write in evidence the exact difference, or that the format matches.';
+// Turns those verdicts into a failed review that names the format, so the existing targeted fix regenerates only that film. Idempotent.
+function applyFormatIdentity(quality,keys){
+ const verdicts=quality&&quality.formatIdentity;
+ if(!verdicts||typeof verdicts!=='object'||Array.isArray(verdicts)||quality.formatIdentityChecked)return quality;
+ quality.formatIdentityChecked=true;
+ const failed=[];
+ for(const key of (keys&&keys.length?keys:Object.keys(verdicts))){
+  const v=verdicts[key];if(!v||typeof v!=='object')continue;
+  const found=CHECKS.filter(c=>v[c.field]===false);
+  if(found.length)failed.push({key,found,evidence:String(v.evidence||'').replace(/\s+/g,' ').trim().slice(0,300)});
+ }
+ quality.formatIdentityFailures=failed.map(f=>f.key);
+ if(!failed.length)return quality;
+ const detail=f=>({
+  reason:'The '+familyOf(f.key)+' film shows a charm that differs from the catalog reference',
+  evidence:'Per-format identity check of '+f.key+': '+f.found.map(c=>c.fault).join('; ')+'.'+(f.evidence?' '+f.evidence:''),
+  correction:'Regenerate this film from the same catalog photograph. The charm must have '+f.found.map(c=>c.need).join(', ')+', with nothing missing, simplified or plainer.'
+ });
+ quality.pass=false;quality.productFaithful=false;quality.exactProductIdentity=false;
+ quality.issues=[...(Array.isArray(quality.issues)?quality.issues:[]),...failed.map(f=>{const d=detail(f);return d.reason+' ('+f.key+'): '+f.found.map(c=>c.fault).join('; ')+'.';})];
+ // The named deduction is what the targeted fix reads: it carries the format key, so only that film is regenerated.
+ const category=quality.categoryReviews&&quality.categoryReviews.productRecognition,scores=quality.scores;
+ if(category&&Array.isArray(category.deductions)&&scores&&Number.isFinite(scores.productRecognition)){
+  let left=scores.productRecognition;
+  const added=failed.map(f=>{const points=Math.min(left,20);left-=points;return {points,...detail(f),kind:'required',formats:[f.key]};});
+  quality.categoryReviews={...quality.categoryReviews,productRecognition:{...category,deductions:[...category.deductions,...added]}};
+  quality.scores={...scores,productRecognition:left};
+  const weights=require('./googleAdsAdQuality').WEIGHTS,total=Object.entries(weights).reduce((n,[k,w])=>n+(Number(quality.scores[k])||0)*w/100,0);
+  if(Number.isFinite(quality.score))quality.score=Math.round(total*100)/100;
+ }
+ return quality;
+}
+module.exports={POLICY:'verified-product-v2',productKey,owns,cropQualifies,verified,foreign,frameOf,framed,resolve,CHECKS,formatIdentitySchema,formatRule,applyFormatIdentity};

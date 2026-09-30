@@ -2,7 +2,7 @@
 const crypto=require('crypto'),fs=require('fs/promises'),path=require('path'),os=require('os'),{promisify}=require('util'),execFile=promisify(require('child_process').execFile),sharp=require('sharp');
 const policy=require('../../brites-ad-format-policy'),{MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,outputVideo}=require('./googleAdsGeminiVideo'),MAX_BYTES=100000000;
 const clone=v=>JSON.parse(JSON.stringify(v)),hash=v=>crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
-const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),PIPELINE=3,BOUNDED_REPAIR=2;
+const rubric=require('./googleAdsAdQuality'),singlePiece=require('./googleAdsSinglePiece'),composition=require('./googleAdsMotionComposition'),PIPELINE=3,BOUNDED_REPAIR=2,REFERENCE_PIXELS=2048;
 // Version 3 films each format on its own: portrait, square (a 16:9 master whose middle square is the format) and landscape.
 // Earlier jobs keep their two masters; every version check below leaves them exactly as they were saved.
 const mastersFor=version=>version>=3?['portrait','square','landscape']:['portrait','landscape'],masterSize=o=>o==='portrait'?'720x1280':'1280x720';
@@ -136,6 +136,7 @@ RULE 1 - NEVER ALTER THE JEWELRY. This outranks every other line here.
 Reproduce the catalog reference exactly in every frame: same silhouette, same flat or dimensional form, same thickness, same engraving, same cutouts, ring and hardware, same proportions, same catalog-facing view.
 No re-modelling in three dimensions. No rotating, turning, tilting or flipping. No edge, side or back the reference does not show.
 No thickened, bevelled, rounded, smoothed or re-cut edges. No redrawn engraving. No added loop, bail, stone or chain.
+This is one of several separate films of the same piece and every size must match the attached photograph exactly: the same outline and proportions, every engraved line and marking it shows (an eye, a wing line, a pattern), and every cutout, ring and loop, with nothing missing, simplified or plainer. A plain silhouette of a similar piece is the wrong piece.
 The piece is flat stamped sheet. Its edge must read as a thin drawn line, never a visible band, wall or rim of metal. If any edge shows a strip of metal thick enough to have its own lit and shaded side, it is too thick. Never a cast or moulded figure with a solid body: no rim, no bevel, no rounded or extruded depth.
 Its engraving is cut into the metal: real recessed lines that read as cut depth catching light. The detail is never a flat mark sitting on the surface, and never raised or embossed above it.
 The piece is complete, sharp and identical from the first frame to the last. Never open on a plainer version and add features later.
@@ -436,13 +437,22 @@ function createMotionService(D){
     await save({creativeDirection:resolved.direction,...(resolved.note?{compositionNotes:[...(job.compositionNotes||[]),resolved.note]}:{}),inFlight:null,stageUsage:[...(job.stageUsage||[]),{key:'direction',estimatedUsd:Number(response.estimatedUsd)||0}],progress:{pct:8,label:'Product motion direction saved'}});
    }
    const masterList=mastersFor(job.pipelineVersion),squareness=s=>Math.abs(Math.log(s.width/s.height)),sourceFor=orientation=>orientation==='square'?[...job.sourceImages].sort((a,b)=>squareness(a)-squareness(b))[0]:job.sourceImages.find(s=>orientation==='portrait'?s.height>s.width:s.width>s.height)||job.sourceImages[0];
+   // One identity reference for every master: the saved design's first own-listing photograph, upright and at full quality (never a photograph chosen
+   // by a format's shape), prepared once so portrait, square and landscape are all filmed from byte-identical pixels.
+   let referenceImage=null;
+   const referenceFor=async()=>{
+    if(referenceImage)return referenceImage;
+    const source=(job.originalSources||[])[0]||(job.sourceImages||[])[0];if(!source?.asset)throw new Error('The saved design has no photograph of the piece to film from.');
+    const sized=await sharp(await D.loadAsset(source.asset)).rotate().resize({width:REFERENCE_PIXELS,height:REFERENCE_PIXELS,fit:'inside',withoutEnlargement:true}).jpeg({quality:95}).toBuffer(),solo=await singlePiece.isolate(sized);
+    return referenceImage=solo?solo.buffer:sized;
+   };
    if(String(job.motionMode||'').startsWith('photograph')){
     for(const orientation of masterList)job.masters[orientation]={id:'photograph_'+orientation,status:'completed',progress:100,source:sourceFor(orientation).asset};
     await save({masters:job.masters});
    }
    for(const orientation of masterList){
     if(job.masters[orientation]?.id)continue;if(job.inFlight&&job.inFlight.key!=='quality')throw new Error('The last video request has no confirmed provider ID. Its receipt must be reconciled before another paid request.');
-    const size=masterSize(orientation),[width,height]=size.split('x').map(Number),sized=await sharp(await D.loadAsset((job.originalSources?.[0]||sourceFor(orientation)).asset)).resize({width:1280,height:1280,fit:'inside',withoutEnlargement:true}).jpeg({quality:92}).toBuffer(),solo=await singlePiece.isolate(sized),image=solo?solo.buffer:sized;
+    const size=masterSize(orientation),image=await referenceFor();
     const direction=job.plan.motion?.[{portrait:'mobilePrompt',square:'squarePrompt',landscape:'desktopPrompt'}[orientation]]||job.plan.imageDirections?.[0]?.composition||'';
     const prompt=motionPrompt(job,orientation,direction);
     const requestId=crypto.randomUUID();await save({inFlight:{orientation,requestId,at:Date.now()},progress:{pct:{portrait:5,square:8,landscape:10}[orientation],label:'Starting '+orientation+' product animation'}});
@@ -512,6 +522,8 @@ function createMotionService(D){
     // in place of delivery.
     // One product per film. A reviewer that saw two pieces fails the set even if it scored well, so the existing bounded repair is offered.
     if(quality?.multipleProducts===true){quality.pass=false;if(!(quality.issues||[]).some(i=>/more than one|two |multiple|second|duplicate/i.test(String(i))))quality.issues=[...(quality.issues||[]),'A film shows more than one piece of jewelry. Show exactly one piece, one charm on one chain or one necklace, and no other jewelry, duplicate, collage or grid in any frame.'];}
+    // Each format is its own take. A format whose charm lacks the reference's outline, engraving or features fails the set and is named, so the targeted fix regenerates only that film from the same reference.
+    if(quality)require('./googleAdsAdIdentity').applyFormatIdentity(quality,job.variants.map(v=>v.key));
     if(quality?.footageLettering===true)await save({letteringBlocked:true,compositionNotes:[...(job.compositionNotes||[]),'Lettering was detected inside the footage, so this set is held rather than delivered. Repair it to regenerate the affected film.']});
     await save({quality,inFlight:null,estimatedUsd:(job.fixTarget?(job.fixTarget.kind==='master'?SECONDS*OUTPUT_USD_PER_SECOND:0):job.recomposeOf||String(job.motionMode||'').startsWith('photograph')?0:masterList.length*SECONDS*OUTPUT_USD_PER_SECOND)+(Number(quality.estimatedUsd)||0)+(job.stageUsage||[]).reduce((n,u)=>n+(Number(u.estimatedUsd)||0),0)});
    }
