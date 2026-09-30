@@ -75,11 +75,13 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
  }
  // Standard fade (renderVersion 11): one mostly transparent ramp and one size per format, in the film's own colour.
  {
-  const {FADE_STOPS,FADE_SIZE,primaryColour,inkFor,captions}=require('../../netlify/functions/googleAdsMotionComposition'),green='#3f8f55';
-  assert(FADE_STOPS[0][0]===0&&FADE_STOPS[0][1]<=.55&&FADE_STOPS[0][1]>=.4,'the fade peaks at about half opacity at the outer edge');
+  const lum_=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2];},contrast_=(a,b)=>(Math.max(lum_(a),lum_(b))+.05)/(Math.min(lum_(a),lum_(b))+.05);
+  const {FADE_STOPS,FADE_SIZE,FADE_MIN_CONTRAST,fadeColour,ensureVisibleFade,primaryColour,inkFor,captions}=require('../../netlify/functions/googleAdsMotionComposition'),green='#3f8f55';
+  assert(FADE_STOPS[0][0]===0&&FADE_STOPS[0][1]<=.85&&FADE_STOPS[0][1]>=.75,'the fade starts clearly perceptible (about .75-.85) at the outer edge');
   assert.equal(FADE_STOPS[FADE_STOPS.length-1][0],1);assert.equal(FADE_STOPS[FADE_STOPS.length-1][1],0);
   assert(FADE_STOPS.every(([o,a],i)=>i===0||(o>FADE_STOPS[i-1][0]&&a<FADE_STOPS[i-1][1])),'the ramp only ever eases outward');
-  assert.equal(FADE_SIZE.side,.335);assert.deepEqual(FADE_SIZE.top,{square:.22,landscape:.22,portrait:.20});
+  assert.equal(FADE_SIZE.side,.335);assert.deepEqual(FADE_SIZE.top,{square:.33,landscape:.33,portrait:.33},'every film shape gets a fade 33% of its height');
+  {const mean=FADE_STOPS.slice(1).reduce((a,[o,v],i)=>a+(o-FADE_STOPS[i][0])*(v+FADE_STOPS[i][1])/2,0);assert(mean<.5,'the fade stays mostly transparent overall: '+mean);}
   const v11={...plan,renderVersion:11,fadeColor:green},seen=new Set();
   const formats=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}];
   const fixtures=[{x:.3,y:.46,w:.4,h:.3},{x:.6,y:.25,w:.3,h:.5},{x:.05,y:.2,w:.3,h:.6},{x:.02,y:.3,w:.32,h:.5}];
@@ -91,11 +93,11 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
     seen.add(fade.name);const outer=fade.name==='right'?f.width-1:0,dir=fade.name==='right'?-1:1,vertical=fade.name==='top',span=vertical?fade.h:fade.w;
     if(!layers.geometry.seam){
      if(vertical)assert(Math.abs(fade.h-FADE_SIZE.top[f.key]*f.height)<=.5,f.key+' top fade is the standard fraction of the height');
-     else assert(Math.abs(fade.w-FADE_SIZE.side*f.width)<=.5,f.key+' '+fade.name+' fade is 33.5% of the width');
+     else assert(Math.abs(fade.w-FADE_SIZE.side*f.width)<=.5,f.key+' '+fade.name+' fade is 33.5% of the width (full height)');
     }
     const at=t=>vertical?px(f.width/2,t):px(outer+dir*t,f.height/2);
     if(!layers.geometry.seam){
-     assert(at(0)[3]<=.6*255&&at(0)[3]>=.4*255,f.key+' outer edge stays mostly transparent: '+at(0)[3]);
+     assert(at(0)[3]<=.85*255+2&&at(0)[3]>=.75*255-2,f.key+' outer edge is clearly visible: '+at(0)[3]);
      assert.equal(at(Math.round(span)-1)[3]<=2,true,'the fade reaches zero at its inner edge');
      for(let t=1;t<span;t++)assert(at(t)[3]<=at(t-1)[3]+1,'the fade only falls away from the edge');
      for(const t of [0,span*.3,span*.6]){const [r,g,b]=at(t);assert(Math.abs(r-0x3f)<=6&&Math.abs(g-0x8f)<=6&&Math.abs(b-0x55)<=6,'the fade is drawn in the film colour');}
@@ -126,6 +128,12 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   const left=await sharp({create:{width:320,height:180,channels:3,background:{r:255,g:0,b:0}}}).composite([{input:await swatch({r:0,g:0,b:255},160,180),left:160,top:0}]).jpeg().toBuffer(),region=await primaryColour(left,{region:{x:.5,y:0,w:.5,h:1}});
   assert(parseInt(region.slice(5,7),16)>parseInt(region.slice(1,3),16)+100,'a region samples only that part of the frame');
   assert.equal(inkFor('#ffffff','#30291f'),'#30291f');assert.equal(inkFor('#1f4d2c','#30291f'),'#fffaf0','dark fade colour switches to a light ink');
+  // The fade colour is guaranteed visibly different from the frame under it, on the same hue.
+  {const flat=await swatch({r:0x3f,g:0x8f,b:0x55}),fc=await fadeColour(flat,{mode:'dominant'});
+   assert(contrast_(fc,'#3f8f55')>=FADE_MIN_CONTRAST-.05,'a fade colour equal to the frame is moved until it is visible: '+fc);
+   const [r,g,b]=[1,3,5].map(i=>parseInt(fc.slice(i,i+2),16));assert(g>r+30&&g>b+20,'the adjusted fade stays the film green: '+fc);
+   assert.equal(ensureVisibleFade('#ffffff',['#101010']),'#ffffff','an already visible colour is untouched');
+   const lifted=ensureVisibleFade('#101010',['#101010']);assert(contrast_(lifted,'#101010')>=FADE_MIN_CONTRAST-.05,'a near-black frame lightens the fade instead: '+lifted);}
   // renderVariants samples the master once and gives every format cut from it the same fade colour.
   const shots=[],realCaptions=require('../../netlify/functions/googleAdsMotionComposition').captions,module_=require('../../netlify/functions/googleAdsMotionComposition');
   const tmp2=await fs.mkdtemp(path.join(os.tmpdir(),'fade-colour-'));

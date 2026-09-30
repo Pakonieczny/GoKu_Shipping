@@ -14,7 +14,7 @@ async function renderVariants(bytes,orientation,plan={}){
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'brites-motion-'));try{
   const photoMotion=String(plan.motionMode||'').startsWith('photograph'),closeFrame=plan.motionMode==='photograph-close',input=path.join(dir,photoMotion?'source.jpg':'source.mp4');await fs.writeFile(input,bytes);const out=[];
   // Standard fade (renderVersion 11+): one primary colour per master, shared by every format cut from it.
-  if(plan.renderVersion>=11&&!photoMotion&&!/^#[a-f0-9]{6}$/i.test(plan.fadeColor||'')){const shot=path.join(dir,'fade_sample.jpg');await ffmpeg(['-y','-ss','3','-i',input,'-frames:v','1','-vf','scale=160:160:force_original_aspect_ratio=decrease',shot]);plan={...plan,fadeColor:await composition.primaryColour(await fs.readFile(shot),{mode:'dominant',...(orientation==='square'?{region:{x:.21875,y:0,w:.5625,h:1}}:{})})};}
+  if(plan.renderVersion>=11&&!photoMotion&&!/^#[a-f0-9]{6}$/i.test(plan.fadeColor||'')){const shot=path.join(dir,'fade_sample.jpg');await ffmpeg(['-y','-ss','3','-i',input,'-frames:v','1','-vf','scale=160:160:force_original_aspect_ratio=decrease',shot]);plan={...plan,fadeColor:await composition.fadeColour(await fs.readFile(shot),{mode:'dominant',...(orientation==='square'?{region:{x:.21875,y:0,w:.5625,h:1}}:{})})};}
   for(const device of ['mobile','desktop'])for(const format of policy.video.formats){
    if(plan.pipelineVersion>=2&&device!==(format.key==='landscape'?'desktop':'mobile'))continue;
    if((plan.pipelineVersion>=3?format.key:format.key==='portrait'?'portrait':format.key==='landscape'?'landscape':plan.squareMaster||(device==='mobile'?'portrait':'landscape'))!==orientation)continue;

@@ -13,7 +13,7 @@ const {renderVariants,captionLayers,captionCopy,motionPrompt,qualityPass}=requir
    assert(base&&layers.length>=4,'v11 keeps the persistent layer and one caption per message');
    const fade=base.fades[0],{data,info}=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true}),column=Math.round(format.width/2),alpha=y=>data[(y*info.width+column)*4+3];
    assert.equal(base.fades.length,1);assert(Math.abs(fade.h-FADE_SIZE.top[format.key]*format.height)<=.5,format.key+' fade height is the standard fraction');
-   assert(alpha(0)<=.6*255&&alpha(0)>=FADE_STOPS[0][1]*255-3,format.key+' fade is mostly transparent at its outer edge');assert.equal(alpha(Math.round(fade.h)),0,'the fade is gone by its inner edge');
+   assert(alpha(0)<=.85*255+2&&alpha(0)>=.75*255-2,format.key+' fade starts clearly visible at its outer edge');assert(alpha(Math.round(fade.h*.5))<alpha(0)*.75&&alpha(Math.round(fade.h*.5))>0,format.key+' fade falls away toward mostly transparent');assert(Math.abs(fade.h-.33*format.height)<=.5,format.key+' fade covers 33% of the video height');assert.equal(alpha(Math.round(fade.h)),0,'the fade is gone by its inner edge');
    for(const l of layers.filter(x=>!x.persistent)){const b=l.textBox;assert(b.x>=fade.x&&b.y>=fade.y&&b.x+b.w<=fade.x+fade.w&&b.y+b.h<=fade.y+fade.h,format.key+' copy sits inside the fade');}}}
  let count=0;for(const orientation of ['portrait','landscape']){
   const rows=await renderVariants(source,orientation,plan);assert.equal(rows.length,orientation==='portrait'?2:1);
