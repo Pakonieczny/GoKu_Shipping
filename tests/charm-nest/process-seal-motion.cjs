@@ -19,13 +19,14 @@ const rect={left:410,right:466,top:560,bottom:616,width:56,height:56};
 seal.getBoundingClientRect=()=>rect;seal.getClientRects=()=>[rect];
 (async()=>{
   try{
-    const pressing=w.Seal.press(seal);w.Seal.press(seal);
+    const pressing=w.Seal.press(seal);w.Seal.press(seal);await wait(1);
     assert.equal(d.querySelectorAll('.sealTool').length,1,'a pending stamp is pressed only once');
     assert.equal(d.querySelectorAll('.sealTool radialGradient').length,2,'the existing wooden tool is used');
     assert(seal.classList.contains('pending'),'ink waits for the tool to reach the paper');
+    let redrawn=0,clicks=0;assert(w.Seal.busy());w.Seal.defer('redraw',()=>redrawn++);d.querySelector('button').onclick=()=>clicks++;d.querySelector('button').click();assert.equal(clicks,0,'navigation is blocked during stamping');assert.equal(redrawn,0);
     assert.equal(moves[0].opts.duration,560);pending.shift()();await wait(1);
     assert(!seal.classList.contains('pending'));assert(seal.classList.contains('wet'));assert(moves.some(m=>m.el.classList.contains('sealRing')));
-    pending.shift()();await pressing;assert.equal(d.querySelector('.sealTool'),null);
+    pending.shift()();await pressing;await wait(30);assert.equal(d.querySelector('.sealTool'),null);assert.equal(redrawn,1);assert(!w.Seal.busy());
     const saved=seal.innerHTML;
     seal.dispatchEvent(new w.MouseEvent('pointerover',{bubbles:true}));
     await wait(150);assert.equal(d.querySelector('.sealLens'),null,'a passing pointer does not open the lens');
@@ -42,6 +43,7 @@ seal.getBoundingClientRect=()=>rect;seal.getClientRects=()=>[rect];
     w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await wait(1);assert.equal(d.querySelector('.sealLens'),null);
     d.querySelector('.sealRow').innerHTML+=w.Seal.html({...stamp,id:'done-124',how:'laserDone',scope:'set',by:'Seth'},56);
     assert.match(d.querySelector('.seal-laserDone').textContent,/SET COMPLETED/);assert.match(d.querySelector('.seal-laserDone').getAttribute('aria-label'),/Seth/);
+    d.querySelector('.sealRow').innerHTML+=w.Seal.html({how:'engraveApproved',at:stamp.at,by:'Seth'},56);assert.match(d.querySelector('.seal-engraveApproved').textContent,/ENGRAVING APPROVED/);assert.match(d.querySelector('.seal-engraveApproved').getAttribute('aria-label'),/Engraving placement approved by Seth/);
     assert.match(w.Seal.titleOf({how:'print',at:stamp.at,by:'Paul'}),/^QR label printed by Paul/);
     assert.match(w.Seal.titleOf({how:'button',at:stamp.at,by:'Paul'}),/^Completed with the Complete Order button by Paul/);
     console.log('PASS: existing wooden tool, ink on contact, single press, delayed hover, enlargement above, full provenance and safe historical controls');

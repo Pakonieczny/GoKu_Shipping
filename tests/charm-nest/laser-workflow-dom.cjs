@@ -11,6 +11,7 @@ const root=path.join(__dirname,'../..');
  Object.assign(w,{S:{mode:'library',library:{rows:[],kind:'sets',metal:'all'},cloud:{ok:true}},api,allSheets:()=>[],Orders:{rows:()=>[]},Engrave:{items:()=>new Map(),backsMarkup:()=>''},esc:x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),el:(tag,cls)=>{const e=d.createElement(tag);e.className=cls;return e;},Gate:{projectLibraryRecords:x=>x},RoseStock:{},CODE:{gold:'GF',silver:'SS',gold14k:'14K'},toast:()=>null,CNEmployee:{name:()=> 'DOM tester'},dayShort:x=>x,metalOf:r=>({label:r.metal}),cors:x=>x,sheetHead:r=>`<div class="h"><span class="nm">Sheet ${r.sheetIndex}</span></div>`,openLibrarySheet:()=>{},showLibrary:()=>{},loadLibrary:()=>Promise.resolve()});
  w.eval(fs.readFileSync(path.join(root,'charm-nest-orders.js'),'utf8'));w.O=w.CharmNestOrders;
  w.eval(fs.readFileSync(path.join(root,'charm-nest-readiness.js'),'utf8'));
+ w.eval(fs.readFileSync(path.join(root,'charm-nest-activity.js'),'utf8'));
  w.eval(fs.readFileSync(path.join(root,'charm-nest-motion.js'),'utf8'));
  const bridge=fs.readFileSync(path.join(root,'charm-nest-bridge.js'),'utf8');
  const laser=bridge.slice(bridge.indexOf('const LaserReview ='),bridge.indexOf('/* ═══ 22 · Sets — one run'));

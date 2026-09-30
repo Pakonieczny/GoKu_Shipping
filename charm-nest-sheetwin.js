@@ -1666,6 +1666,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 
   /* ── the sheet pane: its orders ── */
   function renderStrip() {
+    if(window.Seal?.defer('sheet-strip',renderStrip))return;
     if (!W.rec) return;   // (a window opened on its Back asks for its engraving before its record is read)
     const rec = W.rec, E = W.el, n = W.pieces.filter(x => !x.gone).length, orders = [...W.orders.keys()].filter(k => k !== "—").length;
     const backs = W.pieces.filter(x => x.eng && ["approve", "words", "preparing"].includes(x.eng.kind)).length, ok = W.pieces.filter(x => x.eng?.kind === "approved").length;
@@ -1745,6 +1746,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     renderOrders();
   }
   function renderOrders() {
+    if(window.Seal?.defer('sheet-orders',renderOrders))return;
     const E = W.el, q = W.q;
     if (W.filter === "hold") return renderHeld();
     // (a row whose order is leaving stays, lit, until the list it is in has slid back into view: then it is seen going)
@@ -1959,6 +1961,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     return { key: key || x.rid, order: { receiptId: x.rid }, line: { transactionId: x.tx || "", sku: x.sku }, spec: { designSku: x.sku }, poolIds: x.poolId ? [x.poolId] : [], state: "written", problems: [] };
   }
   function renderPiece(x) {
+    if(window.Seal?.defer("sheet-piece",()=>renderPiece(x)))return;
     const E = W.el, list = sortedPieces(), row = rowOf(x);
     E.pos.textContent = `Charm ${list.indexOf(x) + 1} of ${list.length}`;
     const o = row && row.order || {}, sp = row && row.spec || {};
@@ -1994,6 +1997,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     CharmNestPDF.drawCharm(ctx, c, t, k); ctx.restore();
   }
   function renderEng(x, flash) {
+    if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
     if (e.kind === "none") { host.innerHTML = `<div class="swEng" data-state="none"><div class="top"><b>No back engraving</b></div></div>`; return; }
@@ -2003,7 +2007,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     let acts = "", pv = "";
     if (e.kind === "approve") {
       pv = `<div class="pv" data-r2="pv"><div class="swWait"><span class="owSpin"></span>Drawing the back…</div></div>`;
-      acts = `<button class="btn sage sm" data-e="approve">${ICON.check}Approve</button><button class="btn ghost sm" data-e="engrave">Adjust in Engrave${ICON.go}</button>`;
+      acts = `<button class="btn sage sm egApproveButton" data-e="approve">${ICON.check}Approve</button><button class="btn ghost sm" data-e="engrave">Adjust in Engrave${ICON.go}</button>`;
     } else if (e.kind === "words") acts = `<button class="btn sm" data-e="engrave">Confirm the words in Engrave${ICON.go}</button>`;
     else if (e.kind === "preparing") acts = `<span class="swWait">${e.working ? '<span class="owSpin"></span>' : ""}${esc(e.note || "Being prepared")}</span><button class="btn ghost sm" data-e="engrave">Open in Engrave${ICON.go}</button>`;
     else if (e.kind === "approved") {
@@ -2013,6 +2017,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     } else if (e.kind === "skipped") acts = `<span class="by">${esc(e.by ? "Skipped by " + e.by : "Skipped")}</span>`;
     host.innerHTML = `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${e.kind}"><div class="top"><b>${e.kind === "approve" ? "Check the back, then approve" : e.kind === "approved" ? "Engraved on the back" : e.kind === "words" ? "The words need a decision" : "Back engraving"}</b><span>${states[e.kind] || ""}</span></div>${pv}${words}<div class="acts">${acts}</div></div>`;
     const card = host.querySelector(".swEng");
+    const history=CNEngravingSeals.html(e.job || e.back);if(history)card.querySelector(".acts").insertAdjacentHTML("afterbegin",history);
     if (flash) { card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash"); }
     const slot = host.querySelector("[data-r2=pv]");
     if (slot && e.job) requestAnimationFrame(() => { try { if (!e.job.fit || !e.job.view) { slot.innerHTML = `<span class="by" style="padding:14px">Open it in Engrave to see the back</span>`; return; } const cv = Engrave.renderBack(e.job, 300, { hatch: false, grid: false }); slot.innerHTML = ""; slot.appendChild(cv); } catch (err) { slot.innerHTML = `<span class="by" style="padding:14px">The preview is in Engrave</span>`; } });
@@ -2026,7 +2031,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     const who = needName(() => approveHere(x, b)); if (!who) return;
     b.disabled = true; b.innerHTML = '<span class="spin"></span>Approving…';
     try {
-      await Engrave.approve(job, who);
+      await Engrave.approve(job, who, b);
       if (W.sel !== x) return;
       if (!["approved", "written"].includes(job.state)) { b.disabled = false; b.innerHTML = `${ICON.check}Approve`; return; }
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
@@ -2535,7 +2540,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         r.poolIds = (r.poolIds || []).filter(id => !ids.has(id));
         const j = Engrave.items().get(r.key);
         if (j) { j.copies = (j.copies || []).filter(id => !ids.has(id)); if (!j.copies.length) { Engrave.items().delete(r.key); Review.remove("eng:" + r.key); } }
-        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); }
+        if (!r.poolIds.length && r.state !== "gone") { r.state = "held"; r.hold = r.reason = text; r.heldAt = Date.now(); CNListActivity.touch(r,r.heldAt); }
       }
       if (cue && !cancel && rowsOfOrder(rid).some(r => r.hold)) cue.done();   // (its note: it is on hold now)
       // (a hold is recorded as held, below, and only so: removedBy/At on the piece records would have the server stamp a
@@ -2659,15 +2664,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     /* The records, newest first, read a page at a time (the library's newest 200, then up to its 500): the list is drawn
        from what was read and read again behind it when it is a minute old, so a search or a redraw never waits. */
     const PAGE = 200, MAX = 500;
-    let asked = PAGE, more = false, listAt = 0, reading = null;
+    let asked = PAGE, more = false, listAt = 0, reading = null, activityKey="";
     const extra = new Map();                                        // older ones looked up by number (cancelCheck)
     const sortList = () => list.sort((a, b) => (+b.at || 0) - (+a.at || 0));
     const recordOf = rid => (list || []).find(c => String(c.orderId) === String(rid)) || null;
     function history(n) {
       if (n) asked = Math.min(MAX, Math.max(asked, n));
       if (reading) return reading;
-      const t0 = Date.now();
-      reading = api("charmNestLibrary", { op: "cancelList", limit: asked }, { quiet: true }).then(r => {
+      const t0 = Date.now(), requested=CNListActivity.key("orders");
+      reading = api("charmNestLibrary", { op: "cancelList", ...CNListActivity.state("orders"), limit: asked }, { quiet: true }).then(r => {
         const got = (r.list || []).filter(c => !(restoredAt(c.orderId) >= t0)), first = !list && !at, known = new Set([...ids, ...(list || []).map(c => String(c.orderId))]);
         list = got.slice(); more = !!r.truncated; listAt = Date.now();
         for (const [rid, c] of extra) if (!list.some(x => String(x.orderId) === rid)) list.push(c);
@@ -2675,7 +2680,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
         for (const c of got) ids.add(String(c.orderId));
         if (!first) arrived(got.map(c => String(c.orderId)).filter(rid => !known.has(rid)));
         return list;
-      }).finally(() => { reading = null; });
+      }).finally(() => { reading = null; if(requested!==CNListActivity.key("orders")){listAt=0;history().then(()=>paint(),()=>{});} });
       return reading;
     }
     /** One older order by its number, beyond the pages read: what the stations' check knows of it (no buyer or lines). */
@@ -2710,7 +2715,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       if (!window.Orders) return;
       let n = 0;
       for (const r of Orders.rows()) if (String(r.order.receiptId) === rid && r.state === "gone" && /^cancelled (on Etsy|by )/.test(r.reason || "")) {
-        if (window.Pool && Pool.onSheets(r)) Pool.settle(r); else { r.state = "pulled"; r.reason = null; }
+        CNListActivity.touch(r); if (window.Pool && Pool.onSheets(r)) Pool.settle(r); else { r.state = "pulled"; r.reason = null; }
         n++;
       }
       if (!n) return;
@@ -2780,7 +2785,8 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     function renderInto(host, onChange, opts) {
       opts = opts || {};
       want = { host, onChange, q: String(opts.q || "").trim(), focus: opts.focus ? String(opts.focus) : "", live: opts.live || (() => host.isConnected), clear: opts.clear || null };
-      const w = want, redraw = () => paint();   // (paint draws the latest request, while its pile is still the one shown)
+      const w = want, redraw = () => paint();
+      const nextActivity=CNListActivity.key("orders");if(activityKey!==nextActivity){activityKey=nextActivity;listAt=0;asked=PAGE;history().then(redraw,()=>{});}   // (paint draws the latest request, while its pile is still the one shown)
       if (!list) {
         if (!host.querySelector(":scope > .cxWrap")) host.innerHTML = WAIT;
         history().then(redraw, e => { if (want !== w || !w.live()) return; host.innerHTML = `<div class="libEmpty">The cancelled orders could not be read: ${esc(e.message)}<button class="btn ghost sm" type="button" data-cx="retry">Try again</button></div>`; host.querySelector("[data-cx=retry]").onclick = () => renderInto(host, onChange, opts); });
@@ -2800,13 +2806,13 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const pulled = view ? null : new Set(window.Orders ? Orders.rows().map(r => String(r.order.receiptId)) : []);
       let wrap = host.querySelector(":scope > .cxWrap");
       if (!wrap) { host.innerHTML = ""; wrap = h("div", "cxWrap", `<div class="cxSum" role="status"></div><div class="cxList"></div><div class="cxFoot"></div>`); host.appendChild(wrap); drawnKey = null; }
-      const same = drawnKey === w.q; if (!same) limit = PAGE;
-      const rows = list.filter(c => matches(c, w.q));
+      const same = drawnKey === w.q+CNListActivity.key("orders"); if (!same) limit = PAGE;
+      const rows = CNListActivity.select("orders",list.filter(c => matches(c, w.q)));
       if (w.focus) { const i = rows.findIndex(c => String(c.orderId) === w.focus); if (i >= limit) limit = Math.ceil((i + 1) / PAGE) * PAGE; }
       const shown = rows.slice(0, limit), listEl = wrap.querySelector(".cxList"), sum = wrap.querySelector(".cxSum"), foot = wrap.querySelector(".cxFoot");
       const total = Math.max(ids.size, list.length), etsyN = list.filter(isEtsy).length;
       sum.innerHTML = w.q ? `<b>${rows.length}</b> of ${list.length} match “${esc(w.q)}”`
-        : `<b>${total}</b> cancelled order${total === 1 ? "" : "s"} · newest first${!more && list.length ? `<span class="cxLegend"><span><i class="cxDot etsy"></i>${etsyN} on Etsy</span><span><i class="cxDot person"></i>${list.length - etsyN} by a person</span></span>` : ""}`;
+        : `<b>${total}</b> cancelled order${total === 1 ? "" : "s"} · ${CNListActivity.state("orders").direction==='asc'?'oldest':'newest'} first${!more && list.length ? `<span class="cxLegend"><span><i class="cxDot etsy"></i>${etsyN} on Etsy</span><span><i class="cxDot person"></i>${list.length - etsyN} by a person</span></span>` : ""}`;
       // the rows: kept by order, rebuilt only when what they show changed
       const out = [];
       for (const c of shown) {
@@ -2838,7 +2844,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       host.scrollTop = at0;
       // a view drawn afresh (the pile opened, another search): its rows come in softly, one after another
       if (!same && !still()) out.slice(0, 14).forEach((n, i) => { n.classList.remove("cxIn"); void n.offsetWidth; n.style.setProperty("--i", i); n.classList.add("cxIn"); n.addEventListener("animationend", () => n.classList.remove("cxIn"), { once: true }); });
-      drawnKey = w.q;
+      drawnKey = w.q+CNListActivity.key("orders");
       for (const n of out) if (fresh.has(n.dataset.rid)) { const t = fresh.get(n.dataset.rid); fresh.delete(n.dataset.rid); if (Date.now() - t > 600000) continue; n.classList.remove("mFound"); void n.offsetWidth; n.classList.add("mFound"); setTimeout(() => n.classList.remove("mFound"), 2600); }
       // more: the rest of what was read, then older pages from the library, up to its newest 500
       foot.innerHTML = "";

@@ -51,6 +51,8 @@
   function paintTabs() {
     const bar = byId('libTab'); if (!bar) return;
     for (const b of bar.querySelectorAll('button[data-t]')) { const on = b.dataset.t === L.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; }
+    let activity=byId("libActivity"); if(!activity){activity=doc.createElement("div");activity.id="libActivity";byId("libView").insertBefore(activity,byId("libBody"));}
+    CNListActivity.mount(activity,"library",()=>{ if(L.tab==="done")showDone();else renderCurrent(); });
     fitPlaceholder();
     const view = byId('libView'); if (view) view.dataset.tab = L.tab;
   }
@@ -146,7 +148,7 @@
   function records(ids, at) {
     const want = new Set(ids);
     const all = [...(S.library.rows || []), ...[...doc.querySelectorAll('.setCard')].flatMap(c=>c._sheets || [])];
-    for (const r of all) if (want.has(r.id)) { r.laserDoneAt = at || null; LaserReview.record(r); }
+    for (const r of all) if (want.has(r.id)) { r.laserDoneAt = at || null; CNListActivity.touch(r); LaserReview.record(r); }
     for (const x of L.extra.values()) if (want.has(x.r.id)) x.r.laserDoneAt = at || null;
     S.library.loadedAt = 0;     // Current is read again when it is next shown
   }
@@ -735,13 +737,13 @@
   const rowKey = r => r.kind === 'set' ? 'set:' + r.setId : 'sheet:' + r.id;
   function listKey() {
     const q = query(), n = lookup(), m = metalNow() || 'all';
-    return `${S.library.kind === 'sets' ? 'sets' : 'sheets'}|${m}|${n ? '#' + n : typing() ? '' : foldText(q)}`;
+    return `${S.library.kind === 'sets' ? 'sets' : 'sheets'}|${m}|${n ? '#' + n : typing() ? '' : foldText(q)}|${CNListActivity.key('library')}`;
   }
   function newList(key) {
     const [kind, metal, q] = key.split('|');
     const el = doc.createElement('div'); el.className = 'ldList';
     el.innerHTML = '<div class="ldRows"></div><div class="ldMore" aria-live="polite"></div>';
-    return { key, kind, metal: metal === 'all' ? null : metal, q: q.startsWith('#') ? '' : q, find: q.startsWith('#') ? q.slice(1) : '', el, rowsEl: el.firstChild, moreEl: el.lastChild,
+    return { key, kind, ...CNListActivity.state('library'), metal: metal === 'all' ? null : metal, q: q.startsWith('#') ? '' : q, find: q.startsWith('#') ? q.slice(1) : '', el, rowsEl: el.firstChild, moreEl: el.lastChild,
       rows: [], byKey: new Map(), next: null, end: false, loading: false, error: null, empties: 0, scanned: 0, at: 0, seq: 0, pending: null, scroll: 0, dropped: false };
   }
   function dropList(key) {
@@ -800,13 +802,13 @@
           const res = f.res, sets = st.kind === 'sets' ? (res.setRows || []) : [];
           const inSets = new Set(sets.map(r => r.setId));
           // Sets: the completed sets that hold it, and a completed sheet whose set is not complete (or that has none)
-          st.pending = [...sets, ...(res.rows || []).filter(r => st.kind !== 'sets' || !inSets.has(r.setId))].filter(r => metalOk(r, st.metal)).sort((a, b) => (b.at || 0) - (a.at || 0));
+          st.pending = CNListActivity.select('library',[...sets, ...(res.rows || []).filter(r => st.kind !== 'sets' || !inSets.has(r.setId))].filter(r => metalOk(r, st.metal)));
         }
         if (st.dropped) return;
         append(st, st.pending.splice(0, CHUNK));
         st.end = !st.pending.length; st.at = st.at || Date.now();
       } else {
-        const r = await api('charmNestLibrary', { op: 'laserDoneList', kind: st.kind, limit: PAGE, cursor: st.next || undefined, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
+        const r = await api('charmNestLibrary', { op: 'laserDoneList', sort:'activity', direction:st.direction, range:st.range, kind: st.kind, limit: PAGE, cursor: st.next || undefined, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
         if (st.dropped) return;
         if (r.counts) setCounts(r.counts);
         const fresh = (r.rows || []).filter(x => !st.byKey.has(rowKey(x)));
@@ -824,10 +826,12 @@
     if (st.find || st.freshening || st.dropped || (!now && Date.now() - st.at < FRESH)) return;
     st.freshening = true;
     try {
-      const r = await api('charmNestLibrary', { op: 'laserDoneList', kind: st.kind, limit: PAGE, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
+      const r = await api('charmNestLibrary', { op: 'laserDoneList', sort:'activity', direction:st.direction, range:st.range, kind: st.kind, limit: PAGE, metal: st.metal || undefined, q: st.q || undefined }, { quiet: true });
       if (st.dropped) return;
       if (r.counts) setCounts(r.counts);
-      const head = st.rows.length ? st.rows[0].at || 0 : 0, fresh = (r.rows || []).filter(x => !st.byKey.has(rowKey(x)) && (x.at || 0) >= head);
+      const fresh = (r.rows || []).filter(x => !st.byKey.has(rowKey(x)));
+      const changed=(r.rows || []).some(x=>st.byKey.has(rowKey(x)) && CNListActivity.at(x)!==CNListActivity.at(st.byKey.get(rowKey(x))));
+      if(changed || (st.direction==='asc' && fresh.length)){dropList(st.key);if(L.tab==='done')showDone();return;}
       st.at = Date.now();
       if (fresh.length && fresh.length === (r.rows || []).length && r.next) { dropList(st.key); if (L.tab === 'done') showDone(); return; }
       if (fresh.length) prepend(st, fresh);
@@ -840,7 +844,7 @@
     st.rowsEl.querySelectorAll(':scope > .skel').forEach(n => { if (st.rows.length || !st.loading) n.remove(); });
     if (st.loading && !st.rows.length) {
       if (!st.rowsEl.querySelector('.skel')) st.rowsEl.insertAdjacentHTML('beforeend', Array.from({ length: 6 }, () => '<div class="ldItem skel" aria-hidden="true"><div class="ldLine"><i></i><i></i><i></i><i></i></div></div>').join(''));
-    } else if (st.loading) html = '<i class="spin" aria-hidden="true"></i> Loading older…';
+    } else if (st.loading) html = '<i class="spin" aria-hidden="true"></i> Loading more…';
     else if (st.error) html = `Could not load: ${esc(st.error.message)} <button type="button" class="btn ghost xs" data-ld-retry>Retry</button>`;
     else if (!st.rows.length && st.end) html = '';
     else if (st.rows.length >= MAX_ROWS) html = `The newest ${MAX_ROWS.toLocaleString()} are shown · search for an order, a listing or a date to find older ones`;
@@ -911,7 +915,7 @@
   function append(st, list) {
     if (!list.length) return;
     st.rowsEl.querySelectorAll(':scope > .skel, :scope > .libEmpty').forEach(n => n.remove());
-    const groups = []; for (const r of list) { st.rows.push(r); st.byKey.set(rowKey(r), r); const day = r.at ? realDay(r.at) : 'undated'; const g = groups[groups.length - 1]; if (g && g.day === day) g.rows.push(r); else groups.push({ day, rows: [r] }); }
+    const groups = []; for (const r of list) { st.rows.push(r); st.byKey.set(rowKey(r), r); const day = CNListActivity.day(CNListActivity.at(r)) || 'undated'; const g = groups[groups.length - 1]; if (g && g.day === day) g.rows.push(r); else groups.push({ day, rows: [r] }); }
     for (const g of groups) {
       let sec = st.rowsEl.lastElementChild;
       if (!sec || sec.dataset.day !== g.day) { st.rowsEl.insertAdjacentHTML('beforeend', dayHead(g.day, st.kind === 'sets' ? 'set' : 'sheet')); sec = st.rowsEl.lastElementChild; }
@@ -925,7 +929,7 @@
     const added = [], fresh = new Set();
     for (const r of list.slice().reverse()) {
       st.rows.unshift(r); st.byKey.set(rowKey(r), r);
-      const day = r.at ? realDay(r.at) : 'undated'; let sec = st.rowsEl.firstElementChild;
+      const day = CNListActivity.day(CNListActivity.at(r)) || 'undated'; let sec = st.rowsEl.firstElementChild;
       if (!sec || sec.dataset.day !== day) { st.rowsEl.insertAdjacentHTML('afterbegin', dayHead(day, st.kind === 'sets' ? 'set' : 'sheet')); sec = st.rowsEl.firstElementChild; fresh.add(sec); }
       sec.lastElementChild.insertAdjacentHTML('afterbegin', rowHtml(r)); countDay(sec); added.push([r, sec.lastElementChild.firstElementChild, sec]);
     }

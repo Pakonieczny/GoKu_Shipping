@@ -42,6 +42,8 @@ const { json, gate, parseBody, str, num } = require("./_charmNestAuth");
 const db = admin.firestore();
 const OrderRules = require("../../charm-nest-orders.js");
 const Readiness = require("../../charm-nest-readiness.js");
+const Activity = require("../../charm-nest-activity.js");
+const EngravingSeals = require("../../charm-nest-engraving-seals.js");
 // A run's archived lines keep the readiness policy's decisions as they were when written (op_runArchive); a part written
 // under another version of Readiness.decisions is decided again from its lines when read (decisionsOfRun).
 const DECISIONS_VERSION = require("crypto").createHash("sha256").update(String(Readiness.decisions)).digest("hex").slice(0, 16);
@@ -139,7 +141,7 @@ function slim(d) {
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
     stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
-    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
+    backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, engravingSeals:EngravingSeals.merge(bk), order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
@@ -153,7 +155,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "activityAt"];
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -488,8 +490,8 @@ async function op_renameCharm(b) {
 }
 async function op_listCharms(b) {
   const q = str(b.q, 80).toLowerCase(); const limit = Math.min(1000, Math.max(1, num(b.limit) || 400));
-  const snap = await db.collection(LIB).orderBy("lastUsed", "desc").limit(limit).get();
-  let rows = snap.docs.map(d => { const r = d.data(); return { hash: d.id, name: r.name || null, label: r.label || null, namedBy: r.namedBy || null, metalHint: r.metalHint || null, thumbUrl: r.thumbUrl || null, aiUrl: r.aiUrl || null, widthPt: num(r.widthPt), heightPt: num(r.heightPt), areaPt2: num(r.areaPt2), timesUsed: num(r.timesUsed), sourceName: r.sourceName || null, lastUsed: ms(r.lastUsed) }; });
+  const snap = await db.collection(LIB).orderBy(b.sort==="activity"?"updatedAt":"lastUsed", b.direction==="asc"?"asc":"desc").limit(limit).get();
+  let rows = snap.docs.map(d => { const r = d.data(); return { hash: d.id, name: r.name || null, label: r.label || null, namedBy: r.namedBy || null, metalHint: r.metalHint || null, thumbUrl: r.thumbUrl || null, aiUrl: r.aiUrl || null, widthPt: num(r.widthPt), heightPt: num(r.heightPt), areaPt2: num(r.areaPt2), timesUsed: num(r.timesUsed), sourceName: r.sourceName || null, updatedAt:ms(r.updatedAt), createdAt:ms(r.createdAt), lastUsed: ms(r.lastUsed) }; });
   // Firestore cannot match a substring, so the limit has to come first and the filter second — which means a search
   // only ever sees the most recently used `limit` charms. A charm that genuinely exists but was last used 401 charms
   // ago used to come back as "no charms yet": a false negative on correct input. The caller is told how far it looked.
@@ -501,7 +503,7 @@ async function op_listCharms(b) {
    manifest and a recalled Decided list read. The whole record (fit metrics, flip checks, the review, the reference
    picture) stays in Charm_Pool_Back, and getSheet puts it back for the readers that edit or report a back. A whole copy
    per back used to count toward the sheet document's 1 MiB. */
-const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion"];
+const SHEET_BACK_FIELDS = ["poolId", "sheetId", "setId", "runId", "order", "transactionId", "sku", "copy", "text", "lines", "lineGap", "lineMode", "font", "weight", "sizePt", "capMm", "box", "centre", "angle", "upAngle", "solidBack", "small", "thin", "name", "approvedAt", "approvedBy", "engravingSeals", "invalidated", "previewWPt", "previewHPt", "pageWPt", "pageHPt", "materialVersion"];
 function sheetBack(bk) {
   if (!bk || typeof bk !== "object") return bk;
   const out = {};
@@ -1294,6 +1296,7 @@ async function putBacks(tx, sheetId, list, expected) {
       : expected != null && +expected !== +(currentBack?.approvedAt || old.approvedAt || 0) ? "This back was edited elsewhere. Reopen it before saving your changes."
       : null;
     if (refused) { out.errors.push({ row: x, error: refused }); continue; }
+    x.engravingSeals=EngravingSeals.merge(old,x);
     const copy = sheetBack(x);
     // already recorded as sent, and the sheet already lists it so: nothing would change but the time stamps
     if (old.invalidated === false && old.sheetId === sheetId && holds(old, x) && sameValue(currentBack, copy)) { out.skipped++; continue; }
@@ -1618,10 +1621,10 @@ async function op_runList(b) {
    The answer says what it read (scanned), the days it covered (window) and whether a cap cut it short (truncated).
    Every query is a single-field equality, range or array-contains: no composite index is needed. */
 const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
-const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "updatedAt", "activityAt"];
 // (label: the Sets window says of each sheet whether its QR label is made — Paul, 27 Sep: "add all the appropriate
 // functionality to this pop-up"; the label record is a few small entries, not the sheet's charms)
-const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "label", "cardStartedAt", "createdAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "label", "cardStartedAt", "createdAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "updatedAt", "activityAt"];
 const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "liveLines", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
 const dayOf = x => (isDay(x && x.day) ? x.day : "");
 const dayShift = (day, n) => { const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -1664,7 +1667,25 @@ function historyRows(q, sets, sheets, runs) {
   }).filter(g => g.match).sort((a, b) => String(b.day || "").localeCompare(String(a.day || "")) || (b.seq || 0) - (a.seq || 0) || (b.updatedAt || 0) - (a.updatedAt || 0) || String(a.key).localeCompare(String(b.key)));
   return { rows, runRows };
 }
+async function activityHistory(b) {
+  const omit=new Set(['outputs','backPool','sources','poolIds','verification','stock','sheets','processSeals']);
+  const fields=[HISTORY_SET,HISTORY_SHEET,HISTORY_RUN].map((xs,i)=>xs.filter(x=>!omit.has(x) && !(i===0 && x==='orders')));
+  const snaps=await Promise.all([SETS,SHEETS,RUNS].map((name,i)=>col(name).select(...fields[i]).get()));
+  const maps=snaps.map((snap,i)=>new Map(snap.docs.map(d=>[d.id,{...d.data(),...(i===1?{id:d.id}:i===2?{runId:d.id}:{})}])));
+  const q=String(b.q||'').trim().toLowerCase(), direction=b.direction==='asc'?'asc':'desc';
+  const {rows:all,runRows}=historyRows(q,...maps);
+  const rows=all.filter(r=>Activity.matches(r,b.range)).sort((a,b)=>Activity.compare(a,b,direction));
+  const cur=b.cursor?.activity ? b.cursor:null;
+  const after=cur?rows.filter(r=>Activity.compare(r,{key:cur.key,activityAt:cur.at},direction)>0):rows;
+  const limit=Math.min(100,Math.max(1,num(b.limit)||60)), chosen=after.slice(0,limit), budget=answerBudget(), page=[];
+  const ids=[...new Set(chosen.flatMap(g=>g.sheets.map(x=>x.id)))].filter(isId), full=new Map();
+  for(let i=0;i<ids.length;i+=100)for(const d of await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)),{fieldMask:HISTORY_SHEET}))if(d.exists)full.set(d.id,{...d.data(),id:d.id});
+  for(const g of chosen){g.sheets=g.sheets.map(x=>full.has(x.id)?{...slim(full.get(x.id)),orders:x.orders,orderIds:x.orderIds,sheetIndex:x.sheetIndex}:x);delete g.search;delete g.match;delete g.exact;if(!budget.fits(g))break;page.push(g);}
+  const last=page[page.length-1], onPage=new Set(page.map(g=>g.runId));
+  return {sets:page,runs:runRows.filter(r=>onPage.has(r.runId)),next:after.length>page.length && last?{activity:true,at:Activity.at(last),key:last.key}:null,total:rows.length,scanned:{sets:snaps[0].size,sheets:snaps[1].size,runs:snaps[2].size},truncated:{size:page.length<chosen.length}};
+}
 async function op_history(b) {
+  if(b.sort==="activity" && /^\d*$/.test(String(b.q || "").trim()))return activityHistory(b);
   const q = String(b.q || "").trim().toLowerCase(), limit = Math.min(100, Math.max(1, num(b.limit) || 60));
   const cur = b.cursor && isDay(b.cursor.day) ? { day: b.cursor.day, skip: Math.max(0, Math.floor(num(b.cursor.skip))) } : null;
   const scanned = { runs: 0, sheets: 0, sets: 0, lineParts: 0 }, truncated = { runs: false, sheets: false, sets: false, lineParts: false, size: false };
@@ -1755,10 +1776,10 @@ async function op_history(b) {
    set's record, which is completed with its last sheet and taken back with any of them. Only op_laserDone writes the two
    fields (op_putSheet and op_setUpdate leave them out of what they write), so an open run saving its copy of a sheet
    again keeps its mark. Every query below is on one field (laserDoneAt, orders, listings, day, runId): no composite index. ── */
-const DONE_SHEET = ["id", "metal", "metalLabel", "day", "setId", "setSeq", "sheetIndex", "page", "folder", "fileBase", "orders", "placedCount", "charmCount", "density", "outputs", "laserDoneAt", "laserDoneBy", "archived", "draft", "solidIncluded", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const DONE_SHEET = ["id", "metal", "metalLabel", "day", "setId", "setSeq", "sheetIndex", "page", "folder", "fileBase", "orders", "placedCount", "charmCount", "density", "outputs", "laserDoneAt", "laserDoneBy", "archived", "draft", "solidIncluded", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "updatedAt", "activityAt"];
 const DONE_FIND = DONE_SHEET.concat(["names", "sources", "listings", "runId"]);
-const DONE_SET = ["setId", "seq", "day", "runId", "name", "sheetIds", "materials", "status", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
-const DONE_MEMBER = ["metal", "sheetIndex", "page", "density", "placedCount", "orders", "outputs", "archived", "laserDoneAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const DONE_SET = ["setId", "seq", "day", "runId", "name", "sheetIds", "materials", "status", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "updatedAt", "activityAt"];
+const DONE_MEMBER = ["metal", "sheetIndex", "page", "density", "placedCount", "orders", "outputs", "archived", "laserDoneAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy", "updatedAt", "activityAt"];
 const DONE_SCAN = { sheets: 800, sets: 240 };          // the records one call of a search or a metal may read
 // an archived sheet's laser mark, kept aside where the one-field Completed count and list do not read it (doneCounts)
 const archivedMark = d => ({ processSeals: Readiness.processStamps(d), processReady: false, laserDoneAt: FV.delete(), laserDoneBy: FV.delete(), archivedLaserDoneAt: num(d.laserDoneAt), archivedLaserDoneBy: d.laserDoneBy || null });
@@ -1770,14 +1791,14 @@ const foldText = s => String(s == null ? "" : s).toLowerCase().replace(/[._\-/·
 function doneSheetRow(id, d) {
   return { kind: "sheet", id, metal: d.metal || null, metalLabel: d.metalLabel || null, day: d.day || null, setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || num(d.page) || 1,
     fileBase: d.fileBase || d.folder || null, draft: !!d.draft || d.solidIncluded === false, orders: (d.orders || []).length, pieces: num(d.placedCount), charms: num(d.charmCount), fill: num(d.density),
-    preview: previewOf(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
+    preview: previewOf(d), activityAt:Activity.at(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
 function doneSetRow(id, d, members) {
   const live = members.filter(m => m && !m.archived), orders = new Set(live.flatMap(m => (m.orders || []).map(String)));
   return { kind: "set", setId: id, seq: num(d.seq) || null, day: d.day || null, name: d.name || null, materials: (d.materials && d.materials.length ? d.materials : [...new Set(live.map(m => m.metal))]).filter(Boolean), sheetIds: d.sheetIds || [], status: d.status || null,
     sheets: live.map(m => ({ id: m.id, metal: m.metal || null, sheetIndex: num(m.sheetIndex) || num(m.page) || 1, fill: num(m.density), pieces: num(m.placedCount), orders: (m.orders || []).length, preview: previewOf(m) })).sort((a, b) => String(a.metal).localeCompare(String(b.metal)) || a.sheetIndex - b.sheetIndex),
     orders: orders.size, pieces: live.reduce((n, m) => n + num(m.placedCount), 0), fill: live.length ? live.reduce((n, m) => n + num(m.density), 0) / live.length : 0,
-    processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
+    activityAt:Activity.at(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
 const sheetHay = (id, d) => [id, d.fileBase, d.folder, d.names, d.day, d.metal, d.metalLabel, METAL_CODE[d.metal], d.setId, d.setSeq ? "set " + d.setSeq : "", "sheet " + (num(d.sheetIndex) || num(d.page) || 1), (d.orders || []).join(" "), (d.listings || []).join(" "), d.laserDoneBy, (d.sources || []).map(s => s && s.name).join(" "), d.laserDoneAt ? new Date(num(d.laserDoneAt)).toISOString().slice(0, 10) : ""].join(" ");
 /** Each set's sheets, read for what a Completed row shows (and a search reads): [[setId, [sheet…]]]. */
@@ -1878,6 +1899,7 @@ async function op_laserDone(b) {
     by reading every record at once. The first page counts what is completed (two aggregates), and countOnly asks for
     nothing else. */
 async function op_laserDoneList(b) {
+  if(b.sort === "activity" && !b.countOnly)return activityDoneList(b);
   const kind = b.kind === "sets" ? "sets" : "sheets", name = kind === "sets" ? SETS : SHEETS;
   const cur = b.cursor && num(b.cursor.at) > 0 ? { at: num(b.cursor.at), skip: Math.max(0, Math.floor(num(b.cursor.skip))) } : null;
   const counts = cur ? null : await doneCounts();
@@ -1914,6 +1936,42 @@ async function op_laserDoneList(b) {
   const fix = repair.filter(([, , t]) => t !== at);
   if (fix.length) { const batch = db.batch(); for (const [id, d] of fix) batch.set(col(SHEETS).doc(id), archivedMark(d), { merge: true }); await batch.commit().catch(() => {}); }
   return { kind, rows, next: end ? null : { at, skip }, scanned, ...(counts ? { counts } : {}) };
+}
+/* Activity pages scan a single updatedAt index. Cursor ties retain every record; completion
+   dates remain historical facts. The date range is shop-local, including DST boundaries. */
+async function activityDoneList(b) {
+  const kind=b.kind==='sets'?'sets':'sheets', name=kind==='sets'?SETS:SHEETS, direction=b.direction==='asc'?'asc':'desc';
+  const limit=Math.min(200,Math.max(1,num(b.limit)||60)), q=foldText(str(b.q,120)), metal=isMetal(b.metal)?b.metal:null;
+  const cur=b.cursor?.activity ? b.cursor : null, range=Activity.bounds(b.range), counts=cur?null:await doneCounts();
+  let at=cur?.at || null, skip=cur?.skip || 0, stamp=cur?.stamp!==false, scanned=0, end=false;
+  const rows=[], fields=kind==='sets'?DONE_SET:q?DONE_FIND:DONE_SHEET;
+  while(rows.length<limit && scanned<DONE_SCAN[kind] && !end){
+    const want=Math.min(100,DONE_SCAN[kind]-scanned), skipped=skip;
+    let query=col(name).orderBy('updatedAt',direction);
+    if(at!=null)query=query.where('updatedAt',direction==='asc'?'>=':'<=',stamp?admin.firestore.Timestamp.fromMillis(at):at);
+    if(range){query=query.where('updatedAt','>=',admin.firestore.Timestamp.fromMillis(Activity.dayStart(range[0]))).where('updatedAt','<',admin.firestore.Timestamp.fromMillis(Activity.dayStart(Activity.shift(range[1],1))));}
+    const snap=await query.limit(skipped+want).select(...fields).get();
+    let pass=skipped;const docs=snap.docs.filter(d=>!(at!=null && Activity.ms(d.data().updatedAt)===at && pass-->0));
+    const filing=kind==='sheets'?await filingRecords(docs.map(d=>d.data())):null;
+    const members=kind==='sets'?await doneMembers(docs.filter(d=>num(d.data().laserDoneAt)>0).map(d=>[d.id,d.data()]),q?DONE_MEMBER.concat(['names','fileBase','folder','listings','day','setSeq']):DONE_MEMBER):null;
+    let i=0;
+    for(;i<docs.length && rows.length<limit;i++){
+      const doc=docs[i], d=doc.data(), t=Activity.ms(d.updatedAt);scanned++;
+      if(t===at)skip++;else{at=t;skip=1;}stamp=typeof d.updatedAt==='object';
+      if(!num(d.laserDoneAt) || d.archived || !Activity.matches(d,b.range))continue;
+      if(kind==='sheets'){
+        if(!Readiness.filed(filing[i]) || (metal && d.metal!==metal) || (q && !foldText(sheetHay(doc.id,d)).includes(q)))continue;
+        rows.push(doneSheetRow(doc.id,d));
+      }else{
+        const list=members.get(doc.id)||[];
+        if(metal && !list.some(m=>m.metal===metal) && !(d.materials||[]).includes(metal))continue;
+        if(q && !foldText([doc.id,d.name,d.day,'set '+d.seq,d.laserDoneBy,...list.map(m=>sheetHay(m.id,m))].join(' ')).includes(q))continue;
+        rows.push(doneSetRow(doc.id,d,list));
+      }
+    }
+    if(i===docs.length && snap.size<skipped+want)end=true;
+  }
+  return {kind,rows,next:end?null:{activity:true,at,skip,stamp},scanned,...(counts?{counts}:{})};
 }
 /* "Where is order 3712345?" and "Which sheets hold listing 1718000?" A number is looked up as both, however old:
    · an order: the sheets whose `orders` list it (as the history search finds one);
@@ -2250,7 +2308,10 @@ async function op_cancelList(b) {
     const [s, total] = await Promise.all([col(CANCELLED).orderBy("at", "desc").select("orderId").limit(5000).get(), top ? countOf() : null]);
     return Object.assign({ ids: s.docs.map(d => d.id), truncated: s.size >= 5000 }, top ? Object.assign(track, { total }) : {});
   }
-  const s = await col(CANCELLED).orderBy("at", "desc").limit(n).get();
+  let cq=col(CANCELLED).orderBy("at",b.direction==='asc'?'asc':'desc');
+  const dates=Activity.bounds(b.range);
+  if(dates)cq=cq.where('at','>=',Activity.dayStart(dates[0])).where('at','<',Activity.dayStart(Activity.shift(dates[1],1)));
+  const s = await cq.limit(n).get();
   // a record from before `source` was kept reads as a person's (or Etsy's, when it says so)
   return Object.assign({ list: s.docs.map(tidyRec), truncated: s.size >= n }, track);
 }

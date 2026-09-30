@@ -2649,6 +2649,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owNoteField .owIn{border-color:var(--goldLine)}
 .owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
+<link rel="stylesheet" href="charm-nest-activity.css?v=20260930-activity">
 </head>
 <body>
 <div class="app" id="app">
@@ -2856,17 +2857,19 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260930-process-history"></script>
+<script src="charm-nest-motion.js?v=20260930-engraving-seals"></script>
 <script src="charm-nest-timeline-ui.js?v=20260929-m7"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
-<script src="charm-nest-readiness.js?v=20260930-reopen-laser"></script>
+<script src="charm-nest-activity.js?v=20260930-activity"></script>
+<script src="charm-nest-engraving-seals.js?v=20260930-activity"></script>
+<script src="charm-nest-readiness.js?v=20260930-activity"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
-<script src="charm-nest-background.js?v=20260924-followup"></script>
+<script src="charm-nest-background.js?v=20260930-stamp-barrier"></script>
 <script>
 /* ═════════════════════════════════════════════════════════════════════════
    CHARM NESTING STATION 1 — application
@@ -6167,6 +6170,7 @@ function sheetHead(r, o) {
   return `<div class="h">${swatch(m, 0)}<span class="nm">Sheet ${sheetNo(r)}</span>${sn && !o.inFan ? `<span class="set">Set ${sn}</span>` : ""}<span class="tm" title="Sheet started">${esc(date)}</span></div>`;
 }
 function renderLibrary() {
+  if(window.Seal?.defer("library",renderLibrary))return;
   // Current (the Completed tab is charm-nest-library.js's): what the laser has not cut yet
   const LD = window.LibraryDone; if (LD && LD.tab() === "done") return;
   const q = ($("#libSearch").value || "").trim().toLowerCase(), focus = LD ? LD.focus() : null;
@@ -6174,7 +6178,7 @@ function renderLibrary() {
   const rows0 = (LD ? LD.rows(S.library.rows, focus) : S.library.rows).filter(r => !(LD && LD.isFiled(r)) && (focus ? focus.test(r) : !q || `${r.id} ${r.folder || ""} ${r.metalLabel} ${r.day} ${r.setId || ""} ${r.runId || ""} ${r.names || ""} ${(r.sources || []).map(s => s.name).join(" ")} ${(r.orders || []).join(" ")} ${(r.listings || []).join(" ")}`.toLowerCase().includes(q)));
   // one record per sheet name, the newest: a re-nested sheet keeps its name, and the library could hold its stale twin
   const newest = new Map(); for (const r of rows0) { const k = r.folder || r.fileBase || r.id; const had = newest.get(k); if (!had || (r.updatedAt || 0) > (had.updatedAt || 0)) newest.set(k, r); }
-  const rows = [...newest.values()];
+  const rows = CNListActivity.select("library", [...newest.values()]);
   const body = $("#libBody"); if (!rows.length) { body.innerHTML = `<div class="libEmpty">${focus ? "" : "No sheets match."}</div>`; if (LD) LD.decorate(body); return; }
   const place = S.mode === "library" && body.querySelector(".libCard") ? libraryPlace() : null;
   const card = (r, i) => { const m = metalOf(r), sn = setNo(r); return `<div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" data-page="${r.page || 1}" style="--i:${i || 0}" title="${esc(r.folder || r.id)}">${sheetHead(r, {inFan:r._inFan})}<div data-back-sheet="${esc(r.id)}">${window.Engrave ? Engrave.backsMarkup(r) : ""}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${pvRatio(r)} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span title="charms placed of the charms asked for"><b>${r.placedCount}</b>/${r.charmCount}</span><span title="how full the sheet is"><b>${Math.round((r.density || 0) * 100)}%</b></span><span title="metal left free">${fmt.area(r.freePt2 || 0)} free</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>`; };
@@ -6275,8 +6279,9 @@ async function loadCharms() {
   if (!S.cloud.ok) { if (!had) body.innerHTML = `<div class="libEmpty">Cloud offline.</div>`; return; }
   try {
     const q = ($("#charmSearch").value || "").trim();
-    const r = await api("charmNestLibrary", { op: "listCharms", q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
-    const rows = r.charms || [];
+    const r = await api("charmNestLibrary", { op: "listCharms", sort:"activity", ...CNListActivity.state("charms"), q, limit: q ? 1000 : 400 }, { label: "Loading charms" });
+    CNListActivity.mount($("#charmsView .libBar"),"charms",loadCharms);
+    const rows = CNListActivity.select("charms",r.charms || []);
     $("#charmCount").textContent = q ? `${rows.length} match${rows.length === 1 ? "" : "es"}` : `${rows.length} charm${rows.length === 1 ? "" : "s"}${rows.length >= 400 ? "+" : ""}`;
     body.innerHTML = rows.length ? rows.map(c => `<div class="charmTile hoverItem" data-h="${c.hash}">${c.thumbUrl ? `<img crossorigin="anonymous" src="${cors(c.thumbUrl)}" loading="lazy" alt="">` : ""}<div class="nmRow"><div class="nm" title="${esc(c.name || "")}">${esc(c.name || "")}</div><button class="rename" type="button" title="rename this charm in the library">✎</button></div><div class="meta">${c.widthPt ? `${fmt.mm(c.widthPt)} × ${fmt.mm(c.heightPt)}` : ""}${c.timesUsed ? ` · used ×${c.timesUsed}` : ""}${c.metalHint ? ` · ${esc(labelOf(c.metalHint))}` : ""}</div>${c.aiUrl ? `<a class="btn ghost xs" href="${c.aiUrl}" target="_blank" rel="noopener">.ai</a>` : ""}</div>`).join("") : `<div class="libEmpty">${q
         ? `No charm matches &ldquo;${esc(q)}&rdquo;.` + (r.truncated ? `<br><span style="font-size:12px">The search covered the ${r.scanned} most recently used charms.</span>` : "") + `<br><button class="btn ghost sm" type="button" id="charmClear" style="margin-top:12px">Clear search</button>`
@@ -6301,6 +6306,7 @@ async function loadCharms() {
   } catch (e) { if (!had) body.innerHTML = `<div class="libEmpty">${esc(e.message)}</div>`; else toast("Charms not refreshed: " + e.message, "bad", 4000); }
 }
 function setMode(mode) {
+  if(window.Seal?.defer("main-mode",()=>setMode(mode)))return;
   if (S.mode === "library" && mode !== "library" && $("#libBody .libCard")) S.library.place = libraryPlace();
   S.mode = mode; renderNestFlow(); $$(".topbar button[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === mode));
   { const mm = $("#moreMenu"); if (mm) { const inMore = mm.querySelector(`button[data-mode="${mode}"]`); mm.classList.toggle("on", !!inMore); mm.querySelector("summary").title = inMore ? "Workspace · " + inMore.textContent.trim() : "Workspace tools and settings"; mm.open = false; } }
@@ -6549,13 +6555,13 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260930-reopen-laser"></script>
-<script src="charm-nest-sheetwin.js?v=20260930-laser-stages"></script>
+<script src="charm-nest-bridge.js?v=20260930-activity"></script>
+<script src="charm-nest-sheetwin.js?v=20260930-activity"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260930-reopen-laser"></script>
+<script src="charm-nest-library.js?v=20260930-activity"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const E=require('../../charm-nest-engraving-seals.js'),A=require('../../charm-nest-activity.js');
+const old={key:'old',state:'written',approvedBy:'Paul',approvedAt:1000,row:{engrave:{}}};
+E.keep(old);old.approvedAt=null;old.state='words';assert.equal(E.list(old).length,1);E.add(old,'engraveApproved','Seth',2000);assert.deepEqual(E.list(old).map(s=>s.by),['Paul','Seth']);assert.equal(E.list(JSON.parse(JSON.stringify(old))).length,2,'history survives checkpoint serialization');
+const source=fs.readFileSync('charm-nest-bridge.js','utf8');
+let finish,pressed=false,moved=0,saved=0,removed=0;const wait=new Promise(r=>finish=r);
+const job={key:'order',row:{order:{receiptId:'3701000'},spec:{designSku:'FROG'},engrave:{}},fit:{size:1,capMm:1},verify:{geometry:{ok:true}},text:'A',state:'review'};
+const ctx={Date,Promise,EG:{cardKey:null,card:null},CNListActivity:A,CNEngravingSeals:{...E,press:async()=>{pressed=true;await wait;}},employeeName:()=> 'Paul',Review:{remove(){removed++;}},goes(){moved++;},EG_TAB:()=>'',agent(){},saveBacks:async()=>saved++,toast(){},askEmployee:()=> 'Paul'};
+vm.createContext(ctx);const start=source.indexOf('  async function approve(job,'),end=source.indexOf('  /** An approval',start);vm.runInContext(source.slice(start,end),ctx);
+(async()=>{const p=ctx.approve(job,'Paul',{});await Promise.resolve();assert(pressed);assert(job.stamping);assert.equal(moved,0);assert.equal(saved,0);assert.equal(removed,0);await ctx.approve(job,'Paul',{});assert.equal(E.list(job).length,1,'double click cannot record another approval');finish();await p;assert(!job.stamping);assert.equal(moved,1);assert.equal(saved,1);assert.equal(removed,1);console.log('PASS: no departure, next order, save-triggered redraw or duplicate approval before stamp completion; historical engraving seals survive reopen and reload');})().catch(e=>{console.error(e);process.exitCode=1;});

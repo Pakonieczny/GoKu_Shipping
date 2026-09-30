@@ -282,8 +282,14 @@
 
   /* ════ Seals ════ */
   const Seal = (() => {
-    const INK = { print: "#22408f", button: "#19663f", laserReady: "#22408f", laserDone: "#19663f" };
-    let uid = 0;
+    const INK = { print: "#22408f", button: "#19663f", laserReady: "#22408f", laserDone: "#19663f", engraveApproved:"#19663f", engravePlain:"#6c6940" };
+    let uid = 0, stamping=0, pressChain=Promise.resolve();
+    const pendingDraws=new Map();
+    const busy=()=>stamping>0;
+    function defer(key,fn){if(!busy())return false;pendingDraws.set(key,fn);return true;}
+    function releaseDraws(){if(busy())return;const work=[...pendingDraws.values()];pendingDraws.clear();requestAnimationFrame(()=>{for(const fn of work){try{fn();}catch(e){console.error('After stamping',e);}}});}
+    // A second click, shortcut or pending redraw must never dismiss the surface under the stamp.
+    for(const type of ['click','keydown'])doc.addEventListener(type,e=>{if(busy()){e.preventDefault();e.stopImmediatePropagation();}},true);
     const hash = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
     /** Every seal of a record, oldest first: its stamps, or for a record from before them, what it kept. */
     function list(rec) {
@@ -317,11 +323,12 @@
     // a small QR mark: three finder squares and a few modules
     const qr = `<g stroke="none"><path d="M51 22h7v7h-7zM52.4 23.4v4.2h4.2v-4.2zM62 22h7v7h-7zM63.4 23.4v4.2h4.2v-4.2zM51 33h7v7h-7zM52.4 34.4v4.2h4.2v-4.2z" fill-rule="evenodd"/><rect x="53.6" y="24.6" width="1.8" height="1.8"/><rect x="64.6" y="24.6" width="1.8" height="1.8"/><rect x="53.6" y="35.6" width="1.8" height="1.8"/><path d="M60 31h2v2h-2zM63 33h2v2h-2zM66 31h3v2h-3zM61 36h2v4h-2zM64 37h2v3h-2zM67 35h2v2h-2zM67 38h2v2h-2z"/></g>`;
     const check = `<path d="M51.5 31.5l5.2 5.4 11.8-12.4" fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>`;
-    const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.getDate()).padStart(2, "0")} ${d.toLocaleString("en-US", { month: "short" }).toUpperCase()} ${d.getFullYear()}`; };
-    const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const processOf = st => st.how === 'laserReady' || st.how === 'laserDone';
+    const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.toLocaleString("en-US",{timeZone:"America/Toronto",day:"2-digit"})).padStart(2, "0")} ${d.toLocaleString("en-US", { timeZone:"America/Toronto", month: "short" }).toUpperCase()} ${d.toLocaleString("en-US",{timeZone:"America/Toronto",year:"numeric"})}`; };
+    const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { timeZone:"America/Toronto", hour: "numeric", minute: "2-digit" });
+    const engravingOf=st=>st.how==='engraveApproved' || st.how==='engravePlain';
+    const processOf = st => st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
-    const green = k => k === 'button' || k === 'laserDone';
+    const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
     const whoOf = st => String(st.by || "").trim() || (processOf(st) ? "Not recorded" : "Sorting station");
     /** One seal as SVG: its ring words, and the date, time and name in the middle where they read best. */
@@ -333,9 +340,9 @@
       if (nm.length > 16) nm = nm.slice(0, 15) + "…";
       const nfs = Math.min(9.4, (64 / Math.max(1, nm.length) - .5) / .68), fit = nfs < 7.4 ? ` textLength="64" lengthAdjust="spacingAndGlyphs"` : "";
       const process=processOf(st), scope=st.scope==='set'?'SET':'SHEET';
-      const top = k === 'laserReady' ? 'LASER READY' : k === 'laserDone' ? `${scope} COMPLETED` : k === "button" ? "ORDER COMPLETED" : "QR LABEL PRINTED";
-      const foot = process ? (k==='laserReady'?'READY FOR CUTTING':'LASER CUTTING DONE') : k === "button" ? "NO LABEL PRINTED" : `PRINT Nº ${st.n || 1}`;
-      const edge = green(k) ? scallops(30, 54.2, 58.4) + `<circle cx="60" cy="60" r="51.6" stroke-width="1"/>` : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
+      const top = engravingOf(st) ? (k==='engravePlain'?'ENGRAVING WAIVED':'ENGRAVING APPROVED') : k === 'laserReady' ? 'LASER READY' : k === 'laserDone' ? `${scope} COMPLETED` : k === "button" ? "ORDER COMPLETED" : "QR LABEL PRINTED";
+      const foot = engravingOf(st) ? (k==='engravePlain'?'CUT PLAIN':'PLACEMENT VERIFIED') : process ? (k==='laserReady'?'READY FOR CUTTING':'LASER CUTTING DONE') : k === "button" ? "NO LABEL PRINTED" : `PRINT Nº ${st.n || 1}`;
+      const edge = engravingOf(st) ? `<circle cx="60" cy="60" r="55" stroke-width="2.4"/><circle cx="60" cy="60" r="51.6" stroke-width="1"/>`+Array.from({length:36},(_,i)=>{const a=pt(52.5,i*10),b=pt(54.7,i*10);return `<path d="M${a.join(" ")}L${b.join(" ")}" stroke-width=".9"/>`;}).join("") : green(k) ? scallops(30, 54.2, 58.4) + `<circle cx="60" cy="60" r="51.6" stroke-width="1"/>` : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
       return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>` +
         `<filter id="${id}f" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">` +
         `<feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="${seed}" result="lo"/>` +
@@ -351,7 +358,7 @@
         `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="8.6" font-weight="800" letter-spacing="1.25"><textPath href="#${id}t" startOffset="50%" text-anchor="middle">${esc(top)}</textPath></text>` +
         `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="7" font-weight="800" letter-spacing="1.1"><textPath href="#${id}b" startOffset="50%" text-anchor="middle">${esc(foot)}</textPath></text>` +
         star(150, 47.4, 2.6) + star(30, 47.4, 2.6) +
-        (green(k) ? check : k==='laserReady' ? '<path d="M54 24h12l-3 8h-6zM60 34v4m-13 2h26" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' : qr) +
+        (engravingOf(st) ? '<g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M48 38l6-14 6 14m-10-4h8M68 23l4 4-10 10-5 2 2-5zM63 38h10"/></g>' : green(k) ? check : k==='laserReady' ? '<path d="M54 24h12l-3 8h-6zM60 34v4m-13 2h26" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' : qr) +
         `<path d="M25 44.5h70M22 72.5h76" stroke-width="1" fill="none"/>` +
         `<text x="60" y="56.4" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="10.4" font-weight="800">${esc(process && !st.at?'NOT RECORDED':dateOf(st.at))}</text>` +
         `<text x="60" y="68.2" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="9.8" font-weight="700">${esc(process && !st.at?'—':timeOf(st.at))}</text>` +
@@ -359,7 +366,8 @@
         `</g></svg>`;
     }
     function titleOf(st) {
-      const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      if(engravingOf(st))return `${st.how==='engravePlain'?'Engraving waived · cut plain':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
     }
@@ -409,10 +417,16 @@
     /** The wooden stamp comes down on a seal already in its place, and leaves it inked. */
     async function press(seal) {
       if(seal._press)return seal._press;
-      const run=pressOnce(seal);seal._press=run;try{await run;}finally{seal._press=null;}
+      stamping++;
+      const run=pressChain.catch(()=>{}).then(()=>pressOnce(seal));seal._press=run;pressChain=run;
+      try{await run;}finally{seal._press=null;stamping--;releaseDraws();}
     }
     async function pressOnce(seal) {
       if(reduced() || !visible(seal)){seal.classList.remove('pending');return;}
+      const surface=seal.closest('.rvItem,.swEng,.libCard,.setCard') || seal.parentElement;
+      const incoming=[...(surface?.getAnimations?.({subtree:true}) || []),...[...doc.querySelectorAll('.mGhost')].flatMap(n=>n.getAnimations?.({subtree:true}) || [])].filter(a=>a.playState==='running' && Number.isFinite(a.effect?.getComputedTiming().endTime));
+      await Promise.allSettled(incoming.map(a=>a.finished));
+      if(!seal.isConnected)return;
       const r = seal.getBoundingClientRect(), size = r.width / 1.0, kind = Object.keys(INK).find(k=>seal.classList.contains('seal-'+k)) || 'print';
       const rot = parseFloat(getComputedStyle(seal).getPropertyValue("--rot")) || -8;
       const t = doc.createElement("span"); t.className = "sealTool"; t.innerHTML = tool(kind);
@@ -428,14 +442,15 @@
       seal.classList.remove("pending"); seal.classList.add("wet");
       const btn = btnOf(seal); if (btn) btn.classList.add(green(kind) ? "sealedDone" : "sealedPrint");
       const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;--ink:${INK[kind]}`; layer(seal).appendChild(ring);
-      ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }).finished.then(() => ring.remove(), () => ring.remove());
+      const ripple=ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
+      ripple.finished.then(() => ring.remove(), () => ring.remove());
       const up = t.animate([
         { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
         { transform: `rotate(${rot}deg) scale(.95)`, opacity: 1, offset: .22 },
         { transform: `translate(-16px,-40px) rotate(${rot + 8}deg) scale(1.55)`, opacity: 0 }
       ], { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
       await wait(260); seal.classList.remove("wet");
-      await up.finished.catch(() => {}); t.remove();
+      await Promise.allSettled([up.finished,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]); t.remove();
     }
     const hasPrint = rec => list(rec).some(s => s.how !== "button");
     /** The wooden stamp seen from above: its knob, its turned base, the rubber's inked rim. */
@@ -479,7 +494,8 @@
       const card = host._card || host;
       card.animate([{ transform: "translateY(0)" }, { transform: "translateY(1.6px)", offset: .3 }, { transform: "translateY(0)" }], { duration: 240, easing: "ease-out" });
       const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `left:${cx - size / 2}px;top:${cy - size / 2}px;width:${size}px;height:${size}px;--ink:${INK[kind]}`; host.appendChild(ring);
-      ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }).finished.then(() => ring.remove(), () => ring.remove());
+      const ripple=ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
+      ripple.finished.then(() => ring.remove(), () => ring.remove());
       const up = t.animate([
         { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
         { transform: `rotate(${rot}deg) scale(.95)`, opacity: 1, offset: .22 },
@@ -487,7 +503,7 @@
       ], { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
       shade.to(SHADE.near, SHADE.lift, { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)" });
       await wait(260); seal.classList.remove("wet");
-      await up.finished.catch(() => {}); t.remove();
+      await Promise.allSettled([up.finished,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]); t.remove();
     }
     /* a seal over its button: a press there presses the button (and the seal sinks with it); anywhere else it wobbles */
     // (the button just before its row: an open card has its print seals on Print QR label and its Complete Order seals on
@@ -654,7 +670,7 @@
     const follow = () => { if (Z.el) requestAnimationFrame(watch); };
     root.addEventListener("scroll", follow, true); root.addEventListener("resize", follow);
     doc.addEventListener("close", e => { if (Z.el && e.target && e.target.contains && e.target.contains(Z.el)) lensOff(true); }, true);
-    return { list, html, row, svg, stampOn, press, pressPending, hasPrint, titleOf, INK };
+    return { list, html, row, svg, stampOn, press, pressPending, hasPrint, titleOf, INK, busy, defer };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════

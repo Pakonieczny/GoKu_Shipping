@@ -7,10 +7,11 @@ const start = source.indexOf('const Engrave = window.Engrave =');
 const end = source.indexOf('/* ═══ 22 · Sets', start);
 const dom = new JSDOM('<body><div id="engraveView"></div></body>');
 const document = dom.window.document, jobs = new Map(), frames = [], timers = [], errors = [], observers = [];
-dom.window.ResizeObserver = class { constructor(){observers.push(this);} observe(){this.active=true;} disconnect(){this.active=false;} };
+dom.window.ResizeObserver = class { constructor(){observers.push(this);} observe(){this.active=true;} unobserve(){} disconnect(){this.active=false;} };
 dom.window.HTMLCanvasElement.prototype.getContext = () => ({fillRect(){}});
 let charm = null;
-const c = vm.createContext({window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
+for(const file of ['charm-nest-activity.js','charm-nest-engraving-seals.js']){ const script=new vm.Script(fs.readFileSync(file,'utf8')); const env=vm.createContext({window:dom.window});script.runInContext(env);}
+const c = vm.createContext({WORKSPACE_SANDBOX:true,localStorage:{getItem(){return null;},setItem(){}},CNListActivity:dom.window.CNListActivity,CNEngravingSeals:dom.window.CNEngravingSeals,window:dom.window, document, console:{error:(...x)=>errors.push(x)}, ResizeObserver:dom.window.ResizeObserver, B:{engrave:{items:jobs,fonts:{ok:true}}},
   O:require('../../charm-nest-orders.js'), S:{settings:{},mode:'engrave'}, PT:72/25.4, MM:25.4/72, SOURCE_LABEL:{},
   Pool:{charmOf:()=>charm,sheetOf:()=>null}, P:{drawCharm(){throw Error('invalid saved path');}}, Review:{items:()=>[],count:()=>0,remove(){}}, Master:{entryFor:()=>null,fetchEntry:async()=>null},
   LiveStrip:{render(){}}, RunCtl:{poke(){}}, Orders:{render(){}},

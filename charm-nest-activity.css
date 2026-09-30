@@ -1,0 +1,27 @@
+/* Quiet, consistent list controls; search stays with its own list header. */
+.cnListTools{display:flex;flex:1 0 100%;align-items:center;gap:8px;min-width:0;padding:4px 0;font-size:11px;color:var(--ink60,#746f66)}
+.cnDatePresets{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+.cnListTools .cnDatePresets button{appearance:none;border:0;background:transparent;border-radius:5px;padding:4px 7px;min-height:26px;font:inherit;color:inherit;white-space:nowrap;cursor:pointer;box-shadow:none}
+.cnListTools .cnDatePresets button:hover{background:var(--sand,#eee8db)}
+.cnListTools .cnDatePresets button[aria-pressed=true]{background:var(--ink,#39362f);color:var(--paper,#fffdf7)}
+.cnListTools .cnActivitySort{margin-left:auto;max-width:135px;min-height:26px;border:0;border-left:1px solid var(--line,#ddd6c9);border-radius:0;background:transparent;color:inherit;font:inherit;padding:3px 7px;cursor:pointer}
+.cnListTools :is(button,select):focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}
+.ordHead>.cnListTools{padding:2px 12px 6px;box-sizing:border-box}
+.egBar:has(>.cnListTools){flex-wrap:wrap;row-gap:0}
+.egBar>.cnListTools{border-top:1px solid var(--line,#ddd6c9);margin-top:5px}
+#libActivity{padding:0 2px 5px;border-bottom:1px solid var(--line,#ddd6c9);margin-bottom:8px}
+.hBar>.cnListTools{flex-basis:auto;flex-grow:1;padding:0}
+.hBar:has(>.cnListTools){flex-wrap:wrap;gap:8px}
+.masterHead:has(>.cnListTools),.libBar:has(>.cnListTools){flex-wrap:wrap}
+@media(max-width:600px){.cnListTools{gap:3px;flex-wrap:wrap}.cnListTools .cnDatePresets button{padding:4px 5px}.cnListTools .cnActivitySort{max-width:110px}.hBar>.cnListTools{flex-basis:100%;order:3}}
+.btn.sm.egApproveButton{font-size:24px;padding:12px 20px;min-width:170px;min-height:56px;border-radius:12px;white-space:nowrap}
+.egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:32px;overflow:visible}
+.egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - 28px);top:calc(50% - 28px);width:56px;height:56px;margin:0;padding:0;z-index:4}
+.sealRow.engravingSeals{display:inline-flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0;padding:7px 4px;max-width:240px;min-height:56px;overflow:visible}
+.sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 56px;margin:0;width:56px;height:56px;max-width:none;max-height:none}
+.decisionStatus:has(.engravingSeals){gap:2px;overflow:visible}
+.egPlacementSeals:empty{display:none}
+.egPlacementSeals{justify-self:end;overflow:visible}
+.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,.85fr) minmax(220px,1.4fr) auto}
+@media(max-width:1100px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,1fr) minmax(220px,1.2fr)}.egPlacementSeals{grid-column:2/-1;justify-self:start}}
+@media(max-width:900px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:76px minmax(0,1fr)}}
