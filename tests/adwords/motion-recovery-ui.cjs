@@ -63,6 +63,32 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  assert.equal(oldFull.chips,stages('3 formats'),'an older full run is unchanged');assert.equal(oldFull.button,'Generating…');assert.match(oldFull.detail,/2\/3 sizes saved/);
  const finished=await show({...going({making:['portrait'],variants:[film(K[0],'portrait','mobile'),film(K[1],'square','mobile'),film(K[2],'landscape','desktop')],fixTarget:{kind:'master',category:'redo',index:0,formats:[K[0]],label:'Redone portrait video'}},'Portrait video ready to preview · all 3 sizes saved'),phase:'ready',progress:{pct:100,label:'Portrait video ready to preview · all 3 sizes saved'}});
  assert.match(finished.detail,/3\/3 sizes saved/);assert.equal(finished.label,'Portrait video ready to preview · all 3 sizes saved');assert.equal(finished.button,'Re-run animation');
- dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling, late-response isolation, automatic resume and redo of one video');
+ // Blank players: a film that cannot load asks for one fresh link and swaps its own source (twice at most), and a poll that delivers new links reaches players that failed or stalled.
+ {const vdom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),vw=vdom.window;vw.HTMLDialogElement.prototype.showModal=function(){this.open=true;};vw.HTMLDialogElement.prototype.close=function(){this.open=false;};vw.setTimeout=()=>0;vw.clearTimeout=()=>{};
+  vw.eval(fs.readFileSync('brites-ad-motion.js','utf8'));
+  const link=(k,n)=>'https://example.test/'+k+'?sig='+n,withLinks=n=>({...ready,phase:'needs_attention',error:'Animation interrupted',variants:ready.variants.map(v=>({...v,url:link(v.key,n),posterUrl:link(v.key+'_poster',n)}))});
+  let serving=withLinks(1);const reads=[];
+  vw.BritesAdMotion.mount(vw.document.getElementById('host'),{scope:{workspaceId:'w',productId:'p',groupRef:'g'},request:async(a,b)=>{if(a==='adDesignMotionStatus'){reads.push(b);return serving;}return {ok:true};}});
+  await new Promise(setImmediate);const vq=s=>vw.document.querySelector(s),vall=s=>[...vw.document.querySelectorAll(s)],tick=()=>new Promise(setImmediate),fire=(v,type)=>v.dispatchEvent(new vw.Event(type));
+  assert.equal(reads.length,1);assert.equal(vq('[data-video-wrap] video').getAttribute('preload'),'metadata');assert.match(vq('[data-video-wrap] .bam-loading').textContent,/Loading video/,'a small labelled note shows while the video loads');assert.equal(vq('[data-video-wrap] video').getAttribute('poster'),link(K[0]+'_poster',1));
+  fire(vq('[data-video-wrap] video'),'loadedmetadata');assert.equal(vq('[data-video-wrap] .bam-loading').hidden,true,'the note goes once the video has loaded');
+  vq('[data-sizes]').click();let vids=vall('[data-all-sizes] video');assert.equal(vids.length,3);assert.ok(vids.every((v,i)=>v.getAttribute('src')===link(K[i],1)&&v.getAttribute('preload')==='metadata'&&v.parentNode.querySelector('.bam-loading:not([hidden])')),'all three players start with the current links and a loading note');
+  // A player that cannot load asks for one fresh status and swaps its own source; the other players are left alone.
+  serving=withLinks(2);fire(vids[0],'error');assert.match(vids[0].parentNode.querySelector('.bam-loading').textContent,/Refreshing the video link/);await tick();await tick();
+  assert.equal(reads.length,2,'one fresh status read for the failed player');assert.equal(reads[1].jobId,'motion_abc');assert.equal(reads[1].workspaceId,'w');
+  assert.equal(vids[0].getAttribute('src'),link(K[0],2),'the failed player now points at the fresh link');assert.equal(vids[0].getAttribute('poster'),link(K[0]+'_poster',2));assert.equal(vids[1].getAttribute('src'),link(K[1],1),'a player that did not fail is not touched');assert.equal(vall('[data-all-sizes]')[0]?.querySelectorAll('figure').length,3,'the panel is not rebuilt');
+  assert.equal(vall('[data-all-sizes] a[data-vkey]').find(a=>a.dataset.vkey===K[0]).getAttribute('href'),link(K[0],2),'its Open MP4 link follows the fresh link');
+  fire(vids[0],'loadedmetadata');assert.equal(vids[0].parentNode.querySelector('.bam-loading').hidden,true);
+  // At most two refreshes, then a plain message; the second one also drops the CORS request that some storage links refuse.
+  fire(vids[1],'error');await tick();await tick();assert.equal(reads.length,3);assert.equal(vids[1].getAttribute('crossorigin'),'anonymous');fire(vids[1],'error');await tick();await tick();assert.equal(reads.length,4);assert.equal(vids[1].hasAttribute('crossorigin'),false,'the last try asks without CORS');
+  fire(vids[1],'error');await tick();await tick();assert.equal(reads.length,4,'no third refresh');assert.match(vids[1].parentNode.querySelector('.bam-loading').textContent,/did not load/);assert.equal(vids[1].parentNode.querySelector('.bam-loading').hidden,false);
+  // A poll that delivers new links reaches a player that stalled, an old idle one and the links, but never a film that is playing.
+  vids[2].dataset.at=String(Date.now()-60000);fire(vids[0],'loadedmetadata');vids[0].dataset.at=String(Date.now()-6*3600000);Object.defineProperty(vids[1],'paused',{value:false});vids[1].dataset.tries='0';vids[1].dataset.at=String(Date.now()-60000);vids[1].setAttribute('src','https://example.test/playing');
+  serving=withLinks(3);await vq('[data-refresh]').onclick();
+  assert.equal(vids[2].getAttribute('src'),link(K[2],3),'a stalled player takes the new link');assert.equal(vids[0].getAttribute('src'),link(K[0],3),'a loaded player idle for hours takes the new link');assert.equal(vids[1].getAttribute('src'),'https://example.test/playing','a film that is playing is left alone');
+  assert.equal(vall('[data-all-sizes] a[data-vkey]').every(a=>/sig=3$/.test(a.getAttribute('href'))),true,'every Open MP4 link follows the newest links');
+  assert.equal(vall('[data-all-sizes] video').length,3);assert.equal(vq('[data-video-wrap] video').getAttribute('src'),link(K[0],3),'the single player is rebuilt with the newest link on Check saved progress');
+  vdom.window.close();}
+ dom.window.close();console.log('PASS recovery controls, failed discard retry, idle polling, late-response isolation, automatic resume and redo of one video, and video players that refresh their own links');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e);process.exitCode=1;});
