@@ -76,12 +76,17 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
  // Standard fade (renderVersion 11): one mostly transparent ramp and one size per format, in the film's own colour.
  {
   const lum_=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2];},contrast_=(a,b)=>(Math.max(lum_(a),lum_(b))+.05)/(Math.min(lum_(a),lum_(b))+.05);
-  const {FADE_STOPS,FADE_SIZE,FADE_MIN_CONTRAST,fadeColour,ensureVisibleFade,primaryColour,inkFor,captions}=require('../../netlify/functions/googleAdsMotionComposition'),green='#3f8f55';
-  assert(FADE_STOPS[0][0]===0&&FADE_STOPS[0][1]<=.85&&FADE_STOPS[0][1]>=.75,'the fade starts clearly perceptible (about .75-.85) at the outer edge');
+  const {FADE_STOPS,FADE_PEAK,FADE_SIZE,fadeAlpha,fadeColour,fadeSample,primaryColour,inkFor,inkOver,captions}=require('../../netlify/functions/googleAdsMotionComposition'),green='#3f8f55';
+  assert(FADE_STOPS[0][0]===0&&FADE_STOPS[0][1]<=.7&&FADE_STOPS[0][1]>=.6&&FADE_STOPS[0][1]===FADE_PEAK,'the fade starts at about .6-.7 opacity at the outer edge (softer than the former .8)');
   assert.equal(FADE_STOPS[FADE_STOPS.length-1][0],1);assert.equal(FADE_STOPS[FADE_STOPS.length-1][1],0);
   assert(FADE_STOPS.every(([o,a],i)=>i===0||(o>FADE_STOPS[i-1][0]&&a<FADE_STOPS[i-1][1])),'the ramp only ever eases outward');
   assert.equal(FADE_SIZE.side,.335);assert.deepEqual(FADE_SIZE.top,{square:.33,landscape:.33,portrait:.33},'every film shape gets a fade 33% of its height');
-  {const mean=FADE_STOPS.slice(1).reduce((a,[o,v],i)=>a+(o-FADE_STOPS[i][0])*(v+FADE_STOPS[i][1])/2,0);assert(mean<.5,'the fade stays mostly transparent overall: '+mean);}
+  {const mean=FADE_STOPS.slice(1).reduce((a,[o,v],i)=>a+(o-FADE_STOPS[i][0])*(v+FADE_STOPS[i][1])/2,0);assert(mean<.4,'the fade stays mostly transparent overall: '+mean);
+   // Soft on both ends and never steep: no hard start at the screen edge, no visible edge where it runs out.
+   const n=FADE_STOPS.length,slopes=FADE_STOPS.slice(1).map(([o,a],i)=>(FADE_STOPS[i][1]-a)/(o-FADE_STOPS[i][0]));
+   assert(slopes[0]<.15,'no hard start: the ramp is flat where it begins: '+slopes[0]);assert(slopes[slopes.length-1]<.25,'no visible edge: the ramp arrives at zero almost flat (last stop step '+slopes[slopes.length-1]+'): a few 8-bit levels over its last 6% at most');
+   assert(Math.max(...slopes)<=1.15,'the falloff is never steep (the former ramp fell at 1.25): '+Math.max(...slopes));
+   assert(FADE_STOPS[n-2][1]<.02&&fadeAlpha(1)===0&&Math.abs(fadeAlpha(.5)-FADE_STOPS[8][1])<1e-3,'the stops are samples of the one fade curve');}
   const v11={...plan,renderVersion:11,fadeColor:green},seen=new Set();
   const formats=[{key:'portrait',width:720,height:1280},{key:'square',width:720,height:720},{key:'landscape',width:1280,height:720}];
   const fixtures=[{x:.3,y:.46,w:.4,h:.3},{x:.6,y:.25,w:.3,h:.5},{x:.05,y:.2,w:.3,h:.6},{x:.02,y:.3,w:.32,h:.5}];
@@ -97,9 +102,11 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
     }
     const at=t=>vertical?px(f.width/2,t):px(outer+dir*t,f.height/2);
     if(!layers.geometry.seam){
-     assert(at(0)[3]<=.85*255+2&&at(0)[3]>=.75*255-2,f.key+' outer edge is clearly visible: '+at(0)[3]);
+     assert(at(0)[3]<=.7*255+2&&at(0)[3]>=.6*255-2,f.key+' outer edge is perceptible but soft (about .65): '+at(0)[3]);
      assert.equal(at(Math.round(span)-1)[3]<=2,true,'the fade reaches zero at its inner edge');
      for(let t=1;t<span;t++)assert(at(t)[3]<=at(t-1)[3]+1,'the fade only falls away from the edge');
+     // The same curve on every shape and edge: opacity depends only on how far across the fade a pixel is.
+     for(const share of [0,.2,.4,.6,.8])assert(Math.abs(at(Math.round(span*share))[3]-fadeAlpha(share)*255)<=3,f.key+' '+fade.name+' fade follows the one standard curve at '+share+': '+at(Math.round(span*share))[3]+' vs '+Math.round(fadeAlpha(share)*255));
      for(const t of [0,span*.3,span*.6]){const [r,g,b]=at(t);assert(Math.abs(r-0x3f)<=6&&Math.abs(g-0x8f)<=6&&Math.abs(b-0x55)<=6,'the fade is drawn in the film colour');}
     }
     // The wordmark sits wholly inside the fade.
@@ -128,24 +135,73 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   const left=await sharp({create:{width:320,height:180,channels:3,background:{r:255,g:0,b:0}}}).composite([{input:await swatch({r:0,g:0,b:255},160,180),left:160,top:0}]).jpeg().toBuffer(),region=await primaryColour(left,{region:{x:.5,y:0,w:.5,h:1}});
   assert(parseInt(region.slice(5,7),16)>parseInt(region.slice(1,3),16)+100,'a region samples only that part of the frame');
   assert.equal(inkFor('#ffffff','#30291f'),'#30291f');assert.equal(inkFor('#1f4d2c','#30291f'),'#fffaf0','dark fade colour switches to a light ink');
-  // The fade colour is guaranteed visibly different from the frame under it, on the same hue.
-  {const flat=await swatch({r:0x3f,g:0x8f,b:0x55}),fc=await fadeColour(flat,{mode:'dominant'});
-   assert(contrast_(fc,'#3f8f55')>=FADE_MIN_CONTRAST-.05,'a fade colour equal to the frame is moved until it is visible: '+fc);
-   const [r,g,b]=[1,3,5].map(i=>parseInt(fc.slice(i,i+2),16));assert(g>r+30&&g>b+20,'the adjusted fade stays the film green: '+fc);
-   assert.equal(ensureVisibleFade('#ffffff',['#101010']),'#ffffff','an already visible colour is untouched');
-   const lifted=ensureVisibleFade('#101010',['#101010']);assert(contrast_(lifted,'#101010')>=FADE_MIN_CONTRAST-.05,'a near-black frame lightens the fade instead: '+lifted);}
+  // The fade colour comes from the pixels under the fade itself (the frame's own tone, blended with the film's primary colour) and stays soft.
+  {const rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)),chroma=h=>Math.max(...rgb(h))-Math.min(...rgb(h)),mixHex=(a,b,t)=>'#'+rgb(a).map((v,i)=>Math.round(v+(rgb(b)[i]-v)*t).toString(16).padStart(2,'0')).join(''),dist=(a,b)=>Math.hypot(...rgb(a).map((v,i)=>v-rgb(b)[i]));
+   const paint=(w,h,body)=>sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${body}</svg>`)).jpeg({quality:95}).toBuffer();
+   const jewel='<circle cx="940" cy="390" r="100" fill="#c99b42"/>',right={x:.6,y:.25,w:.3,h:.5},ink='#30291f',light='#fffaf0';
+   const wide={
+    // blue water with beige rock at the lower left and a large saturated yellow-green algae mat elsewhere: the film's saturated primary is green, the scene under the fade is blue
+    water:await paint(1280,720,'<rect width="1280" height="720" fill="#4a90b5"/><path d="M0 480 C 200 420 380 470 470 540 L 520 720 L 0 720 Z" fill="#cdb894"/><ellipse cx="640" cy="700" rx="420" ry="90" fill="#a8bf2c"/>'+jewel),
+    sand:await paint(1280,720,'<rect width="1280" height="720" fill="#d8c39a"/>'+jewel),
+    grass:await paint(1280,720,'<rect width="1280" height="720" fill="#5b9a3c"/>'+jewel),
+    dark:await paint(1280,720,'<rect width="1280" height="720" fill="#12161c"/>'+jewel)};
+   const under={water:'#4a90b5',sand:'#d8c39a',grass:'#5b9a3c',dark:'#12161c'},got={};
+   for(const name of Object.keys(wide)){
+    const s=await fadeSample(wide[name],{mode:'dominant',orientation:'landscape',subject:right,ink}),fade=s.colour;got[name]=s;
+    assert(/^#[0-9a-f]{6}$/.test(fade)&&Object.keys(s.backdrops).sort().join()==='left,right,top',name+' fade sample has a colour and the frame colour under each edge');
+    assert.equal(await fadeColour(wide[name],{mode:'dominant',orientation:'landscape',subject:right,ink}),fade,'fadeColour is the sampled colour');
+    assert(dist(mixHex(under[name],fade,FADE_PEAK),under[name])>=20,name+' fade is perceptible over the frame under it: '+fade);
+    if(name!=='dark'){
+     assert(chroma(fade)<chroma(under[name]),name+' fade is softer (less saturated) than the frame: '+fade);
+     assert(lum_(fade)<=lum_(under[name])+.005,name+' fade is never brighter than the frame under it (no glowing patch): '+fade);
+     const pick=inkOver(fade,ink,s.backdrops.left);
+     for(const t of [.15,.4])assert(contrast_(mixHex(s.backdrops.left,fade,fadeAlpha(t)),pick)>=3.5,name+' copy stays legible at '+t+' of the fade: '+pick);
+    }
+   }
+   {const [r,g,b]=rgb(got.water.colour);assert(b>r+20&&b>=g,'blue water gives a blue-ish fade, not the saturated yellow-green primary: '+got.water.colour);}
+   {const [r,g,b]=rgb(got.sand.colour);assert(r>b+15&&r>=g,'sand gives a sand-toned fade: '+got.sand.colour);}
+   {const [r,g,b]=rgb(got.grass.colour);assert(g>r+8&&g>b+15,'grass gives a green fade: '+got.grass.colour);}
+   assert(lum_(got.dark.colour)<.06&&inkOver(got.dark.colour,ink,got.dark.backdrops.left)===light,'a dark frame keeps a dark, gently lifted fade with light ink: '+got.dark.colour);
+   assert.equal(inkOver('#ffffff',ink,'#e8e8e8'),ink);assert.equal(inkOver('#1f4d2c',ink,'#1f4d2c'),light);assert.equal(inkOver('#3f8f55',ink),inkFor('#3f8f55',ink),'without a frame colour the plain ink choice applies');
+   // The jewelry does not tint the fade: with the piece on the left the fade edge is the clear right side.
+   {const leftPiece=await paint(1280,720,'<rect width="1280" height="720" fill="#2f8f95"/><rect x="40" y="130" width="360" height="460" fill="#e0b13c"/>'),s=await fadeSample(leftPiece,{mode:'dominant',orientation:'landscape',subject:{x:.03,y:.15,w:.3,h:.7},ink}),[r,g,b]=rgb(s.colour);
+    assert(b>r+15&&g>r+15,'the fade takes the water under the clear side, not the gold jewelry: '+s.colour);}
+   // Portrait masters are read along the top edge, square masters inside their central square.
+   {const tall=await paint(720,1280,'<rect width="720" height="1280" fill="#d8c39a"/><rect y="700" width="720" height="580" fill="#2f6f95"/>'),s=await fadeSample(tall,{mode:'dominant',orientation:'portrait',subject:{x:.2,y:.5,w:.6,h:.4},ink}),[r,g,b]=rgb(s.colour);
+    assert(r>b&&r>=g-4,'a portrait fade follows the top of the frame: '+s.colour);
+    const strip=await paint(1280,720,'<rect width="1280" height="720" fill="#2f6f95"/><rect x="280" width="720" height="720" fill="#d8c39a"/>'),q=await fadeSample(strip,{mode:'dominant',orientation:'square',region:{x:.21875,y:0,w:.5625,h:1},ink}),[r2,g2,b2]=rgb(q.colour);
+    assert(r2>b2,'a square fade only looks inside the central square: '+q.colour);}
+   // Legible copy in every ratio with a sampled fade, and the wordmark follows the ink.
+   const logoTone=async layers=>{const base=layers.find(l=>l.persistent),{data,info}=await sharp(base.bytes).raw().toBuffer({resolveWithObject:true}),L=base.logoBox;let n=0,sum=0;for(let y=Math.round(L.y);y<Math.round(L.y+L.h);y++)for(let x=Math.round(L.x);x<Math.round(L.x+L.w);x++){const i=(y*info.width+x)*4;if(data[i+3]>=250){n++;sum+=(data[i]+data[i+1]+data[i+2])/3;}}return n?sum/n/255:NaN;};
+   for(const f of formats)for(const name of ['water','sand','dark']){
+    const composition=f.key==='portrait'?{x:.2,y:.5,w:.6,h:.35}:{x:.6,y:.25,w:.3,h:.5},layers=await captionLayers({...v11,composition,sourceOrientation:f.key==='portrait'?'portrait':'landscape',fadeColor:got[name].colour,fadeBackdrops:got[name].backdrops},f);
+    const edge=layers.find(l=>l.persistent).fades[0].name,tone=await logoTone(layers);
+    if(name!=='water')assert.equal(layers.ink,name==='dark'?light:ink,f.key+' '+name+' copy ink follows the frame under the fade');
+    assert(layers.ink===light?tone>.6:tone<.35,f.key+' '+name+' wordmark follows the ink (light script with light ink, near-black with dark ink): '+tone.toFixed(2));
+    assert(contrast_(mixHex(got[name].backdrops[edge],got[name].colour,fadeAlpha(.15)),layers.ink)>=(name==='dark'?4.5:3.5),f.key+' '+name+' headline contrast holds on the '+edge+' fade');
+   }
+  }
+  // Beside a solid brand band the standard curve starts at full strength and eases out from there, so the join never steps.
+  {const f={key:'square',width:720,height:720},layers=await captionLayers({...v11,composition:{x:.05,y:.05,w:.9,h:.9},sourceOrientation:'landscape'},f),seam=layers.geometry.seam;
+   assert.equal(layers.mode,'band');assert(seam&&seam.edge==='top');
+   const {data,info}=await sharp(layers.find(l=>l.persistent).bytes).raw().toBuffer({resolveWithObject:true}),column=Math.round(info.width/2),alpha=y=>data[(y*info.width+column)*4+3];
+   assert(alpha(0)>=250&&alpha(seam.at)>=250,'the band and the start of its fade are one solid colour');
+   assert(Math.abs(alpha(seam.at)-alpha(seam.at+1))<=8&&Math.abs(alpha(seam.at-1)-alpha(seam.at))<=8,'the fade meets the band without a step in opacity');
+   for(let y=1;y<f.height;y++)assert(alpha(y)<=alpha(y-1)+1,'the field only ever fades outward');
+   assert(alpha(Math.min(f.height-1,seam.at+Math.round(f.height*.12)))<=8,'the field has faded away below the band');}
   // renderVariants samples the master once and gives every format cut from it the same fade colour.
   const shots=[],realCaptions=require('../../netlify/functions/googleAdsMotionComposition').captions,module_=require('../../netlify/functions/googleAdsMotionComposition');
   const tmp2=await fs.mkdtemp(path.join(os.tmpdir(),'fade-colour-'));
   try{
    const sourceJpeg=path.join(tmp2,'green.jpg'),sourceMp4=path.join(tmp2,'green.mp4');await fs.writeFile(sourceJpeg,await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#3f8f55"/><circle cx="940" cy="390" r="100" fill="#c99b42"/></svg>')).jpeg().toBuffer());
    await exec(require('@ffmpeg-installer/ffmpeg').path,['-y','-loop','1','-i',sourceJpeg,'-t','10','-r','24','-pix_fmt','yuv420p',sourceMp4]);
-   module_.captions=async(p,f,b)=>{shots.push({format:f.key,fadeColor:p.fadeColor});return realCaptions(p,f,b);};
+   module_.captions=async(p,f,b)=>{shots.push({format:f.key,fadeColor:p.fadeColor,fadeBackdrops:p.fadeBackdrops});return realCaptions(p,f,b);};
    try{await renderVariants(await fs.readFile(sourceMp4),'landscape',{...v11,fadeColor:undefined,composition:subjects.landscape,squareMaster:'landscape'});}finally{module_.captions=realCaptions;}
    assert(shots.length>=2&&shots.every(s=>s.fadeColor===shots[0].fadeColor),'every format from one master uses one fade colour');
-   const [r,g,b]=[1,3,5].map(i=>parseInt(shots[0].fadeColor.slice(i,i+2),16));assert(g>r+40&&g>b+30,'the fade colour is the film green, not the brand cream: '+shots[0].fadeColor);
+   assert(shots.every(s=>JSON.stringify(s.fadeBackdrops)===JSON.stringify(shots[0].fadeBackdrops)&&/^#[0-9a-f]{6}$/.test(s.fadeBackdrops?.left||'')),'every format also gets the frame colour under each fade edge, for its ink');
+   const [r,g,b]=[1,3,5].map(i=>parseInt(shots[0].fadeColor.slice(i,i+2),16));assert(g>r+8&&g>b+4&&Math.max(r,g,b)-Math.min(r,g,b)<0x8f-0x3f,'the fade colour is a soft version of the film green, not the brand cream: '+shots[0].fadeColor);
   }finally{await fs.rm(tmp2,{recursive:true,force:true});}
  }
- console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam, a standard primary-colour fade and protected jewelry in all three ratios');
+ console.log('PASS full-canvas films, measured crops, large type, transitions, a blended band seam, a standard soft fade matched to the pixels under it (one curve, legible copy) and protected jewelry in all three ratios');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

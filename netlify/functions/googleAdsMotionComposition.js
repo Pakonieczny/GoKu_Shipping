@@ -25,43 +25,99 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  return {bounds,notes};
 }
 const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148,SQUARE_CROP={x:.21875,y:0,w:.5625,h:1};
-// Standard fade (renderVersion 11 and later): one ramp and one size for every film,
-// independent of the copy and of the format. Opacity runs from FADE_STOPS[0] (a clearly
-// perceptible, solid-ish start) at the outer screen edge down to 0 at the inner edge, so the
-// fade is mostly transparent overall. Top fades cover FADE_SIZE.top[format] (33%) of the
-// frame HEIGHT; side fades (jewelry left of or right of the copy) span the full height and
-// FADE_SIZE.side of the frame width.
-const FADE_STOPS=[[0,.8],[.3,.72],[.5,.5],[.7,.25],[.85,.08],[1,0]],FADE_SIZE={side:.335,top:{square:.33,landscape:.33,portrait:.33}},FADE_MIN_CONTRAST=1.6;
+// Standard fade (renderVersion 11 and later): one curve and one size for every film,
+// independent of the copy and of the format. Opacity starts at FADE_PEAK at the outer screen
+// edge and eases to 0 at the inner edge along a smooth-step curve (flat at both ends and never
+// steep in between, so there is no hard start and no visible edge where it ends), which keeps
+// the fade mostly transparent overall. FADE_HOLD > 1 keeps the veil a little longer before it
+// gives way. Top fades cover FADE_SIZE.top[format] (33%) of the frame HEIGHT; side fades
+// (jewelry left of or right of the copy) span the full height and FADE_SIZE.side of the frame width.
+const FADE_PEAK=.65,FADE_HOLD=1.25,FADE_SIZE={side:.335,top:{square:.33,landscape:.33,portrait:.33}};
+const smoothstep=u=>u*u*(3-2*u);
+const fadeAlpha=t=>FADE_PEAK*(1-smoothstep(Math.pow(clamp(t,0,1),FADE_HOLD)));
+const FADE_STOPS=Array.from({length:17},(_,i)=>[i/16,Math.round(fadeAlpha(i/16)*1e4)/1e4]);
 const luminance=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2];};
 const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
+// Where the copy and the wordmark sit along the fade (0 = outer screen edge, 1 = inner edge).
+const FADE_TEXT_AT=[.15,.4,.65],FADE_LOGO_AT=[.16,.5],LOGO_INK='#0b1113',LIGHT_INK='#fffaf0';
+const mixRgb=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t),rgbOf=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)),hexOf=c=>'#'+c.map(v=>Math.round(clamp(v,0,255)).toString(16).padStart(2,'0')).join('');
 // Brand ink stays when it reads well on the fade colour; otherwise the clearer of brand ink and a light ink.
-function inkFor(fade,ink){if(contrast(fade,ink)>=4.5)return ink;const light='#fffaf0';return contrast(fade,light)>contrast(fade,ink)?light:ink;}
-// Make the fade colour clearly different from what sits under it. A fade drawn in the same
-// colour as the frame is invisible, so the colour is moved along its own hue toward a darker,
-// richer tone (or lighter, when the frame is already near black) until it holds at least
-// `min` contrast against every backdrop colour; the hue never changes.
-function toHsl(h){const [r,g,b]=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255),hi=Math.max(r,g,b),lo=Math.min(r,g,b),l=(hi+lo)/2,d=hi-lo;let hue=0,sat=0;
- if(d){sat=d/(1-Math.abs(2*l-1));hue=hi===r?((g-b)/d+(g<b?6:0)):hi===g?(b-r)/d+2:(r-g)/d+4;hue*=60;}return [hue,sat,l];}
-function fromHsl(hue,sat,l){const c=(1-Math.abs(2*l-1))*sat,x=c*(1-Math.abs((hue/60)%2-1)),m=l-c/2,[r,g,b]=hue<60?[c,x,0]:hue<120?[x,c,0]:hue<180?[0,c,x]:hue<240?[0,x,c]:hue<300?[x,0,c]:[c,0,x];
- return '#'+[r,g,b].map(v=>Math.round(clamp((v+m)*255,0,255)).toString(16).padStart(2,'0')).join('');}
-function ensureVisibleFade(colour,backdrops,min=FADE_MIN_CONTRAST){
- const backs=(backdrops||[]).filter(b=>/^#[0-9a-f]{6}$/i.test(b||'')),worst=c=>backs.length?Math.min(...backs.map(b=>contrast(c,b))):Infinity;
- if(!/^#[0-9a-f]{6}$/i.test(colour||'')||worst(colour)>=min)return colour;
- const [hue,sat,l]=toHsl(colour);let best=colour,bestScore=worst(colour);
- for(const dir of [-1,1])for(let i=1;i<=40;i++){const c=fromHsl(hue,clamp(sat+(dir<0?.02*i:0),0,.95),clamp(l+dir*.02*i,.03,.97)),score=worst(c);
-  if(score>=min)return c;if(score>bestScore){best=c;bestScore=score;}}
- return best;
+// The wordmark follows the ink: near-black script on a light fade, a light one-colour version on a dark fade.
+const LOGO_LIGHT_FILTER='<filter id="logoLight" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values=".706 -.578 -.108 0 .98  -.294 .422 -.108 0 .98  -.294 -.578 .892 0 .98  0 0 0 1 0"/></filter>';
+function inkFor(fade,ink){if(contrast(fade,ink)>=4.5)return ink;return contrast(fade,LIGHT_INK)>contrast(fade,ink)?LIGHT_INK:ink;}
+// The same choice made against what the copy really sits on: the frame under the fade, veiled by
+// the fade at the opacity it has where the copy is. Without a frame colour it is the plain choice.
+const worstOver=(back,fade,ink)=>Math.min(...FADE_TEXT_AT.map(t=>contrast(hexOf(mixRgb(rgbOf(back),rgbOf(fade),fadeAlpha(t))),ink)));
+function inkOver(fade,ink,back){
+ if(!/^#[0-9a-f]{6}$/i.test(back||''))return inkFor(fade,ink);
+ const own=worstOver(back,fade,ink);if(own>=4.5)return ink;return worstOver(back,fade,LIGHT_INK)>own?LIGHT_INK:ink;
 }
-// The colours actually under each fade edge (top band, left and right bands) of the visible crop.
-async function edgeBackdrops(jpeg,region){
- const out=[];for(const [x,y,w,h] of [[0,0,1,FADE_SIZE.top.landscape],[0,0,FADE_SIZE.side,1],[1-FADE_SIZE.side,0,FADE_SIZE.side,1]]){
-  const r=region||{x:0,y:0,w:1,h:1};out.push(await primaryColour(jpeg,{mode:'average',region:{x:r.x+x*r.w,y:r.y+y*r.h,w:w*r.w,h:h*r.h}}));}
+// CIELAB, for judging how far apart two colours look and for holding hue while changing lightness.
+const lin=v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);},unlin=v=>255*(v<=.0031308?12.92*v:1.055*Math.pow(v,1/2.4)-.055);
+function toLab(c){const [r,g,b]=c.map(lin),f=t=>t>216/24389?Math.cbrt(t):(24389/27*t+16)/116,fx=f((.4124564*r+.3575761*g+.1804375*b)/.95047),fy=f(.2126729*r+.7151522*g+.072175*b),fz=f((.0193339*r+.119192*g+.9503041*b)/1.08883);return [116*fy-16,500*(fx-fy),200*(fy-fz)];}
+function labLinear([L,a,b]){const fy=(L+16)/116,fx=fy+a/500,fz=fy-b/200,inv=t=>t*t*t>216/24389?t*t*t:(116*t-16)/(24389/27),x=inv(fx)*.95047,y=L>8?fy*fy*fy:L/(24389/27),z=inv(fz)*1.08883;
+ return [3.2404542*x-1.5371385*y-.4985314*z,-.969266*x+1.8760108*y+.041556*z,.0556434*x-.2040259*y+1.0572252*z];}
+// Lightness `L`, chroma `C`, hue `h` (radians) as an sRGB triple, easing the chroma down until it fits the display gamut.
+function lchToRgb(L,C,h){for(let k=0;k<40;k++){const lin3=labLinear([L,C*Math.cos(h),C*Math.sin(h)]);if(lin3.every(v=>v>=-.0005&&v<=1.0005)||C<=.5)return lin3.map(v=>unlin(clamp(v,0,1)));C*=.93;}return [128,128,128];}
+const deltaE=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+// The colour under one fade edge: the tone most of its pixels share (found by a small mean shift, so a
+// few saturated accents such as a duck or the jewelry do not pull it) eased toward the region's plain average.
+function regionTone(px){
+ const n=px.length,mean=[0,1,2].map(k=>px.reduce((a,p)=>a+p[k],0)/n),R2=34*34,step=Math.max(1,Math.floor(n/500)),d2=(p,q)=>(p[0]-q[0])**2+(p[1]-q[1])**2+(p[2]-q[2])**2;
+ let mode=px[0],most=-1;for(let i=0;i<n;i+=step){let c=0;for(let j=0;j<n;j+=step)if(d2(px[i],px[j])<=R2)c++;if(c>most){most=c;mode=px[i];}}
+ for(let it=0;it<3;it++){const s=[0,0,0];let c=0;for(const p of px)if(d2(p,mode)<=R2){s[0]+=p[0];s[1]+=p[1];s[2]+=p[2];c++;}if(c)mode=s.map(v=>v/c);}
+ return mixRgb(mean,mode,.65);
+}
+// Fade edges as fractions of the visible crop, and how likely each is to carry the copy for each master shape
+// (the order the layout tries them in: landscape beside the jewelry first, portrait and square from the top).
+const FADE_EDGES={top:[0,0,1,FADE_SIZE.top.landscape],left:[0,0,FADE_SIZE.side,1],right:[1-FADE_SIZE.side,0,FADE_SIZE.side,1]};
+const FADE_EDGE_WEIGHT={landscape:{left:1,right:.6,top:.4},portrait:{top:1,left:.4,right:.4},square:{top:1,left:.4,right:.4},any:{top:1,left:1,right:1}};
+async function edgeTones(jpeg,{region,orientation,subject}={}){
+ const {data,info}=await sharp(jpeg).resize({width:96,height:96,fit:'inside'}).removeAlpha().toColourspace('srgb').raw().toBuffer({resolveWithObject:true}),w=info.width,h=info.height,r=region&&['x','y','w','h'].every(k=>Number.isFinite(region[k]))?region:{x:0,y:0,w:1,h:1},out={};
+ for(const [name,[ex,ey,ew,eh]] of Object.entries(FADE_EDGES)){
+  const box={x:r.x+ex*r.w,y:r.y+ey*r.h,w:ew*r.w,h:eh*r.h},x0=clamp(Math.floor(box.x*w),0,w-1),x1=clamp(Math.ceil((box.x+box.w)*w),x0+1,w),y0=clamp(Math.floor(box.y*h),0,h-1),y1=clamp(Math.ceil((box.y+box.h)*h),y0+1,h),px=[];
+  for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const i=(y*w+x)*3;px.push([data[i],data[i+1],data[i+2]]);}
+  // A fade edge the jewelry sits under says little about the scene the copy will lie on.
+  let overlap=0;if(subject&&['x','y','w','h'].every(k=>Number.isFinite(subject[k]))){const ix=Math.max(0,Math.min(box.x+box.w,subject.x+subject.w)-Math.max(box.x,subject.x)),iy=Math.max(0,Math.min(box.y+box.h,subject.y+subject.h)-Math.max(box.y,subject.y));overlap=ix*iy/(box.w*box.h);}
+  out[name]={tone:regionTone(px),weight:(FADE_EDGE_WEIGHT[orientation]||FADE_EDGE_WEIGHT.any)[name]*(1-.85*clamp(overlap,0,1))};
+ }
  return out;
 }
-// The film's fade colour: its primary colour, guaranteed visibly different from the frame under the fade.
-async function fadeColour(jpeg,opts={}){
- const base=await primaryColour(jpeg,opts);return ensureVisibleFade(base,await edgeBackdrops(jpeg,opts.region));
+// The lightness that keeps the fade natural yet legible. The fade keeps the scene's own hue and a soft
+// chroma; only its lightness moves, and it is the cheapest lightness by this account: as near as possible
+// to a tone a little darker than the frame under it (a shade, never a glowing patch), while the copy, the
+// near-black wordmark and the fade itself stay readable and perceptible. Each shortfall costs lightness
+// steps, so a bright, ordinary frame gets the natural shade and a frame that cannot carry one gets the
+// smallest departure from it.
+const FADE_GOAL={text:4.5,logo:3.2,vis:8},FADE_COST={dist:1,glow:1.5,text:12,logo:6,vis:5};
+function fitFade(hue,chroma,backs,ink,L0,Lmax){
+ let best=null;
+ for(let L=6;L<=97;L++){
+  const rgb=lchToRgb(L,chroma,hue),c=hexOf(rgb);let logo=Infinity,text=Infinity,vis=Infinity;
+  for(const b of backs){const back=hexOf(b),pick=inkOver(c,ink,back),wordmark=luminance(pick)>.5?LIGHT_INK:LOGO_INK;
+   logo=Math.min(logo,...FADE_LOGO_AT.map(t=>contrast(hexOf(mixRgb(b,rgb,fadeAlpha(t))),wordmark)));
+   text=Math.min(text,worstOver(back,c,pick));
+   vis=Math.min(vis,deltaE(toLab(mixRgb(b,rgb,FADE_PEAK)),toLab(b)));}
+  const cost=FADE_COST.dist*Math.abs(L-L0)+FADE_COST.glow*Math.max(0,L-Lmax)+FADE_COST.text*Math.max(0,FADE_GOAL.text-text)+FADE_COST.logo*Math.max(0,FADE_GOAL.logo-logo)+FADE_COST.vis*Math.max(0,FADE_GOAL.vis-vis);
+  if(!best||cost<best.cost)best={c,cost};
+ }
+ return best.c;
 }
+// The film's fade colour, and the frame colour under each fade edge (used to pick the copy's ink).
+// The tone comes from the pixels under the fade itself, weighted toward the edges the copy is most likely
+// to use, with a share of the film's primary colour that is large where the two agree and small where
+// the primary would clash; it is then softened to a low chroma and fitted in lightness as above.
+async function fadeSample(jpeg,opts={}){
+ const tones=await edgeTones(jpeg,opts),names=Object.keys(tones),weights=names.map(n=>tones[n].weight),total=weights.reduce((a,v)=>a+v,0)||1,top=Math.max(...weights);
+ const labs=names.map(n=>toLab(tones[n].tone)),local=[0,1,2].map(k=>labs.reduce((a,l,i)=>a+l[k]*weights[i],0)/total);
+ const primary=toLab(rgbOf(await primaryColour(jpeg,{mode:opts.mode||'dominant',region:opts.region}))),chroma=v=>Math.hypot(v[1],v[2]);
+ const gap=Math.abs(((Math.atan2(local[2],local[1])-Math.atan2(primary[2],primary[1]))*180/Math.PI+540)%360-180);
+ const share=chroma(local)<6||chroma(primary)<10?.15:clamp(.3-.24*(gap-30)/90,.06,.3),blend=local.map((v,i)=>v+(primary[i]-v)*share);
+ const backs=names.filter((n,i)=>weights[i]>=.5*top).map(n=>tones[n].tone),ink=/^#[0-9a-f]{6}$/i.test(opts.ink||'')?opts.ink:'#30291f';
+ const colour=fitFade(Math.atan2(blend[2],blend[1]),Math.min(chroma(blend)*.8,30),backs,ink,Math.max(14,local[0]-14),Math.max(...labs.filter((l,i)=>weights[i]>=.5*top).map(l=>l[0])));
+ return {colour,backdrops:Object.fromEntries(names.map(n=>[n,hexOf(tones[n].tone)]))};
+}
+async function fadeColour(jpeg,opts={}){return (await fadeSample(jpeg,opts)).colour;}
 // The film's own primary colour as '#rrggbb', from a small downscaled sample of a frame.
 // With a region ({x,y,w,h} as fractions) the default is that region's average colour; without
 // one, the dominant colour of the frame. Either is softened slightly toward the region's
@@ -175,7 +231,7 @@ async function captions(plan,format,beats){
  throw last;
 }
 async function composeTier(plan,format,beats,tier,hints,only){
- const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=plan.renderVersion>=11?inkFor(color(plan.fadeColor,color(style.background,'#fff7ee')),color(style.ink,'#30291f')):color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),wc=plan.renderVersion>=11?color(plan.fadeColor,bg):bg,gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
+ const W=format.width,H=format.height,g=geometry(format,plan.composition,plan.sourceOrientation,{mode:tier.mode,clearance:hints.clearance}),options=await fontOptions().catch(e=>{throw Object.assign(e,{fatal:true});}),style=plan.style||{},color=(v,f)=>/^#[a-f0-9]{6}$/i.test(v||'')?v:f,ink=plan.renderVersion>=11?inkOver(color(plan.fadeColor,color(style.background,'#fff7ee')),color(style.ink,'#30291f'),plan.fadeBackdrops?.[only==='header'?'top':only]):color(style.ink,'#30291f'),bg=color(style.background,'#fff7ee'),wc=plan.renderVersion>=11?color(plan.fadeColor,bg):bg,gold=color(style.accent,'#a67c35'),font=/sans|arial|helvetica/i.test(style.headlineFont||'')?'Open Sans':'Cormorant Garamond';
  const std=plan.renderVersion>=11;
  // Standard fade: the whole film uses one fade edge. Each candidate edge (from where the
  // jewelry leaves room) is tried in turn and the first that holds all the copy wins.
@@ -192,7 +248,8 @@ async function composeTier(plan,format,beats,tier,hints,only){
  // it reads as light falling away instead of as a drawn edge.
  const stops=strong?[[0,'1'],[.3,'.93'],[.6,'.74'],[.82,'.42'],[1,'0']]:[[0,'.97'],[.3,'.86'],[.6,'.62'],[.82,'.32'],[1,'0']];
  const gradientStops=hold=>{
-  if(std){const list=hold>0&&hold<1?[[0,1],[hold,1],...FADE_STOPS.map(([o,a])=>[hold+(1-hold)*o,a])]:FADE_STOPS;return list.map(([o,a])=>`<stop offset="${Math.round(o*1000)/1000}" stop-color="${wc}" stop-opacity="${a}"/>`).join('');}
+  // Beside a solid brand band the curve starts at full strength where the band ends and eases out from there.
+  if(std){const list=hold>0&&hold<1?[[0,1],...FADE_STOPS.map(([o,a])=>[hold+(1-hold)*o,a/FADE_PEAK])]:FADE_STOPS;return list.map(([o,a])=>`<stop offset="${Math.round(o*1000)/1000}" stop-color="${wc}" stop-opacity="${a}"/>`).join('');}
   // Below a solid band the field must start at full strength exactly where the
   // band ends, otherwise the join reads as a cut.
   const list=hold>0&&hold<1?[[0,'1'],[hold,'1'],...stops.slice(1).map(([o,a])=>[hold+(1-hold)*o,a])]:stops;
@@ -278,9 +335,10 @@ async function composeTier(plan,format,beats,tier,hints,only){
    else washes.set('seam',{rect:vertically?{x:0,y:0,w:W,h:reach}:{x:0,y:0,w:reach,h:H},gradient:vertically?vertical:'x1="0" y1="0" x2="1" y2="0"',hold:g.seam.at/reach});
   }
   const wash=[...washes.values()].map(({rect,gradient,hold},i)=>`<defs><linearGradient id="base${i}" ${gradient}>${gradientStops(hold||0)}</linearGradient></defs><rect x="${rect.x}" y="${rect.y}" width="${rect.w}" height="${rect.h}" fill="url(#base${i})"/>`).join('');
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}" href="${logoData}"/></svg></svg>`;
+  const reversed=std&&luminance(ink)>.5;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${reversed?'<defs>'+LOGO_LIGHT_FILTER+'</defs>':''}${wash}<svg x="${logoBox.x}" y="${logoBox.y}" width="${logoBox.w}" height="${logoBox.h}" viewBox="${logo.crop.x} ${logo.crop.y} ${logo.crop.width} ${logo.crop.height}"><image width="${logo.width}" height="${logo.height}"${reversed?' filter="url(#logoLight)"':''} href="${logoData}"/></svg></svg>`;
   layers.unshift({start:0,end:10,persistent:true,logoBox,...(std?{fades:[...washes.values()].map(w=>({...w.rect}))}:{}),bytes:Buffer.from(new Resvg(svg,options).render().asPng()),product:g.product});
  }
  return layers;
 }
-module.exports={FADE_STOPS,FADE_SIZE,FADE_MIN_CONTRAST,fadeColour,ensureVisibleFade,edgeBackdrops,primaryColour,inkFor,VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};
+module.exports={FADE_STOPS,FADE_PEAK,FADE_SIZE,fadeAlpha,fadeColour,fadeSample,edgeTones,fitFade,primaryColour,inkFor,inkOver,VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};
