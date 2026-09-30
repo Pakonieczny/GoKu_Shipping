@@ -11,12 +11,15 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require
  q('[data-refresh]').click();await new Promise(setImmediate);q('[data-discard]').click();assert.equal(q('dialog'),null,'discard confirms in place without a second pop-up');let b=q('[data-confirm] .bam-primary');await b.onclick();assert.equal(b.disabled,false);assert.match(q('[data-confirm-error]').textContent,/Temporary failure/);assert.equal(q('[data-generate]').textContent,'Resume animation','failed discard keeps job');
  failDiscard=false;await b.onclick();assert.equal(q('[data-generate]').textContent,'Generate animated ads');assert.equal(q('[data-discard]').hidden,true);
  pending(state);await new Promise(setImmediate);assert.equal(q('[data-generate]').textContent,'Generate animated ads','late poll cannot restore discarded job');assert.equal(timers.length,0);
+ for(const autoKind of [null,'reference-preparation']){
  const auto=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),aw=auto.window;aw.HTMLDialogElement.prototype.showModal=function(){this.open=true;};aw.HTMLDialogElement.prototype.close=function(){this.open=false;};aw.setTimeout=()=>0;aw.clearTimeout=()=>{};
- aw.eval(fs.readFileSync('brites-ad-motion.js','utf8'));const autoCalls=[];
- aw.BritesAdMotion.mount(aw.document.getElementById('host'),{scope:{workspaceId:'w',productId:'p',groupRef:'g'},request:async(a,b)=>{autoCalls.push({a,b});if(a==='startAdDesignMotion')return {ok:true,jobId:'motion_old',queued:true};return {ok:true,jobId:'motion_old',workspaceId:'w',phase:'needs_attention',canResume:true,autoResume:true,error:'Square film has insufficient clear space',variants:[]};}});
+ aw.eval(fs.readFileSync('brites-ad-motion.js','utf8'));const autoCalls=[],autoMessages=[];
+ aw.BritesAdMotion.mount(aw.document.getElementById('host'),{scope:{workspaceId:'w',productId:'p',groupRef:'g'},request:async(a,b)=>{autoCalls.push({a,b});if(a==='startAdDesignMotion'){autoMessages.push(aw.document.querySelector('.bp-health').textContent);return {ok:true,jobId:'motion_old',queued:true};}return {ok:true,jobId:'motion_old',workspaceId:'w',phase:'needs_attention',canResume:true,autoResume:true,autoResumeKind:autoKind,error:autoKind?'The product reference description was incomplete':'Square film has insufficient clear space',variants:[]};}});
  await new Promise(setImmediate);await new Promise(setImmediate);
- assert.equal(autoCalls.filter(c=>c.a==='startAdDesignMotion'&&c.b.resumeJobId==='motion_old').length,1,'a run stopped by an earlier composition rule resumes itself exactly once');
+ assert.equal(autoCalls.filter(c=>c.a==='startAdDesignMotion'&&c.b.resumeJobId==='motion_old').length,1,'a recoverable '+(autoKind||'composition')+' job resumes itself exactly once');
+ if(autoKind)assert.match(autoMessages[0],/Preparing the saved original product references/);
  auto.window.close();
+ }
  // Redo one video: a small button under each finished video, confirmed in place with the size and the cost, then one targeted request.
  const K=['mobile_portrait','mobile_square','desktop_landscape'],film=(key,format,device)=>({key,device,format,width:720,height:format==='portrait'?1280:720,seconds:10,asset:{hash:key},url:'https://example.test/'+key});
  const choice=(format,key,hasFilm=true)=>({format,key,orientation:format,formats:[key],kept:K.filter(k=>k!==key),hasFilm,estimatedUsd:1.0136});
