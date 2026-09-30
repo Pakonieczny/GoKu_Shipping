@@ -15,7 +15,7 @@ const job=orientation=>({title:'Snake Charm',plan:{copy:{headline:'Made to be wo
  portrait:'Keep the upper third clear for the headline overlay, piece low in frame',
  landscape:'Leave the left third for the brand messaging',
  identity:'Exact catalog reference'}});
-for(const orientation of ['portrait','landscape']){
+for(const orientation of ['portrait','square','landscape']){
  const prompt=motion.motionPrompt(job(orientation),orientation,'fallback');
  const hit=BANNED.exec(prompt);
  assert(!hit,orientation+' film prompt must not name lettering or overlays, found: '+(hit&&hit[0]));
