@@ -41,7 +41,7 @@ const response=value=>({output:[{type:'message',content:[{type:'output_text',tex
   check(!v.frames[0].equals(v.frames[4]),'output retains moving video content');
  }
  async function setup(review=good){
-  const f=memory(),ref=f.db.collection('Workspaces').doc('design_test'),scope={workspaceId:'design_test',productId:'p',groupRef:'g'},id='eai_'+'a'.repeat(40),blobs=new Map(),calls={provider:0,render:[],review:0,direction:0,layout:0};
+  const f=memory(),ref=f.db.collection('Workspaces').doc('design_test'),scope={workspaceId:'design_test',productId:'p',groupRef:'g',generationMode:'reference_to_video'},id='eai_'+'a'.repeat(40),blobs=new Map(),calls={provider:0,render:[],review:0,direction:0,layout:0};
   const sources=photos.map((b,i)=>({id:'original'+i,source:{kind:'product',productId:'p'},productId:'p',asset:{path:'original'+i,hash:references.hash(b)}}));
   await ref.set({settings:scope,context:{groups:[{ref:'g'}]}});const editor=ref.collection('editorAIJobs').doc(id);
   await editor.set({id,scope,phase:'ready',createdAt:1});await editor.collection('data').doc('request').set({identitySources:sources,sources});

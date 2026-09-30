@@ -16,6 +16,13 @@ function referenceRequestBody(references,prompt,orientation){
  if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
  return {model:MODEL,background:true,store:true,input:[...references.map(r=>({type:'image',mime_type:r.mimeType,data:r.bytes.toString('base64')})),{type:'text',text:prompt}],generation_config:{video_config:{task:'reference_to_video'}},response_format:{type:'video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
 }
+// One intact original is the initial frame. Additional images would invite
+// interpolation or another subject; the historic reference path stays intact.
+function firstFrameRequestBody(reference,prompt,orientation){
+ const body=referenceRequestBody([reference],prompt,orientation);
+ body.generation_config.video_config.task='image_to_video';
+ return body;
+}
 // Scenery-only films use text-to-video. Sending an empty image would pin a
 // blank first frame; sending product pixels would invite a generated redraw.
 // https://ai.google.dev/gemini-api/docs/omni#text-to-video-generation
@@ -189,4 +196,4 @@ function createGeminiVideo({apiKey,fetch,sleep=wait}){
  }
  return {request,content};
 }
-module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,referenceRequestBody,sceneryRequestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};
+module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,referenceRequestBody,firstFrameRequestBody,sceneryRequestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};

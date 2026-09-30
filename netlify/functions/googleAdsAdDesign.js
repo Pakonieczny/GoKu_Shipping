@@ -396,6 +396,7 @@ function createAdDesignService(deps) {
   // What an animated film can be made from without buying anything new: this product's finished AI design (it may sit in the
   // workspace that saved the design), else the newest saved design's own photographs.
   async function editorMotionBasis(input={}){
+    if(input.firstFrame===true)return editorMotionFirstFrame(input);
     const w=await read(input.workspaceId);editorScope(w,input);
     const designs=[];for(const t of await savedDesignTargets(w))for(const d of (await t.ref.get()).docs){const x=d.data();if(!x.deletedAt&&productKey(x.productId)===productKey(input.productId))designs.push(x);}
     designs.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
@@ -411,6 +412,37 @@ function createAdDesignService(deps) {
       if(sources.length){const product=sources.filter(x=>x.source?.kind==='product');return {design:{id:design.id,name:design.name||''},sources,originalSources:product};}
     }
     return null;
+  }
+  // Photo-first films start from the clean photograph behind the package's
+  // primary preview, never its flattened logo/copy or an earlier catalog shot.
+  async function editorMotionFirstFrame(input={}){
+    const w=await read(input.workspaceId);editorScope(w,input);
+    let found=null;
+    if(input.savedDesignId){
+      if(!token(input.savedDesignId))throw Error('Choose a saved design package.');
+      found=await savedDesignRecord(w,input.savedDesignId);
+      if(!found||found.design.deletedAt)throw Error('The selected design package is unavailable.');
+    }else if(!input.fromEditorWorker){
+      const designs=[];for(const t of await savedDesignTargets(w))for(const row of (await t.ref.get()).docs){const d=row.data();if(!d.deletedAt&&productKey(d.productId)===productKey(input.productId))designs.push({design:d,ref:row.ref,groupRef:t.groupRef});}
+      found=designs.sort((a,b)=>(b.design.createdAt||0)-(a.design.createdAt||0)||b.design.id.localeCompare(a.design.id))[0]||null;
+    }
+    let document,sources=[],designId=null,owner=input.workspaceId;
+    if(found){
+      const d=found.design;if(productKey(d.productId)!==productKey(input.productId))throw Error('The selected design belongs to another product.');
+      owner=d.workspaceId||input.workspaceId;designId=d.id;document=d.document;
+      for(const id of d.sourceIds||[]){const row=await refFor(owner).collection('editorSources').doc(id).get();if(row.exists){const s=row.data();if(productKey(s.productId)!==productKey(input.productId)||s.groupRef!==found.groupRef)throw Error('A design photo belongs to another product or group.');sources.push({...s,id:s.id||id});}}
+    }else if(input.editorJobId){
+      owner=input.editorWorkspaceId||input.workspaceId;
+      const job=editorAIRef(owner,input.editorJobId),record=await job.get(),result=await job.collection('data').doc('result').get();
+      if(!record.exists||record.data().phase!=='ready'||productKey(record.data().scope?.productId)!==productKey(input.productId)||!result.exists)throw Error('The design package photo is not ready.');
+      const data=result.data();document=data.document;sources=data.sources||[];designId=input.editorJobId;
+    }
+    const source=require('./googleAdsMotionInput').designPhoto(document,sources,input.productId);
+    if(!source)throw Error('The first design preview has no saved clean photo. Save that design package before generating its video.');
+    // Only a rectangular operator crop is applied, when the saved photo layer
+    // has one. This does not redraw, remove the background or extract jewelry.
+    const framed=await require('./googleAdsAdIdentity').framed(source,[source.designLayer],{workspaceId:input.workspaceId,sha,loadAsset:deps.loadAsset,saveAsset:deps.saveAsset});
+    return clean({designId,designWorkspaceId:owner,sourceId:source.id,productId:input.productId,groupRef:input.groupRef,asset:framed.asset,width:framed.width,height:framed.height,selection:'design-primary-photo'});
   }
   async function editorOpenSavedDesign(input={}){
     const w=await read(input.workspaceId);editorScope(w,input);if(!token(input.id))throw new Error('Choose a saved design.');
@@ -1459,7 +1491,6 @@ function createAdDesignService(deps) {
       await saveJob({ phase: "needs_attention", error: String(error.message || error).slice(0, 900), leaseUntil: 0, progress: { pct: Number(job.progress && job.progress.pct) || 0, label: "Saved work retained — review the unfinished step" } }); throw error;
     }
   }
-  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorMotionBasis, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
+  return { workspace, save, upload, crop, start, status, run, resetFailures, editorSource, editorState, editorResponsiveState, editorSave, editorExport, editorSavedDesigns, editorOpenSavedDesign, editorMotionBasis, editorMotionFirstFrame, editorDeleteSavedDesign, deleteGeneratedImage, linkPublishedDesignScopes, linkPublishedWorkspaceGallery, editorAIStart, editorAIStatus, editorAIResume, editorAIRun, editorAIApply, editorAIFix, editorIdentity, recordAnimationHandoff };
 }
 module.exports = { orderAssetGroupMutations, createAdDesignService, buildVersionDesignPayload, isSharedProductGroup, researchGroupFor, formatAssets, chosenPlacements, placementMatches, FORMATS, settingsFor, refreshedSettings, responseText, MAX_UPLOAD };
-

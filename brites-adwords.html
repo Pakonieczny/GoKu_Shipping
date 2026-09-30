@@ -1259,7 +1259,7 @@ svg.lc:focus{outline:none}svg.lc:focus-visible{outline:2px solid var(--gold);out
 <script src="/brites-ad-format-policy.js?v=20260917-shapes"></script>
 <script src="/brites-campaign-styles.js?v=20260929-oppkinds"></script>
 <script src="/brites-brand-assets.js?v=20260914"></script>
-<script src="/brites-ad-motion.js?v=20260930-reference-preparation-recovery"></script>
+<script src="/brites-ad-motion.js?v=20260930-photo-first-trial"></script>
 <script src="/assets/opportunity-timeline.js?v=20260929-visuals"></script>
 <script src="/assets/ad-preview-thumbs.js?v=20260929-visuals"></script>
 <script src="/assets/pmax-recommendation.js?v=20260929-research"></script>
@@ -5411,7 +5411,7 @@ function wireAdDesignHover(host,s){
 
 function wireAdDesign(host,s){
   var dismissNotice=host.querySelector('[data-design-dismiss-notice]');if(dismissNotice)dismissNotice.onclick=function(){s.notice='';renderAdDesign();};
- host.querySelectorAll('[data-design-media]').forEach(function(b){b.onclick=function(){adDesignReadForm(s);s.mediaKind=b.dataset.designMedia;renderAdDesign();};});var motionHost=host.querySelector('[data-design-motion-panel]');if(motionHost&&window.BritesAdMotion)BritesAdMotion.mount(motionHost,{scope:{workspaceId:s.workspaceId,productId:adDesignSettings(s).productId,groupRef:adDesignSettings(s).groupRef},request:api});
+ host.querySelectorAll('[data-design-media]').forEach(function(b){b.onclick=function(){adDesignReadForm(s);s.mediaKind=b.dataset.designMedia;renderAdDesign();};});var motionHost=host.querySelector('[data-design-motion-panel]');if(motionHost&&window.BritesAdMotion)BritesAdMotion.mount(motionHost,{scope:{workspaceId:s.workspaceId,productId:adDesignSettings(s).productId,groupRef:adDesignSettings(s).groupRef},design:adDesignEditing(s),request:api});
 
   var groupSelect=host.querySelector('[data-design-group]');if(groupSelect)groupSelect.onchange=function(){var nextGroup=this.value,product=adDesignProduct(s),nextProduct=product;if(product&&Array.isArray(product.eligibleGroupRefs)&&!product.eligibleGroupRefs.includes(nextGroup))nextProduct=(s.data.products||[]).find(function(p){return !Array.isArray(p.eligibleGroupRefs)||p.eligibleGroupRefs.includes(nextGroup);});if(nextProduct){this.value=adDesignSettings(s).groupRef;switchAdDesignProduct(s,adDesignProductId(nextProduct),nextGroup);}};
   var freshSources=host.querySelector('[data-design-refresh-sources]');if(freshSources)freshSources.onclick=refreshAdDesignSources;
