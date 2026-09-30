@@ -41,7 +41,8 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       get: async () => ({ forEach: () => {} }),
     }) }) };
     if (name === "batches") return {
-      where: (field) => field === "state" ? { get: async () => ({ docs:
+      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : field === "state" ? { get: async () => ({ docs:
         Array.from({ length: providerActive }, () => ({ data: () => ({ collected: false }) })) }) } : ({ orderBy: () => ({ limit: () => ({ get: async () => ({
         size: jobs.length,
         forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })),

@@ -36,7 +36,8 @@ async function sweep(jobs, retryAnswers = {}) {
     if (name === "orchestrations") return { where: () => ({ limit: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
     return {
       // A full refill queue: the collector recounts 30 active jobs.
-      where: (field) => field === "state"
+      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : field === "state"
         ? { get: async () => ({ docs: Array.from({ length: 30 }, () => ({ data: () => ({ collected: false }) })) }) }
         : { orderBy: () => ({ limit: () => ({ get: async () => ({ size: jobs.length,
           forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) },
@@ -53,7 +54,7 @@ async function sweep(jobs, retryAnswers = {}) {
     throw new Error(`unexpected ${payload.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${sweepBranch} })()`, {
-    ...lib, kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
+    ...lib, ...require("../../netlify/functions/lib/listingBatchRecovery.cjs"), kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" }, FieldValue: { serverTimestamp: () => 1 } } },
     module: { exports: { handler } }, json: (statusCode, body) => ({ statusCode, ...body }),
@@ -70,7 +71,7 @@ async function retryOnce(record) {
   const db = { collection: () => ({ doc: () => ref }),
     runTransaction: async (fn) => fn({ get: ref.get, set: (_r, data) => Object.assign(record, data) }) };
   const result = await vm.runInNewContext(`(async () => { ${retryBranch} })()`, {
-    ...lib, kind: "batch_retry_missing", body: { batchName: record.batchName },
+    ...lib, ...require("../../netlify/functions/lib/listingBatchRecovery.cjs"), kind: "batch_retry_missing", body: { batchName: record.batchName },
     BATCHES_COLL: "batches", batchDocIdFromName: (n) => n, getDb: () => db, batchApiKey: () => "key",
     getGeminiBatchJob: async () => { throw new Error("no provider call expected"); },
     batchFailureDetails: () => EXPIRED, assertAllowedOutputBase: () => {},

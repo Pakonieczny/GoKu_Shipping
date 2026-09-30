@@ -12290,6 +12290,7 @@ These requirements take precedence over any instruction to duplicate a reference
               "geminiImageProxy",
               {
                 kind: "batch_submit",
+                enqueueOnly: true,
                 model: batchModel,
                 sets: slice,
                 imageSize: BATCH_DEFAULT_IMAGE_SIZE,
@@ -12322,17 +12323,10 @@ These requirements take precedence over any instruction to duplicate a reference
             // independent OpenAI batch.
           }
 
-          // Adaptive stagger between chunks. Starts at CHUNK_STAGGER_MS,
-          // doubles after rate-limit hits, recovers gradually toward base
-          // after successful chunks.
-          if (c < effectiveChunkCount - 1) {
-            if (_currentChunkStaggerMs > CHUNK_STAGGER_MS) {
-              _setBatchProgress(c + 1, effectiveChunkCount,
-                `Waiting ${Math.round(_currentChunkStaggerMs / 1000)}s before chunk ${c + 2}/${effectiveChunkCount} (adaptive throttle after rate-limit)…`);
-            }
-            await sleep(_currentChunkStaggerMs);
-          }
+          // Provider throttling belongs to the server. This loop only registers work.
         }
+        try { await postJson("geminiImageProxy-background", { kind: "batch_sweep", sessionId }); }
+        catch (err) { console.warn("Queue saved; the scheduled worker will start it", err); }
 
         // Record this submission as a session for the summary panel.
         try {
@@ -12359,7 +12353,7 @@ These requirements take precedence over any instruction to duplicate a reference
         const failCount = submitErrors.length;
         if (failCount === 0) {
           _setBatchProgress(effectiveChunkCount, effectiveChunkCount, `Submitted ${okCount}/${effectiveChunkCount} chunk(s) · ${effectiveCount} set(s)`);
-          setStatus(`Batch submitted · ${effectiveCount} set(s) across ${okCount} chunk(s)`);
+          setStatus(`Queued ${effectiveCount} sets on the server · up to 30 run at once · this tab can close`);
         } else {
           _setBatchProgress(effectiveChunkCount, effectiveChunkCount, `${okCount}/${effectiveChunkCount} chunks OK · ${failCount} failed`);
           setStatus(`Partial submission · ${okCount}/${effectiveChunkCount} chunks succeeded`);
@@ -13202,6 +13196,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
           let s = sessions.get(key);
           if (!s) { s = { sessionId: key, batches: [], earliest: Infinity, latest: 0 }; sessions.set(key, s); }
           s.batches.push(b);
+          s.summary = resp?.sessions?.find(summary => summary.sessionId === key) || null;
           if (b.createdAt) s.earliest = Math.min(s.earliest, b.createdAt);
           if (b.updatedAt) s.latest = Math.max(s.latest, b.updatedAt);
           if (b.collectedAt) s.latest = Math.max(s.latest, b.collectedAt);
@@ -13292,12 +13287,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // jobs when describing provider capacity.
       const uniqueEffective = new Map();
       for (const b of effective) {
-        const key = b.retryOf ? b.batchName : (b.displayName || b.batchName);
+        const key = b.setKeys?.length === 1 ? b.setKeys[0] : b.retryOf ? b.batchName : (b.displayName || b.batchName);
         if (!uniqueEffective.has(key) || (b.collected && !uniqueEffective.get(key).collected))
           uniqueEffective.set(key, b);
       }
-      const total = uniqueEffective.size;
-      const finished = [...uniqueEffective.values()].filter((b) => b.collected && !b.results?.failedCount).length;
+      const audit = session.summary || null;
+      const total = audit?.registered ?? uniqueEffective.size;
+      const finished = audit?.complete ?? [...uniqueEffective.values()].filter((b) => b.setComplete ||
+        b.collected && !b.results?.failedCount).length;
       const succeeded = states.filter((st) => st === "JOB_STATE_SUCCEEDED").length;
       const activeJobs = effective.filter((b) => ["JOB_STATE_RUNNING", "JOB_STATE_PENDING"].includes(_normBatchState(b.state)));
       const running = activeJobs.length;
@@ -13343,8 +13340,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       let waitingRetries = 0;
       for (const b of session.batches) {
         if (!b.retryOf) totalSets += b.setsCount || 0;
-        if (b.retryRequested && !b.retryBatchName && !b.collected &&
-            ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))) waitingRetries++;
+        if (b.retryRequested && !b.retryBatchName && (!b.collected &&
+            ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) || b.repairPending)) waitingRetries++;
         if (b.results) {
           totalImagesGen += b.results.succeededCount || 0;
           totalImagesFailed += b.results.failedCount || 0;
@@ -13356,7 +13353,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const capacityStopped = effective.filter((b) => b.retryStatus === "capacity_refused" && !b.collected);
       // Sets the server stopped after their five retry attempts.
       const attemptsStopped = effective.filter((b) => b.retryStatus === "attempts_exhausted" && !b.collected);
-      const attention = effective.filter((b) => !b.retryRequested && !_awaitingStallRestart(b) &&
+      const attention = audit?.blocked ?? effective.filter((b) => !b.setComplete && !b.retryRequested && !_awaitingStallRestart(b) &&
         (b.collected ? b.results?.failedCount > 0 :
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
       const originals = session.batches.filter((b) => !b.retryOf);
@@ -13369,15 +13366,16 @@ Click the button again to permanently delete eligible temporary files, or cancel
           plannedSets = Math.max(plannedSets, Number(match[1]), Number(match[3]));
         }
       }
-      const originalSubmitted = partNumbers.size || originals.length;
+      const registeredKeys = new Set(session.batches.flatMap(b => b.setKeys || []));
+      const originalSubmitted = audit?.registered ?? (registeredKeys.size || partNumbers.size || originals.length);
       const duplicateJobs = partNumbers.size ? Math.max(0, originals.length - partNumbers.size) : 0;
-      plannedSets = Math.max(plannedSets, totalSets - duplicateJobs);
-      const notSubmitted = partNumbers.size && !session.historyTruncated
+      plannedSets = audit?.planned ?? Math.max(plannedSets, registeredKeys.size || totalSets - duplicateJobs);
+      const notSubmitted = (audit || partNumbers.size) && !session.historyTruncated
         ? Math.max(0, plannedSets - originalSubmitted) : 0;
 
       const startStr = session.earliest && isFinite(session.earliest)
         ? new Date(session.earliest).toLocaleString() : "—";
-      const allDone = (finished + cancelled) === total && notSubmitted === 0;
+      const allDone = finished === plannedSets && plannedSets > 0 && notSubmitted === 0;
       const elapsedMs = allDone && session.latest
         ? session.latest - session.earliest
         : (session.earliest && isFinite(session.earliest) ? Date.now() - session.earliest : 0);
@@ -13389,11 +13387,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
       // Headline.
       let headline, headlineColor;
-      if (session.historyTruncated) {
+      if (session.historyTruncated && !audit) {
         headline = "Earlier history · partial view"; headlineColor = "#a3a3a3";
-      } else if (allDone && cancelled === total) {
+      } else if (cancelled === total && total > 0 && !running && !waitingRetries) {
         headline = "All batches cancelled"; headlineColor = "#a3a3a3";
-      } else if (allDone && failed > 0) {
+      } else if (allDone && failed > 0 && !audit) {
         headline = `Done with ${failed} failure(s)`; headlineColor = "#fca5a5";
       } else if (allDone) {
         headline = "Complete"; headlineColor = "#7fdb96";
@@ -13409,10 +13407,14 @@ Click the button again to permanently delete eligible temporary files, or cancel
         headline = "Waiting for images"; headlineColor = "#93c5fd";
       } else if (running > 0 || waitingRetries > 0) {
         headline = "In progress"; headlineColor = "#93c5fd";
+      } else if (audit?.saving) {
+        headline = "Recovering saved images"; headlineColor = "#93c5fd";
       } else if (capacityStopped.length) {
         headline = "Stopped: token limit"; headlineColor = "#fca5a5";
       } else if (attemptsStopped.length) {
         headline = "Stopped: retry limit"; headlineColor = "#fca5a5";
+      } else if (attention) {
+        headline = "Images need review"; headlineColor = "#fca5a5";
       } else {
         headline = "Pending"; headlineColor = "#fde68a";
       }
@@ -13430,10 +13432,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       )];
       rows.push(["Model", sessionModels.join(", ") || getImageModelConfig(DEFAULT_IMAGE_MODEL).label]);
       rows.push(["Sets planned", String(plannedSets)]);
-      if (partNumbers.size) rows.push(["Original submission", session.historyTruncated
+      if (partNumbers.size || audit) rows.push(["Registered sets", session.historyTruncated
         ? `${originalSubmitted} of ${plannedSets} parts visible · older jobs outside the latest 1000 records`
-        : `${originalSubmitted}/${plannedSets} parts recorded${notSubmitted ? ` · ${notSubmitted} have no job yet` : ""}${duplicateJobs ? ` · ${duplicateJobs} duplicate provider jobs` : ""}`]);
-      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${restarted ? ` · ${restarted} restarted` : ""}${attention ? ` · ${attention} need attention` : ""}`]);
+        : `${originalSubmitted}/${plannedSets} unique sets registered${notSubmitted ? ` · ${notSubmitted} not registered` : ""}`]);
+      rows.push(["Progress", `${finished} saved · ${running} active provider jobs · ${waitingRetries} queued${restarting ? ` · ${restarting} restarting` : ""}${restarted ? ` · ${restarted} restarted` : ""}${attention ? ` · ${attention} need review` : ""}`]);
+      if (audit) rows.push(["Saved-file check", `${audit.complete} saved or approved · ${audit.missingImages} missing images · ${new Date(audit.checkedAt).toLocaleTimeString()}`]);
       rows.push(["Batch jobs", `${session.batches.length} submitted · ${Math.max(0, succeeded - finished)} awaiting collection${cancelled ? ` · ${cancelled} cancelled` : ""}`]);
       if (waitingRetries) rows.push(["Queue admission", `${running} active provider jobs · new jobs and retries start below ${_batchRetryLimit}`]);
       if (requestStats.reporting) rows.push(["Active image requests", `${requestStats.completed} completed · ${requestStats.pending} pending · ${requestStats.failed} failed (of ${requestStats.total}, ${requestStats.reporting}/${running} jobs reporting)`]);
@@ -13460,15 +13463,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
         `<div class="batch-stat"><span>${_batchSafeText(k)}</span><span>${_batchSafeText(v)}</span></div>`
       ).join("");
       const progressPct = plannedSets ? Math.min(100, Math.round(100 * finished / plannedSets)) : 0;
-      const progressHtml = plannedSets && !session.historyTruncated ? `
+      const progressHtml = plannedSets && (!session.historyTruncated || audit) ? `
         <div class="batch-count"><strong>${finished} / ${plannedSets}</strong> sets saved</div>
         <div class="batch-track" role="progressbar" aria-label="Sets saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${finished}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
-      const activity = [cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
+      const activity = [audit ? `${Math.max(0, plannedSets - finished)} sets remaining` : "", cancelling ? `${cancelling} stopping` : "", restarting ? `${restarting} restarting` : "",
         running > cancelling + restartingActive ? `${running - cancelling - restartingActive} active jobs` : "",
         waitingRetries ? `${waitingRetries} queued` : "", restarted ? `${restarted} restarted` : "",
-        attention ? `${attention} need attention` : ""].filter(Boolean).join(" · ");
+        attention ? `${attention} need review` : ""].filter(Boolean).join(" · ");
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
@@ -13480,14 +13483,15 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
-        : notSubmitted ? `${notSubmitted} sets still need to be submitted. Keep the original submission tab open.`
-        : attention ? "Some jobs need attention. Open Details & actions to review them."
+        : audit?.saving ? `${audit.saving} set(s) are recovering images already generated. No new image request is needed.`
+        : notSubmitted ? `${notSubmitted} sets have not been registered on the server. Resume the submission to queue them.`
+        : attention ? `${attention} set(s) still have missing images. The reasons and set numbers are below.`
         : "";
       // Every set is already with OpenAI: fewer than the limit running is the end of
       // the batch, not a queue that failed to fill.
       if (!waitingRetries && !notSubmitted && !session.historyTruncated && running > 0 && running < _batchRetryLimit)
         explanation = `${explanation} Every set has been sent, so only the last ${running} run at once.`.trim();
-      if (restarted && !restarting) explanation = `${explanation} ${restarted} set(s) OpenAI never started were cancelled at no cost and sent again.`.trim();
+      if (restarted && !restarting && !allDone) explanation = `${explanation} ${restarted} set(s) OpenAI never started were cancelled at no cost and sent again.`.trim();
       const capacityNote = capacityStopped.length
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
       const attemptsNote = attemptsStopped.length
@@ -13533,6 +13537,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       if (retryable.length > 0) {
         buttons.push(`<button class="btn btnSmall" data-session-retry="${_batchSafeText(session.sessionId)}" style="font-size: 11px;">Queue missing images (${retryable.length})</button>`);
       }
+      const unresolved = (audit?.sets || []).filter(set => ["blocked", "saving", "cancelled"].includes(set.status));
+      const unresolvedHtml = unresolved.length ? `<div class="batch-alert">${unresolved.map(set =>
+        `<div><strong>Set_${set.setN}</strong> · ${_batchSafeText(set.status)} · slots ${set.missingSlots.join(", ")}${set.note ? ` · ${_batchSafeText(set.note)}` : ""}</div>`).join("")}</div>` : "";
       const buttonsHtml = buttons.length
         ? `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">${buttons.join("")}</div>`
         : "";
@@ -13548,11 +13555,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const failures = counts.failedRequestCount ?? counts.failed ?? counts.failed_count ?? 0;
         const results = b.results || {};
         const message = (["capacity_refused", "attempts_exhausted"].includes(b.retryStatus) && b.retryError) ||
-          b.providerError || b.error?.message || b.error || b.statusError ||
+          b.recoveryReason || b.providerError || b.error?.message || b.error || b.statusError ||
           b.retryError || results.failures?.[0]?.error || "";
         const detail = message ? `<div style="color:#fca5a5; margin-top:3px; overflow-wrap:anywhere;">${_batchSafeText(message)}</div>` : "";
         return `<div style="padding:6px 0; border-top:1px solid var(--line); overflow-wrap:anywhere;">
-          <strong>${name}</strong> · ${_batchSafeText(state)}${b.collected ? " · saved" : ""}${b.retryBatchName ? " · retried" : ""}
+          <strong>${name}</strong> · ${_batchSafeText(state)}${b.setComplete || b.collected && !b.results?.failedCount ? " · saved" : b.collected ? " · partially saved" : ""}${b.retryBatchName ? " · retried" : ""}
           · ${_batchSafeText(String(done))} complete · ${_batchSafeText(String(failures))} failed
           <div class="muted">Updated ${_batchSafeText(updated)} · ${_batchSafeText(b.batchName || "")}</div>${detail}
         </div>`;
@@ -13573,6 +13580,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
             <summary>Details &amp; actions</summary>
             <div class="batch-stats">${statsHtml}</div>
             ${buttonsHtml}
+            ${unresolvedHtml}
             <details data-batch-detail="${_batchSafeText(session.sessionId)}-jobs" style="margin-top:18px; font-size:14px;">
               <summary>Individual jobs (${session.batches.length})</summary>
               <div style="max-height:360px; overflow:auto; margin-top:12px;">${stateDetail}</div>
@@ -13850,11 +13858,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
         const active = _lastBatchList.filter((b) => !b.collected &&
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state))).length;
-        const queued = _lastBatchList.filter((b) => !b.collected && (b.retryRequested && !b.retryBatchName &&
-          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) ||
+        const queued = _lastBatchList.filter((b) => (!b.collected || b.repairPending) && (b.retryRequested && !b.retryBatchName &&
+          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) || b.repairPending ||
           _awaitingStallRestart(b) && ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
         let sweepNote = "";
-        if (manual && queued && active < _batchRetryLimit) {
+        if (manual && ((queued && active < _batchRetryLimit) || _lastBatchList.some(b => !b.setComplete && b.results?.failedCount))) {
           _showBatchCheck(`Provider checked. ${_batchRetryLimit - active} retry place(s) open; asking the collector to fill them…`);
           const previousSweepAt = _batchSweepInfo?.lastSweepAt || 0;
           await postJson("geminiImageProxy-background", { kind: "batch_sweep" });
@@ -13876,7 +13884,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
         const savedNow = _lastBatchList.filter((b) => b.collected).length - beforeSaved;
         const time = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
         const outcome = savedNow > 0 ? `${savedNow} newly saved.` : saving ? `Saving images from ${saving} job(s).` :
-          changed ? `${changed} job(s) updated.` : "No new images yet.";
+          changed ? `${changed} job(s) updated.` : active || queued ? "Waiting for queued images." :
+          _lastBatchList.some(b => !b.setComplete && b.results?.failedCount) ? "No jobs running. Missing images need recovery or review." : "No jobs running.";
         _showBatchCheck(`Checked ${time} · ${outcome}${checkErrors ? ` ${checkErrors} checks failed: ${firstCheckError}` : ""}${sweepNote ? ` ${sweepNote}` : ""}`,
           !!checkErrors || sweepNote.startsWith("Collector error"));
         const charmPanel = document.getElementById("charmBatchJobsPanel");

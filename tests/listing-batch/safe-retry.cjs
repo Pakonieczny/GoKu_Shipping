@@ -14,16 +14,18 @@ const tasks = Array.from({ length: 6 }, (_, slotIndex) => ({
   type: slotIndex === 5 ? "copy" : "edits",
   slotIndex,
   prompt: `Original prompt ${slotIndex}`,
-  input_storage_path: "reference.png",
+  input_storage_path: "listing-generator-1/Beady_Necklace/Primary_Models/reference.png",
   input_charm_storage_path: "original-charm.png",
   source_storage_path: "size-guide.png",
 }));
 const base = "listing-generator-1/Beady_Necklace/Ready_To_List/Set_123";
 
 async function scenario({ approved = false, present = [1, 3, 6], responseFile = null,
-                          retryBatchName = null } = {}) {
+                          retryBatchName = null, completed = false, contentRepairAttempt = 0, storagePending = false } = {}) {
   const record = { batchName: "batch_original", state: "JOB_STATE_FAILED", model: "gpt-image-2.5-sunburst",
     imageSize: "2K", sessionId: "session-1", collected: false, retryBatchName,
+    contentRepairAttempt, collectionPending: storagePending,
+    ...(completed ? { collected: true, state: "JOB_STATE_SUCCEEDED", results: { failedCount: 1, failures: [{key:"s0_slot1",error:"safety system rejected"}] } } : {}),
     sets: [{ category: "Beady_Necklace", setN: 123, outputBasePath: base, tasks }] };
   const writes = [], submitted = [];
   const ref = {
@@ -37,7 +39,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
     } }),
   };
   const bucket = {
-    getFiles: async ({ prefix }) => [prefix.includes("Completed_Listing_Sets")
+    getFiles: async ({ prefix }) => [/(Completed|Approved)_Listing_Sets/.test(prefix)
       ? (approved ? [{ name: prefix + "Slot_1.png" }] : [])
       : present.map((n) => ({ name: `${base}/Slot_${n}.png` }))],
     file: (path) => ({ exists: async () => [present.includes(Number(/Slot_(\d+)/.exec(path)?.[1]))],
@@ -45,10 +47,11 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   };
   const sandbox = {
     ...require("../../netlify/functions/lib/listingBatchAdmission.cjs"),
+    ...require("../../netlify/functions/lib/listingBatchRecovery.cjs"),
     kind: "batch_retry_missing", body: { batchName: "batch_original" },
     BATCHES_COLL: "batches", batchDocIdFromName: (n) => n,
     getDb: () => db, batchApiKey: () => "key",
-    getGeminiBatchJob: async () => ({ state: "JOB_STATE_FAILED",
+    getGeminiBatchJob: async () => ({ state: completed ? "JOB_STATE_SUCCEEDED" : "JOB_STATE_FAILED",
       response: { responsesFile: responseFile } }),
     batchFailureDetails: () => null,
     assertAllowedOutputBase: (path) => assert.equal(path, base),
@@ -88,6 +91,18 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
   const complete = await scenario({ present: [1, 2, 3, 4, 5, 6] });
   assert.equal(complete.result.complete, true);
   assert.equal(complete.submitted.length, 0);
+
+  const partial = await scenario({completed:true, present:[1,3,4,5,6], responseFile:"file-paid"});
+  assert.equal(partial.submitted.length,1,"collected partial success is repairable");
+  assert.equal(partial.submitted[0].sets[0].tasks.length,1,"only the missing slot is requested");
+  assert.match(partial.submitted[0].sets[0].tasks[0].prompt,/fully covering crew-neck top/);
+  assert.equal(partial.submitted[0].contentRepairAttempt,1);
+  assert.equal(partial.submitted[0].sets[0].allTasks[1].contentRepair,true,"safer request survives zero-start restarts");
+  const stopContent = await scenario({completed:true, present:[1,3,4,5,6], contentRepairAttempt:1});
+  assert.equal(stopContent.result.blockedContent,true);
+  assert.equal(stopContent.submitted.length,0);
+  const saveFirst = await scenario({completed:true,storagePending:true});
+  assert.equal(saveFirst.submitted.length,0,"paid output recovery never purchases replacement");
 
   const helperStart = source.indexOf("function batchFailureDetails(data) {");
   const helperEnd = source.indexOf("\n}", helperStart) + 2;

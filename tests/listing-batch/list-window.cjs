@@ -31,7 +31,7 @@ const at = (ms) => ({ toMillis: () => ms });
 function list(docs, body) {
   const asked = [];
   const sorted = [...docs].sort((a, b) => b.createdAt - a.createdAt);
-  const db = { collection: (name) => name === "LG1_Config"
+  const db = { collection: (name) => ["LG1_Config", "sessions"].includes(name)
     ? { doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }) }
     : { orderBy: () => ({ limit: (n) => ({ get: async () => {
         asked.push(n);
@@ -39,7 +39,7 @@ function list(docs, body) {
         return { size: rows.length, forEach: (fn) => rows.forEach(fn) };
       } }) }) } };
   return vm.runInNewContext(`(async () => { ${branch} })()`, {
-    kind: "batch_list", body, getDb: () => db, BATCHES_COLL: "batches", clampNumber: (n, min, max, fb) => {
+    kind: "batch_list", SESSIONS_COLL: "sessions", body, getDb: () => db, BATCHES_COLL: "batches", clampNumber: (n, min, max, fb) => {
       const v = Number(n); return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fb; },
     capacityRefusals: () => 0, preferredCharmRenderModelId: () => "m", json: (statusCode, value) => ({ statusCode, ...value }),
     console: { warn: () => {} },

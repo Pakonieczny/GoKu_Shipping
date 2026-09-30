@@ -124,7 +124,7 @@ async function check({ queued = false, automatic = false } = {}) {
     { ...batches[1], state: "JOB_STATE_SUCCEEDED", collected: true, results: { succeededCount: 5, failedCount: 1 } },
   ]);
   assert.match(partial, /1 \/ 300/, "a partly saved set is not counted as complete");
-  assert.match(partial, /1 need attention/, "missing images remain visible");
+  assert.match(partial, /1 need review/, "missing images remain visible");
   const filling = render([...batches.slice(0, 7), batches[30]], { runningSince: now - 5000, stage: "validating new job" });
   const fillingSummary = filling.slice(0, filling.indexOf('<details class="batch-details"'));
   assert.match(fillingSummary, /Filling queue/);

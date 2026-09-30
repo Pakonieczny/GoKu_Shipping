@@ -72,7 +72,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
       } };
     return q;
   };
-  const db = { collection: (coll) => ({ doc: (id) => docRef(coll, id), where: (f, op, v) => query(coll, [[f, op, v]]) }),
+  const db = { collection: (coll) => ({ doc: (id) => docRef(coll, id), orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }), where: (f, op, v) => query(coll, [[f, op, v]]) }),
     runTransaction: async (fn) => fn({ get: (ref) => ref.get(), set: (ref, value, opts) => write(`${ref.coll}/${ref.id}`, value, opts) }) };
   const bucket = {
     getFiles: async ({ prefix }) => [[...bucketFiles].filter((name) => name.startsWith(prefix)).map((name) => ({ name }))],

@@ -37,7 +37,7 @@ async function retryOnce(record) {
     runTransaction: async (fn) => fn({ get: ref.get, set: (_r, data) => Object.assign(record, data) }) };
   const bucket = { getFiles: async () => [[]], file: () => ({ exists: async () => [false] }) };
   const result = await vm.runInNewContext(`(async () => { ${retryBranch} })()`, {
-    ...lib, kind: "batch_retry_missing", body: { batchName: record.batchName },
+    ...lib, ...require("../../netlify/functions/lib/listingBatchRecovery.cjs"), kind: "batch_retry_missing", body: { batchName: record.batchName },
     BATCHES_COLL: "batches", batchDocIdFromName: (n) => n, getDb: () => db, batchApiKey: () => "key",
     getGeminiBatchJob: async () => ({ state: "JOB_STATE_FAILED" }), batchFailureDetails: () => REFUSED,
     assertAllowedOutputBase: () => {},
@@ -58,7 +58,8 @@ async function sweep(jobs, retryAnswers) {
     if (name === "LG1_Config") return { doc: () => ({ get: async () => ({ exists: false }), set: async () => {} }) };
     if (name === "orchestrations") return { where: () => ({ limit: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
     return {
-      where: () => ({ orderBy: () => ({ limit: () => ({ get: async () => ({ size: jobs.length,
+      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : ({ orderBy: () => ({ limit: () => ({ get: async () => ({ size: jobs.length,
         forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) }),
       doc: (id) => ({ set: async (value) => writes.push({ id, value }) }),
     };
@@ -73,7 +74,7 @@ async function sweep(jobs, retryAnswers) {
     throw new Error(`unexpected ${payload.kind}`);
   };
   const result = await vm.runInNewContext(`(async () => { ${sweepBranch} })()`, {
-    ...lib, kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
+    ...lib, ...require("../../netlify/functions/lib/listingBatchRecovery.cjs"), kind: "batch_sweep", body: {}, getDb: () => db, admissionControl: () => ({ reconcile: async () => {} }),
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" }, FieldValue: { serverTimestamp: () => 1 } } },
     module: { exports: { handler } }, json: (statusCode, body) => ({ statusCode, ...body }),
