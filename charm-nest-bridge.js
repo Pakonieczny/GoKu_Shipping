@@ -5146,7 +5146,6 @@ const LaserReview = window.LaserReview = (()=>{
       if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
-      const held=card.querySelector('[data-order-blockers]');if(held){const blocks=[...new Map(sheets.flatMap(s=>R.orderBlockers(projected(s))).map(x=>[x.id,x])).values()];held.hidden=!blocks.length;held.innerHTML=blocks.length?'<b>Orders waiting:</b> '+blocks.map(x=>`${esc(x.id)} — ${esc(x.why)}`).join(' · '):'';}
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s));if(n.innerHTML!==html)n.innerHTML=html;}});
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
     });
@@ -5438,7 +5437,7 @@ const Sets = window.Sets = (() => {
     agent({ run: set.runId }, "DS", `${set.name}: completion undone on the station — set back to awaiting review, every file kept`);
     Orders.render();
   }
-  /** The Library's Sets view: one card per set, its sheets side by side, held orders, engraving count, label thumbnails. */
+  /** The Library's Sets view: one card per set, its sheets side by side, engraving count, label thumbnails. */
   function libraryGroups(sets, sheets) {
     const groups = new Map(sets.filter(s=>s.status !== "superseded").map(s=>["set:"+s.setId, Object.assign({},s,{sheets:[]})]));
     for (const sheet of sheets) {
@@ -5455,18 +5454,12 @@ const Sets = window.Sets = (() => {
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
-    const held = [...new Map(all.flatMap(r=>window.CharmNestReadiness.orderBlockers(LaserReview.projected(r))).map(x=>[x.id,x])).values()];
-    // a Rose Gold sheet of this set waiting for its Cut Sheet press (the set waits with it): named, and the words lead there
-    const uncut = st.setId && !st.committedAt ? allSheets().find(p => p.setId === st.setId && window.RoseStock?.waiting?.(p)) : null;
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
-          <div class="holds" data-order-blockers${held.length?'':' hidden'}>${held.length ? `<b>Orders waiting:</b> ${held.map(x => `${esc(x.id)} — ${esc(x.why)}`).join(" · ")}` : ""}</div>
-          ${uncut ? `<div class="holds"><b>Waiting:</b> <button type="button" class="cutSheetLink" data-cut-sheet title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(uncut))}</button></div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
-    const cb = card.querySelector("[data-cut-sheet]"); if (cb) cb.onclick = () => RoseStock.showCut(uncut);
     // a QR label ([data-big]) opens in the zoom viewer, wherever it is shown (PhotoView, charm-nest-mail.js)
     // (a set a Library search found comes with only what this card shows, `partial`: its whole record is read before undoing)
     // Undo set (Paul, 27 Sep 20:09-20:24: nothing a click changes may just be drawn again in one go): the card lifts while
