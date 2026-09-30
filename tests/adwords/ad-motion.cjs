@@ -249,6 +249,51 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  const unclear=await setup(),unclearPlan=unclear.D.planMotion;unclear.D.planMotion=async r=>r.text.format.name==='video_product_bounds'?{output_text:JSON.stringify({portrait:{bounds:[.3,.3,.2,.2],complete:false,confidence:.6,note:'occluded'}})}:unclearPlan(r);
  const unclearJob=await unclear.service.start({workspaceId:'design_test',...unclear.scope});await unclear.service.run({workspaceId:'design_test',jobId:unclearJob.jobId});const unclearState=await unclear.service.status({workspaceId:'design_test',...unclear.scope});ok(unclearState.phase==='ready'&&unclearState.variants.length===3&&unclearState.compositionNotes.length>=1&&unclear.calls.review===1,'unsure framing never stops the film: the directed region protects the jewelry, the note reaches the review');
  ok((await unclear.service.start({workspaceId:'design_test',...unclear.scope,rerunOf:unclearJob.jobId,repairReviewHash:unclearState.repairReviewHash})).queued,'explicit rerun remains available after an assumed framing');
+ {
+  // An explicit Re-run is always a NEW job: it never lands on the finished (or discarded) job it re-runs, the previous job and its films stay
+  // exactly as saved, the same press shares one new job, and the panel follows the new id. Only a plain Generate meets the two-master legacy guard.
+  const rr=await setup(),scopeRR={workspaceId:'design_test',...rr.scope},jobsRR=rr.ref.collection('motionJobs'),rowRR=async id=>(await jobsRR.doc(id).get()).data();
+  const first=await rr.service.start(scopeRR);await rr.service.run({workspaceId:'design_test',jobId:first.jobId});
+  const firstState=await rr.service.status(scopeRR),firstSaved=JSON.stringify(await rowRR(first.jobId));
+  ok(firstState.phase==='ready'&&firstState.variants.length===3&&firstState.repairReviewHash&&rr.calls.create===3,'a finished job with three films is the starting point of a re-run');
+  const press=key=>({...scopeRR,rerunOf:first.jobId,repairReviewHash:firstState.repairReviewHash,...(key?{rerunKey:key}:{})});
+  const one=await rr.service.start(press('press-one-aaaa'));
+  ok(one.jobId!==first.jobId&&one.queued&&one.attempt===1&&/^motion_[a-f0-9]{40}$/.test(one.jobId),'a re-run gets its own new job id');
+  const oneRow=await rowRR(one.jobId);ok(oneRow.phase==='queued'&&oneRow.rerunAttempt===1&&oneRow.rerunKey==='press-one-aaaa'&&oneRow.repairOf===first.jobId&&!Object.keys(oneRow.masters).length&&!oneRow.variants.length&&!oneRow.quality&&oneRow.pipelineVersion===3&&oneRow.renderVersion===11&&oneRow.sourceImages.length&&oneRow.originalSources.length,'the new job is queued to make all three films again from the saved design photographs');
+  ok(JSON.stringify(await rowRR(first.jobId))===firstSaved,'the previous job and its films are untouched by the re-run');
+  ok((await rr.service.start(press('press-one-aaaa'))).jobId===one.jobId&&(await rr.service.start(press())).jobId===one.jobId,'the same press, or a keyless repeat within seconds, shares one new job');
+  await assert.rejects(()=>rr.service.start(press('press-two-bbbb')),/already being made and paid for/);n++;
+  ok((await jobsRR.get()).docs.length===2&&rr.calls.create===3,'a repeat neither creates a second job nor buys anything');
+  const following=await rr.service.status({...scopeRR,jobId:one.jobId});ok(following.jobId===one.jobId&&following.phase==='queued'&&!following.variants.length&&!following.quality&&following.repairOf===first.jobId,'the new job reports as queued with none of the previous films or review');
+  ok((await rr.service.status(scopeRR)).jobId===one.jobId,'the next status of the panel is the new job, not the finished one');
+  {
+   // The panel: pressing Re-run sends a fresh request key, switches to the new job at once (no old films or review shown as done) and polls that job by id.
+   const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="motion"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window,sent=[];w.setTimeout=()=>0;w.eval(fs.readFileSync(path.join(__dirname,'../../brites-ad-motion.js'),'utf8'));
+   w.BritesAdMotion.mount(w.document.getElementById('motion'),{scope:scopeRR,request:async(action,payload)=>{sent.push({action,payload});return action==='startAdDesignMotion'?{ok:true,workspaceId:'design_test',jobId:one.jobId,queued:true}:payload.jobId?following:firstState;}});
+   await new Promise(resolve=>setImmediate(resolve));ok(w.document.querySelector('video')&&w.document.querySelector('[data-generate]').textContent==='Re-run animation','the panel first shows the finished films');
+   w.document.querySelector('[data-generate]').click();await [...w.document.querySelectorAll('[data-confirm] button')].find(b=>b.textContent==='Re-run animation').onclick();
+   const asked=sent.find(r=>r.action==='startAdDesignMotion').payload,polled=sent.filter(r=>r.action==='adDesignMotionStatus').slice(-1)[0].payload;
+   ok(asked.rerunOf===first.jobId&&/^[A-Za-z0-9_-]{8,64}$/.test(asked.rerunKey)&&polled.jobId===one.jobId,'the panel sends a request key with the re-run and then polls the new job by id');
+   ok(!w.document.querySelector('video')&&!w.document.querySelector('[data-quality]').textContent&&/Queued|Preparing/.test(w.document.querySelector('[data-label]').textContent)&&w.document.querySelector('[data-generate]').disabled,'after Re-run the panel shows the new job in progress, not the previous films as done');
+   w.close();
+  }
+  // The reported case: the attempt is discarded, then Re-run is pressed again on the same finished job.
+  await rr.service.start({...scopeRR,discardJobId:one.jobId,confirmDiscard:true});
+  ok((await rr.service.status(scopeRR)).jobId===first.jobId,'after a discard the finished job is what the panel shows');
+  const two=await rr.service.start(press('press-two-bbbb'));
+  ok(two.jobId!==first.jobId&&two.jobId!==one.jobId&&two.queued&&two.attempt===2,'Re-run after a discarded attempt is a third job, never the finished or the discarded one');
+  const afterDiscard=await rr.service.status(scopeRR);ok(afterDiscard.jobId===two.jobId&&afterDiscard.phase==='queued'&&!afterDiscard.variants.length,'the panel now shows the new job in progress, not the old films as done');
+  ok((await rowRR(one.jobId)).resetAt&&JSON.stringify(await rowRR(first.jobId))===firstSaved,'the discarded attempt and the finished job remain saved');
+  ok((await rr.service.start(press())).jobId===two.jobId&&(await jobsRR.get()).docs.length===3,'a repeat of that press still shares its one job');
+  await rr.service.run({workspaceId:'design_test',jobId:two.jobId});const twoRow=await rowRR(two.jobId),firstIds=Object.values((await rowRR(first.jobId)).masters).map(m=>m.id);
+  ok(rr.calls.create===6&&twoRow.phase==='ready'&&twoRow.variants.length===3&&Object.values(twoRow.masters).length===3&&Object.values(twoRow.masters).every(m=>!firstIds.includes(m.id)),'the new job buys three new films with provider ids of its own');
+  // A two-master film saved for the same design answers a plain Generate, never a re-run.
+  const legacyId='motion_'+require('node:crypto').createHash('sha256').update('eai_'+'a'.repeat(40)+':v2:after:'+one.jobId).digest('hex').slice(0,40);
+  await jobsRR.doc(legacyId).set({...(await rowRR(first.jobId)),id:legacyId,pipelineVersion:2,createdAt:1});
+  ok((await rr.service.start(scopeRR)).jobId===legacyId,'a plain Generate still returns the saved two-master film for the design');
+  const twoState=await rr.service.status({...scopeRR,jobId:two.jobId}),three=await rr.service.start({...scopeRR,rerunOf:two.jobId,repairReviewHash:twoState.repairReviewHash,rerunKey:'press-three-cccc'}),four=await rr.service.start(press('press-four-dddd'));
+  ok(three.queued&&four.queued&&new Set([first.jobId,one.jobId,two.jobId,three.jobId,four.jobId,legacyId]).size===6&&four.attempt===3,'the legacy guard does not swallow a re-run of a version 3 job, from the newest job or from an older one');
+ }
  // Targeted fixes from the review: only the named film, captions or message change.
  const fx=await setup(),fxPlan=fx.D.planMotion;let copyFixes=0;fx.D.planMotion=async r=>r.text?.format?.name==='brites_motion_copy_fix'?(copyFixes++,{output_text:JSON.stringify({headline:'For the foodie who has everything',shortHeadline:'Pendant',description:'Gift-ready',cta:'Shop now',rationale:'specific hook'})}):fxPlan(r);
  fx.D.reviewImages=async(source,files,brief)=>{fx.calls.review++;fx.lastBrief=brief;return {pass:false,productFaithful:true,mobileReadable:true,score:85,scores:{messaging:90,layout:85,relevance:100,visualAppeal:90,productRecognition:100},categoryReviews:{messaging:{summary:'',deductions:[{points:10,reason:'Generic hook',evidence:'mobile_portrait at 0.3s',correction:'Rewrite the opening line as a specific gift hook',kind:'required',formats:['mobile_portrait']}]},layout:{summary:'',deductions:[{points:15,reason:'Caption too small',evidence:'mobile_square at 3.5s',correction:'Enlarge the caption',kind:'required',formats:['mobile_square']}]},visualAppeal:{summary:'',deductions:[{points:10,reason:'Flat lighting',evidence:'desktop_landscape frames',correction:'Add a travelling reflection across the metal',kind:'optional',formats:['desktop_landscape']}]},relevance:{summary:'',deductions:[]},productRecognition:{summary:'',deductions:[]}},issues:[]};};

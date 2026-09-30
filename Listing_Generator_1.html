@@ -13480,6 +13480,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : notSubmitted ? `${notSubmitted} sets still need to be submitted. Keep the original submission tab open.`
         : attention ? "Some jobs need attention. Open Details & actions to review them."
         : "";
+      // Every set is already with OpenAI: fewer than the limit running is the end of
+      // the batch, not a queue that failed to fill.
+      if (!waitingRetries && !notSubmitted && !session.historyTruncated && running > 0 && running < _batchRetryLimit)
+        explanation = `${explanation} Every set has been sent, so only the last ${running} run at once.`.trim();
       if (restarted && !restarting) explanation = `${explanation} ${restarted} set(s) OpenAI never started were cancelled at no cost and sent again.`.trim();
       const capacityNote = capacityStopped.length
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
