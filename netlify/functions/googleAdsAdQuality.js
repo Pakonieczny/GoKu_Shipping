@@ -12,7 +12,7 @@ const schema={type:'object',additionalProperties:false,properties:{
   issues:{type:'array',items:{type:'string'}}
 },required:['scores','categoryReviews','productRecognizable','claimsSupported','mobileReadable','issues']};
 function normalize(result){
-  if(result.categoryReviews){for(const k of Object.keys(WEIGHTS)){const c=result.categoryReviews[k];if(!c||typeof c.summary!=='string'||!c.summary.trim()||!Array.isArray(c.deductions)||c.deductions.some(d=>!Number.isFinite(d.points)||d.points<=0||!['required','optional'].includes(d.kind)||['reason','evidence','correction'].some(f=>typeof d[f]!=='string'||!d[f].trim()))||Math.abs(c.deductions.reduce((n,d)=>n+d.points,0)-(100-result.scores?.[k]))>.01)throw Error('Review must explain every deducted point for '+k);}}
+  if(result.categoryReviews){for(const k of Object.keys(WEIGHTS)){const c=result.categoryReviews[k];if(!c||typeof c.summary!=='string'||!c.summary.trim()||!Array.isArray(c.deductions)||c.deductions.some(d=>!Number.isFinite(d.points)||d.points<=0||!['required','optional'].includes(d.kind)||['reason','evidence','correction'].some(f=>typeof d[f]!=='string'||!d[f].trim()))||Math.abs(c.deductions.reduce((n,d)=>n+d.points,0)-(100-result.scores?.[k]))>.01)throw Object.assign(Error('Review must explain every deducted point for '+k),{code:'REVIEW_DEDUCTIONS'});}}
   const valid=Object.keys(WEIGHTS).every(k=>Number.isFinite(result.scores?.[k])&&result.scores[k]>=0&&result.scores[k]<=100);
   const score=valid?Math.round(Object.entries(WEIGHTS).reduce((n,[k,w])=>n+result.scores[k]*w/100,0)*100)/100:null;
   return {...result,rubric:RUBRIC,weights:WEIGHTS,target:TARGET,score,productFaithful:result.productRecognizable===true,
