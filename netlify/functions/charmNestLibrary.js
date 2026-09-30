@@ -138,12 +138,12 @@ function slim(d) {
     preview: d.outputs && d.outputs.preview ? d.outputs.preview.url : null,
     // the four files a recalled card offers, so recalling a set is one read of this list and nothing more
     outputs: d.outputs ? Object.fromEntries(["ai", "pdf", "labelled", "report"].filter(k => d.outputs[k] && d.outputs[k].url).map(k => [k, d.outputs[k].url])) : {},
-    stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, laser:d.laser || null,
+    stock: d.stock || null, poolIds: d.poolIds || [], engraving:d.engraving || {}, orderReadiness:d.orderReadiness || {}, laser:d.laser || null,
     backs: (d.backPool || []).map(bk => ({ poolId: bk.poolId || null, previewWPt:bk.previewWPt || null, previewHPt:bk.previewHPt || null, pageWPt:bk.pageWPt || null, pageHPt:bk.pageHPt || null, sheetId:bk.sheetId || d.id, invalidated:!!bk.invalidated, copy:bk.copy || null, approvedAt:bk.approvedAt || null, order: bk.order || null, sku: bk.sku || null, text: bk.text || null, lines: bk.lines || null, approvedBy: bk.approvedBy || null, verified:bk.verified || null, outputs:bk.outputs || null, capMm: bk.capMm || null, png: bk.outputs && bk.outputs.png ? bk.outputs.png.url : null, ai: bk.outputs && bk.outputs.ai ? bk.outputs.ai.url : null })),
     names: str(d.names, 2000), sources: (d.sources || []).map(s => ({ name: s.name, hash: s.hash || null })), runId: d.runId || null, page: num(d.page) || 1,
     setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || null, orders: (d.orders || []).slice(0, 500), backCount: (d.backPool || []).length, label: d.label ? { files: (d.label.files || []).map(f => ({ path: f.path, url: f.url, payload:f.payload || null, orders:f.orders || [], part:f.part || 1 })) } : null,
     // cut on the laser and marked so (op_laserDone), and the listings its pieces were bought from (the Library's search)
-    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, laserSetPending: !!d.laserSetPending, listings: (d.listings || []).slice(0, 500),
+    laserDoneAt: num(d.laserDoneAt) || null, laserDoneBy: d.laserDoneBy || null, processSeals: Readiness.processStamps(d), processReady: !!d.processReady, laserSetPending: !!d.laserSetPending, listings: (d.listings || []).slice(0, 500),
     cardStartedAt: ms(d.cardStartedAt) || ms(d.createdAt), updatedAt: ms(d.updatedAt), createdAt: ms(d.createdAt),
     // a cleanup made on the record (the pieces it took off, the green line it removed): a page whose own copy of the sheet
     // is older puts the same change on it (Cleanups, charm-nest-bridge.js). Only on a record that has one
@@ -153,7 +153,7 @@ function slim(d) {
 /* The fields of a sheet record that its list entry (slim) and its laser readiness (Readiness.sheet) read, and the lists
    filter on. A list reads only these: the rest of a record (its charms with their outlines, its placements) is most of
    its up to 900 KB, and a list of 500 sheets used to read all of it to send none of it. */
-const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt"];
+const SLIM_SHEET = ["id", "sheetId", "roseStockId", "roseCutAt", "rosePlanHash", "solidIncluded", "draft", "releaseFull", "folder", "fileBase", "saving", "dirty", "metal", "metalLabel", "day", "status", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "preview", "outputs", "stock", "poolIds", "backPool", "backs", "names", "sources", "runId", "page", "setId", "setSeq", "sheetIndex", "orders", "label", "archived", "laserDoneAt", "laserDoneBy", "listings", "cardStartedAt", "cleanup", "createdAt", "updatedAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
 /** Readiness counts a record's placements where it has no placedCount (Readiness.sheet): read for those alone. */
 async function withPlacements(rows) {
   const want = rows.filter(([, d]) => !(+d.placedCount)), byId = new Map(want);
@@ -191,20 +191,58 @@ async function filingRecords(records) {
 }
 async function readinessRecords(records) {
   records=await filingRecords(records);
-  const runIds=[...new Set(records.map(s=>s.runId).filter(isId))], runs=new Map();
-  for(let i=0;i<runIds.length;i+=100) {
-    const docs=await db.getAll(...runIds.slice(i,i+100).map(id=>col(RUNS).doc(id)));
-    docs.forEach(d=>{if(d.exists)runs.set(d.id,d.data());});
-  }
-  // A run's line archive is read only for a run whose sheets name a copy its record no longer holds.
-  const decided=new Map();
-  await Promise.all([...runs].map(async([id,run])=>decided.set(id,await decisionsOfRun(id,run,records.filter(s=>s.runId===id).flatMap(s=>s.poolIds || [])))));
-  return records.map(s=>{
-    const engraving=decided.get(s.runId) || {};
-    const record={...s,engraving:Object.fromEntries((s.poolIds || []).map(id=>[id,engraving[id] || {needed:true,state:'unknown',approved:false}]))};
-    record.laser=Readiness.sheet(record);return record;
-  });
+  await productionReadiness(records);
+  return records.map(s=>({...s,laser:Readiness.sheet(s)}));
 }
+// Verify whole orders from their current saved lines, including archived lines and copies on another sheet.
+// The caller's transaction reads the live run and every dependent sheet before it writes a seal or completion.
+async function productionReadiness(records,{tx=null}={}) {
+  const get=ref=>tx?tx.get(ref):ref.get(),runs=new Map(),lines=new Map(),wanted=new Set(records.flatMap(Readiness.orderIds));
+  for(const id of [...new Set(records.map(s=>s.runId).filter(isId))]){
+    const snap=await get(col(RUNS).doc(id)),run=snap.exists?await withLiveLines(id,snap.data()):null;
+    runs.set(id,run || {});
+    const archived=run?.lineArchive?await archivedLines(id,{orders:wanted}):{lines:{}};
+    for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(wanted.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
+  }
+  const evidence=new Map(records.map(s=>[s.id || s.sheetId,s]));
+  const present=new Set(records.flatMap(Readiness.idsOf)),missingOrders=[...new Set([...lines.values()].filter(l=>(l.poolIds || []).some(id=>!present.has(id))).map(l=>l.orderId))];
+  for(let i=0;i<missingOrders.length;i+=30){
+    const snap=await get(col(SHEETS).where('orders','array-contains-any',missingOrders.slice(i,i+30)).select(...SLIM_SHEET));
+    for(const d of snap.docs)if(!d.data().archived && !evidence.has(d.id))evidence.set(d.id,{...d.data(),id:d.id});
+  }
+  // A dependent sheet can also carry other orders. Read their engraving evidence too;
+  // otherwise its plain pieces would incorrectly become "unknown" just because this view shows another set.
+  const dependencies=[...evidence.values()].filter(s=>!records.includes(s));
+  for(const id of [...new Set(dependencies.map(s=>s.runId).filter(isId))]){
+    if(!runs.has(id)){const snap=await get(col(RUNS).doc(id));runs.set(id,snap.exists?await withLiveLines(id,snap.data()):{});}
+    const run=runs.get(id),orders=new Set(dependencies.filter(s=>s.runId===id).flatMap(Readiness.orderIds));
+    const archived=run?.lineArchive?await archivedLines(id,{orders}):{lines:{}};
+    for(const [key,l] of Object.entries({...archived.lines,...run?.lines}))if(orders.has(String(l.orderId || key.split('_')[0])))lines.set(key,{...l,key,orderId:String(l.orderId || key.split('_')[0])});
+  }
+  // No-design exemptions are explicit in new records; an older committed chain may only name its approved SKU.
+  const candidates=[...lines.values()].filter(l=>!l.poolIds?.length && !l.noDesign && ['committed','written','labelled'].includes(l.state));
+  if(candidates.length){
+    const snap=await get(db.collection(NODESIGN)),rules={skus:[],patterns:[]};
+    for(const d of snap.docs){const x=d.data();if(x.sku)rules.skus.push(x.sku);if(x.pattern)rules.patterns.push(x.pattern);}
+    for(const l of candidates){
+      const line={sku:l.sku,title:l.snap?.title || '',variations:(l.snap?.vars || []).map(v=>{const [name,value]=v.split('␟');return {name,value};})};
+      if(OrderRules.isNoDesign(l.sku || line.title,rules) || OrderRules.specialOf(line)?.notCut){l.noDesign=true;continue;}
+      // A special item completed by hand has its own permanent seal, and is not a missing charm.
+      const custom=lineKeyOk(l.key)?await get(col(CUSTOM).doc(l.key)):null;
+      if(custom?.exists && custom.data().state!=='open'){l.noDesign=true;continue;}
+      if(lineKeyOk(l.key)){
+        const saved=await get(db.collection(require('./_charmNestCustomRead').COLL).doc(l.key)),x=saved.exists?saved.data():{};
+        if(OrderRules.specialOf(line,{read:x.reads?.[x.latest],decided:x[PREFIX?'decidedSandbox':'decided']})?.notCut)l.noDesign=true;
+      }
+    }
+  }
+  const decisions=Readiness.decisions([...lines.values()]);
+  for(const s of evidence.values())s.engraving=Object.fromEntries(Readiness.idsOf(s).map(id=>[id,decisions[id] || {needed:true,state:'unknown',approved:false}]));
+  const orders=Readiness.orderReports([...lines.values()],[...evidence.values()]);
+  for(const s of records)s.orderReadiness=Object.fromEntries(Readiness.orderIds(s).map(id=>[id,orders[id] || {ready:false,why:'Order readiness has not been verified'}]));
+  return records;
+}
+
 /* A run's record is one document and used to fill up with every line the run ever took. The page now moves the lines of
    an order the run is done with to the run's line archive (op_runArchive) and leaves them out of the record, which then
    says so (lineArchive). Whoever still wants such a line reads the archive under the record: the record's lines are
@@ -313,12 +351,74 @@ async function op_laserStatus(b) {
   const ids=[...new Set((b.sheetIds || []).filter(isId))].slice(0,500), records=[];
   for(let i=0;i<ids.length;i+=100){const docs=await db.getAll(...ids.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
   const setIds=[...new Set(records.map(s=>s.setId).concat(b.setIds || []).filter(isId))].slice(0,500),sets=[];
-  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs)sets.push({setId:d.id,sheetIds:d.exists?(d.data().sheetIds || []):[],laserDoneAt:d.exists?(num(d.data().laserDoneAt) || null):null});}
+  for(let i=0;i<setIds.length;i+=100){const docs=await db.getAll(...setIds.slice(i,i+100).map(id=>col(SETS).doc(id)));for(const d of docs){const s=d.exists?d.data():{};sets.push({setId:d.id,sheetIds:s.sheetIds || [],laserDoneAt:num(s.laserDoneAt) || null,laserDoneBy:s.laserDoneBy || null,processSeals:Readiness.processStamps(s),processReady:!!s.processReady});}}
   // The Sheets view may show only one metal or one member in the viewport. Read its
   // siblings too, so it follows the same complete-set gate as the Sets view.
   const have=new Set(records.map(s=>s.id)),missing=[...new Set(sets.flatMap(s=>s.sheetIds))].filter(id=>isId(id)&&!have.has(id)).slice(0,Math.max(0,500-records.length));
   for(let i=0;i<missing.length;i+=100){const docs=await db.getAll(...missing.slice(i,i+100).map(id=>col(SHEETS).doc(id)));for(const d of docs)if(d.exists&&!d.data().archived)records.push({...d.data(),id:d.id});}
-  return {sheets:(await readinessRecords(records)).map(slim),sets,checkedAt:Date.now()};
+  const added=[];
+  // Only the active production view asks to record transitions. Ordinary status reads stay read-only.
+  if(b.recordSeals===true){
+    const groups=new Map(records.map(s=>s.setId && !s.draft && s.solidIncluded!==false?['set:'+s.setId,{kind:'set',id:s.setId}]:['sheet:'+s.id,{kind:'sheet',id:s.id}]));
+    for(const g of groups.values()){
+      const result=await recordProcessReadiness(g.kind,g.id,str(b.by,80).trim() || 'System');
+      for(const p of result.records){const target=p.kind==='set'?sets.find(s=>s.setId===p.id):records.find(s=>s.id===p.id);if(target)Object.assign(target,p.patch);}
+      added.push(...result.added);
+    }
+  }
+  return {sheets:(await readinessRecords(records)).map(slim),sets,added,checkedAt:Date.now()};
+}
+
+// All process seals are append-only. No trimming, replacement on re-completion, or client-written history.
+function processEvent(how,at,by,n){return {id:how+'-'+at+'-'+n,how,at,by};}
+function processRecord(kind,id,d){return {kind,id,patch:{processSeals:Readiness.processStamps(d),processReady:!!d.processReady,laserDoneAt:num(d.laserDoneAt) || null,laserDoneBy:d.laserDoneBy || null}};}
+async function processHistory(kind,id,d){
+  if(Array.isArray(d.processSeals))return d.processSeals;
+  // Recover earlier completions even when the old Undo removed laserDoneAt. Each order on a sheet
+  // carried the same recorded event; one press becomes one seal, with its original signer and time.
+  const seals=Readiness.processStamps(d);let after=null;
+  for(;;){
+    let q=db.collection(PREFIX+'Order_Timeline').where(kind==='set'?'setId':'sheetId','==',id).orderBy('__name__').limit(500);
+    if(after)q=q.startAfter(after);
+    const snap=await q.get();
+    for(const doc of snap.docs){const e=doc.data();if(e.type!=='laserDone' || !num(e.at) || (kind==='set' && e.data?.marked!=='set'))continue;
+      if(!seals.some(s=>s.how==='laserDone' && s.at===num(e.at)))seals.push({id:'legacy-done-'+num(e.at),how:'laserDone',at:num(e.at),by:e.by || '',legacy:true});
+    }
+    if(snap.size<500)break;after=snap.docs.at(-1).id;
+  }
+  // Preserve the blue badges that predate timestamped seals, even when the stricter whole-order
+  // gate now returns their sheets to In progress. Their missing time and signer stay explicit.
+  const oldReady=kind==='sheet' && ms(d.createdAt)>0 && ms(d.createdAt)<Date.UTC(2026,8,30,18,21) && Readiness.sheet(d,{physicalOnly:true}).ready;
+  if((oldReady || seals.some(s=>s.how==='laserDone')) && !seals.some(s=>s.how==='laserReady'))seals.push({id:'legacy-ready',how:'laserReady',at:0,by:'',legacy:true});
+  return seals.sort((a,b)=>a.at-b.at);
+}
+async function processDecisions(tx,records){await productionReadiness(records,{tx});}
+
+async function recordProcessReadiness(kind,id,by){
+  const at=Date.now();
+  return db.runTransaction(async tx=>{
+    const ref=col(kind==='set'?SETS:SHEETS).doc(id),own=await tx.get(ref);
+    if(!own.exists)return {records:[],added:[]};
+    const d=own.data(),ids=kind==='set'?[...new Set(d.sheetIds || [])].filter(isId):[id];
+    if(ids.length>300)return {records:[],added:[]};
+    const docs=kind==='set' && ids.length?await tx.getAll(...ids.map(sid=>col(SHEETS).doc(sid)),{fieldMask:SLIM_SHEET.concat(['placements'])}):kind==='sheet'?[own]:[];
+    const sheets=docs.filter(x=>x.exists && !x.data().archived).map(x=>({...x.data(),id:x.id}));
+    await processDecisions(tx,sheets);
+    const recovered=new Map();for(const s of sheets)recovered.set('sheet:'+s.id,await processHistory('sheet',s.id,s));
+    if(kind==='set')recovered.set('set:'+id,await processHistory('set',id,d));
+    const records=[],added=[];
+    const save=(k,key,old,ready)=>{
+      const processSeals=recovered.get(k+':'+key).slice();
+      const oldBadge=!Array.isArray(old.processSeals) && processSeals.some(s=>s.id==='legacy-ready') && !processSeals.some(s=>s.how==='laserDone');
+      if(ready && !old.processReady && !oldBadge){const event=processEvent('laserReady',at,by,processSeals.length);processSeals.push(event);added.push({kind:k,id:key,eventId:event.id});}
+      const patch={processSeals,processReady:ready};
+      if(!Array.isArray(old.processSeals) || !!old.processReady!==ready || JSON.stringify(old.processSeals)!==JSON.stringify(processSeals))tx.set(col(k==='set'?SETS:SHEETS).doc(key),{...patch,updatedAt:FV.serverTimestamp()},{merge:true});
+      records.push(processRecord(k,key,{...old,...patch}));
+    };
+    for(const s of sheets)save('sheet',s.id,s,!num(s.laserDoneAt) && Readiness.sheet(s).ready);
+    if(kind==='set')save('set',id,d,!num(d.laserDoneAt) && sheets.every(s=>s.setId===id) && Readiness.laserGroup(d,sheets).ready);
+    return {records,added};
+  });
 }
 
 // Photo preparation is explicit and budgeted. Ordinary thumbnail reads are cache-only,
@@ -427,7 +527,7 @@ async function op_putSheet(b) {
   const doc = Object.assign({}, s, { id: s.id, archived: false, updatedAt: FV.serverTimestamp() });
   delete doc.log;
   // a sheet is marked cut only by op_laserDone: a save of the open run's copy of it keeps the mark it has
-  delete doc.laserDoneAt; delete doc.laserDoneBy;
+  delete doc.laserDoneAt; delete doc.laserDoneBy; delete doc.processSeals; delete doc.processReady;
   // the listings its pieces were bought from, as the Library's listing search reads them (array-contains)
   if (Object.prototype.hasOwnProperty.call(s, "listings")) doc.listings = [...new Set((Array.isArray(s.listings) ? s.listings : []).map(v => String(v)).filter(v => /^\d{1,24}$/.test(v)))].slice(0, 500);
   // Physical stock and immutable cuts are only changed through transactional stock operations.
@@ -1305,19 +1405,13 @@ async function op_setUpdate(b) {
       if(!ids.length)throw new Error('A set without sheets is not ready for laser');
       const docs=[];for(const sheetId of ids)docs.push(await tx.get(col(SHEETS).doc(sheetId)));
       const records=docs.filter(d=>d.exists).map(d=>({...d.data(),id:d.id}));
-      const runIds=[...new Set(records.map(d=>d.runId).filter(Boolean))], decided=new Map();
-      for(const runId of runIds){
-        const run=await tx.get(col(RUNS).doc(runId)),data=run.exists?run.data():{};
-        // the lines of orders the run is done with are in its line archive, read outside the transaction: a part never changes
-        decided.set(runId,await decisionsOfRun(runId,data,records.filter(s=>s.runId===runId).flatMap(s=>s.poolIds || [])));
-      }
-      for(const record of records)record.engraving=decided.get(record.runId) || {};
+      await productionReadiness(records,{tx});
       if(records.some(s=>s.setId!==id) || !Readiness.set(next,records).ready)throw new Error('Set cannot be completed: every sheet needs approved engraving, verified back files, front files and QR labels');
     }
     // each field the patch names replaces the stored one whole, and a field it leaves out stays as it was: a set with merge
     // merged a map into the stored one key by key, so an order taken off a set stayed on its record for good
     const doc=Object.assign({}, patch,{setId:id,updatedAt:FV.serverTimestamp()});
-    delete doc.laserDoneAt;delete doc.laserDoneBy;   // written by op_laserDone alone
+    delete doc.laserDoneAt;delete doc.laserDoneBy;delete doc.processSeals;delete doc.processReady;   // process records are server-owned
     if(old.exists)tx.update(ref,doc);else tx.set(ref,doc);
   });
   return { ok: true };
@@ -1523,10 +1617,10 @@ async function op_runList(b) {
    The answer says what it read (scanned), the days it covered (window) and whether a cap cut it short (truncated).
    Every query is a single-field equality, range or array-contains: no composite index is needed. */
 const HISTORY_CAP = { sets: 300, sheets: 600, runs: 300, parts: 3000 }, HISTORY_PART_BYTES = 16000000;
-const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders", "laserDoneAt", "laserDoneBy"];
+const HISTORY_SET = ["seq", "day", "runId", "status", "updatedAt", "materials", "orders", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
 // (label: the Sets window says of each sheet whether its QR label is made — Paul, 27 Sep: "add all the appropriate
 // functionality to this pop-up"; the label record is a few small entries, not the sheet's charms)
-const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "label", "cardStartedAt", "createdAt"];
+const HISTORY_SHEET = ["id", "setId", "setSeq", "runId", "day", "metal", "metalLabel", "status", "orders", "sheetIndex", "page", "updatedAt", "archived", "folder", "fileBase", "saving", "draft", "releaseFull", "endedBy", "charmCount", "placedCount", "rejectCount", "density", "freePt2", "verification", "outputs", "names", "poolIds", "backPool", "solidIncluded", "sources", "stock", "laserDoneAt", "laserDoneBy", "listings", "label", "cardStartedAt", "createdAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
 const HISTORY_RUN = ["runId", "setId", "seq", "day", "status", "step", "sheets", "lineArchive", "liveLines", "errors", "stoppedBy", "orders", "createdAt", "updatedAt"];
 const dayOf = x => (isDay(x && x.day) ? x.day : "");
 const dayShift = (day, n) => { const d = new Date(day + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -1660,13 +1754,13 @@ async function op_history(b) {
    set's record, which is completed with its last sheet and taken back with any of them. Only op_laserDone writes the two
    fields (op_putSheet and op_setUpdate leave them out of what they write), so an open run saving its copy of a sheet
    again keeps its mark. Every query below is on one field (laserDoneAt, orders, listings, day, runId): no composite index. ── */
-const DONE_SHEET = ["id", "metal", "metalLabel", "day", "setId", "setSeq", "sheetIndex", "page", "folder", "fileBase", "orders", "placedCount", "charmCount", "density", "outputs", "laserDoneAt", "laserDoneBy", "archived", "draft", "solidIncluded"];
+const DONE_SHEET = ["id", "metal", "metalLabel", "day", "setId", "setSeq", "sheetIndex", "page", "folder", "fileBase", "orders", "placedCount", "charmCount", "density", "outputs", "laserDoneAt", "laserDoneBy", "archived", "draft", "solidIncluded", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
 const DONE_FIND = DONE_SHEET.concat(["names", "sources", "listings", "runId"]);
-const DONE_SET = ["setId", "seq", "day", "runId", "name", "sheetIds", "materials", "status", "laserDoneAt", "laserDoneBy"];
-const DONE_MEMBER = ["metal", "sheetIndex", "page", "density", "placedCount", "orders", "outputs", "archived", "laserDoneAt"];
+const DONE_SET = ["setId", "seq", "day", "runId", "name", "sheetIds", "materials", "status", "laserDoneAt", "laserDoneBy", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
+const DONE_MEMBER = ["metal", "sheetIndex", "page", "density", "placedCount", "orders", "outputs", "archived", "laserDoneAt", "processSeals", "processReady", "archivedLaserDoneAt", "archivedLaserDoneBy"];
 const DONE_SCAN = { sheets: 800, sets: 240 };          // the records one call of a search or a metal may read
 // an archived sheet's laser mark, kept aside where the one-field Completed count and list do not read it (doneCounts)
-const archivedMark = d => ({ laserDoneAt: FV.delete(), laserDoneBy: FV.delete(), archivedLaserDoneAt: num(d.laserDoneAt), archivedLaserDoneBy: d.laserDoneBy || null });
+const archivedMark = d => ({ processSeals: Readiness.processStamps(d), processReady: false, laserDoneAt: FV.delete(), laserDoneBy: FV.delete(), archivedLaserDoneAt: num(d.laserDoneAt), archivedLaserDoneBy: d.laserDoneBy || null });
 const METAL_CODE = { gold: "GF", silver: "SS", rose: "RG", gold10k: "10K", gold14k: "14K" };
 const isMetal = m => Object.prototype.hasOwnProperty.call(METAL_CODE, String(m || ""));
 const previewOf = d => (d.outputs && d.outputs.preview && d.outputs.preview.url) || null;
@@ -1675,14 +1769,14 @@ const foldText = s => String(s == null ? "" : s).toLowerCase().replace(/[._\-/·
 function doneSheetRow(id, d) {
   return { kind: "sheet", id, metal: d.metal || null, metalLabel: d.metalLabel || null, day: d.day || null, setId: d.setId || null, setSeq: num(d.setSeq) || null, sheetIndex: num(d.sheetIndex) || num(d.page) || 1,
     fileBase: d.fileBase || d.folder || null, draft: !!d.draft || d.solidIncluded === false, orders: (d.orders || []).length, pieces: num(d.placedCount), charms: num(d.charmCount), fill: num(d.density),
-    preview: previewOf(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
+    preview: previewOf(d), processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
 function doneSetRow(id, d, members) {
   const live = members.filter(m => m && !m.archived), orders = new Set(live.flatMap(m => (m.orders || []).map(String)));
   return { kind: "set", setId: id, seq: num(d.seq) || null, day: d.day || null, name: d.name || null, materials: (d.materials && d.materials.length ? d.materials : [...new Set(live.map(m => m.metal))]).filter(Boolean), sheetIds: d.sheetIds || [], status: d.status || null,
     sheets: live.map(m => ({ id: m.id, metal: m.metal || null, sheetIndex: num(m.sheetIndex) || num(m.page) || 1, fill: num(m.density), pieces: num(m.placedCount), orders: (m.orders || []).length, preview: previewOf(m) })).sort((a, b) => String(a.metal).localeCompare(String(b.metal)) || a.sheetIndex - b.sheetIndex),
     orders: orders.size, pieces: live.reduce((n, m) => n + num(m.placedCount), 0), fill: live.length ? live.reduce((n, m) => n + num(m.density), 0) / live.length : 0,
-    at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
+    processSeals: Readiness.processStamps(d), at: num(d.laserDoneAt) || null, by: d.laserDoneBy || null };
 }
 const sheetHay = (id, d) => [id, d.fileBase, d.folder, d.names, d.day, d.metal, d.metalLabel, METAL_CODE[d.metal], d.setId, d.setSeq ? "set " + d.setSeq : "", "sheet " + (num(d.sheetIndex) || num(d.page) || 1), (d.orders || []).join(" "), (d.listings || []).join(" "), d.laserDoneBy, (d.sources || []).map(s => s && s.name).join(" "), d.laserDoneAt ? new Date(num(d.laserDoneAt)).toISOString().slice(0, 10) : ""].join(" ");
 /** Each set's sheets, read for what a Completed row shows (and a search reads): [[setId, [sheet…]]]. */
@@ -1727,27 +1821,40 @@ async function op_laserDone(b) {
       const records=members.filter(m=>m.exists && !m.data().archived).map(m=>({...m.data(),id:m.id}));
       if (set && (!ids.length || members.some(m=>!m.exists || m.data().archived) || (own && !ids.includes(id)))) return {error:"The complete set must be present in Laser cutting first",status:409};
       if (!set && own) records.push({...own.data(),id});
-      const pending=records.filter(s=>!(num(s.laserDoneAt)>0)), runIds=[...new Set(pending.map(s=>s.runId).filter(isId))],decided=new Map();
-      for(const runId of runIds){const run=await tx.get(col(RUNS).doc(runId));decided.set(runId,await decisionsOfRun(runId,run.exists?run.data():{},pending.filter(s=>s.runId===runId).flatMap(s=>s.poolIds || [])));}
-      for(const s of pending)s.engraving=decided.get(s.runId) || {};
+      await processDecisions(tx,records);
+      const pending=records.filter(s=>!num(s.laserDoneAt)),blocked=records.flatMap(Readiness.orderBlockers);
+      if(blocked.length)return {error:`Not ready for Laser cutting: order ${blocked[0].id} — ${blocked[0].why}`,status:409};
       if (!records.length || pending.some(s=>!Readiness.sheet(s).ready)) return {error:"Not ready for Laser cutting: every remaining sheet needs approved engraving, verified files and QR labels",status:409};
     }
     const state = new Map(members.filter(m => m.exists && !m.data().archived).map(m => [m.id, num(m.data().laserDoneAt) > 0]));
-    // every read is made: the writes follow
-    const touched = [], write = ref => tx.set(ref, Object.assign({}, mark, { updatedAt: FV.serverTimestamp() }), { merge: true });
-    if (kind === "sheet") { if (!done || !(num(own.data().laserDoneAt)>0)) { write(col(SHEETS).doc(id)); touched.push(id); } if (state.has(id) || !set) state.set(id, done); }
-    else for (const [sid, was] of state) if (!done || !was) { write(col(SHEETS).doc(sid)); touched.push(sid); state.set(sid, done); }
+    const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
+    // every read is made: the writes follow. Reopening changes the current flag, never the seal history.
+    const touched = [], process = [], added = [], recovered=new Map();
+    for(const [sid,s] of facts)recovered.set('sheet:'+sid,await processHistory('sheet',sid,s));
+    if(setRef)recovered.set('set:'+setRef.id,await processHistory('set',setRef.id,set));
+    const write = (k,key,old,completed) => {
+      const processSeals=recovered.get(k+':'+key).slice();
+      const add=how=>{const event=processEvent(how,at,by,processSeals.length);processSeals.push(event);added.push({kind:k,id:key,eventId:event.id});};
+      if(completed!==false && !old.processReady && !num(old.laserDoneAt))add('laserReady');
+      if(completed===true)add('laserDone');
+      const current=completed==null?{}:completed?{laserDoneAt:at,laserDoneBy:by}:mark;
+      tx.set(col(k==='set'?SETS:SHEETS).doc(key),{...current,processSeals,processReady:completed==null,updatedAt:FV.serverTimestamp()},{merge:true});
+      process.push(processRecord(k,key,{...old,...(completed==null?{}:{laserDoneAt:completed?at:null,laserDoneBy:completed?by:null}),processSeals,processReady:completed==null}));
+    };
+    if (kind === "sheet") { if (!done || !(num(own.data().laserDoneAt)>0)) { write('sheet',id,own.data(),done); touched.push(id); } if (state.has(id) || !set) state.set(id, done); }
+    else for (const [sid, was] of state) if (!done || !was) { write('sheet',sid,facts.get(sid),done); touched.push(sid); state.set(sid, done); }
     let setDone = null, setChanged = false;
     if (setRef) {
       const all = state.size > 0 && state.size === ids.length && [...state.values()].every(Boolean), was = num(set.laserDoneAt) > 0;
       setDone = all; setChanged = setDone !== was;
-      if (setDone !== was) tx.set(setRef, Object.assign({}, setDone ? { laserDoneAt: at, laserDoneBy: by || set.laserDoneBy || null } : { laserDoneAt: FV.delete(), laserDoneBy: FV.delete() }, { updatedAt: FV.serverTimestamp() }), { merge: true });
+      if (setDone !== was) write('set',setRef.id,set,setDone);
+      else if(!was && done && !set.processReady)write('set',setRef.id,set,undefined);
+      else if(!done && set.processReady)write('set',setRef.id,set,false);
     }
-    const facts = new Map(members.filter(m => m.exists).map(m => [m.id, m.data()])); if (own) facts.set(id, own.data());
     // (a sheet saved without its `orders` list still names them in its pieces' pool ids, "rid_tid_copy")
     const ordersOf = d => Array.isArray(d.orders) && d.orders.length ? d.orders : (Array.isArray(d.poolIds) ? d.poolIds : []).map(orderOfKey).filter(Boolean);
     const marks = touched.map(sid => { const d = facts.get(sid) || {}; return { sheetId: sid, was: num(d.laserDoneAt), wasBy: d.laserDoneBy || "", orders: ordersOf(d), d }; });
-    return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks };
+    return { ok: true, kind, id, done, at: done ? at : null, by: done ? by : null, sheetIds: touched, setId: setRef ? setRef.id : null, setDone, setChanged, marks, process, added };
   });
   if (res.error) return res;
   const marks = res.marks || []; delete res.marks;
@@ -2089,7 +2196,7 @@ async function op_customReopen(b) {
 async function op_customReadGet(b) { return require("./_charmNestCustomRead").lookup(db, b.items, !!PREFIX); }
 async function op_customDecide(b) { return require("./_charmNestCustomRead").decide(db, FV, b, !!PREFIX); }
 
-const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel});
+const RoseStock = require("./_charmNestRoseStock")({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel});
 /* ── cancelled orders (Paul, 25 Sep 19:05): an order the operator cancels leaves every screen of the sorter, and one
    record of it is kept here as history. The sorter reads the ids to keep such an order out of every later pull.
    Since 28 Sep (A1 · A6) Etsy's own cancels land in the same record (by "Etsy", source "etsy", etsyStatus), written by

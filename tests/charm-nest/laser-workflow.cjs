@@ -9,7 +9,7 @@ function seed(srv) {
   const lines={};
   for(const [i,id] of ['cut-sheet','ready-sheet','pending-sheet'].entries()) {
     const order=String(3700000100+i),pool=order+'_1_1';
-    lines[order+'_1']={orderId:order,poolIds:[pool],engraveCandidate:false};
+    lines[order+'_1']={orderId:order,state:'written',quantity:1,poolIds:[pool],engraveCandidate:false};
     st.put(S,id,{id,setId:'set-fixture',setSeq:1,sheetIndex:i+1,runId:'run-fixture',metal:['silver','gold','gold14k'][i],day,status:'complete',placedCount:1,charmCount:1,density:.72,stock:{wIn:6,hIn:4.5},poolIds:[pool],orders:[order],listings:[String(1718000+i)],verification:{ok:true},outputs:{ai:{path:id+'.ai',url:srv.sorterOrigin+'/'+id+'.ai'},preview:{path:id+'.png',url:image}},label:{files:[{path:id+'-qr.png',url:image,payload:order,orders:[order]}]},updatedAt:ts,createdAt:ts,...(i===0?{laserDoneAt:now-10000,laserDoneBy:'Paul'}:{}),...(i===2?{verification:{ok:false}}:{})});
   }
   st.put(RUN,'run-fixture',{runId:'run-fixture',lines});

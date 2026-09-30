@@ -2,7 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const R=require('../../charm-nest-readiness.js');
 const clone=x=>JSON.parse(JSON.stringify(x));
 const back=id=>({poolId:id,sheetId:'sheet1',approvedAt:10,approvedBy:'Paul',verified:{geometry:{ok:true},file:{ok:true}},outputs:{ai:{path:id+'.ai',url:'https://example.com/'+id+'.ai'}}});
-const ready={id:'sheet1',setId:'set1',runId:'run1',status:'complete',poolIds:['copy1','copy2'],placedCount:2,verification:{ok:true},outputs:{ai:{url:'https://example.com/front.ai'},preview:{url:'https://example.com/front.png'}},orders:['order1'],label:{files:[{path:'qr.png',url:'https://example.com/qr.png',payload:'order1',orders:['order1']}]},backPool:[back('copy1'),back('copy2')]};
+const ready={id:'sheet1',setId:'set1',runId:'run1',status:'complete',poolIds:['copy1','copy2'],placedCount:2,verification:{ok:true},outputs:{ai:{url:'https://example.com/front.ai'},preview:{url:'https://example.com/front.png'}},orders:['order1'],orderReadiness:{order1:{ready:true}},label:{files:[{path:'qr.png',url:'https://example.com/qr.png',payload:'order1',orders:['order1']}]},backPool:[back('copy1'),back('copy2')]};
 assert.equal(R.sheet(ready).ready,true);
 const pending=clone(ready);pending.backPool=[];assert.equal(R.sheet(pending).waiting,2);assert.equal(R.sheet(pending).ready,false,'solver complete never implies approval');
 pending.engraving={copy1:{needed:true,state:'approved',approved:true}};assert.equal(R.sheet(pending).approved,1);assert.equal(R.sheet(pending).saving,1);assert.equal(R.sheet(pending).ready,false,'approval alone cannot release');
@@ -17,10 +17,10 @@ assert.deepEqual(R.decisions([{state:'gone',poolIds:['g'],engrave:{needed:true,s
 assert.deepEqual(R.decisions([{state:'gone',poolIds:['s'],engrave:{needed:true,state:'written',approved:true}}]).s,{needed:true,state:'written',approved:true});
 // Exercise the real server transaction gate and hydration with a deterministic store.
 const source=fs.readFileSync('netlify/functions/charmNestLibrary.js','utf8');
-const data=new Map([['sheets/sheet1',ready],['sets/set1',{setId:'set1',sheetIds:['sheet1'],status:'open'}],['runs/run1',{lines:{}}]]);
+const data=new Map([['sheets/sheet1',ready],['sets/set1',{setId:'set1',sheetIds:['sheet1'],status:'open'}],['runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1']},b:{orderId:'order1',state:'written',poolIds:['copy2']}}}]]);
 let writes=0;
-const snap=ref=>({id:ref.split('/')[1],exists:data.has(ref),data:()=>clone(data.get(ref))});
-const context=vm.createContext({Readiness:R,str:String,num:Number,isId:()=>true,SETS:'sets',SHEETS:'sheets',RUNS:'runs',col:n=>({doc:id=>n+'/'+id}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>snap(ref),set:(ref,patch)=>{writes++;data.set(ref,{...data.get(ref),...patch});},update:(ref,patch)=>{writes++;data.set(ref,{...data.get(ref),...patch});}}),getAll:async(...refs)=>refs.filter(x=>typeof x==='string').map(snap)}});
+const snap=ref=>({id:ref.path.split('/')[1],exists:data.has(ref.path),data:()=>clone(data.get(ref.path))});
+const context=vm.createContext({Readiness:R,str:String,num:Number,isId:()=>true,SETS:'sets',SHEETS:'sheets',RUNS:'runs',col:n=>({doc:id=>({path:n+'/'+id,get:async()=>snap({path:n+'/'+id})})}),FV:{serverTimestamp:()=>100},db:{runTransaction:async fn=>fn({get:async ref=>snap(ref),set:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});},update:(ref,patch)=>{writes++;data.set(ref.path,{...data.get(ref.path),...patch});}}),getAll:async(...refs)=>refs.filter(x=>x.path).map(snap)}});
 vm.runInContext(source.slice(source.indexOf('async function op_setUpdate'),source.indexOf('async function op_setGet')),context);
 vm.runInContext(source.slice(source.indexOf('async function filingRecords'),source.indexOf('async function op_laserStatus')),context);
 (async()=>{
@@ -28,7 +28,7 @@ vm.runInContext(source.slice(source.indexOf('async function filingRecords'),sour
  data.get('sheets/sheet1').backPool=[];
  await assert.rejects(context.op_setUpdate({setId:'set1',patch:{status:'complete'}}),/cannot be completed/);assert.equal(writes,1,'failed gate never writes completion');
  const records=await context.readinessRecords([data.get('sheets/sheet1')]);assert.equal(records[0].laser.waiting,2);
- data.set('runs/run1',{lines:{a:{poolIds:['copy1'],engrave:{needed:false,state:'none',approved:true}}}});
+ data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engrave:{needed:false,state:'none',approved:true}}}});
  const hydrated=await context.readinessRecords([data.get('sheets/sheet1')]);assert.equal(hydrated[0].laser.plain,1);assert.equal(hydrated[0].laser.waiting,1);
  // A line with nothing to engrave reads as plain on the server too, before its engraving check has run. The page let a
  // set with such a line commit at the station, and the server then refused to record the set as complete.
@@ -38,11 +38,11 @@ vm.runInContext(source.slice(source.indexOf('async function filingRecords'),sour
  const [,plainLine]=lines.lineRecord(row({engraveCandidate:false,designSku:'BR-1',material:'rose',quantity:1}));
  assert.deepEqual(R.decisions([plainLine]).copy2,R.decisions([row({engraveCandidate:false})]).copy2,'the page and the server read the line alike');
  data.get('sheets/sheet1').backPool=[back('copy1')];
- data.set('runs/run1',{lines:{a:{poolIds:['copy1'],engrave:{needed:true,state:'written',approved:true}},b:plainLine}});
+ data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engrave:{needed:true,state:'written',approved:true}},b:plainLine}});
  await context.op_setUpdate({setId:'set1',patch:{status:'complete'}});assert.equal(writes,2,'a set with a plain line not yet checked completes');
  for(const b of [{...plainLine,engraveCandidate:true},{...plainLine,engraveCandidate:undefined}]){
-   data.set('runs/run1',{lines:{a:{poolIds:['copy1'],engrave:{needed:true,state:'written',approved:true}},b}});
+   data.set('runs/run1',{lines:{a:{orderId:'order1',state:'written',poolIds:['copy1'],engrave:{needed:true,state:'written',approved:true}},b}});
    await assert.rejects(context.op_setUpdate({setId:'set1',patch:{status:'complete'}}),/cannot be completed/,'a line to engrave, or one not read yet, still waits');
  }
- console.log('Laser readiness OK: per-copy counts, all five gates, exclusions, missing sheets, server completion guard and run hydration, plain lines read alike on the page and the server');
+ console.log('Laser readiness OK: per-copy counts, physical and whole-order gates, exclusions, missing sheets, server completion guard and run hydration, plain lines read alike on the page and the server');
 })().catch(e=>{console.error(e);process.exitCode=1;});

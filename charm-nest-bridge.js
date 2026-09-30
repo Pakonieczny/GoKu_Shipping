@@ -964,7 +964,7 @@ const Orders = window.Orders = (() => {
       engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, text: row.engrave.text || null } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
-      engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null,
+      engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign:!!row.spec?.noDesign,
       changePending:!!row.changePending,repoolChanged:!!row.repoolChanged,arrivedAt: row.arrivedAt || 0, createTs: o.createTs || 0, materialOverride: row.materialOverride || null, sizeOverride: row.sizeOverride || null, problems: (row.problems || []).map(p => p.kind), updateTs: o.updateTs, orderId: o.receiptId, transactionId: l.transactionId,
       snap: { title: cap(l.title, 160), listingId: cap(l.listingId, 24), metalKey: cap(l.metalKey, 24), metalLabel: cap(l.metalLabel, 40),
         orderNumber: cap(o.orderNumber, 24), buyer: cap(o.buyer && o.buyer.name, 60), shipBy: +o.shipBy || 0, isGift: !!o.isGift,
@@ -5097,7 +5097,7 @@ const Engrave = window.Engrave = (() => {
 
 /* ═══ 22 · Sets — production evidence and release ═══ */
 const LaserReview = window.LaserReview = (()=>{
-  const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0;
+  const R=window.CharmNestReadiness, records=new Map(), sets=new Map();let frame=0,polling=false,lastPoll=0,sealPoll=0;
   function record(s){const id=s.id || s.sheetId,old=records.get(id);if(id && (!old || (s.updatedAt || 0)>=(old.updatedAt || 0)))records.set(id,s);return s;}
   function projected(s){
     const id=s.id || s.sheetId,base=records.get(id) || s;
@@ -5122,6 +5122,9 @@ const LaserReview = window.LaserReview = (()=>{
     if(!s.setId || s.draft || s.solidIncluded===false)return sheet(s).ready;
     const st=sets.get(s.setId);return !!st && group(st,(st.sheetIds || []).map(id=>records.get(id)).filter(Boolean)).ready;
   }
+  function acceptProcess(rows){
+    for(const p of rows){const map=p.kind==='set'?sets:records,old=map.get(p.id) || {};map.set(p.id,{...old,...p.patch,updatedAt:Date.now(),...(p.kind==='set'?{setId:p.id}:{id:p.id})});}
+  }
   function labels(s,files){
     const id=s.id || s.sheetId, fs=files?.length?files:s.label?.files || [];
     // a sheet still filling has no label to wait for: every card in progress carried an empty "QR label pending" box
@@ -5135,15 +5138,20 @@ const LaserReview = window.LaserReview = (()=>{
   function refresh(){
     frame=0;
     if(S.mode!=='library')return;   // its cards are the Library's: a closed Library has let its records go (below)
+    let needsSeals=false;
     document.querySelectorAll('[data-laser-card]').forEach(card=>{
       if(!card._laserSheets)return;   // (a copy of a card flying to a tab, charm-nest-motion.js, is not a card: it holds none of its records)
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
+      if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
+      if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
       const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
+      const held=card.querySelector('[data-order-blockers]');if(held){const blocks=[...new Map(sheets.flatMap(s=>R.orderBlockers(projected(s))).map(x=>[x.id,x])).values()];held.hidden=!blocks.length;held.innerHTML=blocks.length?'<b>Orders waiting:</b> '+blocks.map(x=>`${esc(x.id)} — ${esc(x.why)}`).join(' · '):'';}
       card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s));if(n.innerHTML!==html)n.innerHTML=html;}});
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
     });
     if(window.LibraryDone)LibraryDone.refreshCards(document.getElementById('libBody'));
+    if(needsSeals && !polling && !sealPoll && S.cloud.ok)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
     document.querySelectorAll('[data-laser-area]').forEach(area=>{const hasItems=!!area.querySelector('.laserAreaItems')?.children.length;area.hidden=area.dataset.laserArea!=='ready' && !hasItems;const empty=area.querySelector('.laserEmpty');if(empty)empty.hidden=hasItems;});
   }
   function changed(){if(!frame)frame=requestAnimationFrame(refresh);}
@@ -5152,19 +5160,20 @@ const LaserReview = window.LaserReview = (()=>{
     const cards=[...document.querySelectorAll('[data-laser-card]')].filter(x=>{const r=x.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight;});
     const ids=[...new Set(cards.flatMap(x=>(x._laserSheets || []).concat([...x.querySelectorAll('[data-laser-sheet]')].map(n=>n.dataset.laserSheet))))];if(!ids.length)return;
     polling=true;lastPoll=Date.now();
-    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean)},{quiet:true});for(const set of response.sets || []){sets.set(set.setId,set);for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,sheetIds:set.sheetIds,laserDoneAt:set.laserDoneAt};}const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});changed();}
+    try{const response=await api('charmNestLibrary',{op:'laserStatus',sheetIds:ids,setIds:cards.map(x=>x._laserSet?.setId).filter(Boolean),recordSeals:true,by:window.CNEmployee?.name() || undefined},{quiet:true});for(const set of response.sets || []){sets.set(set.setId,set);for(const card of document.querySelectorAll('[data-laser-card]'))if(card._laserSet?.setId===set.setId)card._laserSet={...card._laserSet,...set};}const found=new Set();for(const s of response.sheets || []){found.add(s.id);records.set(s.id,s);}for(const id of ids)if(!found.has(id) && records.has(id))records.set(id,{...records.get(id),archived:true});window.LibraryDone?.addedSeals(response.added);changed();}
     catch(e){console.warn('Production readiness refresh',e);}
     finally{polling=false;}
   }
   function saved(sh){
     const old=records.get(sh.sheetId);if(old)record({...old,backPool:(sh.backPool || []).slice(),engraving:{...old.engraving,...R.decisions(Orders.rows())}});
     changed();
+    if(!sealPoll)sealPoll=setTimeout(()=>{sealPoll=0;poll(true);},Math.max(0,5100-(Date.now()-lastPoll)));
   }
   // Paul, 24 Sep: nothing may pile up on a page left open. The records are the Library's, read again each time it opens
   // (renderLibrary, openLibrarySheet); while it is closed they are let go at the minute's check.
   setInterval(()=>{if(S.mode!=='library'){records.clear();sets.clear();}poll();},60000);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll(true);});
-  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected};
+  return {record,sheet,group,canCut,labels,sections,place,changed,saved,poll,projected,acceptProcess};
 })();
 
 /* ═══ 22 · Sets — one run, one date, one folder, one numbering across materials ═══ */
@@ -5318,7 +5327,11 @@ const Sets = window.Sets = (() => {
     const sheetPools=new Set(sheets.flatMap(sh=>sh.charms.filter(c=>sh.placements.some(p=>p.id===c.id)).map(c=>c.poolId)));
     // A cancelled order is dropped from the set, not waited for: a piece of it that could not come off its sheet is cut with it and set aside
     if(Orders.rows().some(row=>row.state !== "gone" && (row.changePending || row.hold) && row.poolIds.some(id=>sheetPools.has(id))))throw pendingRelease("An order on this sheet changed or needs review");
-    const reports=sheets.map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
+    const physical=allSheets().map(sh=>({...sh,roseStockId:sh.roseStock?.id,id:sh.sheetId,poolIds:(sh.placements || []).map(p=>sh.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:sh.placements.length,outputs:sh.cloud || {},engraving:window.CharmNestReadiness.decisions(Orders.rows())}));
+    const orderReadiness=window.CharmNestReadiness.orderReports(Orders.rows(),physical);
+    const reports=physical.filter(sh=>sh.setId===set.setId).map(sh=>({...sh,orderReadiness}));
+    const blocked=reports.flatMap(window.CharmNestReadiness.orderBlockers);
+    if(blocked.length)throw pendingRelease(`${blocked[0].id}: ${blocked[0].why}`);
     if(!window.CharmNestReadiness.set(set,reports).ready){
       // a Rose Gold sheet whose newest charms wait for Cut Sheet (only a press adds its green line): named, with what to press
       const uncut=sheets.find(sh=>window.RoseStock?.waiting?.(sh));
@@ -5442,13 +5455,13 @@ const Sets = window.Sets = (() => {
   /** One set's card, its sheets side by side with their QR labels (the Library's Sets view, and a set opened in its
       Completed list): `shown` are the sheets drawn, `all` every sheet of the set (its laser readiness reads them all). */
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
-    const held = Object.entries(st.orders || {}).filter(([, o]) => o && o.held);
+    const held = [...new Map(all.flatMap(r=>window.CharmNestReadiness.orderBlockers(LaserReview.projected(r))).map(x=>[x.id,x])).values()];
     // a Rose Gold sheet of this set waiting for its Cut Sheet press (the set waits with it): named, and the words lead there
     const uncut = st.setId && !st.committedAt ? allSheets().find(p => p.setId === st.setId && window.RoseStock?.waiting?.(p)) : null;
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
           <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
-          ${held.length ? `<div class="holds"><b>Held:</b> ${held.map(([rid, o]) => `${esc(rid)} — ${esc(o.held.why || "")}`).join(" · ")}</div>` : ""}
+          <div class="holds" data-order-blockers${held.length?'':' hidden'}>${held.length ? `<b>Orders waiting:</b> ${held.map(x => `${esc(x.id)} — ${esc(x.why)}`).join(" · ")}` : ""}</div>
           ${uncut ? `<div class="holds"><b>Waiting:</b> <button type="button" class="cutSheetLink" data-cut-sheet title="Show the sheet and its Cut Sheet button">${esc(RoseStock.waitWords(uncut))}</button></div>` : ""}
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
@@ -9694,9 +9707,11 @@ const OrderWin = window.OrderWin = (() => {
         problem: pb ? String(x.reason || pb.reason || pb.kind || "") : "", engrave: x.engrave || null, engraveCandidate: sp.engraveCandidate, special: sp.special ? sp.special.label || "" : "", onSheet };
     });
     const dec = pages.size && R && R.decisions ? tryDo(() => R.decisions(Orders.rows())) : null;
+    const physical=dec?allSheets().map(pg=>({...pg,roseStockId:pg.roseStock?.id,id:pg.sheetId,poolIds:(pg.placements || []).map(p=>pg.charms.find(c=>c.id===p.id)?.poolId).filter(Boolean),placedCount:pg.placements.length,outputs:pg.cloud || {},engraving:dec})):[];
+    const orderReadiness=R?.orderReports?R.orderReports(Orders.rows(),physical):{};
     const sheets = [...pages].map(pg => {
       const placed = (pg.placements || []).length;
-      const rep = dec && R.sheet ? tryDo(() => R.sheet(Object.assign({}, pg, { roseStockId: pg.roseStock && pg.roseStock.id, id: pg.sheetId, poolIds: (pg.placements || []).map(p => ((pg.charms || []).find(c => c.id === p.id) || {}).poolId).filter(Boolean), placedCount: placed, outputs: pg.cloud || {}, engraving: dec }))) : null;
+      const rep = dec && R.sheet ? tryDo(() => R.sheet({...physical.find(s=>s.id===pg.sheetId),orderReadiness})) : null;
       return { name: sheetName({ metal: pg.metal, n: pg.sheetIndex || pg.page || 1 }), sheetId: pg.sheetId || "", placed, stages: rep ? rep.stages : null, ready: !!(rep && rep.ready), required: rep ? rep.required : 0, saved: rep ? rep.saved : 0, waiting: rep ? rep.waiting : 0, cut: !!pg.laserDoneAt, uncut: (window.RoseStock && tryDo(() => RoseStock.waiting(pg))) || 0 };
     });
     return { lines, sheets };

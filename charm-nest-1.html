@@ -2223,15 +2223,16 @@ details.noteBox[open]>summary::before{transform:rotate(90deg)}
 .owSheetMatches small{color:var(--ink70);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){#reviewView .cnOrderFind{flex-basis:120px}}
 /* Half-size production stamps straddle the sheet edge and stay visible at rest. */
-.sheetProcessSeal{position:absolute;right:20px;bottom:-28px;z-index:3;width:56px;height:56px;color:#22408f;transform:rotate(-8deg);pointer-events:auto;isolation:isolate}
-.sheetProcessSeal.cut{color:#19663f;transform:rotate(7deg)}
-.sheetProcessSeal svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:currentColor;stroke-width:2}
-.sheetProcessSeal svg>circle:first-child{fill:var(--card,#fffdf8);fill-opacity:.96;stroke-width:3}
-.sheetProcessSeal path{stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
-.sheetProcessSeal text{fill:currentColor;stroke:none;text-anchor:middle;font:800 9px Arial,sans-serif;letter-spacing:.25px}
-.sheetProcessSeal .sealStage{font-size:6.4px;letter-spacing:1px}
-.librarySheet:has(.sheetProcessSeal){padding-bottom:28px}
-.librarySheet:has(.sheetProcessSeal)>.productionRow{margin-top:30px}
+/* Process seals share the wooden press, inked artwork and lens used by order seals. */
+.processSealRow.sealRow{gap:6px;justify-content:flex-end;margin:0;max-width:100%;pointer-events:none}
+.processSealRow.sealRow .seal+.seal{margin-left:0}
+.libCard>.processSealRow{position:absolute;right:20px;bottom:-28px;z-index:3;max-width:calc(100% - 40px)}
+.libCard:has(>.processSealRow){padding-bottom:calc(10px + var(--process-extra,0px))}
+.processSealRow .seal{background:var(--card,#fffdf8);cursor:zoom-in;mix-blend-mode:normal}
+.setProcessSeals.sealRow{margin:-10px 12px -10px auto;flex:0 1 auto}
+.ldProcessSeals.sealRow{grid-column:2 / -1;justify-content:flex-start;margin:0 0 5px;gap:8px}
+.librarySheet:has(.processSealRow){padding-bottom:28px}
+.librarySheet:has(.processSealRow)>.productionRow{margin-top:30px}
 .ldMark{position:absolute;top:-9px;right:-9px;z-index:2;width:26px;height:26px;border-radius:50%;border:1px solid var(--ink25);background:var(--card);color:var(--ink70);display:grid;place-items:center;padding:0;cursor:pointer;box-shadow:0 2px 6px rgba(30,26,20,.14);opacity:0;transform:scale(.8);transition:opacity .14s ease,transform .14s ease,background-color .14s,color .14s,border-color .14s}
 .ldMark svg{width:14px;height:14px;display:block}
 .libCard:hover>.ldMark,.libCard:focus-within>.ldMark,.ldMark:focus-visible,.ldMark.busy{opacity:1;transform:none}
@@ -2632,6 +2633,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .sealLens .lf{position:absolute;inset:9px;mix-blend-mode:multiply;opacity:.94}
 .sealLens .lf svg{display:block;width:100%;height:100%;overflow:visible}
 .sealLens .lc{position:absolute;left:50%;top:calc(100% + 8px);transform:translateX(-50%);white-space:nowrap;font:600 11.5px/1 var(--sans);color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 11px;box-shadow:0 6px 16px rgba(30,26,20,.1)}
+.sealLens.processLens .lc{width:max-content;max-width:min(380px,calc(100vw - 16px));white-space:normal;line-height:1.3;text-align:center;border-radius:10px}
 .rvItem .cuStep>.rvItem{border:0;box-shadow:none;background:transparent;padding:0;border-left:0}
 .rvItem .cuStep>.rvItem>.rh .ttl,.rvItem .cuStep>.rvItem>.rh .sub,.rvItem .cuStep>.rvItem>.ev,.rvItem .cuStep>.rvItem>.why{display:none}
 .rvItem .cuStep>.rvItem>.rh{padding-bottom:0;border-bottom:0}
@@ -2854,13 +2856,13 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20260929-tf2"></script>
+<script src="charm-nest-motion.js?v=20260930-process-history"></script>
 <script src="charm-nest-timeline-ui.js?v=20260929-m7"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
-<script src="charm-nest-readiness.js?v=20260930-laser-stages"></script>
+<script src="charm-nest-readiness.js?v=20260930-process-history"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
 <script src="charm-nest-orders.js?v=20260930-live-search"></script>
@@ -6547,13 +6549,13 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260930-laser-stages"></script>
+<script src="charm-nest-bridge.js?v=20260930-process-history"></script>
 <script src="charm-nest-sheetwin.js?v=20260930-laser-stages"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
 <script src="charm-nest-export-ui.js?v=20260925-done"></script>
-<script src="charm-nest-library.js?v=20260930-laser-stages"></script>
+<script src="charm-nest-library.js?v=20260930-process-history"></script>
 <script src="charm-nest-search.js?v=20260929-m5"></script>
 <script src="charm-nest-signins.js?v=20260929-m5"></script>
 <!-- ══ one order line: what it is, what the customer said, what the shop said, and how to settle it ══ -->

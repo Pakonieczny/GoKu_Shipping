@@ -37,7 +37,8 @@
     timer: 0, leftAt: 0, busy: new Set(), io: null,
     flying: { sheets: 0, sets: 0 },   // marked, still on their way to the Completed tab: its count takes them as they land
     coming: new Map(),      // Completed row key → { from, until }: a row an Undo brings back, flying in from that tab
-    flew: new Map()         // "sheet:<id>" | "set:<id>" → when it was seen fly back in (the Undo's note is then not needed)
+    flew: new Map(),        // "sheet:<id>" | "set:<id>" → when it was seen fly back in (the Undo's note is then not needed)
+    pendingSeals: new Set(), presses: new Set()
   };
 
   /* ── which tab ── */
@@ -201,6 +202,17 @@
       if (kind === 'set') note(key,done,t,r.by);
       if (r.setId && r.setDone != null) note('set:' + r.setId,!!r.setDone,t,r.by);
       pages(r.sheetIds || [],done?t:null); records(r.sheetIds || [],done?t:null);
+      LaserReview.acceptProcess(r.process || []);
+      for(const p of r.process || []){
+        if(p.kind==='sheet'){
+          const rec=recordOf(p.id);if(rec)Object.assign(rec,p.patch);
+          for(const c of doc.querySelectorAll('.setCard'))for(const s of c._sheets || [])if(s.id===p.id)Object.assign(s,p.patch);
+        }else for(const c of doc.querySelectorAll('.setCard'))if(c._laserSet?.setId===p.id)Object.assign(c._laserSet,p.patch);
+      }
+      addedSeals(r.added);
+      cards(byId('libBody'),'current');cards(byId('libDone'),'done');
+      // Let the wooden tool land, ink the new seal and lift before the completed set travels away.
+      await Promise.all([...L.presses]);
       let landed = 0;
       if (done && r.setId) {
         if (r.setDone) landed=leave('set',r.setId,true,ids,r.setId);
@@ -479,14 +491,34 @@
     }
   }
   /** The check at each card's corner, and the set's own at its head: Mark completed in Current, Move back in Completed. */
+  function addedSeals(events){for(const e of events || [])L.pendingSeals.add(e.kind+':'+e.id+':'+e.eventId);}
+  function processHtml(r,owner,extra=''){
+    if(!window.Seal)return '';
+    const st=CharmNestReadiness.processStamps(r),scope=owner.startsWith('set:')?'set':'sheet';
+    return st.length?`<span class="sealRow processSealRow ${extra}" role="group" aria-label="${st.length} historical process seals">${st.map(s=>Seal.html({...s,scope,owner},56,'sheetProcessSeal '+(s.how==='laserDone'?'cut':'ready'))).join('')}</span>`:'';
+  }
+  function processSeals(host,r,owner,extra=''){
+    if(!window.Seal || !host)return;
+    const st=CharmNestReadiness.processStamps(r);if(!st.length)return;
+    let row=host.querySelector(':scope > .processSealRow');
+    if(!row){row=doc.createElement('span');row.className='sealRow processSealRow '+extra;row.setAttribute('role','group');host.appendChild(row);}
+    row.setAttribute('aria-label',st.length+' historical process seals');
+    for(const stamp of st){
+      let seal=[...row.children].find(s=>s.dataset.processSeal===stamp.id);
+      const key=owner+':'+stamp.id,fresh=L.pendingSeals.has(key);
+      if(!seal){row.insertAdjacentHTML('beforeend',Seal.html({...stamp,scope:owner.startsWith('set:')?'set':'sheet'},56,'sheetProcessSeal '+(stamp.how==='laserDone'?'cut':'ready')+(fresh?' pending':'')));seal=row.lastElementChild;seal.dataset.sealOwner=owner;}
+      if(fresh){
+        L.pendingSeals.delete(key);
+        const p=Seal.press(seal).catch(()=>seal.classList.remove('pending'));L.presses.add(p);p.finally(()=>L.presses.delete(p));
+      }
+    }
+    if(host.classList.contains('libCard'))host.style.setProperty('--process-extra',Math.max(0,row.offsetHeight-56)+'px');
+  }
   function cards(root, mode) {
     if (!root) return;
     for (const c of root.querySelectorAll('.libCard[data-id]')) {
-      const r=LaserReview.projected(recordOf(c.dataset.id) || {}), done=isDone(r), ready=!done && LaserReview.sheet(r).ready;
-      let seal=c.querySelector(':scope > .sheetProcessSeal');
-      const phase=done?'cut':ready?'ready':'';
-      if (seal && !seal.classList.contains(phase || 'none')) {seal.remove();seal=null;}
-      if (phase && !seal) c.insertAdjacentHTML('beforeend',CharmNestReadiness.processSeal(done,done?`Completed${r.laserDoneBy?' by '+r.laserDoneBy:''}`:null));
+      const r=LaserReview.projected(recordOf(c.dataset.id) || {}), done=isDone(r);
+      processSeals(c,r,'sheet:'+c.dataset.id);
       let b=c.querySelector(':scope > .ldMark');
       const allowed=done || canComplete('sheet',c.dataset.id);
       if (!allowed) { if(b)b.remove(); continue; }
@@ -496,6 +528,7 @@
     }
     for (const card of root.querySelectorAll('.setCard')) {
       const st=card._laserSet,head=card.querySelector(':scope > .sh');if(!head)continue;
+      if(st?.setId && !st.standalone && !st.working)processSeals(head,st,'set:'+st.setId,'setProcessSeals');
       let b=head.querySelector(':scope > .ldMarkSet');
       const done=isDone(st),allowed=st?.setId && !st.standalone && !st.working && (done || canComplete('set',st.setId));
       if(!allowed){if(b)b.remove();continue;}
@@ -853,7 +886,7 @@
         + `<span class="ldThumbs">${(sheets.length ? sheets.slice(0, 3) : [{}]).map(s => thumb(s.preview)).join('')}</span>`
         + `<span class="ldName"><b>Set ${esc(r.seq || '—')}</b><span class="sws">${mats.map(k => swatch(metalOf({ metal: k }), per.get(k) || 0)).join('')}</span><span class="ldDate" title="Set day">${esc(dayShort(r.day))}</span></span>`
         + `<span class="ldNums"><span><b>${sheets.length}</b> ${sheets.length === 1 ? 'sheet' : 'sheets'}</span><span><b>${+r.orders || 0}</b> orders</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Move the set and its sheets back to Current">Move back</button>${ICON.chev}</div>`
+        + who(r) + `<button type="button" class="ldBack" data-ld-back="set:${esc(r.setId)}" title="Move the set and its sheets back to Current">Move back</button>${ICON.chev}`+processHtml(r,'set:'+r.setId,'ldProcessSeals')+'</div>'
         + '<div class="ldPanel"><div class="ldPanelIn"></div></div></div>';
     }
     const sn = !r.draft && r.setSeq ? r.setSeq : 0;
@@ -861,7 +894,7 @@
       + thumb(r.preview)
       + `<span class="ldName">${swatch(metalOf(r), 0)}<b>Sheet ${esc(r.sheetIndex || 1)}</b>${sn ? `<span class="ldSet">Set ${esc(sn)}</span>` : ''}<span class="ldDate" title="Sheet day">${esc(dayShort(r.day))}</span></span>`
       + `<span class="ldNums"><span><b>${+r.orders || 0}</b> ${r.orders === 1 ? 'order' : 'orders'}</span><span><b>${+r.pieces || 0}</b> pcs</span><span><b>${pct(r.fill)}</b> full</span></span>`
-      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Move back to Current">Move back</button>${ICON.chev}</div></div>`;
+      + who(r) + `<button type="button" class="ldBack" data-ld-back="sheet:${esc(r.id)}" title="Move back to Current">Move back</button>${ICON.chev}`+processHtml(r,'sheet:'+r.id,'ldProcessSeals')+'</div></div>';
   }
   function dayHead(day, kind) {
     const t = realDay(Date.now()), y = realDay(Date.now() - 86400000), d = new Date(day + 'T12:00:00');
@@ -1021,6 +1054,6 @@
     if (S.mode === 'library') { writeHash(); if (L.tab === 'done') showDone(); else { const b = byId('libBody'); if (b.querySelector('.libCard, .libEmpty')) decorate(b); } }
   }
 
-  window.LibraryDone = { mark, isDone, isFiled, canComplete, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
+  window.LibraryDone = { mark, isDone, isFiled, canComplete, addedSeals, refreshCards: root => { cards(root, L.tab); partials(root); }, tab: () => L.tab, setTab, show, focus, rows, decorate, input, fromHash, glide, counts: () => L.counts && Object.assign({}, L.counts) };
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', init); else init();
 })();

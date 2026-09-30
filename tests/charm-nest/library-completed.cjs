@@ -114,7 +114,7 @@ sheet('shA3', { setId: 'set-A', setSeq: 1, sheetIndex: 1, runId: 'run-A', metal:
 sheet('shB1', { setId: 'set-B', setSeq: 2, sheetIndex: 1, runId: 'run-B', metal: 'rose', metalLabel: 'RG', fileBase: 'RG_Sep.24.26_Set-2_Sheet-1', orders: ['3700000010'], names: '3700000010 · BR-TST-09' });
 sheet('shB2', { setId: 'set-B', setSeq: 2, sheetIndex: 2, runId: 'run-B', metal: 'rose', metalLabel: 'RG', fileBase: 'RG_Sep.24.26_Set-2_Sheet-2', orders: ['3700000011', '3700000012'], names: '3700000011 · BR-TST-09 3700000012 · BR-TST-05' });
 sheet('shS1', { runId: 'run-C', draft: false, fileBase: 'GF_Sep.24.26_Sheet-1', orders: ['3700000020'], names: '3700000020 · BR-TST-07' });
-const line = (orderId, tx, listingId) => ({ orderId, transactionId: tx, sku: 'BR', state: 'written', snap: { listingId: String(listingId), title: 't' } });
+const line = (orderId, tx, listingId) => ({ orderId, transactionId: tx, sku: 'BR', state: 'written', poolIds:[...store.entries()].filter(([k,s])=>k.startsWith('Charm_Nest_Sheets/') && s.orders.includes(orderId)).flatMap(([,s])=>s.poolIds.filter((_,i)=>s.orders[i%s.orders.length]===orderId)), snap: { listingId: String(listingId), title: 't' } });
 // run B keeps some lines in its record, some beside it (live) and the rest in its line archive
 const liveJson = JSON.stringify({ '3700000011_2': line('3700000011', '2', 1719999) });
 store.set('Charm_Nest_Run_Live/run-B~live1', { json: liveJson, bytes: liveJson.length, lines: 1, seq: 0 });
@@ -122,7 +122,7 @@ store.set('Charm_Nest_Runs/run-B', { runId: 'run-B', day: DAY, status: 'complete
 const archJson = JSON.stringify({ '3700000010_1': line('3700000010', '1', 1719999), '3700000012_3': line('3700000012', '3', 1718555) });
 store.set('Charm_Nest_Run_Lines/run-B~p1', { runId: 'run-B', json: archJson, bytes: archJson.length, lines: 2, keys: ['3700000010_1', '3700000012_3'], orders: ['3700000010', '3700000012'], at: T, seq: 0 });
 store.set('Charm_Nest_Runs/run-C', { runId: 'run-C', day: DAY, status: 'complete', lines: { '3700000020_1': line('3700000020', '1', 1718555) }, updatedAt: ts(T), createdAt: ts(T) });
-store.set('Charm_Nest_Runs/run-A', { runId: 'run-A', day: DAY, status: 'complete', lines: {}, updatedAt: ts(T), createdAt: ts(T) });
+store.set('Charm_Nest_Runs/run-A', { runId: 'run-A', day: DAY, status: 'complete', lines: Object.fromEntries(['3700000001','3700000002','3700000003'].map((id,i)=>[id+'_1',line(id,'1',i===1?1718002:1718001)])), updatedAt: ts(T), createdAt: ts(T) });
 
 (async () => {
   /* ── marking ── */

@@ -86,7 +86,7 @@ function withoutPieces(guard, gone, ctx = {}) {
   for (const i of keepIdx) { const own = slice(i); list.push({ ...trimmed[i], n: list.length + 1, lines: [lines.length, lines.length + own.length] }); lines.push(...own); }
   return { guard: build(guard.profile, lines, list), removed, kept: keepIdx.map(i => summary(i, stages)), exact: false, changed: true };
 }
-module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
+module.exports=function({db,col,FV,Readiness,decisionsOfRun,productionReadiness,stamp,sheetLabel}){
   const stocks=()=>col('Charm_Nest_Rose_Stock'),sheets=()=>col('Charm_Nest_Sheets');
   async function roseGet(b){
     if(!id(b.stockId))throw new Error('Choose a Rose Gold sheet');
@@ -189,7 +189,9 @@ module.exports=function({db,col,FV,Readiness,decisionsOfRun,stamp,sheetLabel}){
       const run=sheet.runId?await tx.get(col('Charm_Nest_Runs').doc(sheet.runId)):null,runData=run?.exists?run.data():null;
       // the lines of orders the run is done with are in its line archive (charmNestLibrary: decisionsOfRun)
       const engraving=decisionsOfRun?await decisionsOfRun(sheet.runId,runData,sheet.poolIds||[]):Readiness.decisions(Object.values(runData?.lines||{}));
-      if(!Readiness.sheet({...sheet,engraving}).ready)throw new Error('Complete the sheet’s production checks before recording its cut');
+      const checked={...sheet,engraving};
+      if(productionReadiness)await productionReadiness([checked],{tx});
+      if(!Readiness.sheet(checked).ready)throw new Error('Complete every item in the sheet’s orders and its production checks before recording its cut');
       const plan=parse(sheet.rosePlanJson);Rose.validate(plan.profile,stock.wPt,stock.hPt);
       const at=Date.now(),revision=stock.revision+1;
       const cut={sheetId:b.sheetId,stockId:stock.id,revision,at,planHash:b.planHash,planJson:sheet.rosePlanJson,fileBase:sheet.fileBase||b.sheetId,by:String(b.by||'operator').slice(0,80),createdAt:FV.serverTimestamp()};

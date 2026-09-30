@@ -282,7 +282,7 @@
 
   /* ════ Seals ════ */
   const Seal = (() => {
-    const INK = { print: "#22408f", button: "#19663f" };
+    const INK = { print: "#22408f", button: "#19663f", laserReady: "#22408f", laserDone: "#19663f" };
     let uid = 0;
     const hash = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
     /** Every seal of a record, oldest first: its stamps, or for a record from before them, what it kept. */
@@ -319,9 +319,11 @@
     const check = `<path d="M51.5 31.5l5.2 5.4 11.8-12.4" fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>`;
     const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.getDate()).padStart(2, "0")} ${d.toLocaleString("en-US", { month: "short" }).toUpperCase()} ${d.getFullYear()}`; };
     const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-    const kindOf = st => st.how === "button" ? "button" : "print";
-    const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return kindOf(st) === "button" ? 5 + (h % 8) : -(5 + (h % 9)); };
-    const whoOf = st => String(st.by || "").trim() || "Sorting station";
+    const processOf = st => st.how === 'laserReady' || st.how === 'laserDone';
+    const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
+    const green = k => k === 'button' || k === 'laserDone';
+    const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
+    const whoOf = st => String(st.by || "").trim() || (processOf(st) ? "Not recorded" : "Sorting station");
     /** One seal as SVG: its ring words, and the date, time and name in the middle where they read best. */
     function svg(st) {
       const k = kindOf(st), ink = INK[k], id = "sl" + (++uid), seed = (hash(st.at + "|" + st.by) % 997) + 1;
@@ -330,9 +332,10 @@
       if (nm.length > 13) { const w = nm.split(" "); nm = w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : nm; }
       if (nm.length > 16) nm = nm.slice(0, 15) + "…";
       const nfs = Math.min(9.4, (64 / Math.max(1, nm.length) - .5) / .68), fit = nfs < 7.4 ? ` textLength="64" lengthAdjust="spacingAndGlyphs"` : "";
-      const top = k === "button" ? "ORDER COMPLETED" : "QR LABEL PRINTED";
-      const foot = k === "button" ? "NO LABEL PRINTED" : `PRINT Nº ${st.n || 1}`;
-      const edge = k === "button" ? scallops(30, 54.2, 58.4) + `<circle cx="60" cy="60" r="51.6" stroke-width="1"/>` : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
+      const process=processOf(st), scope=st.scope==='set'?'SET':'SHEET';
+      const top = k === 'laserReady' ? 'LASER READY' : k === 'laserDone' ? `${scope} COMPLETED` : k === "button" ? "ORDER COMPLETED" : "QR LABEL PRINTED";
+      const foot = process ? (k==='laserReady'?'READY FOR CUTTING':'LASER CUTTING DONE') : k === "button" ? "NO LABEL PRINTED" : `PRINT Nº ${st.n || 1}`;
+      const edge = green(k) ? scallops(30, 54.2, 58.4) + `<circle cx="60" cy="60" r="51.6" stroke-width="1"/>` : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
       return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>` +
         `<filter id="${id}f" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">` +
         `<feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="${seed}" result="lo"/>` +
@@ -348,21 +351,22 @@
         `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="8.6" font-weight="800" letter-spacing="1.25"><textPath href="#${id}t" startOffset="50%" text-anchor="middle">${esc(top)}</textPath></text>` +
         `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="7" font-weight="800" letter-spacing="1.1"><textPath href="#${id}b" startOffset="50%" text-anchor="middle">${esc(foot)}</textPath></text>` +
         star(150, 47.4, 2.6) + star(30, 47.4, 2.6) +
-        (k === "button" ? check : qr) +
+        (green(k) ? check : k==='laserReady' ? '<path d="M54 24h12l-3 8h-6zM60 34v4m-13 2h26" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' : qr) +
         `<path d="M25 44.5h70M22 72.5h76" stroke-width="1" fill="none"/>` +
-        `<text x="60" y="56.4" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="10.4" font-weight="800">${esc(dateOf(st.at))}</text>` +
-        `<text x="60" y="68.2" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="9.8" font-weight="700">${esc(timeOf(st.at))}</text>` +
+        `<text x="60" y="56.4" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="10.4" font-weight="800">${esc(process && !st.at?'NOT RECORDED':dateOf(st.at))}</text>` +
+        `<text x="60" y="68.2" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="9.8" font-weight="700">${esc(process && !st.at?'—':timeOf(st.at))}</text>` +
         `<text x="60" y="84" text-anchor="middle" stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="${Math.max(7.4, nfs).toFixed(2)}" font-weight="800" letter-spacing=".5"${fit}>${esc(nm)}</text>` +
         `</g></svg>`;
     }
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
     }
     /** One seal, as it sits on a card (one in a row is reached with Tab, and read large in the lens below). */
     function html(st, size, extra) {
       const reach = /\bloose\b/.test(extra || "") ? "" : ` tabindex="0" role="img" aria-label="${esc(titleOf(st))}"`;
-      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}"${reach}>${svg(st)}</span>`;
+      return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}"${processOf(st)?` data-process-seal="${esc(st.id || '')}" data-seal-owner="${esc(st.owner || '')}" data-seal-caption="${esc(titleOf(st))}"`:''}${reach}>${svg(st)}</span>`;
     }
     const sizeFor = n => n <= 2 ? 112 : n <= 4 ? 100 : 88;
     /** The card's seals, oldest first, beside the button they belong with. pending: the time of a seal just pressed
@@ -404,7 +408,12 @@
     }
     /** The wooden stamp comes down on a seal already in its place, and leaves it inked. */
     async function press(seal) {
-      const r = seal.getBoundingClientRect(), size = r.width / 1.0, kind = seal.classList.contains("seal-button") ? "button" : "print";
+      if(seal._press)return seal._press;
+      const run=pressOnce(seal);seal._press=run;try{await run;}finally{seal._press=null;}
+    }
+    async function pressOnce(seal) {
+      if(reduced() || !visible(seal)){seal.classList.remove('pending');return;}
+      const r = seal.getBoundingClientRect(), size = r.width / 1.0, kind = Object.keys(INK).find(k=>seal.classList.contains('seal-'+k)) || 'print';
       const rot = parseFloat(getComputedStyle(seal).getPropertyValue("--rot")) || -8;
       const t = doc.createElement("span"); t.className = "sealTool"; t.innerHTML = tool(kind);
       Object.assign(t.style, { position: "fixed", left: r.left - size * .02 + "px", top: r.top - size * .02 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
@@ -417,7 +426,7 @@
       shadow(t, size * 1.04, SHADE.far, SHADE.near, { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
       await down.finished.catch(() => {});
       seal.classList.remove("pending"); seal.classList.add("wet");
-      const btn = btnOf(seal); if (btn) btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
+      const btn = btnOf(seal); if (btn) btn.classList.add(green(kind) ? "sealedDone" : "sealedPrint");
       const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;--ink:${INK[kind]}`; layer(seal).appendChild(ring);
       ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" }).finished.then(() => ring.remove(), () => ring.remove());
       const up = t.animate([
@@ -484,6 +493,7 @@
     // (the button just before its row: an open card has its print seals on Print QR label and its Complete Order seals on
     // Complete Order, 29 Sep; else the row's first sealed button, as a completed card has one)
     const btnOf = s => {
+      if(s.hasAttribute('data-process-seal'))return null; // historical seals never forward a click to Complete or Undo
       const r = s.closest(".sealRow"); if (!r) return null;
       let p = r.previousElementSibling; while (p && p.classList.contains("sealRow")) p = p.previousElementSibling;
       if (p && p.matches("[data-seal-btn]")) return p;
@@ -534,6 +544,7 @@
     }
     /** The line under the lens, in words: what the seal records, who, and how long ago. */
     function capOf(s) {
+      if(s.dataset.sealCaption)return s.dataset.sealCaption;
       const m = / by (.+?) · /.exec(s.getAttribute("aria-label") || s.getAttribute("title") || ""), who = m ? " by " + m[1] : "", at = +s.dataset.at;
       return (s.classList.contains("seal-button") ? `Completed${who}, no label printed` : `QR label printed${who}`) + (at ? " · " + ago(at) : "");
     }
@@ -571,6 +582,12 @@
         Z.seal = s; untitle(s);   // (its tooltip would only say again what the lens says)
         el.innerHTML = `<div class="lf">${faceOf(s)}</div><div class="lc">${esc(capOf(s))}</div>`;
       }
+      el.classList.toggle('processLens',s.hasAttribute('data-process-seal'));
+      // Prefer directly above a small process seal, shrinking only the enlargement when the top edge is near.
+      // If even a readable enlargement cannot fit above, the normal below-seal fallback stays clear of its original.
+      const room=s.getBoundingClientRect().top-LG-LM-(el.lastElementChild?.offsetHeight || 0)-8;
+      const size=s.hasAttribute('data-process-seal') && room>=96?Math.min(200,room):200;
+      el.style.width=el.style.height=size+'px';
       const to = lensAt(el, s);
       for (const a of el.getAnimations()) a.cancel();
       el.style.transform = to;
@@ -599,8 +616,8 @@
       const el = Z.el; if (!el) return;
       let s = Z.seal;
       if (!zoomable(s) || !visible(s)) {
-        const k = s && s.classList.contains("seal-button") ? "seal-button" : "seal-print", box = (el.closest && el.closest("dialog")) || doc;
-        const again = s && [...box.querySelectorAll(`.sealRow .seal.${k}[data-at="${s.dataset.at}"]`)].find(x => zoomable(x) && visible(x));
+        const k = s && Object.keys(INK).find(k=>s.classList.contains('seal-'+k)) || 'print', box = (el.closest && el.closest("dialog")) || doc;
+        const again = s && [...box.querySelectorAll(`.sealRow .seal.seal-${k}[data-at="${s.dataset.at}"]`)].find(x => (!s.dataset.sealOwner || x.dataset.sealOwner===s.dataset.sealOwner) && zoomable(x) && visible(x));
         if (!again) return lensOff(true);
         Z.seal = s = again; untitle(s);
       }
@@ -615,7 +632,7 @@
       const s = sealAt(e.target); if (!zoomable(s)) return;
       Z.hover = true;
       if (Z.el) { clearTimeout(Z.t); if (Z.seal !== s) lensOn(s); return; }
-      Z.want = s; later(() => { if (Z.hover && Z.want === s) lensOn(s); }, 80);
+      Z.want = s; later(() => { if (Z.hover && Z.want === s) lensOn(s); }, s.hasAttribute('data-process-seal')?320:80);
     }, true);
     doc.addEventListener("pointerout", e => {
       if (e.pointerType === "touch") return;

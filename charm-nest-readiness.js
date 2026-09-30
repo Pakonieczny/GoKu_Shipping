@@ -16,7 +16,8 @@
     }
     return out;
   }
-  function sheet(s){
+  const orderIds=s=>[...new Set([...(Array.isArray(s.orders)?s.orders:[]),...idsOf(s).map(id=>String(id).split('_')[0]).filter(id=>/^\d+$/.test(id))].map(String))];
+  function sheet(s,options={}){
     const ids=idsOf(s), sid=s.id || s.sheetId, backs=new Map((s.backPool || s.backs || []).filter(b=>!b.invalidated && (!b.sheetId || b.sheetId===sid)).map(b=>[b.poolId,b]));
     let approved=0,waiting=0,saved=0,plain=0;
     for(const id of ids){
@@ -36,7 +37,8 @@
       front:!!url(s.outputs?.ai) && !!(s.preview || url(s.outputs?.preview)),
       approval:total>0 && waiting===0,
       backs:total>0 && saved===required,
-      qr:labels.length>0 && labels.every(f=>f.path && f.url && f.payload) && orders.every(id=>covered.has(String(id)))
+      qr:labels.length>0 && labels.every(f=>f.path && f.url && f.payload) && orders.every(id=>covered.has(String(id))),
+      orders:options.physicalOnly===true || orderIds(s).every(id=>s.orderReadiness?.[id]?.ready===true)
     };
     const included=!s.draft && s.solidIncluded!==false && !s.archived;
     return {total,required,approved,waiting,saved,plain,saving:Math.max(0,approved-saved),stages,included,ready:included && Object.values(stages).every(Boolean)};
@@ -44,7 +46,7 @@
   function set(s,sheets){
     const unique=[...new Map((sheets || []).map(x=>[x.id || x.sheetId,x])).values()],reports=unique.map(sheet);
     const expected=s.sheetIds || unique.map(x=>x.id || x.sheetId),complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
-    const stages=Object.fromEntries(['layout','front','approval','backs','qr'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
+    const stages=Object.fromEntries(['layout','front','approval','backs','qr','orders'].map(k=>[k,complete && reports.every(r=>r.stages[k])]));
     return {...Object.fromEntries(['total','required','approved','waiting','saved','plain','saving'].map(k=>[k,reports.reduce((n,r)=>n+r[k],0)])),stages,included:complete && reports.every(r=>r.included),ready:complete && reports.every(r=>r.ready),sheets:unique.length};
   }
   // Laser work keeps a set together. A sheet already cut satisfies its stage even if older
@@ -53,13 +55,52 @@
     const unique=[...new Map((sheets || []).filter(x=>!x.archived).map(x=>[x.id || x.sheetId,x])).values()];
     const expected=[...new Set(s.sheetIds || unique.map(x=>x.id || x.sheetId))];
     const complete=expected.length>0 && expected.length===unique.length && expected.every(id=>unique.some(x=>(x.id || x.sheetId)===id));
-    return {...set(s,unique),ready:complete && unique.every(x=>+x.laserDoneAt>0 || sheet(x).ready)};
+    return {...set(s,unique),ready:complete && unique.every(x=>sheet(x).stages.orders && (+x.laserDoneAt>0 || sheet(x).ready))};
   }
+  // An order travels whole: every line and copy needs its design, files, decisions and labels,
+  // including a second metal on another sheet. No-design and cancelled lines require no cutting.
+  function orderReports(rows,sheets){
+    const groups=new Map(),copies=new Map(),physical=new Map();
+    for(const s of sheets || [])if(!s.archived){physical.set(s,sheet(s,{physicalOnly:true}));for(const id of idsOf(s)){const xs=copies.get(id)||[];xs.push(s);copies.set(id,xs);}}
+    for(const row of rows || []){const id=String(row.order?.receiptId || row.orderId || String(row.key || '').split('_')[0] || '');if(!id)continue;const xs=groups.get(id)||[];xs.push(row);groups.set(id,xs);}
+    const out={},problems={unmatchedSku:'SKU not in a master',needsMaterial:'needs material',needsMapping:'needs an option mapped',missingSize:'no design for that size'};
+    for(const [id,lines] of groups){
+      let block=null;
+      for(const l of lines){
+        let why='';
+        if(l.state==='gone')continue;
+        if(l.hold || l.changePending)why=l.hold || 'Order changes need review';
+        else if(l.spec?.noDesign || l.noDesign || l.state==='noDesign')continue;
+        else if(l.problems?.length){const p=l.problems[0].kind || l.problems[0];why=problems[p] || String(p);}
+        else if(!['written','labelled','committed'].includes(l.state))why=l.reason || `line is ${l.state || 'not ready'}`;
+        else if(!l.poolIds?.length || l.poolIds.length<(+(l.spec?.quantity || l.quantity) || 1))why='Not every copy has a saved sheet';
+        else for(const pid of l.poolIds){
+          const on=copies.get(pid)||[];
+          if(!on.some(s=>+s.laserDoneAt>0 || physical.get(s).ready)){
+            const s=on[0],r=s && physical.get(s),stage=r && Object.keys(r.stages).find(k=>!r.stages[k]);
+            const missing={layout:'layout needs verification',front:'cutting files are missing',approval:'engraving needs approval',backs:'back engraving files are not saved',qr:'QR labels are missing'};
+            why=s?`${s.metalLabel || s.metal || 'Sheet'}: ${missing[stage] || 'not ready for laser cutting'}`:'An item is not on a saved sheet';break;
+          }
+        }
+        if(why){block={ready:false,line:l.key || [id,l.transactionId].filter(Boolean).join('_'),why};break;}
+      }
+      out[id]=block || {ready:true};
+    }
+    return out;
+  }
+  const orderBlockers=s=>orderIds(s).filter(id=>s.orderReadiness?.[id]?.ready!==true).map(id=>({id,...(s.orderReadiness?.[id] || {ready:false,why:'Order readiness has not been verified'})}));
   const filed=s=>+s.laserDoneAt>0 && !s.laserSetPending;
-  // 56px: half the application's 112px order seals. Words and symbols distinguish both stages.
-  function processSeal(done,label){
-    const title=escape(label || (done?'Completed · laser cutting finished':'Laser ready · ready for cutting'));
-    return `<span class="sheetProcessSeal ${done?'cut':'ready'}" role="img" aria-label="${title}" title="${title}"><svg viewBox="0 0 112 112" aria-hidden="true"><circle cx="56" cy="56" r="51"/><circle cx="56" cy="56" r="45" stroke-dasharray="${done?'2 3':'0'}"/><circle cx="56" cy="56" r="35"/>${done?'<path d="m39 46 12 12 23-25"/>':'<path d="M47 29h18l-5 12h-8zM56 44v11m-10 4 5-4m15 4-5-4M36 65h40"/>'}<text x="56" y="79">${done?'COMPLETED':'LASER READY'}</text><text class="sealStage" x="56" y="24">${done?'CUT &amp; CHECKED':'NEXT PROCESS'}</text></svg></span>`;
+  // These are historical facts, independent of today's readiness or completion flag.
+  // Old completion records have an exact signer/time; the former blue icon did not.
+  // Keep that missing provenance explicit instead of dating it at a redraw or inventing a signer.
+  function processStamps(s={}) {
+    const stamps=(Array.isArray(s.processSeals)?s.processSeals:[]).map(x=>({...x}));
+    const at=+(s.laserDoneAt || s.archivedLaserDoneAt || (s.kind?s.at:0)),by=s.laserDoneBy || s.archivedLaserDoneBy || s.by || '';
+    if(at>0 && !stamps.some(x=>x.how==='laserDone' && +x.at===at)) {
+      if(!stamps.some(x=>x.how==='laserReady'))stamps.push({id:'legacy-ready',how:'laserReady',at:0,by:'',legacy:true});
+      stamps.push({id:'legacy-done-'+at,how:'laserDone',at,by,legacy:true});
+    }
+    return stamps;
   }
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const icon=ready=>`<svg viewBox="0 0 32 38" aria-hidden="true"><path d="M8 24 5 36l11-5 11 5-3-12"/><circle cx="16" cy="15" r="12"/>${ready?'<path d="m10 15 4 4 8-9"/>':'<path d="M16 9v7m0 5v.1"/>'}</svg>`;
@@ -72,5 +113,5 @@
     // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
     return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope);
   }
-  return {idsOf,decisions,sheet,set,laserGroup,filed,processSeal,seal,counter};
+  return {idsOf,orderIds,decisions,sheet,set,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter};
 });

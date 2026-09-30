@@ -104,7 +104,7 @@ function sheet(id,patch={}){return{sheetId:id,runId:'run',metal:id,page:1,charms
 
   // Actual release validator distinguishes expected pending work from unexpected failures.
   const a=source.indexOf('  function validateRelease(set)'),b=source.indexOf('  async function finalize(',a);
-  const v={window:{CharmNestReadiness:{decisions:()=>({}),set:()=>({ready:false})}},sheetsOf:()=>[],Orders:{rows:()=>[]},Gate:{modern:()=>false}};
+  const v={window:{CharmNestReadiness:{decisions:()=>({}),orderReports:()=>({}),orderBlockers:()=>[],set:()=>({ready:false})}},sheetsOf:()=>[],allSheets:()=>[],Orders:{rows:()=>[]},Gate:{modern:()=>false}};
   vm.createContext(v);vm.runInContext(source.slice(a,b),v);assert.match(v.releaseIssue({}),/not ready/);
   v.window.CharmNestReadiness.set=()=>{throw Error('unexpected failure');};assert.throws(()=>v.releaseIssue({}),/unexpected failure/);
   // A cancelled order no longer holds its released sheet back (its piece is cut and set aside); a changed order still waits for review
@@ -112,9 +112,9 @@ function sheet(id,patch={}){return{sheetId:id,runId:'run',metal:id,page:1,charms
     placements:[{id:'c1'},{id:'c2'}],charms:[{id:'c1',poolId:'p1'},{id:'c2',poolId:'p2'}],label:{files:[{path:'l.png',url:'https://f/l.png',payload:'x'}]},backPool:[]};
   const goneLines=[{order:{receiptId:'1'},state:'written',poolIds:['p1'],engrave:{needed:false,approved:true,state:'none'}},
     {order:{receiptId:'2'},state:'gone',reason:'cancelled',poolIds:['p2'],engrave:{needed:true,approved:false,state:'review'}}];
-  const gv={window:{CharmNestReadiness:require('../../charm-nest-readiness.js')},sheetsOf:()=>[goneSheet],Orders:{rows:()=>goneLines},Gate:{modern:()=>false}};
+  const gv={window:{CharmNestReadiness:require('../../charm-nest-readiness.js')},sheetsOf:()=>[goneSheet],allSheets:()=>[goneSheet],Orders:{rows:()=>goneLines},Gate:{modern:()=>false}};
   vm.createContext(gv);vm.runInContext(source.slice(a,b),gv);
-  assert.equal(gv.releaseIssue({sheetIds:['s1']}),null,'a cancelled order does not hold its released sheet back');
-  Object.assign(goneLines[1],{state:'written',changePending:true});assert.match(gv.releaseIssue({sheetIds:['s1']}),/changed or needs review/,'a changed order still waits for review');
+  assert.equal(gv.releaseIssue({setId:'set-1',sheetIds:['s1']}),null,'a cancelled order does not hold its released sheet back');
+  Object.assign(goneLines[1],{state:'written',changePending:true});assert.match(gv.releaseIssue({setId:'set-1',sheetIds:['s1']}),/changed or needs review/,'a changed order still waits for review');
   console.log('Process completion OK: pending approvals, sheet holds, independent ready sets, follow-up wake, manual commit, options changes, critical failures, release guards and cancelled orders');
 })().catch(e=>{console.error(e);process.exitCode=1;});
