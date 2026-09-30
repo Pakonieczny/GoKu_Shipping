@@ -246,24 +246,6 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
 .swPiece .facts em{font-style:normal;font:12px var(--serif);color:var(--ink);background:var(--paper2);border-radius:6px;padding:2px 7px;justify-self:start;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .swSection{display:grid;gap:8px}
 .swSection>.fLabel{margin:0}
-.swEng{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:9px;background:var(--card)}
-.swEng .top{display:flex;align-items:center;gap:8px}
-.swEng .top b{font:600 13px var(--sans)}
-.swEng .top span{margin-left:auto;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:var(--paper2);color:var(--ink70)}
-.swEng[data-state=approve],.swEng[data-state=words]{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
-.swEng[data-state=approve] .top span,.swEng[data-state=words] .top span{background:var(--claySoft);color:#8a3a26}
-.swEng[data-state=approved] .top span{background:var(--sageSoft);color:#3f5b3c}
-.swEng[data-state=none]{padding:8px 12px}
-.swEng[data-state=none] .top b{font-weight:500;color:var(--ink45)}
-.swEng .pv{display:grid;place-items:center;background:#fff;border:1px solid var(--line2);border-radius:9px;min-height:120px;overflow:hidden}
-.swEng .pv canvas,.swEng .pv img{max-width:100%;max-height:180px;display:block}
-.swEng .words{font:14px/1.45 var(--serif);white-space:pre-wrap;background:var(--paper2);border-radius:8px;padding:6px 9px}
-.swEng .acts{display:flex;gap:8px;flex-wrap:wrap}
-.swEng .acts .btn{display:inline-flex;align-items:center;gap:6px}
-.swEng .acts .btn svg{width:14px;height:14px}
-.swEng .by{font:11px var(--sans);color:var(--ink45)}
-.swEng.flash{animation:swFlash 1.4s ease}
-@keyframes swFlash{0%{box-shadow:0 0 0 0 rgba(95,122,91,.55)}60%{box-shadow:0 0 0 10px rgba(95,122,91,0)}}
 .swTrail{list-style:none;margin:0;padding:0;display:grid;gap:4px}
 .swTrail li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;border:1px solid var(--line2);border-radius:10px;padding:7px 9px;cursor:pointer;transition:background .12s,border-color .12s}
 .swTrail li:hover{background:var(--paper2)}
@@ -1644,7 +1626,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       const s = job.state;
       // Engrave keeps a job for every line, "none" for one with nothing to engrave: that is no back engraving (it read as
       // "being prepared", so a whole sheet showed a back on every charm with a spinner that never ended)
-      if (s === "none") return { kind: "none", label: "none" };
+      if (s === "none") return { kind: "none", label: "none", job, back, saved };
       if (["approved", "written"].includes(s)) return { kind: "approved", label: "approved", job, back, by: job.approvedBy, at: job.approvedAt, text: job.text };
       if (s === "skipped") return { kind: "skipped", label: "cut plain", job, by: job.approvedBy };
       if (s === "review") return { kind: "approve", label: "to approve", job, text: job.text };
@@ -1660,7 +1642,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return { kind: "none", label: "none" };
     }
     if (back) return { kind: "approved", label: "approved", back, by: back.approvedBy, at: back.approvedAt, text: back.text };
-    if (saved && saved.needed) return saved.approved ? { kind: "approved", label: "approved", text: saved.text } : { kind: "words", label: "to settle", text: saved.text };
+    if (saved && saved.needed) return saved.approved ? { kind: "approved", label: "approved", text: saved.text, saved, by:saved.approvedBy, at:saved.approvedAt } : { kind: "words", label: "to settle", text: saved.text, saved };
     return { kind: "none", label: "none" };
   }
 
@@ -2000,32 +1982,11 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     if(window.Seal?.defer('sheet-engrave',()=>renderEng(x,flash)))return;
     const host = W.el.detail.querySelector("[data-r2=eng]"); if (!host) return;
     x.eng = engOf(x); const e = x.eng;
-    if (e.kind === "none") { host.innerHTML = `<div class="swEng" data-state="none"><div class="top"><b>No back engraving</b></div></div>`; return; }
-    const states = { approve: "To approve", words: "Words to confirm", preparing: "Being prepared", approved: "Approved", skipped: "Cut plain" };
-    const when = e.at ? new Date(e.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-    const words = e.text ? `<div class="words">${esc(e.text)}</div>` : "";
-    let acts = "", pv = "";
-    if (e.kind === "approve") {
-      pv = `<div class="pv" data-r2="pv"><div class="swWait"><span class="owSpin"></span>Drawing the back…</div></div>`;
-      acts = `<button class="btn sage sm egApproveButton" data-e="approve">${ICON.check}Approve</button><button class="btn ghost sm" data-e="engrave">Adjust in Engrave${ICON.go}</button>`;
-    } else if (e.kind === "words") acts = `<button class="btn sm" data-e="engrave">Confirm the words in Engrave${ICON.go}</button>`;
-    else if (e.kind === "preparing") acts = `<span class="swWait">${e.working ? '<span class="owSpin"></span>' : ""}${esc(e.note || "Being prepared")}</span><button class="btn ghost sm" data-e="engrave">Open in Engrave${ICON.go}</button>`;
-    else if (e.kind === "approved") {
-      const img = e.back && (e.back.outputs?.png?.url || e.back.png || e.back.preview);
-      pv = img ? `<div class="pv"><img crossorigin="anonymous" src="${esc(/^https?:/.test(img) ? cors(img) : img)}" alt="The back engraving"></div>` : e.job && e.job.fit && e.job.view ? `<div class="pv" data-r2="pv"></div>` : "";
-      acts = `<span class="by">${esc([e.by ? "by " + e.by : "", when].filter(Boolean).join(" · "))}</span><button class="btn ghost sm" data-e="engrave" style="margin-left:auto">View in Engrave${ICON.go}</button>`;
-    } else if (e.kind === "skipped") acts = `<span class="by">${esc(e.by ? "Skipped by " + e.by : "Skipped")}</span>`;
-    host.innerHTML = `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${e.kind}"><div class="top"><b>${e.kind === "approve" ? "Check the back, then approve" : e.kind === "approved" ? "Engraved on the back" : e.kind === "words" ? "The words need a decision" : "Back engraving"}</b><span>${states[e.kind] || ""}</span></div>${pv}${words}<div class="acts">${acts}</div></div>`;
-    const card = host.querySelector(".swEng");
-    const history=CNEngravingSeals.html(e.job || e.back);if(history)card.querySelector(".acts").insertAdjacentHTML("afterbegin",history);
-    if (flash) { card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash"); }
-    const slot = host.querySelector("[data-r2=pv]");
-    if (slot && e.job) requestAnimationFrame(() => { try { if (!e.job.fit || !e.job.view) { slot.innerHTML = `<span class="by" style="padding:14px">Open it in Engrave to see the back</span>`; return; } const cv = Engrave.renderBack(e.job, 300, { hatch: false, grid: false }); slot.innerHTML = ""; slot.appendChild(cv); } catch (err) { slot.innerHTML = `<span class="by" style="padding:14px">The preview is in Engrave</span>`; } });
-    host.querySelectorAll("[data-e]").forEach(b => b.onclick = () => {
-      if (b.dataset.e === "engrave") return goEngrave(x, b);
-      if (b.dataset.e === "approve") return approveHere(x, b);
-    });
+    host.innerHTML = CNEngravingSeals.panel(e);
+    CNEngravingSeals.wirePanel(host,e,{approve:b=>approveHere(x,b),open:b=>goEngrave(x,b)});
+    if (flash) host.querySelector('.swEng')?.classList.add('flash');
   }
+
   async function approveHere(x, b) {
     const job = x.eng && x.eng.job; if (!job) return;
     const who = needName(() => approveHere(x, b)); if (!who) return;
@@ -2230,7 +2191,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     RET.poll = setInterval(() => {
       if (!RET.ctx) return clearInterval(RET.poll);
       const job = c.key && Engrave.items().get(c.key);
-      if (job && ["approved", "written"].includes(job.state) && !["approved", "written"].includes(c.was)) {
+      if (job && !job.stamping && !window.Seal?.busy() && ["approved", "written"].includes(job.state) && !["approved", "written"].includes(c.was)) {
         clearInterval(RET.poll); paint(true);
         RET.timer = setTimeout(() => { if (S.mode === "engrave" && RET.ctx === c) back(true); }, 1300);
       }
@@ -2242,6 +2203,7 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     animate(RET.el, [{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-6px) scale(.96)" }], 180).then(() => { if (!RET.ctx) RET.el.hidden = true; });
   }
   function back(approved) {
+    if(window.Seal?.defer("sheet-return",()=>back(approved)))return;
     const c = RET.ctx; if (!c) return;
     const r = RET.el.getBoundingClientRect();
     dismiss();

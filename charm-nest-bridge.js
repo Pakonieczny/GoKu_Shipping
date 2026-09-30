@@ -964,7 +964,7 @@ const Orders = window.Orders = (() => {
   function lineRecord(row) {
     const l = row.line, o = row.order;
     return [row.key, { state: row.state, poolIds: row.poolIds, reason: row.reason, hold: row.hold || null, wait: row.wait || null, sku: row.spec && row.spec.designSku, material: row.material || (row.spec && row.spec.material) || null, quantity: row.spec ? row.spec.quantity : 1,
-      engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null } : null,
+      engrave: row.engrave ? { needed: !!row.engrave.needed, state: row.engrave.state, approved: !!row.engrave.approved, approvedAt:row.engrave.approvedAt || 0, approvedBy:row.engrave.approvedBy || "", decidedAt:row.engrave.decidedAt || 0, seals:row.engrave.seals || [], text: row.engrave.text || null } : null,
       // The server reads this record, not the row, before it records a set as complete: a line with nothing to engrave
       // must read as plain there too, including before its engraving check has run.
       engraveCandidate: row.spec ? !!row.spec.engraveCandidate : null, noDesign:!!row.spec?.noDesign,
@@ -3673,7 +3673,7 @@ const Engrave = window.Engrave = (() => {
         const j = ensureJob(row);
         const lines = bk.lines && bk.lines.length ? bk.lines : String(bk.text || "").split("\n").filter(Boolean);
         Object.assign(j, { state: "written", text: lines.join("\n"), lines, lineGap:bk.lineGap ?? .18, approvedBy: bk.approvedBy || null, approvedAt: bk.approvedAt || null, engravingSeals:bk.engravingSeals || [], backs: [{ poolId: bk.poolId, sheet: pg.fileBase, png: bk.outputs && bk.outputs.png && bk.outputs.png.url, ai: bk.outputs && bk.outputs.ai && bk.outputs.ai.url, capMm: bk.capMm }], recalledFrom: pg });
-        row.engrave = { needed: true, state: "written", approved: true, text: j.text };
+        row.engrave = { ...row.engrave, needed:true,state:"written",approved:true,text:j.text,approvedBy:j.approvedBy,approvedAt:j.approvedAt };CNEngravingSeals.keep(j);
       }
     }
     render();
@@ -3746,14 +3746,14 @@ const Engrave = window.Engrave = (() => {
     if (!job.lines.length) return toWords(job, "Enter the requested inscription");
     return setReady(job);
   }
-  function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
-  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why }); RunCtl.poke(); return job; }
+  function setNone(job, why) { job.state = "none"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: false, state: "none", reason: why, approved: true }; Review.remove("eng:" + job.key); RunCtl.poke(); return job; }
+  function toWords(job, why) { job.state = "words"; job.reason = why; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: why }; Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why }); RunCtl.poke(); return job; }
   async function setReady(job, wake = true) {
     await loadFonts();
-    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
+    if (!F_.ok) { job.state = "blocked"; job.reason = "Source Sans 3 font files are missing"; job.row.engrave = { ...job.row.engrave, needed: true, state: "blocked", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "fontMissing", key: "eng:" + job.key, row: job.row, job, why: F_.error }); return job; }
     const cov = G.glyphCoverage(F_.Regular, job.lines.join("\n"));
-    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
-    job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
+    if (!cov.ok) { job.state = "words"; job.reason = `Unsupported engraving characters: ${cov.missing.map(c => c + " (" + [...c].map(x=>"U+"+x.codePointAt(0).toString(16).toUpperCase()).join(" ") + ")").join(", ")}${F_.emojiError ? " — " + F_.emojiError : ""}`; job.missing = cov.missing; job.row.engrave = { ...job.row.engrave, needed: true, state: "words", text: job.text, approved: false, reason: job.reason }; Review.add({ kind: "notRepresentable", key: "eng:" + job.key, row: job.row, job, why: job.reason }); return job; }
+    job.state = "ready"; job.reason = null; job.missing = null; job.row.engrave = { ...job.row.engrave, needed: true, state: "ready", text: job.text, approved: false }; Review.remove("eng:" + job.key);
     if(!job.editingBack) {Pool.update(job.copies, { engrave: true }).catch(() => {});if (wake) RunCtl.poke();}                                                        // a waiting run fits it now (the classifier answers asynchronously)
     return job;
   }
@@ -3792,7 +3792,7 @@ const Engrave = window.Engrave = (() => {
           if (["ready", "fitting"].includes(job.state) && canFit(job)) await fitJob(job);
         } catch (e) {
           job.state = "blocked"; job.reason = e.message;
-          job.row.engrave = { needed:true, state:"blocked", text:job.text, approved:false, reason:e.message };
+          job.row.engrave = { ...job.row.engrave, needed:true, state:"blocked", text:job.text, approved:false, reason:e.message };
         } finally { preparingJob = null; }
       }
     } finally { previewRecovery = false; RunCtl.poke(); render(); }
@@ -4021,7 +4021,7 @@ const Engrave = window.Engrave = (() => {
     // the card in front goes up into Decided, which says what arrived (Paul, 27 Sep 20:09-20:24); the tab is drawn at once, so
     // the next card is there while the pieces' record is saved (it used to wait for the cloud's answer first)
     revokeBacks(job); goes(job, { to: EG_TAB("done"), note: { text: `Order ${job.row.order.receiptId} · No engraving · in Decided`, ms: 6000, actions: [{ label: "Show", title: "open Decided at this order", fn: () => showDecided(job.key) }] } });
-    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
+    job.state = "skipped"; job.decidedAt=Date.now(); job.decidedBy=by; CNListActivity.touch(job.row,job.decidedAt); job.approvedBy = null; job.row.engrave = { ...job.row.engrave, needed: false, state: "skipped", text: job.text, approved: true, reason: `cut plain — skipped by ${by}` }; CNEngravingSeals.add(job,"engravePlain",by,job.decidedAt); wordsEvent(job, by, job.text, "skipped"); job.row.flag = `engraving skipped by ${by}`; Review.remove("eng:" + job.key); agent({ engrave: true }, "warn", `${job.row.order.receiptId} · ${job.row.spec.designSku}: engraving skipped by ${by} — cut plain, order flagged`);
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
@@ -4048,9 +4048,11 @@ const Engrave = window.Engrave = (() => {
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
     CNEngravingSeals.keep(job);
-    job.state = "approved"; job.approvedBy = by; job.approvedAt = Date.now(); CNListActivity.touch(job.row,job.approvedAt); job.row.engrave = Object.assign(job.row.engrave || {}, { needed: true, state: "approved", approved: true, text: job.text, approvedBy: by, approvedAt:job.approvedAt });
-    const seal=CNEngravingSeals.add(job,"engraveApproved",by,job.approvedAt);
+    const approvedAt=Date.now(),seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
+    // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
     job.stamping=true;try{await CNEngravingSeals.press(button || EG.card?.querySelector('[data-a="approve"]'),seal);}finally{job.stamping=false;}
+    job.state="approved";job.approvedBy=by;job.approvedAt=approvedAt;CNListActivity.touch(job.row,approvedAt);
+    job.row.engrave=Object.assign(job.row.engrave || {},{needed:true,state:"approved",approved:true,text:job.text,approvedBy:by,approvedAt});
     goes(job, { to: EG_TAB("done") });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
@@ -6088,7 +6090,7 @@ const RunCtl = window.RunCtl = (() => {
       pg.persisted = Promise.resolve();
       computeSaturation(pg); renderCard(pg);
       for (const row of Orders.rows()) { if (!row.poolIds.length) continue; if (row.poolIds.every(pid => { const pool = B.pool.rows.get(pid); return pool && pool.setId && ["written", "engraved", "labelled", "committed"].includes(pool.state); })) row.state = "written"; else if (row.poolIds.some(pid => (d.poolIds || []).includes(pid))) row.state = "pooled"; }
-      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy: b.approvedBy }; } }
+      for (const b of pg.backPool) { const row = Orders.rows().find(x => x.poolIds.includes(b.poolId)); if (row) { const j = Engrave.ensureJob(row); j.backSaving = false; j.state = "written"; j.text = b.text; j.lines = b.lines || String(b.text).split("\n"); j.approvedBy = b.approvedBy; j.approvedAt = b.approvedAt; j.backs.push(b); row.engrave = { needed: true, state: "written", approved: true, text: b.text, approvedBy:b.approvedBy,approvedAt:b.approvedAt,seals:CNEngravingSeals.merge(j,b) };CNEngravingSeals.keep(j); } }
       // Cloud-only recovery has file links, not the editable output bytes. A working
       // sheet must be rebuilt and verified before it can acquire set membership.
       if (pg.draft || pg.placements.length !== (d.placements || []).length) {
@@ -9420,7 +9422,7 @@ const OrderWin = window.OrderWin = (() => {
       (where ? mcell("Sheet", (where.set ? where.set + " · " : "") + (where.sheet || "")) : "") +
       mcell("Ship by", tryDo(() => Orders.shipTxt(r)) || "—") +
       (sp.form ? mcell("Form", sp.form) : "") + (sp.size ? mcell("Size", sp.size) : "") + (sp.chain ? mcell("Chain", sp.chain) : "") +
-      (r.engrave && r.engrave.needed ? mcell("Engraving", (r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : "")) : "") +
+      (r.engrave && (r.engrave.needed || CNEngravingSeals.list(r.engrave).length) ? `<div class="m"><i>Engraving</i><span>${esc((r.engrave.approved ? "approved" : r.engrave.state || "waiting") + (r.engrave.text ? " · " + r.engrave.text : ""))}</span>${CNEngravingSeals.html(Engrave.jobOf(r) || r.engrave)}</div>` : "") +
       (bought.length ? bought.map(o => mcell(o.name || "Option", o.value)).join("") : (sp.options || []).filter(o => o.mapped).map(o => mcell(o.name, o.value)).join("")) +
       mcell("Listing", String(r.line.listingId || "—")) +
       mcell("Title", r.line.title || "—");
@@ -9933,6 +9935,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** The panel beside the plate: the sheets, the order, its charm, its back engraving and every piece of it. */
   function paintPanel(inf) {
+    if(window.Seal?.defer("order-sheet-panel",()=>paintPanel(SV.info)))return;
     const panel = byId("owSheetPanel"), r = rowOf(W.key); if (!panel || !r) return;
     const oldFind=panel.querySelector('#owSheetOrderFind'),findActive=document.activeElement===oldFind;
     const rid = String(r.order.receiptId), list = SV.list || [];
@@ -9953,16 +9956,12 @@ const OrderWin = window.OrderWin = (() => {
     for (const x of linesOf(r)) for (const pid of x.poolIds || []) if (!items.has(pid)) add(pid, { poolId: pid, sku: (x.spec && x.spec.designSku) || x.line.sku, copy: +pid.split("_").pop() || 1, qty: (x.spec && x.spec.quantity) || x.line.quantity });
     if (!items.size) for (const x of linesOf(r)) add(x.key, { sku: (x.spec && x.spec.designSku) || x.line.sku, qty: (x.spec && x.spec.quantity) || x.line.quantity, copy: 1 });
     const pieces = [...items.values()];
-    const eng = x0 && x0.eng && x0.eng.kind !== "none" ? x0.eng : null, re = lr.engrave && lr.engrave.needed ? lr.engrave : null;
-    const disc = (e2, metal) => {
-      const cls = /silver/.test(metal || "") ? " silver" : /rose/.test(metal || "") ? " rose" : "";
-      const img = e2 && e2.back && (e2.back.outputs?.png?.url || e2.back.png || e2.back.preview);
-      return `<div class="disc${cls}" data-disc>${img ? `<img crossorigin="anonymous" alt="The back engraving" src="${esc(/^https?:/.test(img) ? cors(img) : img)}">` : esc((e2 && e2.text) || "")}</div>`;
-    };
-    const STATE = { approve: ["To approve", "bad"], words: ["Words to confirm", "bad"], preparing: ["Being prepared", ""], approved: ["Approved", "ok"], skipped: ["Cut plain", ""] };
-    const engHtml = eng ? `<div class="owBackEng">${disc(eng, rec && rec.metal)}<div><div class="k ${(STATE[eng.kind] || [])[1] || ""}">Back engraving · ${esc((STATE[eng.kind] || [eng.label])[0])}</div><b>${eng.text ? "“" + esc(eng.text) + "”" : "—"}</b><span>${esc([eng.by ? "by " + eng.by : "", eng.at ? when(eng.at) : "", eng.note || ""].filter(Boolean).join(" · "))}${W.face !== "back" && eng.text ? (eng.by || eng.at ? " · " : "") + "switch to Back to see it on the sheet" : ""}</span>${eng.kind === "approve" && eng.job ? `<div class="acts"><button type="button" class="btn sage xs" data-eng="approve">Approve</button></div>` : ""}</div></div>`
-      : re ? `<div class="owBackEng">${disc({ text: re.text }, lr.material)}<div><div class="k ${re.approved ? "ok" : "bad"}">Back engraving · ${re.approved ? "approved" : esc(re.state || "waiting")}</div><b>${re.text ? "“" + esc(re.text) + "”" : "—"}</b></div></div>`
-      : `<div class="owBackEng" style="grid-template-columns:1fr"><div><div class="k">Back engraving</div><span>No back engraving</span></div></div>`;
+    const job=x0?.eng?.job || Engrave.jobOf(lr),re=lr.engrave;
+    const eng=job ? {job,back:x0?.eng?.back,saved:re,kind:["approved","written"].includes(job.state)?"approved":job.state==="review"?"approve":job.state==="skipped"?"skipped":["words","blocked"].includes(job.state)?"words":job.state==="none"?"none":"preparing",text:job.text,by:job.approvedBy,at:job.approvedAt,note:x0?.eng?.note}
+      : x0?.eng?.kind && x0.eng.kind!=="none" ? {...x0.eng,saved:re || x0.eng.saved}
+      : re ? {kind:re.needed?(re.approved?"approved":"words"):re.state==="skipped"?"skipped":"none",text:re.text,by:re.approvedBy,at:re.approvedAt,saved:re}
+      : {kind:"none"};
+    const engHtml=CNEngravingSeals.panel(eng);
     const bk = BK.length && BK[BK.length - 1].to === rid ? BK[BK.length - 1] : null;
     const where = it => it.here ? `<em style="--c:var(--gold2)">this sheet</em>` : it.sheetId ? `<em style="--c:${esc(colorOf(it.metal))}">${esc(sheetName({ metal: it.metal, n: it.n }))}</em>` : SV.list ? `<em>not on a sheet yet</em>` : `<em></em>`;   // (nothing said while its sheets are still being found)
     panel.innerHTML =
@@ -9970,13 +9969,11 @@ const OrderWin = window.OrderWin = (() => {
       `<div class="owSheetMatches" id="owSheetMatches" role="list" aria-live="polite" hidden></div>` +
       `<section><div class="owOrdHd"><span class="fLabel">Order</span>${bk ? `<button type="button" class="btn ghost xs" data-ow-back title="Back to order ${esc(bk.rid)}, as it was"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>Back to order ${esc(bk.rid)}</button>` : ""}</div><div class="big">${esc(rid)}</div><div class="sub">${esc([o.buyer && o.buyer.name, placed ? "ordered " + placed : "", ship].filter(Boolean).join(" · "))}</div></section>` +
       `<section class="owCharm"><div class="pic" data-pic></div><div><b>${esc(sku || "—")}</b>${x0 && x0.c ? `<span>${esc((x0.c.widthPt * 25.4 / 72).toFixed(1))} × ${esc((x0.c.heightPt * 25.4 / 72).toFixed(1))} mm</span>` : ""}<span>${esc(lr.material ? labelOf(lr.material) : rec ? labelOf(rec.metal) : "")}${sp.size ? " · size " + esc(sp.size) : ""}</span></div></section>` +
-      `<section>${engHtml}</section>` +
+      `<section class="swSection" data-engraving-panel>${engHtml}</section>` +
       `<section><span class="fLabel">This order · ${pieces.length} piece${pieces.length === 1 ? "" : "s"}</span><ul class="owPieces">${pieces.map((it, i) => `<li data-i="${i}" class="${it.here && (!SV.focus || it.poolId === SV.focus || !x0 || x0 === it.piece) && it.piece === x0 ? "on" : !it.here && !it.sheetId ? "off" : ""}"><span class="n">${i + 1}</span><span class="sku">${esc(it.sku || "")}${it.qty > 1 ? ` <small>copy ${it.copy} of ${it.qty}</small>` : ""}</span>${where(it)}</li>`).join("")}</ul></section>` +
       (rec ? `<div class="acts"><button type="button" class="btn ghost sm" data-full${cut ? "" : ""}>Open full sheet ›</button><button type="button" class="btn ghost sm" data-off${cut || lined ? " disabled" : ""}${lined ? ` title="Inside the saved Rose Gold green line: its pieces stay on the sheet until it is cut, then are set aside"` : ""}>Take off the sheet…</button>${cut ? `<span class="why">Cut — it can no longer be taken off</span>` : lined ? `<span class="why">Inside the saved green line</span>` : ""}</div>` : "");
     // the charm's own picture: its drawing on this sheet, else the order's vector
     const pic = panel.querySelector("[data-pic]"); if (pic) { if (x0 && x0.c) { const c2 = document.createElement("canvas"); c2.width = c2.height = 184; drawCharmInto(c2, x0.c); pic.appendChild(c2); } else tryDo(() => ListMedia.vectorInto(pic, lr)); }
-    // an approval-waiting back is drawn as Engrave fits it
-    const dsc = panel.querySelector("[data-disc]"); if (dsc && eng && eng.job && !dsc.querySelector("img") && eng.job.fit && eng.job.view && window.Engrave && Engrave.renderBack) { const cv2 = tryDo(() => Engrave.renderBack(eng.job, 176, { hatch: false, grid: false })); if (cv2) { dsc.innerHTML = ""; dsc.appendChild(cv2); } }
     panel.querySelectorAll("[data-at]").forEach(b => b.onclick = () => { if (+b.dataset.at === SV.at) return; SV.at = +b.dataset.at; SV.focus = null; paintPanel(null); sheetDraw(); });
     panel.querySelectorAll(".owPieces li[data-i]").forEach(li => {
       const it = pieces[+li.dataset.i];
@@ -9987,12 +9984,24 @@ const OrderWin = window.OrderWin = (() => {
         const i = it.sheetId ? list.findIndex(s => s.id === it.sheetId) : -1; if (i >= 0) { SV.at = i; SV.focus = it.poolId; sheetDraw(); }
       };
     });
-    const ap = panel.querySelector("[data-eng=approve]"); if (ap) ap.onclick = async () => {
-      const who = me() || askEmployee(); if (!who) return;
-      ap.disabled = true; ap.innerHTML = '<span class="spin"></span>Approving…';
-      try { await Engrave.approve(eng.job, who); if (x0) x0.eng = Object.assign({}, x0.eng, { kind: "approved", by: who, at: Date.now() }); if (SV.info) paintPanel(SV.info); if (window.RunCtl) RunCtl.poke(); }
-      catch (e) { toast("Not approved: " + e.message, "bad", 6000); ap.disabled = false; ap.textContent = "Approve"; }
-    };
+    CNEngravingSeals.wirePanel(panel.querySelector('[data-engraving-panel]'),eng,{
+      approve:async ap=>{
+        const who=me() || askEmployee();if(!who)return;
+        ap.disabled=true;ap.innerHTML='<span class="spin"></span>Approving…';
+        try{
+          await Engrave.approve(eng.job,who,ap);
+          if(!["approved","written"].includes(eng.job.state)){ap.disabled=false;ap.textContent="Approve";return;}
+          if(x0)x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
+          if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
+        }catch(e){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;ap.textContent="Approve";}
+      },
+      open:async()=>{
+        await shut();
+        const v=Engrave.view(),done=["approved","written","skipped"].includes(eng.job?.state) || eng.kind==="approved";
+        Engrave.restoreView({...v,tab:done?"done":"place",focus:done?null:eng.job?.key || lr.key,list:false,chosen:true,q:done?rid:""});
+        setMode("engrave");Engrave.render();
+      }
+    });
     const bb = panel.querySelector("[data-ow-back]"); if (bb) bb.onclick = () => goBack();
     const full = panel.querySelector("[data-full]"); if (full) full.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
     const off = panel.querySelector("[data-off]"); if (off) off.onclick = () => fullSheet(x0 && (x0.poolId || x0.id));
@@ -10240,6 +10249,7 @@ const OrderWin = window.OrderWin = (() => {
   /** Draw now, or (the view in flight, or still drawing what it held) once it lands: the latest of each kind, then its
    *  parts fade in. */
   function hold(key, fn, fade) {
+    if(window.Seal?.defer("order-view-"+key,()=>hold(key,fn,fade)))return;
     if (!flying() && !H.q.size) return void fn();
     H.q.delete(key); H.q.set(key, { fn, fade: [].concat(fade || []) });
     if (!flying()) land();

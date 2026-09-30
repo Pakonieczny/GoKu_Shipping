@@ -25,3 +25,30 @@
 .doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,.85fr) minmax(220px,1.4fr) auto}
 @media(max-width:1100px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:184px minmax(160px,1fr) minmax(220px,1.2fr)}.egPlacementSeals{grid-column:2/-1;justify-self:start}}
 @media(max-width:900px){.doneRow.placementRow:has(.engravingSeals){grid-template-columns:76px minmax(0,1fr)}}
+
+/* One engraving inspector, shared by both sheet windows. */
+.swEng{border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:grid;gap:9px;background:var(--card);min-width:0}
+.swEng .top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.swEng .top b{font:600 13px var(--sans)}
+.swEng .top span{margin-left:auto;font:700 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;border-radius:999px;padding:2px 8px;background:var(--paper2);color:var(--ink70)}
+.swEng[data-state=approve],.swEng[data-state=words]{border-color:#e7b9aa;background:linear-gradient(0deg,rgba(244,227,220,.35),rgba(244,227,220,.35)),var(--card)}
+.swEng[data-state=approve] .top span,.swEng[data-state=words] .top span{background:var(--claySoft);color:#8a3a26}
+.swEng[data-state=approved] .top span{background:var(--sageSoft);color:#3f5b3c}
+.swEng[data-state=none]{padding:8px 12px}
+.swEng[data-state=none] .top b{font-weight:500;color:var(--ink45)}
+.swEng .pv{display:grid;place-items:center;background:#fff;border:1px solid var(--line2);border-radius:9px;height:180px;min-width:0;overflow:hidden}
+.swEng .pv canvas,.swEng .pv img{width:100%;height:100%;max-width:100%;max-height:180px;object-fit:contain;display:block;border-radius:0}
+.swEng .words{font:14px/1.45 var(--serif);white-space:pre-wrap;overflow-wrap:anywhere;background:var(--paper2);border-radius:8px;padding:6px 9px}
+.swEng .acts{display:flex;gap:8px;flex-wrap:wrap}
+.swEng .acts .btn{display:inline-flex;align-items:center;gap:6px}
+.swEng .acts .btn svg{width:14px;height:14px}
+.swEng .acts .egApproveButton svg{width:22px;height:22px}
+.swEng .egApproveButton:disabled{opacity:1;cursor:default}
+.swEng .egHistory{border-top:1px solid var(--line2);padding-top:3px}
+.swEng .egHistory .engravingSeals{max-width:100%}
+.swEng .acts:empty{display:none}
+.swEng .by{font:11px var(--sans);color:var(--ink45)}
+.swEng.flash{animation:swFlash 1.4s ease}
+@keyframes swFlash{0%{box-shadow:0 0 0 0 rgba(95,122,91,.55)}60%{box-shadow:0 0 0 10px rgba(95,122,91,0)}}
+
+#owSheetPanel{padding:14px 16px 18px;gap:16px}

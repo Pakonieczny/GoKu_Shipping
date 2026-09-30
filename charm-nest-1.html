@@ -777,21 +777,11 @@ dialog.phv.layer.phvIn{background:transparent}
 .owShTabs button{border:1px solid var(--line);border-radius:999px;padding:3px 11px;background:var(--card);font:11.5px var(--sans);color:var(--ink70);cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:background .18s,color .18s,border-color .18s}
 .owShTabs button i{width:8px;height:8px;border-radius:50%;background:var(--c,var(--ink25))}
 .owShTabs button.on{background:var(--velvet);border-color:var(--velvet);color:#fff}
-.owCharm{display:grid;grid-template-columns:96px minmax(0,1fr);gap:14px;align-items:center}
-.owCharm .pic{aspect-ratio:1;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
-.owCharm .pic img,.owCharm .pic canvas{width:100%;height:100%;object-fit:contain}
+.owCharm{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:center}
+.owCharm .pic{width:92px;height:92px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;display:grid;place-items:center;background:var(--card2);overflow:hidden;font:11px var(--sans);color:var(--ink45);text-align:center;padding:4px}
+.owCharm .pic img,.owCharm .pic canvas{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
 .owCharm b{font:600 13px var(--mono);display:block;overflow-wrap:anywhere}
 .owCharm span{display:block;font:12.5px var(--sans);color:var(--ink70)}
-.owBackEng{display:grid;grid-template-columns:88px minmax(0,1fr);gap:14px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--card2)}
-.owBackEng .disc{width:88px;height:88px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fbf3de,#e3cf9e 70%,#c9ad6c);display:grid;place-items:center;text-align:center;font:italic 12px/1.25 var(--serif);color:#6a4f1c;box-shadow:inset 0 0 0 1px rgba(169,130,63,.5);overflow:hidden;padding:8px}
-.owBackEng .disc.silver{background:radial-gradient(circle at 35% 30%,#fbfcfd,#d9dee4 70%,#aab2bb);color:#46505a}
-.owBackEng .disc.rose{background:radial-gradient(circle at 35% 30%,#fbe9e3,#e4b9ab 70%,#c08578);color:#6e3b30}
-.owBackEng .disc canvas,.owBackEng .disc img{max-width:100%;max-height:100%;border-radius:50%}
-.owBackEng .k{font:700 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink45)}
-.owBackEng .k.bad{color:#8a3a26}.owBackEng .k.ok{color:#3f5b3c}
-.owBackEng b{display:block;font:15px var(--serif);font-weight:500;overflow-wrap:anywhere}
-.owBackEng span{display:block;font:11.5px var(--sans);color:var(--ink70)}
-.owBackEng .acts{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
 .owPieces{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .owPieces li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border:1px solid var(--line);border-radius:10px;font:600 12px var(--mono);background:var(--card);cursor:pointer;transition:background .2s,border-color .2s}
 .owPieces li:hover{border-color:var(--ink25)}
@@ -2649,7 +2639,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 .owNoteField .owIn{border-color:var(--goldLine)}
 .owNoteField .owIn.has{background:#fdf7e6;border-color:var(--gold2);font-size:13.5px}
 </style>
-<link rel="stylesheet" href="charm-nest-activity.css?v=20260930-activity">
+<link rel="stylesheet" href="charm-nest-activity.css?v=20260930-panel">
 </head>
 <body>
 <div class="app" id="app">
@@ -2864,7 +2854,7 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-assets.js"></script>
 <script src="charm-nest-backs.js?v=20260928-backface"></script>
 <script src="charm-nest-activity.js?v=20260930-activity"></script>
-<script src="charm-nest-engraving-seals.js?v=20260930-activity"></script>
+<script src="charm-nest-engraving-seals.js?v=20260930-panel"></script>
 <script src="charm-nest-readiness.js?v=20260930-activity"></script>
 <script src="charm-nest-export.js"></script>
 <script src="charm-nest-text.js"></script>
@@ -6555,8 +6545,8 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20260930-activity"></script>
-<script src="charm-nest-sheetwin.js?v=20260930-activity"></script>
+<script src="charm-nest-bridge.js?v=20260930-panel"></script>
+<script src="charm-nest-sheetwin.js?v=20260930-panel"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>
