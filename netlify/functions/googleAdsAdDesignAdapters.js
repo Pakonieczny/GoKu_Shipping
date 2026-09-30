@@ -12,6 +12,9 @@ const POLL_STEPS=Object.freeze([2000,3000,5000,8000,12000,15000]),POLL_WINDOW_MS
 // 15 minutes. A submission with no saved answer after STREAM_WINDOW_MS cannot
 // still be streaming anywhere, so it has definitely ended without an answer.
 const DURABLE_STREAM_MS=10*60000,STREAM_MS=5*60000,STREAM_WINDOW_MS=16*60000,MAX_RECEIPT_BYTES=900000;
+// The animated review asks for one charm verdict per film format (three today), never one per frame: more format keys than this and the block is left out
+// so the strict schema stays small enough to compile.
+const MAX_FORMAT_VERDICTS=3;
 // Claude reads at most 100 images per request: 5 MB of base64 and 8000 px per
 // side each, 2000 px once a request has more than 20. A request body is capped
 // at 32 MB, so the images share a 28 MB budget.
@@ -79,6 +82,23 @@ function syntheticXmp(jpeg,existing){
   // IPTC packet after composition so the AI disclosure survives each saved crop.
   return attachXmp(jpeg,xml);
 }
+// A review reads its saved answer as saved. The answer's JSON may be fenced, have a sentence around it or a trailing comma; only text with no JSON
+// object in it stays unreadable. Every other error (a refusal, a stopped or still-running response) is left exactly as parseResponse words it.
+function readReviewAnswer(data){
+  const research=require('./googleAdsAdDesignResearch');
+  try{return research.parseResponse(data);}
+  catch(error){
+    if(error.code!=='AI_OUTPUT_INVALID')throw error;
+    const text=typeof(data&&data.output_text)==='string'?data.output_text:((data&&data.output)||[]).flatMap(v=>(v&&v.content)||[]).filter(p=>p&&p.type==='output_text').map(p=>p.text||'').join('');
+    for(const candidate of [text,text.replace(/,(\s*[}\]])/g,'$1')]){
+      const found=claude.parseJsonText(candidate);
+      if(found&&typeof found==='object'&&!Array.isArray(found))return found;
+    }
+    throw error;
+  }
+}
+// What the answer cost, from the provider's own usage when the receipt has no price on it.
+const answerCost=data=>data&&data.estimatedUsd!=null?data.estimatedUsd:data&&data.claudeUsage?claude.estimateCostUsd(data.claudeUsage):null;
 function createAdDesignAdapters(D){
   const sharp=D.sharp||require('sharp');
   let imageAccess={ready:true,message:null},imageAccessFailureAt=0,openaiRetryAt=0,claudeRetryAt=0;
@@ -321,7 +341,8 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
   async function reviewImages(source,files,brief,catalogReferences,requestId,recovery={}){
     const weighted=brief?.reviewType==='complete_ad',motion=weighted&&!!brief.motionReview,rubric=require('./googleAdsAdQuality'),identity=require('./googleAdsAdIdentity');
     // Each film format is its own take: the charm of every format is checked against the same catalog reference and answered separately.
-    const formatKeys=motion?[...new Set((Array.isArray(brief.renderedFormats)?brief.renderedFormats:[]).map(f=>f&&f.key).filter(k=>typeof k==='string'&&/^[a-z0-9_]{1,60}$/i.test(k)))]:[];
+    // A quick re-check (asked once when the first answer could not be read) is the cheap version: low effort and no per-format verdict block.
+    const quick=motion&&recovery.quick===true,allKeys=motion&&!quick?[...new Set((Array.isArray(brief.renderedFormats)?brief.renderedFormats:[]).map(f=>f&&f.key).filter(k=>typeof k==='string'&&/^[a-z0-9_]{1,60}$/i.test(k)))]:[],formatKeys=allKeys.length<=MAX_FORMAT_VERDICTS?allKeys:[];
     const schema=weighted?(motion?{...rubric.schema,properties:{...rubric.schema.properties,exactProductIdentity:{type:'boolean'},footageLettering:{type:'boolean'},multipleProducts:{type:'boolean'},...(formatKeys.length?{formatIdentity:identity.formatIdentitySchema(formatKeys)}:{})},required:[...rubric.schema.required,'exactProductIdentity','footageLettering','multipleProducts',...(formatKeys.length?['formatIdentity']:[])]}:rubric.schema):{type:'object',additionalProperties:false,properties:{pass:{type:'boolean'},productFaithful:{type:'boolean'},mobileReadable:{type:'boolean'},score:{type:'number',minimum:0,maximum:100},issues:{type:'array',items:{type:'string'}}},required:['pass','productFaithful','mobileReadable','score','issues']};
     const manifest=brief&&brief.inputCoverage&&brief.inputCoverage.referenceManifest,multi=Array.isArray(manifest)&&manifest.length>0;
     if(multi&&(!catalogReferences||manifest.length!==catalogReferences.length))throw new Error('Quality review requires every saved composition reference.');
@@ -335,10 +356,21 @@ Compose specifically for ${format.key}, final ${format.width} by ${format.height
     const productCount=Math.max(1,Number(brief&&brief.inputCoverage&&brief.inputCoverage.usedProductImages)||1);
     if(!multi)(catalogReferences||[]).slice(1,Math.min(productCount,3)).forEach((b,i)=>content.push({type:'input_text',text:'ADDITIONAL VERIFIED PRODUCT VIEW '+(i+1)},{type:'input_image',image_url:'data:image/jpeg;base64,'+b.toString('base64'),detail:'high'}));
     files.forEach((b,i)=>content.push({type:'input_text',text:'FINAL '+(i+1)},{type:'input_image',image_url:'data:image/jpeg;base64,'+b.toString('base64'),detail:'high'}));
-    const data=recovery.rawResponse||await responses({model:TEXT_MODEL,...(recovery.durable?{background:true}:{}),store:false,reasoning:{effort:'high'},input:[{role:'user',content}],text:{format:{type:'json_schema',name:'ad_design_quality',strict:true,schema}}},requestId);
+    const data=recovery.rawResponse||await responses({model:TEXT_MODEL,...(recovery.durable?{background:true}:{}),store:false,reasoning:{effort:quick?'low':'high'},input:[{role:'user',content}],text:{format:{type:'json_schema',name:'ad_design_quality',strict:true,schema,...(motion?{name:quick?'ad_design_motion_recheck':'ad_design_motion_quality'}:{})}}},requestId);
     if(!recovery.rawResponse&&recovery.onResponse)await recovery.onResponse(data);
-    const result=require('./googleAdsAdDesignResearch').parseResponse(data);
-    const review={...result,...(weighted?rubric.normalize(result):{pass:result.pass===true&&result.productFaithful===true&&result.mobileReadable===true&&Number.isFinite(result.score)&&result.score>=97&&result.score<=100}),...(motion?{productFaithful:result.exactProductIdentity===true,footageLettering:result.footageLettering===true,multipleProducts:result.multipleProducts===true,pass:rubric.normalize(result).pass&&result.exactProductIdentity===true&&result.footageLettering!==true&&result.multipleProducts!==true}:{}),usage:data.usage||{},providerModel:data.model||TEXT_MODEL,...(data.estimatedUsd==null?{}:{estimatedUsd:data.estimatedUsd}),costEstimated:data.costEstimated!==false};
+    // Only text with no JSON, no complete category scores or deductions that cannot be reconciled is unreadable. A motion review marks that (reviewUnreadable) so the
+    // job can ask once more or finish without a review; a verdict the answer lacks (or renamed) is simply not assessed and never fails the read.
+    let result,scored=null;
+    try{
+      result=readReviewAnswer(data);
+      if(motion&&!Object.keys(rubric.WEIGHTS).every(k=>Number.isFinite(result.scores&&result.scores[k])&&result.scores[k]>=0&&result.scores[k]<=100))throw Object.assign(new Error('The review answer has no complete set of category scores.'),{code:'AI_OUTPUT_INVALID'});
+      if(weighted)scored=rubric.normalize(result);
+    }catch(error){
+      if(motion&&(error.code==='AI_OUTPUT_INVALID'||error.code==='REVIEW_DEDUCTIONS'))throw Object.assign(error,{reviewUnreadable:true,definiteResponse:true,technical:String(error.message||'').slice(0,300),estimatedUsd:answerCost(data)});
+      throw error;
+    }
+    const cost=answerCost(data),notAssessed=motion?[...['exactProductIdentity','footageLettering','multipleProducts'].filter(k=>typeof result[k]!=='boolean'),...(formatKeys.length&&(!result.formatIdentity||typeof result.formatIdentity!=='object'||Array.isArray(result.formatIdentity))?['formatIdentity']:[])]:[];
+    const review={...result,...(weighted?scored:{pass:result.pass===true&&result.productFaithful===true&&result.mobileReadable===true&&Number.isFinite(result.score)&&result.score>=97&&result.score<=100}),...(motion?{productFaithful:typeof result.exactProductIdentity==='boolean'?result.exactProductIdentity:scored.productFaithful,footageLettering:result.footageLettering===true,multipleProducts:result.multipleProducts===true,pass:scored.pass&&result.exactProductIdentity!==false&&result.footageLettering!==true&&result.multipleProducts!==true,...(notAssessed.length?{notAssessed}:{}),...(quick?{reviewMode:'quick_recheck'}:{})}:{}),usage:data.usage||{},providerModel:data.model||TEXT_MODEL,...(cost==null?{}:{estimatedUsd:cost}),costEstimated:data.costEstimated!==false};
     return formatKeys.length?identity.applyFormatIdentity(review,formatKeys):review;
   }
   function reserveCost({key,workspace,job,format:sceneFormat}){

@@ -748,6 +748,45 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
    const resolved=resolveBounds({square:{bounds:[.45,.3,.28,.55],complete:true,confidence:.99,note:'fixture'}},['square']);ok(resolved.bounds.square.x>=.21875&&resolved.bounds.square.x+resolved.bounds.square.w<=.78125&&!resolved.notes.length,'a measured square master keeps its jewelry inside the central square');
    ok(/FULL wide frame/.test(layoutRequest({title:'x'},[],Buffer.from('i'),['portrait','square','landscape']).input[0].content)&&!/FULL wide frame/.test(layoutRequest({title:'x'},[],Buffer.from('i')).input[0].content),'the layout request asks for full-frame bounds only when it measures a square master');
   }
+ // A saved review answer never costs Paul his films. An answer in an older shape (or fenced, or with a sentence around it) is read as saved with no new paid
+ // call; an unreadable one is discarded once and asked again cheaply and labelled; if that is unreadable too, the saved films are ready and only the review is not completed.
+ {
+  const {createAdDesignAdapters,TEXT_MODEL}=require('../../netlify/functions/googleAdsAdDesignAdapters'),{Readable}=require('node:stream');
+  const cats=['messaging','layout','relevance','visualAppeal','productRecognition'],keys=['mobile_portrait','mobile_square','desktop_landscape'],good={scores:Object.fromEntries(cats.map(k=>[k,100])),categoryReviews:Object.fromEntries(cats.map(k=>[k,{summary:'Fine.',deductions:[]}])),productRecognizable:true,claimsSupported:true,mobileReadable:true,exactProductIdentity:true,footageLettering:false,issues:[]};
+  const saved=text=>({id:'msg_saved',object:'response',provider:'anthropic',model:TEXT_MODEL,status:'completed',incomplete_details:null,output:[],output_text:text,usage:{input_tokens:1000,output_tokens:500},claudeUsage:{input_tokens:1000,output_tokens:500},stop_reason:'end_turn'});
+  const sse=text=>Readable.from([{type:'message_start',message:{id:'m',type:'message',role:'assistant',model:TEXT_MODEL,content:[],usage:{input_tokens:10,output_tokens:1}}},{type:'content_block_start',index:0,content_block:{type:'text',text:''}},{type:'content_block_delta',index:0,delta:{type:'text_delta',text}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:'end_turn'},usage:{output_tokens:10}},{type:'message_stop'}].map(e=>'event: '+e.type+'\ndata: '+JSON.stringify(e)+'\n\n'));
+  // replies are the answers Sonnet will give, in order; savedText (when given) is an answer already saved in the review receipt of the stopped job, as production leaves it.
+  async function stoppedJob(replies,savedText){
+   const x=await setup(),sent=[],labels=watchLabels(x),adapters=createAdDesignAdapters({env:{ANTHROPIC_API_KEY:'fixture-only'},sleep:async()=>{},log:()=>{},formats:[],fetch:async(url,options)=>{sent.push(JSON.parse(options.body));if(!replies.length)throw new Error('an unexpected paid request');return {ok:true,status:200,headers:{get:()=>null},body:sse(replies.shift())};}});
+   x.D.reviewImages=savedText===undefined?adapters.reviewImages:async(s,f,b,refs,id,recovery)=>{await recovery.onResponse(saved(savedText));throw Object.assign(new Error('The AI returned an incomplete or malformed answer. Saved research and artwork are retained.'),{definiteResponse:true});};
+   const st=await x.service.start({workspaceId:'design_test',...x.scope});await x.service.run({workspaceId:'design_test',jobId:st.jobId});x.D.reviewImages=adapters.reviewImages;
+   const row=async()=>(await x.ref.collection('motionJobs').doc(st.jobId).get()).data();
+   return {x,sent,labels,adapters,row,status:()=>x.service.status({workspaceId:'design_test',...x.scope}),resume:async()=>{await x.service.start({workspaceId:'design_test',...x.scope,resumeJobId:st.jobId});return x.service.run({workspaceId:'design_test',jobId:st.jobId});}};
+  }
+  const oldVerdicts=Object.fromEntries(keys.map(k=>[k,{sameOutline:true,sameEngraving:false,sameFeatures:true,evidence:'The engraving is missing.'}]));
+  for(const [label,text] of [['an old-shape answer (no per-format verdicts, no multipleProducts)',JSON.stringify(good)],['an answer with the retired sameEngraving verdicts',JSON.stringify({...good,formatIdentity:oldVerdicts})],['an answer inside a markdown fence','```json\n'+JSON.stringify(good)+'\n```'],['an answer with a sentence around it','My review:\n'+JSON.stringify(good)+'\nThat is all.']]){
+   const t=await stoppedJob([],text),r=await t.resume(),row=await t.row();
+   ok(r.ok&&row.phase==='ready'&&row.variants.length===3&&row.quality.score===100&&row.quality.pass===true&&!row.quality.formatIdentityFailures?.length&&!t.sent.length&&!row.reviewSkipped,label+' is read as saved: the job is ready and no new paid request is sent');
+  }
+  // A full review that comes back unreadable: films saved, plain specific message, Resume reads the saved answer, then asks once more, cheaply and labelled.
+  const t=await stoppedJob(['',JSON.stringify(good)]),first=await t.row();
+  ok(first.phase==='needs_attention'&&first.variants.length===3&&t.sent.length===1&&first.error==='The final review answer could not be read; your films are saved. Press Resume to read it again.'&&/malformed/.test(first.errorDetail||'')&&/Films saved/.test(first.progress.label),'an unreadable final review answer says so plainly and keeps the three films');
+  const full=t.sent[0].output_config.format.schema.properties.formatIdentity;ok(full&&Object.keys(full.properties).join()===keys.join()&&t.sent[0].output_config.effort==='high','the full review asks for at most one verdict per format, three in all, never one per frame');
+  ok((await t.resume()).ok&&t.sent.length===2&&(await t.row()).phase==='ready','Resume reads the saved answer, finds it unusable and asks once more');
+  const quick=t.sent[1],done=await t.row(),kept=await t.x.ref.collection('motionJobs').doc(done.id).collection('receipts').doc('quality_unreadable').get();
+  ok(quick.output_config.effort==='low'&&!quick.output_config.format.schema.properties.formatIdentity&&done.quality.reviewMode==='quick_recheck'&&done.quality.score===100&&t.labels.some(l=>/quick re-check/i.test(l)),'that second request is a cheaper, labelled quick re-check without the per-format verdicts');
+  ok(kept.exists&&kept.data().response.output_text===''&&done.stageUsage.some(u=>u.key==='quality_unreadable'),'the discarded paid answer stays archived and counted');
+  // Unreadable twice: the saved films are ready and downloadable; only the review is marked not completed.
+  const u=await stoppedJob(['not json at all','still not json']);await u.resume();
+  const ended=await u.row(),shown=await u.status();
+  ok(u.sent.length===2&&ended.phase==='ready'&&!ended.quality&&ended.reviewSkipped&&ended.variants.length===3&&/final review not completed/.test(ended.progress.label),'a review that cannot be read twice still leaves the job ready with its three films');
+  ok(shown.phase==='ready'&&shown.reviewSkipped&&shown.variants.length===3&&shown.variants.every(v=>/^https:\/\//.test(v.url))&&!shown.qualityTargetMet&&!shown.reviewHash&&!shown.error,'the panel shows ready films with download links and a review marked not completed, never publishable unreviewed');
+  await u.x.service.run({workspaceId:'design_test',jobId:ended.id});ok(u.sent.length===2,'a finished job never asks again');
+  // Older 6-format jobs would need six verdicts: they are reviewed without the per-format block so the schema stays small.
+  const sixSent=[],photo=await sharp({create:{width:64,height:64,channels:3,background:'#b69b74'}}).jpeg().toBuffer(),six=createAdDesignAdapters({env:{ANTHROPIC_API_KEY:'fixture-only'},sleep:async()=>{},log:()=>{},formats:[],fetch:async(url,options)=>{sixSent.push(JSON.parse(options.body));return {ok:true,status:200,headers:{get:()=>null},body:sse(JSON.stringify(good))};}});
+  await six.reviewImages(photo,[photo],{reviewType:'complete_ad',motionReview:'x',renderedFormats:['mobile_portrait','mobile_square','mobile_landscape','desktop_portrait','desktop_square','desktop_landscape'].map(key=>({key}))},[photo],'six-formats');
+  ok(!sixSent[0].output_config.format.schema.properties.formatIdentity&&!sixSent[0].output_config.format.schema.required.includes('formatIdentity'),'more than three format keys never multiply the review schema');
+ }
  win.close();console.log('PASS '+n+' Gemini request, durable generation, device variants and recovery checks');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1});
