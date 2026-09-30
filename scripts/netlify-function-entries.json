@@ -333,6 +333,7 @@
     "googleAdsMotionFraming.js",
     "googleAdsMotionIntegrity.js",
     "googleAdsMotionInput.js",
+    "googleAdsMotionProductLock.js",
     "googleAdsMotionReferences.js",
     "googleAdsMotionPublication.js",
     "googleAdsSalesEvidence.js",
