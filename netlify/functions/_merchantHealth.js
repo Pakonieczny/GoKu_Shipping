@@ -224,16 +224,50 @@ async function autofeed(request, account) {
 }
 
 
-// The Merchant account is named by any linked shopping campaign, so an
-// environment variable pinning it is optional. More than one linked account is
-// not something to guess between.
-// runQuery(gaql) resolves to the rows Google returned.
-async function discoverMerchantId(runQuery) {
-  const rows = await runQuery("SELECT campaign.shopping_setting.merchant_id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 200");
-  const ids = [...new Set((rows || []).map(r => String((((r.campaign || {}).shoppingSetting || {}).merchantId) || '')).filter(Boolean))];
-  if (ids.length === 1) return { id: ids[0], ids, reason: 'discovered from a linked shopping campaign' };
-  if (ids.length > 1) return { id: null, ids, reason: 'campaigns link ' + ids.length + ' Merchant accounts (' + ids.join(', ') + '); set GMC_MERCHANT_ID to choose one' };
-  return { id: null, ids, reason: 'no shopping campaign names a Merchant account' };
+// Where the Merchant account id comes from, in order of trust. An explicit
+// setting beats anything Google reports; among Google's own records, the Ads
+// account's Merchant link beats a campaign, and the accounts the Merchant OAuth
+// token can list are the last resort. A source that names several different
+// accounts is never guessed between: it is reported and the next source is tried.
+//   env          GMC_MERCHANT_ID / MERCHANT_CENTER_ID
+//   readConfig() Firestore config/googleApiKeys.merchantId (resolves to a string or null)
+//   adsQuery(g)  resolves to the rows Google Ads returned
+//   listAccounts() resolves to the Merchant account ids the OAuth token can list
+// Every step is read-only, and a failing step is noted, not thrown.
+const MERCHANT_ID_HELP = 'Add the numeric Merchant Center account id (digits only, shown top right in merchants.google.com) as the Netlify environment variable GMC_MERCHANT_ID, or as the field merchantId in Firestore config/googleApiKeys.';
+const digits = v => String(v == null ? '' : v).replace(/\D/g, '');
+
+async function resolveMerchantId(deps) {
+  const { env, readConfig, adsQuery, listAccounts } = deps || {};
+  const notes = [], seen = [];
+  const explicit = digits((env || {}).GMC_MERCHANT_ID || (env || {}).MERCHANT_CENTER_ID);
+  if (explicit) return { id: explicit, ids: [explicit], source: 'environment GMC_MERCHANT_ID', notes };
+  if (readConfig) {
+    try { const v = digits(await readConfig()); if (v) return { id: v, ids: [v], source: 'Firestore config/googleApiKeys.merchantId', notes }; }
+    catch (e) { notes.push('Firestore config not readable: ' + String((e && e.message) || e)); }
+  }
+  const unique = list => [...new Set(list.map(digits).filter(Boolean))];
+  const steps = [
+    adsQuery && { source: 'the Google Ads product_link (Merchant Center link)', run: async () => unique((await adsQuery("SELECT product_link.merchant_center.merchant_center_id FROM product_link WHERE product_link.type = 'MERCHANT_CENTER'") || [])
+      .map(r => (((r.productLink || {}).merchantCenter || {}).merchantCenterId))) },
+    adsQuery && { source: 'a linked shopping campaign', run: async () => unique((await adsQuery("SELECT campaign.shopping_setting.merchant_id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 200") || [])
+      .map(r => (((r.campaign || {}).shoppingSetting || {}).merchantId))) },
+    listAccounts && { source: 'the accounts the Merchant OAuth token can list', run: async () => unique(await listAccounts() || []) }
+  ].filter(Boolean);
+  let chosen = null;
+  for (const step of steps) {
+    // The account list is only a fallback: skip it once anything else has spoken.
+    if (step.source.startsWith('the accounts') && (chosen || seen.length)) continue;
+    let ids = [];
+    try { ids = await step.run(); } catch (e) { notes.push(step.source + ' failed: ' + String((e && e.message) || e)); continue; }
+    ids.forEach(i => { if (!seen.includes(i)) seen.push(i); });
+    if (ids.length === 1 && !chosen) chosen = { id: ids[0], source: step.source };
+    else if (ids.length === 1 && chosen && ids[0] !== chosen.id) notes.push(step.source + ' names ' + ids[0] + ', not ' + chosen.id + '; using ' + chosen.id + ' from ' + chosen.source);
+    else if (ids.length > 1) notes.push(step.source + ' names ' + ids.length + ' different Merchant accounts (' + ids.join(', ') + ')');
+  }
+  if (chosen) return { id: chosen.id, ids: seen, source: chosen.source, notes };
+  if (seen.length > 1) return { id: null, ids: seen, notes, reason: 'several Merchant accounts are named (' + seen.join(', ') + ') and none was chosen. Set GMC_MERCHANT_ID (or merchantId in Firestore config/googleApiKeys) to the one this store uses.' };
+  return { id: null, ids: seen, notes, reason: 'no Merchant account id could be found: it is not in GMC_MERCHANT_ID, Firestore config/googleApiKeys.merchantId, the Google Ads product_link, any shopping campaign, or the Merchant OAuth account list' + (notes.length ? ' (' + notes.join('; ') + ')' : '') + '. ' + MERCHANT_ID_HELP };
 }
 
 async function merchantHealth(input) {
@@ -275,4 +309,4 @@ async function merchantHealth(input) {
   };
 }
 
-module.exports = { merchantHealth, discoverMerchantId, accountIssues, productIssues, titleIssues, titleProblem, garbledTitlesNotice, TITLE_FIX, adsLink, conversionSources, servingSettings, dataSources, promotions, autofeed };
+module.exports = { merchantHealth, resolveMerchantId, MERCHANT_ID_HELP, accountIssues, productIssues, titleIssues, titleProblem, garbledTitlesNotice, TITLE_FIX, adsLink, conversionSources, servingSettings, dataSources, promotions, autofeed };

@@ -68,6 +68,16 @@ async function googleApiKeyStatus(field, deps) {
     : { key: null, source: null, error: null };
 }
 
+// A plain configuration value (not an API key) stored in the same document, such
+// as merchantId. Numbers are accepted, since Firestore consoles often store IDs
+// as numbers. Throws when Firestore is unreachable so a caller can say so.
+async function storedValue(field, deps) {
+  const stored = await keys(deps);
+  if (stored && stored._error) throw new Error(stored._error);
+  const value = stored && stored[field];
+  return (typeof value === 'string' || typeof value === 'number') && String(value).trim() ? String(value).trim() : null;
+}
+
 function resetCache() { cache = null; cachedAt = 0; inFlight = null; }
 
-module.exports = { googleApiKey, googleApiKeyStatus, resetCache, envNameFor, DOC_PATH };
+module.exports = { googleApiKey, googleApiKeyStatus, storedValue, resetCache, envNameFor, DOC_PATH };

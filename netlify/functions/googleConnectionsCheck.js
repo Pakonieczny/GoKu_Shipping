@@ -24,6 +24,7 @@
 
 const fetch = require("node-fetch");
 const C = require("./_googleConnections");
+const { resolveMerchantId } = require("./_merchantHealth");
 const { refuse } = require("./_adsCheckGate");
 const ENV = process.env;
 
@@ -83,7 +84,7 @@ function credentialSection() {
   shape("GADS_REFRESH_TOKEN", () => /^1\/\//.test(ENV.GADS_REFRESH_TOKEN), "present (1//…)", "not a 1// refresh token");
   rows.push(/^\d{10}$/.test(LOGIN) ? C.ok("GADS_LOGIN_CUSTOMER_ID", LOGIN) : C.fail("GADS_LOGIN_CUSTOMER_ID", (LOGIN || "missing") + " — expected 10 digits, no dashes"));
   rows.push(/^\d{10}$/.test(CID) ? C.ok("GADS_CUSTOMER_ID", CID) : C.fail("GADS_CUSTOMER_ID", (CID || "missing") + " — expected 10 digits, no dashes"));
-  rows.push(MERCHANT ? C.ok("GMC_MERCHANT_ID", MERCHANT) : C.warn("GMC_MERCHANT_ID", "not set — the Merchant account is discovered from a linked campaign instead"));
+  rows.push(MERCHANT ? C.ok("GMC_MERCHANT_ID", MERCHANT) : C.warn("GMC_MERCHANT_ID", "not set — the Merchant account is looked up in Firestore config/googleApiKeys.merchantId, the Google Ads Merchant link, then shopping campaigns"));
   rows.push(present("GMC_REFRESH_TOKEN") ? C.ok("GMC_REFRESH_TOKEN", "present") : C.warn("GMC_REFRESH_TOKEN", "not set — every Merchant Center call is unavailable"));
   rows.push(present("GEMINI_API_KEY") ? C.ok("GEMINI_API_KEY", "present") : C.warn("GEMINI_API_KEY", "not set — image and video generation are unavailable"));
   rows.push(present("SHOPIFY_STORE") ? C.ok("SHOPIFY_STORE", ENV.SHOPIFY_STORE) : C.warn("SHOPIFY_STORE", "not set — the store side cannot be verified"));
@@ -294,20 +295,32 @@ async function merchantSection(adsToken, report) {
     token = await mintToken(ENV.GMC_CLIENT_ID || ENV.GADS_CLIENT_ID || "", ENV.GMC_CLIENT_SECRET || ENV.GADS_CLIENT_SECRET || "", ENV.GMC_REFRESH_TOKEN);
     rows.push(C.ok("merchant OAuth", "minted an access token"));
   } catch (e) { return { title: "Merchant Center", rows: [C.fail("merchant OAuth", e.message, { remedy: C.remedyFor(e.message) })] }; }
-  let account = MERCHANT;
-  if (!account && adsToken && /^\d{10}$/.test(CID)) {
-    try {
-      const { res, data } = await adsPost(adsToken, "customers/" + CID + "/googleAds:search", {
-        query: "SELECT campaign.shopping_setting.merchant_id FROM campaign WHERE campaign.status != 'REMOVED' LIMIT 200"
-      });
-      const ids = res.ok ? [...new Set((data.results || []).map(r => String((((r.campaign || {}).shoppingSetting || {}).merchantId) || "")).filter(Boolean))] : [];
-      // More than one linked account is not a thing to guess between.
-      if (ids.length === 1) { account = ids[0]; if (report) report.merchantId = ids[0]; rows.push(C.ok("merchant account", ids[0] + " — discovered from a linked shopping campaign, no environment variable needed")); }
-      else if (ids.length > 1) rows.push(C.warn("merchant account", "campaigns link " + ids.length + " Merchant accounts (" + ids.join(", ") + "); set GMC_MERCHANT_ID to choose one"));
-      else rows.push(C.warn("merchant account", "no shopping campaign names a Merchant account, and GMC_MERCHANT_ID is not set"));
-    } catch (e) { rows.push(C.warn("merchant account", "discovery failed: " + e.message)); }
-  } else if (!account) rows.push(C.warn("merchant account", "no GMC_MERCHANT_ID, and Google Ads credentials were unavailable to discover it"));
-  if (!account) return { title: "Merchant Center", rows };
+  const adsReady = adsToken && /^\d{10}$/.test(CID);
+  const found = await resolveMerchantId({
+    env: ENV,
+    readConfig: () => require("./_googleApiKeys").storedValue("merchantId"),
+    adsQuery: adsReady ? async query => {
+      const { res, data } = await adsPost(adsToken, "customers/" + CID + "/googleAds:search", { query });
+      if (!res.ok) throw new Error(res.status + " — " + (C.adsErrorCode(data) || "no detail"));
+      return data.results || [];
+    } : null,
+    // Read-only: the accounts this OAuth token can see. Only used when nothing else names one.
+    listAccounts: async () => {
+      const res = await fetch("https://merchantapi.googleapis.com/accounts/v1/accounts?pageSize=100", { timeout: TIMEOUT, headers: { Authorization: "Bearer " + token } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(res.status + " — " + (((data || {}).error || {}).message || "").slice(0, 180));
+      return (data.accounts || []).map(a => a.accountId || String(a.name || "").replace(/^accounts\//, ""));
+    }
+  });
+  const account = found.id;
+  if (account) {
+    if (report) report.merchantId = account;
+    rows.push(C.ok("merchant account", account + " — from " + found.source));
+    if (found.notes.length) rows.push(C.warn("merchant account sources", found.notes.join("; ")));
+  } else {
+    rows.push(C.warn("merchant account", found.reason));
+    return { title: "Merchant Center", note: "The Merchant API probes did not run because no Merchant account id could be resolved.", rows };
+  }
 
   const probed = await inBatches(C.MERCHANT_PROBES, 7, async probe => {
     try {

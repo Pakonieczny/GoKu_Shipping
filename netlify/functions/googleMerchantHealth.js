@@ -11,11 +11,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fetch = require('node-fetch');
-const { merchantHealth, discoverMerchantId } = require('./_merchantHealth');
+const { merchantHealth, resolveMerchantId } = require('./_merchantHealth');
 const { refuse } = require('./_adsCheckGate');
 const ENV = process.env;
 const TIMEOUT = 20000;
-const MERCHANT = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || '').replace(/\D/g, '');
 const ADS_CID = (ENV.GADS_CUSTOMER_ID || '').replace(/\D/g, '');
 const LOGIN = (ENV.GADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, '');
 const V = ENV.GADS_API_VERSION || 'v24';
@@ -98,14 +97,18 @@ exports.handler = async (event) => {
   const params = (event && event.queryStringParameters) || {};
   let result;
   try {
-    let account = MERCHANT;
-    if (!account) {
-      const found = await discoverMerchantId(adsQuery);
-      if (!found.id) throw new Error('No Merchant Center account could be resolved: ' + found.reason + '. Set GMC_MERCHANT_ID to name it explicitly.');
-      account = found.id;
-    }
-    result = await merchantHealth({ request: requestWith(await merchantToken()), merchantId: account, adsCustomerId: ADS_CID, offerLimit: params.offers });
-    result.merchantIdSource = MERCHANT ? 'GMC_MERCHANT_ID' : 'discovered from a linked shopping campaign';
+    const token = await merchantToken();
+    const found = await resolveMerchantId({
+      env: ENV,
+      readConfig: () => require('./_googleApiKeys').storedValue('merchantId'),
+      adsQuery: ADS_CID ? adsQuery : null,
+      listAccounts: async () => ((await requestWith(token)('accounts/v1/accounts?pageSize=100', 'GET')).accounts || [])
+        .map(a => a.accountId || String(a.name || '').replace(/^accounts\//, ''))
+    });
+    if (!found.id) throw new Error('No Merchant Center account could be resolved: ' + found.reason);
+    result = await merchantHealth({ request: requestWith(token), merchantId: found.id, adsCustomerId: ADS_CID, offerLimit: params.offers });
+    result.merchantIdSource = found.source;
+    if (found.notes.length) result.merchantIdNotes = found.notes;
   } catch (e) {
     return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ok: false, error: String(e.message || e) }, null, 2) };
   }
