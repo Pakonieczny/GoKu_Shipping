@@ -25,15 +25,43 @@ function resolveBounds(value,orientations=['portrait','landscape']){
  return {bounds,notes};
 }
 const BAND={square:.24,portrait:.22,landscape:.28},LOGO=148,SQUARE_CROP={x:.21875,y:0,w:.5625,h:1};
-// Standard fade (renderVersion 11 and later): one ramp and one size per format for
-// every film, independent of the copy. Opacity runs from FADE_STOPS[0] at the outer
-// screen edge, easing to 0 at the inner edge. Side fades are FADE_SIZE.side of the
-// frame width; top fades are FADE_SIZE.top[format] of the frame height.
-const FADE_STOPS=[[0,.5],[.2,.448],[.4,.324],[.6,.176],[.8,.052],[1,0]],FADE_SIZE={side:.335,top:{square:.22,landscape:.22,portrait:.20}};
+// Standard fade (renderVersion 11 and later): one ramp and one size for every film,
+// independent of the copy and of the format. Opacity runs from FADE_STOPS[0] (a clearly
+// perceptible, solid-ish start) at the outer screen edge down to 0 at the inner edge, so the
+// fade is mostly transparent overall. Top fades cover FADE_SIZE.top[format] (33%) of the
+// frame HEIGHT; side fades (jewelry left of or right of the copy) span the full height and
+// FADE_SIZE.side of the frame width.
+const FADE_STOPS=[[0,.8],[.3,.72],[.5,.5],[.7,.25],[.85,.08],[1,0]],FADE_SIZE={side:.335,top:{square:.33,landscape:.33,portrait:.33}},FADE_MIN_CONTRAST=1.6;
 const luminance=h=>{const c=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2];};
 const contrast=(a,b)=>{const x=luminance(a),y=luminance(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
 // Brand ink stays when it reads well on the fade colour; otherwise the clearer of brand ink and a light ink.
 function inkFor(fade,ink){if(contrast(fade,ink)>=4.5)return ink;const light='#fffaf0';return contrast(fade,light)>contrast(fade,ink)?light:ink;}
+// Make the fade colour clearly different from what sits under it. A fade drawn in the same
+// colour as the frame is invisible, so the colour is moved along its own hue toward a darker,
+// richer tone (or lighter, when the frame is already near black) until it holds at least
+// `min` contrast against every backdrop colour; the hue never changes.
+function toHsl(h){const [r,g,b]=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255),hi=Math.max(r,g,b),lo=Math.min(r,g,b),l=(hi+lo)/2,d=hi-lo;let hue=0,sat=0;
+ if(d){sat=d/(1-Math.abs(2*l-1));hue=hi===r?((g-b)/d+(g<b?6:0)):hi===g?(b-r)/d+2:(r-g)/d+4;hue*=60;}return [hue,sat,l];}
+function fromHsl(hue,sat,l){const c=(1-Math.abs(2*l-1))*sat,x=c*(1-Math.abs((hue/60)%2-1)),m=l-c/2,[r,g,b]=hue<60?[c,x,0]:hue<120?[x,c,0]:hue<180?[0,c,x]:hue<240?[0,x,c]:hue<300?[x,0,c]:[c,0,x];
+ return '#'+[r,g,b].map(v=>Math.round(clamp((v+m)*255,0,255)).toString(16).padStart(2,'0')).join('');}
+function ensureVisibleFade(colour,backdrops,min=FADE_MIN_CONTRAST){
+ const backs=(backdrops||[]).filter(b=>/^#[0-9a-f]{6}$/i.test(b||'')),worst=c=>backs.length?Math.min(...backs.map(b=>contrast(c,b))):Infinity;
+ if(!/^#[0-9a-f]{6}$/i.test(colour||'')||worst(colour)>=min)return colour;
+ const [hue,sat,l]=toHsl(colour);let best=colour,bestScore=worst(colour);
+ for(const dir of [-1,1])for(let i=1;i<=40;i++){const c=fromHsl(hue,clamp(sat+(dir<0?.02*i:0),0,.95),clamp(l+dir*.02*i,.03,.97)),score=worst(c);
+  if(score>=min)return c;if(score>bestScore){best=c;bestScore=score;}}
+ return best;
+}
+// The colours actually under each fade edge (top band, left and right bands) of the visible crop.
+async function edgeBackdrops(jpeg,region){
+ const out=[];for(const [x,y,w,h] of [[0,0,1,FADE_SIZE.top.landscape],[0,0,FADE_SIZE.side,1],[1-FADE_SIZE.side,0,FADE_SIZE.side,1]]){
+  const r=region||{x:0,y:0,w:1,h:1};out.push(await primaryColour(jpeg,{mode:'average',region:{x:r.x+x*r.w,y:r.y+y*r.h,w:w*r.w,h:h*r.h}}));}
+ return out;
+}
+// The film's fade colour: its primary colour, guaranteed visibly different from the frame under the fade.
+async function fadeColour(jpeg,opts={}){
+ const base=await primaryColour(jpeg,opts);return ensureVisibleFade(base,await edgeBackdrops(jpeg,opts.region));
+}
 // The film's own primary colour as '#rrggbb', from a small downscaled sample of a frame.
 // With a region ({x,y,w,h} as fractions) the default is that region's average colour; without
 // one, the dominant colour of the frame. Either is softened slightly toward the region's
@@ -155,7 +183,7 @@ async function composeTier(plan,format,beats,tier,hints,only){
  if(std)g.zones=g.zones.filter(z=>z.name===only);
  const fadePad=Math.max(24,Math.round(Math.min(W,H)*.035));
  const fadeRect=name=>{const band=g.seam?g.seam.at:0;
-  if(name==='top'||name==='header'){const h=H*FADE_SIZE.top[format.key],ext=g.seam?.edge==='top'?band:0;return {name:'top',x:0,y:0,w:W,h:h+ext,hold:ext?ext/(h+ext):0};}
+  if(name==='top'||name==='header'){const h=H*FADE_SIZE.top[format.key],ext=g.seam?.edge==='top'?band:0,total=ext?Math.max(h,ext+H*.08):h;return {name:'top',x:0,y:0,w:W,h:total,hold:ext?ext/total:0};}
   const w=W*FADE_SIZE.side,ext=name==='left'&&g.seam?.edge==='left'?band:0;
   return name==='left'?{name:'left',x:0,y:0,w:w+ext,h:H,hold:ext?ext/(w+ext):0}:{name:'right',x:W-w,y:0,w,h:H,hold:0};};
  const ff=std?fadeRect(only):null,inFade=b=>b.x>=ff.x-.5&&b.y>=ff.y-.5&&b.x+b.w<=ff.x+ff.w+.5&&b.y+b.h<=ff.y+ff.h+.5;
@@ -255,4 +283,4 @@ async function composeTier(plan,format,beats,tier,hints,only){
  }
  return layers;
 }
-module.exports={FADE_STOPS,FADE_SIZE,primaryColour,inkFor,VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};
+module.exports={FADE_STOPS,FADE_SIZE,FADE_MIN_CONTRAST,fadeColour,ensureVisibleFade,edgeBackdrops,primaryColour,inkFor,VERSION,TIMES,BAND,layoutRequest,validateBounds,resolveBounds,defaultBounds,geometry,captions};
