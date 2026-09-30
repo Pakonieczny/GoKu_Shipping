@@ -8,6 +8,14 @@ function requestBody(image,prompt,orientation){
  if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
  return {model:MODEL,background:true,store:true,input:[{type:'image',mime_type:'image/jpeg',data:image.toString('base64')},{type:'text',text:prompt}],response_format:{type:'video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
 }
+// Scenery-only films use text-to-video. Sending an empty image would pin a
+// blank first frame; sending product pixels would invite a generated redraw.
+// https://ai.google.dev/gemini-api/docs/omni#text-to-video-generation
+function sceneryRequestBody(prompt,orientation){
+ if(typeof prompt!=='string'||!prompt.trim())throw Error('A moving scenery direction is required.');
+ if(!Object.hasOwn(ASPECT,orientation))throw Error('Choose a supported video orientation.');
+ return {model:MODEL,background:true,store:true,input:[{type:'text',text:prompt}],response_format:{type:'video',task:'text_to_video',aspect_ratio:ASPECT[orientation],resolution:'720p',delivery:'uri'}};
+}
 function outputVideo(data){return (data.steps||[]).filter(s=>s.type==='model_output').flatMap(s=>s.content||[]).find(c=>c.type==='video'&&(c.uri||c.data))||null;}
 
 // Reading Google's replies. An interaction answers with plain JSON, but Google also sends Server-Sent-Events text ("event: error" then
@@ -173,4 +181,4 @@ function createGeminiVideo({apiKey,fetch,sleep=wait}){
  }
  return {request,content};
 }
-module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};
+module.exports={MODEL,SECONDS,OUTPUT_USD_PER_SECOND,requestBody,sceneryRequestBody,outputVideo,createGeminiVideo,readReply,RETRY_DELAYS_MS};
