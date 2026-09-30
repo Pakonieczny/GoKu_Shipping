@@ -34,7 +34,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
 }
 (async()=>{
  const body=requestBody(Buffer.from('image'),'Exact jewelry, subtle camera movement','portrait');ok(body.model==='gemini-omni-1.1-flash'&&body.response_format.aspect_ratio==='9:16','requested model and ratio');ok(!('seconds'in body)&&!('input_reference'in body),'no OpenAI video parameters sent to Gemini');ok(outputVideo({steps:[{type:'user_input',content:[{type:'video',data:'wrong'}]},{type:'model_output',content:[{type:'video',data:'right'}]}]}).data==='right','only generated video returned');
- let sent=0;const provider=createGeminiVideo({apiKey:'fixture',fetch:async(url,opts)=>{sent++;ok(opts.headers['x-goog-api-key']==='fixture'&&!url.includes('fixture'),'key kept in header');return {ok:true,json:async()=>({id:'v1_1'}),headers:{get:()=>null}}}});await provider.request('interactions','POST',body);await assert.rejects(()=>provider.content({uri:'https://attacker.test/video'}),/unsupported/);ok(sent===1,'no credentials or fetch to untrusted download host');
+ let sent=0;const provider=createGeminiVideo({apiKey:'fixture',fetch:async(url,opts)=>{sent++;ok(opts.headers['x-goog-api-key']==='fixture'&&!url.includes('fixture'),'key kept in header');return {ok:true,status:200,text:async()=>'{"id":"v1_1"}',headers:{get:()=>null}}}});await provider.request('interactions','POST',body);await assert.rejects(()=>provider.content({uri:'https://attacker.test/video'}),/unsupported/);ok(sent===1,'no credentials or fetch to untrusted download host');
  const e=await setup(),start=await e.service.start({workspaceId:'design_test',...e.scope});const result=await e.service.run({workspaceId:'design_test',jobId:start.jobId});ok(result.ok,'complete motion pipeline '+result.error);const status=await e.service.status({workspaceId:'design_test',...e.scope});ok(status.phase==='ready'&&status.variants.length===3,'three previews saved');ok(e.calls.create===3&&e.calls.render===3&&e.calls.review===1,'three purpose-built masters, one per ratio');await e.service.run({workspaceId:'design_test',jobId:start.jobId});ok(e.calls.create===3,'completed job never charges twice');
   {
    // Version 3: portrait, square and landscape each have their own film request.
@@ -77,6 +77,43 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
    await pr.update({masters:{portrait:{...done,id:'v1_p',size:'720x1280'},square:{id:'v1_pending',status:'in_progress',progress:0,size:'1280x720',requestId:'saved',estimatedUsd:1.0136}}});
    const inner=p3.D.videoRequest;p3.D.videoRequest=async(route,method,body)=>{if(method!=='POST'&&route==='interactions/v1_pending'){polls.push(route);return {id:'v1_pending',status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/pending.mp4'}]}]};}return inner(route,method,body);};
    ok((await p3.service.run({workspaceId:'design_test',jobId:ps.jobId})).ok&&p3.calls.create===1&&p3.calls.aspects.join()==='16:9'&&polls.length===1,'the pending square master is polled and only the missing landscape master is requested');
+  }
+  {
+   // Google answering a poll with an event stream ("event: error"), a gateway page or a reset never fails or re-buys a paid film: the same
+   // saved interaction is asked again, the job stays resumable, and the panel gets a plain sentence with the technical reason kept apart.
+   const reply=(status,text,headers={})=>({ok:status>=200&&status<300,status,headers:{get:k=>headers[k.toLowerCase()]||null},text:async()=>text,buffer:async()=>Buffer.from(text)});
+   const stream='event: error\ndata: {"error":{"message":"Internal error encountered."}}\n\n',finished=JSON.stringify({id:'v1_pending',status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/pending.mp4'}]}]});
+   const film=(id,status,size)=>({id,status,progress:status==='completed'?100:0,output:status==='completed'?{uri:'https://storage.googleapis.com/saved.mp4'}:null,size,requestId:'saved',estimatedUsd:1.0136});
+   const seed=async()=>{const x=await setup(),s=await x.service.start({workspaceId:'design_test',...x.scope}),r=x.ref.collection('motionJobs').doc(s.jobId);
+    await r.update({masters:{portrait:film('v1_p','completed','720x1280'),square:film('v1_pending','in_progress','1280x720'),landscape:film('v1_l','completed','1280x720')}});return {x,r,id:s.jobId};};
+   const wire=(x,answer)=>{const urls=[],sleeps=[],g=createGeminiVideo({apiKey:'fixture',sleep:async ms=>{sleeps.push(ms);},fetch:async(url,opts)=>{urls.push(opts.method+' '+url);return answer(urls.length);}});x.D.videoRequest=g.request;x.D.sleep=async()=>{};return {urls,sleeps};};
+   const POLL='GET https://generativelanguage.googleapis.com/v1beta/interactions/v1_pending';
+   // Two unreadable replies, then the finished film: one interaction, polled three times, no second purchase.
+   const a=await seed(),wa=wire(a.x,n=>n<=2?reply(200,stream):reply(200,finished));
+   ok((await a.x.service.run({workspaceId:'design_test',jobId:a.id})).ok,'a film survives two unreadable event-stream replies');
+   const aj=(await a.r.get()).data();
+   ok(wa.urls.length===3&&wa.urls.every(u=>u===POLL)&&a.x.calls.create===0,'the same saved interaction is polled again and no second film is requested');
+   ok(aj.phase==='ready'&&aj.variants.length===3&&aj.masters.square.id==='v1_pending'&&aj.masters.square.status==='completed'&&!aj.error,'the job ends ready with the original interaction');
+   ok(wa.sleeps.length===2&&wa.sleeps[0]>0,'the provider backed off between tries');
+   // Google keeps answering unreadably: the job stops resumable (never failed), with a plain message, and resuming polls the same film.
+   const b=await seed(),wb=wire(b.x,()=>reply(200,stream)),out=await b.x.service.run({workspaceId:'design_test',jobId:b.id}),bj=(await b.r.get()).data();
+   ok(out.ok===false&&bj.phase==='needs_attention'&&bj.phase!=='failed'&&bj.masters.square.id==='v1_pending'&&bj.masters.portrait.id==='v1_p'&&!bj.inFlight,'persistent unreadable replies leave the job resumable with every interaction id kept');
+   ok(/Google’s video service/.test(bj.error)&&/Check saved progress/.test(bj.error)&&!/Unexpected token|not valid JSON|event: err/.test(bj.error),'the panel message is plain, not a parse error');
+   ok(/event stream/.test(bj.errorDetail)&&/Internal error encountered/.test(bj.errorDetail),'the technical reason is kept in the details');
+   ok(wb.urls.length>3&&wb.urls.length<=12&&wb.urls.every(u=>u===POLL)&&b.x.calls.create===0,'retries are bounded and only ever ask for the saved interaction');
+   const bs=await b.x.service.status({workspaceId:'design_test',...b.x.scope});ok(bs.canResume&&bs.providerWait&&bs.phase==='needs_attention'&&/Waiting for Google/.test(bs.progress.label)&&/Internal error/.test(bs.errorDetail),'status offers resume by polling and carries the details');
+   const wc=wire(b.x,()=>reply(200,finished));await b.x.service.start({workspaceId:'design_test',...b.x.scope,resumeJobId:b.id});
+   ok((await b.x.service.run({workspaceId:'design_test',jobId:b.id})).ok&&wc.urls.length===1&&wc.urls[0]===POLL&&b.x.calls.create===0,'Resume animation polls the same interaction and buys nothing');
+   const bj2=(await b.r.get()).data();ok(bj2.phase==='ready'&&!bj2.error&&!bj2.errorDetail&&!bj2.providerWait&&bj2.variants.length===3,'the resumed film completes and clears the wait state');
+   // Real refusals stay terminal with Google's own words; the same reading covers create, event-stream results and the finished-file download.
+   const f=answer=>createGeminiVideo({apiKey:'fixture',sleep:async()=>{},fetch:async()=>answer()});
+   await assert.rejects(()=>f(()=>reply(404,'{"error":{"code":404,"message":"Interaction not found","status":"NOT_FOUND"}}')).request('interactions/v1_x'),e=>e.transient===false&&/Interaction not found/.test(e.message)&&e.definiteResponse===true);n++;
+   await assert.rejects(()=>f(()=>reply(200,'event: error\ndata: {"error":{"code":400,"message":"Blocked by safety filters"}}\n\n')).request('interactions/v1_x'),e=>e.transient===false&&/safety/.test(e.message));n++;
+   ok((await f(()=>reply(200,'event: interaction.start\ndata: {"interaction":{"id":"v1_x","status":"in_progress"}}\n\nevent: interaction.complete\ndata: {"event_type":"interaction.complete","interaction":{"id":"v1_x","status":"completed"}}\n\n')).request('interactions/v1_x')).status==='completed','an interaction.complete event carries the result');
+   ok((await f(()=>reply(200,'event: interaction.start\ndata: {"interaction":{"id":"v1_new","status":"in_progress"}}\n\n'+stream)).request('interactions','POST',{})).id==='v1_new','a create whose stream already named the interaction keeps its id');
+   await assert.rejects(()=>f(()=>reply(200,stream)).request('interactions','POST',{}),e=>e.transient===true&&e.definiteResponse===false&&/nothing is requested again/.test(e.message));n++;
+   let tries=0;const dl=createGeminiVideo({apiKey:'fixture',sleep:async()=>{},fetch:async()=>++tries===1?reply(200,stream,{'content-type':'text/event-stream'}):reply(200,'MP4',{'content-type':'video/mp4'})});
+   ok((await dl.content({uri:'https://storage.googleapis.com/v.mp4'})).toString()==='MP4'&&tries===2,'an event stream in place of the video is retried, never saved as a film');
   }
   {
    // An unsaved provider outcome for any master stays protected.
