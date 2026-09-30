@@ -15442,7 +15442,7 @@ async function _handlerImpl(event) {
           return json(200, { ok: true, queued: true, batchName: originalName });
         }
         if (response.statusCode === 200 && result.ok && result.copyOnly) {
-          await originalRef.set({ retryStatus: "complete", retryMissing: 0,
+          await originalRef.set({ retryStatus: "complete", retryMissing: 0, repairPending: false, retryRequested: false,
             updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           return json(200, { ok: true, complete: true, missing: 0, present: presentSlots.size });
         }
@@ -15450,7 +15450,7 @@ async function _handlerImpl(event) {
           throw new Error(result.error?.message || "Retry submission returned no batch ID");
         }
         await originalRef.set({ retryBatchName: result.batchName, retryStatus: "submitted",
-          retryMissing: missingTasks.length,
+          retryMissing: missingTasks.length, repairPending: false, retryRequested: false,
           updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         return json(200, { ok: true, batchName: result.batchName, missing: missingTasks.length,
           present: presentSlots.size });

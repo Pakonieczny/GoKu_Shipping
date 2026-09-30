@@ -60,6 +60,12 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     complete: 0, approved: 0, active: 0, queued: 0, saving: 0, blocked: 0, cancelled: 0,
     missingImages: 0, checkedAt: now(), sets: [] };
   const updates = [];
+  // Submitted parents are history, not waiting work. Clear old queue markers
+  // so the bounded repair query always has room for genuinely pending jobs.
+  for (const record of records) {
+    if (record.retryBatchName && record.repairPending)
+      updates.push({ ref: record.ref, patch: { repairPending: false, retryRequested: false } });
+  }
   for (const [path, group] of groups) {
     const { set } = group;
     const rows = group.records.sort((a, b) => stampMs(b.createdAt) - stampMs(a.createdAt));
@@ -108,7 +114,7 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     if (!complete) summary.missingImages += missing.length;
     summary.sets.push({ category: set.category, setN: set.setN, outputBasePath: path, status,
       missingSlots: complete ? [] : missing.map(t => Number(t.slotIndex) + 1), note });
-    // Only the current leaf is reconciled; retry history and paid results stay intact.
+    // Reconcile the current leaf; history cleanup above only clears queue markers.
     if (latest && Object.keys(patch).length && Object.entries(patch).some(([key, value]) => key !== 'retryQueuedAt' && latest[key] !== value))
       updates.push({ ref: latest.ref, patch: { ...patch, reconciledAt: timestamp() } });
   }

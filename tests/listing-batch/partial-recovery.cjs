@@ -14,7 +14,7 @@ async function run() {
     job(4,{contentRepairAttempt:1}),job(5,{state:'JOB_STATE_RUNNING',collected:false}),job(6,{state:'JOB_STATE_QUEUED',locallyQueued:true,collected:false,retryRequested:true}),
     job(7,{results:{failedCount:0,failures:[],succeededCount:2}}),job(8)];
   // An old pointer and duplicate provider job refer to set 1, not extra listings.
-  records.push({...job(1),batchName:'batch_duplicate',createdAt:0,retryBatchName:'batch_1'});
+  records.push({...job(1),batchName:'batch_duplicate',createdAt:0,retryBatchName:'batch_1',repairPending:true,retryRequested:true});
   const files = new Set([`${path(1)}/manifest.json`,`${path(1)}/Slot_1.png`,`${path(1)}/Slot_2.png`,`${path(2)}/Slot_1.png`,`${path(3)}/Slot_1.png`,`${path(4)}/Slot_1.png`]);
   const summaryDocs = new Map();
   const db = { collection: name => name === 'batches' ? {where:()=>({limit:()=>({get:async()=>({size:records.length,docs:records.map(record=>({ref:record,data:()=>record}))})})})}
@@ -26,6 +26,8 @@ async function run() {
   assert.equal(summary.complete,1);assert.equal(summary.queued,2);assert.equal(summary.saving,3);assert.equal(summary.blocked,1);assert.equal(summary.active,1);
   assert.equal(records[6].collectionPending,true,'lost successful output is restored without another generation');
   assert.equal(records[7].collectionPending,true,'recover paid successes before repairing rejected slots');
+  assert.equal(records[8].repairPending,false,'submitted parents cannot crowd out the bounded repair queue');
+  assert.equal(records[8].retryRequested,false);
   assert.equal(records[2].collectionPending,true,'save errors recover existing output');
   assert.equal(records[2].collected,false,'a failed upload stays in the collector');
   assert.equal(records[1].repairPending,true,'partial moderation result gets one substantially clothed correction');
