@@ -47,19 +47,21 @@ async function resolve({sources,objects,productId},D){
  return identity;
 }
 // Per-format identity of a film. Every format is filmed as its own take from the one identity reference, so the charm can drift in a single
-// format (a plain silhouette with no engraving, eye or wing line) while the others stay exact. The set-level identity boolean and the
-// 5% product-recognition weight do not catch that; the review returns one verdict per format and a failing format is named.
+// format: a feature added that the reference lacks (an eye, wing lines, engraving, a moulded look) or one it shows taken away. The set-level
+// identity boolean and the 5% product-recognition weight do not catch that; the review returns one verdict per format and a failing format is named.
+// Both directions are judged against the reference alone: a plain blank reference must stay plain and blank.
 const CHECKS=[
- {field:'sameOutline',fault:'a different outline or proportions',need:'the same outline and proportions'},
- {field:'sameEngraving',fault:'engraving, eye, wing line or markings that are missing, simplified or redrawn',need:'every engraved line, eye, wing line and marking of the reference'},
- {field:'sameFeatures',fault:'cutouts, ring or loop that are missing, changed or added',need:'the same cutouts, ring and loop'}
+ {field:'sameOutline',when:'the silhouette, beak or proportions differ from the SOURCE',fault:'a different outline, beak or proportions',need:'the same outline and proportions'},
+ {field:'noAddedDetail',when:'the charm shows any feature the SOURCE lacks: an eye, wing or feather lines, a beak line, engraving, texture, pattern, raised or recessed detail, or a thicker, moulded or bevelled look',fault:'a feature the reference lacks (an eye, wing or feather lines, engraving, texture, or a thicker, moulded look)',need:'no feature the reference lacks'},
+ {field:'noMissingDetail',when:'a detail the SOURCE clearly shows is missing or simplified',fault:'a detail the reference clearly shows that is missing or simplified',need:'every detail the reference clearly shows'},
+ {field:'sameFeatures',when:'a cutout, ring, bail or loop the SOURCE shows is missing or changed, or one it does not show is added',fault:'cutouts, ring or loop that are missing, changed or added',need:'the same cutouts, ring and loop'}
 ];
 const familyOf=key=>String(key||'').split('_').pop();
 function formatIdentitySchema(keys){
- const verdict=()=>({type:'object',additionalProperties:false,properties:{sameOutline:{type:'boolean'},sameEngraving:{type:'boolean'},sameFeatures:{type:'boolean'},evidence:{type:'string'}},required:[...CHECKS.map(c=>c.field),'evidence']});
+ const verdict=()=>({type:'object',additionalProperties:false,properties:{...Object.fromEntries(CHECKS.map(c=>[c.field,{type:'boolean',description:'False when '+c.when+'.'}])),evidence:{type:'string',description:'The exact difference, or that the format matches.'}},required:[...CHECKS.map(c=>c.field),'evidence']});
  return {type:'object',additionalProperties:false,properties:Object.fromEntries(keys.map(k=>[k,verdict()])),required:[...keys]};
 }
-const formatRule=keys=>' PER-FORMAT CHARM IDENTITY. Each rendered format was filmed as its own separate take, so the charm can drift in one format while the others stay exact. FINAL n is renderedFormats[n-1] and each names its format key ('+keys.join(', ')+'). Compare the charm in EVERY sampled frame of EACH format, one format at a time, with the SOURCE, and return formatIdentity with one verdict for every one of those keys. Judge each format on its own: an exact charm in one format never excuses another, and general resemblance is not enough; look for each engraved detail of the SOURCE in that format. Set sameOutline=false when the silhouette or proportions differ from the SOURCE. Set sameEngraving=false when any engraved or cut line, eye, wing line, texture or marking shown on the SOURCE is missing, simplified, redrawn or replaced by a plain surface: a plain silhouette of a similar piece is a DIFFERENT piece, one that could belong to another listing. Set sameFeatures=false when a cutout, ring, bail or loop the SOURCE shows is missing or changed, or one it does not show is added. A chain or cord the piece hangs from is scenery, never a difference. Write in evidence the exact difference, or that the format matches.';
+const formatRule=keys=>' PER-FORMAT CHARM IDENTITY. Each rendered format was filmed as its own separate take. FINAL n is renderedFormats[n-1] and each names its format key ('+keys.join(', ')+'). Compare the charm in EVERY sampled frame of EACH format, one format at a time, with the SOURCE, and return formatIdentity with one verdict for every one of those keys. Judge each format on its own: an exact charm in one format never excuses another. Each film must show EXACTLY the SOURCE, nothing added and nothing removed; a plain flat blank SOURCE must stay plain, flat and blank. '+CHECKS.map(c=>'Set '+c.field+'=false when '+c.when+'.').join(' ')+' A chain or cord the piece hangs from is scenery, never a difference. Write in evidence the exact difference, or that the format matches.';
 // Turns those verdicts into a failed review that names the format, so the existing targeted fix regenerates only that film. Idempotent.
 function applyFormatIdentity(quality,keys){
  const verdicts=quality&&quality.formatIdentity;
@@ -76,7 +78,7 @@ function applyFormatIdentity(quality,keys){
  const detail=f=>({
   reason:'The '+familyOf(f.key)+' film shows a charm that differs from the catalog reference',
   evidence:'Per-format identity check of '+f.key+': '+f.found.map(c=>c.fault).join('; ')+'.'+(f.evidence?' '+f.evidence:''),
-  correction:'Regenerate this film from the same catalog photograph. The charm must have '+f.found.map(c=>c.need).join(', ')+', with nothing missing, simplified or plainer.'
+  correction:'Regenerate this film from the same catalog photograph. The charm must have '+f.found.map(c=>c.need).join(', ')+': nothing added and nothing removed.'
  });
  quality.pass=false;quality.productFaithful=false;quality.exactProductIdentity=false;
  quality.issues=[...(Array.isArray(quality.issues)?quality.issues:[]),...failed.map(f=>{const d=detail(f);return d.reason+' ('+f.key+'): '+f.found.map(c=>c.fault).join('; ')+'.';})];
