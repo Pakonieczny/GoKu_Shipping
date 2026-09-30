@@ -957,7 +957,7 @@ function createAdDesignService(deps) {
     for(const image of images){
       const source=sources.find(s=>s.id===image.id),key='subject_focus_'+sha(source.asset).slice(0,24),raw=await target.collection('data').doc(key+'_response').get();
       if(job.inFlight?.key===key&&raw.exists)await save({inFlight:null});
-      const located=await paid(key,90,'Finding the charm for close, size-aware crops',async(requestId,reservedUsd)=>{
+      const located=await paid(key,90,'Locating the jewelry and attached components for balanced framing',async(requestId,reservedUsd)=>{
         let response=raw.exists?raw.data().response:null,size=raw.exists?raw.data().size||null:null;
         if(!response){
           // The photo goes to Sonnet at a size it reads without resizing, so its pixel box maps exactly back.
@@ -975,7 +975,7 @@ function createAdDesignService(deps) {
       const px=await require('sharp')(await deps.loadAsset(source.asset),{limitInputPixels:40000000}).resize({width:256,height:256,fit:'inside'}).removeAlpha().raw().toBuffer({resolveWithObject:true});
       const measured=placement.measureProduct({data:px.data,width:px.info.width,height:px.info.height,channels:px.info.channels},modelBox),cutEdges=[...new Set([...(measured.confident?measured.cutEdges:[]),...modelCut])];
       image.focusCheck={...measured,cutEdges,cut:{top:cutEdges.includes('top'),right:cutEdges.includes('right'),bottom:cutEdges.includes('bottom'),left:cutEdges.includes('left')},modelFocus:modelBox,modelCut};
-      image.focus=measured.confident?{...measured.box}:modelBox;source.focus=image.focus;source.focusCheck=image.focusCheck;await ref.collection('editorSources').doc(source.id).set(clean(source));
+      image.focus=measured.confident?{...measured.box}:modelBox;if(model.contextFocus)image.contextFocus=source.contextFocus=model.contextFocus;if(model.jewelryType)image.jewelryType=source.jewelryType=model.jewelryType;source.focus=image.focus;source.focusCheck=image.focusCheck;await ref.collection('editorSources').doc(source.id).set(clean(source));
       if(Date.now()>sceneDeadline)return {continue:true};
     }
     // Charm placement: every size is checked where the charm really is (measured above). A photo that cuts the charm, or a
@@ -997,7 +997,7 @@ function createAdDesignService(deps) {
       }
       if(pending){
         const {spec,key,f}=pending,words={top:'top',right:'right side',bottom:'bottom',left:'left side'},edges=list=>[...list].map(e=>words[e]||e).join(' and '),sizes=f.sizes.map(x=>x.key.replace(/^(mobile|desktop)_/,'').replace('display_','')+(x.edges.length?' ('+edges(x.edges)+')':'')).join(', ');
-        const correction=(f.own.size?'The previous photo cut the charm off at its '+edges(f.own)+' edge. ':'')+(f.sizes.length?'The charm was cut off in these ad sizes: '+sizes+'. ':'')+'Pull the camera back and move the charm toward the centre of the frame so the complete charm and its bail sit fully inside the picture, with at least 12 percent of the frame clear above the bail and on every side. Keep the same exact jewelry, setting, palette and light.';
+        const correction=(f.own.size?'The previous photo cut the charm off at its '+edges(f.own)+' edge. ':'')+(f.sizes.length?'The charm was cut off in these ad sizes: '+sizes+'. ':'')+'Pull the camera back within the assigned scene profile, keeping its intended left/right placement. Retain the complete decorative piece and useful supplied components inside the protected photo region, with at least 12 percent of the frame clear above the supplied assembly and on every side. Keep the same exact jewelry, setting, palette and light.';
         const row=await paid(key,90,'Remaking the '+spec.key+' scene so the complete charm fits',async requestId=>{
           const direction={...fixedDirection(spec),composition:fixedDirection(spec).composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' '+correction};
           const generated=await deps.generateImage({requestId,provider:provider(),format:spec.format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:spec.direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+' Preserve the exact original jewelry and the same palette, lighting and scene concept. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
@@ -1021,7 +1021,7 @@ function createAdDesignService(deps) {
         const {image,spec,key}=pendingFit;
         const affected=bad.filter(c=>c.image.id===image.id).map(c=>({format:c.board.key,width:c.board.width,height:c.board.height,reason:c.fit.reason}));
         const row=await paid(key,90,'Refining the '+spec.key+' scene to fit its assigned ad sizes',async requestId=>{
-          const direction={...fixedDirection(spec),composition:fixedDirection(spec).composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; the renderer will retain the approved final product size. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
+          const direction={...fixedDirection(spec),composition:fixedDirection(spec).composition+' '+responsive.sceneCatalog.find(s=>s.key===spec.key).direction+' The previous composition did not leave enough continuous photographic context. Pull the camera back to provide more empty scene around the exact product; retain a relaxed product scale with visible supplied component context in the final ad. Do not enlarge or reposition the text. Previous product bounds and failed crops: '+JSON.stringify({focus:image.focus,affected})};
           const generated=await deps.generateImage({requestId,provider:provider(),format:spec.format,references:refs,product,products:[product],brief:{buyer:plan.rationale,visualDirection:spec.direction.concept},imageDirections:[direction],settings:{...w.settings,direction:request.instruction+' Preserve the exact original jewelry and the same palette, lighting and scene concept. '+direction.composition},inputCoverage:{usedProductImages:refs.length,preparedReferenceCount:refs.length}});
           const asset=await deps.saveAsset(workspaceId,generated.bytes,jobId+'_'+key,{width:spec.format.width,height:spec.format.height,mimeType:'image/jpeg',digitalSourceType:generated.digitalSourceType||null});return {...generated,bytes:undefined,asset};
         });await recordCost(key,row);return {continue:true};

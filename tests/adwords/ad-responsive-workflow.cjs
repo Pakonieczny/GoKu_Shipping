@@ -3,10 +3,13 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),asse
 const fixture=path.join(__dirname,'ad-design-workflow.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{const e=await setup();')[0];
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,Buffer,console,Date,setTimeout,clearTimeout});vm.runInContext(source+'\nglobalThis.setupFixture=setup;',ctx);
 const {plan}=require('./ad-responsive.cjs');let n=0;const ok=(v,m)=>{assert(v,m);n++};
+const framingScenes=require('./fixtures/jewelry-framing.cjs');
+function focusReply(key,args){const im=framingScenes[key];if(!im)return {x:.46,y:.65,width:.08,height:.18,confident:true};const [,w,h]=args.input[0].content[0].text.match(/exactly (\d+) × (\d+)/),px=b=>({left:b.x*w,top:b.y*h,right:(b.x+b.width)*w,bottom:(b.y+b.height)*h});return {...px(im.focus),context:px(im.contextFocus),jewelryType:'necklace',complete:true,cutEdges:[],confident:true};}
+
 async function setup({generatedSource=false,autoProofs=true,layer=null,makeSource=null}={}){const e=await ctx.setupFixture(),bytes=await sharp({create:{width:1024,height:1024,channels:3,background:'#d1b284'}}).jpeg().toBuffer();e.D.fullSourceBytes=async()=>bytes;
  let source=await e.svc.editorSource({workspaceId:e.id,productId:plan.productId,groupRef:plan.groupRef,source:{kind:'product',productId:plan.productId,imageId:'img1'}});
  e.D.research.collect=async()=>({hash:'facts',researchCompletedAt:Date.now(),sourceBindings:{landingUrl:'https://britesjewelry.com/products/duck'},sources:[{id:'product:'+plan.productId,status:'available',data:{title:'Duck necklace',description:'Duck pendant necklace'}}],warnings:[]});
- e.D.responses=async args=>{if(args.text?.format?.name==='brites_subject_focus'){e.calls.focus=(e.calls.focus||0)+1;return {model:'claude-sonnet-5-5',output_text:JSON.stringify({...({landscape:{x:.58,y:.08,width:.29,height:.8},square:{x:.3,y:.04,width:.4,height:.38},portrait:{x:.28,y:.04,width:.44,height:.5},tall:{x:.29,y:.18,width:.42,height:.42},banner:{x:.04,y:.08,width:.23,height:.84},slim:{x:.29,y:.18,width:.42,height:.42}}[plan.scenePlans?.[e.calls.focus-1]?.key]||{x:.46,y:.65,width:.08,height:.18}),confident:true}),estimatedUsd:.03,costEstimated:false};}e.calls.responses++;return {model:'claude-sonnet-5-5',output_text:JSON.stringify(plan),estimatedUsd:.1,costEstimated:false}};
+ e.D.responses=async args=>{if(args.text?.format?.name==='brites_subject_focus'){e.calls.focus=(e.calls.focus||0)+1;return {model:'claude-sonnet-5-5',output_text:JSON.stringify(focusReply([...new Set([...(plan.scenePlans||[]).map(s=>s.key),'midLandscape','midPortrait'])][e.calls.focus-1],args)),estimatedUsd:.03,costEstimated:false};}e.calls.responses++;return {model:'claude-sonnet-5-5',output_text:JSON.stringify(plan),estimatedUsd:.1,costEstimated:false}};
  e.D.generateImage=async({format})=>{e.calls.images++;return {bytes:await sharp(bytes).resize(format.width,format.height).jpeg().toBuffer(),estimatedUsd:.2,costEstimated:false}};
  e.D.reviewImages=async()=>{e.calls.quality++;return {pass:true,productFaithful:true,mobileReadable:true,score:92,issues:[],estimatedUsd:.1,costEstimated:false}};
  e.D.cropImage=async(bytes,format)=>{const b=require('../../brites-ad-responsive').boards.find(b=>b.key===format);return {bytes:await sharp(bytes).resize(b.width,b.height,{fit:'cover'}).jpeg().toBuffer(),width:b.width,height:b.height}};
@@ -126,7 +129,7 @@ async function setup({generatedSource=false,autoProofs=true,layer=null,makeSourc
   // A new design also gets the two specialised photos (580 x 400, and 240 x 400 / 250 x 360), derived when the plan omits them.
   const wanted=count+2;ok(multi.calls.images===wanted&&multi.calls.focus===wanted,'every '+count+'-scene source, plus the two specialised photos, is generated and localized once');
   assert.deepEqual(formats,[...engine.sceneCatalog.slice(0,count).map(s=>s.format.requestSize),'1536x1056','1296x2048']);n++;
-  ok(done.result.responsive.images.every(i=>i.focusCheck&&i.focusCheck.version>=1),'every photo carries its measured charm check');
+  ok(done.result.responsive.images.every(i=>i.focusCheck&&i.focusCheck.version>=1),'every photo carries its measured charm check');ok(done.result.responsive.images.every(i=>i.contextFocus&&i.jewelryType==='necklace')&&done.result.sources.every(s=>s.contextFocus&&s.jewelryType==='necklace'),'located chain context survives measurement, saving and responsive generation');
   const routed=k=>engine.selectImage(plan,done.result.responsive.images,engine.boards.find(b=>b.key===k))?.sceneKey;
   ok(routed('display_580x400')==='midLandscape'&&routed('display_240x400')==='midPortrait'&&routed('display_250x360')==='midPortrait','the mid-size Display boards use their own photos');
   for(const b of engine.boards){const im=engine.selectImage(plan,done.result.responsive.images,b);ok(im.forBoards?.includes(b.key)||im.forFamilies.includes(engine.family(b)),b.key+' gets its assigned scene');}
@@ -134,7 +137,7 @@ async function setup({generatedSource=false,autoProofs=true,layer=null,makeSourc
  }
  plan.scenePlans=plan.scenePlans.slice(0,5);
  for(const fixed of [true,false]){
-  const repair=await setup(),response=repair.D.responses;repair.D.responses=async args=>{const out=await response(args);if(args.text?.format?.name==='brites_subject_focus'&&[2,8].includes(repair.calls.focus))out.output_text=JSON.stringify({x:.3,y:.04,width:.4,height:repair.calls.focus===8&&fixed?.38:.5,confident:true});return out;};
+  const repair=await setup(),response=repair.D.responses;repair.D.responses=async args=>{const out=await response(args);if(args.text?.format?.name==='brites_subject_focus'&&[2,8].includes(repair.calls.focus))out.output_text=JSON.stringify(repair.calls.focus===8&&fixed?focusReply('square',args):{x:.3,y:.04,width:.4,height:.5,confident:true});return out;};
   const first=await repair.svc.editorAIRun({workspaceId:repair.id,jobId:repair.jobId});ok(first.continue&&repair.calls.images===8,'only the unsuitable square scene receives one bounded correction (7 scenes, then that one again)');
   await repair.svc.editorAIRun({workspaceId:repair.id,jobId:repair.jobId});const state=await repair.svc.editorAIStatus({...repair.input,jobId:repair.jobId});
   ok(repair.calls.images===8,'correction resumes without regenerating the other scenes');

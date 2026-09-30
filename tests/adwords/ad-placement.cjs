@@ -31,15 +31,17 @@ const plan={productId:'p1',groupRef:'g1',rationale:'Duck.',masterFormat:'portrai
  const cutBox={x:.36,y:.0,width:.28,height:.3},cut=P.measureProduct(await photo(W,H,cutBox,{cutTop:.25}),{x:.34,y:0,width:.32,height:.27});
  ok(cut.cutEdges.includes('top'),'a photo that cuts the charm at the top is flagged');
  ok(!exact.cutEdges.includes('top'),'a complete charm is not flagged');
- // 3. Every size is checked against the verified charm: the mistaken box cuts the top in the portrait sizes; the verified one does not.
+ // 3. Every size is checked against the verified charm: a saved tight crop cuts the top; the current wider layout does not.
  const image=(focus,check)=>({id:'portrait',width:W,height:H,focalX:.5,focalY:.5,sceneKey:'portrait',forFamilies:['portrait'],forBoards:[],focus,...(check?{focusCheck:check}:{})});
  const lowBox={...grow(truth,.03),y:grow(truth,.03).y+.14};
  const wrongCheck=P.measureProduct(px,lowBox),boards=[{key:'portrait',width:1080,height:1350},{key:'display_240x400',width:240,height:400},{key:'display_250x360',width:250,height:360},{key:'square',width:1080,height:1080}];
  let flagged=0,clean=0;
  for(const board of boards){
   const layoutBoard={...board,device:'mobile'};
-  // What the studio made before: the layout trusted the unchecked box.
+  // Reproduce a historical tight crop explicitly. The current wider renderer
+  // can tolerate this old box error without cutting the charm.
   const trusting=image(lowBox),chosen=responsive.selectImage(plan,[trusting],layoutBoard),doc=responsive.document(plan,chosen,layoutBoard,'mobile');
+  const tight=doc.objects.find(o=>o.editorRole==='photo');tight.cropY=(truth.y+truth.height*.20)*H;tight.height=Math.min(tight.height,H-tight.cropY);
   const source={id:chosen.id,width:W,height:H,focus:lowBox,focusCheck:wrongCheck},result=P.checkDocument(doc,layoutBoard,[source],{label:board.key});
   if(!result.ok&&result.issues.some(i=>i.kind==='cut'))flagged++;
   // What it makes now: the layout uses the verified box, so the same size is whole.
@@ -47,7 +49,7 @@ const plan={productId:'p1',groupRef:'g1',rationale:'Duck.',masterFormat:'portrai
   const again=P.checkDocument(doc2,layoutBoard,[{id:chosen2.id,width:W,height:H,focus:wrongCheck.box,focusCheck:wrongCheck}],{label:board.key});
   if(again.ok)clean++;
  }
- ok(flagged>=3,'a layout fitted to a wrong box is caught as cutting the charm ('+flagged+' of '+boards.length+' sizes)');
+ ok(flagged>=3,'a saved tight crop is caught as cutting the charm ('+flagged+' of '+boards.length+' sizes)');
  ok(clean===boards.length,'the same sizes laid out around the verified charm show it whole ('+clean+' of '+boards.length+')');
  // 4. Nothing to check against never blocks: an unknown charm position is a warning, not a failure.
  const unknown=P.checkDocument(responsive.document(plan,image(null),{key:'portrait',width:1080,height:1350,device:'mobile'},'mobile'),{key:'portrait',width:1080,height:1350},[{id:'portrait',width:W,height:H,focus:null}],{label:'portrait'});

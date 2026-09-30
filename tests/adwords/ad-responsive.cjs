@@ -56,7 +56,7 @@ if(require.main===module)(async()=>{
    // The full charm remains inside every crop, including its off-center position.
    const fx=photo.focus.x*photo.width,fy=photo.focus.y*photo.height,fw=photo.focus.width*photo.width,fh=photo.focus.height*photo.height;
    ok(image.cropX<=fx&&image.cropY<=fy&&image.cropX+image.width>=fx+fw&&image.cropY+image.height>=fy+fh,board.key+' keeps the complete located charm visible');
-   ok(Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height)>=.59,board.key+' gives the charm a dominant share of the image frame');
+   const share=Math.max(fw*image.scaleX/imageBox.width,fh*image.scaleY/imageBox.height);ok(share>=.35&&share<=.72,board.key+' keeps the charm readable with visible scene context');
    ok(imageBox.top<=1,board.key+' removes the empty band above the photograph');
    const action=text.find(o=>o.editorRole==='button')?.getObjects().find(o=>'text'in o);
    ok(!action||action.textLines.length===1,board.key+' action stays on one line');
@@ -64,19 +64,18 @@ if(require.main===module)(async()=>{
  }
  const fadePlan={...plan,style:{...plan.style,treatment:'soft-fade',atmospheric:false},copy:{headline:'Sweet on Peach Charm',shortHeadline:'Peach Charm',description:'A gift for food lovers.',cta:'Shop Peach Charm'}};let fades=0;
  for(const device of ['mobile','desktop'])for(const board of [{key:'square',width:2048,height:2048},{key:'portrait',width:1638,height:2048}]){
-   const doc=responsive.document(fadePlan,{id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},board,device),fade=doc.objects.find(o=>o.id==='ai_image_fade'),photo=doc.objects.find(o=>o.editorRole==='photo');
-   ok(!!fade,device+' '+board.key+' keeps a vertical fade for a wide source photograph instead of falling back to a footer');
+   const doc=responsive.document(fadePlan,{id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},board,device),fade=doc.objects.find(o=>o.id==='ai_image_fade'||o.id==='ai_photo_caption_fade'),photo=doc.objects.find(o=>o.editorRole==='photo');
+   ok(!!fade,device+' '+board.key+' keeps a photographic fade while allowing a wider safe crop');
    ok(fade.fill.coords.x2===0&&fade.fill.coords.y2===1,'portrait fade runs downward');
-   ok(fade.fill.colorStops.some(s=>s.color.endsWith(',1)')&&s.offset*board.height<=photo.height*photo.scaleY+.01),'fade becomes opaque before the photograph ends, preventing a hard boundary');
+   ok(fade.id==='ai_photo_caption_fade'||fade.fill.colorStops.some(s=>s.color.endsWith(',1)')&&s.offset*board.height<=photo.height*photo.scaleY+.01),'caption fade or protected overlay softens the photo boundary');
  }
 
 
  for(const board of [{key:'display_120x600',width:120,height:600},{key:'display_160x600',width:160,height:600},{key:'display_300x1050',width:300,height:1050},{key:'display_250x360',width:250,height:360},{key:'display_240x400',width:240,height:400}]){
    const im={id:'peach',width:2048,height:1072,focus:{x:.539,y:.199,width:.258,height:.682}},d=responsive.document(fadePlan,im,board,'desktop'),p=d.objects.find(o=>o.editorRole==='photo'),t=d.objects.find(o=>o.editorRole==='headline'),b=d.objects.find(o=>o.editorRole==='button');
    const bottom=p.top+(im.height*(im.focus.y+im.focus.height)-p.cropY)*p.scaleY;
-   // The charm keeps a 5 percent margin inside its region (CHARM_ROOM), so the
-   // copy sits a few pixels further below it than the former 60 px bound.
-   if(board.height/board.width<=2)ok(t.top-bottom<68,'portrait copy stays close to the product '+board.key);
+   // Wider photographic framing leaves a deliberate gap before the copy.
+   if(board.height/board.width<=2)ok(t.top-bottom<board.height*.32,'portrait copy stays connected to the product '+board.key);
    if(board.height/board.width>2){ok(t.top>=board.height*2/3,'tall messaging stays in lower third '+board.key);ok(b.top-(t.top+t.aiBoxHeight)<=30.1,'tall action follows the headline without a large gap '+board.key);ok(b.width*b.scaleX<=board.width-10&&b.height*b.scaleY>=(board.width>=240?48:36),'tall action scales with available copy space '+board.key);ok(p.top>=0&&bottom<=board.height*2/3+1,'entire charm stays in upper two thirds '+board.key);}
    ok(t.textAlign==='center'&&Math.abs(b.left+b.width*b.scaleX/2-board.width/2)<1,'portrait title and button share the product centerline '+board.key);
    ok(b.width*b.scaleX>=board.width*.4,'portrait CTA has a substantial readable width '+board.key);
@@ -92,7 +91,7 @@ if(require.main===module)(async()=>{
    ok(t.fontSize*t.scaleY/board.width>=20/360,'master headline is at least 5.5 percent of width '+board.key);
    ok(label.fontSize*b.scaleY/board.width>=12/360&&label.fontSize*b.scaleY/board.width<=18/360,'master CTA type remains in a defined proportional range '+board.key);
  }
- const bleedBoard={key:'landscape',width:2048,height:1072},bleed=responsive.document(fadePlan,{id:'scene',width:1536,height:1024,focus:{x:.4,y:.2,width:.3,height:.6}},bleedBoard,'desktop'),bleedPhoto=bleed.objects.find(o=>o.editorRole==='photo');
+ const bleedBoard={key:'landscape',width:2048,height:1072},bleed=responsive.document({...fadePlan,style:{...fadePlan.style,atmospheric:true}},{id:'scene',width:2048,height:1072,jewelryType:'necklace',...require('./fixtures/jewelry-framing.cjs').landscape},bleedBoard,'desktop'),bleedPhoto=bleed.objects.find(o=>o.editorRole==='photo');
  ok(bleedPhoto.left===0&&bleedPhoto.top===0&&Math.abs(bleedPhoto.width*bleedPhoto.scaleX-2048)<1&&Math.abs(bleedPhoto.height*bleedPhoto.scaleY-1072)<1,'landscape original photograph covers the entire artboard');
  ok(!bleed.objects.some(o=>o.id==='ai_scene_extension'),'full landscape uses no edge strips');
  for(const board of responsive.variants){e.board=board;await e.restore(responsive.document(fadePlan,photo,board,board.device));for(const o of e.canvas.getObjects())e.fitAIText(o);const fade=e.canvas.getObjects().find(o=>o.id==='ai_image_fade');if(!fade)continue;fades++;
@@ -103,12 +102,12 @@ if(require.main===module)(async()=>{
    ok(fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===0)&&fade.fill.colorStops.some(s=>new w.fabric.Color(s.color).getAlpha()===1),'fade remains editable and smoothly transparent');
  }
  const fadeProofs=await e.renderAIProofs({artboard:{key:'square',width:2048,height:2048},device:'mobile',document:responsive.document(fadePlan,photo,{key:'square',width:2048,height:2048},'mobile'),sources:[photo],responsive:{layoutVersion:responsive.layoutVersion,plan:fadePlan,images:[photo]}});ok(fadeProofs.length===27,'fade proofs retain visible photograph pixels in every size');
- ok(fades>=6,'soft fade is the practical default across master formats');
+ ok(fades>=2,'compatible saved photographs retain the side-copy overlay; tight sources may use the wider caption fade');
  const noFocus=responsive.document(fadePlan,{...photo,focus:null},{key:'square',width:2048,height:2048},'mobile');ok(!noFocus.objects.some(o=>o.id==='ai_image_fade'),'unlocated products retain safe framing instead of speculative overlays');
  const focused={id:'focus',width:1956,height:1024,focus:{x:.45,y:.70,width:.06,height:.16}};
  const small=responsive.document(plan,focused,{key:'display_300x50',width:300,height:50},'mobile').objects[0],large=responsive.document(plan,focused,{key:'square',width:2048,height:2048},'mobile').objects[0];
- // A 5 percent margin (CHARM_ROOM 1.10) stays around the charm; the former 1.025 fit allowed 1.03.
- ok(small.height<=focused.height*focused.focus.height*1.11&&small.height>=focused.height*focused.focus.height,'small placement removes surplus vertical context while retaining the whole charm');
+ // The compact crop preserves scene context instead of filling it with the charm.
+ ok(small.height>=focused.height*focused.focus.height*1.4&&small.cropY<focused.height*focused.focus.y,'small placement retains additional context above the complete charm');
  assert.throws(()=>research.validateSubjectFocus({x:.95,y:.8,width:.1,height:.1,confident:true}),/reliably/);checks++;
  assert.throws(()=>research.validateSubjectFocus({x:.45,y:.7,width:.06,height:.16,confident:false}),/reliably/);checks++;
  ok(research.buildSubjectFocusRequest({imageDataUrl:'data:image/jpeg;base64,test',product:{title:'Corgi necklace'},width:1024,height:536}).text.format.name==='brites_subject_focus','focus analysis has its own structured response rather than a guessed center');
