@@ -14172,7 +14172,8 @@ async function _handlerImpl(event) {
   if (kind === "batch_session_audit") {
     try {
       const summary = await reconcileSession({ db: getDb(), bucket: admin.storage().bucket(), collection: BATCHES_COLL,
-        sessionId: String(body?.sessionId || ""), timestamp: () => admin.firestore.FieldValue.serverTimestamp() });
+        sessionId: String(body?.sessionId || ""), restoreLostPaidOutputs: body?.restoreLostPaidOutputs === true,
+        timestamp: () => admin.firestore.FieldValue.serverTimestamp() });
       return json(200, { ok: true, summary });
     } catch (err) { return json(502, { ok: false, error: safeErr(err) }); }
   }

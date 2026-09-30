@@ -12,7 +12,7 @@ const job = (n, extra = {}) => ({ batchName: `batch_${n}`, sessionId, displayNam
 async function run() {
   const records = [job(1), job(2), job(3,{results:{failedCount:1,failures:[{key:'s0_slot1',error:'socket hang up'}]}}),
     job(4,{contentRepairAttempt:1}),job(5,{state:'JOB_STATE_RUNNING',collected:false}),job(6,{state:'JOB_STATE_QUEUED',locallyQueued:true,collected:false,retryRequested:true}),
-    job(7,{results:{failedCount:0,failures:[],succeededCount:2}}),job(8)];
+    job(7,{setComplete:true,results:{failedCount:1,failures:[{key:'s0_slot1',error:'socket hang up'}],succeededCount:1}}),job(8)];
   // An old pointer and duplicate provider job refer to set 1, not extra listings.
   records.push({...job(1),batchName:'batch_duplicate',createdAt:0,retryBatchName:'batch_1',repairPending:true,retryRequested:true});
   const files = new Set([`${path(1)}/manifest.json`,`${path(1)}/Slot_1.png`,`${path(1)}/Slot_2.png`,`${path(2)}/Slot_1.png`,`${path(3)}/Slot_1.png`,`${path(4)}/Slot_1.png`]);
@@ -23,7 +23,11 @@ async function run() {
   const bucket = {getFiles:async({prefix})=>[[...files].filter(name=>name.startsWith(prefix)).map(name=>({name}))]};
   const summary = await reconcileSession({db,bucket,collection:'batches',sessionId,timestamp:()=>123,now:()=>123});
   assert.equal(summary.registered,8);assert.equal(summary.planned,8);
-  assert.equal(summary.complete,1);assert.equal(summary.queued,2);assert.equal(summary.saving,3);assert.equal(summary.blocked,1);assert.equal(summary.active,1);
+  assert.equal(summary.complete,1);assert.equal(summary.queued,2);assert.equal(summary.saving,1);assert.equal(summary.blocked,3);assert.equal(summary.active,1);
+  assert.equal(records[6].collectionPending,undefined,'completed sets removed by an operator are not automatically restored');
+  assert.equal(records[7].repairPending,false,'a removed set cannot trigger another paid generation');
+  const restored = await reconcileSession({db,bucket,collection:'batches',sessionId,timestamp:()=>123,now:()=>123,restoreLostPaidOutputs:true});
+  assert.equal(restored.saving,3,'explicit recovery can restore existing paid output');
   assert.equal(records[6].collectionPending,true,'lost successful output is restored without another generation');
   assert.equal(records[7].collectionPending,true,'recover paid successes before repairing rejected slots');
   assert.equal(records[8].repairPending,false,'submitted parents cannot crowd out the bounded repair queue');
@@ -38,6 +42,10 @@ async function run() {
   assert.equal(records[1].retryRequested,false,'approval takes precedence over missing Ready files');
   assert.equal(records[1].setComplete,true);
   assert.equal(files.size,7,'audit never rewrites images');
+  records.push(job(9,{collected:false,results:null}));
+  const awaitingCollection = await reconcileSession({db,bucket,collection:'batches',sessionId,timestamp:()=>125,now:()=>125});
+  assert.equal(awaitingCollection.saving,4,'new provider output is automatically collected');
+  assert.equal(records[9].collectionPending,true);
   const task={slotIndex:0,prompt:'Preserve charm exactly.',input_charm_storage_path:'original-charm.png'};
   const revised=compliantModelTask(task);
   assert.equal(revised.input_charm_storage_path,task.input_charm_storage_path);

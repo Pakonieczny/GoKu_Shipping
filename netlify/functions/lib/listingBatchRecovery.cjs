@@ -18,7 +18,7 @@ function tasksFor(set) { return Array.isArray(set.allTasks) ? set.allTasks : (se
 
 // A session is counted by its actual output folders, never by retry job names.
 // Storage is authoritative: approval/redo can change files after batch collection.
-async function reconcileSession({ db, bucket, collection, sessionId, timestamp, now = Date.now }) {
+async function reconcileSession({ db, bucket, collection, sessionId, timestamp, now = Date.now, restoreLostPaidOutputs = false }) {
   if (!/^sess_[A-Za-z0-9_-]{8,80}$/.test(sessionId)) throw new Error('Invalid listing session');
   const snapshot = await db.collection(collection).where('sessionId', '==', sessionId).limit(4000).get();
   if (snapshot.size >= 4000) throw new Error('Session history exceeds reconciliation limit');
@@ -94,10 +94,11 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
       const missingPaidOutput = paidTasks.some(task => missingKeys.has(`s0_slot${Number(task.slotIndex)}`) &&
         !failedKeys.has(`s0_slot${Number(task.slotIndex)}`));
       // A result already paid for must be recovered, never regenerated.
-      if (latest.responsesFile && (missingPaidOutput || kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent)) {
+      if (latest.responsesFile && (restoreLostPaidOutputs || !latest.setComplete) &&
+          (!latest.collected || restoreLostPaidOutputs && missingPaidOutput || kinds.has('storage') || latest.collectionPending || !missing.length && !manifestPresent)) {
         status = 'saving'; summary.saving++;
         patch = { collected: false, collectionPending: true, recoveryStatus: 'saving', setComplete: false };
-      } else if (latest.collected && Number(latest.retryAttempt || 0) < 5 &&
+      } else if (latest.collected && !missingPaidOutput && Number(latest.retryAttempt || 0) < 5 &&
           (kinds.size && [...kinds].every(k => k === 'transient') ||
            kinds.has('content') && [...kinds].every(k => k === 'content' || k === 'transient') &&
            !Number(latest.contentRepairAttempt || 0) && missing.every(isModelTask))) {
@@ -106,7 +107,8 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
           retryQueuedAt: timestamp() };
       } else {
         status = 'blocked'; summary.blocked++;
-        note = kinds.has('content') ? 'Model photo rejected. Choose a different reference or a product-only photo.'
+        note = missingPaidOutput ? 'Previously saved images are missing. Restore the existing provider output if this set should be kept.'
+          : kinds.has('content') ? 'Model photo rejected. Choose a different reference or a product-only photo.'
           : latest.retryError || failures[0]?.error || 'Missing images need a source or error review.';
         patch = { recoveryStatus: 'blocked', setComplete: false, recoveryReason: note, repairPending: false, retryRequested: false };
       }
