@@ -13,22 +13,28 @@ const capacityRefusals = (record) => Number(record?.capacityRefusals || 0) +
 const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha256')
   .update(JSON.stringify([session, display, sets.map(s => s.outputBasePath).sort()])).digest('hex').slice(0, 40);
 // OpenAI sometimes accepts a job and never starts it: 0 of 6 images for 6 to
-// 17 hours while jobs sent after it finish in minutes (about one job in four
-// on 2026-09-27 and 28, 30 each day). Each one holds one of the thirty places
-// until OpenAI expires it at 24 hours, so the whole queue stopped. After
-// STALL_RESTART_MS with nothing done the collector cancels it (nothing was
-// made, so nothing is billed) and queues its set again, at most
-// STALL_RESTART_LIMIT times per set. Normal jobs finish in 5 minutes to about
-// 2 hours.
-// Roughly two jobs in five are never started, whichever set they carry, so a
-// few sets in a big batch need five or six tries (on 2026-09-29 the last
-// seven of 300 sets had each been restarted four or five times, and the four
-// on their fifth restart were no longer watched, so they would have sat until
-// OpenAI expired them a day later). A restart costs nothing, and one takes
-// about three hours, so the limit is only a stop for something badly wrong:
-// about three days of tries.
-const STALL_RESTART_MS = 3 * 60 * 60 * 1000;
-const STALL_RESTART_LIMIT = 24;
+// 17 hours while jobs sent after it finish in minutes. Each one holds one of
+// the thirty places until OpenAI expires it at 24 hours, so the whole queue
+// stopped (2026-09-27 and 28). After STALL_RESTART_MS with nothing done the
+// collector cancels it (nothing was made, so nothing is billed) and queues its
+// set again.
+// How long to wait, from the 255 jobs sent 2026-09-29 03:36 to 2026-09-30
+// 02:45 UTC: 142 finished, 106 were never started, 7 were still open. Jobs
+// that finished took 30 minutes at the median and 133 at the 90th percentile;
+// hardly any with nothing done at 150 minutes ever finished. A job with
+// nothing done at 45 minutes had a 17% chance of finishing in the next hour,
+// a new job 36%, and a restart costs nothing. Waiting three hours (as this did
+// at first) made the average set take 3.4 hours to get through and left the
+// last few of a 300-set batch running into the next day; 45 minutes gives
+// about 2.5. Jobs finished as often with 30 running as with a few, so
+// cancelling does not lose a place in some queue.
+const STALL_RESTART_MS = 45 * 60 * 1000;
+// About four jobs in ten are never started, whichever set they carry (more in
+// the US daytime), so a few sets in a big batch need five or six tries. A
+// restart costs nothing and takes about an hour, so the limit is only a stop
+// for something badly wrong (a day of OpenAI not starting anything): about
+// two and a half days of tries.
+const STALL_RESTART_LIMIT = 60;
 // OpenAI validates a new job in a minute or two, and a token-limit refusal
 // comes then. Past this age a job still validating tells nothing more: the
 // collector stops waiting for it and admission sends the next set (on
@@ -36,9 +42,9 @@ const STALL_RESTART_LIMIT = 24;
 // waited behind it). It is cancelled and sent again at STALL_RESTART_MS.
 const VALIDATION_WAIT_MS = 15 * 60 * 1000;
 // A person can ask the collector to restart stalled jobs sooner than
-// STALL_RESTART_MS (Paul, 2026-09-29: "please restart" on a queue where most
-// jobs had made nothing for over an hour), never sooner than this: a job
-// under half an hour old is normal, and each restart uses one of the tries.
+// STALL_RESTART_MS (Paul, 2026-09-29: "please restart"), never sooner than
+// this: a job under half an hour old is normal, and each restart uses one of
+// the tries.
 const STALL_RESTART_MIN_MS = 30 * 60 * 1000;
 const stallCutoffMs = (requested) => {
   const ms = Number(requested);

@@ -2,7 +2,7 @@
 
 // OpenAI sometimes accepts a listing job and never starts it. On 2026-09-27
 // and 28 thirty such jobs held every place in the queue for most of a day.
-// The collector now cancels a job that has done nothing for three hours and
+// The collector now cancels a job that has done nothing for 45 minutes and
 // queues its set again: only the images the set still lacks, never twice,
 // never while another job covers the set, and never a set a person cancelled
 // or approved.
@@ -34,6 +34,7 @@ const provider = vm.runInNewContext(`${cut(server, "function normalizeOpenAIBatc
   ({ normalizeOpenAIBatch, batchFailureDetails })`, {});
 
 const HOUR = 60 * 60 * 1000;
+const MIN = 60 * 1000;
 const START = Date.parse("2026-09-29T02:00:00Z");
 const at = (ms) => ({ toMillis: () => ms });
 const folder = (n) => `listing-generator-1/Generated_Listing_Sets/Ready_To_List/Beady_Necklace_Set_${n}`;
@@ -154,7 +155,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   const validating = () => ({ status: "validating", request_counts: { total: 0, completed: 0, failed: 0 } });
   assert(lib.neverStarted(stuck, seen(validating()), START), "stuck validating, before OpenAI counts its requests");
   for (const [why, record, raw] of [
-    ["under three hours", { ...stuck, createdAt: at(START - 2.9 * HOUR) }, openai("in_progress")],
+    ["under the wait", { ...stuck, createdAt: at(START - lib.STALL_RESTART_MS + MIN) }, openai("in_progress")],
     ["one image done", stuck, openai("in_progress", 1)],
     ["one image refused", stuck, openai("in_progress", 0, 1)],
     ["finishing", stuck, openai("finalizing")],
@@ -163,7 +164,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     ["a two-set job", { ...stuck, sets: [set(1), set(2)] }, openai("in_progress")],
     ["every restart used", { ...stuck, stallRestarts: lib.STALL_RESTART_LIMIT }, openai("in_progress")],
     ["no send time", { ...stuck, createdAt: null }, openai("in_progress")],
-    ["validating under three hours", { ...stuck, createdAt: at(START - 2.9 * HOUR) }, validating()],
+    ["validating under the wait", { ...stuck, createdAt: at(START - lib.STALL_RESTART_MS + MIN) }, validating()],
     ["running with no requests counted", stuck, openai("in_progress", 0, 0, { request_counts: { total: 0, completed: 0, failed: 0 } })],
     ["a queued record", { ...stuck, batchName: `batch_local_${"a".repeat(40)}`, locallyQueued: true }, openai("in_progress")],
   ]) assert(!lib.neverStarted(record, seen(raw), START), `not restarted: ${why}`);
@@ -172,7 +173,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   const w = world({
     records: [
       job("batch_stuck", 1),
-      job("batch_young", 2, { createdAt: at(START - HOUR) }),
+      job("batch_young", 2, { createdAt: at(START - 10 * MIN) }),
       job("batch_busy", 3),
       job("batch_charm", 4, { sets: [set(4, "charm_maker")] }),
       job("batch_person", 5, { state: "JOB_STATE_CANCELLED", providerStatus: "cancelled" }),
@@ -287,10 +288,10 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.deepEqual(c.cancels, ["batch_s22"], "a job whose stop did not reach OpenAI is cancelled there");
   assert.equal(c.get("batch_s22").stallRestartBlocked, true);
 
-  // 5. A person asks for the restart sooner than three hours ("please restart",
-  // 2026-09-29): only a job that has made nothing that long, never under half
-  // an hour, never later than the three hours.
-  const MIN = 60 * 1000;
+  // 5. A person asks for the restart sooner ("please restart", 2026-09-29):
+  // only a job that has made nothing that long, never under half an hour, never
+  // later than the usual wait.
+  assert.equal(lib.STALL_RESTART_MS, 45 * MIN, "the usual wait");
   const recent = () => world({
     records: [job("batch_r90", 40, { createdAt: at(START - 90 * MIN) }),
       job("batch_r90_done", 41, { createdAt: at(START - 90 * MIN) }),
@@ -302,28 +303,28 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   });
   const sweptWith = async (extra) => { const r = recent(); const res = await r.call({ kind: "batch_sweep", ...extra });
     assert.equal(res.statusCode, 200, res.error?.message); return r.cancels.slice().sort(); };
-  assert.deepEqual(await sweptWith({}), ["batch_r4h"], "the scheduled run keeps the three hours");
+  assert.deepEqual(await sweptWith({}), ["batch_r4h", "batch_r90"], "the scheduled run: jobs with nothing for the usual wait, not the one with an image done, not the younger ones");
   assert.deepEqual(await sweptWith({ restartStalledAfterMs: 60 * MIN }), ["batch_r4h", "batch_r90"],
-    "asked for one hour: the jobs with nothing for an hour, not the one with an image done, not the younger ones");
+    "asked for one hour: no later than the usual wait");
   assert.deepEqual(await sweptWith({ restartStalledAfterMs: 1 }), ["batch_r40", "batch_r4h", "batch_r90"],
     "asked for one millisecond: never under half an hour");
-  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 10 * 60 * MIN }), ["batch_r4h"], "cannot be asked to wait longer than three hours");
-  assert.deepEqual(await sweptWith({ restartStalledAfterMs: "soon" }), ["batch_r4h"], "an unreadable request is the usual three hours");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 10 * 60 * MIN }), ["batch_r4h", "batch_r90"], "cannot be asked to wait longer than the usual wait");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: "soon" }), ["batch_r4h", "batch_r90"], "an unreadable request is the usual wait");
   const direct = recent();
-  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90" })).skipped, true, "asked directly, still three hours");
-  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90", minAgeMs: 60 * MIN })).cancelRequested, true);
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40" })).skipped, true, "asked directly, still the usual wait");
+  assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40", minAgeMs: 30 * MIN })).cancelRequested, true);
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r20", minAgeMs: 1 })).skipped, true, "the half-hour floor holds here too");
   // Its set is queued again like any stalled job, once OpenAI confirms the cancel.
   const asked = recent();
-  await asked.call({ kind: "batch_sweep", restartStalledAfterMs: 60 * MIN });
-  asked.live.get("batch_r90").status = "cancelled";
+  await asked.call({ kind: "batch_sweep", restartStalledAfterMs: 30 * MIN });
+  asked.live.get("batch_r40").status = "cancelled";
   asked.later(2 * MIN);
   const next = await asked.call({ kind: "batch_sweep" });
   assert.equal(next.stalledRestarted, 1, "the restarted set goes back in the queue");
   assert.equal(asked.submits.length, 1);
-  assert.equal(asked.submits[0].sets[0].setN, 40);
+  assert.equal(asked.submits[0].sets[0].setN, 42);
 
-  // 6. A job stuck in validation: not waited on, then restarted at three hours.
+  // 6. A job stuck in validation: not waited on, then restarted at the usual wait.
   const v = world({
     records: [job("batch_val_old", 30, { state: "JOB_STATE_PENDING", providerStatus: "validating" }),
       job("batch_val_new", 31, { state: "JOB_STATE_PENDING", providerStatus: "validating", createdAt: at(START - 20 * 60 * 1000) })],
@@ -381,5 +382,5 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   assert.doesNotMatch(backlog, /Every set has been sent/, "not said while sets still wait to be sent");
   assert.match(requeued, /1 set\(s\) OpenAI never started were cancelled at no cost and sent again/);
   assert.doesNotMatch(requeued, /need attention|All batches cancelled/);
-  console.log("Listing batch: a job OpenAI never started is cancelled after three hours and only its missing images are queued again, once, with every guard and the card");
+  console.log("Listing batch: a job OpenAI never started is cancelled after 45 minutes and only its missing images are queued again, once, with every guard and the card");
 })().catch((err) => { console.error(err); process.exitCode = 1; });

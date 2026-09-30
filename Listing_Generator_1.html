@@ -13304,6 +13304,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // Jobs OpenAI never started, which the collector cancels and queues again.
       const restarting = effective.filter(_awaitingStallRestart).length;
       const restartingActive = activeJobs.filter(_awaitingStallRestart).length;
+      // How long the collector waits before it restarts a job OpenAI has not
+      // started (STALL_RESTART_MS in listingBatchAdmission.cjs).
+      const stallMinutes = 45;
       // Sets whose job OpenAI never started, sent again, until they are saved.
       const byName = new Map(session.batches.map((b) => [b.batchName, b]));
       const leafOf = (b) => {
@@ -13469,11 +13472,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const awaitingCollection = effective.filter((b) => !b.collected && _normBatchState(b.state) === "JOB_STATE_SUCCEEDED").length;
       const shortTime = (ts) => new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       let explanation = cancelling ? "Waiting for OpenAI to confirm cancellation."
-        : restarting ? `OpenAI never started ${restarting} job(s) within 3 hours. They are cancelled at no cost and their sets are queued again.`
+        : restarting ? `OpenAI never started ${restarting} job(s) within ${stallMinutes} minutes. They are cancelled at no cost and their sets are queued again.`
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
         : providerWaiting
-        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. A job OpenAI has not started after 3 hours is restarted automatically.`
+        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. A job OpenAI has not started after ${stallMinutes} minutes is restarted automatically.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
