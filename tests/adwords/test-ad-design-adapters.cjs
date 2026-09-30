@@ -27,6 +27,7 @@ const output=bytes=>({data:[{b64_json:bytes.toString('base64')}],model:IMAGE_MOD
  check(request.body.model===IMAGE_MODEL&&request.body.size==='1024x1024'&&request.body.quality==='high'&&request.body.n===1,'exact Sunburst model, dimensions, quality and count');
  check(request.body.output_format==='jpeg'&&request.body.images[0].image_url==='data:image/jpeg;base64,'+source.toString('base64')&&!request.body.image,'references use supported JSON images schema');
  check(request.headers['X-Client-Request-Id']==='fixture-request','request identity passed to provider');
+ check(request.body.prompt.includes(req('./googleAdsAdDesignResearch').productSceneGuidance),'the actual image-provider request carries the same motif, pastel and close-crop guidance as both planners, including for saved directions');
  const meta=await sharp(generated.bytes).metadata(),xmp=meta.xmp.toString();
  check(meta.format==='jpeg'&&meta.width===1024&&meta.height===1024,'saved artwork is exact required JPEG size');
  check(xmp.includes('Iptc4xmpExt:DigitalSourceType')&&xmp.includes('/compositeSynthetic')&&xmp.includes('Fixture owner'),'final JPEG retains AI source and existing copyright XMP');

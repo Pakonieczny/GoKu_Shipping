@@ -37,8 +37,8 @@ function result(){return {brief:{buyer:'A gift buyer looking for a monogram neck
  for(const prompt of [request.input[0].content[0].text,sceneRequest.input[0].content]){
   ok(prompt.includes('Choose a fresh product-specific scene'),'both generation paths direct a fresh product-specific setting');
   ok(prompt.includes('copy-area fade and CTA as one palette'),'scene and overlay colours are planned together');
-  ok(prompt.includes('Every new scene MUST include')&&prompt.includes('not a colour wash'),'props and a new physical setting are required');
-  ok(prompt.includes('soft pastel')&&prompt.includes('dark near-neutral charcoal'),'soft scenery and restrained typography required');
+  ok(prompt.includes('one primary thematic cue')&&prompt.includes('Props are optional')&&prompt.includes('A background colour alone is not a theme'),'both planning paths require a restrained motif cue without forcing props');
+  ok(prompt.includes('soft pastel, low-saturation')&&prompt.includes('without replacing the pastel look')&&prompt.includes('dark near-neutral charcoal'),'pastel scenery and restrained typography remain required');
   ok(prompt.includes('Honor explicit operator art direction'),'operator preferences remain authoritative');
   ok(!prompt.includes('Preferred house style: the approved peach'),'previous product is not the house palette');
  }
