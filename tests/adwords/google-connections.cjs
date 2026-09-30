@@ -108,6 +108,9 @@ const stub = async (url, options) => {
     // severity can be told apart.
     if (/FROM (video|detail_placement_view)\b/.test(JSON.parse(options.body).query))
       return reply(403, { error: { details: [{ errors: [{ errorCode: { authorizationError: 'USER_PERMISSION_DENIED' } }] }] } });
+    // The Merchant link the resolver reads; the catalog's own product_link probe has no WHERE clause.
+    if (/FROM product_link WHERE/.test(JSON.parse(options.body).query))
+      return reply(200, { results: [{ productLink: { merchantCenter: { merchantCenterId: '5550001' } } }] });
     return reply(200, { results: [{}] });
   }
   return reply(200, {});
@@ -157,6 +160,19 @@ delete process.env.GMC_REFRESH_TOKEN; delete process.env.GEMINI_API_KEY; delete 
     'the opt-in write probe reports capability without creating anything');
   check(calls.some(u => /googleAds:mutate/.test(u)) && calls.filter(u => /googleAds:mutate/.test(u)).length === 1,
     'the write probe is sent exactly once, and only when asked for');
+
+  // The Merchant account is found from the Ads product_link when nothing is configured, and the probes then run.
+  process.env.GMC_REFRESH_TOKEN = '1//m'; delete process.env.GMC_MERCHANT_ID; delete process.env.MERCHANT_CENTER_ID;
+  calls.length = 0;
+  const merchant = await checker.run({ write: false });
+  const mrows = merchant.sections.flatMap(s => s.rows);
+  const account = mrows.find(r => r.name === 'merchant account');
+  check(account && account.status === 'ok' && /5550001/.test(account.detail) && /product_link/.test(account.detail) && merchant.merchantId === '5550001',
+    'the Merchant account id is discovered from the Google Ads product_link');
+  check(mrows.find(r => r.name === 'products').status === 'ok' && calls.some(u => /merchantapi\.googleapis\.com\/products\/v1\/accounts\/5550001\//.test(u)),
+    'the Merchant API probes run against the discovered account');
+  check(calls.filter(u => /merchantapi\.googleapis\.com/.test(u)).every(u => !/mutate|:(create|delete|patch)/i.test(u)), 'discovery and probes stay read-only');
+  delete process.env.GMC_REFRESH_TOKEN;
 
   console.log(passed + ' Google connection catalog and executor checks passed.');
   require('./suite-guard.cjs').done();

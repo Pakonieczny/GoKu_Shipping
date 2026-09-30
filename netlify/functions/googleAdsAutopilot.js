@@ -3814,6 +3814,9 @@ async function merchantCenterId() {
   const envId = String(ENV.GMC_MERCHANT_ID || ENV.MERCHANT_CENTER_ID || "").replace(/\D/g, "");
   if (envId) { _mcCache = envId; return _mcCache; }
 
+  // Next, an explicit Firestore setting (config/googleApiKeys.merchantId); it overrides a remembered discovery.
+  try { const stored = String(await require("./_googleApiKeys").storedValue("merchantId") || "").replace(/\D/g, ""); if (stored) { _mcCache = stored; return _mcCache; } } catch (_) { /* unreadable config: fall through to discovery */ }
+
   const saved = await _gadsReadState();
   if (/^\d+$/.test(String(saved.merchantId || ''))) { _mcCache = String(saved.merchantId); return _mcCache; }
   if (!_mcLookup) _mcLookup = _discoverMerchantCenterId().finally(() => { _mcLookup = null; });
@@ -3824,6 +3827,16 @@ async function _discoverMerchantCenterId() {
   const remember = async id => { _mcCache = id; await _saveGadsReadState({ merchantId: id, merchantVerifiedAt: Date.now() }); return id; };
 
   const attempts = [];
+  // The account's own Merchant link is the most direct record of which Merchant account it uses.
+  try {
+    const rows = await gaql(`SELECT product_link.merchant_center.merchant_center_id
+      FROM product_link
+      WHERE product_link.type = 'MERCHANT_CENTER'`);
+    const ids = [...new Set(rows.map(r => r.productLink && r.productLink.merchantCenter && r.productLink.merchantCenter.merchantCenterId)
+      .map(v => String(v || "").replace(/\D/g, "")).filter(Boolean))];
+    if (ids.length === 1) return await remember(ids[0]);
+  } catch (e) { if (_isGadsQuotaError(e)) throw e; attempts.push("product link: " + String(e.message || e)); }
+
   try {
     const rows = await gaql(`SELECT campaign.shopping_setting.merchant_id
       FROM campaign
