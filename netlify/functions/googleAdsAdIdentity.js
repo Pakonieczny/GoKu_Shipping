@@ -43,7 +43,7 @@ function foreign(source,productId){
 }
 async function resolve({sources,objects,productId},D){
  const identity=[];
- for(const source of sources||[])if(await verified(source,productId,D.library))identity.push(await framed(source,objects,D));
+ for(const source of sources||[])if(await verified(source,productId,D.library))identity.push({...await framed(source,objects,D),identityVerified:module.exports.POLICY,identityProductId:productId});
  return identity;
 }
 // Per-format identity of a film. Every format is filmed as its own take from the one identity reference, so the charm can drift in a single
