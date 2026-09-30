@@ -4,6 +4,10 @@ const {createMotionService,renderVariants}=require('../../netlify/functions/goog
 const fixture=path.join(__dirname,'ad-design-workflow.cjs'),source=fs.readFileSync(fixture,'utf8').split('(async()=>{const e=await setup();')[0];
 const ctx=vm.createContext({require:require('node:module').createRequire(fixture),__dirname,process,Buffer,console,Date,setTimeout,clearTimeout});vm.runInContext(source+'\nglobalThis.mem=memory;',ctx);
 let n=0;function ok(v,m){assert(v,m);n++;}
+// Every progress label a job saves, in order: what the panel would have shown while the job ran.
+function watchLabels(x){const labels=[],run=x.f.db.runTransaction;x.f.db.runTransaction=fn=>run(tx=>fn({...tx,update:(r,v)=>{const l=v?.progress?.label;if(l&&labels[labels.length-1]!==l)labels.push(l);return tx.update(r,v);}}));return labels;}
+// A provider whose films are still in progress when requested and complete on the next poll, so the run reaches its "Generating motion" stage.
+function slowFilms(x,onPoll){const inner=x.D.videoRequest;x.D.videoRequest=async(route,method,body)=>{if(method==='POST'){const r=await inner(route,method,body);return {id:r.id,status:'in_progress'};}if(onPoll)await onPoll();return {id:route.split('/').pop(),status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/video.mp4'}]}]};};}
 async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('design_test'),scope={productId:'p',groupRef:'g'},id='eai_'+'a'.repeat(40),jpeg=await sharp({create:{width:100,height:100,channels:3,background:'#b69b74'}}).jpeg().toBuffer();
  await ref.set({settings:scope,editorAI:{id},context:{groups:[{ref:'g'}]}});const e=ref.collection('editorAIJobs').doc(id);await e.set({scope,phase:'ready',createdAt:1});await e.collection('data').doc('request').set({sources:[{asset:{path:'photo'}}]});await e.collection('data').doc('result').set({responsive:{plan:{nativeCopy:{headlines:['Pendant','A personal touch']},layouts:[]}},sources:[{asset:{path:'photo'},width:100,height:100}]});
  const direction=Object.fromEntries(['rationale','setting','props','lighting','opening','middle','ending','portrait','landscape','identity','limitations'].map(k=>[k,'Verified '+k]));
@@ -76,7 +80,9 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
    const p3=await setup(),ps=await p3.service.start({workspaceId:'design_test',...p3.scope}),pr=p3.ref.collection('motionJobs').doc(ps.jobId);let polls=[];
    await pr.update({masters:{portrait:{...done,id:'v1_p',size:'720x1280'},square:{id:'v1_pending',status:'in_progress',progress:0,size:'1280x720',requestId:'saved',estimatedUsd:1.0136}}});
    const inner=p3.D.videoRequest;p3.D.videoRequest=async(route,method,body)=>{if(method!=='POST'&&route==='interactions/v1_pending'){polls.push(route);return {id:'v1_pending',status:'completed',steps:[{type:'model_output',content:[{type:'video',uri:'https://storage.googleapis.com/pending.mp4'}]}]};}return inner(route,method,body);};
+   const p3Labels=watchLabels(p3);
    ok((await p3.service.run({workspaceId:'design_test',jobId:ps.jobId})).ok&&p3.calls.create===1&&p3.calls.aspects.join()==='16:9'&&polls.length===1,'the pending square master is polled and only the missing landscape master is requested');
+   ok(p3Labels.includes('Generating motion · square and landscape')&&!p3Labels.some(l=>/portrait, square and landscape/.test(l)),'a resume with the portrait master already done names only the two films still being made ('+p3Labels.join(' | ')+')');
   }
   {
    // Google answering a poll with an event stream ("event: error"), a gateway page or a reset never fails or re-buys a paid film: the same
@@ -303,6 +309,7 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  await assert.rejects(()=>fx.service.start({workspaceId:'design_test',...fx.scope,fixOf:fxStart.jobId,repairReviewHash:'stale',fix:{category:'layout',index:0}}),/review changed/);n++;
  const captionFix={workspaceId:'design_test',...fx.scope,fixOf:fxStart.jobId,repairReviewHash:fxState.repairReviewHash,fix:{category:'layout',index:0}},cf=await fx.service.start(captionFix);
  ok(cf.queued&&(await fx.service.start(captionFix)).jobId===cf.jobId&&cf.jobId!==fxStart.jobId,'caption fix is a distinct, idempotent job');
+ {const q=await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:cf.jobId});ok(cf.making.join()==='square'&&q.making.join()==='square'&&/ · square$/.test(q.progress.label)&&!/portrait|landscape/.test(q.progress.label),'a caption fix of one size is queued as making that size only ('+q.progress.label+')');}
  const beforeCaption={...fx.calls};ok((await fx.service.run({workspaceId:'design_test',jobId:cf.jobId})).ok,'caption fix completes');
  const cfState=await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:cf.jobId});
  ok(cfState.phase==='ready'&&cfState.fixOf===fxStart.jobId&&cfState.variants.length===3&&fx.calls.create===beforeCaption.create&&fx.calls.download===beforeCaption.download&&fx.calls.review===beforeCaption.review+1,'caption fix re-composes without any new film or download and re-reviews the set');
@@ -310,14 +317,26 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
  ok(fx.lastBrief.targetedFix?.formats.join()==='mobile_square'&&fx.lastBrief.fixNote,'the review is told which format was corrected');
  ok(cfState.estimatedUsd===0&&(await fx.ref.collection('motionJobs').doc(cf.jobId).get()).data().captionHints.square.preferBand,'caption fix costs nothing and records its hint');
  const masterFix={workspaceId:'design_test',...fx.scope,fixOf:fxStart.jobId,repairReviewHash:fxState.repairReviewHash,fix:{category:'visualAppeal',index:0}},mf=await fx.service.start(masterFix),beforeMaster={...fx.calls};
+ {const q=await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:mf.jobId});ok(mf.making.join()==='landscape'&&q.making.join()==='landscape'&&!/portrait|square/.test(q.progress.label),'a fix that regenerates one film is queued as making that size only ('+q.progress.label+')');}
  ok((await fx.service.run({workspaceId:'design_test',jobId:mf.jobId})).ok,'master fix completes');const mfState=await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:mf.jobId});
  ok(fx.calls.create===beforeMaster.create+1&&mfState.variants.length===3&&mfState.variants.find(v=>v.key==='mobile_portrait').asset.hash===fxState.variants.find(v=>v.key==='mobile_portrait').asset.hash,'master fix regenerates exactly one film and keeps the portrait film');
  ok(Math.abs(mfState.estimatedUsd-1.015)<.01,'master fix reports one film of video cost');
  const copyFix={workspaceId:'design_test',...fx.scope,fixOf:fxStart.jobId,repairReviewHash:fxState.repairReviewHash,fix:{category:'messaging',index:0}},cpf=await fx.service.start(copyFix),beforeCopy={...fx.calls};
+ ok((await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:cpf.jobId})).making.join()==='portrait,square,landscape','a messaging fix re-composes every size, so it says all three');
  ok((await fx.service.run({workspaceId:'design_test',jobId:cpf.jobId})).ok,'copy fix completes');const cpfState=await fx.service.status({workspaceId:'design_test',...fx.scope,jobId:cpf.jobId}),cpfJob=(await fx.ref.collection('motionJobs').doc(cpf.jobId).get()).data();
  ok(copyFixes===1&&fx.calls.create===beforeCopy.create&&cpfState.variants.length===3&&cpfJob.plan.copy.headline==='For the foodie who has everything'&&cpfJob.copyFixed,'copy fix revises the message once and re-composes every format without new video');
  await fx.service.run({workspaceId:'design_test',jobId:cpf.jobId});ok(copyFixes===1&&fx.calls.create===beforeCopy.create,'completed fixes never charge twice');
  ok((await fx.service.status({workspaceId:'design_test',...fx.scope})).jobId===cpf.jobId,'the latest fix becomes the current animation');
+ // Progress wording follows what the job will really make: a full run keeps its three-size wording all the way through.
+ {
+  const fr=await setup(),W={workspaceId:'design_test'},labels=watchLabels(fr),mids=[];
+  const first=await fr.service.start({...W,...fr.scope});
+  ok((await fr.service.status({...W,...fr.scope})).making.join()==='portrait,square,landscape','a new job is making all three sizes');
+  const inner=fr.D.renderVariants;fr.D.renderVariants=async(...a)=>{mids.push((await fr.service.status({...W,...fr.scope,jobId:first.jobId})).making.join());return inner(...a);};
+  slowFilms(fr);await fr.service.run({...W,jobId:first.jobId});
+  ok(labels.includes('Generating motion · portrait, square and landscape')&&labels.includes('Saved 3 of 3 video formats')&&labels.at(-1)==='Three video formats ready to preview','a full run reads exactly as before ('+labels.join(' | ')+')');
+  ok(mids.length===3&&mids.every(m=>m==='portrait,square,landscape'),'saving one video never shrinks the list of sizes a running job is making');
+ }
  // Redo one film on demand: any format of a finished job, exactly one new master, every other film kept as saved.
  {
   const rd=await setup(),W={workspaceId:'design_test'},first=await rd.service.start({...W,...rd.scope});await rd.service.run({...W,jobId:first.jobId});
@@ -330,7 +349,13 @@ async function setup(){const f=ctx.mem(),ref=f.db.collection('Workspace').doc('d
   await assert.rejects(()=>rd.service.start({...input,redoFormat:'widescreen'}),/Choose the portrait, square or landscape/);n++;
   const started=await rd.service.start(input);
   ok(started.queued&&started.jobId!==first.jobId&&(await rd.service.start(input)).jobId===started.jobId&&rd.calls.create===create0,'the redo is a distinct, idempotent job and starting it buys nothing');
+  // A one-video redo makes one size: the start reply, the queued status, every progress label while it runs and the finished label name only the square.
+  const queued=await rd.service.status({...W,...rd.scope,jobId:started.jobId}),redoLabels=watchLabels(rd),running=[];
+  ok(started.making.join()==='square'&&(await rd.service.start(input)).making.join()==='square'&&queued.phase==='queued'&&queued.making.join()==='square'&&queued.progress.label==='Preparing one new square video','a one-video redo is queued as making the square only');
+  slowFilms(rd,async()=>{const s=await rd.service.status({...W,...rd.scope,jobId:started.jobId});running.push(s.phase+':'+s.making.join());});
   ok((await rd.service.run({...W,jobId:started.jobId})).ok,'the redo completes');
+  ok(running.join()==='running:square','while the redo runs its status still says it is making the square only');
+  ok(redoLabels.includes('Generating motion · square')&&redoLabels.includes('Saved 1 of 1 new video format')&&redoLabels.at(-1)==='Square video ready to preview · all 3 sizes saved'&&!redoLabels.some(l=>/portrait|landscape|three|Saved 3|Saved 2/i.test(l.replace(/all 3 sizes saved/,''))),'no progress label of a one-video redo names the other formats or promises three ('+redoLabels.join(' | ')+')');
   const done=await rd.service.status({...W,...rd.scope}),job=(await rd.ref.collection('motionJobs').doc(started.jobId).get()).data();
   ok(rd.calls.create===create0+1&&rd.calls.aspects.slice(3).join()==='16:9'&&rd.calls.download===download0+1,'exactly one new master is bought and downloaded');
   ok(rd.calls.renders.length===renders0+1&&rd.calls.renders[renders0].orientation==='square'&&rd.calls.renders[renders0].plan.renderVersion===11&&rd.calls.renders[renders0].plan.composition.w>0&&rd.calls.review===review0+1,'only the square film is composed again, with the same render version and its own measured framing, then the set is reviewed');
