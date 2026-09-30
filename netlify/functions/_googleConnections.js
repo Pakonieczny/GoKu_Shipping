@@ -308,6 +308,10 @@ function adsErrorCode(data) {
 }
 
 const REMEDIES = [
+  [/invalid_grant/i, "Google refused the refresh token: it was revoked, the password or client secret changed, or it expired (a consent screen left in Testing expires refresh tokens after 7 days). Re-consent this OAuth client and store the new refresh token."],
+  [/invalid_client|unauthorized_client/i, "The OAuth client id or secret is wrong or was deleted or rotated in Google Cloud Console, or this refresh token was issued to a different client."],
+  [/API_DEVELOPER|not registered|developerRegistration|registerGcp/i, "The Merchant API needs this Google Cloud project registered to the Merchant Center account with an API_DEVELOPER user (accounts.developerRegistration:registerGcp; Merchant Center: Settings > Developer registration)."],
+  [/^410|Content API for Shopping/i, "Google returned Gone. The Content API for Shopping was shut down on 2026-08-18; only the Merchant API (merchantapi.googleapis.com) still answers."],
   [/DEVELOPER_TOKEN_NOT_APPROVED|DEVELOPER_TOKEN_PROHIBITED/i, "The developer token is not approved for production. Apply for Basic access in the manager account's API Center."],
   [/USER_PERMISSION_DENIED/i, "login-customer-id and customer-id do not pair, or the manager link was never accepted. Check the invitation in Google Ads."],
   [/CUSTOMER_NOT_ENABLED/i, "The Google Ads account is not active — usually unfinished billing."],
@@ -324,7 +328,13 @@ function remedyFor(detail) {
   return null;
 }
 
+// Google's published (tentative, month-granular) sunset for each Google Ads API major
+// version: https://developers.google.com/google-ads/api/docs/sunset-dates. The check
+// quotes the configured version's own date rather than a fixed sentence.
+const ADS_VERSION_SUNSET = { v22: "2026-10", v23: "2027-02", v24: "2027-05", v25: "2027-08" };
+
 module.exports = {
+  ADS_VERSION_SUNSET,
   ADS_RESOURCES, ADS_FIELDS, DEVICE_SPLIT_WANTED, MERCHANT_PROBES, MERCHANT_REPORT_VIEWS, OTHER_HOSTS, REQUIRED_SCOPES,
   REQUIRED_IMAGE_FORMATS, REQUIRED_VIDEO_FORMATS,
   row, ok, fail, warn, skip, summarize, adsErrorCode, remedyFor, RECENT, fieldsIn, allQueriedFields

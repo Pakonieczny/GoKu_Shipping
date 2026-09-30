@@ -126,8 +126,14 @@ async function adsAccessSection(token) {
     } catch (e) { /* treated as not served */ }
   }
   const newest = served[served.length - 1];
+  const sunset = C.ADS_VERSION_SUNSET[V];
+  const sunsetText = sunset ? V + " is scheduled to sunset in " + sunset + " (tentative, per Google's sunset table)" : V + " has no sunset date in this application's table — confirm it at developers.google.com/google-ads/api/docs/sunset-dates";
+  const soon = sunset && Date.parse(sunset + "-01") - Date.now() < 120 * 86400000;
+  const currency = (a, b) => (soon ? C.warn : C.ok)("API version currency", a, b);
+  if (served.length && !served.includes(V))
+    rows.push(C.fail("API version served", V + " did not answer, while " + served.join(", ") + " did. A version that no longer answers has been sunset: set GADS_API_VERSION to a served version after checking its readiness row below."));
   rows.push(newest && newest !== V
-    ? C.ok("API version currency", "configured " + V + "; Google also serves " + served.join(", ") + ". v24 is supported into 2027, so this is a deliberate choice — the readiness row below says whether a move would be safe.")
+    ? currency("configured " + V + "; Google also serves " + served.join(", ") + ". " + sunsetText + (soon ? " — MOVE SOON; the readiness row below says whether a move would be safe." : ", so staying is a deliberate choice; the readiness row below says whether a move would be safe."))
     : served.length ? C.ok("API version currency", "configured " + V + " is the newest version answering for this account")
       : C.fail("API version currency", "no probed version answered"));
   return { title: "Google Ads · access", rows, served };
