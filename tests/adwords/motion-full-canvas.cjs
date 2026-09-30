@@ -157,14 +157,14 @@ const {renderVariants,captionLayers}=require('../../netlify/functions/googleAdsA
   {
    const plain=geometry(LAND,{x:.66,y:0,w:.22,h:.72},'landscape',{mode:'full'});assert.equal(plain.framing,null,'no pixel measurement, no enlargement: the existing framing stands');
    const g=geometry(LAND,duck(.27),'landscape',{mode:'full'}),b=duck(.27).body;
-   assert.equal(g.framing.status,'zoomed');assert(inFrame(g.crop),'the window stays inside the frame');assert(Math.abs(g.crop.w-.5)<1e-9&&Math.abs(g.crop.h-.5)<1e-9,'a charm at 27% needs more than 2x, so it is enlarged by the 2x limit exactly');
-   assert(holds(g.crop,b),'the whole charm stays in the window');assert(Math.abs(g.framing.zoom-2)<1e-9);assert(/enlarged 2\.0x/.test(g.framing.note));
-   assert(b.mh/g.crop.h>=.53&&b.mh/g.crop.h<=.56,'charm share after the enlargement: '+b.mh/g.crop.h);
+   assert.equal(g.framing.status,'zoomed');assert(inFrame(g.crop),'the window stays inside the frame');assert(Math.abs(g.crop.w-1/2.4)<1e-9&&Math.abs(g.crop.h-1/2.4)<1e-9,'a charm at 27% needs more than 2x, so it is enlarged by the 2x limit exactly');
+   assert(holds(g.crop,b),'the whole charm stays in the window');assert(Math.abs(g.framing.zoom-2.4)<1e-9);assert(/enlarged 2\.4x/.test(g.framing.note));
+   assert(b.mh/g.crop.h>=.63&&b.mh/g.crop.h<=.67,'charm share after the enlargement: '+b.mh/g.crop.h);
    const cx=(b.x+b.w/2-g.crop.x)/g.crop.w,cy=(b.y+b.h/2-g.crop.y)/g.crop.h;assert(cx>.6&&cx<.8&&Math.abs(cy-.5)<.06,'the charm sits right of centre and the left stays open for the copy: '+cx+','+cy);
    assert(g.product.x>=0&&g.product.y>=0&&g.product.x+g.product.w<=1+1e-9&&g.product.y+g.product.h<=1+1e-9,'the protected product box is the part still in view (the chain leaves at the top)');
    assert(g.zones[0].name==='left'&&!g.zones.crowded&&g.zones[0].w>=LAND.width*.3,'the copy keeps a left area beside the enlarged charm');
    const mid=geometry(LAND,duck(.40),'landscape',{mode:'full'});assert.equal(mid.framing.status,'zoomed');assert(Math.abs(.40/mid.crop.h-.66)<.005&&Math.abs(mid.framing.zoom-1.65)<.01,'a charm at 40% is enlarged 1.65x to the 66% target (a visible 55-60% of the height)');
-   const small=geometry(LAND,duck(.22),'landscape',{mode:'full'});assert.equal(small.framing.status,'too-small');assert(Math.abs(small.crop.w-.5)<1e-9&&/still small and distant/.test(small.framing.note),'beyond the 2x limit the film is enlarged as far as allowed and flagged for the review');
+   const small=geometry(LAND,duck(.18),'landscape',{mode:'full'});assert.equal(small.framing.status,'too-small');assert(Math.abs(small.crop.w-1/2.4)<1e-9&&/still small and distant/.test(small.framing.note),'beyond the 2x limit the film is enlarged as far as allowed and flagged for the review');
    const big=geometry(LAND,duck(.62),'landscape',{mode:'full'});assert.equal(big.framing.status,'ok');assert.equal(big.framing.note,undefined);assert.deepEqual(big.crop,geometry(LAND,{x:.66,y:0,w:.22,h:.72},'landscape',{mode:'full'}).crop,'a charm already in the size band is left exactly as framed');
    const band=geometry(LAND,duck(.27),'landscape',{mode:'band'});assert.equal(band.framing.status,'zoomed');assert(band.product.x>=-.002&&band.product.y>=-.002&&band.product.x+band.product.w<=1.002&&band.product.y+band.product.h<=1.002,'the band layout is enlarged too and keeps its product box on the canvas');
   }

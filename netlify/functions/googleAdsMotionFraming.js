@@ -5,7 +5,7 @@
 // calls for, the one fixed crop the composition applies is closed in about it. The crop never moves during the film.
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v)),pct=v=>Math.round(v*100);
 const CLOSE={
- maxZoom:2,     // never enlarge the master more than this: past it the upscale shows
+ maxZoom:2.4,     // never enlarge the master more than this: past it the upscale shows
  minSamples:3,  // sampled frames in which the charm must be found, and at least half of all of them
  edge:.012,     // a measured product box this close to a frame side already runs out of the frame there (a hanging chain)
  flag:.52,      // still below this share after every enlargement allowed: the film is reported as too small
