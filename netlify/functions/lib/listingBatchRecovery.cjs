@@ -1,12 +1,13 @@
 'use strict';
 const { batchCharmPaths } = require('./listingBatchReservations.cjs');
+const { stallRestartPending } = require('./listingBatchAdmission.cjs');
 
 const SESSIONS_COLL = 'ListingGenerator1Sessions';
 const ACTIVE = new Set(['JOB_STATE_PENDING', 'JOB_STATE_RUNNING']);
 const normalizeState = value => String(value || '').replace(/^BATCH_STATE_/, 'JOB_STATE_');
 const failureKind = value => /safety system|safety_violations|moderation|content_policy/i.test(String(value || '')) ? 'content'
   : /socket hang up|ECONN|ETIMEDOUT|storage\.googleapis|upload|download|network|fetch failed|manifest:/i.test(String(value || '')) ? 'storage'
-  : /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error/i.test(String(value || '')) ? 'transient' : 'other';
+  : /rate.limit|overload|temporar|internal.server|timeout|no result returned|no inline_data|batch error|completion window expired|batch_expired/i.test(String(value || '')) ? 'transient' : 'other';
 const isModelTask = task => /\/(?:Primary|Secondary)_Models\//.test(String(task?.input_storage_path || ''));
 // This changes the requested image itself: opaque clothing replaces an exposed
 // torso. It never asks a model to ignore a policy or disguise rejected content.
@@ -88,11 +89,17 @@ async function reconcileSession({ db, bucket, collection, sessionId, timestamp, 
     const complete = isApproved || (group.tasks.size > 0 && missing.length === 0 && manifestPresent);
     const live = leaves.find(r => !r.collected && ACTIVE.has(normalizeState(r.state)));
     const queued = leaves.find(r => r.retryRequested && (r.locallyQueued || r.repairPending || !r.collected));
+    const restart = leaves.find(stallRestartPending);
     let status, note = '', patch = {};
     if (complete) { status = isApproved ? 'approved' : 'complete'; summary.complete++; if (isApproved) summary.approved++;
       patch = { setComplete: true, repairPending: false, collectionPending: false, retryRequested: false, recoveryStatus: status };
     } else if (live) { status = 'active'; summary.active++; }
     else if (queued) { status = 'queued'; summary.queued++; }
+    else if (restart) {
+      status = 'queued'; summary.queued++;
+      patch = { repairPending: true, retryRequested: false, recoveryStatus: 'queued', setComplete: false,
+        recoveryReason: 'Recovering unfinished images after an automatic batch cancellation.' };
+    }
     else if (latest?.retryStatus === 'complete_or_protected' || latest?.stallRestartBlocked ||
         normalizeState(latest?.state) === 'JOB_STATE_CANCELLED' && latest?.stallRestart !== 'pending' && !latest?.stallCancelRequestedAt) {
       status = 'cancelled'; summary.cancelled++;

@@ -57,8 +57,8 @@ function render(summary) {
   const html = render(complete);
   const card = html.slice(0, html.indexOf('<details class="batch-details"'));
   assert.match(card, /Completed with 1 issue/);
-  assert.match(card, /300 \/ 300/);
-  assert.match(card, /listings processed/);
+  assert.match(card, /299 \/ 300/);
+  assert.match(card, /listings saved/);
   assert.match(card, /299 saved · 1 needs attention/);
   assert.match(card, /Set_300/);
   assert.match(card, /Previously saved images are missing/);

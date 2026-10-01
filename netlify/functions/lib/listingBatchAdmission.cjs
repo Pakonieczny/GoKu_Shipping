@@ -12,28 +12,12 @@ const capacityRefusals = (record) => Number(record?.capacityRefusals || 0) +
   (quotaFailure(record?.providerError) ? 1 : 0);
 const queuedName = (session, display, sets) => 'batch_local_' + createHash('sha256')
   .update(JSON.stringify([session, display, sets.map(s => s.outputBasePath).sort()])).digest('hex').slice(0, 40);
-// OpenAI sometimes accepts a job and never starts it: 0 of 6 images for 6 to
-// 17 hours while jobs sent after it finish in minutes. Each one holds one of
-// the thirty places until OpenAI expires it at 24 hours, so the whole queue
-// stopped (2026-09-27 and 28). After STALL_RESTART_MS with nothing done the
-// collector cancels it (nothing was made, so nothing is billed) and queues its
-// set again.
-// How long to wait, from the 255 jobs sent 2026-09-29 03:36 to 2026-09-30
-// 02:45 UTC: 142 finished, 106 were never started, 7 were still open. Jobs
-// that finished took 30 minutes at the median and 133 at the 90th percentile;
-// hardly any with nothing done at 150 minutes ever finished. A job with
-// nothing done at 45 minutes had a 17% chance of finishing in the next hour,
-// a new job 36%, and a restart costs nothing. Waiting three hours (as this did
-// at first) made the average set take 3.4 hours to get through and left the
-// last few of a 300-set batch running into the next day; 45 minutes gives
-// about 2.5. Jobs finished as often with 30 running as with a few, so
-// cancelling does not lose a place in some queue.
-const STALL_RESTART_MS = 45 * 60 * 1000;
-// About four jobs in ten are never started, whichever set they carry (more in
-// the US daytime), so a few sets in a big batch need five or six tries. A
-// restart costs nothing and takes about an hour, so the limit is only a stop
-// for something badly wrong (a day of OpenAI not starting anything): about
-// two and a half days of tries.
+// Batch requests have a 24-hour completion window. A zero completed count
+// does not prove that an in-progress request is stuck. Scheduled sweeps must
+// not repeatedly cancel accepted requests inside that window. An explicit
+// restart request can still choose an earlier cutoff below.
+const STALL_RESTART_MS = 24 * 60 * 60 * 1000;
+// Bound explicit/watchdog restarts independently of normal provider retries.
 const STALL_RESTART_LIMIT = 60;
 // OpenAI validates a new job in a minute or two, and a token-limit refusal
 // comes then. Past this age a job still validating tells nothing more: the
@@ -62,6 +46,16 @@ function neverStarted(record, live, now, minAgeMs = STALL_RESTART_MS) {
     (live.providerStatus === 'validating' || Number(stats.requestCount || 0) > 0) &&
     !Number(stats.successfulRequestCount || 0) && !Number(stats.failedRequestCount || 0) &&
     sentAt > 0 && now - sentAt >= minAgeMs &&
+    Number(record.stallRestarts || 0) < STALL_RESTART_LIMIT &&
+    record.sets?.length === 1 && record.sets[0]?.setKind !== 'charm_maker';
+}
+
+// Reading an error file is not completion of the listing. Keep the durable
+// restart intent after collection; only a finished set, a replacement job or
+// an explicit stop closes it.
+function stallRestartPending(record) {
+  return !!record?.stallCancelRequestedAt && !record.retryBatchName && !record.setComplete &&
+    !record.stallRestartBlocked && !record.stallRestartClosed &&
     Number(record.stallRestarts || 0) < STALL_RESTART_LIMIT &&
     record.sets?.length === 1 && record.sets[0]?.setKind !== 'charm_maker';
 }
@@ -155,4 +149,4 @@ function admissionControl(db, collection, timestamp, now = Date.now) {
   return { reserve, beforeCreate, complete, release, rejected, reconcile };
 }
 module.exports = { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS, stallCutoffMs };
+  neverStarted, stallRestartPending, STALL_RESTART_MS, STALL_RESTART_MIN_MS, STALL_RESTART_LIMIT, VALIDATION_WAIT_MS, stallCutoffMs };

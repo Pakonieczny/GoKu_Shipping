@@ -12736,10 +12736,10 @@ These requirements take precedence over any instruction to duplicate a reference
         alert(`Cannot verify current batch jobs: ${err?.message || err}. Retry later.`);
         return;
       }
-      if (liveBatches.some((b) => !b.collected && (_awaitingStallRestart(b) || ![
+      if (liveBatches.some((b) => _awaitingStallRestart(b) || !b.collected && ![
         "JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_CANCELLED", "JOB_STATE_SUCCEEDED",
         "BATCH_STATE_FAILED", "BATCH_STATE_EXPIRED", "BATCH_STATE_CANCELLED", "BATCH_STATE_SUCCEEDED",
-      ].includes(b.state)))) {
+      ].includes(b.state))) {
         alert("Some batch jobs are still running. Wait for them to finish and collect their images before resuming empty folders.");
         return;
       }
@@ -13190,8 +13190,8 @@ Click the button again to permanently delete eligible temporary files, or cancel
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
     function _renderBatchDashboard(sessions, response) {
-      const hasWork = b => !b.retryBatchName && !b.setComplete && (b.collectionPending || b.repairPending ||
-        !b.collected && (b.retryRequested || _awaitingStallRestart(b) ||
+      const hasWork = b => !b.retryBatchName && !b.setComplete && (b.collectionPending || b.repairPending || _awaitingStallRestart(b) ||
+        !b.collected && (b.retryRequested ||
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING", "JOB_STATE_SUCCEEDED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state))));
       const finished = s => /^completed(?:_with_issues)?$/.test(s.summary?.status || "") &&
         !s.summary.pending && !s.batches.some(hasWork);
@@ -13313,10 +13313,10 @@ Click the button again to permanently delete eligible temporary files, or cancel
       return x.startsWith("BATCH_STATE_") ? "JOB_STATE_" + x.slice("BATCH_STATE_".length) : x;
     }
 
-    // A job OpenAI accepted but never started: the collector is cancelling it
-    // (nothing was made, so nothing is billed) and will queue its set again.
+    // Automatic cancellation recovery remains pending after its error file
+    // is collected. Existing images are kept; only missing slots are queued.
     function _awaitingStallRestart(b) {
-      return b?.stallRestart === "pending" && !b.collected;
+      return b?.stallRestart === "pending" && !b.setComplete && !b.retryBatchName;
     }
 
     function _formatDuration(ms) {
@@ -13359,7 +13359,6 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const restartingActive = activeJobs.filter(_awaitingStallRestart).length;
       // How long the collector waits before it restarts a job OpenAI has not
       // started (STALL_RESTART_MS in listingBatchAdmission.cjs).
-      const stallMinutes = 45;
       // Sets whose job OpenAI never started, sent again, until they are saved.
       const byName = new Map(session.batches.map((b) => [b.batchName, b]));
       const leafOf = (b) => {
@@ -13528,11 +13527,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const statsHtml = rows.map(([k, v]) =>
         `<div class="batch-stat"><span>${_batchSafeText(k)}</span><span>${_batchSafeText(v)}</span></div>`
       ).join("");
-      const progressCount = allDone ? processed : finished;
+      const progressCount = finished;
       const progressPct = plannedSets ? Math.min(100, Math.round(100 * progressCount / plannedSets)) : 0;
       const progressHtml = plannedSets && (!session.historyTruncated || audit) ? `
-        <div class="batch-count"><strong>${progressCount} / ${plannedSets}</strong> ${allDone ? "listings processed" : "sets saved"}</div>
-        <div class="batch-track" role="progressbar" aria-label="${allDone ? "Listings processed" : "Sets saved"}" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${progressCount}">
+        <div class="batch-count"><strong>${progressCount} / ${plannedSets}</strong> listings saved</div>
+        <div class="batch-track" role="progressbar" aria-label="Listings saved" aria-valuemin="0" aria-valuemax="${plannedSets}" aria-valuenow="${progressCount}">
           <div style="height:100%; width:${progressPct}%; background:#7fdb96;"></div>
         </div>` : "";
       const activity = allDone ? `${finished} saved${issueCount ? ` · ${issueCount} need${issueCount === 1 ? "s" : ""} attention` : ""}` :
@@ -13545,11 +13544,11 @@ Click the button again to permanently delete eligible temporary files, or cancel
       let explanation = allDone
         ? `Batch finished. Saved listings are available in Review and Approved Sets.${issueCount ? " The issues below can be handled separately." : ""}`
         : cancelling ? "Waiting for OpenAI to confirm cancellation."
-        : restarting ? `OpenAI never started ${restarting} job(s) within ${stallMinutes} minutes. They are cancelled at no cost and their sets are queued again.`
+        : restarting ? `${restarting} cancelled job(s) are being recovered. Only missing images will be requested.`
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
         : providerWaiting
-        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. A job OpenAI has not started after ${stallMinutes} minutes is restarted automatically.`
+        ? `Waiting for OpenAI. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. Active requests retain their 24-hour completion window.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
@@ -13561,7 +13560,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       // the batch, not a queue that failed to fill.
       if (!waitingRetries && !notSubmitted && !session.historyTruncated && running > 0 && running < _batchRetryLimit)
         explanation = `${explanation} Every set has been sent, so only the last ${running} run at once.`.trim();
-      if (restarted && !restarting && !allDone) explanation = `${explanation} ${restarted} set(s) OpenAI never started were cancelled at no cost and sent again.`.trim();
+      if (restarted && !restarting && !allDone) explanation = `${explanation} ${restarted} listing(s) resumed with saved images preserved.`.trim();
       const capacityNote = capacityStopped.length
         ? `${capacityStopped.length} set(s) stopped after repeated token-limit refusals from OpenAI and will not retry automatically.` : "";
       const attemptsNote = attemptsStopped.length
@@ -13933,9 +13932,9 @@ Click the button again to permanently delete eligible temporary files, or cancel
 
         const active = _lastBatchList.filter((b) => !b.collected &&
           ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"].includes(_normBatchState(b.state))).length;
-        const queued = _lastBatchList.filter((b) => (!b.collected || b.repairPending) && (b.retryRequested && !b.retryBatchName &&
-          ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)) || b.repairPending ||
-          _awaitingStallRestart(b) && ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)))).length;
+        const queued = _lastBatchList.filter((b) => !b.retryBatchName && !b.setComplete &&
+          (b.repairPending || _awaitingStallRestart(b) && ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(_normBatchState(b.state)) ||
+           !b.collected && b.retryRequested && ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(_normBatchState(b.state)))).length;
         let sweepNote = "";
         const pendingRecovery = _lastBatchList.some(b => !b.retryBatchName && !b.setComplete &&
           (b.collectionPending || b.repairPending));
@@ -13986,6 +13985,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         // remain "open" until the collect call updates their record.
         const anyOpen = _lastBatchList.some((b) => {
           const st = _normBatchState(b.state);
+          if (_awaitingStallRestart(b) || b.collectionPending || b.repairPending) return true;
           if (b.collected) return false;
           if (b.retryRequested && !b.retryBatchName) return true;
           if (_awaitingStallRestart(b)) return true;

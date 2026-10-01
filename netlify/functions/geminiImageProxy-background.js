@@ -8,7 +8,7 @@ const { capBeadyCharmSize } = require("./_beadyCharmCap");
 const { SESSIONS_COLL, failureKind, isModelTask, compliantModelTask, reconcileSession } = require("./lib/listingBatchRecovery.cjs");
 const { batchCharmPaths, readReservedCharms } = require("./lib/listingBatchReservations.cjs");
 const { admissionControl, quotaFailure, queuedName, capacityRefusals, CAPACITY_REFUSAL_LIMIT,
-  neverStarted, VALIDATION_WAIT_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
+  neverStarted, stallRestartPending, VALIDATION_WAIT_MS, stallCutoffMs } = require("./lib/listingBatchAdmission.cjs");
 // const sharp = require("sharp"); // ensure sharp is installed in package.json
 const { initializeFirestore, getFirestore } = require("firebase-admin/firestore");
 
@@ -14184,11 +14184,12 @@ async function _handlerImpl(event) {
     const SWEEP_BUDGET_MS = 11 * 60 * 1000;
     const sweepStart = Date.now();
     const guardRef = db.collection("LG1_Config").doc("batchSweep");
-    // How long a job may have done nothing before this run restarts it: 45
-    // minutes, unless a person asked for sooner ({ kind: "batch_sweep",
+    // Respect the 24-hour provider completion window unless a person asks
+    // for an earlier restart ({ kind: "batch_sweep",
     // restartStalledAfterMs }), never under 30 minutes. { resetNow: true } is
     // a person saying "reset them now": every one-set job with nothing done is
-    // cancelled whatever its age (free, nothing was made). The cron never asks.
+    // cancelled whatever its age. Any results finished meanwhile are saved.
+    // The cron never asks for an early reset.
     const resetNow = body?.resetNow === true;
     const stallAfterMs = resetNow ? 0 : stallCutoffMs(body?.restartStalledAfterMs);
 
@@ -14300,7 +14301,7 @@ async function _handlerImpl(event) {
         cursor = page.docs[page.docs.length - 1].id;
       }
       // Partial collections queued for missing-only repair are collected=true.
-      const repairs = await db.collection(BATCHES_COLL).where("repairPending", "==", true).limit(250).get();
+      const repairs = await db.collection(BATCHES_COLL).where("repairPending", "==", true).limit(500).get();
       const openNames = new Set(open.map(b => b.batchName));
       repairs.forEach(doc => { const b = doc.data(); if (!openNames.has(b.batchName)) open.push(b); });
       // Oldest first so long-waiting batches are served before fresh ones.
@@ -14364,8 +14365,7 @@ async function _handlerImpl(event) {
           for (const s of o.sets || []) setsInFlight.add(String(s?.outputBasePath || ""));
         }
       }
-      const restartable = open.filter((b) => b.stallCancelRequestedAt && !b.collected && !b.retryBatchName &&
-        !b.stallRestartBlocked && !b.stallRestartClosed &&
+      const restartable = open.filter((b) => stallRestartPending(b) &&
         ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(normState(b.state)));
       if (restartable.length) await guardRef.set({ stage: "restarting stalled jobs" }, { merge: true });
       for (const b of restartable) {
@@ -14409,7 +14409,7 @@ async function _handlerImpl(event) {
       // carries retryRequested and is eligible again on a later sweep.
       const activeStates = ["JOB_STATE_PENDING", "JOB_STATE_RUNNING"];
       let activeCount = open.filter((b) => !b.collected && activeStates.includes(normState(b.state))).length;
-      const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName &&
+      const waiting = open.filter((b) => b.retryRequested && !b.retryBatchName && !stallRestartPending(b) &&
         // A cancelled job is never retried (batch_retry_missing refuses it,
         // and that refusal would stop the refill for every set behind it).
         ((!b.collected && !b.responsesFile &&
@@ -15455,8 +15455,8 @@ async function _handlerImpl(event) {
     }
 
     // The collector's watchdog (see neverStarted): cancel a listing job that
-    // OpenAI accepted hours ago and never started. Nothing was made, so
-    // nothing is billed. The provider answer is checked again here, so a job
+    // OpenAI accepted but has returned no images. Respect its completion
+    // window unless an early reset was requested. Check the provider again so a job
     // that started meanwhile is left alone.
     if (kind === "batch_stall_cancel") {
       const batchName = String(body?.batchName || "").trim();
@@ -15501,8 +15501,7 @@ async function _handlerImpl(event) {
       const saved = (await ref.get()).data();
       if (!saved) return json(404, { error: { message: "Batch record is missing" } });
       if (saved.retryBatchName) return json(200, { ok: true, batchName: saved.retryBatchName });
-      if (!saved.stallCancelRequestedAt || saved.stallRestartBlocked || saved.stallRestartClosed || saved.collected ||
-          saved.sets?.length !== 1 || saved.sets[0]?.setKind === "charm_maker") {
+      if (!stallRestartPending(saved)) {
         return json(409, { error: { message: "This job was not stopped by the collector for a restart" } });
       }
       const apiKey = batchApiKey(batchName);
@@ -15519,13 +15518,14 @@ async function _handlerImpl(event) {
       assertAllowedOutputBase(set.outputBasePath);
       const bucket = admin.storage().bucket();
       const close = async (retryStatus, retryError = null) => {
-        await ref.set({ stallRestartClosed: true, retryRequested: false, retryStatus, retryError,
+        await ref.set({ stallRestartClosed: true, retryRequested: false, repairPending: false, retryStatus, retryError,
           updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
       };
       // Approval moves the set away from Ready_To_List; never refill it there.
       const approvedPath = `listing-generator-1/Generated_Listing_Sets/Completed_Listing_Sets/${set.category}_Set_${set.setN}/`;
       const [approved] = await bucket.getFiles({ prefix: approvedPath, maxResults: 1 });
-      if (approved.length) {
+      const [archived] = await bucket.getFiles({ prefix: approvedPath.replace("Completed_Listing_Sets/", "Approved_Listing_Sets/"), maxResults: 1 });
+      if (approved.length || archived.length) {
         await close("complete_or_protected", "This set is already in Completed_Listing_Sets; it was not restarted");
         return json(200, { ok: true, protected: true });
       }
@@ -15538,6 +15538,23 @@ async function _handlerImpl(event) {
         return parsed;
       };
       if (finishedWhileCancelling) await collectHere({ importOnly: true });
+
+      // An earlier attempt may have produced paid images before a later
+      // missing-only retry was cancelled. Recover those existing outputs
+      // before deciding which slots actually need generation. Imports use
+      // create-only storage writes and leave approval/redo images intact.
+      const history = await db.collection(BATCHES_COLL).where("setKeys", "array-contains", set.outputBasePath)
+        .select("batchName", "batchStats", "responsesFile", "createdAt").get();
+      const paidAttempts = history.docs.slice().sort((a, b) =>
+        (b.data().createdAt?.toMillis?.() || 0) - (a.data().createdAt?.toMillis?.() || 0));
+      for (const doc of paidAttempts) {
+        const attempt = doc.data();
+        if (attempt.batchName === batchName || !attempt.responsesFile || !Number(attempt.batchStats?.successfulRequestCount || 0)) continue;
+        const res = await module.exports.handler({ httpMethod: "POST", headers: {},
+          body: JSON.stringify({ kind: "batch_collect", batchName: attempt.batchName, force: true, importOnly: true }) });
+        const imported = JSON.parse(res.body || "{}");
+        if (res.statusCode !== 200 || !imported.ok) throw new Error(imported.error?.message || "Could not recover an earlier paid image");
+      }
 
       const [presentFiles] = await bucket.getFiles({ prefix: `${set.outputBasePath}/` });
       const presentSlots = new Set(presentFiles.map((f) =>
@@ -15562,7 +15579,10 @@ async function _handlerImpl(event) {
         }
         // Everything is saved: finish the set (manifest, charm) from this
         // job's results when it has any, as a normal collection would.
-        if (finishedWhileCancelling) await collectHere({});
+        if (respFile) {
+          await ref.set({ collected: false, collectionPending: true }, { merge: true });
+          await collectHere({});
+        }
         else await close("complete");
         return json(200, { ok: true, complete: true, missing: 0 });
       }
@@ -15575,7 +15595,7 @@ async function _handlerImpl(event) {
       const outcome = await db.runTransaction(async (tx) => {
         const current = (await tx.get(ref)).data() || {};
         if (current.retryBatchName) return { batchName: current.retryBatchName };
-        if (current.stallRestartBlocked || current.stallRestartClosed || current.collected) return { blocked: true };
+        if (!stallRestartPending(current)) return { blocked: true };
         tx.set(localRef, {
           batchName: localName, docId: localName, displayName, sessionId: saved.sessionId || "",
           state: "JOB_STATE_QUEUED", locallyQueued: true, retryRequested: true, retryAttempt: Number(saved.retryAttempt || 0),
@@ -15697,7 +15717,7 @@ async function _handlerImpl(event) {
       }
       const docData = docSnap.data();
 
-      if (docData.collected && !docData.collectionPending) {
+      if (docData.collected && !docData.collectionPending && !body?.importOnly) {
         return json(200, { ok: true, alreadyCollected: true, batchName, results: docData.results || null });
       }
 
@@ -16288,12 +16308,12 @@ async function _handlerImpl(event) {
       // A job the collector already stopped because OpenAI never started it:
       // cancelling it means its set is not queued again. If that already
       // happened, the queued restart is cancelled in its place.
-      if (saved.stallCancelRequestedAt && !saved.collected && (saved.providerStatus === "cancelling" ||
+      if (saved.stallCancelRequestedAt && !saved.setComplete && (saved.providerStatus === "cancelling" ||
           ["JOB_STATE_CANCELLED", "JOB_STATE_EXPIRED"].includes(String(saved.state || "").replace(/^BATCH_STATE_/, "JOB_STATE_")))) {
         const restartName = await getDb().runTransaction(async (tx) => {
           const current = (await tx.get(cancelRef)).data() || {};
           if (current.retryBatchName) return current.retryBatchName;
-          tx.set(cancelRef, { stallRestartBlocked: true, retryRequested: false,
+          tx.set(cancelRef, { stallRestartBlocked: true, retryRequested: false, repairPending: false,
             updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
           return null;
         });

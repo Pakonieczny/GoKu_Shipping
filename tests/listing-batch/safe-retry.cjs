@@ -167,6 +167,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
           () => ({ data: () => ({ collected: false }) })) }) }) }) },
       guardRef: { set: async () => {} },
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
+      stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
       console: { warn: () => {} },
     };
     const outcome = await vm.runInNewContext(

@@ -12,7 +12,7 @@ function render(sessions = [history], extras = {}) {
   return vm.runInNewContext(`${dashboard}; _renderBatchDashboard(sessions, response)`, {
     sessions, response: {sweep: {lastSweepAt: Date.now(), lastError: null}, admission: {busy: false}, ...extras},
     _renderSessionBlock: s => `<article>${s.sessionId}</article>`, _batchInFlight: false,
-    _normBatchState: x => x, _awaitingStallRestart: () => false,
+    _normBatchState: x => x, _awaitingStallRestart: b => b.stallRestart === 'pending' && !b.setComplete,
   });
 }
 const html = render();
@@ -31,6 +31,11 @@ assert(running.indexOf('<article>next') < running.indexOf('<details class="batch
 assert(!render([history], {admission: {busy: true}}).includes('Ready for another batch'), 'unconfirmed admission is not ready');
 assert(!render([history], {admissionError: 'provider unavailable'}).includes('Ready for another batch'), 'admission errors are not masked');
 assert(!render([history], {sweep: {lastSweepAt: Date.now() - 30 * 60000}}).includes('Ready for another batch'), 'stale worker is not advertised as ready');
+const stranded = {sessionId: 'stranded', summary: {...summary, processed: 331, complete: 77},
+  batches: [{state: 'JOB_STATE_CANCELLED', collected: true, stallRestart: 'pending', setComplete: false}]};
+assert(!render([stranded, history]).includes('Ready for another batch'), 'a collected cancellation with pending recovery is not ready');
+assert(render([stranded, history]).indexOf('<article>stranded') < render([stranded, history]).indexOf('<details class="batch-history"'),
+  'unfinished recovered work stays outside completed history even with a stale completion summary');
 
 const prepare = cut('    async function prepareBatchSources(category, slotPlan) {', '    async function runBatchModeSubmission() {');
 async function sources(empty = false) {

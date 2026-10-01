@@ -96,6 +96,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     admissionControl: () => ({ reconcile: async () => {} }),
     quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
     neverStarted: require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted,
+    stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
     VALIDATION_WAIT_MS, body: {}, stallCutoffMs: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallCutoffMs,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
     admin: { firestore: { FieldPath: { documentId: () => "__name__" },
