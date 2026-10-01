@@ -1,6 +1,9 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const build=fs.readFileSync('scripts/build-public.cjs','utf8');
 const assets=new Set(JSON.parse(build.match(/const assets = (\[[\s\S]*?\]);/)[1]));
+for(const file of ['charm-nest-motion.js','charm-nest-stamp-walnut.png','charm-nest-timeline-ui.js','charm-nest-engraving-seals.js','charm-nest-readiness.js','charm-nest-activity.css']){
+ assert(assets.has(file),'Seal subsystem dependency missing from deployment: '+file);assert(fs.existsSync(file));
+}
 const worker=fs.readFileSync('charm-nest-worker.js','utf8');
 for(const call of worker.matchAll(/importScripts\(([^)]*)\)/g))for(const item of call[1].matchAll(/"([^"]+)"/g)){
  const file=item[1].split('?')[0];assert(assets.has(file),'Worker dependency missing from deployment: '+file);assert(fs.existsSync(file));
