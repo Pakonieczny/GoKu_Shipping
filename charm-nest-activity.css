@@ -7,8 +7,10 @@
 .cnListTools .cnActivitySort{margin-left:auto;max-width:135px;min-height:26px;border:0;border-left:1px solid var(--line,#ddd6c9);border-radius:0;background:transparent;color:inherit;font:inherit;padding:3px 7px;cursor:pointer}
 .cnListTools :is(button,select):focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}
 .ordHead>.cnListTools{padding:2px 12px 6px;box-sizing:border-box}
-.egBar:has(>.cnListTools){flex-wrap:wrap;row-gap:0}
-.egBar>.cnListTools{border-top:1px solid var(--line,#ddd6c9);margin-top:5px}
+.egBar:has(>.cnListTools){flex-wrap:wrap;row-gap:6px}
+.egBar>.egSearchGroup{flex:0 1 220px}
+.egBar>.egSearchGroup>.ordSearch{width:100%;max-width:none;box-sizing:border-box}
+.egBar>.cnListTools{flex:1 1 auto;padding:0;border:0;margin:0}
 #libActivity{padding:0 2px 5px;border-bottom:1px solid var(--line,#ddd6c9);margin-bottom:8px}
 .hBar>.cnListTools{flex-basis:auto;flex-grow:1;padding:0}
 .hBar:has(>.cnListTools){flex-wrap:wrap;gap:8px}
@@ -17,7 +19,12 @@
 .btn.sm.egApproveButton{font-size:24px;padding:12px 20px;min-width:170px;min-height:56px;border-radius:12px;white-space:nowrap}
 .egApproveWrap{position:relative;display:inline-flex;align-items:center;margin-right:32px;overflow:visible}
 .egApproveWrap>.egButtonSeal{position:absolute;left:calc(100% - 28px);top:calc(50% - 28px);width:56px;height:56px;margin:0;padding:0;z-index:4}
-.egApproveWrap .egApproveButton{padding-right:42px}
+.egApproveWrap .btn.egApproveButton{padding-right:42px}
+.pvHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 auto;min-width:0;flex-wrap:wrap}
+.pvHead>.pvH{margin:0}
+.pvApproval{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;min-width:0;flex-wrap:wrap}
+.pvApproval>.sealRow.engravingSeals{padding:0;max-width:none}
+.pvApproval .egApproveButton .k{font:700 13px var(--mono);border-radius:4px;padding:2px 5px;margin-left:6px;background:rgba(0,0,0,.09);vertical-align:2px}
 .egButtonSeal>.seal{background:var(--card,#fffdf8);border-radius:50%;mix-blend-mode:normal}
 .sealRow.engravingSeals{display:inline-flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0;padding:7px 4px;max-width:240px;min-height:56px;overflow:visible}
 .sealRow.engravingSeals>.seal,.egButtonSeal>.seal{position:relative;flex:0 0 56px;margin:0;width:56px;height:56px;max-width:none;max-height:none}
