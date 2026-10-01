@@ -4423,7 +4423,14 @@ const Engrave = window.Engrave = (() => {
       const W=G.materialMask(wc,wc[cut.indexOf(c.outline)],frame),V=G.materialMask(vc,vc[outlineIndex],frame);
       const diff = G.diffFraction(W,V);
       const textPaths=parsed.segments.concat(parsed.nested).filter(s=>s.kind==="path" && s.fill && !s.stroke && !/CUT OUTLINE/.test(s.layer || "")),textOk=textPaths.length>=1;
-      const textCmds=textPaths.flatMap(s=>G.flatten(G.transformSeg(s,writtenToView),16).flatMap(poly=>poly.map((p,i)=>({type:i?'L':'M',x:p[0],y:p[1]})).concat({type:'Z'})));
+      // Preserve the written Béziers so verifyInk uses the same curved outlines
+      // and sampling as the preview. Flattening them first changed valid fits.
+      const textCmds=textPaths.flatMap(s=>G.transformSeg(s,writtenToView).subpaths.flatMap(sub=>sub.map(([op,p,p1,p2])=>{
+        if(op==='m' || op==='l')return {type:op==='m'?'M':'L',x:p[0],y:p[1]};
+        if(op==='c')return {type:'C',x1:p[0],y1:p[1],x2:p1[0],y2:p1[1],x:p2[0],y:p2[1]};
+        if(op==='h')return {type:'Z'};
+        throw new Error("Unsupported engraving path in the back file");
+      })));
       const ink=textOk && G.verifyInk(textCmds,G.engraveMask({mask:W},{marginMm:job.mask?.marginMm || 0}));
       return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
     } catch (e) { return { ok: false, why: e.message }; }
