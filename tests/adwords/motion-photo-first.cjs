@@ -91,6 +91,28 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
  const changedResult=await service.run({...scope,jobId:changed.jobId});check(changedResult.ok,'a redo from another selected package completes: '+JSON.stringify(changedResult));
  const changedJob=(await ref.collection('motionJobs').doc(changed.jobId).get()).data();check(changedJob.productLock.firstFrameHash!==againJob.productLock.firstFrameHash&&changedJob.productLock.hash!==againJob.productLock.hash,'another package cannot inherit the first photo identity record');
  check(Buffer.from(calls.video.at(-1).input[0].data,'base64').equals(alternatePhoto),'the new package photo reaches the video request without masking or replacement');
+ // Multiple selected formats share one durable redo and retain old previews independently.
+ let latest=changed.jobId;
+ for(const selections of [['portrait','landscape'],['portrait','square','landscape'],['square']]){
+  const before=JSON.parse(JSON.stringify((await ref.collection('motionJobs').doc(latest).get()).data())),count=calls.video.length;
+  const payload={...scope,redoOf:latest,redoFormats:selections,confirmRedo:true,generationMode:mode.PHOTO};
+  const started=await service.start(payload),duplicate=await service.start({...payload,redoFormats:[...selections].reverse()});
+  check(started.jobId===duplicate.jobId,'reordered multi-selection is idempotent');
+  const pending=await service.status({...scope,jobId:started.jobId});
+  check(pending.displayVariants.length===3&&pending.variants.length===3-selections.length,'refresh retains all previews while only untouched exports are current');
+  check(pending.videoStates.filter(v=>selections.includes(v.format)).every(v=>v.stage==='queued'&&v.previous&&!v.updated),'each selected video has its own queued state and old preview');
+  for(const v of pending.displayVariants)check(v.asset.hash===before.variants.find(x=>x.key===v.key).asset.hash,'pending preview is the exact saved video');
+  const render=D.renderVariants;D.renderVariants=async(bytes,orientation,plan)=>{if(orientation==='landscape'&&selections.includes('portrait')){const partial=await service.status({...scope,jobId:started.jobId});check(partial.videoStates.find(v=>v.format==='portrait').updated&&partial.videoStates.find(v=>v.format==='landscape').previous,'completed portrait swaps independently while landscape keeps its earlier film');}return render(bytes,orientation,plan);};
+  const result=await service.run({...scope,jobId:started.jobId});D.renderVariants=render;check(result.ok,'multi redo completes '+selections.join(','));
+  const final=await service.status({...scope,jobId:started.jobId}),after=(await ref.collection('motionJobs').doc(started.jobId).get()).data();
+  check(calls.video.length===count+selections.length,'buys only the selected video masters');
+  check(final.displayVariants.length===3&&final.videoStates.filter(v=>v.updated).length===selections.length,'only replaced formats show completion checkmarks');
+  for(const f of ['portrait','square','landscape'].filter(f=>!selections.includes(f))){check(JSON.stringify(after.masters[f])===JSON.stringify(before.masters[f]),'unselected master stays byte-identical');check(JSON.stringify(after.variants.find(v=>v.format===f))===JSON.stringify(before.variants.find(v=>v.format===f)),'unselected export stays byte-identical');}
+  check(JSON.stringify((await ref.collection('motionJobs').doc(latest).get()).data())===JSON.stringify(before),'parent and paid receipts are untouched');
+  await service.run({...scope,jobId:started.jobId});check(calls.video.length===count+selections.length,'resuming finished multi redo buys nothing twice');
+  latest=started.jobId;
+ }
+ for(const redoFormats of [[],['invalid'],['portrait','square','landscape','portrait']]){await assert.rejects(service.start({...scope,redoOf:latest,redoFormats,confirmRedo:true}),/Choose/);checks++;}
  // Incomplete preparation is corrected once and then stops before any video purchase.
  const brokenStore=memory(),brokenRef=brokenStore.db.collection('State').doc('broken'),brokenId='motion_'+ 'b'.repeat(40);await brokenRef.set({settings:scope});
  await brokenRef.collection('motionJobs').doc(brokenId).set({...parent,id:brokenId,generationMode:mode.PHOTO,photoFidelityPolicy:mode.PRODUCT_POLICY,firstFrameSource:{asset:{path:'design-photo'},selection:'design-primary-photo',productId:'p'},creativeDirection:null});
