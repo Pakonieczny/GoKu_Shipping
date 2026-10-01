@@ -4411,13 +4411,19 @@ const Engrave = window.Engrave = (() => {
       const bbV = job.view.members.reduce((a, s) => [Math.min(a[0], s.bbox[0]), Math.min(a[1], s.bbox[1]), Math.max(a[2], s.bbox[2]), Math.max(a[3], s.bbox[3])], [Infinity, Infinity, -Infinity, -Infinity]);
       const res = 6; const fw = G.makeFrame([0, 0, bbW[2] - bbW[0], bbW[3] - bbW[1]], res, (bbW[2] - bbW[0]) / 2, 1), fv = G.makeFrame([0, 0, bbV[2] - bbV[0], bbV[3] - bbV[1]], res, (bbV[2] - bbV[0]) / 2, 1);
       if (Math.abs(fw.w - fv.w) > 2 || Math.abs(fw.h - fv.h) > 2) return { ok: false, why: `written extent ${fw.w}×${fw.h} px differs from the verified back ${fv.w}×${fv.h} px` };
-      const frame=fv,wc=cut.map(m=>G.transformSeg(m,G.translate(-bbW[0],-bbW[1]))),vc=job.view.members.map(m=>G.transformSeg(m,G.translate(-bbV[0],-bbV[1])));
+      // Reuse the preview's pixel grid after translating both files to their cut bounds.
+      // A new bbox-centred grid shifts the clearance pixels on asymmetric rotated charms.
+      const originalFrame=job.view.mask;
+      const frame=originalFrame ? {w:originalFrame.w,h:originalFrame.h,res:originalFrame.res,ox:originalFrame.ox-bbV[0],oy:originalFrame.oy-bbV[1],cx:originalFrame.cx-bbV[0],cy:originalFrame.cy-bbV[1]} : fv;
+      const front = (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";
+      const normalized=G.translate(-bbW[0],-bbW[1]);
+      const writtenToView=front ? G.mul(normalized,G.mirrorX((bbW[2]-bbW[0])/2)) : normalized;
+      const wc=cut.map(m=>G.transformSeg(m,writtenToView)),vc=job.view.members.map(m=>G.transformSeg(m,G.translate(-bbV[0],-bbV[1])));
       const outlineIndex=job.view.outline ? job.view.members.indexOf(job.view.outline) : job.view.members.reduce((best,m,i,all)=>(m.bbox[2]-m.bbox[0])*(m.bbox[3]-m.bbox[1])>(all[best].bbox[2]-all[best].bbox[0])*(all[best].bbox[3]-all[best].bbox[1])?i:best,0);
       const W=G.materialMask(wc,wc[cut.indexOf(c.outline)],frame),V=G.materialMask(vc,vc[outlineIndex],frame);
-      const front = (S.settings.backFileView || "asSeenFromBack") === "frontCoordinates";
-      const diff = G.diffFraction(W, front ? G.flipX(V) : V);
+      const diff = G.diffFraction(W,V);
       const textPaths=parsed.segments.concat(parsed.nested).filter(s=>s.kind==="path" && s.fill && !s.stroke && !/CUT OUTLINE/.test(s.layer || "")),textOk=textPaths.length>=1;
-      const textCmds=textPaths.flatMap(s=>G.flatten(G.transformSeg(s,G.translate(-bbW[0],-bbW[1])),16).flatMap(poly=>poly.map((p,i)=>({type:i?'L':'M',x:p[0],y:p[1]})).concat({type:'Z'})));
+      const textCmds=textPaths.flatMap(s=>G.flatten(G.transformSeg(s,writtenToView),16).flatMap(poly=>poly.map((p,i)=>({type:i?'L':'M',x:p[0],y:p[1]})).concat({type:'Z'})));
       const ink=textOk && G.verifyInk(textCmds,G.engraveMask({mask:W},{marginMm:job.mask?.marginMm || 0}));
       return {ok:diff<=.01 && textOk && ink.ok,why:diff>.01?`cut geometry differs by ${(diff*100).toFixed(2)}%`:!textOk?'no engraving paths in the file':!ink.ok?'engraving intersects a cut-out or cut-edge clearance':null,pixelDiff:diff,textPaths:textOk,ink};
     } catch (e) { return { ok: false, why: e.message }; }
