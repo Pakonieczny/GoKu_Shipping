@@ -394,7 +394,9 @@
 
     async reviewProofsPanel({note=''}={}){
       const run=this.aiRuns.get(this.key());
-      const state=await this.request('adDesignEditorAIStatus',{...(run?.scope||this.input()),...(run?.jobId?{jobId:run.jobId}:{}),includeReview:true,allSizes:true});
+      // A standalone selected-package preview must not show the latest AI job from a different package.
+      const selectedPackage=!this.canvas&&this.input().savedDesignId&&!this.input().reviewVersion;
+      const state=selectedPackage?{reviewProofs:[]}:await this.request('adDesignEditorAIStatus',{...(run?.scope||this.input()),...(run?.jobId?{jobId:run.jobId}:{}),includeReview:true,allSizes:true});
       if(this.updateReviewScore)this.updateReviewScore(state);
       let fallback=false,currentTemplate=false;
       if(this.preferCurrentLayouts&&!this.input().reviewVersion&&state.candidate?.responsive&&root.BritesAdResponsive){
