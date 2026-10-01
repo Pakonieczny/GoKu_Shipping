@@ -58,9 +58,9 @@ async function sweep(jobs, retryAnswers) {
     if (name === "LG1_Config") return { doc: () => ({ get: async () => ({ exists: false }), set: async () => {} }) };
     if (name === "orchestrations") return { where: () => ({ limit: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
     return {
-      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : ({ orderBy: () => ({ limit: () => ({ get: async () => ({ size: jobs.length,
-        forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) }),
+      orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ docs: [] }) }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) } : ({ orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ size: jobs.length,
+        forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) }) }),
       doc: (id) => ({ set: async (value) => writes.push({ id, value }) }),
     };
   } };
@@ -141,7 +141,7 @@ const _awaitingStallRestart = vm.runInNewContext(`${cut(page, "    function _awa
     normalizeImageModelId: (x) => x, getImageModelConfig: () => ({ label: "Sunburst" }), DEFAULT_IMAGE_MODEL: "m",
   });
   const summary = html.slice(0, html.indexOf('<details class="batch-details"'));
-  assert.match(summary, /Stopped: token limit/);
+  assert.match(summary, /Completed with 1 issue/);
   assert.match(summary, /1 set\(s\) stopped after repeated token-limit refusals/);
   assert.match(html, /Stopped after 12 token-limit refusals from OpenAI/, "job detail shows the stop reason");
   assert(!html.includes("data-session-retry"), "no Queue missing images button for a stopped set");

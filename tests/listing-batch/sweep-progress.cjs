@@ -13,7 +13,8 @@ const { VALIDATION_WAIT_MS } = require("../../netlify/functions/lib/listingBatch
 
 async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 2,
   finishOne = true, validationPolls = 0, existingPending = false, pendingSentAgo = 0,
-  neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [], extraJobs = [] } = {}) {
+  neverValidates = false, validationError = false, finishDuringRefill = false, failedAnswers = [], extraJobs = [],
+  firstSourceError = false } = {}) {
   const T0 = Date.parse("2026-09-29T17:00:00Z");
   let clock = T0;
   let providerActive = activeCount;
@@ -29,10 +30,24 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       state: "JOB_STATE_FAILED", collected: false, retryRequested: true, retryAttempt: 0 })),
   ];
   const guard = {};
-  const submissions = [], collections = [], stages = [], continuations = [];
+  const submissions = [], collections = [], stages = [], continuations = [], postponed = [];
   const checks = new Map();
   let validating = existingPending ? "batch_running_0" : null;
   let validatingSince = clock - pendingSentAgo;
+  const openQuery = () => {
+    let offset = 0, count = 50;
+    const query = {
+      orderBy: () => query,
+      limit: n => { count = n; return query; },
+      select: (...fields) => { assert(!fields.includes("preparedSubmission")); return query; },
+      startAfter: id => { offset = Number(id) + 1; return query; },
+      get: async () => {
+        const docs = jobs.slice(offset, offset + count).map((job, i) => ({ id: offset + i, data: () => ({ ...job }) }));
+        return {size: docs.length, docs, forEach: fn => docs.forEach(fn)};
+      },
+    };
+    return query;
+  };
   const db = { collection: (name) => {
     if (name === "LG1_Config") return { doc: () => ({
       get: async () => ({ exists: false }),
@@ -42,12 +57,9 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       get: async () => ({ forEach: () => {} }),
     }) }) };
     if (name === "batches") return {
-      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : field === "state" ? { get: async () => ({ docs:
-        Array.from({ length: providerActive }, () => ({ data: () => ({ collected: false }) })) }) } : ({ orderBy: () => ({ limit: () => ({ get: async () => ({
-        size: jobs.length,
-        forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })),
-      }) }) }) }),
+      orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ docs: [] }) }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) } : field === "state" ? { get: async () => ({ docs:
+        Array.from({ length: providerActive }, () => ({ data: () => ({ collected: false }) })) }) } : openQuery(),
       doc: () => ({ set: async () => {} }),
     };
     throw new Error(`unexpected collection ${name}`);
@@ -78,6 +90,11 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
       if (payload.batchName === 'batch_cancelled_paid') assert.equal(payload.force, true, 'recover a cancelled job\'s saved output');
       response = { ok: true };
     } else if (payload.kind === "batch_retry_missing") {
+      if (firstSourceError && payload.batchName === "batch_failed_original") {
+        postponed.push(payload.batchName);
+        return { body: JSON.stringify({ ok: true, queued: true, sourceError: true,
+          reason: "Listing reference download timed out" }) };
+      }
       // Admission waits on the job being validated, until it is VALIDATION_WAIT_MS old.
       if (validating && clock - validatingSince < VALIDATION_WAIT_MS)
         return { body: JSON.stringify({ ok: true, queued: true, reason: "Waiting for provider validation" }) };
@@ -95,7 +112,10 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     kind: "batch_sweep", getDb: () => db,
     admissionControl: () => ({ reconcile: async () => {} }),
     quotaFailure: require("../../netlify/functions/lib/listingBatchAdmission.cjs").quotaFailure,
-    neverStarted: require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted,
+    neverStarted: (record, ...args) => {
+      assert((record.sets || []).every(set => !set.tasks), "sweep does not retain historical prompts");
+      return require("../../netlify/functions/lib/listingBatchAdmission.cjs").neverStarted(record, ...args);
+    },
     stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
     VALIDATION_WAIT_MS, body: {}, stallCutoffMs: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallCutoffMs,
     BATCHES_COLL: "batches", ORCH_COLL: "orchestrations",
@@ -111,7 +131,7 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
     batchDocIdFromName: (x) => x,
     safeErr: (err) => ({ message: err.message }),
   });
-  return { result, guard, submissions, collections, stages, continuations, checks };
+  return { result, guard, submissions, collections, stages, continuations, checks, postponed };
 }
 
 (async () => {
@@ -141,6 +161,19 @@ async function runSweep({ rejectRetry = false, activeCount = 30, waitingCount = 
   assert.equal(refill.checks.get("batch_new_23"), 3, "each new job is confirmed before the next is submitted");
   assert(refill.stages.includes("validating new job"));
   assert.equal(refill.continuations.length, 0, "a full queue needs no continuation");
+  const sourceFailure = await runSweep({ activeCount: 1, waitingCount: 40, finishOne: false, firstSourceError: true });
+  assert.deepEqual(sourceFailure.postponed, ["batch_failed_original"]);
+  assert.equal(sourceFailure.submissions.length, 29, "one bad reference does not prevent filling the other twenty-nine places");
+  assert.equal(sourceFailure.guard.lastResult.sourceErrors, 1);
+  assert.equal(sourceFailure.guard.currentBatchName, null, "finished worker clears its current-job checkpoint");
+  assert.equal(sourceFailure.guard.lastProgressAt, sourceFailure.guard.lastSweepAt);
+  const history = await runSweep({activeCount: 1, waitingCount: 40, finishOne: false,
+    extraJobs: Array.from({length: 1200}, (_, i) => ({batchName: `batch_old_${i}`,
+      state: "JOB_STATE_FAILED", collected: false, retryRequested: false,
+      sets: [{outputBasePath: `old/${i}`, tasks: [{prompt: "historical prompt".repeat(1000)}]}],
+      preparedSubmission: {ignored: true}}))});
+  assert.equal(history.submissions.length, 29, "paged historical failures do not hide the live queue");
+  assert.equal(history.guard.stage, "idle");
   const finishedDuring = await runSweep({ activeCount: 7, waitingCount: 40, finishOne: false, validationPolls: 2, finishDuringRefill: true });
   assert.equal(finishedDuring.submissions.length, 24, "a place freed during refill is filled before the worker stops");
   assert.equal(finishedDuring.guard.lastResult.activeAtAdmission, 30);

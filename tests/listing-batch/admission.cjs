@@ -93,9 +93,10 @@ async function originalSubmissionScenario() {
     batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
     normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>now}}},
-    process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}),
+    process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), quotaFailure,
+    setTimeout: fn => setTimeout(fn, 0), clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
-    storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
+    storagePathToBuffer:async path=>path === 'unreadable' ? new Promise(()=>{}) : ({mime:'image/png',buffer:Buffer.from('test image')}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',
     withCurrentBeadyCharmSize:(_set,_slot,prompt)=>prompt,
     uploadOpenAIBatchFile:async()=>{uploads++;return 'file-input';},
@@ -112,6 +113,14 @@ async function originalSubmissionScenario() {
   assert.equal(db.data.get('batches/'+first.batchName).retryBatchName,'batch_one');
   assert.deepEqual(db.data.get('batches/batch_one').sets[0].tasks,body.sets[0].tasks);
   const after=await submit(body);assert.equal(after.batchName,'batch_one');assert.equal(creates,1,'repeated original request never creates another provider job');
+  db.data.get('batches/batch_one').state='JOB_STATE_RUNNING';
+  const broken=clone(body);broken.displayName='listing-with-unreadable-reference';
+  broken.sets[0].outputBasePath += '-broken';broken.sets[0].tasks[0].input_storage_path='unreadable';
+  const failed=await submit(broken);
+  assert.equal(failed.sourceError,true,'reference timeout is a listing-specific preparation error');
+  assert.equal(creates,1,'a timed-out reference never creates a paid provider job');
+  assert.equal(db.data.get('LG1_Config/batchAdmission').owner,null,'failed preparation releases admission for other listings');
+  assert.match(db.data.get('batches/'+failed.batchName).retryError,/reference download timed out/i);
 }
 async function quotaRecoveryScenario() {
   const db=database(35);
@@ -177,7 +186,7 @@ async function submitRefusalCountScenario() {
     batchCharmPaths: require('../../netlify/functions/lib/listingBatchReservations.cjs').batchCharmPaths,
     normalizeCategory:x=>x,GENERATABLE_CATEGORIES:new Set(['Beady_Necklace']),assertAllowedOutputBase:()=>{},
     admin:{storage:()=>({bucket:()=>({})}),firestore:{FieldValue:{serverTimestamp:()=>1,increment:n=>({increment:n})}}},
-    process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}),
+    process,Buffer,console:{log:()=>{}}, json:(statusCode,data)=>({statusCode,...data}), setTimeout, clearTimeout,
     runBoundedConcurrent:async(items,_n,fn)=>Promise.all(items.map(fn)),
     storagePathToBuffer:async()=>({mime:'image/png',buffer:Buffer.from('test image')}),
     buildOpenAIBatchJsonlLine:()=>({request:'test'}),listingImageSize:()=> '2048x2048',

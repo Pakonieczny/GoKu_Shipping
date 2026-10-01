@@ -38,10 +38,10 @@ async function runSweep(jobs, statuses = {}) {
     if (name === "LG1_Config") return { doc: () => ({ get: async () => ({ exists: false }), set: async () => {} }) };
     if (name === "orchestrations") return { where: () => ({ limit: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
     return {
-      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : field === "state" ? { get: async () => ({ docs: [] }) } : ({ orderBy: () => ({ limit: () => ({
+      orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ docs: [] }) }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) } : field === "state" ? { get: async () => ({ docs: [] }) } : ({ orderBy: () => ({ limit: () => ({ select: () => ({
         get: async () => ({ size: jobs.length, forEach: (fn) => jobs.forEach((j) => fn({ data: () => ({ ...j }) })) }),
-      }) }) }),
+      }) }) }) }),
       doc: () => ({ set: async () => {} }),
     };
   } };

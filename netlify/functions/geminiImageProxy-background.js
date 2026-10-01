@@ -14199,6 +14199,21 @@ async function _handlerImpl(event) {
       try { parsed = res && res.body ? JSON.parse(res.body) : null; } catch (_) {}
       return parsed;
     };
+    const checkpoint = (stage, batchName = null) => guardRef.set({ stage,
+      currentBatchName: batchName, lastProgressAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    // History contains large task prompts and submission metadata. The sweep
+    // only needs routing and state; each action reads its own complete record.
+    const compact = (record) => ({
+      ...Object.fromEntries(["batchName", "state", "collected", "locallyQueued", "retryBatchName",
+        "retryRequested", "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending",
+        "providerError", "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked",
+        "stallRestartClosed", "stallRestarts"].map(key => [key, record[key]])),
+      sets: (record.sets || []).map(set => ({ outputBasePath: set.outputBasePath, setKind: set.setKind })),
+    });
+    const sweepFields = ["batchName", "state", "collected", "locallyQueued", "retryBatchName", "retryRequested",
+      "retryAttempt", "retryStatus", "setComplete", "repairPending", "collectionPending", "providerError",
+      "responsesFile", "createdAt", "stallCancelRequestedAt", "stallRestartBlocked", "stallRestartClosed",
+      "stallRestarts", "sets"];
 
     try {
       // Overlap guard: skip if another sweep started < 12 minutes ago.
@@ -14210,12 +14225,14 @@ async function _handlerImpl(event) {
       await guardRef.set({
         runningSince: admin.firestore.FieldValue.serverTimestamp(),
         stage: "checking provider jobs",
+        currentBatchName: null,
+        lastProgressAt: admin.firestore.FieldValue.serverTimestamp(),
         lastError: null,
       }, { merge: true });
 
       // A collected job may still have missing images, or have been repaired
       // manually/approved since collection. Reconcile the current submissions.
-      const recent = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(100).get();
+      const recent = await db.collection(BATCHES_COLL).orderBy("createdAt", "desc").limit(100).select("sessionId").get();
       const sessionIds = [...new Set([body?.sessionId, ...recent.docs.map(d => d.data().sessionId)]
         .filter(id => /^sess_[A-Za-z0-9_-]{8,80}$/.test(id || "")))].slice(0, 3);
       for (const sessionId of sessionIds) {
@@ -14293,17 +14310,17 @@ async function _handlerImpl(event) {
       let cursor = null;
       while (open.length < 2000) {
         let query = db.collection(BATCHES_COLL).where("collected", "==", false)
-          .orderBy(admin.firestore.FieldPath.documentId()).limit(250);
+          .orderBy(admin.firestore.FieldPath.documentId()).limit(50).select(...sweepFields);
         if (cursor) query = query.startAfter(cursor);
         const page = await query.get();
-        page.forEach((d) => open.push(d.data()));
-        if (page.size < 250) break;
+        page.forEach((d) => open.push(compact(d.data())));
+        if (page.size < 50) break;
         cursor = page.docs[page.docs.length - 1].id;
       }
       // Partial collections queued for missing-only repair are collected=true.
-      const repairs = await db.collection(BATCHES_COLL).where("repairPending", "==", true).limit(500).get();
+      const repairs = await db.collection(BATCHES_COLL).where("repairPending", "==", true).limit(500).select(...sweepFields).get();
       const openNames = new Set(open.map(b => b.batchName));
-      repairs.forEach(doc => { const b = doc.data(); if (!openNames.has(b.batchName)) open.push(b); });
+      repairs.forEach(doc => { const b = compact(doc.data()); if (!openNames.has(b.batchName)) open.push(b); });
       // Oldest first so long-waiting batches are served before fresh ones.
       open.sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
 
@@ -14317,6 +14334,7 @@ async function _handlerImpl(event) {
           b.retryRequested = true;
         }
         if (!b.batchName || b.collected || b.locallyQueued || b.retryBatchName || isFinal(b.state) && !b.collectionPending) continue;
+        await checkpoint("checking provider job", b.batchName);
         let state = b.state;
         if (!isSucceeded(state) && !b.collectionPending) {
           let st = await inProcess({ kind: "batch_status", batchName: b.batchName });
@@ -14372,6 +14390,7 @@ async function _handlerImpl(event) {
         if (Date.now() - sweepStart > SWEEP_BUDGET_MS) break;
         const path = String(b.sets?.[0]?.outputBasePath || "");
         if (!path || setsInFlight.has(path)) continue;
+        await checkpoint("recovering cancelled listing", b.batchName);
         const restart = await inProcess({ kind: "batch_restart_stalled", batchName: b.batchName });
         if (restart?.batchName && restart.batchName !== b.batchName) {
           b.retryBatchName = restart.batchName;
@@ -14416,7 +14435,7 @@ async function _handlerImpl(event) {
           ["JOB_STATE_FAILED", "JOB_STATE_EXPIRED", "JOB_STATE_QUEUED"].includes(normState(b.state))) ||
           b.collected && b.repairPending) && !b.setComplete && b.batchName &&
         Number(b.retryAttempt || 0) < 5);
-      let refillNeedsContinuation = false, validationUnconfirmed = null;
+      let refillNeedsContinuation = false, validationUnconfirmed = null, sourceErrors = 0;
       for (const b of waiting) {
         if (activeCount >= 30) {
           // Other jobs can finish while new ones validate. Recount before
@@ -14430,9 +14449,12 @@ async function _handlerImpl(event) {
           refillNeedsContinuation = true;
           break;
         }
-        await guardRef.set({ stage: "submitting queued sets" }, { merge: true });
+        await checkpoint("submitting queued sets", b.batchName);
         const retry = await inProcess({ kind: "batch_retry_missing", batchName: b.batchName });
         if (retry?.queued) {
+          // Reference preparation failed before any paid create call. That
+          // listing keeps its error, while unrelated listings can still run.
+          if (retry.sourceError) { sourceErrors++; continue; }
           refillNeedsContinuation = retry.reason === "Waiting for provider validation" &&
             Date.now() - sweepStart + 5000 >= SWEEP_BUDGET_MS;
           break;
@@ -14474,7 +14496,10 @@ async function _handlerImpl(event) {
           console.warn("[batch_sweep] retry stopped:", b.batchName, retry.error?.message);
         } else if (!retry?.ok) {
           console.warn("[batch_sweep] retry postponed:", b.batchName, retry?.error?.message || "unknown error");
-          break;
+          sourceErrors++;
+          await db.collection(BATCHES_COLL).doc(batchDocIdFromName(b.batchName)).set({
+            retryError: retry?.error?.message || "This listing could not be submitted; the next server check will retry it.",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
         }
       }
       await guardRef.set({ stage: "checking stalled orchestrations" }, { merge: true });
@@ -14510,11 +14535,13 @@ async function _handlerImpl(event) {
       await guardRef.set({
         runningSince: null,
         stage: "idle",
+        currentBatchName: null,
+        lastProgressAt: admin.firestore.FieldValue.serverTimestamp(),
         lastSweepAt: admin.firestore.FieldValue.serverTimestamp(),
         lastResult: { statusChecked, collected, collectErrors, resumed, retriesSubmitted,
           stalledCancelled, stalledRestarted,
           waiting: waiting.length, activeAtAdmission: activeCount, openBatches: open.length,
-          refillContinuing: refillNeedsContinuation, validationUnconfirmed },
+          refillContinuing: refillNeedsContinuation, validationUnconfirmed, sourceErrors },
       }, { merge: true });
       // Continue with a fresh background budget. The same shared admission
       // guard still validates every job and enforces the global 30-job cap.
@@ -14956,6 +14983,7 @@ async function _handlerImpl(event) {
 
       const admission = admissionControl(getDb(), BATCHES_COLL, () => admin.firestore.FieldValue.serverTimestamp());
       let claim = null;
+      let createStarted = false;
       let sourceName = String(body?.retryOf || "");
       const hasImageTasks = sets.some((set) => set.tasks.some((task) => task.type !== "copy"));
       if (hasImageTasks) {
@@ -15079,12 +15107,22 @@ async function _handlerImpl(event) {
       // line + Buffer chunk). After the worker returns, only the
       // pushed Buffer chunk in jsonlChunks survives.
       const FETCH_CONCURRENCY = 10;
+      const readReference = async (path) => {
+        let timer;
+        try {
+          // This deadline is before batch creation. A late storage read cannot
+          // submit a job after preparation has already returned an error.
+          return await Promise.race([storagePathToBuffer(path), new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Listing reference download timed out; remaining listings can continue.")), 45000);
+          })]);
+        } finally { clearTimeout(timer); }
+      };
       memLog(`before fetch loop (${fetchJobs.length} jobs)`);
       let fetchCounter = 0;
       await runBoundedConcurrent(fetchJobs, FETCH_CONCURRENCY, async (j, idx) => {
         const [ref, charm] = await Promise.all([
-          storagePathToBuffer(j.refPath),
-          j.charmPath ? storagePathToBuffer(j.charmPath) : Promise.resolve(null),
+          readReference(j.refPath),
+          j.charmPath ? readReference(j.charmPath) : Promise.resolve(null),
         ]);
         const key = `s${j.setIdx}_slot${j.slot}`;
 
@@ -15248,6 +15286,7 @@ async function _handlerImpl(event) {
         copyStats: { copied: copiedCount, errors: copyErrors },
       };
       await admission.beforeCreate(claim, persistDoc);
+      createStarted = true;
       const { batchName, raw } = await createOpenAIImageBatch(apiKey, fileName, displayName);
       await admission.complete(claim, batchName, persistDoc, raw);
 
@@ -15272,7 +15311,8 @@ async function _handlerImpl(event) {
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         return json(200, { ok: true, queued: true, batchName: sourceName,
-          state: "JOB_STATE_QUEUED", reason: "Submission saved; waiting for the next server check" });
+          state: "JOB_STATE_QUEUED", sourceError: !createStarted && !refused,
+          reason: "Submission saved; waiting for the next server check" });
       } finally {
         if (claim?.token) await admission.release(claim, null);
       }
@@ -16266,6 +16306,8 @@ async function _handlerImpl(event) {
           const millis = (v) => v?.toMillis?.() || null;
           sweep = {
             stage: d.stage || "unknown",
+            currentBatchName: d.currentBatchName || null,
+            lastProgressAt: millis(d.lastProgressAt),
             runningSince: millis(d.runningSince),
             lastSweepAt: millis(d.lastSweepAt),
             lastFailureAt: millis(d.lastFailureAt),

@@ -36,11 +36,11 @@ async function sweep(jobs, retryAnswers = {}) {
     if (name === "orchestrations") return { where: () => ({ limit: () => ({ get: async () => ({ forEach: () => {} }) }) }) };
     return {
       // A full refill queue: the collector recounts 30 active jobs.
-      orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }) }),
-      where: (field) => field === "repairPending" ? { limit: () => ({ get: async () => ({ forEach: () => {} }) }) } : field === "state"
+      orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ docs: [] }) }) }) }),
+      where: (field) => field === "repairPending" ? { limit: () => ({ select: () => ({ get: async () => ({ forEach: () => {} }) }) }) } : field === "state"
         ? { get: async () => ({ docs: Array.from({ length: 30 }, () => ({ data: () => ({ collected: false }) })) }) }
-        : { orderBy: () => ({ limit: () => ({ get: async () => ({ size: jobs.length,
-          forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) },
+        : { orderBy: () => ({ limit: () => ({ select: () => ({ get: async () => ({ size: jobs.length,
+          forEach: (fn) => jobs.forEach((job) => fn({ data: () => ({ ...job }) })) }) }) }) }) },
       doc: (id) => ({ set: async (value) => writes.push({ id, value }) }),
     };
   } };

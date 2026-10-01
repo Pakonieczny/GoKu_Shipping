@@ -166,6 +166,7 @@ async function scenario({ approved = false, present = [1, 3, 6], responseFile = 
         where: () => ({ get: async () => ({ docs: Array.from({ length: active + submitted },
           () => ({ data: () => ({ collected: false }) })) }) }) }) },
       guardRef: { set: async () => {} },
+      checkpoint: async () => {},
       BATCHES_COLL: "batches", batchDocIdFromName: (x) => x,
       stallRestartPending: require("../../netlify/functions/lib/listingBatchAdmission.cjs").stallRestartPending,
       console: { warn: () => {} },
