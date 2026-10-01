@@ -4025,8 +4025,18 @@ const Engrave = window.Engrave = (() => {
     const saved = Pool.update(job.copies, { engrave: false, engraveSkippedBy: by }); if (!job.editingBack) render(); await saved;
     if(job.editingBack) {await backQueue;await syncEditedBack(job);} Orders.render(); render(); if(!job.editingBack) RunCtl.poke(); }
   function sendBack(job, why) { CNListActivity.touch(job.row); CNListActivity.touch(job); revokeBacks(job); job.state = "words"; job.reason = why || "sent back from the placement review — a decision on the words is needed"; job.row.engrave.state = "words"; job.row.engrave.approved = false; Review.remove("eng:" + job.key); Review.add({ kind: "engraveWords", key: "eng:" + job.key, row: job.row, job, why: job.reason }); render(); Orders.render(); }
+  async function prepareApproval(job, by, at) {
+    const charm=charmFor(job),view=job.view,fit=job.fit;
+    if(!charm || !view || !job.copies?.length || job.copies.some(id=>!sheetFor(job,id)))throw new Error("The charm needs its current sheet and outline before approval.");
+    const src=sourceOf(charm.sourceId),poolId=job.copies[0];
+    const glyphs=fit.glyphs.map(g=>({cmds:g.cmds.map(c=>{const o={type:c.type};if(c.type!=="Z"){o.x=c.x-view.cx;o.y=c.y-view.cy;}if(c.type==="C" || c.type==="Q"){o.x1=c.x1-view.cx;o.y1=c.y1-view.cy;}if(c.type==="C"){o.x2=c.x2-view.cx;o.y2=c.y2-view.cy;}return o;})}));
+    const built=await P.buildBackFile({charm,parsed:src.parsed,cutMembers:view.cutMembers,cx:view.cx,cy:view.cy,angleDeg:view.angleDeg,padPt:5*PT,glyphs,view:S.settings.backFileView || "asSeenFromBack",title:`${job.row.order.receiptId} · ${job.row.spec.designSku} · back`,meta:{poolId,order:job.row.order.receiptId,sku:job.row.spec.designSku,copy:job.editingBack?job.editOriginal.copy || 1:B.pool.rows.get(poolId)?.copy || 1,text:job.text,font:"Source Sans 3",weight:fit.weight,sizePt:fit.size,capMm:fit.capMm,lineGap:fitOpts(job).lineGap,angle:fit.angle,approvedBy:by,approvedAt:at,upAngle:view.upAngle,flipChecks:view.checks}});
+    const verified=await verifyBackFile(built.bytes,job);
+    if(!verified.ok)throw new Error(`The back file needs adjustment (${verified.why}). Move or resize the words before approving.`);
+    return {fit,view};
+  }
   async function approve(job, by, button) {
-    if(job.stamping || job.backSaving || job.approvalPreparing) return;
+    if(job.state!=="review" || job.stamping || job.backSaving || job.approvalPreparing) return;
     if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
     job.approvalPreparing=true;
@@ -4042,21 +4052,26 @@ const Engrave = window.Engrave = (() => {
         job.lines=job.lineInput.slice();if(!(await fitNewWords(job)))return;
       }
     }
-    } finally {job.approvalPreparing=false;}
     if (job.backSaving) return;
     by = by || employeeName() || askEmployee(); if (!by) { toast("An employee name is required to approve", "bad"); return; }
     // says which step is missing (it read "Nothing verified to approve" whatever the reason)
     if (!job.fit || !job.verify || !job.verify.geometry.ok) { toast(!job.fit ? "Not approved: the words are not placed on the charm yet" : !job.verify ? "Not approved: the placement is still being checked" : "Not approved: the placement failed its check · move or resize the words first", "bad"); return; }
+    const approvedAt=Date.now();let prepared;
+    try{prepared=await prepareApproval(job,by,approvedAt);}catch(e){toast(`Not approved: ${e.message}`,"bad",7000);return;}
+    if(job.fit!==prepared.fit || job.view!==prepared.view){toast("The placement changed while it was checked. Review it before approving.","bad");return;}
     CNEngravingSeals.keep(job);
-    const approvedAt=Date.now(),seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
+    const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
     job.stamping=true;try{await CNEngravingSeals.press(button || EG.card?.querySelector('[data-a="approve"]'),seal);}finally{job.stamping=false;}
     job.state="approved";job.approvedBy=by;job.approvedAt=approvedAt;CNListActivity.touch(job.row,approvedAt);
     job.row.engrave=Object.assign(job.row.engrave || {},{needed:true,state:"approved",approved:true,text:job.text,approvedBy:by,approvedAt});
+    job.approvalPreparing=false;
     goes(job, { to: EG_TAB("done") });
     Review.remove("eng:" + job.key);
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
+    render();
     await saveBacks(job);
+    } finally {job.approvalPreparing=false;if(job.state==="review")render();}
   }
   /** An approval's back files are written; one that cannot be written sends the job back to placement review. */
   async function saveBacks(job) {
@@ -4699,7 +4714,7 @@ const Engrave = window.Engrave = (() => {
   function activityTools(v) { CNListActivity.mount(v.querySelector(".ordBar"), activityScope(), () => { EG.focus=null; render(); }); }
   const decidedOrder = () => CNListActivity.select("engrave-done", decidedJobs().filter(matchesQ));
   function renderView() {
-    if([...items().values()].some(j=>j.stamping))return;
+    if([...items().values()].some(j=>j.stamping || j.approvalPreparing))return;
     LiveStrip.render();
     const v = document.getElementById("engraveView");
     if (!previewRecovery && previewRecoveryTimer === null && [...items().values()].some(needsPreview))
