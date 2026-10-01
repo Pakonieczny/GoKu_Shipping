@@ -53,11 +53,12 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
  check(body.input[0].mime_type==='image/png'&&Buffer.from(body.input[0].data,'base64').equals(designPhoto),'the selected design photo, not the catalog reference, reaches the provider unchanged');
  check(prompt.includes('FIRST FRAME')&&prompt.includes('real physical motion')&&!prompt.includes('mountain vista')&&prompt.includes('PHOTO_BOUND_CONTOUR')&&prompt.includes('OBSERVED_negativeSpace'),'the new prompt anchors the photo, carries its observed identity and excludes old scenery');
  check(prompt.includes(refs.REPLICATION_RULES)&&prompt.includes('extending only the existing background'),'identity has priority while aspect changes extend the backdrop');
+ check(prompt.includes(refs.CONTINUITY_RULES)&&!prompt.includes('For the first 1–2 seconds')&&prompt.includes('THROUGHOUT 0–10 SECONDS'),'outbound generation requires persistent identity throughout the middle, not only the opening');
  check(calls.video.length===4&&calls.planning===2,'redo prepares one photo-bound identity and one layout, then buys only its one film');
  for(const o of ['square','landscape']){check(JSON.stringify(fresh.masters[o])===JSON.stringify(before.masters[o]),'other '+o+' master remains untouched');const key=o==='landscape'?'desktop_landscape':'mobile_square';check(JSON.stringify(fresh.variants.find(v=>v.key===key))===JSON.stringify(before.variants.find(v=>v.key===key)),'other '+o+' export remains untouched');}
  check(JSON.stringify((await target.get()).data())===JSON.stringify(before),'the original version is unchanged');
  const receipt=(await newRef.collection('receipts').doc('video_request_portrait').get()).data();
- check(receipt.task===mode.PHOTO&&receipt.references.length===1&&receipt.references[0].source.path==='design-photo'&&receipt.references[0].designId==='saved_selected'&&receipt.prompt===prompt&&fresh.masters.portrait.promptRevision==='design-photo-product-fidelity-v2'&&receipt.productLockHash===fresh.productLock.hash,'receipt records the actual first-frame request');
+ check(receipt.task===mode.PHOTO&&receipt.references.length===1&&receipt.references[0].source.path==='design-photo'&&receipt.references[0].designId==='saved_selected'&&receipt.prompt===prompt&&fresh.masters.portrait.promptRevision==='design-photo-product-fidelity-continuous-v3'&&receipt.productLockHash===fresh.productLock.hash,'receipt records the actual first-frame request');
  check(locks.matches(fresh.productLock,fresh.firstFrameHash)&&fresh.productLock.firstFrameHash===fresh.firstFrameHash,'identity observations are bound to the exact selected photograph');
  const tampered=clone(fresh.productLock);tampered.shapePlan.features[0].count++;check(!locks.matches(tampered,fresh.firstFrameHash),'changed identity observations cannot reuse the original lock receipt');
  assert.throws(()=>motionPrompt({...fresh,firstFrameHash:'f'.repeat(64)},'portrait'),/exact design photo/);checks++;
@@ -74,6 +75,7 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
  check(calls.video.slice(-3).every(b=>b.generation_config.video_config.task===mode.PHOTO&&Buffer.from(b.input[0].data,'base64').equals(designPhoto)),'every format in the new set starts from the same saved design photo');
  const fullJob=(await ref.collection('motionJobs').doc(full.jobId).get()).data();
  check(['portrait','square','landscape'].every(o=>fullJob.masters[o].productLockHash===fullJob.productLock.hash),'all formats consume the same photo-bound identity record');
+ check(calls.video.slice(-3).every(b=>b.input.at(-1).text.includes(refs.CONTINUITY_RULES)),'all three actual provider requests require the same continuous shot');
  const lockCalls=calls.planning,videoCalls=calls.video.length;await service.run({...scope,jobId:full.jobId});check(calls.planning===lockCalls&&calls.video.length===videoCalls,'a completed resume purchases neither a lock nor a replacement film');
  const again=await service.start({...scope,redoOf:full.jobId,redoFormat:'portrait',confirmRedo:true,generationMode:mode.PHOTO});
  check((await service.run({...scope,jobId:again.jobId})).ok,'one-format fidelity redo completes');
@@ -102,6 +104,12 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
   const firstFrameHash='a'.repeat(64),lock=locks.bind(observations,firstFrameHash);
   for(const format of ['portrait','square','landscape']){const p=motionPrompt({...parent,generationMode:mode.PHOTO,photoFidelityPolicy:mode.PRODUCT_POLICY,firstFrameHash,productLock:lock},format);check(p.includes(name+' observed outline')&&p.includes(hardware)&&p.includes('"count":'+count),'generic '+name+' identity reaches '+format);}
  }
+ // A paid, cached motion plan may have been written before continuity was
+ // strengthened. Replace its unsafe actions without changing its identity.
+ const continuityHash='c'.repeat(64),cached=locks.bind({geometry:direction().geometry,shapePlan:{contour:'Original outline',features:[{name:'Original opening',count:1,positions:'As photographed',appearance:'As photographed'}],confusionRisks:'Preserve the original opening'},motion:{support:'The charm disappears behind the support.',flexibleMotion:'The chain covers the charm.',environmentMotion:'Dissolve to a new scene.',camera:'Rack focus to the foreground and reveal a replacement charm.'}},continuityHash),cachedBefore=JSON.stringify(cached);
+ for(const format of ['portrait','square','landscape']){const p=motionPrompt({...parent,generationMode:mode.PHOTO,photoFidelityPolicy:mode.PRODUCT_POLICY,firstFrameHash:continuityHash,productLock:cached},format);check(Object.values(cached.motion).every(v=>!p.includes(v))&&p.includes('Original outline')&&p.includes(refs.CONTINUITY_RULES),'cached conflicting actions are removed before '+format+' dispatch');}
+ check(JSON.stringify(cached)===cachedBefore&&locks.matches(cached,continuityHash),'sanitizing unsafe motion leaves the paid identity record and binding unchanged');
+ check(locks.request(parent,[{bytes:designPhoto,mimeType:'image/png'}]).input[0].content.includes(refs.CONTINUITY_RULES),'photo preparation plans product permanence before generation');
  // Browser interactions: persistence, failed save, chosen method on a one-film redo, and unchanged ratio control.
  const dom=new JSDOM('<div id="host"></div>',{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;w.setTimeout=()=>0;w.clearTimeout=()=>{};w.eval(fs.readFileSync('brites-ad-motion.js','utf8'));
  let preference=mode.PHOTO,fail=false,sent=[];const uiState={...state,jobId:'motion_saved',phase:'ready',nextGenerationMode:preference,redoOptions:[{format:'portrait',orientation:'portrait',formats:['mobile_portrait'],kept:['mobile_square','desktop_landscape'],hasFilm:true,estimatedUsd:1.01}]};

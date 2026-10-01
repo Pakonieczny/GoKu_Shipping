@@ -18,6 +18,14 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
  const identity=p=>p.split('PRODUCT IDENTITY — HIGHEST PRIORITY, ABOVE SCENERY AND CAMERA:')[1].split('SETTING AND MOTION:')[0];
  check(prompts.every(p=>identity(p)===identity(prompts[0])),'the complete product identity block is byte-identical across formats');
  check(prompts.every(p=>p.includes('inside an opening must remain inside')&&p.includes('exactly as photographed')),'containment and engraving are mandatory in each format');
+ check(prompts.every(p=>p.includes(refs.CONTINUITY_RULES)),'reference mode shares the same uninterrupted product visibility rule');
+ for(const unsafe of ['Cut to another scene.','The charm disappears behind a prop.','Rack focus onto the scenery.','Reveal a replacement charm.','The scene changes halfway through.','A leaf crosses the charm.']){
+  const oldPlan={...upgraded(),middle:unsafe,sceneStory:{...upgraded().sceneStory,propMotion:unsafe}};
+  for(const format of ['portrait','square','landscape']){const p=motionPrompt({...job,creativeDirection:oldPlan,repairIssues:[unsafe]},format);check(!p.includes(unsafe)&&p.includes(oldPlan.geometry.outline),'conflicting saved staging and retry text cannot interrupt '+format+': '+unsafe);}
+  check(oldPlan.middle===unsafe&&oldPlan.sceneStory.propMotion===unsafe,'unsafe saved observations remain intact');
+ }
+ const safePlan={...upgraded(),middle:'The nearby fabric moves gently beside the unobstructed product.'};
+ check(motionPrompt({...job,creativeDirection:safePlan},'portrait').includes(safePlan.middle),'safe physical movement remains in the direction');
  const photo=await sharp({create:{width:64,height:64,channels:3,background:'#c9a369'}}).jpeg().toBuffer();
  async function setup(){
   const f=memory(),ref=f.db.collection('Workspaces').doc('design_test'),scope={workspaceId:'design_test',productId:'p',groupRef:'g',generationMode:'reference_to_video'},id='motion_'+'a'.repeat(40),target=ref.collection('motionJobs').doc(id),blobs=new Map(),calls={preparations:0,videos:0,prompts:[],renders:[]};
