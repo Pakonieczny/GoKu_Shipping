@@ -72,6 +72,45 @@
     return anim(layer, [{ transform: t, opacity: 1 }, { transform: `${t} translateY(${layer.dataset.side === "below" ? -5 : 5}px) scale(.88)`, opacity: 0 }], 150, { easing: "ease-in" });
   }
 
+  // Every timeline/overview seal uses the same rest and departure rules. The original seal alone owns the hover;
+  // enlarged faces and explanatory cards cannot keep it alive, and moving to a neighbour starts a new full delay.
+  const SEAL_HOVER_DELAY = 1100;
+  function restOnSeal(host, pick, show, hide) {
+    let wanted = null, shown = null, timer = 0, point = null;
+    const at = node => { const b = node && pick(node); return b && host.contains(b) ? b : null; };
+    const underPointer = b => !point || typeof doc.elementFromPoint !== "function" || at(doc.elementFromPoint(point.x, point.y)) === b;
+    const cancel = now => { clearTimeout(timer); timer = 0; wanted = shown = null; hide(now); };
+    const open = b => { clearTimeout(timer); timer = 0; wanted = null; shown = b; show(b); };
+    const over = ev => {
+      if (ev.pointerType === "touch") return;
+      const b = at(ev.target); if (!b || b === wanted || b === shown) return;
+      point = { x: ev.clientX, y: ev.clientY }; cancel(true); wanted = b;
+      timer = setTimeout(() => { timer = 0; if (wanted === b && host.isConnected && b.isConnected && underPointer(b)) open(b); else cancel(true); }, SEAL_HOVER_DELAY);
+    };
+    const out = ev => {
+      if (ev.pointerType === "touch") return;
+      const b = at(ev.target);
+      if (b && (b === wanted || b === shown) && !b.contains(ev.relatedTarget)) cancel();
+    };
+    const move = ev => {
+      if (ev.pointerType === "touch") return;
+      point = { x: ev.clientX, y: ev.clientY };
+      if ((wanted || shown) && at(ev.target) !== (wanted || shown)) cancel();
+    };
+    const blur = () => cancel(true), vis = () => { if (doc.visibilityState === "hidden") cancel(true); };
+    const key = ev => { if (ev.key === "Escape" && (wanted || shown)) { ev.preventDefault(); ev.stopPropagation(); cancel(true); } };
+    const check = () => { if ((wanted || shown) && !(wanted || shown).isConnected) cancel(true); };
+    const observer = new root.MutationObserver(check); observer.observe(host, { childList: true, subtree: true });
+    host.addEventListener("pointerover", over); host.addEventListener("pointerout", out);
+    doc.addEventListener("pointermove", move, true); doc.addEventListener("visibilitychange", vis); doc.addEventListener("keydown", key, true);
+    root.addEventListener("blur", blur); root.addEventListener("scroll", blur, true); root.addEventListener("resize", blur);
+    return { open, cancel, check, get current() { return wanted || shown; }, destroy() {
+      cancel(true); observer.disconnect(); host.removeEventListener("pointerover", over); host.removeEventListener("pointerout", out);
+      doc.removeEventListener("pointermove", move, true); doc.removeEventListener("visibilitychange", vis); doc.removeEventListener("keydown", key, true);
+      root.removeEventListener("blur", blur); root.removeEventListener("scroll", blur, true); root.removeEventListener("resize", blur);
+    } };
+  }
+
   /* ════ Stamp family: siblings of the two existing seals (Seal in charm-nest-motion.js) ════
      m = milestone: scalloped, like "Order completed"; e = event: double-ring postmark, like "QR label printed";
      a = alert: a thick notched ring. Small face (the lanes): heavy edge, ink wash, big icon. Full face (loupe, detail):
@@ -870,8 +909,8 @@
     return b;
   }
   /** The order view's "Where it is now" card (and any host): hovering its seal or a stamp in it (.tlNowSeal, .tlMini,
-   *  [data-tl-step]) shows the step card under it; a click on the seal (or a [data-tl-step]) pins the card, whose link
-   *  (or a second click) calls onPin({ stage }), which the host turns into the Timeline with that step pinned. get() → { events, cancelled, where, context, stages }.
+   *  [data-tl-step]) shows the step card under it after a rest; a click opens that step on the Timeline via onPin({ stage }).
+   *  Leaving the original seal dismisses the card. get() → { events, cancelled, where, context, stages }.
    *  Wired once per host (it survives the host's innerHTML being written again); a later call only swaps get/onPin. */
   function explainOn(host, get, onPin) {
     if (!host) return;
@@ -880,7 +919,7 @@
     css();
     const card = doc.createElement("div"); card.className = "tlExp"; card.setAttribute("role", "tooltip");
     (host.closest && host.closest("dialog") || doc.body).appendChild(card);
-    let on = null, a = null, t = 0, pinned = null, cur = null;
+    let on = null, a = null, cur = null;
     const SEL = ".tlNowSeal, .tlMini, [data-tl-step]";
     const stepOf = b => {
       const g = (typeof host._tlExpGet === "function" && host._tlExpGet()) || {};
@@ -890,40 +929,28 @@
       if (i < 0) i = D.cancelled ? D.stop : D.cur >= 0 ? D.cur : D.step;
       return i >= 0 ? requirementsOf(i, { events: evs, D, context: g.context }) : null;
     };
-    // as the Timeline's card: it takes the pointer, so moving from the seal onto it keeps it; leaving both lets it go
-    // 160 ms later. A click pins it (Esc or a click elsewhere lets it go); pinned, it offers the step on the Timeline.
-    const foot = pin => { const f = card.querySelector(".xf"); if (f && cur) f.innerHTML = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"} · ${pin && typeof host._tlExpPin === "function" ? `<button type="button" class="tlLink" data-tl-open>Open on the Timeline</button>` : "click to pin"}`; };
+    const foot = () => { const f = card.querySelector(".xf"); if (f && cur) f.textContent = `${cur.n ? `Step ${cur.n} of ${cur.of}` : "Not a step of this order"}${typeof host._tlExpPin === "function" ? " · click seal to open on the Timeline" : ""}`; };
     const show = b => {
       const q = stepOf(b); if (!q) return false;
       if (a) { try { a.cancel(); } catch (_) {} }
-      clearTimeout(t); on = b; cur = q; pinned = null;
-      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b); card.classList.add("on"); foot(false);
+      on = b; cur = q;
+      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b); card.classList.add("on"); foot();
       return true;
     };
-    const hide = () => { clearTimeout(t); t = 0; pinned = null; if (!on) return; on = null; card.classList.remove("on"); a = fadeExp(card, a); };
-    const later = () => { clearTimeout(t); t = setTimeout(() => { t = 0; if (on && !pinned && !card.matches(":hover") && !(on.isConnected && on.matches(":hover"))) hide(); }, 160); };
-    host.addEventListener("pointerover", ev => {
-      const b = ev.target.closest && ev.target.closest(SEL); if (!b || !host.contains(b)) return;
-      if (b === on) { clearTimeout(t); return; }
-      show(b);
-    });
-    host.addEventListener("pointerout", ev => { const b = ev.target.closest && ev.target.closest(SEL); if (b && b === on && !b.contains(ev.relatedTarget) && !(ev.relatedTarget && card.contains(ev.relatedTarget))) later(); });
-    card.addEventListener("pointerleave", ev => { if (on && !(ev.relatedTarget && on.contains(ev.relatedTarget))) later(); });
+    const hide = now => {
+      if (!on) return; on = null; card.classList.remove("on");
+      if (now) { if (a) { try { a.cancel(); } catch (_) {} } a = null; card.style.display = "none"; }
+      else a = fadeExp(card, a);
+    };
+    const hover = restOnSeal(host, node => node.closest?.(SEL), show, hide);
+    host.addEventListener("focusin", ev => { const b = ev.target.closest?.(SEL); if (b && b.matches(":focus-visible")) hover.open(b); });
+    host.addEventListener("focusout", ev => { if (ev.target.closest?.(SEL) === hover.current) hover.cancel(); });
     host.addEventListener("click", ev => {
       const b = ev.target.closest && ev.target.closest(".tlNowSeal, [data-tl-step]"); if (!b) return;
-      if (pinned === b) { openIt(); return; }   // a second click: the step on the Timeline
-      if (b !== on && !show(b)) return;
-      pinned = b; foot(true);
-    });
-    function openIt() {
-      const q = cur; hide();
+      const q = stepOf(b); hover.cancel(true);
       if (q && typeof host._tlExpPin === "function") { try { host._tlExpPin({ stage: q.k }); } catch (err) { warn("onPin", err); } }
-    }
-    card.addEventListener("click", ev => { if (ev.target.closest && ev.target.closest("[data-tl-open]")) openIt(); });
-    doc.addEventListener("pointerdown", ev => { if (pinned && !card.contains(ev.target) && !(on && on.contains(ev.target))) hide(); }, true);
-    // (Esc lets the pin go first; the order view stays open)
-    doc.addEventListener("keydown", ev => { if (ev.key === "Escape" && pinned) { ev.preventDefault(); ev.stopPropagation(); hide(); } }, true);
-    const dlg = host.closest && host.closest("dialog"); if (dlg) dlg.addEventListener("close", hide);
+    });
+    const dlg = host.closest && host.closest("dialog"); if (dlg) dlg.addEventListener("close", () => hover.cancel(true));
     host._tlExp = card;
   }
 
@@ -959,7 +986,7 @@
 .tlStop{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;border:0;background:none;padding:0 1px;color:var(--ink45)}
 .tlStop .tlSeal{position:relative;display:block;width:34px;height:34px;transform:rotate(var(--rot,0deg));transition:transform .22s var(--tlE),opacity .24s}
 .tlStop .tlSeal svg{width:100%;height:100%;display:block;overflow:visible}
-.tlStop:hover .tlSeal{transform:rotate(var(--rot,0deg)) scale(1.12)}
+.tlStop .tlSeal.lifted{transform:rotate(var(--rot,0deg)) scale(1.12)}
 .tlStop>span{font:700 8.5px/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;text-align:center;max-width:100%;overflow-wrap:anywhere}
 .tlStop.d>span{color:var(--ink70)}
 .tlStop.c>span{color:#7a5a1d}
@@ -1011,13 +1038,13 @@
 .tlLaneLine{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
 .tlSt{position:absolute;width:var(--s);height:var(--s);margin:calc(var(--s) / -2) 0 0 calc(var(--s) / -2);border:0;padding:0;background:transparent;border-radius:50%;transform:rotate(var(--rot));transition:opacity .24s,transform .22s var(--tlE);z-index:2}
 .tlSt svg{width:100%;height:100%;display:block;overflow:visible;mix-blend-mode:multiply}
-.tlSt:hover{transform:rotate(var(--rot)) scale(1.12)}
+.tlSt.lifted{transform:rotate(var(--rot)) scale(1.12)}
 .tlSt.sel::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 @keyframes tlSelIn{from{transform:scale(.6);opacity:0}}
 .tlSt.hl::after{content:"";position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
 .tlSt.dim{opacity:.13}.tlSt.dim svg{filter:grayscale(1)}
 .tlSt.pend svg{opacity:.65}
-.tlSt.ghost{opacity:.42;cursor:default}.tlSt.ghost:hover{transform:rotate(var(--rot))}
+.tlSt.ghost{opacity:.42;cursor:default}
 .tlSt.ghost svg{mix-blend-mode:normal}
 .tlInkRing{position:absolute;border-radius:50%;border:2px solid;pointer-events:none;z-index:1;opacity:0}
 .tlNowLine{position:absolute;top:34px;bottom:4px;width:0;border-left:1.5px solid var(--gold);z-index:1}
@@ -1102,8 +1129,8 @@
 /* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .tlMini .f{visibility:hidden}
-.tlMini:hover,.tlMini:focus-visible{z-index:6;outline:0}
-.tlMini:hover .s,.tlMini:focus-visible .s{transform:rotate(var(--rot,0deg)) scale(1.12)}
+.tlMini.zoomed,.tlMini:focus-visible{z-index:6;outline:0}
+.tlMini.zoomed .s,.tlMini:focus-visible .s{transform:rotate(var(--rot,0deg)) scale(1.12)}
 .tlExp{position:fixed;z-index:2147483001;left:0;top:0;width:272px;pointer-events:none;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e7e1d6);border-radius:12px;padding:11px 14px 9px;box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 14px 34px rgba(30,26,20,.16),0 2px 6px rgba(30,26,20,.06);font:12px/1.4 var(--sans,system-ui,sans-serif);opacity:0;display:none}
 .tlExp::before{content:"";position:absolute;left:var(--ax,50%);top:-6px;width:10px;height:10px;margin-left:-5px;background:inherit;border-left:1px solid var(--line,#e7e1d6);border-top:1px solid var(--line,#e7e1d6);transform:rotate(45deg)}
 .tlExp.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
@@ -1139,7 +1166,6 @@
 .tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
 .tlSt.ghost[data-stage]{cursor:pointer}
 .tlExp.side::before{display:none}
-.tlExp.on{pointer-events:auto}
 .tlStop.pinned .tlSeal::before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 .tlStop.pinned>span{color:#7a5a1d}
 @media (prefers-reduced-motion:reduce){.tlUI *,.tlUI *::before,.tlUI *::after,.tlMini>span{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.001s!important}.tlUI .tlSpin{animation:tlSpin 1.4s linear infinite!important}}
@@ -1356,12 +1382,13 @@
     /* ── painting ── */
     function repaint(o) {
       o = o || {};
+      sealHover.cancel(true); // a redraw cannot preserve hover just because a larger parent still matches :hover
       const D = S.D = deriveNow();
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
       S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
       paintNow(D, o); paintRail(D, o);
       tell();
-      if (compact) { if (loupeFor) { const b = loupeFor; hideLoupe(true); if (b.isConnected && b.matches(HOVER) && b.matches(":hover")) showLoupe(b, true); } return; }
+      if (compact) return;
       paintChips(); paintCanvas(D, o); paintSum();
       const fresh = (o.fresh || []).filter(k => S.shownKeys.has(k));
       if (S.legend) return;
@@ -1540,7 +1567,7 @@
       if (html !== lanesHtml) { lanesHtml = html; $(".tlLanes").innerHTML = html; }
     }
     function paintCanvas(D, o) {
-      const hov = loupeFor; hideLoupe(true);
+      hideLoupe(true);
       const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
       const { cols, w } = layout(evs), last = evs[evs.length - 1];
@@ -1610,8 +1637,6 @@
           }
         }
       }
-      // a live step while a stamp is hovered: its loupe stays up (the stamp was kept)
-      if (hov && hov.isConnected && hov.matches(HOVER) && hov.matches(":hover")) showLoupe(hov, true);
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
     /** The seal that stands for an event: itself when it is drawn, the seal that collapsed it, else the milestone it
@@ -1735,20 +1760,16 @@
       hideA = zoomOut(loupe);
       if (hideA) hideA.finished.then(done, () => { lift.classList.remove("lifted"); }); else done();
     }
-    const HOVER = ".tlSt[data-key], .tlStop.d, .tlStop.x";
-    function onOver(ev) { const b = ev.target.closest && ev.target.closest(HOVER); if (b && b !== loupeFor && box.contains(b)) showLoupe(b); }
-    function onOut(ev) { const b = ev.target.closest && ev.target.closest(HOVER); if (b && b === loupeFor && !b.contains(ev.relatedTarget)) hideLoupe(); }
-    function onScroll() { hideLoupe(true); hideExp(true); }
+    function onScroll() { sealHover.cancel(true); }
 
     /* ── the step explainer (Paul, 28 Sep, point 5): hovering a step (a rail's stop, a lane stamp, a dashed stamp to come)
        shows a small card BELOW its dot, what is done and what is still missing (the zoomed seal sits above: the dot stays
        seen); a click on a step not done yet pins the fuller version in the detail below, never a pop-up on a pop-up.
        Escape or a click elsewhere lets it go. opts.context() is what the host knows of the order (requirementsOf). ── */
-    let expFor = null, expA = null, expT = 0;
+    let expFor = null, expA = null;
     const ctxOf = () => { try { return (typeof opts.context === "function" ? opts.context() : opts.context) || null; } catch (err) { warn("context", err); return null; } };
     // (S.D is the rail drawn: the piece shown's own steps, or the order's)
     const reqOf = i => requirementsOf(i, { events: S.events, D: S.D || deriveNow(), context: ctxOf() });
-    const EXP = ".tlStop, .tlSt[data-key], .tlSt.ghost[data-stage]";
     function stageOfEl(b) {
       if (b.dataset.stage) return STAGES.findIndex(s => s.k === b.dataset.stage);
       const e = b.dataset.key && S.byKey.get(b.dataset.key); if (!e) return -1;
@@ -1762,16 +1783,15 @@
       // an event that is not a step of its own says what it is first, then what the order needs to move on
       const e = b.dataset.key && S.byKey.get(b.dataset.key), lone = e && STOP_OF[e.type] == null, hand = lone && S.D.hand;
       const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : "";
-      expFor = b; expT = cancelT(expT);
+      expFor = b;
       // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
       const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && !z.up ? z : null;
       const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
       // (a short view puts the card beside the dot: beside its seal too, never over it)
       expA = placeExp(exp, hand ? head : head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
-      exp.classList.add("on");   // (the card takes the pointer: moving onto it keeps it)
+      exp.classList.add("on");
     }
     function hideExp(now) {
-      expT = cancelT(expT);
       if (!expFor || !exp) return;
       expFor = null; exp.classList.remove("on");
       if (now) { if (expA) { try { expA.cancel(); } catch (_) {} } expA = null; exp.style.display = "none"; exp.innerHTML = ""; return; }
@@ -1782,13 +1802,13 @@
       const q = reqOf(D.cur); if (!q || !q.need.length) return "";
       return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
     }
-    function expOver(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b !== expFor && box.contains(b)) showExp(b); }
-    // the pointer leaving the step for its card (across the gap between them) keeps the card; leaving both lets it go
-    const expLater = () => { expT = cancelT(expT); expT = later(() => { expT = 0; if (expFor && !exp.matches(":hover") && !expFor.matches(":hover")) hideExp(); }, 160); };
-    function expOut(ev) { const b = ev.target.closest && ev.target.closest(EXP); if (b && b === expFor && !b.contains(ev.relatedTarget)) { if (ev.relatedTarget && exp.contains(ev.relatedTarget)) return; expLater(); } }
-    function expLeave(ev) { if (expFor && !(ev.relatedTarget && expFor.contains(ev.relatedTarget))) expLater(); }
-    function expFocus(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b.matches(":focus-visible")) showExp(b); }
-    function expBlur(ev) { const b = ev.target.closest && ev.target.closest(".tlStop"); if (b && b === expFor) hideExp(); }
+    const sealHover = restOnSeal(box, node => node.closest?.(".tlStop .tlSeal, .tlSt[data-key], .tlSt.ghost[data-stage]"), seal => {
+      const b = seal.closest(".tlStop") || seal;
+      if (b.matches(".tlSt[data-key], .tlStop.d, .tlStop.x")) showLoupe(b);
+      showExp(b);
+    }, now => { hideLoupe(now); hideExp(now); });
+    function expFocus(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key]"); if (b && b.matches(":focus-visible")) sealHover.open(liftOf(b)); }
+    function expBlur(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key]"); if (b && liftOf(b) === sealHover.current) sealHover.cancel(); }
     /** Pins a step's fuller explainer in the detail below; → true when shown. */
     function pin(i) {
       const s = STAGES[i]; if (!s || compact || !S.loaded) return false;
@@ -1934,8 +1954,9 @@
       try { if (typeof unfeed === "function") unfeed(); } catch (_) {}
       unsub = unfeed = null;
       doc.removeEventListener("visibilitychange", onVis);
-      box.removeEventListener("click", onClick); box.removeEventListener("pointerover", onOver); box.removeEventListener("pointerout", onOut); box.removeEventListener("keydown", onKey);
-      box.removeEventListener("pointerover", expOver); box.removeEventListener("pointerout", expOut); box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur); exp.removeEventListener("pointerleave", expLeave);
+      sealHover.destroy();
+      box.removeEventListener("click", onClick); box.removeEventListener("keydown", onKey);
+      box.removeEventListener("focusin", expFocus); box.removeEventListener("focusout", expBlur);
       doc.removeEventListener("pointerdown", onDocDown, true); doc.removeEventListener("keydown", onDocKey);
       scroller.removeEventListener("scroll", onScroll);
       try { for (const a of box.getAnimations({ subtree: true })) a.cancel(); } catch (_) {}
@@ -1943,8 +1964,8 @@
       box.remove();
     }
 
-    box.addEventListener("click", onClick); box.addEventListener("pointerover", onOver); box.addEventListener("pointerout", onOut); box.addEventListener("keydown", onKey);
-    box.addEventListener("pointerover", expOver); box.addEventListener("pointerout", expOut); box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur); exp.addEventListener("pointerleave", expLeave);
+    box.addEventListener("click", onClick); box.addEventListener("keydown", onKey);
+    box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
     if (!compact) { doc.addEventListener("pointerdown", onDocDown, true); doc.addEventListener("keydown", onDocKey); }
     if (tb) bar.addEventListener("click", onClick);
     scroller.addEventListener("scroll", onScroll, { passive: true });
@@ -2018,10 +2039,16 @@
   }
   function wireNow(card, onOpen) {
     if (!card) return;
+    if (!card._tlHover) {
+      const sel = ".tlMini[data-tl-ev]";
+      card._tlHover = restOnSeal(card, node => node.closest?.(sel), b => nowZoom(card, b), now => nowZoom(card, null, now));
+      card.addEventListener("focusin", ev => { const b = ev.target.closest?.(sel); if (b && b.matches(":focus-visible")) card._tlHover.open(b); });
+      card.addEventListener("focusout", ev => { if (ev.target.closest?.(sel) === card._tlHover.current) card._tlHover.cancel(); });
+      card.closest("dialog")?.addEventListener("close", () => card._tlHover.cancel(true));
+    }
+    card._tlHover.check();
     card.querySelectorAll(".tlMini[data-tl-ev]").forEach(b => {
-      b.onclick = ev => { ev.preventDefault(); nowZoom(card, null); if (typeof onOpen === "function") { try { onOpen({ id: b.dataset.tlEv }); } catch (err) { warn("onOpen", err); } } };
-      b.onpointerenter = b.onfocus = () => nowZoom(card, b);
-      b.onpointerleave = b.onblur = () => { if (card._tlZoomFor === b) nowZoom(card, null); };
+      b.onclick = ev => { ev.preventDefault(); card._tlHover.cancel(true); if (typeof onOpen === "function") { try { onOpen({ id: b.dataset.tlEv }); } catch (err) { warn("onOpen", err); } } };
     });
     if (card._tlZoomFor && !card._tlZoomFor.isConnected) nowZoom(card, null, true);   // repainted under the pointer
     const cx = card.querySelector(".tlNowSeal.cx"), s = card.querySelector(".tlNowSeal:not(.cx)");
@@ -2045,11 +2072,11 @@
       let h = f.innerHTML; const ids = [...new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))];
       for (const id of ids) h = h.split(`id="${id}"`).join(`id="${id}-z"`).split(`#${id})`).join(`#${id}-z)`).split(`#${id}"`).join(`#${id}-z"`);
       L.innerHTML = `<div class="lf" style="transform:rotate(${b.style.getPropertyValue("--rot") || "0deg"})">${h}</div>`;
-      const quiet = !!card._tlZoomFor; card._tlZoomFor = b;
+      const quiet = !!card._tlZoomFor; card._tlZoomFor?.classList.remove("zoomed"); card._tlZoomFor = b; b.classList.add("zoomed");
       zoomIn(L, b.getBoundingClientRect(), quiet);
       return;
     }
-    card._tlZoomFor = null; if (!L || L.style.display === "none") return;
+    card._tlZoomFor?.classList.remove("zoomed"); card._tlZoomFor = null; if (!L || L.style.display === "none") return;
     const done = () => { card._tlZoomA = null; if (!card._tlZoomFor) L.style.display = "none"; };
     const a = now || !L.isConnected ? null : zoomOut(L);
     card._tlZoomA = a; if (a) a.finished.then(done, () => {}); else done();

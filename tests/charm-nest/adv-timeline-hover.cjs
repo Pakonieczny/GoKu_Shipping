@@ -1,8 +1,8 @@
 // The step explainer card kept in reach (Paul, 28 Sep 21:18: "the hover must persist"), in the real sorter page with
 // the fake site (bridge-server.cjs), every other request aborted:
 //  1 · the order view's "Where it is now" card (explainOn, inside a modal dialog as in the order view): the card stays
-//      while the pointer is on the seal or on the card and goes shortly after it leaves both; a click pins it (it stays
-//      with the pointer gone, and offers the Timeline), Esc or a click elsewhere lets it go and the view stays open;
+//      after resting on the original seal and closes on departure, including onto the enlargement;
+//      clicking the original opens its step on the Timeline;
 //  2 · a very short screen: a rail at the top flips the zoomed seal under its dot and the card goes beside them, clear of
 //      the seal and inside the view.
 //   node tests/charm-nest/adv-timeline-hover.cjs     (PW_DIR=<playwright node_modules>, CHROMIUM=<chrome>)
@@ -51,42 +51,23 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     const seal = await page.locator('.tlTestHost .tlNowSeal').boundingBox();
     const away = { x: 1400, y: 880 };
     await page.mouse.move(away.x, away.y);
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(300);
+    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(1500);
     assert(await shown(), 'hovering the seal shows its card');
-    // across the gap and onto the card
-    const cb = await page.evaluate(() => { const r = document.querySelector('.tlTestDlg .tlExp').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 24, top: r.top, left: r.left }; });
-    await page.mouse.move(cb.x, cb.y, { steps: 8 }); await page.waitForTimeout(450);
-    assert(await shown(), 'the card stays while the pointer is on it');
-    // back to the seal, then away from both
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(400);
-    assert(await shown(), 'and while it is back on the seal');
-    await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(500);
-    assert(!(await shown()), 'it goes shortly after the pointer leaves both');
-    // a click pins it: it stays with the pointer gone, and offers the Timeline
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(300);
-    await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(100);
-    await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(500);
-    assert(await shown(), 'a click pins the card: it stays with the pointer gone');
-    assert.equal(await page.evaluate(() => window.__pinned), undefined, 'a click pins; it does not leave the Overview');
-    assert.equal(await page.evaluate(() => !!document.querySelector('.tlTestDlg .tlExp [data-tl-open]')), true, 'the pinned card offers the Timeline');
-    await page.keyboard.press('Escape'); await page.waitForTimeout(400);
-    assert(!(await shown()), 'Esc lets it go');
-    assert.equal(await page.evaluate(() => document.querySelector('.tlTestDlg').open && !window.__closed), true, 'and the view stays open');
-    // pinned again, a click elsewhere lets it go
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(300);
-    await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(100);
+    // the enlarged card cannot keep the hover alive: only the actual original seal can
+    const cb = await page.evaluate(() => { const r = document.querySelector('.tlTestDlg .tlExp').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + 24 }; });
+    await page.mouse.move(cb.x, cb.y, { steps: 8 }); await page.waitForTimeout(300);
+    assert(!(await shown()), 'moving onto the enlargement closes the original-seal hover');
+    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 6 }); await page.waitForTimeout(1000);
+    assert(!(await shown()), 'a new hover waits its full delay');
+    await page.waitForTimeout(500); assert(await shown(), 'resting on the original opens it again');
     await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(300);
-    assert(await shown(), 'pinned again');
-    await page.mouse.click(away.x, away.y); await page.waitForTimeout(400);
-    assert(!(await shown()), 'a click elsewhere lets it go');
-    // the pinned card's link opens the step on the Timeline
-    await page.mouse.move(seal.x + seal.width / 2, seal.y + seal.height / 2, { steps: 4 }); await page.waitForTimeout(300);
-    await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(250);
-    await page.click('.tlTestDlg .tlExp [data-tl-open]'); await page.waitForTimeout(300);
-    assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'assembled', 'the link asks the host for the step on the Timeline');
-    assert(!(await shown()), 'and the card goes');
+    assert(!(await shown()), 'it closes as soon as the pointer leaves');
+    await page.mouse.click(seal.x + seal.width / 2, seal.y + seal.height / 2); await page.waitForTimeout(100);
+    assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'assembled', 'the original seal opens its step on the Timeline');
+    await page.mouse.move(away.x, away.y, { steps: 4 }); await page.waitForTimeout(300);
+    assert(!(await shown()), 'a click cannot leave a floating hover pinned');
     await page.evaluate(() => { const d = document.querySelector('.tlTestDlg'); d.close(); d.remove(); });
-    console.log('  ✓ 1 · the Overview card: the explainer stays on the seal and on the card, goes 160 ms after both; a click pins it, Esc (the view stays) or a click elsewhere lets it go, its link opens the Timeline');
+    console.log('  ✓ 1 · the Overview card: delayed rest on the original seal; departure dismisses it, including onto the enlargement; clicking the seal opens the Timeline');
 
     // ── 2 · a very short screen: the card beside a flipped seal, clear of it and in the view ──
     await page.setViewportSize({ width: 1440, height: 280 });
@@ -100,7 +81,7 @@ const Timeline = require(path.join(root, 'netlify/functions/_orderTimeline.js'))
     const out = [];
     for (const k of ['arrived', 'sheet', 'laser', 'sorted']) {
       await page.mouse.move(700, 275); await page.waitForTimeout(250);
-      await page.locator(`.tlStop[data-stage="${k}"]`).hover(); await page.waitForTimeout(380);
+      await page.locator(`.tlStop[data-stage="${k}"] .tlSeal`).hover(); await page.waitForTimeout(1500);
       out.push(await page.evaluate(k => {
         const el = window.__el, X = el.querySelector('.tlExp'), L = el.querySelector('.tlLoupe'), e = X.getBoundingClientRect(), l = L.getBoundingClientRect(), d = el.querySelector(`.tlStop[data-stage="${k}"] .tlSeal`).getBoundingClientRect();
         return { k, card: getComputedStyle(X).display === 'block', loupe: getComputedStyle(L).display === 'block', flipped: l.top >= d.bottom - 1,

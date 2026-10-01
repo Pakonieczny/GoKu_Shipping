@@ -176,7 +176,7 @@ function fixture({ MAIN, CX }) {
   const welded = await page.$('.tlSt[data-key="welded~e25"]');
   const small = await welded.boundingBox();
   await welded.hover();
-  await page.waitForTimeout(320);
+  await page.waitForTimeout(1500);
   const zoomAt = () => page.evaluate(() => { const L = window.__el.querySelector('.tlLoupe'), b = L.getBoundingClientRect(), s = window.__el.querySelector('.tlSt[data-key="welded~e25"]'), d = s.getBoundingClientRect(), cap = L.querySelector('.cap'), X = [...window.__el.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return { disp: getComputedStyle(L).display, w: b.width, h: b.height, top: b.top, bottom: b.bottom, cx: b.left + b.width / 2, dTop: d.top, dBottom: d.bottom, dcx: d.left + d.width / 2, dOp: getComputedStyle(s).opacity, pe: getComputedStyle(L).pointerEvents, side: L.dataset.side, capTop: X ? X.getBoundingClientRect().top : null, expText: X ? X.textContent : '', texts: [...L.querySelectorAll('text')].map(t => t.textContent).join(' | '), cap: (cap || {}).textContent, lifted: s.classList.contains('lifted'), hov: s.matches(':hover'), shadow: getComputedStyle(L).boxShadow }; });
   r = await zoomAt();
   assert.equal(r.disp, 'block'); assert(small.width < 40, 'a small dot: ' + small.width);
@@ -197,13 +197,13 @@ function fixture({ MAIN, CX }) {
 
   // ── the step explainer (Paul, 28 Sep, point 5): a step to come, hovered, says below its dot what is still missing ──
   const futs = await page.$$eval('.tlStop:not(.d)', s => s.map(n => n.dataset.stage)), futK = futs[futs.length - 1];
-  await page.hover(`.tlStop[data-stage="${futK}"]`); await page.waitForTimeout(300);
+  await page.hover(`.tlStop[data-stage="${futK}"] .tlSeal`); await page.waitForTimeout(1500);
   r = await page.evaluate(k => { const X = window.__el.querySelector('.tlExp'), b = X.getBoundingClientRect(), st = window.__el.querySelector(`.tlStop[data-stage="${k}"]`), d = st.querySelector('.tlSeal').getBoundingClientRect(); return { disp: getComputedStyle(X).display, text: X.textContent, need: X.querySelectorAll('.rq:not(.ok)').length, top: b.top, dot: d.bottom, title: st.getAttribute('title') }; }, futK);
   assert.equal(r.disp, 'block', 'the step card shows');
   assert(r.need > 0 && /Next|After|Waiting|Needs a person/.test(r.text), 'a step to come lists what is missing: ' + r.text);
   assert(r.top >= r.dot, `the card sits below the dot (${r.top} ≥ ${r.dot})`); assert.equal(r.title, null, 'no dark tooltip on the rail');
   const ghostK = await page.$eval('.tlSt.ghost[data-stage]', g => g.dataset.stage);
-  await page.hover(`.tlSt.ghost[data-stage="${ghostK}"]`); await page.waitForTimeout(260);
+  await page.hover(`.tlSt.ghost[data-stage="${ghostK}"]`); await page.waitForTimeout(1500);
   assert(await page.evaluate(() => window.__el.querySelectorAll('.tlExp .rq:not(.ok)').length) > 0, 'a dashed stamp to come shows its missing lines');
   await shot('tlui-d-step-card');
   await page.click(`.tlStop[data-stage="${futK}"]`); await page.waitForTimeout(150);
@@ -243,7 +243,7 @@ function fixture({ MAIN, CX }) {
   assert.deepEqual(noise, [], 'read, pulled, scanned, moved, QR label, set committed … draw no seal');
   assert.equal(await page.$$eval('.tlSt.dim', s => s.length), 0, 'nothing is dimmed any more');
   await page.click('.tlSt[data-key="welded~e25"]'); await page.waitForTimeout(350);
-  await page.hover('.tlSt[data-key="sorted~e22"]'); await page.waitForTimeout(320);
+  await page.hover('.tlSt[data-key="sorted~e22"]'); await page.waitForTimeout(1500);
   await shot('tlui-2-hover-filter');
   await page.mouse.move(700, 880);
   await page.click('.tlChip[data-legend]'); await page.waitForTimeout(200);
@@ -359,15 +359,13 @@ function fixture({ MAIN, CX }) {
   assert.equal(r.ask.label, 'Needs a decision'); assert.match(r.ask.text, /Unknown SKU/); assert(r.askSeal, 'and its seal is the milestone, not a "?"');
   assert.equal(r.cxBlock, null);
   assert.match(r.cx, /CANCELLED ORDER/); assert.match(r.cx, /DO NOT PROCEED/); assert.equal(r.drop, 1, 'the cancel seal drops in');
-  // explainOn: the card's seal, hovered, says what the order's next step still needs; a click pins the card, whose link
-  // asks the host for the step on the Timeline
+  // explainOn: a rested seal says what its next step needs; a click opens that step on the Timeline
   await page.evaluate(MAIN => { const card = document.querySelector('.tlTestHost'), a = OrderTimelineUI.nowStamps(window.__fx[MAIN].events, {}); card.innerHTML = a.seal; OrderTimelineUI.explainOn(card, () => ({ events: window.__fx[MAIN].events }), st => { window.__pinned = st; }); }, MAIN);
-  await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(260);
+  await page.mouse.move(0, 0); await page.hover('.tlTestHost .tlNowSeal'); await page.waitForTimeout(1500);
   r = await page.evaluate(() => { const X = [...document.querySelectorAll('.tlExp')].find(x => getComputedStyle(x).display === 'block'); return X ? { need: X.querySelectorAll('.rq:not(.ok)').length, top: X.getBoundingClientRect().top, seal: document.querySelector('.tlTestHost .tlNowSeal').getBoundingClientRect().bottom } : null; });
   assert(r && r.need > 0 && r.top >= r.seal, 'the Overview seal shows the next step\'s missing lines below it: ' + JSON.stringify(r));
   await page.click('.tlTestHost .tlNowSeal');
-  await page.click('.tlExp.on [data-tl-open]');
-  assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click pins the card; its link asks for the next step pinned');
+  assert.equal(await page.evaluate(() => window.__pinned && window.__pinned.stage), 'shipped', 'a click on the original seal asks for the next step on the Timeline');
   await page.evaluate(() => document.querySelector('.tlTestHost').remove());
   ok.push('nowStamps: one seal — the milestone it is at (ASSEMBLED · LUISA T.) — no row of stamps, the blocker in plain words ("On hold — H or K", "Needs a decision — Unknown SKU"), and the 118px CANCELLED ORDER · DO NOT PROCEED seal dropping in');
 

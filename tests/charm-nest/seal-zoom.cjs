@@ -80,8 +80,9 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     assert.equal(await page.evaluate(() => document.querySelectorAll('#owCustom .seal')[0].hasAttribute('title')), false, 'no tooltip over the lens');
     if (shots) await page.screenshot({ path: path.join(shots, '2-hover-print-seal.png') });
 
-    // 3 · onto the other seal: the lens glides to it
+    // 3 · onto the other seal: the previous preview closes and the new seal gets a full delay
     await page.mouse.move(p1.x, p1.y, { steps: 4 });
+    await page.waitForFunction(() => document.querySelector(".sealLens .lc")?.textContent.startsWith("Completed by Paul"));
     await settle();
     L = await lens();
     assert(L && L.n === 1 && L.top === 'ORDER COMPLETED' && /^Completed by Paul, no label printed · /.test(L.cap), 'the seal under the pointer: ' + JSON.stringify(L));
@@ -92,13 +93,14 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForFunction(() => !document.querySelector('.sealLens'), null, { timeout: 3000 });
     assert.equal(await page.evaluate(() => [...document.querySelectorAll('#owCustom .seal')].every(s => /^(QR label printed|Completed with the Complete Order button) by Paul · /.test(s.title))), true);
 
-    // 5 · a click keeps it: the pointer may rest on the lens; Esc puts it away and the window stays open; nothing printed
+    // 5 · a click can read it immediately, but only while the pointer remains on the original seal
     await page.mouse.click(p1.x, p1.y);
     await settle();
     L = await lens(); assert(L && L.pinned, 'kept open by the click');
     await page.mouse.move((L.rect.l + L.rect.r) / 2, (L.rect.t + L.rect.b) / 2, { steps: 6 });
     await page.waitForTimeout(500);
-    assert((await lens()) && (await lens()).pinned, 'the pointer rests on it and it stays');
+    assert.equal(await lens(), null, 'moving onto the enlargement dismisses the original-seal hover');
+    await page.mouse.click(p1.x, p1.y); await settle();
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.sealLens'), null, { timeout: 3000 });
     assert.equal(await page.evaluate(() => OrderWin.isOpen()), true, 'Esc put the lens away, not the window');
@@ -134,7 +136,7 @@ const ORDERS = [{ receiptId: RID, orderNumber: RID, createTs: SHIP - 5 * DAY, up
     await page.waitForFunction(() => !document.querySelector('.sealLens'), null, { timeout: 3000 });
 
     assert.deepEqual(errors, [], 'no page errors');
-    console.log('  ✓ hover grows a readable lens beside the seal, glides between overlapping seals, a click keeps it, Esc and a click away put it away, Tab reaches each seal');
+    console.log('  ✓ hover waits on each original seal, closes when the pointer leaves even after a click, Esc and a click away dismiss it, Tab reaches each seal');
     console.log('Seal zoom OK');
   } finally { await browser.close(); srv.close(); }
 })().catch(e => { console.error(e); process.exit(1); });

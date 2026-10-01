@@ -30,7 +30,7 @@ seal.getBoundingClientRect=()=>rect;seal.getClientRects=()=>[rect];
     const saved=seal.innerHTML;
     seal.dispatchEvent(new w.MouseEvent('pointerover',{bubbles:true}));
     await wait(150);assert.equal(d.querySelector('.sealLens'),null,'a passing pointer does not open the lens');
-    await wait(220);let lens=d.querySelector('.sealLens');assert(lens,'resting over a seal opens the enlargement');
+    await wait(1000);let lens=d.querySelector('.sealLens');assert(lens,'resting over a seal opens the enlargement');
     assert.match(lens.querySelector('.lc').textContent,/Laser ready by Paul Konieczny/);
     assert.match(lens.querySelector('.lf').textContent,/30 SEP 2026/);
     const [,x,y]=/translate\(([-\d.]+)px,([-\d.]+)px\)/.exec(lens.style.transform);
