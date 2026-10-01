@@ -19,7 +19,8 @@ const response=v=>({status:'completed',output_text:JSON.stringify(v),estimatedUs
  check(prompts.every(p=>identity(p)===identity(prompts[0])),'the complete product identity block is byte-identical across formats');
  check(prompts.every(p=>p.includes('inside an opening must remain inside')&&p.includes('exactly as photographed')),'containment and engraving are mandatory in each format');
  check(prompts.every(p=>p.includes(refs.CONTINUITY_RULES)),'reference mode shares the same uninterrupted product visibility rule');
- for(const unsafe of ['Cut to another scene.','The charm disappears behind a prop.','Rack focus onto the scenery.','Reveal a replacement charm.','The scene changes halfway through.','A leaf crosses the charm.']){
+ check(prompts.every(p=>p.includes(refs.ATTACHMENT_RULES)),'reference mode preserves the same attachment point, connection and hanging orientation');
+ for(const unsafe of ['Cut to another scene.','The charm disappears behind a prop.','Rack focus onto the scenery.','Reveal a replacement charm.','The scene changes halfway through.','A leaf crosses the charm.','Move the attachment loop to the centre.','The loop slides along the outline.']){
   const oldPlan={...upgraded(),middle:unsafe,sceneStory:{...upgraded().sceneStory,propMotion:unsafe}};
   for(const format of ['portrait','square','landscape']){const p=motionPrompt({...job,creativeDirection:oldPlan,repairIssues:[unsafe]},format);check(!p.includes(unsafe)&&p.includes(oldPlan.geometry.outline),'conflicting saved staging and retry text cannot interrupt '+format+': '+unsafe);}
   check(oldPlan.middle===unsafe&&oldPlan.sceneStory.propMotion===unsafe,'unsafe saved observations remain intact');

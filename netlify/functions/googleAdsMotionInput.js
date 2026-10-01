@@ -6,7 +6,7 @@ const fidelity=job=>forJob(job)===PHOTO&&job.photoFidelityPolicy===PRODUCT_POLIC
 const newPolicy=mode=>mode===PHOTO?PRODUCT_POLICY:null;
 function validate(value){if(![PHOTO,REFERENCE].includes(value))throw Error('Choose Start from photo or New scene.');return value;}
 const forJob=job=>job.generationMode==null?REFERENCE:validate(job.generationMode);
-const revision=job=>forJob(job)===PHOTO?(fidelity(job)?'design-photo-product-fidelity-continuous-v3':'original-first-frame-continuous-v2'):null;
+const revision=job=>forJob(job)===PHOTO?(fidelity(job)?'design-photo-product-attachment-v4':'original-first-frame-attachment-v3'):null;
 function designPhoto(document,sources,productId){
  const layers=[];function visit(items){for(const o of items||[]){if(o.visible===false||o.opacity===0)continue;if(o.sourceKey)layers.push(o);visit(o.objects);}}visit(document?.objects);
  const layer=layers.find(o=>o.editorRole==='photo')||layers.find(o=>String(o.type).toLowerCase()==='image'&&o.editorRole!=='brand'&&o.editorRole!=='shape');
@@ -21,6 +21,7 @@ function prompt(job,orientation,identityRules){
 
 ${identityRules}
 ${require('./googleAdsMotionReferences').CONTINUITY_RULES}
+${require('./googleAdsMotionReferences').ATTACHMENT_RULES}
 ${locked?locked+'\n\nTHROUGHOUT 0–10 SECONDS: Preserve the photographed pose, support, placement and reference-facing silhouette continuously. The original item remains the same visible physical object during every moment, especially the middle of the film. Gentle surrounding motion and small camera translation develop within this one view; never restage, hide or rotate the decorative piece.':''}
 
 MOTION: Bring only elements already visible in this photograph to life. A freely suspended assembly may make one small natural rigid-body sway; a resting item stays supported while its visible flexible chain, fabric or other flexible surroundings move gently where physically plausible. ${locked?'If no flexible surroundings are visible, keep supported jewelry stable and use the camera translation and real moving-light reflections for physical depth; never force an unsupported object to settle or move.':'For rigid surroundings use a very small physically plausible in-plane settling movement of the jewelry.'} Keep movement restrained but clearly visible, with natural contact, depth, parallax and changing reflections. The decorative design itself never articulates. A short, slow camera translation stays close to the photographed view; the complete detailed face and its engraving remain sharp and readable. Preserve the light direction and material finish. Avoid a new angle that requires inventing hidden geometry.
