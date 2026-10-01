@@ -6,7 +6,7 @@
 .cnListTools .cnDatePresets button[aria-pressed=true]{background:var(--ink,#39362f);color:var(--paper,#fffdf7)}
 .cnListTools .cnActivitySort{margin-left:0;max-width:135px;min-height:26px;border:0;border-left:1px solid var(--line,#ddd6c9);border-radius:0;background:transparent;color:inherit;font:inherit;padding:3px 7px;cursor:pointer}
 .cnListTools :is(button,select):focus-visible{outline:2px solid var(--slate,#68899d);outline-offset:2px}
-.ordBar:has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+.ordBar:has(.cnListTools),.libBar:has(>.cnListTools),.masterHead:has(>.cnListTools),.hBar:has(>.cnListTools){flex-shrink:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
 .ordBar:has(.cnListTools)>*,.masterHead:has(>.cnListTools)>*,.hBar:has(>.cnListTools)>*{flex-shrink:0;white-space:nowrap}
 .egBar>.egSearchGroup{flex:0 1 220px}
 .egBar>.egSearchGroup>.ordSearch{width:100%;max-width:none;box-sizing:border-box}
