@@ -11,9 +11,18 @@ const rows=[{id:'new-order',arrivedAt:now+100,approvedAt:now-1000},{id:'new-deci
 assert.deepEqual(rows.slice().sort(A.compare).map(x=>x.id),['new-decision','new-order','unknown']);
 A.touch(rows[0],now+200);assert.equal(rows.slice().sort(A.compare)[0].id,'new-order');
 const dom=new JSDOM('<input id="search" value="3701"><header></header>',{url:'https://test.invalid',runScripts:'outside-only'}),w=dom.window;
+w.localStorage.setItem('cn.activityLists.v1',JSON.stringify({library:{range:'yesterday',direction:'asc'}}));
 w.eval(fs.readFileSync('charm-nest-activity.js','utf8'));let changes=0;w.CNListActivity.mount(w.document.querySelector('header'),'orders',()=>changes++);
 w.document.querySelector('[data-range="yesterday"]').click();assert.equal(w.CNListActivity.state('orders').range,'yesterday');
-const sort=w.document.querySelector('select');sort.value='asc';sort.dispatchEvent(new w.Event('change'));assert.equal(w.CNListActivity.state('orders').direction,'asc');assert.equal(w.document.querySelector('#search').value,'3701');assert.equal(changes,2);w.close();
+const sort=w.document.querySelector('select');sort.value='asc';sort.dispatchEvent(new w.Event('change'));assert.equal(w.CNListActivity.state('orders').direction,'asc');assert.equal(w.document.querySelector('#search').value,'3701');assert.equal(changes,2);
+const library=w.document.createElement('header');library.innerHTML='<input type="search"><button>Sheets</button>';w.document.body.append(library);
+w.CNListActivity.mount(library,'library',()=>{});
+assert.equal(library.querySelector('[data-range]'),null,'Library has no date filters');
+assert.equal(library.firstElementChild.nextElementSibling.dataset.activityTools,'library','sorting is beside the search in its existing toolbar');
+assert.equal(w.CNListActivity.state('library').range,'all','an old saved Library date filter cannot remain active');
+assert.equal(w.CNListActivity.state('library').direction,'asc','the saved sort direction remains available');
+assert.equal(w.CNListActivity.select('library',rows,now).length,rows.length,'removing date filters restores every age of sheet');
+w.close();
 (async()=>{
  const srv=await start({receipts:[]}),st=srv.st;
  const call=async b=>{const r=await fetch(srv.sorterOrigin+'/.netlify/functions/charmNestLibrary',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)});const out=await r.json();assert.equal(r.status,200,JSON.stringify(out));return out;};

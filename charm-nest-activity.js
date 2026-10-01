@@ -38,7 +38,7 @@
   }
   function state(scope){
     if(!loaded){loaded=true;try{Object.assign(states,JSON.parse(root?.localStorage?.getItem(KEY)||'{}'));}catch(_){} }
-    const old=states[scope] || {};return states[scope]={range:presets.some(p=>p[0]===old.range)?old.range:'all',direction:old.direction==='asc'?'asc':'desc'};
+    const old=states[scope] || {};return states[scope]={range:scope==='library'?'all':presets.some(p=>p[0]===old.range)?old.range:'all',direction:old.direction==='asc'?'asc':'desc'};
   }
   function set(scope,patch){const current=state(scope);states[scope]={...current,...patch};state(scope);try{root?.localStorage?.setItem(KEY,JSON.stringify(states));}catch(_){}return states[scope];}
   const key=scope=>{const s=state(scope);return s.range+':'+s.direction;};
@@ -48,8 +48,10 @@
     if(!root?.document || !host)return;
     let bar=host.querySelector(`[data-activity-tools="${scope}"]`);
     if(!bar){bar=root.document.createElement('span');bar.className='cnListTools';bar.dataset.activityTools=scope;
-      bar.innerHTML='<span class="cnDatePresets" role="group" aria-label="Filter by last activity">'+presets.map(([id,label])=>`<button type="button" data-range="${id}" aria-pressed="false">${label}</button>`).join('')+'</span><select class="cnActivitySort" aria-label="Sort by last activity" title="Last activity: newest or oldest first"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select>';
-      host.appendChild(bar);
+      bar.innerHTML=(scope==='library'?'':'<span class="cnDatePresets" role="group" aria-label="Filter by last activity">'+presets.map(([id,label])=>`<button type="button" data-range="${id}" aria-pressed="false">${label}</button>`).join('')+'</span>')+'<select class="cnActivitySort" aria-label="Sort by last activity" title="Last activity: newest or oldest first"><option value="desc">Newest first</option><option value="asc">Oldest first</option></select>';
+      let search=host.querySelector('input[type=search],input.ordSearch');
+      while(search && search.parentElement!==host)search=search.parentElement;
+      if(search)search.after(bar);else host.appendChild(bar);
     }
     const s=state(scope);for(const b of bar.querySelectorAll('[data-range]')){b.setAttribute('aria-pressed',String(b.dataset.range===s.range));b.onclick=()=>{set(scope,{range:b.dataset.range});mount(host,scope,change);change?.();};}
     const sort=bar.querySelector('select');sort.value=s.direction;sort.onchange=()=>{set(scope,{direction:sort.value});change?.();};

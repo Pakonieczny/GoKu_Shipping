@@ -21,7 +21,6 @@
   function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
   function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,56,'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const check='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
   function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.at,approvedBy:e.by};}
   /** Both sheet inspectors use exactly the same back preview, words, approval and historical seals. */
   function panel(e={kind:'none'}){
@@ -30,7 +29,7 @@
     const all=list(record(e)),latest=kind==='approved'?all.filter(s=>s.how==='engraveApproved').at(-1):null;
     const history=html({seals:all.filter(s=>s!==latest)});
     const approval=kind==='approve' && e.job || kind==='approved';
-    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>${check}${kind==='approved'?'Approved':'Approve'}</button>${latest && root?.Seal?`<span class="sealRow egButtonSeal">${root.Seal.html(latest,56,'engravingSeal')}</span>`:''}</span>`:'';
+    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${latest && root?.Seal?`<span class="sealRow egButtonSeal">${root.Seal.html(latest,56,'engravingSeal')}</span>`:''}</span>`:'';
     const open=kind==='none' || kind==='skipped'?'':`<button type="button" class="btn ghost sm" data-e="engrave">${kind==='approve'?'Adjust in Engrave':kind==='approved'?'View in Engrave':kind==='words'?'Confirm the words in Engrave':'Open in Engrave'} <span aria-hidden="true">→</span></button>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     return `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${esc(kind)}"><div class="top"><b>${title}</b>${states[kind]?`<span>${states[kind]}</span>`:''}</div>${preview}${e.text?`<div class="words">${esc(e.text)}</div>`:''}${e.note?`<div class="by">${esc(e.note)}</div>`:''}<div class="acts">${approve}${open}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;

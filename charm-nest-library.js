@@ -51,8 +51,8 @@
   function paintTabs() {
     const bar = byId('libTab'); if (!bar) return;
     for (const b of bar.querySelectorAll('button[data-t]')) { const on = b.dataset.t === L.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); b.tabIndex = on ? 0 : -1; }
-    let activity=byId("libActivity"); if(!activity){activity=doc.createElement("div");activity.id="libActivity";byId("libView").insertBefore(activity,byId("libBody"));}
-    CNListActivity.mount(activity,"library",()=>{ if(L.tab==="done")showDone();else renderCurrent(); });
+    byId("libActivity")?.remove();
+    CNListActivity.mount(byId("libView").querySelector(".libBar"),"library",()=>{ if(L.tab==="done")showDone();else renderCurrent(); });
     fitPlaceholder();
     const view = byId('libView'); if (view) view.dataset.tab = L.tab;
   }
