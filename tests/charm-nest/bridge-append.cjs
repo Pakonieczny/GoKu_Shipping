@@ -114,7 +114,7 @@ function liveCase({metal='rose',newRun=false,cut=false,full=false,committed=fals
   const savedCharm={id:'protected',poolId:'protected-pool',sourceId:'old-source',outline:{},ringGeometryVersion:1};
   const savedPage={metal:'rose',charms:[savedCharm],placements:[{id:'protected',cxPt:20,cyPt:15,angle:0}],rosePlan:{profile:{axis:'x'},lines:[[[0,30],[40,30]]]},roseStock:{id:'reserved'},verification:{ok:true},outputs:{ai:'saved'}};
   const recovery={sources:[],poolSources:{},unassigned:[],sheets:[{pages:[savedPage]}],jobs:[]};
-  const recoverContext={G:{pathRole(){throw Error('protected geometry must not be rewritten');}},P:{integrateRings(){throw Error('protected geometry must not be rewritten');}},S:{settings:{}}};
+  const recoverContext={CNEngravingSeals:require('../../charm-nest-engraving-seals.js'),G:{pathRole(){throw Error('protected geometry must not be rewritten');}},P:{integrateRings(){throw Error('protected geometry must not be rewritten');}},S:{settings:{}}};
   vm.createContext(recoverContext);
   const ra=bridge.indexOf('  async function repairRecoveredGeometry('),rb=bridge.indexOf('  function cloneCharm(',ra);
   vm.runInContext(bridge.slice(ra,rb),recoverContext);

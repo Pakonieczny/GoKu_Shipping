@@ -1,42 +1,82 @@
+// Every real timeline seal surface uses the shared face and the same delayed, noninteractive hover.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<main id="timeline"></main><section id="overview"></section><section id="recent"></section><p id="outside">Work area</p>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
-let now=0,id=0;const timers=new Map();
-w.setTimeout=(fn,ms)=>{timers.set(++id,{fn,at:now+ms});return id;};w.clearTimeout=id=>timers.delete(id);w.setInterval=()=>++id;w.clearInterval=()=>{};
+const dom=new JSDOM('<main id="timeline"></main><section id="overview"></section><section id="recent"></section><section id="cancelled"></section><p id="outside">Work area</p>',{url:'http://127.0.0.1',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
+let now=0,id=0,hit=null,visibility='visible';const timers=new Map();
+w.setTimeout=(fn,ms=0)=>{timers.set(++id,{fn,at:now+ms});return id;};w.clearTimeout=id=>timers.delete(id);w.setInterval=()=>++id;w.clearInterval=()=>{};
 w.matchMedia=()=>({matches:false});w.Element.prototype.getAnimations=()=>[];w.Element.prototype.animate=()=>({finished:Promise.resolve(),cancel(){},playState:'finished'});
-Object.defineProperty(w.HTMLElement.prototype,'offsetWidth',{get(){return this.classList.contains('tlExp')?272:this.classList.contains('tlLoupe')?122:34;}});
-Object.defineProperty(w.HTMLElement.prototype,'offsetHeight',{get(){return this.classList.contains('tlExp')?160:this.classList.contains('tlLoupe')?122:34;}});
-w.eval(fs.readFileSync('charm-nest-timeline-ui.js','utf8'));
+Object.defineProperty(d,'visibilityState',{get:()=>visibility});d.elementFromPoint=()=>hit;
+Object.defineProperty(w.HTMLElement.prototype,'offsetWidth',{get(){return this.classList.contains('tlExp')?272:this.classList.contains('tlLoupe')?168:84;}});
+Object.defineProperty(w.HTMLElement.prototype,'offsetHeight',{get(){return this.classList.contains('tlExp')?160:this.classList.contains('tlLoupe')?168:84;}});
+w.eval(fs.readFileSync('charm-nest-motion.js','utf8'));w.eval(fs.readFileSync('charm-nest-timeline-ui.js','utf8'));
 const T=w.OrderTimelineUI,orderId='4175254511',at=Date.UTC(2026,9,1),types=Object.keys(T.KIND).filter(type=>T.sealed({type}));
-const events=types.map((type,index)=>({id:orderId+'-'+index,orderId,type,at:at+index*60000,by:'Paul',source:'sorter',sheetId:'sheet1',sheet:'14K Sheet 1'}));
-w.OrderTimeline={get:async()=>({events,cancelled:null,where:null})};
-const outside=d.querySelector('#outside'),point=(type,node,relatedTarget=null)=>node.dispatchEvent(new w.MouseEvent(type,{bubbles:true,relatedTarget}));
-async function advance(ms){const end=now+ms;for(;;){const next=[...timers.entries()].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;timers.delete(next[0]);next[1].fn();await Promise.resolve();}now=end;for(let i=0;i<10;i++)await Promise.resolve();}
-const visible=e=>e&&w.getComputedStyle(e).display!=='none';
-async function exercise(seal,shown,label){
- point('pointerover',seal);await advance(1000);assert(!shown(),label+' cannot open on a quick pass');point('pointerout',seal,outside);await advance(2000);assert(!shown(),label+' cancels its timer');
- point('pointerover',seal);await advance(1100);assert(shown(),label+' opens after resting');point('pointerout',seal,outside);await advance(0);assert(!shown(),label+' closes on departure');
+const events=types.map((type,index)=>({id:orderId+'-'+index,orderId,type,at:at+index*60000,by:'Paul Konieczny',source:'sorter',sheetId:'sheet1',sheet:'14K Sheet 1'}));
+const cancellation={at:at+864e5,by:'Seth Signed',source:'sorter',why:'Customer requested cancellation'};
+w.OrderTimeline={get:async id=>id==='555'?{events:events.slice(0,3),cancelled:cancellation,where:null}:{events,cancelled:null,where:null}};
+w.localStorage.setItem('cn.employee','Current Viewer');
+const outside=d.querySelector('#outside'),visible=e=>e&&w.getComputedStyle(e).display!=='none';
+function rectFor(seal,x=410,y=560,size=84){const rect={left:x,right:x+size,top:y,bottom:y+size,width:size,height:size};seal.getBoundingClientRect=()=>rect;seal.getClientRects=()=>[rect];return rect;}
+function point(type,node,relatedTarget=null){if(['pointerover','pointermove','pointerdown','click'].includes(type))hit=node;if(type==='pointerout')hit=relatedTarget;const r=node.getBoundingClientRect();node.dispatchEvent(new w.MouseEvent(type,{bubbles:true,relatedTarget,clientX:r.left+r.width/2,clientY:r.top+r.height/2}));}
+async function advance(ms){const end=now+ms;for(;;){const next=[...timers.entries()].filter(([,t])=>t.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;timers.delete(next[0]);next[1].fn();for(let i=0;i<10;i++)await Promise.resolve();}now=end;for(let i=0;i<10;i++)await Promise.resolve();}
+function checkPosition(preview,seal,label){if(!preview)return;const [,x,y]=/translate\(([-\d.]+)px,([-\d.]+)px\)/.exec(preview.style.transform)||[],r=seal.getBoundingClientRect();assert(Number.isFinite(+y),label+' gets a positioned preview');assert(+y+168<=r.top,label+' preview stays above the original');assert(+x>=8&&+x+168<=w.innerWidth-8,label+' preview stays inside the viewport');assert.equal(w.getComputedStyle(preview).pointerEvents,'none',label+' preview cannot take pointer ownership');}
+async function exercise(seal,shown,label,preview=null,signer=null){
+ rectFor(seal);const history=seal.innerHTML;
+ point('pointerover',seal);await advance(1000);assert(!shown(),label+' cannot open during a quick pass');point('pointerout',seal,outside);await advance(2000);assert(!shown(),label+' cancels a pending timer');
+ point('pointerover',seal);await advance(1100);assert(shown(),label+' opens after resting');if(preview){const p=preview();assert(p,label+' has an enlarged seal');checkPosition(p,seal,label);if(signer){assert.match(p.textContent,new RegExp(signer),label+' shows full saved signer');assert.doesNotMatch(p.textContent,/Current Viewer/,label+' ignores the current viewer name');}}
+ point('pointerout',seal,outside);await advance(0);assert(!shown(),label+' closes on departure');
  point('pointerover',seal);await advance(900);point('pointermove',outside);await advance(2000);assert(!shown(),label+' cancels without pointerout');
  point('pointerover',seal);await advance(1100);assert(shown());point('pointermove',outside);await advance(0);assert(!shown(),label+' movement dismisses an open preview');
- point('pointerover',seal);await advance(900);w.dispatchEvent(new w.Event('blur'));await advance(2000);assert(!shown(),label+' cannot open after window blur');
+ for(const event of ['blur','scroll','resize']){
+  point('pointerover',seal);await advance(900);w.dispatchEvent(new w.Event(event));await advance(2000);assert(!shown(),label+' cannot appear after '+event);
+  point('pointerover',seal);await advance(1100);assert(shown());w.dispatchEvent(new w.Event(event));await advance(0);assert(!shown(),label+' open preview closes after '+event);
+ }
+ point('pointerover',seal);await advance(900);visibility='hidden';d.dispatchEvent(new w.Event('visibilitychange'));await advance(2000);assert(!shown(),label+' cannot open in a hidden tab');visibility='visible';
+ assert.equal(seal.innerHTML,history,label+' keeps the historical face unchanged');
 }
-(async()=>{let timeline;try{
+(async()=>{let timeline,cancelTimeline;try{
  timeline=T.mount(d.querySelector('#timeline'),{orderId,live:false});await advance(0);
- const box=d.querySelector('.tlUI'),loupe=()=>visible(box.querySelector('.tlLoupe')),exp=()=>box.querySelector('.tlExp').classList.contains('on');
- const seals=[...box.querySelectorAll('.tlSt[data-key]')];assert(seals.length>15,'real chronology renders all milestone, process, print and action seal families');
- for(const seal of seals)await exercise(seal,()=>loupe()||exp(),'timeline '+seal.dataset.key);
- const rail=box.querySelector('.tlStop.d .tlSeal');assert(rail);await exercise(rail,()=>loupe()||exp(),'compact/milestone rail seal');
- point('pointerover',rail.parentElement.querySelector('span'));await advance(2000);assert(!loupe()&&!exp(),'a rail label cannot activate the seal');
- point('pointerover',seals[0]);await advance(1100);assert(loupe());point('pointerout',seals[0],seals[1]);point('pointerover',seals[1],seals[0]);await advance(1000);assert(!loupe()&&!exp(),'adjacent timeline seals wait again');await advance(100);assert(loupe());point('pointerout',seals[1],outside);await advance(0);
- seals[0].focus();assert(loupe(),'timeline keyboard focus remains readable');point('pointermove',outside);await advance(0);assert(!loupe()&&!exp(),'focus cannot hold a mouse preview open');
+ const box=d.querySelector('#timeline .tlUI'),loupe=()=>visible(box.querySelector('.tlLoupe')),preview=()=>loupe()?box.querySelector('.tlLoupe'):null,exp=()=>box.querySelector('.tlExp').classList.contains('on'),shown=()=>loupe()||exp();
+ const seals=[...box.querySelectorAll('.tlSt[data-key]')];assert(seals.length>15,'real chronology renders milestone, process, print and action seals');
+ for(const seal of seals){assert.doesNotMatch(seal.querySelector('svg').textContent,/Paul Konieczny|Signed by/,'regular chronology seal reserves its signer for hover');await exercise(seal,shown,'timeline '+seal.dataset.key,preview,'Paul Konieczny');}
+ const families=new Set(seals.map(s=>s.querySelector('svg').dataset.sealFamily));assert.equal(families.size,8,'real chronology uses all eight selected seal families');
+ const rail=box.querySelector('.tlStop.d .tlSeal');assert(rail);await exercise(rail,shown,'milestone rail',preview,'Paul Konieczny');
+ point('pointerover',rail.parentElement.querySelector('span'));await advance(2000);assert(!shown(),'a rail label cannot activate its seal');
+ point('pointerover',seals[0]);await advance(1100);assert(loupe());point('pointerout',seals[0],seals[1]);point('pointerover',seals[1],seals[0]);await advance(1000);assert(!shown(),'adjacent timeline seals earn a new delay');await advance(100);assert(loupe());point('pointerout',seals[1],outside);await advance(0);
+ seals[0].focus();assert(loupe(),'chronology keyboard focus stays readable');point('pointermove',outside);await advance(0);assert(!shown(),'focus cannot hold a mouse preview open');
+ const detail=box.querySelector('.tlBig');assert(detail);await exercise(detail,shown,'selected detail seal',preview,'Paul Konieczny');
+ for(const [i,seal]of [...box.querySelectorAll('.tlArw .sv')].entries())await exercise(seal,shown,'around-this-step seal '+i,preview,'Paul Konieczny');
+ const aroundLabel=box.querySelector('.tlArw b');point('pointerover',aroundLabel);await advance(2000);assert(!shown(),'around-step labels do not activate seals');
+ assert(timeline.focus({stage:'arrived'}));await advance(0);
+ const pathSeals=[...box.querySelectorAll('.tlPath2 .sv')];assert(pathSeals.length>3,'pinned step exposes its real path seal group');
+ for(const [i,seal]of pathSeals.entries())await exercise(seal,shown,'pinned-path seal '+i,seal.dataset.key?preview:null,seal.dataset.key?'Paul Konieczny':null);
+ await exercise(box.querySelector('.tlBig'),shown,'pinned detail seal',preview,'Paul Konieczny');
+ point('click',box.querySelector('.tlChip'));await advance(0);const legends=[...box.querySelectorAll('.tlLegend .sv')];assert.equal(legends.length,8,'legend consolidates the event actions into the eight selected families');
+ assert.equal(new Set(legends.map(s=>s.querySelector('svg').dataset.sealFamily)).size,8,'each selected family has a distinct legend example');
+ for(const [i,seal]of legends.entries())await exercise(seal,shown,'legend seal '+i,preview,'Not recorded');
+ legends[0].focus();assert(loupe(),'legend keyboard focus is accessible');legends[0].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));await advance(0);assert(!shown(),'Escape closes a legend preview');
+ // Redrawing the complete legend while its seal is hovered clears the old preview without reacquiring its replacement.
+ point('pointerover',legends[0]);await advance(1100);assert(loupe());point('click',box.querySelector('.tlChip'));await advance(0);assert(!shown(),'detail redraw dismisses a vanished legend seal');
+ // With little room above or below, the enlarged face remains in view beside the original.
+ const edgeSeal=box.querySelector('.tlSt[data-key]');
+ for(const [x,y,height]of [[8,20,768],[900,20,768],[410,150,300],[8,150,300],[900,150,300]]){
+  w.innerHeight=height;rectFor(edgeSeal,x,y);point('pointerover',edgeSeal);await advance(1100);assert(loupe(),'viewport edge still permits a timeline preview');
+  const [px,py]=preview().style.transform.match(/-?\d+(?:\.\d+)?(?=px)/g).map(Number),p={left:px,right:px+168,top:py,bottom:py+168},r=edgeSeal.getBoundingClientRect();
+  assert(p.right<=r.left || p.left>=r.right || p.bottom<=r.top || p.top>=r.bottom,'timeline preview never covers its original at a viewport edge');
+  assert(p.left>=8 && p.right<=w.innerWidth-8 && p.top>=8 && p.bottom<=height-8,'timeline preview remains wholly inside a '+height+'px viewport');
+  point('pointerout',edgeSeal,outside);await advance(0);assert(!shown(),'viewport-edge departure closes the timeline preview');
+ }
+ w.innerHeight=768;
  const overview=d.querySelector('#overview'),story=events.filter(e=>['arrived','placed','engraveApproved','laserDone','sorted'].includes(e.type));overview.innerHTML=T.nowStamps(story,{}).seal;let opened=null;
- T.explainOn(overview,()=>({events:story}),x=>opened=x);let seal=overview.querySelector('.tlNowSeal'),shown=()=>overview._tlExp.classList.contains('on');
- await exercise(seal,shown,'overview current seal');point('pointerover',seal);await advance(1100);assert(shown());point('pointerout',seal,overview._tlExp);await advance(0);assert(!shown(),'moving onto the enlarged card cannot keep the seal hover open');
- point('click',seal);assert(opened?.stage,'the original seal still opens its step on the Timeline');assert(!shown(),'clicking does not pin a floating hover');
- overview.innerHTML=T.nowStamps(story,{cancelled:{at,by:'Seth'}}).seal;seal=overview.querySelector('.tlNowSeal.cx');await exercise(seal,shown,'cancelled order seal');
- const recent=d.querySelector('#recent'),e=story[0];recent.innerHTML='<button class="tlMini" data-tl-ev="'+e.id+'"><span class="s">'+T.stampSvg(e,false)+'</span><span class="f">'+T.stampSvg(e,true)+'</span></button>';T.wireNow(recent,x=>opened=x);
- const mini=recent.querySelector('.tlMini'),zoom=()=>visible(recent.querySelector('.tlNowZoom'));await exercise(mini,zoom,'recent mini seal');
- mini.focus();assert(zoom(),'mini keyboard access remains');point('pointermove',outside);await advance(0);assert(!zoom(),'a focused mini seal does not stay open after mouse departure');
- point('pointerover',mini);await advance(900);mini.remove();await advance(2000);assert(!zoom(),'redrawing cannot resurrect a removed seal');
- point('pointerover',seals[0]);await advance(900);timeline.destroy();timeline=null;await advance(2000);assert(!d.querySelector('.tlUI'),'destroy cancels pending seal previews');
- console.log('PASS: '+seals.length+' timeline seal variants, rail, current/cancelled overview and recent mini seals share 1.1-second rest, cancellation, neighbour delay and strict original-seal departure; keyboard and Timeline navigation remain');
-}finally{timeline?.destroy();w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+ T.wireNow(overview,x=>opened=x);T.explainOn(overview,()=>({events:story}),x=>opened=x);
+ let seal=overview.querySelector('.tlNowSeal'),ovZoom=()=>visible(overview.querySelector('.tlNowZoom')),ovPreview=()=>ovZoom()?overview.querySelector('.tlNowZoom'):null,ovShown=()=>ovZoom()||overview._tlExp.classList.contains('on');
+ await exercise(seal,ovShown,'overview current seal',ovPreview,'Paul Konieczny');point('pointerover',seal);await advance(1100);assert(ovShown());point('pointerout',seal,overview._tlExp);await advance(0);assert(!ovShown(),'moving onto an enlarged card cannot keep hover open');
+ point('click',seal);assert(opened?.stage,'the original seal still opens its step on the Timeline');assert(!ovShown(),'clicking does not pin a floating overview hover');
+ overview.innerHTML=T.nowStamps(story,{cancelled:cancellation}).seal;T.wireNow(overview,x=>opened=x);seal=overview.querySelector('.tlNowSeal.cx');await exercise(seal,ovShown,'overview cancelled-order seal',ovPreview,'Seth Signed');
+ const recent=d.querySelector('#recent'),e=story[0];recent.innerHTML='<button class="tlMini" data-tl-ev="'+e.id+'"><span class="s">'+T.stampSvg(e,false)+'</span><span class="f">'+T.stampSvg(e,true,{hover:true})+'</span></button>';T.wireNow(recent,x=>opened=x);
+ const mini=recent.querySelector('.tlMini'),zoom=()=>visible(recent.querySelector('.tlNowZoom')),miniPreview=()=>zoom()?recent.querySelector('.tlNowZoom'):null;await exercise(mini,zoom,'legacy recent mini seal',miniPreview,'Paul Konieczny');
+ mini.focus();assert(zoom(),'mini keyboard access remains');point('pointermove',outside);await advance(0);assert(!zoom(),'a focused mini does not stay open after departure');
+ point('pointerover',mini);await advance(900);mini.remove();await advance(2000);assert(!zoom(),'redrawing cannot resurrect a removed mini seal');
+ cancelTimeline=T.mount(d.querySelector('#cancelled'),{orderId:'555',live:false});await advance(0);const cancelBox=d.querySelector('#cancelled .tlUI'),overlay=cancelBox.querySelector('.tlCxStamp');assert(overlay,'a cancelled order has its historical cancellation overlay');
+ const cxPreview=()=>visible(cancelBox.querySelector('.tlLoupe'))?cancelBox.querySelector('.tlLoupe'):null,cxShown=()=>!!cxPreview()||cancelBox.querySelector('.tlExp').classList.contains('on');await exercise(overlay,cxShown,'cancelled rail overlay',cxPreview,'Seth Signed');
+ point('pointerover',seals[0]);await advance(900);timeline.destroy();timeline=null;await advance(2000);assert(!d.querySelector('#timeline .tlUI'),'destroy cancels every pending preview');
+ console.log('PASS: '+seals.length+' chronology variants in 8 families, rail, detail, around/path, '+legends.length+' legend faces, current/cancelled overview, cancellation overlay and legacy mini; common 168 px preview, unobstructed edge placement, full saved signer, 1.1-second rest, strict departure/dismissal, redraw safety and keyboard/navigation access');
+}finally{timeline?.destroy();cancelTimeline?.destroy();w.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

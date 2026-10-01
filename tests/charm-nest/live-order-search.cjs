@@ -5,6 +5,7 @@ const O=require('../../charm-nest-orders.js');
 const between=(source,a,b,from=0)=>{const i=source.indexOf(a,from),j=source.indexOf(b,i);assert(i>=0&&j>i,`source boundaries: ${a}`);return source.slice(i,j);};
 const dom=new JSDOM('<input id="find"><input id="findPiece"><ol id="orders"></ol><div id="owSheetPanel"><div id="owSheetMatches"></div></div><div id="reviewView"></div>',{runScripts:'outside-only',pretendToBeVisual:true});
 const w=dom.window,d=w.document,noop=()=>{},esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+w.eval(fs.readFileSync(path.join(root,'charm-nest-activity.js'),'utf8'));
 const pieces=['3701200001','3712200002','3799900003','4812000004'].map((rid,i)=>({rid,id:'p'+i,poolId:rid+'_1_1',sku:i===3?'SKU-3701':'SKU-'+i,name:'Charm',p:{cxPt:i,cyPt:i}}));
 const ctx=new Proxy({},{get:(o,k)=>o[k]||noop,set:(o,k,v)=>(o[k]=v,true)}),halos=[];
 Object.assign(w,{O,CharmNestOrders:O,esc,byId:id=>d.getElementById(id),tip:noop,lightChips:noop,otherSheets:()=>[],fillTarget:()=>null,backFace:()=>false,focusSet:()=>null,withPiece:(c,x,fn)=>fn(),outlinePath:noop,markBack:noop,haloOf:x=>({id:x.id,r:1}),layHalo:(c,h)=>halos.push(h.id),plateX:x=>x,paintLanding:noop,paintGhost:noop,paintHand:noop,still:()=>true,Mo:()=>null,selectPiece:noop});

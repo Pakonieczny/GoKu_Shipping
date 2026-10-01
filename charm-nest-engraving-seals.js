@@ -16,12 +16,13 @@
   function keep(job){const seals=list(job);job.engravingSeals=seals;if(job.row){job.row.engrave ||= {};job.row.engrave.seals=seals;}return seals;}
   function fromEvents(events,row){
     const rid=String(row.order?.receiptId || ''),tx=String(row.line?.transactionId || ''),copies=new Set(row.poolIds || []);
-    return merge({seals:(events || []).filter(e=>e.type==='engraveApproved' && (!e.orderId || String(e.orderId)===rid) && (e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId))).map(e=>({id:e.id,how:'engraveApproved',at:+e.at || 0,by:e.by || ''}))});
+    return merge({seals:(events || []).filter(e=>(e.type==='engraveApproved' || e.type==='engraveChanged' && e.data?.how==='skipped') && (!e.orderId || String(e.orderId)===rid) && (e.lineKey===row.key || tx && String(e.transactionId)===tx || copies.has(e.data?.poolId))).map(e=>({id:e.id,how:e.type==='engraveApproved'?'engraveApproved':'engravePlain',at:+(e.type==='engraveChanged'?e.data?.decidedAt ?? e.at:e.at) || 0,by:e.by || ''}))});
   }
   function add(job,how,by,at=Date.now()){keep(job);const seal={id:`${how}:${at}:${String(by).trim()}`,how,at,by};job.engravingSeals=merge(job,{seals:[seal]});if(job.row){job.row.engrave ||= {};job.row.engrave.seals=job.engravingSeals;}return seal;}
-  function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,56,'engravingSeal')).join('')}</span>`:'';}
+  const regularSize=()=>root?.Seal?.BASE_SIZE || 84;
+  function html(job){const seals=list(job);return seals.length && root?.Seal?`<span class="sealRow engravingSeals" data-seal-group data-seal-count="${seals.length}" role="group" aria-label="Engraving approval history">${seals.map(s=>root.Seal.html(s,regularSize(),'engravingSeal')).join('')}</span>`:'';}
   const esc=s=>String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.at,approvedBy:e.by};}
+  function record(e){return {key:e.job?.key,engravingSeals:merge(e.job,e.job?.row?.engrave,...(e.job?.backs || []),e.job?.editOriginal,e.back,e.saved),state:e.kind==='approved'?'approved':e.kind==='skipped'?'skipped':e.job?.state,approvedAt:e.kind==='approved'?e.at:0,approvedBy:e.kind==='approved'?e.by:'',decidedAt:e.kind==='skipped'?e.at:0,decidedBy:e.kind==='skipped'?e.by:''};}
   /** Both sheet inspectors use exactly the same back preview, words, approval and historical seals. */
   function panel(e={kind:'none'}){
     const states={approve:'To approve',words:'Words to confirm',preparing:'Being prepared',approved:'Approved',skipped:'Cut plain'},kind=e.kind || 'none';
@@ -29,7 +30,7 @@
     const all=list(record(e)),latest=kind==='approved'?all.filter(s=>s.how==='engraveApproved').at(-1):null;
     const history=html({seals:all.filter(s=>s!==latest)});
     const approval=kind==='approve' && e.job || kind==='approved';
-    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${latest && root?.Seal?`<span class="sealRow egButtonSeal">${root.Seal.html(latest,56,'engravingSeal')}</span>`:''}</span>`:'';
+    const approve=approval?`<span class="egApproveWrap"><button type="button" class="btn sage sm egApproveButton"${kind==='approved'?' disabled aria-label="Back engraving approved"':' data-e="approve"'}>Approved</button>${latest && root?.Seal?`<span class="sealRow egButtonSeal" data-seal-group data-seal-count="1">${root.Seal.html(latest,regularSize(),'engravingSeal')}</span>`:''}</span>`:'';
     const open=kind==='none' || kind==='skipped'?'':`<button type="button" class="btn ghost sm" data-e="engrave">${kind==='approve'?'Adjust in Engrave':kind==='approved'?'View in Engrave':kind==='words'?'Confirm the words in Engrave':'Open in Engrave'} <span aria-hidden="true">→</span></button>`;
     const preview=['approve','approved'].includes(kind)?'<div class="pv" data-engraving-preview></div>':'';
     return `<span class="fLabel">Back engraving</span><div class="swEng" data-state="${esc(kind)}"><div class="top"><b>${title}</b>${states[kind]?`<span>${states[kind]}</span>`:''}</div>${preview}${e.text?`<div class="words">${esc(e.text)}</div>`:''}${e.note?`<div class="by">${esc(e.note)}</div>`:''}<div class="acts">${approve}${open}</div>${history?`<div class="egHistory">${history}</div>`:''}</div>`;
@@ -48,8 +49,10 @@
     if(!button || !root?.Seal)return;
     let wrap=button.closest('.egApproveWrap');if(!wrap){wrap=root.document.createElement('span');wrap.className='egApproveWrap';button.before(wrap);wrap.append(button);}
     let row=wrap.querySelector('.sealRow');if(!row){row=root.document.createElement('span');row.className='sealRow egButtonSeal';wrap.append(row);}
-    row.innerHTML=root.Seal.html(stamp,56,'engravingSeal pending');button.disabled=true;
-    try{await root.Seal.press(row.firstElementChild);}finally{button.disabled=false;}
+    row.dataset.sealGroup='';row.dataset.sealCount='1';
+    const wasDisabled=button.disabled,wasBusy=button.getAttribute('aria-busy');
+    row.innerHTML=root.Seal.html(stamp,regularSize(),'engravingSeal pending');button.disabled=true;button.textContent='Approved';button.setAttribute('aria-busy','true');
+    try{await root.Seal.press(row.firstElementChild);}finally{button.disabled=wasDisabled;if(wasBusy==null)button.removeAttribute('aria-busy');else button.setAttribute('aria-busy',wasBusy);}
   }
   return {merge,list,keep,add,html,press,record,panel,wirePanel,fromEvents};
 });

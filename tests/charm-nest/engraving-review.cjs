@@ -1,7 +1,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const E=require('../../charm-nest-engraving-seals.js');
 const src=fs.readFileSync('charm-nest-bridge.js','utf8');
 let result, sent;const classifiedJobs=new Map();
-const ctx={render(){},S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},items:()=>classifiedJobs,ensureJob:row=>{row.job ||= {key:row,row,copies:['copy']};classifiedJobs.set(row,row.job);return row.job;},agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={needed:true,approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why}};
+const ctx={CNEngravingSeals:E,render(){},S:{settings:{engraveConfidence:.65}},Master:{entryFor:()=>({engravable:false})},items:()=>classifiedJobs,ensureJob:row=>{row.job ||= {key:row,row,copies:['copy']};classifiedJobs.set(row,row.job);return row.job;},agentCall:async(mode,payload)=>{sent=payload;return result},agent(){},setReady:async j=>{j.state='ready';j.row.engrave={...j.row.engrave,needed:true,state:'ready',approved:false};return j},toWords:(j,why)=>{j.state='words';j.reason=why;return j},setNone:(j,why)=>{j.state='none';j.reason=why;j.row.engrave={...j.row.engrave,needed:false,state:'none',approved:true};return j}};
 vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('  const classifyTasks ='),src.indexOf('  function setNone(job')),ctx);
 const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandidate:true,designSku:'SHEEP3',personalization:['S'],size:'M'}});
 (async()=>{
@@ -16,10 +17,14 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  ctx.S.settings.engraveConfidence=.65;j=await ctx.classify(row());assert.equal(j.state,'words','a reading below the confidence set is checked');
  result={engrave:true,text:'Anna Ben',source:'personalization',confidence:.9,questions:[]};r=row();r.spec.personalization=['Anna','Ben'];j=await ctx.classify(r);assert.equal(j.text,'Anna\nBen','typed line breaks preserved');
  // words that changed on Etsy are read afresh: the line split kept from the old words must not bring them back at the fit
- r=row();r.spec.personalization=['ROSE'];r.job={key:r,row:r,copies:['copy'],text:'LILY',lines:['LILY'],lineInput:['LILY'],lineMode:'preserve',wantSize:9,decision:{by:'Tester',text:'LILY'}};
+ r=row();r.spec.personalization=['ROSE'];r.engrave={state:'written',seals:[{how:'engraveApproved',at:500,by:'Seth'}]};r.job={key:r,row:r,copies:['copy'],state:'written',approvedAt:1000,approvedBy:'Paul',text:'LILY',lines:['LILY'],lineInput:['LILY'],lineMode:'preserve',wantSize:9,decision:{by:'Tester',text:'LILY'}};
  result={engrave:true,text:'ROSE',source:'personalization',confidence:.9,questions:[]};j=await ctx.classify(r);
  assert.equal(j.lineInput,null,'the old line split is gone');assert.equal(j.lineMode,'auto');assert.equal(j.wantSize,null);assert.equal(j.decision,null);
  j.lineInput ||= j.lines.slice();assert.deepEqual([...j.lineInput],['ROSE'],'so the fit starts from the new words');
+ const signatures=x=>E.list(x).map(s=>[s.how,s.at,s.by]);
+ assert.deepEqual(signatures(j),[['engraveApproved',500,'Seth'],['engraveApproved',1000,'Paul']],'reclassification materializes the exact legacy signer/time before resetting the row');
+ assert.deepEqual(signatures(r.engrave),signatures(j),'the proposed new words retain both historical seals on the order');assert.equal(r.engrave.approved,false,'historical approvals do not approve new words');
+ r.spec.engraveCandidate=false;j=await ctx.classify(r);assert.equal(j.state,'none');assert.deepEqual(signatures(r.engrave),signatures(j),'deciding no engraving keeps the original seals without inventing another decision');assert.equal(signatures(j).length,2);
  const jobs=[{state:'words',row:{},lines:['S'],copies:['1'],questions:['The design is not engravable']},{state:'words',row:{},lines:['?'],copies:['2'],missing:['?']},{state:'written',row:{},lines:['Saved'],copies:['3']},{state:'words',row:{},lines:[],copies:['4']}];
  let fits=0,ready=0,release;const pause=new Promise(r=>release=r);
  jobs.forEach((j,i)=>j.key=i);
@@ -36,5 +41,5 @@ const row=()=>({order:{receiptId:'test'},line:{title:'Sheep'},spec:{engraveCandi
  // Exercise the actual server prompt builder without credentials or a model call.
  const agentSource=fs.readFileSync('netlify/functions/_charmNestAgent.js','utf8');const server={module:{exports:{}},process:{env:{}},require:n=>n==='./_charmNestAuth'?{str:(v,n)=>String(v||'').slice(0,n),num:v=>+v||0}:{}};vm.createContext(server);vm.runInContext(agentSource,server);
  const req=server.module.exports.buildRequest('engraveIntent',{engravable:false,personalization:['S']});assert(req.content[0].text.includes('Design can take engraving: yes'));assert(!req.content[0].text.includes('NO —'));assert(req.system.includes('valid initial'));assert(req.system.includes('Every design'));
- console.log('Engraving review OK: legacy eligibility ignored, low-confidence/offline previews, typed lines, no-engraving decisions, single recovery pass and server prompt');
+ console.log('Engraving review OK: legacy eligibility ignored, low-confidence/offline previews, typed lines, historical signatures through reclassification/no-engraving, single recovery pass and server prompt');
 })().catch(e=>{console.error(e);process.exitCode=1});

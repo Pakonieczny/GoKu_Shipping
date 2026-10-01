@@ -497,7 +497,7 @@
   function processHtml(r,owner,extra=''){
     if(!window.Seal)return '';
     const st=CharmNestReadiness.processStamps(r),scope=owner.startsWith('set:')?'set':'sheet';
-    return st.length?`<span class="sealRow processSealRow ${extra}" role="group" aria-label="${st.length} historical process seals">${st.map(s=>Seal.html({...s,scope,owner},56,'sheetProcessSeal '+(s.how==='laserDone'?'cut':'ready'))).join('')}</span>`:'';
+    return st.length?`<span class="sealRow processSealRow ${extra}" data-seal-group data-seal-count="${st.length}" role="group" aria-label="${st.length} historical process seals">${st.map(s=>Seal.html({...s,scope,owner},Seal.BASE_SIZE,'sheetProcessSeal '+(s.how==='laserDone'?'cut':'ready'))).join('')}</span>`:'';
   }
   function processSeals(host,r,owner,extra=''){
     if(!window.Seal || !host)return;
@@ -508,13 +508,13 @@
     for(const stamp of st){
       let seal=[...row.children].find(s=>s.dataset.processSeal===stamp.id);
       const key=owner+':'+stamp.id,fresh=L.pendingSeals.has(key);
-      if(!seal){row.insertAdjacentHTML('beforeend',Seal.html({...stamp,scope:owner.startsWith('set:')?'set':'sheet'},56,'sheetProcessSeal '+(stamp.how==='laserDone'?'cut':'ready')+(fresh?' pending':'')));seal=row.lastElementChild;seal.dataset.sealOwner=owner;}
+      if(!seal){row.insertAdjacentHTML('beforeend',Seal.html({...stamp,scope:owner.startsWith('set:')?'set':'sheet'},Seal.BASE_SIZE,'sheetProcessSeal '+(stamp.how==='laserDone'?'cut':'ready')+(fresh?' pending':'')));seal=row.lastElementChild;seal.dataset.sealOwner=owner;}
       if(fresh){
         L.pendingSeals.delete(key);
         const p=Seal.press(seal).catch(()=>seal.classList.remove('pending'));L.presses.add(p);p.finally(()=>L.presses.delete(p));
       }
     }
-    if(host.classList.contains('libCard'))host.style.setProperty('--process-extra',Math.max(0,row.offsetHeight-56)+'px');
+    Seal.fitGroups(row);
   }
   function cards(root, mode) {
     if (!root) return;

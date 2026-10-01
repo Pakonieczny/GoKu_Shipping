@@ -1,6 +1,6 @@
 // Both real inspector handlers share the engraving preview and immutable approval record.
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<div id="owSheetPanel"></div><section id="sheetEng"></section>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+const dom=new JSDOM('<div id="owSheetPanel"></div><section id="sheetEng"></section>',{runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window,d=w.document;
 w.matchMedia=()=>({matches:true});w.eval(fs.readFileSync('charm-nest-motion.js','utf8'));w.eval(fs.readFileSync('charm-nest-engraving-seals.js','utf8'));
 const E=w.CNEngravingSeals,old={how:'engraveApproved',at:1000,by:'Paul'},latest={how:'engraveApproved',at:2000,by:'Seth'};
 let previews=0,approvedButton,finish,approval;

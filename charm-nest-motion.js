@@ -190,6 +190,7 @@
    *  what left is seen going (to where its action said, else it fades), what stayed glides into place, and what is new
    *  opens its room, or flies in from where its action said it came from. */
   function reconcile(host, nodes, opts = {}) {
+    if(Seal.defer(host,()=>reconcile(host,nodes,opts)))return;
     const on = opts.animate !== false && !reduced() && host.isConnected && host.getClientRects().length > 0;
     const before = new Map(), ctr = on ? containerOf(host, true) : null, cw = ctr ? innerWidthOf(ctr) : null;
     // (a carried row the list holds where it stood: not glided, not copied as it leaves, and not new either)
@@ -282,12 +283,116 @@
 
   /* ════ Seals ════ */
   const Seal = (() => {
-    const INK = { print: "#22408f", button: "#19663f", laserReady: "#22408f", laserDone: "#19663f", engraveApproved:"#19663f", engravePlain:"#6c6940" };
+    const BASE_SIZE = 84, HOVER_SIZE = 168, META_INK = '#12294c';
+    const INK = { print: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
+    // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
+    const FAMILY = {
+      received:{name:'Received',ink:'#315e93',d:'M60 4A56 56 0 1 1 59.99 4Z'},
+      prepared:{name:'Prepared',ink:'#65737f',d:'M18 6H102L114 18V102L102 114H18L6 102V18Z'},
+      engraving:{name:'Back Engraving',ink:'#296c58',d:'M4 60A56 48 0 1 1 116 60A56 48 0 1 1 4 60Z'},
+      laser:{name:'Laser Cutting',ink:'#98721f',d:'M31 7H89L116 60L89 113H31L4 60Z'},
+      finishing:{name:'Finishing',ink:'#276a74',d:'M60 5L112 20V73Q112 98 60 115Q8 98 8 73V20Z'},
+      fulfilment:{name:'Fulfilment',ink:'#77518a',d:'M60 8C77-4 85 15 88 23C111 20 121 39 108 60C121 81 111 100 88 97C85 105 77 124 60 112C43 124 35 105 32 97C9 100-1 81 12 60C-1 39 9 20 32 23C35 15 43-4 60 8Z'},
+      exceptions:{name:'Exceptions',ink:'#9f483d',d:'M36 6H84L114 36V84L84 114H36L6 84V36Z'},
+      cancelled:{name:'Cancelled Orders',ink:'#982f48',d:'M27 6H93L114 27V40Q95 60 114 80V93L93 114H27L6 93V80Q25 60 6 40V27Z'}
+    };
+    const SYMBOL = {
+      received:'<path d="M8 2h9l4 4v11H8zM17 2v5h4M11 9h7M11 12h7M3 15h5l2 4h8l2-4h4v8H3zM14 14v4m-2-2 2 2 2-2"/>',
+      prepared:'<path d="M2 3h20v18H2z"/><circle cx="8" cy="10" r="3"/><path d="M8 6V4M14 7c0-3 3-3 3 0 3-3 5 0 2 3l-2 2zM5 17h5m5-1h5M19 2v4m-2-2h4"/>',
+      engraving:'<circle cx="10" cy="14" r="7"/><circle cx="10" cy="4" r="2"/><path d="M19 2l4 4-9 9-4 2 2-4zM16 5l4 4M6 12h6M6 15h5M18 19a8 8 0 0 1-5 4m2-3-2 3 4 .5"/>',
+      laser:'<path d="M8 1h8v3H8zM9 4h6v3H9zM10 7h4v3h-4zM12 10v8M4 18h16l3 5H1zM8 14l2 2m6-2-2 2M12 20v2m-5-3 3-1m7 1-3-1"/>',
+      laserReady:'<path d="M8 1h8v3H8zM9 4h6v3H9zM10 7h4v3h-4zM4 18h16l3 5H1zM13 13h9m-3-3 3 3-3 3"/>',
+      finishing:'<circle cx="8" cy="15" r="6"/><circle cx="15" cy="16" r="6"/><path d="M5 5h6l-3 4zM17 2l5 4-6 7-3 1 1-3zM19 12l2 2m-3 0v3"/>',
+      fulfilment:'<path d="M2 7l9-5 8 5v11l-8 5-9-5zM2 7l9 5 8-5M11 12v11M7 4l8 5M16 14h8m-3-3 3 3-3 3"/>',
+      exceptions:'<circle cx="10" cy="10" r="8"/><path d="M7 6v8m6-8v8M18 12l6 11H12zM18 16v3m0 2v.2"/>',
+      cancelled:'<path d="M5 1h11l4 4v18H5zM16 1v5h4M8 7h8M8 10h7M8 13l9 8m0-8-9 8"/>',
+      qr:'<path d="M2 2h8v8H2zM14 2h8v8h-8zM2 14h8v8H2zM15 14h3v3h-3zM20 15h2v6h-2zM14 20h3v2h-3zM5 5h2v2H5zM17 5h2v2h-2zM5 17h2v2H5z"/>',
+      plain:'<circle cx="9" cy="15" r="7"/><circle cx="9" cy="5" r="2"/><path d="M15 7h9m-3-3 3 3-3 3"/>',
+      complete:'<path d="M2 7l9-5 8 5v11l-8 5-9-5zM2 7l9 5 8-5M11 12v11M14 16l3 3 6-7"/>',
+      set:'<path d="M2 5l10-4 10 4-10 4zM2 10l10 4 10-4M2 15l10 4 10-4M2 20l10 4 10-4M15 12l3 3 5-6"/>'
+    };
+    const familyOf = st => st.how==='button'?'fulfilment':st.how==='laserReady' || st.how==='laserDone'?'laser':st.how==='engraveApproved' || st.how==='engravePlain'?'engraving':'prepared';
+    function face(model, opts={}) {
+      model = Object.assign({}, model);
+      model.family=FAMILY[model.family]?model.family:'received';
+      opts = Object.assign({}, opts, {ghost:!!(opts.ghost || model.ghost), signer:!!opts.signer && !model.status});
+      if(opts.ghost)model.ghost=true;
+      if (!model.date && +model.at > 0) model.date = dateOf(model.at);
+      if (!model.time && +model.at > 0) model.time = timeOf(model.at);
+      const f=FAMILY[model.family] || FAMILY.received, ink=opts.ghost?'#92968f':f.ink;
+      const action=String(model.action || f.name).toUpperCase(), words=action.split(/\s+/), lines=action==='BACK ENGRAVING'?['BACK','ENGRAVING']:action==='ORDER RECEIVED'?['ORDER','RECEIVED']:action.length>14 && words.length>1?[words.slice(0,Math.ceil(words.length/2)).join(' '),words.slice(Math.ceil(words.length/2)).join(' ')]:[action];
+      const serifFree='system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif';
+      const txt=(value,y,size,weight=700,color=ink)=>`<text x="60" y="${y}" text-anchor="middle" fill="${color}" stroke="none" font-family="${serifFree}" font-size="${size}" font-weight="${weight}" letter-spacing="0">${esc(value)}</text>`;
+      const signer=String(model.by || '').trim() || 'Not recorded', sigLines=signer.match(/.{1,21}(?:\s|$)|\S+/g)?.map(s=>s.trim()) || [signer];
+      const H=opts.signer?137+sigLines.length*12:120;
+      let trim='';
+      if(model.family==='received' || model.family==='fulfilment')trim=`<path d="${f.d}" transform="translate(60 60) scale(.86) translate(-60 -60)" fill="none" stroke-width=".9" stroke-dasharray=".2 2.7" stroke-linecap="round"/>`;
+      if(model.family==='prepared')trim='<path d="M15 17h8m-4-4v8M97 17h8m-4-4v8M15 103h8m-4-4v8M97 103h8m-4-4v8" fill="none" stroke-width=".8"/>';
+      if(model.family==='engraving')trim='<path d="M16 37l11-11 3 8-11 6zM104 37L93 26l-3 8 11 6zM16 83l11 11 3-8-11-6zM104 83L93 94l-3-8 11-6z" fill="none" stroke-width="1.1"/>';
+      if(model.family==='laser')trim='<g fill="none" stroke-width="1.2"><circle cx="30" cy="22" r="2"/><circle cx="90" cy="22" r="2"/><circle cx="20" cy="75" r="2"/><circle cx="100" cy="75" r="2"/></g>';
+      const symbol=model.path?`<path d="${esc(model.path)}"/>`:SYMBOL[model.icon || model.family] || SYMBOL[model.family] || SYMBOL.received;
+      return `<svg viewBox="0 0 120 ${H}" aria-hidden="true" focusable="false" data-seal-family="${esc(model.family || 'received')}" data-seal-model="${esc(JSON.stringify(model))}"><g fill="${ink}" stroke="${ink}" stroke-linecap="round" stroke-linejoin="round"${opts.ghost?' opacity=".55"':''}>`+
+        `<path data-seal-outline d="${f.d}" fill="rgba(255,254,251,.96)" stroke-width="2.7"${opts.ghost?' stroke-dasharray="3 3"':''}/><path d="${f.d}" transform="translate(60 60) scale(.93) translate(-60 -60)" fill="none" stroke-width=".9"/>${trim}`+
+        `<g transform="translate(43 15) scale(1.4)" fill="none" stroke-width="1.45">${symbol}</g>`+
+        lines.map((line,i)=>txt(line,lines.length===2?56+i*14:69,line.length>14?10.8:lines.length===2?13.4:14.5)).join('')+
+        (opts.ghost || model.status?'':txt(model.date || 'NOT RECORDED',87,model.date?12.6:10.5,700,META_INK)+txt(model.time || '—',101,13,700,META_INK))+
+        (opts.signer?'<path d="M32 124h56" fill="none" stroke-width=".7" opacity=".5"/>'+txt('Signed by',135,8,500,META_INK)+sigLines.map((s,i)=>txt(s,147+i*12,10,600,META_INK)).join(''):'')+'</g></svg>';
+    }
+    function enlarge(g) {try{return face(JSON.parse(g.getAttribute('data-seal-model')),{signer:true});}catch(_){return null;}}
+    // A rounded wooden contact, with a faint cushioned paper tail. Generated locally: no network/audio-file delay.
+    const Sound=(()=>{
+      let context=null, buffer=null, contacts=0, lastContact=0;
+      const volume=.6;
+      const sync=()=>{doc.documentElement.dataset.stampAudio=context?.state || 'not-created';doc.documentElement.dataset.stampAudioReady=String(!!buffer);doc.documentElement.dataset.stampContacts=String(contacts);};
+      function samples(rate=44100) {
+        const a=new Float32Array(Math.ceil(rate*.32));let seed=928371,lp=0,paper=0,peak=0;
+        const alpha=1-Math.exp(-2*Math.PI*1100/rate);
+        for(let i=0;i<a.length;i++){
+          const t=i/rate;seed=(Math.imul(seed,1664525)+1013904223)>>>0;const n=seed/2147483648-1;
+          lp+=alpha*(n-lp);paper+=(1-Math.exp(-2*Math.PI*550/rate))*(n-paper);
+          const onset=1-Math.exp(-t/.0018),body=.46*Math.sin(2*Math.PI*225*t)*Math.exp(-t/.040)+.16*Math.sin(2*Math.PI*390*t)*Math.exp(-t/.027)+.05*Math.sin(2*Math.PI*780*t)*Math.exp(-t/.016);
+          const v=onset*(body+.38*lp*Math.exp(-t/.028)+.05*paper*Math.exp(-t/.074))*Math.min(1,(.32-t)/.02);
+          a[i]=v;peak=Math.max(peak,Math.abs(v));
+        }
+        const gain=.08/(peak || 1);for(let i=0;i<a.length;i++)a[i]*=gain;
+        return a;
+      }
+      function unlock() {
+        try {
+          const C=root.AudioContext || root.webkitAudioContext;if(!C)return Promise.resolve(false);
+          if(!context || context.state==='closed'){context=new C({latencyHint:'interactive'});buffer=null;context.onstatechange=sync;}
+          if(!buffer){const a=samples(context.sampleRate),ready=context.createBuffer(1,a.length,context.sampleRate);ready.copyToChannel(a,0);buffer=ready;}
+          const resumed=context.state==='running'?Promise.resolve():context.resume();
+          return Promise.resolve(resumed).then(()=>{sync();return context.state==='running';},()=>{sync();return false;});
+        }catch(_){sync();return Promise.resolve(false);}
+      }
+      function play() {
+        if(doc.visibilityState==='hidden' || !context || context.state!=='running' || !buffer)return false;
+        let source, gain;
+        try {
+          source=context.createBufferSource();gain=context.createGain();source.buffer=buffer;gain.gain.value=volume;
+          source.connect(gain);gain.connect(context.destination);source.onended=()=>{source.disconnect();gain.disconnect();};source.start();contacts++;lastContact=Date.now();sync();return true;
+        }catch(_){try{source?.disconnect();gain?.disconnect();}catch(__){}return false;}
+      }
+      // These trusted gestures unlock before the async approval/export and 560ms descent, including a first-ever approval.
+      for(const type of ['pointerdown','click','keydown','touchend'])doc.addEventListener(type,e=>{if(e.isTrusted)unlock();},{capture:true,passive:true});
+      sync();
+      return {unlock,play,samples,volume,state:()=>({state:context?.state || 'not-created',contacts,lastContact,volume})};
+    })();
     let uid = 0, stamping=0, pressChain=Promise.resolve();
     const pendingDraws=new Map();
+    const idleWaiters=new Set();
     const busy=()=>stamping>0;
+    async function whenIdle(){while(busy())await new Promise(resolve=>idleWaiters.add(resolve));}
     function defer(key,fn){if(!busy())return false;pendingDraws.set(key,fn);return true;}
-    function releaseDraws(){if(busy())return;const work=[...pendingDraws.values()];pendingDraws.clear();requestAnimationFrame(()=>{for(const fn of work){try{fn();}catch(e){console.error('After stamping',e);}}});}
+    function releaseDraws(){
+      if(busy())return;
+      requestAnimationFrame(()=>{
+        if(busy())return;
+        const work=[...pendingDraws.values()];pendingDraws.clear();
+        for(const fn of work){try{fn();}catch(e){console.error('After stamping',e);}}
+      });
+    }
     // A second click, shortcut or pending redraw must never dismiss the surface under the stamp.
     for(const type of ['click','keydown'])doc.addEventListener(type,e=>{if(busy()){e.preventDefault();e.stopImmediatePropagation();}},true);
     const hash = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
@@ -305,24 +410,6 @@
       const counted = +rec.prints || 0; if (counted > n) { let k = counted - n; for (const s of st) if (s.how !== "button") s.n += k; }
       return st;
     }
-    const pt = (r, a) => [60 + r * Math.cos(a * Math.PI / 180), 60 + r * Math.sin(a * Math.PI / 180)];
-    function arc(r, a0, a1, sweep) {
-      const [x0, y0] = pt(r, a0), [x1, y1] = pt(r, a1), span = sweep ? (a1 - a0 + 360) % 360 : (a0 - a1 + 360) % 360;
-      return `M${x0.toFixed(2)} ${y0.toFixed(2)}A${r} ${r} 0 ${span > 180 ? 1 : 0} ${sweep} ${x1.toFixed(2)} ${y1.toFixed(2)}`;
-    }
-    function star(a, r, s) {
-      const [cx, cy] = pt(r, a); let d = "";
-      for (let i = 0; i < 10; i++) { const rr = i % 2 ? s * .42 : s, t = (i * 36 - 90) * Math.PI / 180; d += (i ? "L" : "M") + (cx + rr * Math.cos(t)).toFixed(2) + " " + (cy + rr * Math.sin(t)).toFixed(2); }
-      return `<path d="${d}Z" stroke="none"/>`;
-    }
-    function scallops(n, rv, rc) {
-      let d = ""; const step = 360 / n;
-      for (let i = 0; i < n; i++) { const a0 = i * step, am = a0 + step / 2, a1 = a0 + step, [x0, y0] = pt(rv, a0), [xm, ym] = pt(rc, am), [x1, y1] = pt(rv, a1); d += (i ? "" : `M${x0.toFixed(2)} ${y0.toFixed(2)}`) + `Q${xm.toFixed(2)} ${ym.toFixed(2)} ${x1.toFixed(2)} ${y1.toFixed(2)}`; }
-      return `<path d="${d}Z" stroke-width="2.4"/>`;
-    }
-    // a small QR mark: three finder squares and a few modules
-    const qr = `<g stroke="none"><path d="M51 22h7v7h-7zM52.4 23.4v4.2h4.2v-4.2zM62 22h7v7h-7zM63.4 23.4v4.2h4.2v-4.2zM51 33h7v7h-7zM52.4 34.4v4.2h4.2v-4.2z" fill-rule="evenodd"/><rect x="53.6" y="24.6" width="1.8" height="1.8"/><rect x="64.6" y="24.6" width="1.8" height="1.8"/><rect x="53.6" y="35.6" width="1.8" height="1.8"/><path d="M60 31h2v2h-2zM63 33h2v2h-2zM66 31h3v2h-3zM61 36h2v4h-2zM64 37h2v3h-2zM67 35h2v2h-2zM67 38h2v2h-2z"/></g>`;
-    const check = `<path d="M51.5 31.5l5.2 5.4 11.8-12.4" fill="none" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>`;
     const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.toLocaleString("en-US",{timeZone:"America/Toronto",day:"2-digit"})).padStart(2, "0")} ${d.toLocaleString("en-US", { timeZone:"America/Toronto", month: "short" }).toUpperCase()} ${d.toLocaleString("en-US",{timeZone:"America/Toronto",year:"numeric"})}`; };
     const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { timeZone:"America/Toronto", hour: "numeric", minute: "2-digit" });
     const engravingOf=st=>st.how==='engraveApproved' || st.how==='engravePlain';
@@ -331,40 +418,15 @@
     const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
     const whoOf = st => String(st.by || "").trim() || (processOf(st) ? "Not recorded" : "Sorting station");
-    /** One seal as SVG: its ring words, and the date, time and name in the middle where they read best. */
-    function svg(st) {
-      const k = kindOf(st), ink = INK[k], id = "sl" + (++uid), seed = (hash(st.at + "|" + st.by) % 997) + 1;
-      // the name, as big as the middle allows: a long one is shortened to the first name and an initial, then set narrower
-      let nm = whoOf(st).toUpperCase().replace(/\s+/g, " ");
-      if (nm.length > 13) { const w = nm.split(" "); nm = w.length > 1 ? `${w[0]} ${w[w.length - 1][0]}.` : nm; }
-      if (nm.length > 16) nm = nm.slice(0, 15) + "…";
-      const nfs = Math.min(9.4, (64 / Math.max(1, nm.length) - .5) / .68), fit = nfs < 7.4 ? ` textLength="64" lengthAdjust="spacingAndGlyphs"` : "";
-      const process=processOf(st), scope=st.scope==='set'?'SET':'SHEET';
-      const top = engravingOf(st) ? (k==='engravePlain'?'ENGRAVING WAIVED':'ENGRAVING APPROVED') : k === 'laserReady' ? 'LASER READY' : k === 'laserDone' ? `${scope} COMPLETED` : k === "button" ? "ORDER COMPLETED" : "QR LABEL PRINTED";
-      const foot = engravingOf(st) ? (k==='engravePlain'?'CUT PLAIN':'PLACEMENT VERIFIED') : process ? (k==='laserReady'?'READY FOR CUTTING':'LASER CUTTING DONE') : k === "button" ? "NO LABEL PRINTED" : `PRINT Nº ${st.n || 1}`;
-      const edge = engravingOf(st) ? `<circle cx="60" cy="60" r="55" stroke-width="2.4"/><circle cx="60" cy="60" r="51.6" stroke-width="1"/>`+Array.from({length:36},(_,i)=>{const a=pt(52.5,i*10),b=pt(54.7,i*10);return `<path d="M${a.join(" ")}L${b.join(" ")}" stroke-width=".9"/>`;}).join("") : green(k) ? scallops(30, 54.2, 58.4) + `<circle cx="60" cy="60" r="51.6" stroke-width="1"/>` : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
-      return `<svg viewBox="0 0 120 120" aria-hidden="true" focusable="false"><defs>` +
-        `<filter id="${id}f" x="-6%" y="-6%" width="112%" height="112%" color-interpolation-filters="sRGB">` +
-        `<feTurbulence type="fractalNoise" baseFrequency=".05" numOctaves="2" seed="${seed}" result="lo"/>` +
-        `<feDisplacementMap in="SourceGraphic" in2="lo" scale="1.8" xChannelSelector="R" yChannelSelector="G" result="rough"/>` +
-        `<feTurbulence type="fractalNoise" baseFrequency=".95" numOctaves="1" seed="${seed + 11}" result="hi"/>` +
-        `<feColorMatrix in="hi" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3.6 0 0 0 -.72" result="holes"/>` +
-        `<feComposite in="rough" in2="holes" operator="in" result="inked"/>` +
-        `<feColorMatrix in="lo" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.7 0 0 0 .12" result="press"/>` +
-        `<feComposite in="inked" in2="press" operator="in"/></filter>` +
-        `<path id="${id}t" d="${arc(44.2, 158, 22, 1)}"/><path id="${id}b" d="${arc(50.6, 143, 37, 0)}"/></defs>` +
-        `<g filter="url(#${id}f)" fill="${ink}" stroke="${ink}">` +
-        `<g fill="none">${edge}<circle cx="60" cy="60" r="41.4" stroke-width="1.3"/></g>` +
-        `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="8.6" font-weight="800" letter-spacing="1.25"><textPath href="#${id}t" startOffset="50%" text-anchor="middle">${esc(top)}</textPath></text>` +
-        `<text stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="7" font-weight="800" letter-spacing="1.1"><textPath href="#${id}b" startOffset="50%" text-anchor="middle">${esc(foot)}</textPath></text>` +
-        star(150, 47.4, 2.6) + star(30, 47.4, 2.6) +
-        (engravingOf(st) ? '<g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M48 38l6-14 6 14m-10-4h8M68 23l4 4-10 10-5 2 2-5zM63 38h10"/></g>' : green(k) ? check : k==='laserReady' ? '<path d="M54 24h12l-3 8h-6zM60 34v4m-13 2h26" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' : qr) +
-        `<path d="M25 44.5h70M22 72.5h76" stroke-width="1" fill="none"/>` +
-        `<text x="60" y="56.4" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="10.4" font-weight="800">${esc(process && !st.at?'NOT RECORDED':dateOf(st.at))}</text>` +
-        `<text x="60" y="68.2" text-anchor="middle" stroke="none" font-family="ui-monospace,Menlo,Consolas,'Courier New',monospace" font-size="9.8" font-weight="700">${esc(process && !st.at?'—':timeOf(st.at))}</text>` +
-        `<text x="60" y="84" text-anchor="middle" stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="${Math.max(7.4, nfs).toFixed(2)}" font-weight="800" letter-spacing=".5"${fit}>${esc(nm)}</text>` +
-        `</g></svg>`;
+    function modelOf(st) {
+      if (st.model) return Object.assign({}, st.model);
+      if (st.family) return Object.assign({}, st);
+      const action = st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? 'BACK ENGRAVING' : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
+      const icon = st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      return { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
     }
+    /** The selected hallmark family. Operator identity belongs only in the enlarged historical detail. */
+    function svg(st) { return face(modelOf(st)); }
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
       if(engravingOf(st))return `${st.how==='engravePlain'?'Engraving waived · cut plain':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
@@ -372,20 +434,62 @@
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
     }
     /** One seal, as it sits on a card (one in a row is reached with Tab, and read large in the lens below). */
-    function html(st, size, extra) {
+    function html(st, size = BASE_SIZE, extra) {
+      size = BASE_SIZE;
       const reach = /\bloose\b/.test(extra || "") ? "" : ` tabindex="0" role="img" aria-label="${esc(titleOf(st))}"`;
       return `<span class="seal seal-${kindOf(st)}${extra ? " " + extra : ""}" style="--rot:${rotOf(st)}deg;--sz:${size}px" title="${esc(titleOf(st))}" data-at="${+st.at || 0}"${processOf(st)?` data-process-seal="${esc(st.id || '')}" data-seal-owner="${esc(st.owner || '')}" data-seal-caption="${esc(titleOf(st))}"`:''}${reach}>${svg(st)}</span>`;
     }
-    const sizeFor = n => n <= 2 ? 112 : n <= 4 ? 100 : 88;
+    const sizeFor = () => BASE_SIZE;
     /** The card's seals, oldest first, beside the button they belong with. pending: the time of a seal just pressed
      *  (it waits unseen until pressPending stamps it); size: a fixed size (the order window's small seals). */
     function row(rec, opts = {}) {
       const st = list(rec); if (!st.length) return "";
-      const shown = st.slice(-8), more = st.length - shown.length, size = opts.size || sizeFor(shown.length);
-      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
+      const shown = st, more = 0, size = BASE_SIZE;
+      return `<span class="sealRow n${Math.min(shown.length, 5)}${opts.size ? " mini" : ""}" data-seal-group data-seal-count="${shown.length}" role="group" aria-label="${st.length === 1 ? "Seal" : st.length + " seals"}">` +
         (more ? `<span class="sealMore" title="${esc(st.slice(0, more).map(titleOf).join("\n"))}">+${more} earlier</span>` : "") +
         shown.map(s => html(s, size, opts.pending && +s.at >= opts.pending ? "pending" : "")).join("") + `</span>`;
     }
+    /** One uniform fit for a history group. Independent seals keep the canonical size. */
+    let groupSizeObserver=null;
+    const fitParents=new Set();
+    function fit(row) {
+      const seals=[...row.children].filter(n=>n.classList.contains('seal'));
+      if(!seals.length)return BASE_SIZE;
+      row.style.setProperty('--seal-fit',BASE_SIZE+'px');
+      const parent=row.parentElement, cs=getComputedStyle(row), ps=parent?getComputedStyle(parent):null;
+      if(parent && groupSizeObserver && !fitParents.has(parent)){fitParents.add(parent);groupSizeObserver.observe(parent);}
+      let available=parent?.clientWidth || parent?.getBoundingClientRect().width || row.clientWidth || seals.length*BASE_SIZE;
+      if(ps)available-= (parseFloat(ps.paddingLeft)||0)+(parseFloat(ps.paddingRight)||0);
+      const cap=cs.maxWidth;if(cap && cap!=='none')available=Math.min(available,cap.endsWith('%')?available*parseFloat(cap)/100:parseFloat(cap)||available);
+      if(cs.position==='absolute'){
+        for(const side of ['left','right'])if(/^[\d.]+px$/.test(cs[side] || ''))available-=parseFloat(cs[side]);
+      } else if(ps && /flex/.test(ps.display) && ps.flexDirection!=='column') {
+        const siblings=[...parent.children].filter(n=>n!==row && getComputedStyle(n).position!=='absolute');
+        for(const n of siblings){const ns=getComputedStyle(n);available-=n.getBoundingClientRect().width+(parseFloat(ns.marginLeft)||0)+(parseFloat(ns.marginRight)||0);}
+        available-=(parseFloat(ps.columnGap)||0)*siblings.length;
+      }
+      available-=(parseFloat(cs.marginLeft)||0)+(parseFloat(cs.marginRight)||0);
+      const rowWidth=row.clientWidth || row.getBoundingClientRect().width;
+      if(rowWidth>0)available=Math.min(available,rowWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0));
+      const gap=parseFloat(cs.columnGap)||parseFloat(cs.gap)||4;
+      const other=[...row.children].filter(n=>!seals.includes(n)).reduce((n,e)=>n+e.getBoundingClientRect().width,0);
+      const size=seals.length===1?BASE_SIZE:Math.max(1,Math.min(BASE_SIZE,(available-other-gap*(row.children.length-1))/seals.length));
+      const value=(Math.floor(size*100)/100)+'px';
+      if(row.style.getPropertyValue('--seal-fit')!==value)row.style.setProperty('--seal-fit',value);
+      row.dataset.sealCount=String(seals.length);return size;
+    }
+    function fitGroups(scope=doc) {
+      if(busy()){defer('seal-layout',()=>fitGroups(scope));return;}
+      for(const parent of fitParents)if(!parent.isConnected){groupSizeObserver?.unobserve(parent);fitParents.delete(parent);}
+      if(scope.matches?.('.sealRow'))fit(scope);
+      for(const row of scope.querySelectorAll?.('.sealRow') || [])fit(row);
+    }
+    let fitting=0;
+    const scheduleFit=()=>{if(!fitting)fitting=requestAnimationFrame(()=>{fitting=0;fitGroups();});};
+    const rowObserver=new MutationObserver(()=>{scheduleFit();if(Z.want && !Z.want.isConnected || Z.seal && !Z.seal.isConnected)lensOff(true);});
+    rowObserver.observe(doc.documentElement,{subtree:true,childList:true});
+    if(root.ResizeObserver){groupSizeObserver=new root.ResizeObserver(scheduleFit);groupSizeObserver.observe(doc.documentElement);}
+    root.addEventListener('resize',scheduleFit);scheduleFit();
     /** Every seal waiting to be pressed, pressed where it shows (one out of sight just shows). */
     function pressPending() {
       for (const s of doc.querySelectorAll(".seal.pending")) {
@@ -415,95 +519,164 @@
       return { to: to2 };
     }
     /** The wooden stamp comes down on a seal already in its place, and leaves it inked. */
-    async function press(seal) {
-      if(seal._press)return seal._press;
+    function queued(work) {
       stamping++;
-      const run=pressChain.catch(()=>{}).then(()=>pressOnce(seal));seal._press=run;pressChain=run;
-      try{await run;}finally{seal._press=null;stamping--;releaseDraws();}
+      const run=pressChain.catch(()=>{}).then(work);pressChain=run;
+      return run.finally(()=>{stamping--;if(!busy()){for(const resolve of idleWaiters)resolve();idleWaiters.clear();}releaseDraws();});
+    }
+    function press(seal) {
+      if (!seal) return Promise.resolve();
+      if(seal._press)return seal._press;
+      const run=queued(()=>pressOnce(seal));seal._press=run;
+      run.finally(()=>{if(seal._press===run)seal._press=null;}).catch(()=>{});
+      return run;
+    }
+    async function incomingMotion(seal) {
+      const surface=seal.closest('.rvItem,.swEng,.libCard,.setCard') || seal.parentElement;
+      const animations=[...(surface?.getAnimations?.({subtree:true}) || []),...[...doc.querySelectorAll('.mGhost')].filter(n=>!n.contains(seal)).flatMap(n=>n.getAnimations?.({subtree:true}) || [])];
+      for(let n=seal.parentElement;n;n=n.parentElement)animations.push(...(n.getAnimations?.() || []));
+      const finite=[...new Set(animations)].filter(a=>a.playState==='running' && Number.isFinite(a.effect?.getComputedTiming().endTime));
+      await Promise.allSettled(finite.map(a=>a.finished));
+    }
+    function geometry(seal) {
+      const face=seal.querySelector('svg'), sr=seal.getBoundingClientRect(), fr=face?.getBoundingClientRect(), r=fr?.width>0?fr:sr;
+      const cs=getComputedStyle(seal), numeric=v=>/^[\d.]+px$/.test(v || '')?parseFloat(v):0;
+      const w=seal.offsetWidth || numeric(cs.width) || r.width, h=seal.offsetHeight || numeric(cs.height) || w;
+      return {left:r.left+r.width/2-w/2,top:r.top+r.height/2-h/2,width:w,height:h,rect:r};
+    }
+    // A native scroll or responsive panel move can shift the paper while a fixed tool is travelling.
+    // Keep its base and contact ripple centred on the actual seal until the full press has finished.
+    function anchorFixed(seal,...nodes) {
+      const targets=new Set(nodes);let frame=0,active=true;
+      function place(){
+        if(!active || !seal.isConnected)return;
+        const g=geometry(seal);
+        for(const node of targets)if(node.isConnected)Object.assign(node.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
+      }
+      function tick(){
+        frame=0;if(!active || !seal.isConnected || ![...targets].some(n=>n.isConnected))return;
+        place();frame=requestAnimationFrame(tick);
+      }
+      place();frame=requestAnimationFrame(tick);
+      return {add(node){targets.add(node);place();},stop(){active=false;cancelAnimationFrame(frame);targets.clear();}};
+    }
+    // If another animation manager cancels a tool, resume its remaining travel before revealing ink or advancing.
+    async function finishPhase(animation,node,end,duration) {
+      const started=root.performance.now();
+      try{await animation.finished;return;}catch(_){}
+      const remaining=Math.max(0,duration-(root.performance.now()-started));
+      if(!remaining)return;
+      const restart=root.performance.now();
+      if(node.isConnected){
+        const cs=getComputedStyle(node), resumed=node.animate([{transform:cs.transform,opacity:cs.opacity},end],{duration:remaining,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+        try{await resumed.finished;return;}catch(_){}
+      }
+      await wait(Math.max(0,remaining-(root.performance.now()-restart)));
     }
     async function pressOnce(seal) {
       if(reduced() || !visible(seal)){seal.classList.remove('pending');return;}
-      const surface=seal.closest('.rvItem,.swEng,.libCard,.setCard') || seal.parentElement;
-      const incoming=[...(surface?.getAnimations?.({subtree:true}) || []),...[...doc.querySelectorAll('.mGhost')].flatMap(n=>n.getAnimations?.({subtree:true}) || [])].filter(a=>a.playState==='running' && Number.isFinite(a.effect?.getComputedTiming().endTime));
-      await Promise.allSettled(incoming.map(a=>a.finished));
-      if(!seal.isConnected)return;
-      const r = seal.getBoundingClientRect(), size = r.width / 1.0, kind = Object.keys(INK).find(k=>seal.classList.contains('seal-'+k)) || 'print';
-      const rot = parseFloat(getComputedStyle(seal).getPropertyValue("--rot")) || -8;
-      const t = doc.createElement("span"); t.className = "sealTool"; t.innerHTML = tool(kind);
-      Object.assign(t.style, { position: "fixed", left: r.left - size * .02 + "px", top: r.top - size * .02 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
+      await incomingMotion(seal);
+      if(!seal.isConnected || !visible(seal))return;
+      const g=geometry(seal), size=g.width, kind=Object.keys(INK).find(k=>seal.classList.contains('seal-'+k)) || 'print';
+      const rot=parseFloat(getComputedStyle(seal).getPropertyValue('--rot')) || 0;
+      const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
+      Object.assign(t.style,{position:'fixed',left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
+      const ink=FAMILY[t.querySelector('svg')?.dataset.stampFamily]?.ink || INK[kind];
       layer(seal).appendChild(t);
-      const down = t.animate([
-        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
-        { opacity: 1, offset: .22 },
-        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1 }
-      ], { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)", fill: "forwards" });
-      shadow(t, size * 1.04, SHADE.far, SHADE.near, { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
-      await down.finished.catch(() => {});
-      seal.classList.remove("pending"); seal.classList.add("wet");
-      const btn = btnOf(seal); if (btn) btn.classList.add(green(kind) ? "sealedDone" : "sealedPrint");
-      const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;--ink:${INK[kind]}`; layer(seal).appendChild(ring);
-      const ripple=ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
-      ripple.finished.then(() => ring.remove(), () => ring.remove());
-      const up = t.animate([
-        { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
-        { transform: `rotate(${rot}deg) scale(.95)`, opacity: 1, offset: .22 },
-        { transform: `translate(-16px,-40px) rotate(${rot + 8}deg) scale(1.55)`, opacity: 0 }
-      ], { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
-      await wait(260); seal.classList.remove("wet");
-      await Promise.allSettled([up.finished,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]); t.remove();
+      const anchor=anchorFixed(seal,t);
+      try {
+      const down=t.animate([
+        {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},
+        {opacity:1,offset:.22},
+        {transform:`translate(0,0) rotate(${rot}deg) scale(1)`,opacity:1}
+      ],{duration:560,easing:'cubic-bezier(.62,0,.92,.5)',fill:'forwards'});
+      const shade=shadow(t,size,SHADE.far,SHADE.near,{duration:560,easing:'cubic-bezier(.62,0,.92,.5)'});
+      await finishPhase(down,t,{transform:`translate(0,0) rotate(${rot}deg) scale(1)`,opacity:1},560);
+      Sound.play();seal.classList.remove('pending');seal.classList.add('wet');
+      const btn=btnOf(seal);if(btn)btn.classList.add(green(kind)?'sealedDone':'sealedPrint');
+      const ring=doc.createElement('span');ring.className='sealRing';ring.style.cssText=`position:fixed;left:${g.left}px;top:${g.top}px;width:${g.width}px;height:${g.height}px;--ink:${ink}`;layer(seal).appendChild(ring);
+      anchor.add(ring);
+      const ripple=ring.animate([{transform:'scale(.86)',opacity:.42},{transform:'scale(1.42)',opacity:0}],{duration:760,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+      ripple.finished.then(()=>ring.remove(),()=>ring.remove());
+      const up=t.animate([
+        {transform:`rotate(${rot}deg) scale(1)`,opacity:1},
+        {transform:`rotate(${rot}deg) scale(.95)`,opacity:1,offset:.22},
+        {transform:`translate(-16px,-40px) rotate(${rot+8}deg) scale(1.55)`,opacity:0}
+      ],{duration:700,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+      const lifted=finishPhase(up,t,{transform:`translate(-16px,-40px) rotate(${rot+8}deg) scale(1.55)`,opacity:0},700);
+      shade.to(SHADE.near,SHADE.lift,{duration:700,easing:'cubic-bezier(.2,.7,.3,1)'});
+      await wait(260);seal.classList.remove('wet');
+      await Promise.allSettled([lifted,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]);
+      } finally {anchor.stop();t.remove();}
     }
     const hasPrint = rec => list(rec).some(s => s.how !== "button");
-    /** The wooden stamp seen from above: its knob, its turned base, the rubber's inked rim. */
-    function tool(kind) {
-      const ink = INK[kind], id = "st" + (++uid);
-      return `<svg viewBox="0 0 120 120" aria-hidden="true"><defs>` +
-        `<radialGradient id="${id}a" cx=".36" cy=".3" r=".85"><stop offset="0" stop-color="#d9a868"/><stop offset=".55" stop-color="#a66c35"/><stop offset="1" stop-color="#5d3818"/></radialGradient>` +
-        `<radialGradient id="${id}b" cx=".38" cy=".3" r=".75"><stop offset="0" stop-color="#f6d6a0"/><stop offset=".5" stop-color="#c98e4e"/><stop offset="1" stop-color="#7c4a1f"/></radialGradient></defs>` +
-        `<circle cx="60" cy="60" r="58" fill="${ink}"/><circle cx="60" cy="60" r="55" fill="url(#${id}a)"/>` +
-        `<g fill="none" stroke="#3d240e" stroke-opacity=".16" stroke-width=".9"><ellipse cx="60" cy="60" rx="46" ry="44"/><ellipse cx="60" cy="61" rx="38" ry="35"/><path d="M18 52c14-6 26-5 40 0s26 6 44-1"/><path d="M20 72c16 5 30 4 42-1s24-5 38 1"/></g>` +
-        `<circle cx="60" cy="60" r="47" fill="none" stroke="#2c1a09" stroke-opacity=".22" stroke-width="1.2"/>` +
-        `<circle cx="61.5" cy="62" r="27" fill="#2c1a09" opacity=".25"/><circle cx="60" cy="60" r="26" fill="url(#${id}b)"/>` +
-        `<ellipse cx="51" cy="50" rx="10" ry="6.5" fill="#fff" opacity=".28" transform="rotate(-24 51 50)"/></svg>`;
+    const WOOD_URL=(()=>{try{return new URL('charm-nest-stamp-walnut.png',doc.currentScript?.src || doc.baseURI).href;}catch(_){return 'charm-nest-stamp-walnut.png';}})();
+    /** The rubber die and walnut head share the exact outline of the ink they leave. */
+    function tool(kind, source) {
+      if(typeof source==='string'){const holder=doc.createElement('span');holder.innerHTML=source;source=holder;}
+      const sourceSvg=source?.matches?.('svg')?source:source?.querySelector?.('svg');
+      const family=sourceSvg?.dataset.sealFamily || (FAMILY[kind]?kind:familyOf({how:kind}));
+      const f=FAMILY[family] || FAMILY.prepared, d=sourceSvg?.querySelector('[data-seal-outline]')?.getAttribute('d') || f.d, id='st'+(++uid);
+      return `<svg viewBox="0 0 120 120" aria-hidden="true" data-stamp-family="${family}"><defs>`+
+        `<clipPath id="${id}grain"><path d="${d}"/></clipPath><clipPath id="${id}knob"><circle cx="60" cy="53" r="26"/></clipPath>`+
+        `<linearGradient id="${id}light" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffead0" stop-opacity=".4"/><stop offset=".32" stop-color="#fff1d8" stop-opacity=".07"/><stop offset=".75" stop-color="#241108" stop-opacity=".32"/><stop offset="1" stop-color="#150a04" stop-opacity=".65"/></linearGradient>`+
+        `<radialGradient id="${id}knobLight" cx=".30" cy=".24" r=".8"><stop stop-color="#fff1d2" stop-opacity=".55"/><stop offset=".42" stop-color="#de9d5c" stop-opacity=".02"/><stop offset=".73" stop-color="#391809" stop-opacity=".3"/><stop offset="1" stop-color="#120905" stop-opacity=".82"/></radialGradient>`+
+        `<radialGradient id="${id}stem" cx=".30" cy=".20" r=".8"><stop stop-color="#d59656"/><stop offset=".45" stop-color="#713b1e"/><stop offset="1" stop-color="#291208"/></radialGradient></defs>`+
+        `<path data-stamp-contact d="${d}" fill="${f.ink}" stroke="${f.ink}" stroke-width="2.7" stroke-linejoin="round"/>`+
+        `<g transform="translate(60 59) scale(.975) translate(-60 -60)"><path d="${d}" fill="#673519" stroke="#2e170c" stroke-width="2"/>`+
+        `<g clip-path="url(#${id}grain)"><image href="${esc(WOOD_URL)}" x="0" y="0" width="120" height="120" preserveAspectRatio="xMidYMid slice"/><path d="${d}" fill="url(#${id}light)"/></g>`+
+        `<path d="${d}" fill="none" stroke="#f6c68d" stroke-opacity=".53" stroke-width="1.8" transform="translate(60 60) scale(.95) translate(-60 -60)"/><path d="${d}" fill="none" stroke="#28160c" stroke-opacity=".55" stroke-width="1" transform="translate(60 60) scale(.89) translate(-60 -60)"/></g>`+
+        `<ellipse cx="62" cy="64" rx="28" ry="22" fill="#201008" opacity=".30"/><circle cx="60" cy="60" r="21" fill="url(#${id}stem)" stroke="#e7ae76" stroke-opacity=".35"/>`+
+        `<circle cx="60" cy="53" r="26" fill="#7e4425" stroke="#29160c" stroke-width="1.3"/><image href="${esc(WOOD_URL)}" x="31" y="21" width="65" height="63" clip-path="url(#${id}knob)" preserveAspectRatio="xMidYMid slice"/>`+
+        `<circle cx="60" cy="53" r="26" fill="url(#${id}knobLight)"/><path d="M40 42C43 31 57 27 66 30" fill="none" stroke="#fff1d4" stroke-opacity=".49" stroke-width="1.4" stroke-linecap="round"/><ellipse cx="47" cy="37" rx="8" ry="4" fill="#fff5df" opacity=".18" transform="rotate(-28 47 37)"/></svg>`;
     }
     /** A new seal pressed onto `spec.btn` (a selector inside host, or an element): the stamp comes down, the ink is left,
      *  the stamp lifts away, and the button takes the seal's colour. */
-    async function stampOn(host, spec) {
-      const btn = typeof spec.btn === "string" ? host.querySelector(spec.btn) : spec.btn; if (!btn) return;
-      const st = spec.stamp || spec, kind = kindOf(st), size = spec.size || 112;
-      if (spec.label) btn.innerHTML = esc(spec.label);
-      btn.disabled = false; btn.removeAttribute("aria-busy"); btn.classList.remove("working");
-      const hr = host.getBoundingClientRect(), br = btn.getBoundingClientRect();
-      const cx = br.left + Math.min(br.width * .64, br.width - 18) - hr.left, cy = br.top + br.height / 2 - hr.top;
-      const s = doc.createElement("span"); s.innerHTML = html(st, size, "loose"); const seal = s.firstChild;
-      Object.assign(seal.style, { left: cx - size / 2 + "px", top: cy - size / 2 + "px", opacity: "0" });
-      const t = doc.createElement("span"); t.className = "sealTool"; t.innerHTML = tool(kind);
-      Object.assign(t.style, { left: cx - size * .52 + "px", top: cy - size * .52 + "px", width: size * 1.04 + "px", height: size * 1.04 + "px" });
-      host.appendChild(seal); host.appendChild(t);
-      const rot = rotOf(st), paint = () => btn.classList.add(kind === "button" ? "sealedDone" : "sealedPrint");
-      // (spec.still: the seal was pressed already and is only put where it rests)
-      if (reduced() || spec.still) { seal.style.opacity = ""; t.remove(); paint(); return; }
-      const down = t.animate([
-        { transform: `translate(34px,-46px) rotate(${rot - 16}deg) scale(1.7)`, opacity: 0 },
-        { opacity: 1, offset: .22 },
-        { transform: `translate(0,0) rotate(${rot}deg) scale(1)`, opacity: 1 }
-      ], { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)", fill: "forwards" });
-      const shade = shadow(t, size * 1.04, SHADE.far, SHADE.near, { duration: 560, easing: "cubic-bezier(.62,0,.92,.5)" });
-      await down.finished.catch(() => {});
-      // the press: ink on the paper and the button, a thud, a ring through the paper
-      seal.style.opacity = ""; seal.classList.add("wet"); paint();
-      const card = host._card || host;
-      card.animate([{ transform: "translateY(0)" }, { transform: "translateY(1.6px)", offset: .3 }, { transform: "translateY(0)" }], { duration: 240, easing: "ease-out" });
-      const ring = doc.createElement("span"); ring.className = "sealRing"; ring.style.cssText = `left:${cx - size / 2}px;top:${cy - size / 2}px;width:${size}px;height:${size}px;--ink:${INK[kind]}`; host.appendChild(ring);
-      const ripple=ring.animate([{ transform: "scale(.86)", opacity: .42 }, { transform: "scale(1.42)", opacity: 0 }], { duration: 760, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
-      ripple.finished.then(() => ring.remove(), () => ring.remove());
-      const up = t.animate([
-        { transform: `rotate(${rot}deg) scale(1)`, opacity: 1 },
-        { transform: `rotate(${rot}deg) scale(.95)`, opacity: 1, offset: .22 },
-        { transform: `translate(-16px,-40px) rotate(${rot + 8}deg) scale(1.55)`, opacity: 0 }
-      ], { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)", fill: "forwards" });
-      shade.to(SHADE.near, SHADE.lift, { duration: 700, easing: "cubic-bezier(.2,.7,.3,1)" });
-      await wait(260); seal.classList.remove("wet");
-      await Promise.allSettled([up.finished,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]); t.remove();
+    function stampOn(host, spec) {
+      const btn=typeof spec.btn==='string'?host.querySelector(spec.btn):spec.btn;
+      if(!btn)return Promise.resolve();
+      if(btn._sealStamp)return btn._sealStamp;
+      const run=queued(()=>stampOnOnce(host,spec,btn));btn._sealStamp=run;
+      run.finally(()=>{if(btn._sealStamp===run)btn._sealStamp=null;}).catch(()=>{});
+      return run;
+    }
+    async function stampOnOnce(host,spec,btn) {
+      if(!host.isConnected || !btn.isConnected)return;
+      const st=spec.stamp || spec, kind=kindOf(st), size=BASE_SIZE;
+      if(spec.label)btn.innerHTML=esc(spec.label);
+      btn.disabled=false;btn.removeAttribute('aria-busy');btn.classList.remove('working');
+      await incomingMotion(btn);
+      const hr=host.getBoundingClientRect(),br=btn.getBoundingClientRect();
+      const cx=br.left+Math.min(br.width*.64,br.width-18)-hr.left,cy=br.top+br.height/2-hr.top;
+      const holder=doc.createElement('span');holder.innerHTML=html(st,size,'loose');const seal=holder.firstChild;
+      Object.assign(seal.style,{left:cx-size/2+'px',top:cy-size/2+'px',opacity:'0','--seal-fit':size+'px'});
+      const t=doc.createElement('span');t.className='sealTool';t.innerHTML=tool(kind,seal);
+      Object.assign(t.style,{left:cx-size/2+'px',top:cy-size/2+'px',width:size+'px',height:size+'px'});
+      host.appendChild(seal);host.appendChild(t);
+      const rot=rotOf(st),paint=()=>btn.classList.add(kind==='button'?'sealedDone':'sealedPrint');
+      if(reduced() || spec.still){seal.style.opacity='';t.remove();paint();return;}
+      const down=t.animate([
+        {transform:`translate(34px,-46px) rotate(${rot-16}deg) scale(1.7)`,opacity:0},
+        {opacity:1,offset:.22},
+        {transform:`translate(0,0) rotate(${rot}deg) scale(1)`,opacity:1}
+      ],{duration:560,easing:'cubic-bezier(.62,0,.92,.5)',fill:'forwards'});
+      const shade=shadow(t,size,SHADE.far,SHADE.near,{duration:560,easing:'cubic-bezier(.62,0,.92,.5)'});
+      await finishPhase(down,t,{transform:`translate(0,0) rotate(${rot}deg) scale(1)`,opacity:1},560);
+      Sound.play();seal.style.opacity='';seal.classList.add('wet');paint();
+      const card=host._card || host;
+      const settle=card.animate([{transform:'translateY(0)'},{transform:'translateY(1.6px)',offset:.3},{transform:'translateY(0)'}],{duration:240,easing:'ease-out'});
+      const ring=doc.createElement('span');ring.className='sealRing';ring.style.cssText=`left:${cx-size/2}px;top:${cy-size/2}px;width:${size}px;height:${size}px;--ink:${FAMILY[t.querySelector('svg')?.dataset.stampFamily]?.ink || INK[kind]}`;host.appendChild(ring);
+      const ripple=ring.animate([{transform:'scale(.86)',opacity:.42},{transform:'scale(1.42)',opacity:0}],{duration:760,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+      ripple.finished.then(()=>ring.remove(),()=>ring.remove());
+      const up=t.animate([
+        {transform:`rotate(${rot}deg) scale(1)`,opacity:1},
+        {transform:`rotate(${rot}deg) scale(.95)`,opacity:1,offset:.22},
+        {transform:`translate(-16px,-40px) rotate(${rot+8}deg) scale(1.55)`,opacity:0}
+      ],{duration:700,easing:'cubic-bezier(.2,.7,.3,1)',fill:'forwards'});
+      const lifted=finishPhase(up,t,{transform:`translate(-16px,-40px) rotate(${rot+8}deg) scale(1.55)`,opacity:0},700);
+      shade.to(SHADE.near,SHADE.lift,{duration:700,easing:'cubic-bezier(.2,.7,.3,1)'});
+      await wait(260);seal.classList.remove('wet');
+      await Promise.allSettled([lifted,ripple.finished,settle.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]);t.remove();
     }
     /* a seal over its button: a press there presses the button (and the seal sinks with it); anywhere else it wobbles */
     // (the button just before its row: an open card has its print seals on Print QR label and its Complete Order seals on
@@ -551,8 +724,8 @@
        a readable version for keyboard users; mouse movement takes over from keyboard focus. ── */
     const LG = 12, LM = 8, HOVER_DELAY = 1100, EASE = "cubic-bezier(.2,.8,.2,1)";
     const Z = { el: null, seal: null, pinned: false, keyboard: false, hover: false, point: null, want: null, t: 0, watch: 0, n: 0 };
-    const sealAt = t => t && t.closest ? t.closest(".sealRow .seal, .laserSeal") : null;
-    const zoomable = s => !!(s && s.isConnected && s.matches(".sealRow .seal:not(.pending), .laserSeal") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
+    const sealAt = t => t && t.closest ? t.closest(".seal, .laserSeal") : null;
+    const zoomable = s => !!(s && s.isConnected && s.matches(".seal:not(.pending), .laserSeal") && !s.closest(".mGhost,[inert]") && s.getClientRects().length);
     function ago(t) {
       const m = Math.round((Date.now() - t) / 60000), h = Math.round(m / 60), d = Math.round(h / 24);
       return m < 1 ? "just now" : m < 60 ? m + " min ago" : h < 24 ? h + (h === 1 ? " hour ago" : " hours ago") : d < 2 ? "yesterday" : d < 7 ? d + " days ago"
@@ -568,6 +741,7 @@
     /** The seal's own artwork, its ids renamed so the page never holds two of one id. */
     function faceOf(s) {
       const g = s.querySelector("svg"); if (!g) return "";
+      const enlarged=enlarge(g);if(enlarged)return enlarged;
       let face = g;
       if (s.classList.contains("laserSeal")) {
         face = g.cloneNode(true); const style = getComputedStyle(g);
@@ -582,7 +756,18 @@
       const r = s.getBoundingClientRect(), D = el.offsetWidth, o = el._o, cx = r.left + r.width / 2, cy = r.top + r.height / 2;
       if (at) { const k = Math.max(.05, s.offsetWidth / (D * .91)), rot = parseFloat(getComputedStyle(s).getPropertyValue("--rot")) || 0; return `translate(${cx - D / 2 - o.left}px,${cy - D / 2 - o.top}px) scale(${k}) rotate(${rot}deg)`; }
       const c = el.lastElementChild, cw = c ? c.offsetWidth : 0, ch = c ? c.offsetHeight + 8 : 0, vw = root.innerWidth, vh = root.innerHeight;
-      const up = r.top - LG - ch - D >= LM || !(r.bottom + LG + D + ch <= vh - LM) && r.top > vh - r.bottom, half = Math.max(D, cw) / 2;
+      const above=r.top-LG-ch-D>=LM,below=r.bottom+LG+D+ch<=vh-LM, groupWidth=Math.max(D,cw), half=groupWidth/2;
+      if(!above && !below){
+        const right=r.right+LG,left=r.left-LG-groupWidth;
+        if(right+groupWidth<=vw-LM || left>=LM){
+          const groupX=right+groupWidth<=vw-LM?right:left, y=Math.max(LM,Math.min(vh-LM-D-ch,r.top+(r.height-D-ch)/2));
+          return `translate(${Math.round(groupX+(groupWidth-D)/2-o.left)}px,${Math.round(y-o.top)}px) scale(1) rotate(0deg)`;
+        }
+        // Very short/narrow windows may clip the preview at the viewport edge, but it never covers its original.
+        const x=Math.max(LM+half,Math.min(vw-LM-half,cx))-D/2;
+        return `translate(${Math.round(x-o.left)}px,${Math.round(r.top-LG-ch-D-o.top)}px) scale(1) rotate(0deg)`;
+      }
+      const up = above;
       const x = Math.max(LM + half, Math.min(vw - LM - half, cx)) - D / 2, y = Math.max(LM, Math.min(vh - LM - D - ch, up ? r.top - LG - ch - D : r.bottom + LG));
       return `translate(${Math.round(x - o.left)}px,${Math.round(y - o.top)}px) scale(1) rotate(0deg)`;
     }
@@ -605,11 +790,7 @@
         el.innerHTML = `<div class="lf">${faceOf(s)}</div><div class="lc">${esc(capOf(s))}</div>`;
       }
       el.classList.toggle('processLens',s.hasAttribute('data-process-seal'));
-      // Prefer directly above a small process seal, shrinking only the enlargement when the top edge is near.
-      // If even a readable enlargement cannot fit above, the normal below-seal fallback stays clear of its original.
-      const room=s.getBoundingClientRect().top-LG-LM-(el.lastElementChild?.offsetHeight || 0)-8;
-      const size=s.hasAttribute('data-process-seal') && room>=96?Math.min(200,room):200;
-      el.style.width=el.style.height=size+'px';
+      el.style.width=el.style.height=HOVER_SIZE+'px';
       const to = lensAt(el, s);
       for (const a of el.getAnimations()) a.cancel();
       el.style.transform = to;
@@ -636,13 +817,8 @@
     /** While it shows: it follows its seal (a scroll, a redraw that drew the same seal anew), and goes when the seal does. */
     function watch() {
       const el = Z.el; if (!el) return;
-      let s = Z.seal;
-      if (!zoomable(s) || !visible(s)) {
-        const k = s && Object.keys(INK).find(k=>s.classList.contains('seal-'+k)) || 'print', box = (el.closest && el.closest("dialog")) || doc;
-        const again = s && [...box.querySelectorAll(`.sealRow .seal.seal-${k}[data-at="${s.dataset.at}"]`)].find(x => (!s.dataset.sealOwner || x.dataset.sealOwner===s.dataset.sealOwner) && zoomable(x) && visible(x));
-        if (!again) return lensOff(true);
-        Z.seal = s = again; untitle(s);
-      }
+      const s = Z.seal;
+      if (!zoomable(s) || !visible(s)) return lensOff(true);
       if (!Z.keyboard && !pointed(s)) return lensOff(true);
       if (el.getAnimations().some(a => a.playState === "running")) return;
       const to = lensAt(el, s); if (el.style.transform !== to) el.style.transform = to;
@@ -690,7 +866,7 @@
     root.addEventListener("blur", () => lensOff(true));
     doc.addEventListener("visibilitychange", () => { if (doc.visibilityState === "hidden") lensOff(true); });
     doc.addEventListener("close", e => { if (e.target?.contains?.(Z.el || Z.want)) lensOff(true); }, true);
-    return { list, html, row, svg, stampOn, press, pressPending, hasPrint, titleOf, INK, busy, defer };
+    return { list, html, row, svg, face, modelOf, tool, sound:Sound, stampOn, press, pressPending, hasPrint, titleOf, INK, FAMILY, BASE_SIZE, HOVER_SIZE, busy, whenIdle, defer, fit, fitGroups };
   })();
 
   /* ════ Pop-ups: every window grows out of what opened it, and goes back into it ════
@@ -921,6 +1097,7 @@
   /** Closes the window now (dialog.open is false when this returns; returnValue, Esc and focus as the browser does them),
    *  and a copy of it goes back into what opened it. opts.to: where it goes instead; opts.returnValue. */
   function dialogClose(dlg, opts = {}) {
+    if(Seal.busy())return Seal.whenIdle().then(()=>dialogClose(dlg,opts));
     if (!dlg || !dlg.open) return Promise.resolve();
     let snap = null;
     // (_mdSnap: an Esc whose cancel handler closes the window itself leaves this one copy, not a second from the Esc)
@@ -935,6 +1112,7 @@
     const P = root.HTMLDialogElement.prototype; P._mdWrapped = true;
     let seq = 0;   // the order windows were opened in, so a closing copy never lands over a window opened after it
     P.showModal = function () {
+      const args=[...arguments];if(Seal.defer(this,()=>this.showModal(...args)))return;
       if (!this.open) this._mdSeq = ++seq;
       if (this.open || skips(this)) return nativeShow.apply(this, arguments);
       const f = this._mdFrom; this._mdFrom = null; this._mdClosing = false; this._mdSnap = null;
@@ -943,6 +1121,7 @@
       this._mdShown = dialogOpen(this, f);
     };
     P.close = function (rv) {
+      const args=[...arguments];if(Seal.defer(this,()=>this.close(...args)))return;
       if (!this.open || skips(this)) return arguments.length ? nativeClose.call(this, rv) : nativeClose.call(this);
       dialogClose(this, arguments.length ? { returnValue: rv } : {});
     };
@@ -955,7 +1134,7 @@
     };
     // (the closing copy's styles are made ready once the page has loaded, again after a window opens if they changed)
     if (doc.readyState === "complete") warm(); else root.addEventListener("load", () => warm(), { once: true });
-    doc.addEventListener("cancel", e => early(e.target), true);
+    doc.addEventListener("cancel", e => {if(Seal.busy()){e.preventDefault();return;}early(e.target);}, true);
     doc.addEventListener("submit", e => { const f = e.target, how = (e.submitter && e.submitter.getAttribute("formmethod")) || (f && f.getAttribute && f.getAttribute("method")); if (f && /^dialog$/i.test(how || "")) early(f.closest("dialog")); }, true);
     doc.addEventListener("close", e => {
       const d = e.target; if (!(d instanceof root.HTMLDialogElement)) return;

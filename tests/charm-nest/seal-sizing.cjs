@@ -1,0 +1,158 @@
+// Drive the real seal renderer and fitter through their actual CSS variables. JSDOM does not lay out
+// pixels, so this fixture supplies container widths and resolves the stylesheet's length expressions;
+// the production fitter, markup, family artwork, inspector and hover handlers are not replaced.
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {JSDOM}=require('jsdom');
+const ROOT=path.join(__dirname,'../..'),read=file=>fs.readFileSync(path.join(ROOT,file),'utf8');
+const catalog=new JSDOM('<style id="main"></style><style id="activity"></style>');
+catalog.window.document.querySelector('#main').textContent=read('charm-nest-1.html').match(/<style>([\s\S]*?)<\/style>/)[1];
+catalog.window.document.querySelector('#activity').textContent=read('charm-nest-activity.css');
+const main=catalog.window.document.querySelector('#main').sheet,activity=catalog.window.document.querySelector('#activity').sheet;
+assert(main && activity,'both production stylesheets parse');
+const relevant=sheet=>[...sheet.cssRules].filter(r=>r.selectorText && (r.selectorText===':root' || /\.seal|\.laserSeal|\.processSealRow|\.egApprove|\.egButtonSeal|\.engravingSeals|\.pvMain|\.pvApproval/.test(r.selectorText))).map(r=>r.cssText).join('\n');
+const dom=new JSDOM(`<style>*{box-sizing:border-box}${relevant(main)}${relevant(activity)}</style><p id="outside">Work area</p>`,{url:'http://127.0.0.1',runScripts:'outside-only',pretendToBeVisual:true});
+catalog.window.close();
+const w=dom.window,d=w.document,frames=[],observers=[];
+w.matchMedia=()=>({matches:false});w.requestAnimationFrame=fn=>(frames.push(fn),frames.length);w.cancelAnimationFrame=()=>{};
+w.setInterval=()=>1;w.clearInterval=()=>{};w.Element.prototype.getAnimations=()=>[];
+w.Element.prototype.animate=()=>({finished:Promise.resolve(),playState:'finished',cancel(){}});
+w.ResizeObserver=class{constructor(callback){this.callback=callback;this.targets=new Set();observers.push(this);}observe(node){this.targets.add(node);}unobserve(node){this.targets.delete(node);}disconnect(){this.targets.clear();}};
+w.localStorage.setItem('cn.employee','Current Viewer');
+
+function custom(node,name){
+  for(let n=node;n;n=n.parentElement){const value=w.getComputedStyle(n).getPropertyValue(name).trim();if(value)return value;}
+  return '';
+}
+function expand(value,node){
+  let start;
+  while((start=value.indexOf('var('))>=0){
+    let end=start+4,level=1,comma=-1;
+    for(;end<value.length && level;end++){const c=value[end];if(c==='(')level++;if(c===')')level--;if(c===',' && level===1 && comma<0)comma=end;}
+    assert.equal(level,0,'valid CSS custom-property expression');
+    const name=value.slice(start+4,comma<0?end-1:comma).trim(),fallback=comma<0?'':value.slice(comma+1,end-1);
+    const replacement=custom(node,name)||fallback;assert(replacement,'CSS variable '+name+' has a value');
+    value=value.slice(0,start)+expand(replacement,node)+value.slice(end);
+  }
+  return value;
+}
+function length(node,property,percentBase=0){
+  let value=w.getComputedStyle(node).getPropertyValue(property).trim();if(!value || /^(auto|none|normal)$/.test(value))return null;
+  value=expand(value,node).replace(/(-?\d*\.?\d+)%/g,(_,n)=>String(+n*percentBase/100)).replace(/px\b/g,'');
+  value=value.replace(/calc\(/g,'(').replace(/\bmin\(/g,'Math.min(').replace(/\bmax\(/g,'Math.max(');
+  assert(/^[\d\s.+\-*/,()Mathminax]+$/.test(value),'safe numeric CSS length: '+value);
+  const number=Function('return ('+value+')')();assert(Number.isFinite(number),'finite CSS length: '+value);return number;
+}
+const pad=node=>(length(node,'padding-left')||0)+(length(node,'padding-right')||0);
+const gap=node=>length(node,'column-gap') ?? length(node,'gap') ?? 0;
+function width(node){
+  if(node._width!=null)return node._width;
+  if(node.classList?.contains('sealRow')){
+    const parent=node.parentElement,available=parent?.clientWidth || 1200;
+    const natural=[...node.children].reduce((sum,n)=>sum+width(n),0)+gap(node)*Math.max(0,node.children.length-1)+pad(node);
+    return Math.min(natural,length(node,'max-width',available) ?? available,length(node,'width',available) ?? Infinity);
+  }
+  return length(node,'width') ?? (node.classList?.contains('lc')?280:0);
+}
+Object.defineProperty(w.HTMLElement.prototype,'clientWidth',{get(){return width(this);}});
+Object.defineProperty(w.HTMLElement.prototype,'offsetWidth',{get(){return width(this);}});
+Object.defineProperty(w.HTMLElement.prototype,'offsetHeight',{get(){return length(this,'height') ?? (this.classList.contains('lc')?28:84);}});
+w.HTMLElement.prototype.getBoundingClientRect=function(){const size=width(this),h=this.offsetHeight;return {left:410,top:560,right:410+size,bottom:560+h,width:size,height:h};};
+w.HTMLElement.prototype.getClientRects=function(){return [this.getBoundingClientRect()];};
+w.eval(read('charm-nest-motion.js'));w.eval(read('charm-nest-engraving-seals.js'));w.eval(read('charm-nest-readiness.js'));
+const Seal=w.Seal,at=Date.UTC(2026,9,1,1,44),by='Recorded Operator',outside=d.querySelector('#outside');
+const nearly=(actual,expected,message)=>assert(Math.abs(actual-expected)<.02,`${message}: ${actual} vs ${expected}`);
+const rule=(sheet,selector)=>[...sheet.cssRules].find(r=>r.selectorText===selector);
+const tick=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
+async function resizeParent(parent,width){
+  parent._width=width;
+  const watchers=observers.filter(o=>o.targets.has(parent));assert(watchers.length,'contained group resize is observed even when the browser viewport stays the same');
+  for(const observer of watchers)observer.callback([{target:parent,contentRect:parent.getBoundingClientRect()}]);
+  await tick();for(let n=0;frames.length&&n<8;n++){const batch=frames.splice(0);for(const frame of batch)frame(0);await tick();}
+}
+
+function fixture(count,parentWidth=1200,classes=''){
+  const parent=d.createElement('section');parent._width=parentWidth;parent.style.cssText='display:block;padding:0;position:relative';
+  const record={stamps:Array.from({length:count},(_,i)=>({how:i%3===0?'button':'print',at:at+i*60000,by}))};
+  parent.innerHTML=Seal.row(record,{size:34});const row=parent.firstElementChild;row.classList.add(...classes.split(' ').filter(Boolean));row.style.margin='0';
+  d.body.appendChild(parent);return {parent,row,seals:[...row.querySelectorAll('.seal')]};
+}
+function fitted(f,label){
+  Seal.fitGroups(f.parent);
+  const widths=f.seals.map(s=>length(s,'width')),heights=f.seals.map(s=>length(s,'height'));
+  assert(widths.every(n=>n===widths[0]),label+' fits every sibling uniformly');assert.deepEqual(heights,widths,label+' preserves square seal viewports');
+  const used=widths.reduce((sum,n)=>sum+n,0)+gap(f.row)*Math.max(0,f.seals.length-1);
+  const capacity=f.row.clientWidth-pad(f.row);assert(used<=capacity+.02,label+' fits inside its actual CSS width cap');
+  assert(widths.every(n=>n>0&&n<=84),label+' only shrinks below the canonical size');return widths[0];
+}
+
+(async()=>{
+  try{
+    assert.equal(Seal.BASE_SIZE,84);assert.equal(Seal.HOVER_SIZE,168);
+    assert.equal(typeof Seal.fitGroups,'function');assert.equal(typeof Seal.fit,'function');
+    assert.equal(custom(d.documentElement,'--seal-size'),'84px');assert.equal(custom(d.documentElement,'--seal-hover-size'),'168px');
+
+    // Old rendering calls and previously generated inline --sz values cannot create a different normal size.
+    for(const how of ['print','button','engraveApproved','engravePlain','laserReady','laserDone'])for(const requested of [0,34,56,112,180]){
+      const host=d.createElement('span');host.innerHTML=Seal.html({how,at,by},requested);d.body.appendChild(host);
+      const seal=host.firstElementChild;assert.equal(seal.style.getPropertyValue('--sz'),'84px',how+' normalizes a legacy requested size');
+      seal.style.setProperty('--sz',requested+'px');nearly(length(seal,'width'),84,how+' CSS ignores a legacy width');nearly(length(seal,'height'),84,how+' CSS ignores a legacy height');host.remove();
+    }
+    for(const ready of [true,false]){
+      const host=d.createElement('div');host.innerHTML=w.CharmNestReadiness.seal({ready});d.body.appendChild(host);
+      const badge=host.querySelector('.laserSeal');nearly(length(badge,'width'),84,'readiness has the same normal width');nearly(length(badge,'height'),84,'readiness has the same normal height');host.remove();
+    }
+
+    // Twelve historical decisions remain available; shrinking never alters, hides or cuts off any seal.
+    const history=fixture(12),faces=history.seals.map(s=>s.innerHTML);
+    assert.equal(history.seals.length,12,'the entire history is rendered');assert.equal(history.row.querySelector('.sealMore'),null,'no historical seal is replaced by an earlier-count marker');
+    assert.equal(fitted(history,'wide 12-seal history'),84);
+    history.parent._width=440;const narrow=fitted(history,'narrow 12-seal history');assert(narrow<84);
+    const stable=history.row.style.getPropertyValue('--seal-fit');fitted(history,'repeated narrow fit');assert.equal(history.row.style.getPropertyValue('--seal-fit'),stable,'repeated fitting does not oscillate');
+    history.parent._width=1200;assert.equal(fitted(history,'restored wide history'),84,'seals grow back to the canonical size');
+    assert.deepEqual(history.seals.map(s=>s.innerHTML),faces,'fitting never rewrites historical artwork');history.parent.remove();
+
+    for(const count of [1,2,3,4,6,8]){
+      const f=fixture(count,1200);assert.equal(fitted(f,count+' spacious siblings'),84);
+      if(count>1){f.parent._width=count*64+4*(count-1);assert(fitted(f,count+' constrained siblings')<=64,'adding siblings reduces them together');f.parent._width=1200;assert.equal(fitted(f,count+' expanded siblings'),84);}
+      f.parent.remove();
+    }
+    const changing=fixture(2,256);const two=fitted(changing,'two siblings');
+    const extra=d.createElement('span');extra.innerHTML=Seal.html({how:'print',at:at+9e5,by},56);changing.row.appendChild(extra.firstChild);changing.seals=[...changing.row.querySelectorAll('.seal')];
+    assert(fitted(changing,'third sibling added')<two,'a new seal triggers a smaller equal fit');changing.row.lastChild.remove();changing.seals=[...changing.row.querySelectorAll('.seal')];assert.equal(fitted(changing,'third sibling removed'),84);changing.parent.remove();
+    const responsive=fixture(4,600);assert.equal(fitted(responsive,'observed group starts full-size'),84);
+    await resizeParent(responsive.parent,224);assert(responsive.seals.every(s=>length(s,'width')<84),'a container resize refits without an explicit render or window resize');
+    await resizeParent(responsive.parent,600);assert(responsive.seals.every(s=>length(s,'width')===84),'a wider container restores the same canonical size automatically');responsive.parent.remove();
+
+    // These real stylesheet caps previously defeated parseFloat(maxWidth): min(), calc() and row padding matter.
+    const engraving=fixture(12,600,'engravingSeals');assert(fitted(engraving,'engraving capped history')<20);assert(engraving.row.clientWidth<=240);engraving.parent.remove();
+    const process=fixture(4,300,'processSealRow');process.parent.classList.add('libCard');
+    const status=d.createElement('span');status.className='sheetBackStatus';status.innerHTML=w.CharmNestReadiness.seal({ready:true});process.parent.appendChild(status);
+    // JSDOM's cascade does not rank :has() specificity correctly. Use the matching production rule's
+    // unchanged cap expression as the fixture's inline cap; browser layout itself is checked separately.
+    const processSelector='.libCard:has(.sheetBackStatus .laserSeal)>.processSealRow';assert(process.row.matches(processSelector));
+    process.row.style.maxWidth=rule(main,processSelector).style.getPropertyValue('max-width');
+    assert(fitted(process,'process history beside readiness')<84);assert(process.row.clientWidth<=214,'process seals respect the space reserved for readiness');process.parent.remove();
+
+    // The existing Approved control keeps its footprint and label. Its seal and the workspace approval overlay stay out of flow.
+    const panel=d.createElement('section');panel.innerHTML=w.CNEngravingSeals.panel({kind:'approved',at,by,job:{key:'test',state:'approved',approvedAt:at,approvedBy:by}});d.body.appendChild(panel);
+    const button=panel.querySelector('.egApproveButton');assert.equal(button.textContent,'Approved');
+    nearly(length(button,'min-width'),144,'Approved minimum width');nearly(length(button,'height'),36,'Approved height');nearly(length(button,'font-size'),18,'Approved text size');assert.equal(w.getComputedStyle(button).justifyContent,'center');
+    const buttonSeal=panel.querySelector('.egButtonSeal');assert.equal(w.getComputedStyle(buttonSeal).position,'absolute');nearly(length(buttonSeal.firstElementChild,'width'),84,'button uses the same seal size');assert.equal(w.getComputedStyle(buttonSeal.firstElementChild).backgroundColor,'rgba(0, 0, 0, 0)');panel.remove();
+    const overlay=rule(activity,'.pvApproval'),space=rule(activity,'.pvMain:has(.pvApproval:not(:empty))');assert.equal(overlay.style.getPropertyValue('position'),'absolute');
+    for(const property of ['height','min-height','padding-top','padding-bottom'])assert.equal(space.style.getPropertyValue(property),'','approval overlay adds no vertical '+property);
+    assert(!rule(main,'.librarySheet:has(.processSealRow)'),'no redundant trailing seal padding remains under the QR area');
+
+    // Every chosen family shares one regular viewport and one enlarged hover viewport. The saved signer stays historical.
+    const families=Object.keys(Seal.FAMILY);assert.equal(families.length,8);
+    for(const family of families){
+      const host=d.createElement('span');host.className='sealRow';host.innerHTML=`<span class="seal" tabindex="0" role="img" aria-label="Stamped by ${by} · Sep 30" data-at="${at}">${Seal.face({family,action:Seal.FAMILY[family].name,at,by})}</span>`;d.body.appendChild(host);
+      const seal=host.firstElementChild;nearly(length(seal,'width'),84,family+' regular size');assert.doesNotMatch(seal.querySelector('svg').textContent,/Recorded Operator|Signed by/);
+      seal.dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:452,clientY:602}));await tick();
+      const lens=d.querySelector('.sealLens');assert(lens,family+' has an enlarged hover surface');nearly(length(lens,'width'),168,family+' enlarged width');nearly(length(lens,'height'),168,family+' enlarged height');assert.equal(lens.querySelector('svg').dataset.sealFamily,family);
+      assert.equal(w.getComputedStyle(lens).backgroundColor,'rgba(0, 0, 0, 0)',family+' enlargement has no unrelated paper disc');assert.equal(w.getComputedStyle(lens).borderRadius,'0');assert.equal(w.getComputedStyle(lens).boxShadow,'none');assert.equal(w.getComputedStyle(lens.querySelector('.lf')).inset,'0');
+      assert.match(lens.querySelector('svg').textContent,/Recorded Operator/);assert.doesNotMatch(lens.textContent,/Current Viewer/);
+      seal.dispatchEvent(new w.MouseEvent('pointerout',{bubbles:true,relatedTarget:outside}));await tick();assert.equal(d.querySelector('.sealLens'),null,family+' preview leaves with its original seal');host.remove();
+    }
+    console.log('PASS: canonical84 normal/168 hover across all8 families; legacy sizes ignored; all12 historical seals retained; equal groups shrink, recover and respect calc/min caps; compact Approved control and workspace overlay preserved; no redundant Library padding.');
+  }finally{w.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1307,7 +1307,7 @@ const Orders = window.Orders = (() => {
     const keep = new Set(nodes); for (const c of [...list.children]) if (!keep.has(c)) c.remove();
   }
   function renderBody() {
-    if(window.CharmNestInteraction?.defer('orders-list',renderBody))return;
+    if(window.Seal?.defer('orders-list',renderBody) || window.CharmNestInteraction?.defer('orders-list',renderBody))return;
     const host = document.getElementById("ordBody"); if (!host) return;
     // the order window open over the list: the list is drawn when it closes, so what was done in it is seen going where
     // it went (drawn behind the window, it moved where nobody could see it)
@@ -1486,11 +1486,13 @@ const Orders = window.Orders = (() => {
   let bodyWanted = false;
   const onScreen = () => { const v = document.getElementById("ordersView"); return !!v && !v.classList.contains("hidden"); };
   function render() {
+    if(window.Seal?.defer('orders-view',render))return;
     if (!window.CNFrame) return renderNow();
     if (onScreen()) bodyWanted = true;
     CNFrame.later("orders", renderNow);
   }
   function renderNow() {
+    if(window.Seal?.defer('orders-view',renderNow))return;
     window.CNFrame?.cancel("orders");
     const v = document.getElementById("ordersView"), wanted = bodyWanted; bodyWanted = false;
     if (!v || (v.classList.contains("hidden") && !wanted)) { tabCount(); return; }
@@ -2114,8 +2116,10 @@ const Pool = window.Pool = (() => {
     }
     const keys=new Set();
     for(const j of d.jobs || [])if((j.copies || []).some(id=>poolIds.has(id)) && j.state!=='skipped') {
+      const row=d.orders?.rows?.find(r=>r.key===j.key);
+      j.engravingSeals=CNEngravingSeals.merge(j,row?.engrave);CNEngravingSeals.keep(j);
       Object.assign(j,{state:'ready',view:null,mask:null,fit:null,writtenFit:null,verify:null,backs:[],approvedBy:null,approvedAt:null});keys.add(j.key);
-      const row=d.orders?.rows?.find(r=>r.key===j.key);if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false});
+      if(row?.engrave)Object.assign(row.engrave,{state:'ready',approved:false,seals:CNEngravingSeals.merge(row.engrave,j)});
     }
     for(const j of d.jobs || [])if(!["approved","written","skipped"].includes(j.state) && j.materialVersion!==2) {
       Object.assign(j,{view:null,mask:null,fit:null,verify:null,materialVersion:2});
@@ -3627,6 +3631,7 @@ const Engrave = window.Engrave = (() => {
         job.fit={ok:true,size:saved.sizePt,fittedMax:Math.max(saved.sizePt,ceiling.ok?ceiling.size:0),weight:saved.weight || "Regular",centre:layout.centre,angle:layout.angle,layout,glyphs:layout.glyphs,cmds:layout.cmds,capMm:saved.capMm || saved.sizePt*G.capPerEm(font)*MM,metrics:saved.metrics,small:!!saved.small,thin:!!saved.thin};
         job.verify={geometry:check,at:Date.now()};
       }
+      await window.Seal?.whenIdle?.();
       items().set(job.key,job);
       for(const dlg of document.querySelectorAll('dialog[open]')) dlg.close();
       Object.assign(EG,{tab:"place",focus:job.key,list:false,chosen:true,q:"",card:null,cardKey:null});
@@ -3648,7 +3653,10 @@ const Engrave = window.Engrave = (() => {
         if(!other.copies.length) {other.state="written";Review.remove("eng:"+other.key);}
       }
       const row=Orders.rows().find(r=>r.poolIds.includes(job.copies[0]));
-      if(row && row.poolIds.length===1) row.engrave={...(row.engrave || {}),text:job.text,state:job.state,needed:job.state!=="skipped",approved:true};
+      if(row){
+        row.engrave={...(row.engrave || {}),seals:CNEngravingSeals.merge(row.engrave,job)};
+        if(row.poolIds.length===1) Object.assign(row.engrave,{text:job.text,state:job.state,needed:job.state!=="skipped",approved:true,approvedBy:job.approvedBy,approvedAt:job.approvedAt,decidedBy:job.decidedBy,decidedAt:job.decidedAt});
+      }
     }
     refreshBacks();Orders.render();Review.render();Session.schedule();
     if(S.mode === "library") await CN.loadLibrary();
@@ -3700,17 +3708,18 @@ const Engrave = window.Engrave = (() => {
   }
   function wordsEvent(job, by, was, how) {
     try {
-      const t = String(job.text || "").trim(), d = job.decision || {}, at = d.at || Date.now();
+      const t = String(job.text || "").trim(), d = job.decision || {}, at = (how === "skipped" ? job.decidedAt : d.at) || Date.now();
       const text = how === "none" ? `No engraving — decided by ${by}` : how === "skipped" ? `Engraving skipped by ${by} — cut plain` : `Engraving ${d.note === "edited" ? "edited" : "confirmed"} by ${by}: “${t.replace(/\n/g, " / ")}”`;
-      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
+      TL.line(job.row, "engraveChanged", { id: `${job.row.key}.${at}`, at, by, text: text.slice(0, 200), data: { how, ...(how === "skipped" ? {decidedAt:at} : {}), text: how === "words" ? t : null, was: String(was || "").trim() || null, note: d.note || null } });
     } catch (_) {}
   }
   async function classifyOnce(row) {
     const job = ensureJob(row); const sp = row.spec; const owner = items();
+    CNEngravingSeals.keep(job);
     if (!sp.engraveCandidate) { setNone(job, "no personalisation, message or note"); return job; }
     // Etsy offers engraving on these designs; legacy catalog estimates are not eligibility rules.
     const engravable = true;
-    job.state = "classify"; row.engrave = { needed: false, state: "classify" };
+    job.state = "classify"; row.engrave = { needed: false, state: "classify",seals:CNEngravingSeals.merge(row.engrave,job) };
     // A fresh reading replaces the line split, size and decision kept for earlier words. The fit restored the first words
     // it had seen, so an order whose words changed on Etsy showed its new words but was engraved with the old ones.
     job.lineInput = null; job.lineMode = "auto"; job.wantSize = null; job.decision = null;
@@ -3827,7 +3836,7 @@ const Engrave = window.Engrave = (() => {
       if (!["pooled", "written"].includes(r.state) || !r.spec || r.spec.engraveCandidate || !r.engrave) continue;
       if (!(["classify", "reclassify"].includes(r.engrave.state) || (r.engrave.state === "words" && !r.engrave.text))) continue;
       const j = items().get(r.key);
-      if (j && ["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); else if (!j) r.engrave = { needed: false, state: "none", approved: true };
+      if (j && ["classify", "words"].includes(j.state) && !j.decision) setNone(j, "no personalisation, message or note"); else if (!j) r.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(r.engrave) };
       plain++;
     }
     // a pass with nothing to read changes nothing: the lists and the run record are left as they are
@@ -4039,6 +4048,9 @@ const Engrave = window.Engrave = (() => {
     if(job.state!=="review" || job.stamping || job.backSaving || job.approvalPreparing) return;
     if(EG.cardKey === job.key && EG.card?._previewFailed) { toast("Refit the words to restore the preview before approving.", "bad"); return; }
     if(EG.cardKey===job.key) EG.card?._flushSpacing?.();
+    const approvalButton=button || (EG.cardKey===job.key ? EG.card?.querySelector('[data-a="approve"]') : null);
+    const wasDisabled=!!approvalButton?.disabled;
+    if(approvalButton){approvalButton.textContent="Approved";approvalButton.disabled=true;approvalButton.setAttribute?.("aria-busy","true");}
     job.approvalPreparing=true;
     try {
     if(EG.cardKey===job.key) {
@@ -4062,7 +4074,7 @@ const Engrave = window.Engrave = (() => {
     CNEngravingSeals.keep(job);
     const seal=CNEngravingSeals.add(job,"engraveApproved",by,approvedAt);
     // Publish the new state only after the wooden press, ink and lift finish. Pollers must not advance early.
-    job.stamping=true;try{await CNEngravingSeals.press(button || EG.card?.querySelector('[data-a="approve"]'),seal);}finally{job.stamping=false;}
+    job.stamping=true;try{await CNEngravingSeals.press(approvalButton,seal);}finally{job.stamping=false;}
     job.state="approved";job.approvedBy=by;job.approvedAt=approvedAt;CNListActivity.touch(job.row,approvedAt);
     job.row.engrave=Object.assign(job.row.engrave || {},{needed:true,state:"approved",approved:true,text:job.text,approvedBy:by,approvedAt});
     job.approvalPreparing=false;
@@ -4071,7 +4083,11 @@ const Engrave = window.Engrave = (() => {
     agent({ engrave: true }, "ENGRAVE", `${job.row.order.receiptId} · ${job.row.spec.designSku}: placement approved by ${by} (${job.fit.size.toFixed(2)} pt, cap ${job.fit.capMm.toFixed(2)} mm${job.nudged ? ", nudged" : ""})`);
     render();
     await saveBacks(job);
-    } finally {job.approvalPreparing=false;if(job.state==="review")render();}
+    } finally {
+      job.approvalPreparing=false;
+      if(approvalButton){approvalButton.removeAttribute?.("aria-busy");approvalButton.textContent="Approved";if(job.state==="review")approvalButton.disabled=wasDisabled;}
+      if(job.state==="review")render();
+    }
   }
   /** An approval's back files are written; one that cannot be written sends the job back to placement review. */
   async function saveBacks(job) {
@@ -5189,9 +5205,9 @@ const LaserReview = window.LaserReview = (()=>{
       const sheets=(card._laserSheets || []).map(id=>records.get(id)).filter(Boolean),report=card._laserSet?group(card._laserSet,sheets):{...sheet(sheets[0] || {}),ready:canCut(sheets[0] || {})};
       if(sheets.some(s=>!s.laserDoneAt && sheet(s).ready!==!!s.processReady))needsSeals=true;
       if(card._laserSet?.setId && !card._laserSet.standalone && !card._laserSet.working && !card._laserSet.laserDoneAt && report.ready!==!!card._laserSet.processReady)needsSeals=true;
-      const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet');if(seal.innerHTML!==html)seal.innerHTML=html;}
+      const seal=card.querySelector('[data-laser-seal]');if(seal){const html=R.seal(report,card._laserSet?'Set':'Sheet',card._laserSet || sheets[0]);if(seal.innerHTML!==html)seal.innerHTML=html;}
       const title=card.querySelector('[data-set-title]');if(title)title.textContent=O.setLabel(card._laserSet.seq)+(card._laserSet.day?' · '+card._laserSet.day:'');
-      card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s));if(n.innerHTML!==html)n.innerHTML=html;}});
+      card.querySelectorAll('[data-sheet-status]').forEach(n=>{const s=records.get(n.dataset.sheetStatus);if(s){const html=R.counter(sheet(s),'Sheet',s);if(n.innerHTML!==html)n.innerHTML=html;}});
       const body=card.closest('#libBody');if(body && card.parentElement!==body.querySelector(`[data-laser-area="${report.ready?'ready':'pending'}"] .laserAreaItems`))place(card,report.ready,body);
     });
     for(const list of document.querySelectorAll('#libBody .laserAreaItems')){
@@ -5506,7 +5522,7 @@ const Sets = window.Sets = (() => {
   function libraryCard(st, all, shown, {onUndo = null} = {}) {
     const card = el("div", "setCard"); card.dataset.laserCard="set";card._laserSet=st;card._laserSheets=all.map(r=>r.id);card._sheets=all;
     card.innerHTML = `${st.standalone || st.working ? `<div class="sh"><span class="nm">${st.standalone ? "14K / 10K Solid Sheets" : "Sheets"}</span></div>` : `<div class="sh"><span class="nm" data-set-title>${esc(O.setLabel(st.seq))}${st.day?" · "+esc(st.day):""}</span>${st.labels?.pdf || st.labels?.manifest || st.labels?.json || /complete/.test(st.status) ? `<details class="setActions"><summary aria-label="Set file menu">⋯</summary><div>${st.labels?.pdf ? `<a href="${st.labels.pdf.url}" target="_blank" rel="noopener">Labels PDF</a>` : ""}${st.labels?.manifest ? `<a href="${st.labels.manifest.url}" target="_blank" rel="noopener">Manifest</a>` : ""}${st.labels?.json ? `<a href="${st.labels.json.url}" target="_blank" rel="noopener">Set data</a>` : ""}${/complete/.test(st.status) ? `<button class="btn ghost xs" data-undo="${esc(st.setId)}">Undo set</button>` : ""}</div></details>` : ""}</div>`}
-          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r))}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
+          <div class="sheetsRow">${shown.map(r => `<article class="librarySheet"><div class="libCard hoverItem" data-m="${r.metal}" data-id="${r.id}" title="${esc(r.folder || r.id)}">${window.sheetHead ? sheetHead(r, { inFan: true }) : `<div class="h"><span class="nm">${esc(r.folder || r.id)}</span></div>`}<div data-back-sheet="${esc(r.id)}">${Engrave.backsMarkup(r)}</div><img class="pv" data-sheet-preview="${esc(r.id)}"${window.pvRatio ? pvRatio(r) : ""} crossorigin="anonymous"${r.preview ? ` src="${esc(cors(r.preview))}"` : ""} loading="lazy" alt="Sheet preview"><div class="m"><span><b>${r.placedCount}</b>/${r.charmCount}</span><span><b>${Math.round((r.density || 0) * 100)}%</b></span><span>${(r.orders || []).length} orders</span><span class="sheetBackStatus" data-sheet-status="${esc(r.id)}" aria-live="polite">${window.CharmNestReadiness.counter(LaserReview.sheet(r),'Sheet',r)}</span></div></div>${LaserReview.labels(r,(st.labelFiles || []).filter(f=>f.sheetId===r.id))}</article>`).join("") || "<div class='libEmpty'>no sheets recorded</div>"}</div>
           ${st.refused && st.refused.length ? `<div class="holds"><b>Refused by the station:</b> ${st.refused.map(r => `${esc(r.id)} — ${esc(r.reason)}`).join(" · ")}</div>` : ""}
           `;
     card.querySelectorAll(".libCard").forEach(x => x.onclick = () => openLibrarySheet(x.dataset.id));
@@ -6519,10 +6535,10 @@ const CustomPrint = window.CustomPrint = (() => {
   }
   /** The kept seals of one kind ("print" | "button") of an open card, as they were, on the button that made them: the
    *  same seals (their look and turn come from who and when), never pressed again on a redraw. "" when there are none. */
-  function keptSeals(it, how, size) {
+  function keptSeals(it, how) {
     const rec = keptOf(it); if (!rec || !window.Seal) return "";
     const st = Seal.list(rec).filter(x => (x.how === "button") === (how === "button"));
-    return st.length ? Seal.row({ stamps: st, prints: +rec.prints || 0 }, size ? { size } : {}) : "";
+    return st.length ? Seal.row({ stamps: st, prints: +rec.prints || 0 }) : "";
   }
   /** Records just written: a completed one is read as completed, and no longer as reopened. */
   function keepDone(saved) {
@@ -6807,9 +6823,9 @@ const CustomPrint = window.CustomPrint = (() => {
     return `<button type="button" class="btn ${cls} ${sz}" data-cu-${act}${more}${w ? " disabled" : ""} title="${esc(title)}">${esc(label)}</button>` + tail;
   }
   /** An open card's button with the seals it made before a reopen resting on it, as they were (the button takes their
-   *  colour, as a seal pressed there leaves it); a card with none gets the button as it is. size: the order window's. */
-  function keptButtonHtml(it, act, cls, label, title, sz, size) {
-    const k = keptSeals(it, act === "complete" ? "button" : "print", size);
+   *  colour, as a seal pressed there leaves it); every placement uses the shared responsive seal size. */
+  function keptButtonHtml(it, act, cls, label, title, sz) {
+    const k = keptSeals(it, act === "complete" ? "button" : "print");
     return buttonHtml(it, act, k ? (act === "complete" ? "sealedDone" : "sealedPrint") : cls, label, title, sz, k ? "data-seal-btn" : "") + k;
   }
   const freshOf = mk => fresh.get(mk) || 0;
@@ -7121,7 +7137,7 @@ const CustomSheet = window.CustomSheet = (() => {
       pools.push({ poolId, runId: run ? run.runId : null, setId: run ? run.setId || null : null, sheetId: null, orderId: rid, orderDate: +row.order.createTs || 0, arrivedAt: row.arrivedAt || 0, transactionId: row.line.transactionId, sku: sp.designSku || row.line.sku || "CUSTOM", material: F.metal, size: null, form: sp.form || null, chain: sp.chain || null, copy, quantity: mine.length, charmHash: c.hash, masterHash: null, aiPath: (F.cloud && F.cloud.path) || null, engrave: false, state: "ready", lineKey: row.key, updateTs: row.order.updateTs, custom: true, customFile: F.name });
       charms.push(c);
     }
-    row.engrave = { needed: false, state: "none", approved: true };
+    row.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(row.engrave) };
     return { sp: Object.assign({}, sp, { material: charms[0].metal, quantity: charms.length, designSku: sp.designSku || row.line.sku || "CUSTOM" }), pools, charms, custom: true };
   }
   /** One pool source per file, as a master's (Pool.masterCharm): its pieces traced once, every copy sharing them. */
@@ -7342,6 +7358,7 @@ const CustomSheet = window.CustomSheet = (() => {
   const refocus = (host, sel) => { if (!sel) return; let b = host.querySelector(sel); if (b && b.disabled) b = host.querySelector("[data-q]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); };
   const addWords = () => { const d = D.dlg, e = D.ck && all()[D.ck], t = d && d.querySelector(".cuAddT"); if (t) t.innerHTML = e && e.files.length ? "Drop more .ai or .dxf files here, or <u>browse</u>" : "Drop the order's .ai or .dxf files here, or <u>browse</u>"; };
   function paint() {
+    if(window.Seal?.defer('custom-design-view',paint))return;
     const d = D.dlg; if (!d || !D.ck) return;
     const e = all()[D.ck], it = D.it, row = it && linesOf(it)[0];
     if (!row) { d.close(); return; }
@@ -7504,6 +7521,7 @@ const CustomSheet = window.CustomSheet = (() => {
   }
   /** The window, for one card: never over another window (the order window is closed first). */
   function open(it, opts = {}) {
+    if(window.Seal?.busy?.())return window.Seal.whenIdle().then(()=>open(it,opts));
     const d = build(); if (!d._wired) { wireDlg(); d._wired = true; }
     D.ck = ckOf(it); D.it = it; D.askName = !!opts.askName;
     let flown = null;   // (the files just added have all landed in their rows)
@@ -7520,6 +7538,7 @@ const CustomSheet = window.CustomSheet = (() => {
   /** The window goes back into its card: it closes at once (the page is usable again), and a copy of it shrinks into the
    *  card's designs, which answer. A card out of sight: the copy only fades. */
   function shut() {
+    if(window.Seal?.defer('custom-design-close',shut))return;
     const d = D.dlg; if (!d || !d.open) return;
     const ck = D.ck, home = () => { const card = cardNode(ck); return card && (card.querySelector(".cuDzThumbs") || card); };
     // (as every window closes, Motion.dialogClose: at once, and a copy of it goes back into the card's designs)
@@ -7968,7 +7987,7 @@ const Review = window.Review = (() => {
     if(!row.repoolChanged && Pool.onSheets(row)){
       // a plain line's engraving decision was reset with the Etsy change; its piece is kept as it is, so it is plain again
       // (left reset, the sheet never read as ready and its set waited for good)
-      if(row.engrave && row.engrave.state==="reclassify" && row.spec && !row.spec.engraveCandidate)row.engrave={needed:false,state:"none",approved:true};
+      if(row.engrave && row.engrave.state==="reclassify" && row.spec && !row.spec.engraveCandidate)row.engrave={needed:false,state:"none",approved:true,seals:CNEngravingSeals.merge(row.engrave)};
       row.changePending=false;row.problems=[];row.hold=null;Pool.settle(row);Orders.interpretAll();
       syncOrderItems();Orders.render();renderRail();updateTopSub();refreshAllCards();if(OrderWin.isOpen())OrderWin.paint();RunCtl.poke();return;
     }
@@ -8168,7 +8187,7 @@ const Review = window.Review = (() => {
       return Engrave.placementCard(it.job, 1);
     } else if (it.kind === "orderChanged") {
       c.innerHTML = head("Order changed", r.order.receiptId, orderSub) + `<div class="ev">${evRow("Was", `<q>${esc(it.old && it.old.text || (it.old && it.old.spec && it.old.spec.personalization || []).join(" / ") || "—")}</q> · ${esc(it.old && it.old.spec ? `${it.old.spec.designSku} · ${it.old.spec.material || "?"} · ${it.old.spec.form || ""} ${it.old.spec.size || ""}` : "")}`)}${evRow("Now", `<q>${esc((sp.personalization || []).join(" / ") || "—")}</q> · ${esc(`${sp.designSku} · ${sp.material || "?"} · ${sp.form || ""} ${sp.size || ""}`)}`)}${evRow("Buyer / note", `<q>${esc(sp.buyerMessage || "—")}</q> / <q>${esc(sp.staffNote || "—")}</q>`)}</div><div class="why">${esc(it.why)}</div><div class="fixes"><button class="btn gold sm" data-a="accept">Accept the new order (re-read, re-fit)</button><button class="btn ghost sm" data-a="hold">Hold order</button></div>`;
-      c.querySelector("[data-a=accept]").onclick = async () => { answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true }; } else await repool(r); RunCtl.poke(); };
+      c.querySelector("[data-a=accept]").onclick = async () => { answered(it, "decided", "Accept the change", { accepted: true }); remove(it.key); r.changePending=false; if(r.repoolChanged){await repool(r);RunCtl.poke();return;} if (r.state === "written" || r.state === "pooled") { if (sp.engraveCandidate) await Engrave.classify(r); else r.engrave = { needed: false, state: "none", approved: true,seals:CNEngravingSeals.merge(r.engrave) }; } else await repool(r); RunCtl.poke(); };
     } else if (it.kind === "heldOrder") {
       c.innerHTML = head("Held order", it.rid, it.why) + `<div class="fixes"><button class="btn ghost sm" data-a="jump">Jump to the line's item</button></div>`;
       c.querySelector("[data-a=jump]").onclick = () => { remove(it.key); focus(it.line); };
@@ -8307,6 +8326,7 @@ const Review = window.Review = (() => {
     host._rvKey = null; host._rvStamp = null;
   }
   function cardIn(host, it) {
+    if(window.Seal?.defer('review-card-'+it.key,()=>cardIn(host,it)))return;
     const stamp=stampOf(it);
     if(host._rvStamp===stamp&&host._rvKey===it.key&&host.firstChild)return;
     if(host._rvKey!==it.key)leaveCard(host);
@@ -8404,6 +8424,7 @@ const Review = window.Review = (() => {
   /** opts.still: laid out as it stands, nothing glides (the Send to Sheet tour, home: the list is still out of sight). */
   function render(opts) {
     opts = opts && typeof opts === "object" && !(opts instanceof Event) ? opts : {};
+    if(window.Seal?.defer('review-view',()=>render(opts)))return;
     if(!opts.still&&window.CharmNestInteraction?.defer('review-view',render))return;
     const v = document.getElementById("reviewView"); LiveStrip.render(); if (!v || v.classList.contains("hidden")) return;
     try { CustomSheet.prune(); } catch (_) {}
@@ -9401,6 +9422,7 @@ const OrderWin = window.OrderWin = (() => {
   }
   /** Paint the window from the row it is showing. */
   function paint() {
+    if(window.Seal?.defer('order-view-paint',paint))return;
     const r = rowOf(W.key); if (!r) { if (W.dlg && W.dlg.open && !W.closing) W.dlg.close(); return; }
     const sp = r.spec || {};
     const sibs = linesOf(r), li = Math.max(0, sibs.findIndex(x => x.key === r.key));
@@ -9517,14 +9539,13 @@ const OrderWin = window.OrderWin = (() => {
     if (bar._stamp === stamp) return;
     bar._stamp = stamp; bar.className = "owCustom" + (it.done ? " done" : "");
     // (a spinner and what is happening, the name asked for, or "Marked completed · Undo" in place of the buttons)
-    // completed: its seals, small, beside the print button (each with who and when on hover; the Review card shows them
-    // full size), the newest pressed there as it happens
-    const seals = it.done && rec && window.Seal ? Seal.row(rec, { size: 34, pending: CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
+    // Completed: the same seals and signer history as Review, fitted together beside the print button.
+    const seals = it.done && rec && window.Seal ? Seal.row(rec, { pending: CustomPrint.freshOf("cu:" + String(it.key).replace(/^[a-z]+:/, "")) }) : "";
     bar.innerHTML = `<span class="tag">Custom Orders · ${esc(label)}${it.done ? " · completed" : ""}</span><span class="w" title="${esc(why)}">${esc(why)}</span>` +
       (busy && !busy.includes("cuUndo") ? busy
         : CustomPrint.failNote(it) + (can ? (it.done ? CustomPrint.buttonHtml(it, "print", printed ? "sealedPrint" : "ghost", printed ? "Print again" : "Print QR label", `print this order's 1 × 1 in QR sticker for the sorting station${printed ? " again" : ""}`, "xs", "data-seal-btn")
-            : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs", 34)) : "") + seals +
-          (can && !it.done ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs", 34) : "") +
+            : CustomPrint.keptButtonHtml(it, "print", "gold", "Print QR label", "print this order's 1 × 1 in QR sticker for the sorting station; the order then moves to Completed", "xs")) : "") + seals +
+          (can && !it.done ? CustomPrint.keptButtonHtml(it, "complete", "ghost", "Complete Order", "mark this order completed now without printing its label; it moves to Completed", "xs") : "") +
           (it.done ? `<button type="button" class="btn ghost xs" data-cu-reopen title="move this order back to Open (a printed label stays printed)">Reopen</button>` : "") + (busy && busy.includes("cuUndo") ? busy : ""));
     // the card as it is when pressed, not as it was drawn: a repool in between may have changed its lines
     const now = () => (W.key && Review.customItemFor(W.key)) || it;
@@ -9692,6 +9713,7 @@ const OrderWin = window.OrderWin = (() => {
     return { tone: st[0] === "bad" ? "bad" : st[0] === "ok" ? "done" : "", pill: String(st[1] || "").replace(/^\d\/\d\s+/, ""), k: "Where it is now", t: r.loading ? "Reading the order's records…" : (st[1] ? st[1].replace(/^\d\/\d\s+/, "") : "") + (where ? " · " + (where.sheet || "") : ""), ev: null };
   }
   function paintNow(r) {
+    if(window.Seal?.defer('order-now',()=>paintNow(rowOf(W.key))))return;
     if (!r) return;
     // Older compact order rows omitted approval metadata. Their permanent timeline keeps the exact signature.
     const events=W.evFor===String(r.order.receiptId)?W.events:[],historical=CNEngravingSeals.fromEvents(events,r);
@@ -9715,8 +9737,8 @@ const OrderWin = window.OrderWin = (() => {
     if (r.loading) { card.hidden = true; return; }
     const e = n.ev;
     const who = e && (e.station || e.by) ? `<span class="who"><i>${(window.OrderTimelineUI && OrderTimelineUI.iconOf && tryDo(() => OrderTimelineUI.iconOf(e))) || ""}</i>${e.station ? `<b>${esc((window.OrderTimelineUI && OrderTimelineUI.placeOf && tryDo(() => OrderTimelineUI.placeOf(e))) || e.station)}</b>` : ""}${esc((window.OrderTimelineUI && OrderTimelineUI.personOf && tryDo(() => OrderTimelineUI.personOf(e))) || e.by || "")}${e.at ? " · " + esc(new Date(e.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })) : ""}</span>` : "";
-    // timeline-ui's seal: the milestone this order (or the piece shown) is at (the 118px CANCELLED ORDER one when
-    // cancelled) — never a row of stamps. What is holding it up (a decision nobody made, a hold nobody let go) is said in
+    // Timeline's shared seal: the current milestone of this order or piece, using the standard responsive size.
+    // What is holding it up (a decision nobody made, a hold nobody let go) is said in
     // plain words instead.
     const UI = window.OrderTimelineUI, shown = shownEvents(), st = UI && UI.nowStamps && shown && shown.length ? tryDo(() => UI.nowStamps(shown, { ev: e, cancelled: n.cancelled ? e : null })) : null;
     const bl = (st && st.blocker) || null;
@@ -9798,6 +9820,7 @@ const OrderWin = window.OrderWin = (() => {
     for (const s of W.chatSc || []) if (c.contains(s.e)) s.e.scrollTop = s.end ? s.e.scrollHeight : s.top;
   }
   function setView(v, o = {}) {
+    if(window.Seal?.defer('order-view-switch',()=>setView(v,o)))return;
     if (!VIEWS.includes(v)) v = "info";
     const prev = W.view, chatWas = !!(W.dlg.open && chatHost(prev)); if (chatWas) chatKeep();
     W.view = v;
@@ -10026,13 +10049,14 @@ const OrderWin = window.OrderWin = (() => {
       imageUrl:url=>/^https?:/.test(url)?cors(url):url,
       approve:async ap=>{
         const who=me() || askEmployee();if(!who)return;
-        ap.disabled=true;ap.innerHTML='<span class="spin"></span>Approving…';
+        ap.disabled=true;ap.textContent="Approved";ap.setAttribute("aria-busy","true");
         try{
           await Engrave.approve(eng.job,who,ap);
-          if(!["approved","written"].includes(eng.job.state)){ap.disabled=false;ap.textContent="Approve";return;}
+          if(!["approved","written"].includes(eng.job.state)){ap.disabled=false;return;}
           if(x0)x0.eng={...eng,kind:"approved",by:eng.job.approvedBy,at:eng.job.approvedAt};
           if(SV.info)paintPanel(SV.info);if(window.RunCtl)RunCtl.poke();
-        }catch(e){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;ap.textContent="Approve";}
+        }catch(e){toast("Not approved: "+e.message,"bad",6000);ap.disabled=false;}
+        finally{ap.removeAttribute("aria-busy");ap.textContent="Approved";}
       },
       open:async()=>{
         await shut();
@@ -10145,6 +10169,7 @@ const OrderWin = window.OrderWin = (() => {
     });
   }
   function swapTo(rid, o) {
+    if(window.Seal?.defer('order-swap',()=>swapTo(rid,o)))return;
     const body = W.dlg.querySelector(".owBody");
     const go = () => openOrder(rid, { view: o.view, keepFrom: true, sheetId: o.sheetId, poolId: o.poolId, highlight: o.highlight });
     if (still() || !body) return go();
@@ -10164,6 +10189,7 @@ const OrderWin = window.OrderWin = (() => {
   /** The sheet window takes this view's place (never one window over another), grown out of the sheet drawn here, and
    *  this view comes back as it was when the sheet window closes, unless something else has opened meanwhile. */
   function fullSheet(select) {
+    if(window.Seal?.defer('order-full-sheet',()=>fullSheet(select)))return;
     const s = SV.list && SV.list[SV.at]; if (!s || !s.id || !window.SheetWin || !SheetWin.open) return;
     const cv = byId("owSheetCv"), R = cv.getBoundingClientRect(), inf = SV.info, snap = inf && inf.snap ? inf.snap() : null, face = W.face === "back" ? "back" : "front";
     W.back = { key: W.key, row: rowOf(W.key), rows: W.rows, walk: W.walk, hl: W.hl, sheetId: s.id, focus: select || SV.focus };
@@ -10342,6 +10368,7 @@ const OrderWin = window.OrderWin = (() => {
     const tint = bgOf(from); if (tint) { const t = el("i", "owTint"); t.style.background = tint; d.appendChild(t); const a = run(t, [{ opacity: 1 }, { opacity: 0 }], { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }); if (a) a.finished.then(() => t.remove(), () => t.remove()); }
   }
   async function shut() {
+    await window.Seal?.whenIdle?.();
     const d = W.dlg; if (!d || !d.open || W.closing) return;
     W.closing = true; stopMotion();
     const from = still() ? null : origin(), r = rectOf(from), A = [];
@@ -10373,10 +10400,11 @@ const OrderWin = window.OrderWin = (() => {
    *  order) is given it back once, as this view starts going back into it (ms: that flight), or at once (0) when the
    *  view closes any other way. */
   function giveBack(ms) { const ret = W.ret; W.ret = null; if (ret) tryDo(() => ret.fn({ ms })); }
-  function closeNow() { if (!W.dlg || !W.dlg.open) return; W.closing = false; stopMotion(); try { W.dlg.close(); } catch (_) { W.dlg.removeAttribute("open"); } }
+  function closeNow() { if(window.Seal?.defer('order-close',closeNow))return; if (!W.dlg || !W.dlg.open) return; W.closing = false; stopMotion(); try { W.dlg.close(); } catch (_) { W.dlg.removeAttribute("open"); } }
 
   /** Show a line in the view: opened, or in the view already open (another order, the next line, the same one again). */
   function show(r, opts = {}) {
+    if(window.Seal?.busy?.())return window.Seal.whenIdle().then(()=>show(r,opts));
     wire(); if (!W.dlg || !r) return;
     const key = r.key, rid = String(r.order.receiptId);
     const fresh = !W.dlg.open || W.closing;
@@ -10492,6 +10520,7 @@ const OrderWin = window.OrderWin = (() => {
   /** Opens an order by its number, wherever it is: the pull's line when it has one, else built from the records.
    *  opts: { highlight, from, view } (a search passes highlight: the number is lit as the view opens). */
   async function openOrder(rid, opts = {}) {
+    await window.Seal?.whenIdle?.();
     wire(); if (!W.dlg) return;
     rid = String(rid || "").replace(/\D/g, ""); if (!rid) return;
     // (back: called once as this view goes back into `from`, which it does even after Previous or Next, giveBack)
@@ -10519,6 +10548,7 @@ const OrderWin = window.OrderWin = (() => {
     try { rows = await lookUp(rid, say); } catch (e) { failed = e; console.warn("order view: look-up", e); }
     // (drawn once the view has landed, never into it mid-flight; a view going back meanwhile is left to go)
     await landed();
+    await window.Seal?.whenIdle?.();
     if (tok !== W.look || !W.dlg.open || W.closing || W.key !== stub.key) return;
     say(null);
     const shown = () => { if (!still()) fadeIn([...W.dlg.querySelectorAll(".owBody > .owView:not([hidden]) > *, .owId > *, #owRail > *")]); };

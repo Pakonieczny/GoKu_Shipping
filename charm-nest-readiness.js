@@ -111,15 +111,17 @@
     return stamps;
   }
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const icon=ready=>`<svg viewBox="0 0 32 38" aria-hidden="true"><path d="M8 24 5 36l11-5 11 5-3-12"/><circle cx="16" cy="15" r="12"/>${ready?'<path d="m10 15 4 4 8-9"/>':'<path d="M16 9v7m0 5v.1"/>'}</svg>`;
   // The badge stays visible; only verified readiness lights it up.
-  function seal(r,scope='Sheet'){
-    const label=escape(scope+(r.ready?' ready for laser cutting':' not ready for laser cutting'));
-    return `<span class="laserSeal ${r.ready?'earned':'pending'}" role="img" aria-label="${label}" title="${label}">${icon(true)}</span>`;
+  function seal(r,scope='Sheet',source){
+    const Sl=typeof window!=='undefined' && window.Seal;if(!Sl?.face)return '';
+    const saved=r.ready && processStamps(source || r).filter(s=>s.how==='laserReady' && +s.at>0).at(-1);
+    const model=saved?Sl.modelOf(saved):{family:'laser',action:r.ready?'LASER READY':'AWAITING LASER',status:true,ghost:!r.ready,at:0,by:''};
+    const label=escape(scope+(r.ready?' ready for laser cutting':' not ready for laser cutting')+(saved?' · '+Sl.titleOf(saved):''));
+    return `<span class="laserSeal ${r.ready?'earned':'pending'}" tabindex="0" role="img" aria-label="${label}" title="${label}">${Sl.face(model)}</span>`;
   }
-  function counter(r,scope='Sheet'){
+  function counter(r,scope='Sheet',source){
     // a sheet with no engraved backs has nothing to count: its cards read "0 / 0" beside the seal
-    return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope);
+    return (r.required ? `<span class="backSavedCount" title="Engraved backs saved" aria-label="${r.saved} of ${r.required} backs saved"><b>${r.saved} / ${r.required}</b></span>` : '')+seal(r,scope,source);
   }
   return {idsOf,orderIds,decisions,sheet,set,completedBefore,laserSheet,laserGroup,orderReports,orderBlockers,filed,processStamps,seal,counter};
 });

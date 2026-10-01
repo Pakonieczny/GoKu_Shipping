@@ -1990,14 +1990,15 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
   async function approveHere(x, b) {
     const job = x.eng && x.eng.job; if (!job) return;
     const who = needName(() => approveHere(x, b)); if (!who) return;
-    b.disabled = true; b.innerHTML = '<span class="spin"></span>Approving…';
+    b.disabled = true; b.textContent = 'Approved'; b.setAttribute('aria-busy','true');
     try {
       await Engrave.approve(job, who, b);
       if (W.sel !== x) return;
-      if (!["approved", "written"].includes(job.state)) { b.disabled = false; b.innerHTML = `${ICON.check}Approve`; return; }
+      if (!["approved", "written"].includes(job.state)) { b.disabled = false; return; }
       renderEng(x, true); renderStrip(); renderOrders(); paintFx();
       if (window.RunCtl) RunCtl.poke();
-    } catch (e) { toast("Not approved: " + e.message, "bad", 6000); b.disabled = false; b.innerHTML = `${ICON.check}Approve`; }
+    } catch (e) { toast("Not approved: " + e.message, "bad", 6000); b.disabled = false; }
+    finally { b.removeAttribute('aria-busy'); b.textContent = 'Approved'; }
   }
 
   /* ── the order's pieces, here and elsewhere ── */

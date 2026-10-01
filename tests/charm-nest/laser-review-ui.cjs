@@ -1,16 +1,25 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
-const R=require('../../charm-nest-readiness.js'),src=fs.readFileSync('charm-nest-bridge.js','utf8');
-const dom=new JSDOM('<body><main id="libBody"></main></body>',{pretendToBeVisual:true}),document=dom.window.document,jobs=new Map(),frames=[];
-dom.window.CharmNestReadiness=R;
+const src=fs.readFileSync('charm-nest-bridge.js','utf8');
+const dom=new JSDOM('<body><main id="libBody"></main></body>',{runScripts:'outside-only',pretendToBeVisual:true}),document=dom.window.document,jobs=new Map(),frames=[],requests=[];
+dom.window.matchMedia=()=>({matches:true});
+dom.window.eval(fs.readFileSync('charm-nest-motion.js','utf8'));
+dom.window.eval(fs.readFileSync('charm-nest-readiness.js','utf8'));
 const esc=x=>String(x||'').replace(/"/g,'&quot;');
-const c=vm.createContext({window:dom.window,document,console,esc,cors:x=>x,S:{mode:'library',cloud:{ok:true}},allSheets:()=>[],Orders:{rows:()=>[]},Engrave:{items:()=>jobs},O:{setLabel:n=>'Set '+n},requestAnimationFrame:fn=>(frames.push(fn),frames.length),setInterval(){},api:async()=>({sheets:[]})});
+const c=vm.createContext({window:dom.window,document,console,esc,cors:x=>x,S:{mode:'library',cloud:{ok:true}},allSheets:()=>[],Orders:{rows:()=>[]},Engrave:{items:()=>jobs},O:{setLabel:n=>'Set '+n},innerHeight:dom.window.innerHeight,requestAnimationFrame:fn=>(frames.push(fn),frames.length),setTimeout:dom.window.setTimeout.bind(dom.window),clearTimeout:dom.window.clearTimeout.bind(dom.window),setInterval(){},api:async(name,payload)=>{requests.push({name,payload});return {sheets:[]};}});
 vm.runInContext(src.slice(src.indexOf('const LaserReview ='),src.indexOf('const Sets =')),c);
 const L=dom.window.LaserReview,body=document.querySelector('#libBody');
 const s={id:'sheet1',sheetIndex:1,poolIds:['c1'],placedCount:1,verification:{ok:true},preview:'preview',outputs:{ai:'front'},label:{files:[{path:'qr',url:'url',payload:'orders'}]},backPool:[]};
 L.record(s);L.sections(body);
 const card=document.createElement('article');card.dataset.laserCard='set';card._laserSheets=['sheet1'];card._laserSet={seq:1,sheetIds:['sheet1']};card.innerHTML='<div class="libCard"><span data-laser-seal></span><span data-sheet-status="sheet1"></span></div>'+L.labels(s);L.place(card,false,body);L.changed();frames.shift()();
+card.getBoundingClientRect=()=>({left:10,top:80,right:310,bottom:430,width:300,height:350});
 assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending');assert.equal(card.querySelector('.productionRow').dataset.laserSheet,'sheet1');
 assert.equal(card.querySelectorAll('.laserSeal.pending').length,2,'unfinished sheets and sets show muted badges');
+for(const badge of card.querySelectorAll('.laserSeal.pending')){
+ const svg=badge.querySelector('svg'),model=JSON.parse(svg.dataset.sealModel);
+ assert.equal(svg.dataset.sealFamily,'laser','pending readiness uses the matching hexagonal laser family');
+ assert.equal(model.at,0);assert.equal(model.status,true,'computed readiness is a status, not a historical approval');
+ assert.doesNotMatch(svg.textContent,/\d{1,2}\s+[A-Z]{3}\s+\d{4}|\d{1,2}:\d{2}|Signed by|Paul/,'pending readiness invents neither time nor signer');
+}
 assert.equal(card.querySelectorAll('.laserSeal.earned').length,0,'muted badges cannot grant readiness');
 assert.equal(card.querySelector('.libCard').nextElementSibling.className,'productionRow','QR remains below the sheet');
 assert.match(card.querySelector('[data-sheet-status]').textContent,/0 \/ 1/);
@@ -24,4 +33,4 @@ assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','reop
 assert.equal(card.querySelectorAll('.laserSeal.pending').length,2,'reopening greys both badges');
 assert.equal(card.querySelectorAll('.laserSeal.earned').length,0);
 jobs.clear();L.changed();frames.shift()();
-(async()=>{await L.poll(true);frames.shift()();assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','deleted cloud sheet cannot retain readiness');console.log('Laser Library UI OK: small counters, persistent muted badges, immediate approvals/reopens, stable images and section movement');})().catch(e=>{console.error(e);process.exitCode=1;});
+(async()=>{try{await L.poll(true);assert.equal(requests.length,1,'the visible card is refreshed against cloud state');assert.equal(requests[0].payload.sheetIds.join(','),'sheet1');frames.shift()();assert.equal(card.closest('[data-laser-area]').dataset.laserArea,'pending','deleted cloud sheet cannot retain readiness');console.log('Laser Library UI OK: compact counters, shared laser-family status seals without invented timestamps, immediate approvals/reopens, stable images and section movement');}finally{dom.window.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

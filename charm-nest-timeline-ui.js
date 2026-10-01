@@ -21,7 +21,7 @@
  *                          path from event to event, the NOW line and the milestones to come as dashed stamps
  *    detail                the chosen event inline, never a pop-up: its seal, who, where, when, the sheet (Open sheet),
  *                          before → after, the reason, its data, Earlier/Later (← →) and the steps around it
- *  Hovering a stamp lifts it onto a loupe (its own fixed layer, never clipped) at 136px with its full face.
+ *  Hovering a stamp lifts it onto a loupe (its own fixed layer, never clipped) at twice the shared seal size with its full face.
  *  compact: true draws the rail alone, sized to its host (the order view's header); a rail stamp asks the host to open
  *  it on the Timeline: opts.onOpen(event), or else a bubbling "timeline:focus" event, detail { eventId }.
  *  nowStamps()/wireNow(): the order view's "Where it is now" seal and latest stamps (see the end of this file).
@@ -32,7 +32,7 @@
   "use strict";
   if (root.OrderTimelineUI) return;
   const doc = root.document;
-  const E = "cubic-bezier(.2,.8,.2,1)", SLIDE = "cubic-bezier(.3,.1,.2,1)", SPRING = "cubic-bezier(.3,1.7,.5,1)", DROP = "cubic-bezier(.5,0,.3,1)";
+  const E = "cubic-bezier(.2,.8,.2,1)", SLIDE = "cubic-bezier(.3,.1,.2,1)", SPRING = "cubic-bezier(.3,1.7,.5,1)";
   const POLL = 20000;
   const reduced = () => { try { return !!root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (_) { return false; } };
   const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -47,13 +47,19 @@
   }
 
   /* ── the zoomed seal (Paul, 2026-09-28): a hovered dot's seal opens directly ABOVE it, its bottom edge ZGAP over the
-     dot's top, at 90% of the old 136px loupe. It never covers the dot, which stays in sight and keeps the hover (the
-     layer takes no pointer). It flips below only when the view has no room above, and stays inside the view sideways.
+     dot's top, at twice the standard 84px seal size. It never covers the dot, which stays in sight and keeps the hover (the
+     layer takes no pointer). It flips below, then beside when needed, with the same size and gap in every view.
      The room under the dot belongs to the step's explainer card. ── */
-  const ZSZ = 122, ZGAP = 8, ZM = 8;
+  const SEAL_SIZE = 84, ZSZ = 168, ZGAP = 12, ZM = 8;
   function zoomSpot(r, vw, vh) {
-    const up = r.top - ZGAP - ZSZ >= ZM || r.bottom + ZGAP + ZSZ > vh - ZM && r.top > vh - r.bottom;
-    return { x: clamp(r.left + r.width / 2 - ZSZ / 2, ZM, Math.max(ZM, vw - ZSZ - ZM)), y: up ? r.top - ZGAP - ZSZ : r.bottom + ZGAP, up };
+    const centeredX = clamp(r.left + r.width / 2 - ZSZ / 2, ZM, Math.max(ZM, vw - ZSZ - ZM));
+    const besideY = clamp((r.top + r.bottom) / 2 - ZSZ / 2, ZM, Math.max(ZM, vh - ZSZ - ZM));
+    if (r.top - ZGAP - ZSZ >= ZM) return { x: centeredX, y: r.top - ZGAP - ZSZ, up: true, side: "above" };
+    if (r.bottom + ZGAP + ZSZ <= vh - ZM) return { x: centeredX, y: r.bottom + ZGAP, up: false, side: "below" };
+    if (r.left + r.width + ZGAP + ZSZ <= vw - ZM) return { x: r.left + r.width + ZGAP, y: besideY, up: false, side: "right" };
+    if (r.left - ZGAP - ZSZ >= ZM) return { x: r.left - ZGAP - ZSZ, y: besideY, up: false, side: "left" };
+    // In a viewport with no full slot, preserve the shared preview size and the original's unobstructed hit target.
+    return { x: centeredX, y: r.top - ZGAP - ZSZ, up: true, side: "above" };
   }
   /** Lays a fixed layer at the dot's spot and eases it up out of the dot's edge; quiet puts it there at once. */
   function zoomIn(layer, r, quiet) {
@@ -61,15 +67,16 @@
     // a transformed ancestor moves a fixed layer's origin: measure where it really sits
     const o = layer.getBoundingClientRect(), p = zoomSpot(r, root.innerWidth || 1200, root.innerHeight || 800);
     const to = `translate(${Math.round(p.x - o.left)}px,${Math.round(p.y - o.top)}px)`;
-    layer.dataset.side = p.up ? "above" : "below"; layer.style.transformOrigin = p.up ? "50% 100%" : "50% 0";
+    layer.dataset.side = p.side; layer.style.transformOrigin = p.side === "right" ? "0 50%" : p.side === "left" ? "100% 50%" : p.up ? "50% 100%" : "50% 0";
     layer.style.transform = to;
-    if (!quiet) anim(layer, [{ transform: `${to} translateY(${p.up ? 6 : -6}px) scale(.84)`, opacity: 0 }, { transform: to, opacity: 1 }], 240, { easing: "cubic-bezier(.2,.8,.2,1)" });
+    if (!quiet) { const from = p.side === "right" ? "translateX(-6px)" : p.side === "left" ? "translateX(6px)" : `translateY(${p.up ? 6 : -6}px)`; anim(layer, [{ transform: `${to} ${from} scale(.84)`, opacity: 0 }, { transform: to, opacity: 1 }], 240, { easing: "cubic-bezier(.2,.8,.2,1)" }); }
     return p;
   }
   /** Eases the layer back down toward its dot: the animation, or null when motion is reduced. */
   function zoomOut(layer) {
     const t = layer.style.transform;
-    return anim(layer, [{ transform: t, opacity: 1 }, { transform: `${t} translateY(${layer.dataset.side === "below" ? -5 : 5}px) scale(.88)`, opacity: 0 }], 150, { easing: "ease-in" });
+    const side = layer.dataset.side, to = side === "right" ? "translateX(-5px)" : side === "left" ? "translateX(5px)" : `translateY(${side === "below" ? -5 : 5}px)`;
+    return anim(layer, [{ transform: t, opacity: 1 }, { transform: `${t} ${to} scale(.88)`, opacity: 0 }], 150, { easing: "ease-in" });
   }
 
   // Every timeline/overview seal uses the same rest and departure rules. The original seal alone owns the hover;
@@ -191,7 +198,8 @@
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
   const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
-  const sealed = e => !!e && (MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
+  const isPlainDecision = e => !!e && e.type === "engraveChanged" && !!e.data && e.data.how === "skipped";
+  const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
    *  sorting scan, a rose sheet's cut after its laser mark) keeps the first seal and hangs the rest on it as `same`, so
    *  nothing is lost — the explainer and the detail can still read them. Etsy's completion folds into the order's
@@ -280,7 +288,7 @@
   }
   const printTitle = e => `QR label printed · Print Nº ${e.print.n} · ${e.print.where}`;
   /** The print seal in the Stamps legend. */
-  const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "Name", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
+  const printLegend = t => { const e = { key: "legend-print", type: "sealPrinted", at: t, by: "", lane: "office", data: null, print: { n: 1, where: PRINT_WHERE.charm } }; return `<figure><span class="sv" tabindex="0" ${sealAttrs(e)} style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>QR label printed<small>every print</small></figcaption></figure>`; };
   /** What is holding this order up, in plain words: a hold nobody released, or a question nobody answered. */
   function blockerOf(events) {
     let hold = null; const need = new Map(), byHand = new Map();
@@ -523,7 +531,19 @@
     const d = h / 24; return d < 2 ? "yesterday" : d < 14 ? Math.round(d) + " days ago" : new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
   const rotOf = e => { const h = hash(String(e.key || e.id || "") + e.type); return kindOf(e.type).sh === "m" ? 4 + (h % 8) : -(4 + (h % 9)); };
-  const sizeOf = e => { const s = kindOf(e.type).sh; return s === "m" ? 36 : s === "a" ? 32 : 28; };
+  // One size per group: the kind changes the silhouette, never the space occupied by its seal.
+  const sealAttrs = e => `data-tl-face="${esc(JSON.stringify({ key: e.key, type: e.type, at: e.at, by: e.by, source: e.source, station: e.station, lane: e.lane, sheet: e.sheet, data: e.data, print: e.print }))}"`;
+  function storedFace(b) { try { return b && b.dataset.tlFace ? JSON.parse(b.dataset.tlFace) : null; } catch (_) { return null; } }
+  function baseSealSize(host) { try { return Math.max(1, parseFloat(root.getComputedStyle(host).getPropertyValue("--seal-size")) || SEAL_SIZE); } catch (_) { return SEAL_SIZE; } }
+  function fitRail(rail) {
+    if (!rail) return;
+    const wrap = rail.querySelector(".tlStops"), n = wrap && wrap.children.length; if (!n) return;
+    const base = baseSealSize(rail), width = wrap.clientWidth || rail.clientWidth, compactHost = rail.closest(".tlUI.compact");
+    let fit = width > 0 ? Math.min(base, Math.max(24, width / n - 8)) : base;
+    // A compact header is already sized by its host. Its seals fit that space without making a taller toolbar.
+    if (compactHost && compactHost.clientHeight) fit = Math.min(fit, Math.max(24, compactHost.clientHeight - 20));
+    rail.style.setProperty("--seal-fit", Math.round(fit * 100) / 100 + "px");
+  }
   function iconG(ic, x, y, s, ink, sw) {
     const green = ic === "greenline";
     return `<g transform="translate(${x - 12 * s} ${y - 12 * s}) scale(${s})" fill="none" stroke="${green ? "#2f7d3a" : ink}" stroke-width="${green ? 3 : sw || 2.2}" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[ic] || ICON.dot}"/>${green ? `<circle cx="3" cy="17" r="1.8" fill="#2f7d3a"/><circle cx="21" cy="7" r="1.8" fill="#2f7d3a"/>` : ""}</g>`;
@@ -542,10 +562,32 @@
     if (at) return /station$/i.test(at) || !(LANE[STATION_LANE[e.station]] || {}).st ? at : at + " station";
     return L.st ? L.l + " station" : L.k === "etsy" ? "From Etsy" : L.l;
   }
+  // Eight visual families share the same action/date/time layout. Event wording stays truthful within its family.
+  const FAMILY_BY_TYPE = {
+    arrived: "received", pulled: "received", interpreted: "received", decided: "received", customRead: "received", customDecided: "received",
+    designSent: "prepared", designDropped: "prepared", pooled: "prepared", placed: "prepared", moved: "prepared", renested: "prepared",
+    sizeChanged: "prepared", included: "prepared", excluded: "prepared", merged: "prepared", qrLabel: "prepared", setCommitted: "prepared", sealPrinted: "prepared", roseLine: "prepared",
+    engraveNeeded: "engraving", engraveApproved: "engraving", engraveChanged: "engraving",
+    laserDone: "laser", roseCut: "laser", laserReady: "laser", sheetCompleted: "laser", setCompleted: "laser",
+    scan: "finishing", sorted: "finishing", welded: "finishing", assembled: "finishing",
+    packed: "fulfilment", labelPrinted: "fulfilment", shipped: "fulfilment", etsyCompleted: "fulfilment", sealCompleted: "fulfilment",
+    cancelled: "cancelled", etsyCancelled: "cancelled", cancelStep: "cancelled", cancelAlert: "cancelled"
+  };
+  const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", engraveApproved: "BACK ENGRAVING", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
+  const CANONICAL_ICON = { arrived: "received", placed: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
+  function faceModel(e) {
+    const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
+    const action = plain ? "CUT PLAIN" : printed ? "QR LABEL PRINTED" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();
+    return { family, action, icon: plain ? "plain" : CANONICAL_ICON[e.type], path: plain || CANONICAL_ICON[e.type] ? undefined : ICON[printed ? "qr" : kindOf(e.type).ic] || ICON.dot, date: at ? dateOf(at) : "", time: at ? timeOf(at) : "", by: e.ghost || (!at && !String(e.by || "").trim()) ? "" : personOf(e), at };
+  }
   /** One stamp as SVG. full: the face that reads (ring words, icon, date, time, name); otherwise edge + big icon.
    *  opts.ghost draws a step still to come (dashed, no ink); opts.tex:false leaves out the ink texture; opts.uid names
    *  its inner ids (the same stamp then draws the same markup; unique in the page, as the ids are). */
   function stampSvg(e, full, opts) {
+    opts = opts || {};
+    if (root.Seal && typeof root.Seal.face === "function") {
+      try { return root.Seal.face(faceModel(e), { signer: !!opts.hover, ghost: !!opts.ghost }); } catch (err) { warn("seal face", err); }
+    }
     if (e && e.print) return printSvg(e, full, opts);
     opts = opts || {};
     const Kd = kindOf(e.type), ink = INK[Kd.ink], id = opts.uid ? String(opts.uid).replace(/[^\w-]/g, "_") : "tls" + (++UID), seed = (hash(String(e.key || e.id || e.type) + e.at) % 997) + 1;
@@ -571,16 +613,11 @@
       `<text x="60" y="68.2" text-anchor="middle" stroke="none" ${mono} font-size="9.8" font-weight="700">${esc(timeOf(e.at))}</text>` +
       `<text x="60" y="84" text-anchor="middle" stroke="none" ${sans} font-size="${Math.max(7.4, nfs).toFixed(2)}" font-weight="800" letter-spacing=".5">${esc(nm)}</text></g></svg>`;
   }
-  /** The red rubber stamp laid across the rail of a cancelled order. */
-  function cancelSvg(c) {
-    const id = "tlx" + (++UID), by = c.source === "etsy" || /^etsy$/i.test(c.by || "") ? "ON ETSY" : "BY " + String(c.by || "a person").toUpperCase().slice(0, 24);
-    const mono = `font-family="ui-monospace,Menlo,Consolas,monospace"`;
-    return `<svg viewBox="0 0 420 118" aria-hidden="true" focusable="false"><defs>${texOf(id, (hash(c.at) % 997) + 1)}</defs><g filter="url(#${id}f)" fill="${RED}" stroke="${RED}">` +
-      `<rect x="5" y="5" width="410" height="108" rx="12" fill="none" stroke-width="6"/><rect x="15" y="15" width="390" height="88" rx="7" fill="none" stroke-width="1.8"/>` +
-      `<text x="210" y="60" text-anchor="middle" stroke="none" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif" font-size="44" font-weight="900" letter-spacing="7">CANCELLED</text>` +
-      `<text x="210" y="80" text-anchor="middle" stroke="none" ${mono} font-size="12.5" font-weight="800" letter-spacing="3">DO NOT PROCEED</text>` +
-      `<text x="210" y="96" text-anchor="middle" stroke="none" ${mono} font-size="10" font-weight="700" letter-spacing="1.4">${esc(`${by} · ${dateOf(c.at)} · ${timeOf(c.at)}`.toUpperCase())}</text></g></svg>`;
+  /** The cancellation seal uses the same regular footprint as every other event, with its warning in the record. */
+  function cancellationFace(c) {
+    return { key: "cancel-" + c.at, type: c.source === "etsy" || /^etsy$/i.test(c.by || "") ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || "", source: c.source || "", lane: "office", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } };
   }
+  function cancelSvg(c) { return stampSvg(cancellationFace(c), true, { uid: "tlx" + (++UID) }); }
 
   /* ════ one event, as the timeline reads it ════ */
   function norm(x) {
@@ -934,7 +971,9 @@
       const q = stepOf(b); if (!q) return false;
       if (a) { try { a.cancel(); } catch (_) {} }
       on = b; cur = q;
-      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, b); card.classList.add("on"); foot();
+      const z = host._tlZoomFor === b ? host._tlZoomAt : null;
+      const whole = z && z.side === "below" ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, z.y + ZSZ) }; } } : b;
+      a = placeExp(card, reqCard(q), b.querySelector(".s") || b, whole, z && { left: z.x, right: z.x + ZSZ }); card.classList.add("on"); foot();
       return true;
     };
     const hide = now => {
@@ -979,14 +1018,14 @@
 .tlLink:hover{text-decoration-color:currentColor}
 .tlRail{position:relative;flex:3 1 520px;min-width:0;max-width:860px;margin-left:auto}
 .tlStops{position:relative;display:grid;grid-template-columns:repeat(var(--n,9),minmax(0,1fr));margin:0;padding:0}
-.tlTrack,.tlFill{position:absolute;top:17px;height:2px;border-radius:2px;left:calc(100% / (2 * var(--n,9)));right:calc(100% / (2 * var(--n,9)))}
+.tlTrack,.tlFill{position:absolute;top:calc(var(--seal-fit,var(--seal-size,84px)) / 2);height:2px;border-radius:2px;left:calc(100% / (2 * var(--n,9)));right:calc(100% / (2 * var(--n,9)))}
 .tlTrack{background:repeating-linear-gradient(90deg,var(--ink25) 0 4px,transparent 4px 8px)}
 .tlFill{background:var(--sage);transform-origin:0 50%;transform:scaleX(0);transition:transform .9s cubic-bezier(.3,.1,.2,1)}
 .tlRail.cx .tlFill{background:linear-gradient(90deg,var(--sage) 75%,var(--clay))}
 .tlStop{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0;border:0;background:none;padding:0 1px;color:var(--ink45)}
-.tlStop .tlSeal{position:relative;display:block;width:34px;height:34px;transform:rotate(var(--rot,0deg));transition:transform .22s var(--tlE),opacity .24s}
+.tlStop .tlSeal{position:relative;display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));transform:rotate(var(--rot,0deg));transition:transform .22s var(--tlE),opacity .24s}
 .tlStop .tlSeal svg{width:100%;height:100%;display:block;overflow:visible}
-.tlStop .tlSeal.lifted{transform:rotate(var(--rot,0deg)) scale(1.12)}
+.tlStop .tlSeal.lifted{filter:drop-shadow(0 2px 3px rgba(30,26,20,.12))}
 .tlStop>span{font:700 8.5px/1.2 var(--mono);letter-spacing:.07em;text-transform:uppercase;text-align:center;max-width:100%;overflow-wrap:anywhere}
 .tlStop.d>span{color:var(--ink70)}
 .tlStop.c>span{color:#7a5a1d}
@@ -998,8 +1037,8 @@
 .tlStop .tlCnt{position:absolute;top:-5px;left:calc(50% + 9px);font:700 8px/1 var(--mono);letter-spacing:.02em;font-style:normal;padding:2px 5px;border-radius:999px;background:var(--goldSoft,#f6eedc);color:#7a5a1d;box-shadow:0 0 0 1px var(--goldLine,#e3cf9f);white-space:nowrap;pointer-events:none;z-index:2;animation:tlCntIn .36s var(--tlSpring) both}
 @keyframes tlCntIn{from{opacity:0;transform:scale(.6)}}
 @keyframes tlRing{0%{transform:scale(.85);opacity:.85}70%,100%{transform:scale(1.4);opacity:0}}
-.tlCxStamp{position:absolute;left:50%;top:50%;width:min(270px,40%);pointer-events:none;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
-.tlCxStamp svg{display:block;width:100%;height:auto;mix-blend-mode:multiply;opacity:.93}
+.tlCxStamp{position:absolute;left:50%;top:50%;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));cursor:pointer;z-index:3;transform:translate(-50%,-50%) rotate(-6deg)}
+.tlCxStamp svg{display:block;width:100%;height:100%;mix-blend-mode:multiply;opacity:.93}
 .tlBar{display:flex;align-items:center;gap:6px;padding:7px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-height:40px;flex:none}
 .tlChips{display:flex;flex-wrap:wrap;gap:6px}
 .tlChip{border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--card);font-size:11px;color:var(--ink70);display:inline-flex;align-items:center;gap:6px;transition:transform .12s}
@@ -1018,7 +1057,7 @@
 @keyframes tlSpin{to{transform:rotate(360deg)}}
 .tlGrid{display:grid;grid-template-columns:140px minmax(0,1fr);border-bottom:1px solid var(--line);position:relative;flex:none}
 .tlLanes{border-right:1px solid var(--line);background:var(--card);padding-top:40px;padding-bottom:26px}
-.tlLane{position:relative;height:58px;display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
+.tlLane{position:relative;height:var(--tl-lane-height,58px);display:flex;flex-direction:column;justify-content:center;padding:0 14px;border-bottom:1px solid var(--line2);min-width:0}
 .tlLane::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(202,168,97,.16),transparent);opacity:0;transition:opacity .24s}
 .tlLane.on::before{opacity:1}
 .tlLane b{position:relative;font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink70);display:flex;align-items:center;gap:6px}
@@ -1038,12 +1077,13 @@
 .tlLaneLine{position:absolute;left:0;right:0;height:1px;background:var(--line2)}
 .tlSt{position:absolute;width:var(--s);height:var(--s);margin:calc(var(--s) / -2) 0 0 calc(var(--s) / -2);border:0;padding:0;background:transparent;border-radius:50%;transform:rotate(var(--rot));transition:opacity .24s,transform .22s var(--tlE);z-index:2}
 .tlSt svg{width:100%;height:100%;display:block;overflow:visible;mix-blend-mode:multiply}
-.tlSt.lifted{transform:rotate(var(--rot)) scale(1.12)}
+.tlSt.lifted{filter:drop-shadow(0 2px 3px rgba(30,26,20,.12))}
 .tlSt.sel::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:1.5px solid var(--gold);box-shadow:0 0 0 4px rgba(202,168,97,.18);animation:tlSelIn .32s var(--tlSpring) both}
 @keyframes tlSelIn{from{transform:scale(.6);opacity:0}}
 .tlSt.hl::after{content:"";position:absolute;inset:-10px;border-radius:50%;background:radial-gradient(rgba(202,168,97,.38),transparent 70%);z-index:-1}
 .tlSt.dim{opacity:.13}.tlSt.dim svg{filter:grayscale(1)}
 .tlSt.pend svg{opacity:.65}
+.tlSt.pending svg,.tlStop .tlSeal.pending svg{visibility:hidden}
 .tlSt.ghost{opacity:.42;cursor:default}
 .tlSt.ghost svg{mix-blend-mode:normal}
 .tlInkRing{position:absolute;border-radius:50%;border:2px solid;pointer-events:none;z-index:1;opacity:0}
@@ -1056,12 +1096,12 @@
 .tlAfterCx{position:absolute;top:34px;bottom:0;right:0;background:repeating-linear-gradient(135deg,transparent 0 7px,rgba(176,86,63,.09) 7px 8px)}
 .tlMsg{position:absolute;left:158px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink70);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 13px;box-shadow:var(--sh);z-index:4;max-width:calc(100% - 176px)}
 .tlMsg.err{color:#8a3a26;background:var(--claySoft);border-color:#e7b9aa}
-/* the zoomed seal (zoomSpot): 122px, 90% of the old 136px, above its dot and taking no pointer, so the dot keeps the hover */
-.tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:122px;height:122px;pointer-events:none;border-radius:50%;background:var(--card,#fffefb);box-shadow:0 0 0 1px rgba(30,26,20,.06),0 16px 40px rgba(30,26,20,.22);display:none}
-.tlLoupe .lf,.tlLoupe .lf svg{width:100%;height:100%;display:block}
+/* All zoomed faces use the same 168px preview, above the original and taking no pointer. */
+.tlLoupe{position:fixed;z-index:2147483000;left:0;top:0;width:var(--seal-hover-size,168px);height:var(--seal-hover-size,168px);pointer-events:none;background:transparent;display:none}
+.tlLoupe .lf,.tlLoupe .lf svg{width:100%;height:100%;display:block}.tlLoupe .lf{filter:drop-shadow(0 10px 14px rgba(30,26,20,.16))}
 .tlDetail{position:relative;flex:1 1 auto;min-height:0;overflow:auto;padding:22px 28px 26px}
-.tlDetIn{display:grid;grid-template-columns:150px minmax(0,1fr) 290px;gap:32px;align-content:start}
-.tlBig{width:150px;height:150px;transform:rotate(var(--rot,0deg))}
+.tlDetIn{display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr) 290px;gap:24px;align-content:start}
+.tlBig{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));transform:rotate(var(--rot,0deg))}
 .tlBig svg{width:100%;height:100%;display:block;overflow:visible}
 .tlDetail h3{font:500 24px/1.2 var(--serif);margin:6px 0 4px}
 .tlWhen{font:11.5px var(--mono);color:var(--ink45)}
@@ -1085,19 +1125,19 @@
 .tlBadge.sm{font-size:11px;padding:1px 8px 1px 2px;gap:5px}.tlBadge.sm i{width:17px;height:17px}.tlBadge.sm em{font-size:8.5px}
 .tlAround{border-left:1px solid var(--line);padding-left:24px;display:grid;gap:4px;align-content:start}
 .tlAround .tlLbl{margin-bottom:6px}
-.tlArw{position:relative;display:grid;grid-template-columns:34px minmax(0,1fr);gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:10px;transition:transform .18s var(--tlE)}
+.tlArw{position:relative;display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr);gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:6px 8px;border-radius:10px;transition:transform .18s var(--tlE)}
 .tlArw::before{content:"";position:absolute;inset:0;border-radius:inherit;background:var(--card2);opacity:0;transition:opacity .18s}
 .tlArw:hover::before{opacity:1}.tlArw:hover{transform:translateX(2px)}
 .tlArw.cur::before{opacity:1;background:var(--goldSoft)}
-.tlArw .sv{position:relative;display:block;width:34px;height:34px}
+.tlArw .sv{position:relative;display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlArw .sv svg{width:100%;height:100%;display:block}
 .tlArw div{position:relative;min-width:0}
 .tlArw b{display:block;font:600 12px var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tlArw span{font:10.5px var(--mono);color:var(--ink45)}
 .tlEmpty{color:var(--ink45);font-size:12.5px}
-.tlLegend{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:14px 8px}
+.tlLegend{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,calc(var(--seal-size,84px) + 18px)),1fr));gap:14px 8px}
 .tlLegend figure{margin:0;display:grid;justify-items:center;gap:6px;text-align:center}
-.tlLegend .sv{width:96px;height:96px}.tlLegend .sv svg{width:100%;height:100%;display:block}
+.tlLegend .sv{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}.tlLegend .sv svg{width:100%;height:100%;display:block}
 .tlLegend figcaption{font:600 10.5px var(--sans);color:var(--ink70)}
 .tlLegend figcaption small{display:block;font:9px var(--mono);color:var(--ink45);letter-spacing:.06em;text-transform:uppercase;font-weight:400}
 .tlUI.compact .tlBar,.tlUI.compact .tlGrid,.tlUI.compact .tlDetail,.tlUI.compact .tlNow{display:none}
@@ -1106,17 +1146,17 @@
 .tlUI.compact .tlRail{flex:1 1 auto;max-width:none;margin:0}
 .tlUI.compact .tlStops{grid-template-columns:repeat(var(--n,9),minmax(0,1fr))!important;row-gap:0}
 .tlUI.compact .tlStop .tlCnt{top:3px;left:calc(50% + 15px);font-size:7.5px;padding:1.5px 4px}
-.tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:11px}
+.tlUI.compact .tlTrack,.tlUI.compact .tlFill{display:block;top:calc(var(--seal-fit,var(--seal-size,84px)) / 2)}
 .tlUI.compact .tlStop{gap:2px}
-.tlUI.compact .tlStop .tlSeal{width:24px;height:24px}
+.tlUI.compact .tlStop .tlSeal{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlUI.compact .tlStop>span{font-size:7.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.tlUI.compact .tlCxStamp{width:min(150px,30%)}
+.tlUI.compact .tlCxStamp{width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}
 .tlUI.compact .tlMsg{left:50%;top:50%;transform:translate(-50%,-50%);max-width:100%;padding:3px 10px;font-size:11px;gap:6px;box-shadow:none;white-space:nowrap}
-@media (max-width:1100px){.tlDetIn{grid-template-columns:120px minmax(0,1fr)}.tlBig{width:120px;height:120px}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
+@media (max-width:1100px){.tlDetIn{grid-template-columns:var(--seal-size,84px) minmax(0,1fr)}.tlAround{grid-column:1/-1;border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
 @media (max-width:900px){.tlRail{flex-basis:100%}.tlStops{grid-template-columns:repeat(6,minmax(0,1fr));row-gap:10px}.tlTrack,.tlFill{display:none}}
-.tlNowSeal{width:92px;height:92px;flex:none;transform:rotate(var(--rot,0deg))}
+.tlNowSeal{position:relative;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));flex:none;transform:rotate(var(--rot,0deg))}
 .tlNowSeal svg,.tlMini svg{display:block;width:100%;height:100%;overflow:visible}
-.tlNowSeal.cx{width:118px;height:118px;margin:-8px 0;pointer-events:none;mix-blend-mode:multiply;transform:rotate(-11deg)}
+.tlNowSeal.cx{margin:0;mix-blend-mode:multiply;transform:rotate(-11deg)}
 .tlBlock{display:inline-flex;align-items:baseline;gap:9px;min-width:0;max-width:100%;font:13px/1.45 var(--sans);color:#7a5a1d;background:var(--goldSoft);border:1px solid var(--goldLine);border-radius:10px;padding:5px 12px}
 .tlBlock b{font:700 9.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a24;flex:none}
 .tlCxList{flex:1 1 100%;display:flex;flex-direction:column;gap:3px;min-width:0;margin:2px 0 6px;font:12.5px/1.4 var(--sans)}
@@ -1125,12 +1165,12 @@
 .tlCxList .s i{font-style:normal;font-weight:800;width:1em;flex:none;text-align:center}
 .tlCxList .s.ok i{color:var(--sage,#4f7a5a)}.tlCxList .s.wait i,.tlCxList .s.wait{color:#8a6a24}.tlCxList .s.bad i,.tlCxList .s.bad{color:var(--clay,#b0563f)}.tlCxList .s.back i{color:var(--sage,#4f7a5a)}
 .tlCxList small{opacity:.7;font-size:11px;white-space:nowrap}
-.tlMini{position:relative;width:26px;height:26px;margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
-/* a stamp stays put under the pointer (a touch larger); wireNow zooms its full face .f onto a 122px layer above it */
+.tlMini{position:relative;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px));margin:0 1px;padding:0;border:0;background:none;flex:none;cursor:pointer;vertical-align:middle}
+/* The same regular seal and delayed 168px hover face are used in compact and full views. */
 .tlMini>span{position:absolute;inset:0;border-radius:50%;transform:rotate(var(--rot,0deg));transition:transform .22s cubic-bezier(.2,.8,.2,1);pointer-events:none}
 .tlMini .f{visibility:hidden}
 .tlMini.zoomed,.tlMini:focus-visible{z-index:6;outline:0}
-.tlMini.zoomed .s,.tlMini:focus-visible .s{transform:rotate(var(--rot,0deg)) scale(1.12)}
+.tlMini.zoomed .s,.tlMini:focus-visible .s{filter:drop-shadow(0 2px 3px rgba(30,26,20,.12))}
 .tlExp{position:fixed;z-index:2147483001;left:0;top:0;width:272px;pointer-events:none;background:var(--card,#fffefb);color:var(--ink,#1c1a17);border:1px solid var(--line,#e7e1d6);border-radius:12px;padding:11px 14px 9px;box-shadow:0 1px 0 rgba(255,255,255,.6) inset,0 14px 34px rgba(30,26,20,.16),0 2px 6px rgba(30,26,20,.06);font:12px/1.4 var(--sans,system-ui,sans-serif);opacity:0;display:none}
 .tlExp::before{content:"";position:absolute;left:var(--ax,50%);top:-6px;width:10px;height:10px;margin-left:-5px;background:inherit;border-left:1px solid var(--line,#e7e1d6);border-top:1px solid var(--line,#e7e1d6);transform:rotate(45deg)}
 .tlExp.up::before{top:auto;bottom:-6px;transform:rotate(225deg)}
@@ -1159,9 +1199,9 @@
 .tlStepReq .tlPinH b{font:500 15px var(--serif)}
 .tlPin .tlReq{max-width:620px;margin-top:14px;gap:9px}.tlPin .tlReq .rq{font-size:13px}
 .tlPath2{display:grid;gap:2px}
-.tlPath2 button{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
+.tlPath2 button{display:grid;grid-template-columns:var(--seal-size,84px) minmax(0,1fr) auto;gap:10px;align-items:center;border:0;background:transparent;text-align:left;padding:5px 8px;border-radius:9px;transition:background .18s,transform .18s var(--tlE)}
 .tlPath2 button:hover{background:var(--card2)}.tlPath2 button.cur{background:var(--goldSoft)}
-.tlPath2 .sv{width:26px;height:26px}.tlPath2 .sv svg{width:100%;height:100%;display:block}
+.tlPath2 .sv{display:block;width:var(--seal-fit,var(--seal-size,84px));height:var(--seal-fit,var(--seal-size,84px))}.tlPath2 .sv svg{width:100%;height:100%;display:block}
 .tlPath2 b{font:600 12px var(--sans)}.tlPath2 span{font:9.5px var(--mono);color:var(--ink45);letter-spacing:.04em;text-transform:uppercase}
 .tlPath2 button.later .sv,.tlPath2 button.gone .sv{opacity:.45}
 .tlSt.ghost[data-stage]{cursor:pointer}
@@ -1177,12 +1217,13 @@
   const badge = (e, sm) => `<span class="tlBadge${sm ? " sm" : ""}"><i>${iconSvg((LANE[e.lane] || LANE.office).ic)}</i><em>${esc(e.print ? e.print.where : stationName(e))}</em>${esc(whoOf(e))}</span>`;
   // roomier than it was (Paul, 28 Sep: "this entire section is way too crowded"): the seals sit further apart on a
   //  taller lane, and a day is wider, so nothing crowds even when a day holds three or four of them
-  const COL = 50, LANE_H = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26, H = TOP + LANES.length * LANE_H + AXIS;
-  const laneY = k => TOP + (LANE[k] || LANE.office).i * LANE_H + LANE_H / 2;
+  const CELL_COL = 50, CELL_LANE = 58, TOP = 40, PAD = 18, IDLE = 34, DAYMIN = 150, AXIS = 26;
+  const laneY = (k, laneH) => TOP + (LANE[k] || LANE.office).i * laneH + laneH / 2;
   const dayKey = t => { const d = new Date(t); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const midnight = t => { const d = new Date(t); d.setHours(0, 0, 0, 0); return +d; };
   /** Day columns and each event's place (x in its day, y on its lane). */
-  function layout(evs) {
+  function layout(evs, fit) {
+    const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12);
     const days = []; let cur = null;
     for (const e of evs) { const k = dayKey(e.at); if (!cur || cur.k !== k) { cur = { k, at: e.at, evs: [] }; days.push(cur); } cur.evs.push(e); }
     let x = 0, alt = 0; const cols = [];
@@ -1196,7 +1237,7 @@
       const t0 = timeOf(d.evs[0].at), t1 = timeOf(d.evs[d.evs.length - 1].at), span = (t0 === t1 ? t0 : t0 + " – " + t1) + " · " + d.evs.length;
       const w = Math.max(DAYMIN, PAD * 2 + d.evs.length * COL, Math.ceil(26 + span.length * 6.1));
       cols.push({ x, w, at: d.at, evs: d.evs, alt: alt++ % 2, span });
-      d.evs.forEach((e, j) => { e.x = x + PAD + j * COL + COL / 2; e.y = laneY(e.lane); });
+      d.evs.forEach((e, j) => { e.x = x + PAD + j * COL + COL / 2; e.y = laneY(e.lane, LANE_H); });
       x += w;
     });
     return { cols, w: x };
@@ -1265,7 +1306,7 @@
     const railNow = evs => { let r = null; try { r = typeof opts.stages === "function" ? opts.stages() : opts.stages; } catch (err) { warn("stages", err); } return withDone(r, evs); };
     // events/byKey: what is drawn (one piece's, or all); every/allKeys: all the order's (opts.pieces, opts.piece: agent F)
     const S = { events: [], shown: [], shownKeys: new Set(), byKey: new Map(), every: [], allKeys: new Map(), pieces: Array.isArray(opts.pieces) ? opts.pieces : [], piece: opts.piece || null, cancelled: null, where: null, D: null, sel: null, legend: false, hl: new Set(), sig: "",
-      loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
+      stamping: null, deferredPaint: null, loaded: false, loading: null, error: "", dead: false, lastLoad: 0, seq: 0, nowX: 0, pendingFocus: null, hlDone: false };
     const timers = new Set();
     const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); if (!S.dead) fn(); }, ms); timers.add(t); return t; };
     const cancelT = t => { if (t) { clearTimeout(t); timers.delete(t); } return 0; };
@@ -1284,6 +1325,7 @@
     const $ = s => box.querySelector(s) || (tb ? bar.querySelector(s) : null), $$ = s => [...box.querySelectorAll(s)];
     if (compact) $(".tlRail").appendChild($(".tlMsg"));   // the rail alone: its wait and error lines sit on it
     const loupe = $(".tlLoupe"), scroller = $(".tlScroll"), exp = $(".tlExp");
+    let fitObserver = null;
     let unsub = null, unfeed = null, pollT = 0, busyT = 0, loupeFor = null, loupeAt = null, hideA = null;
     // what the lanes' names and the detail show now: a redraw that would write the same leaves them (and their layout) alone
     let lanesHtml = "", detHtml = "";
@@ -1382,26 +1424,48 @@
     /* ── painting ── */
     function repaint(o) {
       o = o || {};
+      if (S.stamping) {
+        const prev = S.deferredPaint || {}; S.deferredPaint = Object.assign({}, prev, o, { fresh: [...new Set((prev.fresh || []).concat(o.fresh || []))] });
+        return;
+      }
       sealHover.cancel(true); // a redraw cannot preserve hover just because a larger parent still matches :hover
       const D = S.D = deriveNow();
       // every event stays in S.events (the host, and the step explainer, read them all); only the seals are drawn
       S.shown = withPrints(S.events); S.shownKeys = new Set(S.shown.map(e => e.key));
-      paintNow(D, o); paintRail(D, o);
+      const now = Date.now(), pressKeys = (o.fresh || []).filter(k => { const e = S.byKey.get(k); return e && (e.live || e.pending || (!e.derived && +e.at >= now - 300000 && +e.at <= now + 60000)); });
+      // A newly discovered old record gains its historical face silently; only a fresh action gets a physical press.
+      const paint = Object.assign({}, o, { pressKeys });
+      paintNow(D, paint); const railPresses = paintRail(D, paint);
       tell();
-      if (compact) return;
-      paintChips(); paintCanvas(D, o); paintSum();
+      if (!compact) { paintChips(); paintCanvas(D, paint); paintSum(); }
       const fresh = (o.fresh || []).filter(k => S.shownKeys.has(k));
-      if (S.legend) return;
-      if (S.pin && renderPin(true)) return;
-      if (fresh.length) {
-        // a new step: follow it when the reader was on the latest one, otherwise leave their reading alone
-        const newest = fresh.map(k => S.byKey.get(k)).sort(byAt).pop(), prevLast = S.shown.filter(e => !fresh.includes(e.key)).pop();
-        if (!S.sel || (prevLast && S.sel === prevLast.key)) select(newest.key, 1, { scroll: true, quiet: false });
-        else if (S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
-        else select(newest.key, 1, { scroll: true });
-      } else if (S.sel && S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
-      else if (S.shown.length) select(S.shown[S.shown.length - 1].key, 0, { scroll: o.first, quiet: true });
-      else $(".tlDetail").innerHTML = `<p class="tlEmpty">${esc(S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.")}</p>`;
+      const presses = compact ? railPresses : pressKeys.filter(k => S.shownKeys.has(k)).map(k => $(".tlCanvas").querySelector(`.tlSt[data-key="${cssEsc(k)}"]`)).filter(Boolean);
+      const follow = () => {
+        if (S.dead || compact || S.legend) return;
+        if (S.pin && renderPin(true)) return;
+        if (fresh.length) {
+          // Follow the next event only after the complete press sequence has finished.
+          const newest = fresh.map(k => S.byKey.get(k)).filter(Boolean).sort(byAt).pop(), prevLast = S.shown.filter(e => !fresh.includes(e.key)).pop();
+          if (!newest) return;
+          if (!S.sel || (prevLast && S.sel === prevLast.key)) select(newest.key, 1, { scroll: true, quiet: false });
+          else if (S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
+          else select(newest.key, 1, { scroll: true });
+        } else if (S.sel && S.shownKeys.has(S.sel)) renderDetail(S.sel, 0, true);
+        else if (S.shown.length) select(S.shown[S.shown.length - 1].key, 0, { scroll: o.first, quiet: true });
+        else $(".tlDetail").innerHTML = detHtml = `<p class="tlEmpty">${esc(S.events.length ? "No milestone yet. The first seal lands here the moment this order reaches one." : "Nothing is recorded for this order yet. Each step shows here the moment it happens.")}</p>`;
+      };
+      if (presses.length && root.Seal && typeof root.Seal.press === "function") {
+        for (const target of presses) target.classList.add("pending");
+        S.stamping = Promise.resolve().then(async () => {
+          for (const target of presses) { if (S.dead) break; if (target.isConnected) { try { await root.Seal.press(target); } finally { target.classList.remove("pending"); } } }
+        }).catch(err => warn("seal press", err)).finally(() => {
+          S.stamping = null;
+          if (S.dead) return;
+          const deferred = S.deferredPaint; S.deferredPaint = null;
+          follow();
+          if (deferred) repaint(deferred);
+        });
+      } else follow();
     }
     /** One piece: its own events and steps. All pieces of an order of several: the order is where its slowest piece is,
      *  on the steps any of its pieces takes, each counted. One piece only: as it always was. */
@@ -1486,7 +1550,8 @@
       // (the steps of the piece shown, or of all of them: drawn again when they change)
       const keys = R.map(r => r.s.k).join(" ");
       if (wrap.dataset.keys !== keys) { wrap.dataset.keys = keys; rail.style.setProperty("--n", R.length); wrap.innerHTML = R.map(r => `<button type="button" class="tlStop f" data-stage="${r.s.k}"><i class="tlSeal"></i><span>${esc(r.s.l)}</span><em class="tlCnt" hidden></em></button>`).join(""); }
-      const nodes = [...wrap.children];
+      fitRail(rail);
+      const nodes = [...wrap.children], presses = [];
       R.forEach(({ s, i }, j) => {
         const n = nodes[j], st = D.stages[i];
         // all pieces: a step some pieces reached and others not yet says how many ("2 of 3")
@@ -1499,22 +1564,19 @@
         const ev = c === "d" ? st.first : null;
         const sig = c + "|" + (ev ? ev.key : "") + (c === "c" && D.hold ? "|h" : "") + (c === "x" ? "|" + D.cancelled.at : "") + "|" + part;
         if (n.dataset.sig === sig) return;
-        const was = n.dataset.sig || "";
         n.dataset.sig = sig;
         n.className = "tlStop " + c + (c === "c" && D.hold ? " paused" : "");
         const seal = n.querySelector(".tlSeal"), rot = ev ? rotOf(ev) : 0;
         n.style.setProperty("--rot", rot + "deg");
-        seal.innerHTML = c === "d" ? stampSvg(ev || { key: "d-" + s.k, type: s.kind, at: 0 }, false) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at }, false)
+        seal.innerHTML = c === "d" ? stampSvg(ev || { key: "d-" + s.k, type: s.kind, at: 0 }, !!ev) : c === "x" ? stampSvg({ key: "x-" + s.k, type: D.cancelled.source === "etsy" ? "etsyCancelled" : "cancelled", at: D.cancelled.at, by: D.cancelled.by }, true)
           : stampSvg({ key: "g-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
         n.querySelector("span").textContent = c === "x" ? "Cancelled" : s.l;
         const cnt = n.querySelector(".tlCnt"); if (cnt) { cnt.hidden = !part; cnt.textContent = part; }
         // (who did it and where: "Welded · Marco R. · Welding · done Tuesday, Sep 29, 2026 · 10:15 AM")
         const say = (c === "d" ? (ev ? `${[s.l, whoOf(ev)].concat(placeOf(ev) ? [placeOf(ev)] : []).join(" · ")} · done ${longWhen(ev.at)}` : `${s.l}: done`) : c === "c" ? `${s.l}: ${D.hold ? "on hold" : "next"}` : c === "x" ? `Cancelled here, ${longWhen(D.cancelled.at)}` : D.hand ? `${s.l}: skipped, the order was completed by hand` : `${s.l}: still to come`) + (sr && D.sum ? ` · ${sr.n} of ${sr.of} piece${sr.of === 1 ? "" : "s"}` : "");
         n.setAttribute("aria-label", say); n.removeAttribute("title");   // the step explainer (below) replaces the dark tooltip
-        if ((c === "d" || c === "x") && !was.startsWith(c)) {
-          if (o.first) anim(seal, [{ opacity: 0, transform: `rotate(${rot}deg) scale(.6)` }, { opacity: 1, transform: `rotate(${rot}deg) scale(1)` }], 380, { delay: 120 + i * 45, easing: SPRING, fill: "backwards" });
-          else anim(seal, [{ transform: `rotate(${rot}deg) scale(.6)` }, { transform: `rotate(${rot}deg) scale(1.5)`, offset: .45 }, { transform: `rotate(${rot}deg) scale(1)` }], 700, { easing: SPRING });
-        }
+        const pressEvent = ev || (c === "x" && S.events.filter(e => CANCEL_TYPES.has(e.type)).pop());
+        if (compact && pressEvent && (o.pressKeys || []).includes(pressEvent.key)) presses.push(seal);
       });
       const at = D.cancelled ? D.stop : D.cur < 0 ? R[R.length - 1].i : Math.max(0, D.cur), idx = Math.max(0, R.findIndex(r => r.i === at));
       $(".tlFill").style.transform = `scaleX(${(idx / Math.max(1, R.length - 1)).toFixed(4)})`;
@@ -1522,20 +1584,21 @@
       let cx = rail.querySelector(".tlCxStamp:not(.out)");
       const cxK = D.cancelled ? [D.cancelled.at, D.cancelled.by, D.cancelled.source, D.stop].join("|") : "";
       const cxAt = () => {
-        cx.dataset.k = cxK; cx.innerHTML = cancelSvg(D.cancelled);
+        cx.dataset.k = cxK; cx.dataset.tlFace = JSON.stringify(cancellationFace(D.cancelled)); cx.innerHTML = cancelSvg(D.cancelled);
         // over the steps it will not reach, so the ✕ where it stopped stays readable
         const from = Math.min(Math.max(0, R.findIndex(r => r.i === D.stop)) + 1, R.length - 1), mid = ((from + R.length - 1) / 2 + .5) / R.length;
-        cx.style.left = `clamp(135px, ${(mid * 100).toFixed(2)}%, calc(100% - 135px))`;
+        cx.style.left = `clamp(calc(var(--seal-fit,var(--seal-size,84px)) / 2), ${(mid * 100).toFixed(2)}%, calc(100% - var(--seal-fit,var(--seal-size,84px)) / 2))`;
       };
       if (D.cancelled && cx && cx.dataset.k !== cxK) cxAt();
       if (D.cancelled && !cx) {
         cx = doc.createElement("div"); cx.className = "tlCxStamp"; rail.appendChild(cx); cxAt();
-        anim(cx, [{ transform: "translate(-50%,-50%) rotate(-2deg) scale(1.9) translateY(-20px)", opacity: 0 }, { transform: "translate(-50%,-50%) rotate(-8deg) scale(.96)", opacity: 1, offset: .62 }, { transform: "translate(-50%,-50%) rotate(-6deg) scale(1)", opacity: 1 }], 700, { delay: o.first ? 450 : 0, easing: DROP, fill: "backwards" });
+
       } else if (!D.cancelled && cx) {
         cx.classList.add("out");
         const a = anim(cx, [{ opacity: 1 }, { opacity: 0 }], 240);
         if (a) a.finished.then(() => cx.remove(), () => cx.remove()); else cx.remove();
       }
+      return presses;
     }
     /** One quiet chip: the legend of the seals. (The filters are gone — only milestones are drawn.) */
     function paintChips() {
@@ -1570,9 +1633,16 @@
       hideLoupe(true);
       const cv = $(".tlCanvas"), evs = S.shown, oldNow = S.nowX;
       paintLanes();
-      const { cols, w } = layout(evs), last = evs[evs.length - 1];
+      const pending = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step);
+      const base = baseSealSize(cv), count = Math.min(12, Math.max(1, evs.length + pending.length)), available = scroller.clientWidth;
+      // Every member of a dense timeline shrinks by the same ratio; a sparse timeline uses the shared base size.
+      // The existing timeline cells provide 50px by 58px. Fit the whole group inside them rather than making taller lists.
+      const fit = Math.min(base, CELL_COL - 8, CELL_LANE - 12, available > 0 ? Math.max(24, (available - PAD * 2) / count - 8) : base);
+      const COL = Math.max(CELL_COL, fit + 8), LANE_H = Math.max(CELL_LANE, fit + 12), H = TOP + LANES.length * LANE_H + AXIS;
+      box.style.setProperty("--tl-lane-height", LANE_H + "px"); cv.style.setProperty("--seal-fit", fit + "px");
+      const { cols, w } = layout(evs, fit), last = evs[evs.length - 1];
       const nowX = last ? last.x + COL * .75 : PAD + COL / 2;
-      const ghosts = D.cancelled || D.hand ? [] : (D.rail || STAGES.map((s, i) => ({ s, i }))).filter(g => g.i > D.step).map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane) }));
+      const ghosts = pending.map((g, j) => ({ key: "ghost-" + g.s.k, type: g.s.kind, s: g.s, x: nowX + COL * (j + .9), y: laneY(g.s.lane, LANE_H) }));
       const W = Math.ceil(Math.max(w, nowX + COL * (ghosts.length + .6) + 16));
       const thisYear = new Date().getFullYear();
       const dayCols = cols.map(c => { const d = c.idle ? null : new Date(c.at); return `<div class="tlDay${c.alt ? " alt" : ""}${c.idle ? " idle" : ""}" style="left:${c.x}px;width:${c.w}px"><div class="dh">${c.idle ? esc(c.label) : `${DAYN[d.getDay()]} · ${MON[d.getMonth()]} ${d.getDate()}${d.getFullYear() !== thisYear ? " " + d.getFullYear() : ""}<small>${esc(c.span)}</small>`}</div></div>`; }).join("");
@@ -1588,14 +1658,14 @@
         `<svg class="tlPath" width="${W}" height="${H}" aria-hidden="true">${evs.length > 1 ? `<path d="${pathD(evs)}" fill="none" stroke="var(--gold)" stroke-width="1.6" stroke-opacity=".55" stroke-linecap="round"/>` : ""}${future ? `<path d="${future}" fill="none" stroke="var(--ink25)" stroke-width="1.4" stroke-dasharray="3 5"/>` : ""}</svg>` +
         (D.cancelled ? `<div class="tlAfterCx" style="left:${cxX}px"></div><div class="tlNowLine cx" style="left:${cxX}px"><span>CANCELLED · ${esc(shortWhen(D.cancelled.at))}</span></div>` : `<div class="tlNowLine" style="left:${nowX}px"><span>${esc(nowLbl)}</span></div>`);
       const clsOf = e => `tlSt${S.sel === e.key ? " sel" : ""}${e.pending ? " pend" : ""}${S.hl.has(e.key) ? " hl" : ""}`;
-      const posOf = e => `left:${e.x}px;top:${e.y}px;--s:${sizeOf(e)}px;--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
-      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:${sizeOf(g)}px;--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
+      const posOf = e => `left:${e.x}px;top:${e.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:${rotOf(e)}deg`, sayOf = e => `${labelOf(e.type)} · ${titleOf(e)} · ${longWhen(e.at)} · ${whoOf(e)}${placeOf(e) ? " · " + placeOf(e) : ""}`;
+      const ghostHtml = ghosts.map(g => `<span class="tlSt ghost" data-stage="${esc(g.s.k)}" style="left:${g.x}px;top:${g.y}px;--s:var(--seal-fit,var(--seal-size,84px));--rot:0deg" aria-label="${esc("To come: " + g.s.l)}">${stampSvg(g, false, { ghost: 1 })}</span>`).join("");
       // the stamps already drawn are kept (a live step parses one stamp, not every one: a redraw of 100 stays in a frame);
       // the days, lines, path, NOW line and ghosts are drawn again
       const kept = new Map();
       if (!o.first) for (const b of [...cv.children]) { if (b.tagName === "BUTTON" && b.dataset.key && S.shownKeys.has(b.dataset.key) && !kept.has(b.dataset.key)) kept.set(b.dataset.key, b); else b.remove(); }
       if (!kept.size) {
-        cv.innerHTML = back + evs.map(e => `<button type="button" class="${clsOf(e)}" data-key="${esc(e.key)}" data-sv="${esc(e.type + "|" + e.at)}" style="${posOf(e)}" aria-label="${esc(sayOf(e))}">${stampSvg(e, false)}</button>`).join("") + ghostHtml;
+        cv.innerHTML = back + evs.map(e => `<button type="button" class="${clsOf(e)}" data-key="${esc(e.key)}" data-sv="${esc(e.type + "|" + e.at)}" style="${posOf(e)}" aria-label="${esc(sayOf(e))}">${stampSvg(e, true)}</button>`).join("") + ghostHtml;
       } else {
         cv.insertAdjacentHTML("afterbegin", back);
         let prev = cv.querySelector(".tlNowLine");
@@ -1603,7 +1673,7 @@
           let b = kept.get(e.key);
           if (!b) { b = doc.createElement("button"); b.type = "button"; b.dataset.key = e.key; }
           const sv = e.type + "|" + e.at, cls = clsOf(e), pos = posOf(e), say = sayOf(e);
-          if (b.dataset.sv !== sv) { b.dataset.sv = sv; b.innerHTML = stampSvg(e, false); }
+          if (b.dataset.sv !== sv) { b.dataset.sv = sv; b.innerHTML = stampSvg(e, true); }
           if (b.className !== cls) b.className = cls;
           if (b.getAttribute("style") !== pos) b.setAttribute("style", pos);
           if (b.getAttribute("aria-label") !== say) b.setAttribute("aria-label", say);
@@ -1617,25 +1687,12 @@
       const nl0 = cv.querySelector(".tlNowLine:not(.cx) span"); if (nl0 && (nl0.offsetWidth || nowLbl.length * 6.7 + 12) + 8 > nowX) { nl0.style.right = "auto"; nl0.style.left = "8px"; }
       if (o.first) {
         const p = cv.querySelector(".tlPath"); anim(p, [{ opacity: 0 }, { opacity: 1 }], 900, { easing: SLIDE });
-        [...cv.querySelectorAll(".tlSt")].forEach((b, i) => { const r = b.style.getPropertyValue("--rot"); anim(b, [{ transform: `rotate(${r}) scale(.3)`, opacity: 0 }, { transform: `rotate(${r}) scale(1)`, opacity: b.classList.contains("ghost") ? .42 : b.classList.contains("dim") ? .13 : 1 }], 420, { delay: Math.min(i * 18, 540), easing: SPRING, fill: "backwards" }); });
         // opens at "now"
         if (scroller.clientWidth && W > scroller.clientWidth) scroller.scrollLeft = Math.max(0, nowX - scroller.clientWidth * .6);
       } else {
         // (the canvas keeps its width while it is redrawn, so the scroll stays where the reader left it)
         const nl = cv.querySelector(".tlNowLine:not(.cx)");
         if (nl && oldNow && Math.abs(oldNow - nowX) > 1) anim(nl, [{ transform: `translateX(${oldNow - nowX}px)` }, { transform: "none" }], 760, { easing: SLIDE });
-        for (const k of o.fresh || []) {
-          const e = S.byKey.get(k), b = e && cv.querySelector(`.tlSt[data-key="${cssEsc(k)}"]`); if (!b) continue;
-          const r = rotOf(e), s = sizeOf(e);
-          anim(b, [{ transform: `rotate(${r - 8}deg) scale(2.4)`, opacity: 0 }, { transform: `rotate(${r + 2}deg) scale(.9)`, opacity: 1, offset: .55 }, { transform: `rotate(${r}deg) scale(1)`, opacity: 1 }], 900, { easing: DROP });
-          if (!reduced()) {
-            const ring = doc.createElement("span"); ring.className = "tlInkRing";
-            ring.style.cssText = `left:${e.x - s / 2}px;top:${e.y - s / 2}px;width:${s}px;height:${s}px;border-color:${INK[kindOf(e.type).ink]}`;
-            cv.appendChild(ring);
-            const a = anim(ring, [{ transform: "scale(.8)", opacity: 0 }, { transform: "scale(.9)", opacity: .9, offset: .5 }, { transform: "scale(2.2)", opacity: 0 }], 1100, { delay: 350, easing: "ease-out", fill: "both" });
-            if (a) a.finished.then(() => ring.remove(), () => ring.remove()); else ring.remove();
-          }
-        }
       }
     }
     const cssEsc = s => (root.CSS && root.CSS.escape ? root.CSS.escape(s) : String(s).replace(/["\\]/g, "\\$&"));
@@ -1653,10 +1710,21 @@
     function toggleLegend() {
       S.legend = !S.legend; paintChips();
       if (!S.legend) { renderDetail(S.sel || (S.shown[S.shown.length - 1] || {}).key, 0); return; }
-      // the legend shows the seals that are actually drawn, nothing else
-      const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k }));
+      // The legend explains eight visual families; its captions keep every truthful action that uses that family.
+      const t = Date.now(), types = Object.keys(KIND).filter(k => sealed({ type: k })).concat("sealPrinted");
+      const families = [
+        { k: "received", type: "arrived", name: "Received" }, { k: "prepared", type: "placed", name: "Prepared" },
+        { k: "engraving", type: "engraveApproved", name: "Back Engraving" }, { k: "laser", type: "laserDone", name: "Laser Cutting" },
+        { k: "finishing", type: "assembled", name: "Finishing" }, { k: "fulfilment", type: "shipped", name: "Fulfilment" },
+        { k: "exceptions", type: "held", name: "Exceptions" }, { k: "cancelled", type: "cancelled", name: "Cancelled Orders" }
+      ];
       const det = $(".tlDetail");
-      det.innerHTML = `<div class="tlLegend">${types.map(k => { const e = { key: "legend-" + k, type: k, at: t, by: "Name", lane: kindOf(k).lane, data: null }; const sh = kindOf(k).sh; return `<figure><span class="sv" style="transform:rotate(${rotOf(e)}deg)">${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(labelOf(k))}<small>${sh === "m" ? "milestone" : sh === "a" ? "alert" : "event"}</small></figcaption></figure>`; }).join("")}${printLegend(t)}</div>`;
+      det.innerHTML = `<div class="tlLegend" aria-label="Eight seal families">${families.map(f => {
+        const e = { key: "legend-" + f.k, type: f.type, at: t, by: "", source: "system", derived: true, lane: kindOf(f.type).lane, data: null };
+        const actions = [...new Set(types.filter(type => faceModel({ type, at: 0 }).family === f.k).map(type => FACE_ACTION[type] || labelOf(type)))];
+        if (f.k === "engraving") actions.push("CUT PLAIN");
+        return `<figure data-seal-family="${f.k}"><span class="sv" tabindex="0" aria-label="${esc(f.name + " family example seal")}" ${sealAttrs(e)}>${stampSvg(e, true, { tex: false })}</span><figcaption>${esc(f.name)}<small>${esc(actions.join(" · "))}</small></figcaption></figure>`;
+      }).join("")}</div>`;
       anim(det.firstChild, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], 280);
     }
     /** Chooses one event: its stamp gets the gold ring, its lane lights, its detail opens below. */
@@ -1694,7 +1762,7 @@
       const desc = e.text && e.text.length > 90 ? e.text : "";
       const whyLbl = CANCEL_TYPES.has(e.type) ? "Why it was cancelled" : e.type === "removed" ? "Why it was taken off" : e.type === "held" ? "Why it was held" : "Reason";
       const html = `<div class="tlDetIn">` +
-        `<span class="tlBig" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
+        `<span class="tlBig" tabindex="0" aria-label="${esc(labelOf(e.type) + " · " + longWhen(e.at) + " · " + whoOf(e))}" data-key="${esc(e.key)}" style="--rot:${rotOf(e)}deg">${stampSvg(e, true, { uid: detUid })}</span>` +
         `<div class="tlDetMain"><span class="tlLbl">${esc(labelOf(e.type))} · milestone ${i + 1} of ${evs.length}${e.pending ? " · saving…" : ""}</span>` +
         `<h3>${esc(titleOf(e))}</h3><div class="tlWhen">${esc(longWhen(e.at))} · ${esc(ago(e.at))}</div>` +
         `<div class="tlBadgeRow">${badge(e)}</div>` +
@@ -1705,7 +1773,7 @@
         nextHtml(D) +
         `<div class="tlActs"><button type="button" class="btn ghost sm" data-step="-1"${i ? "" : " disabled"}>‹ Earlier</button><button type="button" class="btn ghost sm" data-step="1"${i < evs.length - 1 ? "" : " disabled"}>Later ›</button>` +
         (e.sheetId && opts.onSheet ? `<button type="button" class="btn sm tlOpenSheet" data-sheet="${esc(e.sheetId)}" data-pool="${esc(poolOf(e))}">Open sheet</button>` : "") + `</div></div>` +
-        `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, false, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
+        `<div class="tlAround"><span class="tlLbl">Around this step</span>${around.map(a => `<button type="button" class="tlArw${a.key === e.key ? " cur" : ""}" data-key="${esc(a.key)}"><span class="sv" data-key="${esc(a.key)}" style="transform:rotate(${rotOf(a)}deg)">${stampSvg(a, true, { tex: false })}</span><div><b>${esc(titleOf(a, 60))}</b><span>${esc(shortWhen(a.at))} · ${esc(whoOf(a))}</span></div></button>`).join("")}</div></div>`;
       if (quiet && html === detHtml && det.firstChild && det.firstChild.classList.contains("tlDetIn")) return;
       det.innerHTML = detHtml = html;
       if (focused && !det.contains(doc.activeElement)) { const b = (focused === "arw" && det.querySelector(".tlArw.cur")) || det.querySelector(`[data-step="${focused}"]:not(:disabled)`) || det.querySelector("[data-step]:not(:disabled)"); if (b) b.focus({ preventScroll: true }); }
@@ -1730,13 +1798,14 @@
       return null;
     }
 
-    /* ── the loupe: a hovered dot's seal zooms to 122px ABOVE it on its own layer (zoomSpot), so nothing clips it and
+    /* ── the loupe: a hovered dot's seal zooms to 168px ABOVE it on its own layer (zoomSpot), so nothing clips it and
        the dot stays in sight under the pointer ── */
     function evOfEl(b) {
+      const stored = storedFace(b); if (stored) return stored;
       if (b.dataset.key) return S.byKey.get(b.dataset.key) || null;
       const i = STAGES.findIndex(s => s.k === b.dataset.stage); if (i < 0 || !S.D) return null;
-      if (b.classList.contains("x") && S.D.cancelled) return S.events.filter(e => CANCEL_TYPES.has(e.type)).pop() || { key: "x", type: "cancelled", at: S.D.cancelled.at, by: S.D.cancelled.by, lane: "office", data: null };
-      return S.D.stages[i].first;
+      if ((b.classList.contains("x") || b.classList.contains("tlCxStamp")) && S.D.cancelled) return S.events.filter(e => CANCEL_TYPES.has(e.type)).pop() || { key: "x", type: "cancelled", at: S.D.cancelled.at, by: S.D.cancelled.by, lane: "office", data: null };
+      return S.D.stages[i].first || { key: "future-" + STAGES[i].k, type: STAGES[i].kind, at: 0, by: "", ghost: true };
     }
     const liftOf = b => b.classList.contains("tlStop") ? b.querySelector(".tlSeal") : b;
     function showLoupe(b, quiet) {
@@ -1747,7 +1816,7 @@
       const lift = liftOf(b), d = lift.getBoundingClientRect(), bb = b.getBoundingClientRect(), rot = rotOf(e);
       const r = { left: d.left, width: d.width, top: d.top, bottom: Math.max(d.bottom, bb.bottom) };
       // the seal alone: what the step is and still needs is the explainer card under the dot (it replaced the dark caption)
-      loupe.innerHTML = `<div class="lf" style="transform:rotate(${rot}deg)">${stampSvg(e, true)}</div>`;
+      loupe.innerHTML = `<div class="lf">${stampSvg(e, true, { hover: true, ghost: !!e.ghost })}</div>`;
       loupeAt = zoomIn(loupe, r, quiet);
       loupeFor = b; lift.classList.add("lifted");
     }
@@ -1785,7 +1854,7 @@
       const head = lone ? `<ul class="tlReq"><li class="rq ok"><i>${CHECK}</i><span>${esc(titleOf(e, 80))}<small>${esc(shortWhen(e.at) + " · " + whoOf(e))}</small></span></li></ul><div class="xf" style="margin:8px 0 ${hand ? 0 : 9}px">${hand ? (hand === e ? "Order completed by hand · nothing more to do" : `Order completed by hand · ${esc(shortWhen(hand.at))}${personOf(hand) ? " · " + esc(personOf(hand)) : ""}`) : "Then, for the order to move on"}</div>` : "";
       expFor = b;
       // a seal that had no room above its dot (a rail at the top of the view) opened under it: the card goes under the seal
-      const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && !z.up ? z : null;
+      const z = loupeFor === b && loupeAt ? loupeAt : null, lp = z && z.side === "below" ? z : null;
       const whole = lp ? { getBoundingClientRect: () => { const r = b.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, top: r.top, height: r.height, bottom: Math.max(r.bottom, lp.y + ZSZ) }; } } : b;
       // (a short view puts the card beside the dot: beside its seal too, never over it)
       expA = placeExp(exp, hand ? head : head + reqCard(q), b.classList.contains("tlStop") ? b.querySelector(".tlSeal") || b : b, whole, z && { left: z.x, right: z.x + ZSZ });
@@ -1802,13 +1871,18 @@
       const q = reqOf(D.cur); if (!q || !q.need.length) return "";
       return `<div class="tlStepReq"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">Next for this order</span><span class="xs now">${esc(q.label)}</span></div>${reqLines(q, false)}<button type="button" class="tlLink" data-pin="${esc(q.k)}" style="margin-top:9px">All that ${esc(q.label)} needs</button></div>`;
     }
-    const sealHover = restOnSeal(box, node => node.closest?.(".tlStop .tlSeal, .tlSt[data-key], .tlSt.ghost[data-stage]"), seal => {
+    const sealSelector = ".tlStop .tlSeal:not(.pending), .tlSt[data-key]:not(.pending), .tlSt.ghost[data-stage], .tlBig, .tlArw .sv, .tlPath2 .sv, .tlLegend .sv, .tlCxStamp";
+    const sealHover = restOnSeal(box, node => node.closest?.(sealSelector), seal => {
       const b = seal.closest(".tlStop") || seal;
-      if (b.matches(".tlSt[data-key], .tlStop.d, .tlStop.x")) showLoupe(b);
-      showExp(b);
+      if (evOfEl(b)) showLoupe(b);
+      if (b.matches(".tlSt, .tlStop")) showExp(b);
     }, now => { hideLoupe(now); hideExp(now); });
-    function expFocus(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key]"); if (b && b.matches(":focus-visible")) sealHover.open(liftOf(b)); }
-    function expBlur(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key]"); if (b && liftOf(b) === sealHover.current) sealHover.cancel(); }
+    function focusedSeal(ev) {
+      const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlBig, .tlArw, .tlPath2 button, .tlLegend .sv, .tlCxStamp");
+      return b && b.matches(":focus-visible") ? b.matches(".tlArw, .tlPath2 button") ? b.querySelector(".sv") : liftOf(b) : null;
+    }
+    function expFocus(ev) { const b = focusedSeal(ev); if (b && !b.classList.contains("pending")) sealHover.open(b); }
+    function expBlur(ev) { const b = ev.target.closest?.(".tlStop, .tlSt[data-key], .tlBig, .tlArw, .tlPath2 button, .tlLegend .sv, .tlCxStamp"); if (b && (b.matches(".tlArw, .tlPath2 button") ? b.querySelector(".sv") : liftOf(b)) === sealHover.current) sealHover.cancel(); }
     /** Pins a step's fuller explainer in the detail below; → true when shown. */
     function pin(i) {
       const s = STAGES[i]; if (!s || compact || !S.loaded) return false;
@@ -1829,8 +1903,8 @@
       const D = S.D, ev = q.state === "done" ? D.stages[i].first : null, s = STAGES[i];
       const seal = ev ? stampSvg(ev, true, { uid: detUid }) : stampSvg({ key: "pin-" + s.k, type: s.kind, at: 0 }, false, { ghost: 1 });
       const sheet = (ev && ev.sheetId && ev) || S.events.filter(e => e.sheetId).pop();
-      const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv">${f && r.state === "done" ? stampSvg(f, false, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
-      const html = `<div class="tlDetIn tlPin"><span class="tlBig" style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
+      const path = (D.rail || STAGES.map((x, j) => ({ s: x, i: j }))).map(({ s: x, i: j }) => { const r = reqOf(j), f = D.stages[j].first; return `<button type="button" class="${r.state}${j === i ? " cur" : ""}" data-pin="${x.k}"><span class="sv" data-stage="${esc(x.k)}"${f && r.state === "done" ? ` data-key="${esc(f.key)}"` : ""}>${f && r.state === "done" ? stampSvg(f, true, { tex: false }) : stampSvg({ key: "p-" + x.k, type: x.kind, at: 0 }, false, { ghost: 1 })}</span><b>${esc(x.l)}</b><span>${esc(r.state === "done" && f ? shortWhen(f.at) : STATE_WORD[r.state] || "")}</span></button>`; }).join("");
+      const html = `<div class="tlDetIn tlPin"><span class="tlBig" tabindex="0" aria-label="${esc(s.l + " · " + (ev ? longWhen(ev.at) + " · " + whoOf(ev) : STATE_WORD[q.state] || q.state))}" data-stage="${esc(s.k)}"${ev ? ` data-key="${esc(ev.key)}"` : ""} style="--rot:${ev ? rotOf(ev) : 0}deg">${seal}</span>` +
         `<div class="tlDetMain"><div class="tlPinH" style="justify-content:flex-start"><span class="tlLbl">${q.n ? `Step ${q.n} of ${q.of}` : "Not a step of this order"}</span><span class="xs ${q.state}${partDone(q) ? " now" : ""}">${esc(partDone(q) ? "Part done" : STATE_WORD[q.state] || "")}</span></div>` +
         `<h3>${esc(s.l)}</h3><div class="tlWhen">${q.state === "done" || q.state === "skipped" ? "What was done" : q.need.some(n => n.kind === "person") ? "Waiting on a person" : "What is still missing"}</div>` +
         reqLines(q, true) +
@@ -1946,6 +2020,8 @@
       return true;
     }
     function destroy() {
+      if (fitObserver) fitObserver.disconnect();
+      root.removeEventListener("resize", fitAll);
       if (S.dead) return;
       S.dead = true;
       for (const t of timers) clearTimeout(t);
@@ -1964,6 +2040,14 @@
       box.remove();
     }
 
+    function fitAll() {
+      if (S.dead) return;
+      if (S.stamping) { S.deferredPaint = S.deferredPaint || {}; return; }
+      fitRail($(".tlRail"));
+      if (!compact && S.loaded && S.D) paintCanvas(S.D, {});
+    }
+    root.addEventListener("resize", fitAll);
+    if (typeof root.ResizeObserver === "function") { fitObserver = new root.ResizeObserver(fitAll); fitObserver.observe(el); }
     box.addEventListener("click", onClick); box.addEventListener("keydown", onKey);
     box.addEventListener("focusin", expFocus); box.addEventListener("focusout", expBlur);
     if (!compact) { doc.addEventListener("pointerdown", onDocDown, true); doc.addEventListener("keydown", onDocKey); }
@@ -1987,9 +2071,9 @@
   }
 
   /* ════ the order view's "Where it is now" card (spec §3, §8) ════
-     nowStamps(events, { ev, cancelled }) → { seal, recent } HTML: the latest step's seal at 92px (a cancelled order: the
-     118px CANCELLED ORDER / DO NOT PROCEED seal) and the last six stamps at 26px, whose full face grows out on hover.
-     wireNow(card, onOpen) once that HTML is in the page: a stamp click → onOpen({ id }); the cancel seal drops in once. */
+     nowStamps(events, { ev, cancelled }) → { seal, recent } HTML: the latest step's seal at the shared 84px size, including cancelled orders; all compact groups
+     fit the same seal uniformly, and every full face grows to 168px on hover.
+     wireNow(card, onOpen) once that HTML is in the page: a stamp click → onOpen({ id }); historical rendering is silent. */
   function nowStamps(events, o) {
     css(); o = o || {};
     const evs = (events || []).map(norm).filter(Boolean).sort(byAt), c = o.cancelled;
@@ -2001,8 +2085,8 @@
     let seal = "";
     if (c) {
       const etsy = c.type === "etsyCancelled" || c.source === "etsy" || /^etsy$/i.test(c.by || "");
-      seal = `<div class="tlNowSeal cx" data-at="${+c.at || 0}">${stampSvg({ key: "now-cx", type: etsy ? "etsyCancelled" : "cancelled", at: +c.at || 0, by: c.by || (etsy ? "Etsy" : ""), source: etsy ? "etsy" : "", data: { ring: "CANCELLED ORDER", foot: "DO NOT PROCEED" } }, true, { uid: "tlNowCx" })}</div>`;
-    } else if (last) seal = `<div class="tlNowSeal" data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
+      seal = `<div class="tlNowSeal cx" tabindex="0" aria-label="${esc("Cancelled order · " + longWhen(c.at) + (c.by ? " · " + c.by : ""))}" data-at="${+c.at || 0}" ${sealAttrs(cancellationFace(Object.assign({}, c, { source: etsy ? "etsy" : c.source })))}>${stampSvg(cancellationFace(Object.assign({}, c, { source: etsy ? "etsy" : c.source })), true, { uid: "tlNowCx" })}</div>`;
+    } else if (last) seal = `<div class="tlNowSeal" tabindex="0" aria-label="${esc(labelOf(last.type) + " · " + longWhen(last.at) + " · " + whoOf(last))}" ${sealAttrs(last)} data-key="${esc(last.key)}" style="--rot:${rotOf(last)}deg">${stampSvg(last, true, { uid: "tlNowSeal" })}</div>`;
     // (`recent`, the old row of six stamps, is gone: one seal says where it is, and the words below say what it waits on)
     const recent = blocker ? `<span class="tlBlock"><b>${esc(blocker.label)}</b>${esc(blocker.text)}</span>` : c ? cxList(evs, c) : "";
     return { seal, recent, blocker };
@@ -2040,10 +2124,11 @@
   function wireNow(card, onOpen) {
     if (!card) return;
     if (!card._tlHover) {
-      const sel = ".tlMini[data-tl-ev]";
+      const sel = ".tlMini[data-tl-ev], .tlNowSeal";
       card._tlHover = restOnSeal(card, node => node.closest?.(sel), b => nowZoom(card, b), now => nowZoom(card, null, now));
       card.addEventListener("focusin", ev => { const b = ev.target.closest?.(sel); if (b && b.matches(":focus-visible")) card._tlHover.open(b); });
       card.addEventListener("focusout", ev => { if (ev.target.closest?.(sel) === card._tlHover.current) card._tlHover.cancel(); });
+      card.addEventListener("click", ev => { if (ev.target.closest?.(sel)) card._tlHover.cancel(true); });
       card.closest("dialog")?.addEventListener("close", () => card._tlHover.cancel(true));
     }
     card._tlHover.check();
@@ -2052,31 +2137,26 @@
     });
     if (card._tlZoomFor && !card._tlZoomFor.isConnected) nowZoom(card, null, true);   // repainted under the pointer
     const cx = card.querySelector(".tlNowSeal.cx"), s = card.querySelector(".tlNowSeal:not(.cx)");
-    if (cx && card._tlCx !== cx.dataset.at) {
-      card._tlCx = cx.dataset.at;
-      anim(cx, [{ transform: "rotate(-4deg) scale(1.9) translateY(-30px)", opacity: 0 }, { transform: "rotate(-13deg) scale(.96)", opacity: 1, offset: .62 }, { transform: "rotate(-11deg) scale(1)", opacity: 1 }], 700, { easing: DROP, delay: 200, fill: "backwards" });
-    }
-    if (!cx) card._tlCx = null;
-    if (s && card._tlLast && card._tlLast !== s.dataset.key) { const r = s.style.getPropertyValue("--rot"); anim(s, [{ transform: `rotate(${r}) scale(1.6)`, opacity: 0 }, { transform: `rotate(${r}) scale(.94)`, opacity: 1, offset: .55 }, { transform: `rotate(${r}) scale(1)`, opacity: 1 }], 600, { easing: DROP }); }
-    card._tlLast = s ? s.dataset.key : null;
+    card._tlCx = cx ? cx.dataset.at : null; card._tlLast = s ? s.dataset.key : null;
   }
 
-  /* the card's stamps zoom like the timeline's: b's full face on the card's own 122px layer above it (zoomSpot); null
+  /* the card's stamps zoom like the timeline's: b's full face on the card's own 168px layer above it (zoomSpot); null
      eases it away. The face's ids are renamed in the copy so the page never holds two of one id. */
   function nowZoom(card, b, now) {
     let L = card._tlZoom;
     if (b) {
-      const f = b.querySelector(".f"); if (!f) return;
+      const f = b.querySelector(".f"), e = storedFace(b); if (!f && !e) return;
+      let savedModel = null; try { savedModel = f && JSON.parse(f.querySelector("svg[data-seal-model]")?.dataset.sealModel || "null"); } catch (_) {}
       if (!L || !L.isConnected) { L = card._tlZoom = doc.createElement("div"); L.className = "tlLoupe tlNowZoom"; L.setAttribute("aria-hidden", "true"); card.appendChild(L); }
       if (card._tlZoomA) { try { card._tlZoomA.cancel(); } catch (_) {} card._tlZoomA = null; }
-      let h = f.innerHTML; const ids = [...new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))];
+      let h = e ? stampSvg(e, true, { hover: true }) : savedModel && root.Seal && typeof root.Seal.face === "function" ? root.Seal.face(savedModel, { signer: true }) : f.innerHTML; const ids = [...new Set([...h.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))];
       for (const id of ids) h = h.split(`id="${id}"`).join(`id="${id}-z"`).split(`#${id})`).join(`#${id}-z)`).split(`#${id}"`).join(`#${id}-z"`);
-      L.innerHTML = `<div class="lf" style="transform:rotate(${b.style.getPropertyValue("--rot") || "0deg"})">${h}</div>`;
+      L.innerHTML = `<div class="lf">${h}</div>`;
       const quiet = !!card._tlZoomFor; card._tlZoomFor?.classList.remove("zoomed"); card._tlZoomFor = b; b.classList.add("zoomed");
-      zoomIn(L, b.getBoundingClientRect(), quiet);
+      card._tlZoomAt = zoomIn(L, b.getBoundingClientRect(), quiet);
       return;
     }
-    card._tlZoomFor?.classList.remove("zoomed"); card._tlZoomFor = null; if (!L || L.style.display === "none") return;
+    card._tlZoomFor?.classList.remove("zoomed"); card._tlZoomFor = null; card._tlZoomAt = null; if (!L || L.style.display === "none") return;
     const done = () => { card._tlZoomA = null; if (!card._tlZoomFor) L.style.display = "none"; };
     const a = now || !L.isConnected ? null : zoomOut(L);
     card._tlZoomA = a; if (a) a.finished.then(done, () => {}); else done();
@@ -2086,5 +2166,5 @@
   function iconOf(x) { const e = x && norm(x); return e ? iconSvg((LANE[e.lane] || LANE.office).ic) : ""; }
 
   root.OrderTimelineUI = { mount, feed, stampSvg, derive, STAGES, stagesFor, ofPiece, summary, isStud, engraveOf, KIND, labelOf, nowStamps, wireNow, iconOf, sealed, sealsOf, blockerOf, requirementsOf, explainOn,
-    stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf };
+    stepOf, labelStepOf, personOf, placeOf, opStepOf, handOf, faceModel };
 })(typeof window !== "undefined" ? window : globalThis);

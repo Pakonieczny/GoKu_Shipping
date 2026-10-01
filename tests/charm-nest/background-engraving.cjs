@@ -10,6 +10,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const O = require('../../charm-nest-orders.js');
 const Ops = require('../../charm-nest-operations.js');
+const E = require('../../charm-nest-engraving-seals.js');
 const source = fs.readFileSync('charm-nest-bridge.js', 'utf8');
 const slice = (from, to) => { const a = source.indexOf(from), b = source.indexOf(to, a); assert(a >= 0 && b > a, 'slice ' + from); return source.slice(a, b); };
 const tick = () => new Promise(r => setImmediate(r));
@@ -106,7 +107,7 @@ async function backgroundTest() {
 
 /* ── 3 · the run's Engraving step ── */
 function controllerContext({ background, onSets }) {
-  let controller = slice('const RunCtl =', '/* ═══ 24 · Review');
+  let controller = slice('const RunCtl =', "/* ═══ 23c · Custom Orders' QR sticker");
   const renderStart = controller.indexOf('  function renderBanner()'), renderEnd = controller.indexOf('  return { optionsChanged', renderStart);
   controller = controller.slice(0, renderStart) + '  function renderBanner() {}\n' + controller.slice(renderEnd);
   controller = controller.replace('return { optionsChanged', 'return { _loop:loop, optionsChanged');
@@ -183,8 +184,8 @@ async function lockTest() {
   const events = [];
   let uploadGate, uploaded = new Promise(r => { uploadGate = r; });
   const sh = { sheetId: 's1', fileBase: 'GF_1', folderPath: 'f', runId: 'run', metal: 'gold', backPool: [] };
-  const job = { key: 'k', state: 'approved', approvedAt: 5, approvedBy: 'P', copies: ['p1'], fit: { glyphs: [], size: 5, capMm: 2, weight: 400, angle: 0, centre: [0, 0], rect: null, metrics: {} }, view: { cx: 0, cy: 0, angleDeg: 0, cutMembers: [], upAngle: 0 }, verify: { geometry: {} }, text: 'Hi', lines: ['Hi'], row: { order: { receiptId: 'o' }, line: { transactionId: 't' }, spec: { designSku: 'S' }, engrave: {} }, backs: [] };
-  const ctx = { window: { CharmNestOperations: ops }, B: { run: { runId: 'run' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} }, Promise, Map, Set, Object, Error, JSON, console,
+  const job = { key: 'k', state: 'approved', approvedAt: 5, approvedBy: 'P', engravingSeals:[{how:'engraveApproved',at:3,by:'Seth'}], copies: ['p1'], fit: { glyphs: [], size: 5, capMm: 2, weight: 400, angle: 0, centre: [0, 0], rect: null, metrics: {} }, view: { cx: 0, cy: 0, angleDeg: 0, cutMembers: [], upAngle: 0 }, verify: { geometry: {} }, text: 'Hi', lines: ['Hi'], row: { order: { receiptId: 'o' }, line: { transactionId: 't' }, spec: { designSku: 'S' }, engrave: {} }, backs: [] };
+  const ctx = { window: { CharmNestOperations: ops }, CNEngravingSeals:E, B: { run: { runId: 'run' }, pool: { rows: new Map() } }, S: { cloud: { ok: true }, settings: {} }, Promise, Map, Set, Object, Error, JSON, console,
     charmFor: () => ({ sourceId: 'x' }), sourceOf: () => ({ parsed: {} }), sheetFor: () => sh, allSheets: () => [sh], PT: 72 / 25.4,
     renderBack: () => ({ toBlob: cb => cb(new Uint8Array(1)), _sizePt: { w: 1, h: 1 } }), fitOpts: () => ({ lineGap: 0.18 }),
     P: { buildBackFile: async () => ({ bytes: new Uint8Array(2), reference: {}, wPt: 1, hPt: 1 }) },
@@ -204,6 +205,7 @@ async function lockTest() {
   assert(intakeDone, 'the intake ran while the back file was uploading');
   uploadGate(); await saving;
   assert(events.includes('backPut')); assert.equal(job.state, 'written'); assert.equal(sh.backPool.length, 1);
+  assert.deepEqual(E.list(sh.backPool[0]).map(s=>[s.at,s.by]),[[3,'Seth'],[5,'P']],'recording the back under the production lock preserves every historical signature');
 }
 
 (async () => {
