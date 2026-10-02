@@ -69,3 +69,11 @@ The guide loads an original Three.js character when opened. `brites-concierge-av
 ## Resumptions and costs
 
 The hourly hosted tick refreshes catalogue information and records a heartbeat. Work-based scheduled continuation performs research and implementation from saved checkpoints, with expired leases recoverable and capped retries. Scheduled work is bounded by the stored stop date. Backend model inference is separate from Work capacity, default-off and bounded by a daily reservation/cost ledger. It never runs the bulk research queue. Preserve unknowns and failures; do not regenerate completed work simply to consume capacity.
+
+## Digital-eye concierge
+
+The original single-eye robot uses indexed Three.js geometry, a deforming light aperture, articulated paddles, six procedural PBR maps and a six-face procedural studio skybox with PMREM reflections. The skybox is LDR; it is not a captured HDRI. Conversation states drive eye colour, blinking, gestures and contextual calm/celebrate poses. The old portrait is no longer loaded. An animated SVG robot is an explicitly separate 2-D fallback. Pause, reduced motion, off-screen and page visibility bounds apply to both modes.
+
+`/concierge-avatar-qa.html` provides expression and rendering diagnostics. A WebGL-disabled browser can verify the fallback and controls, but cannot certify GPU appearance, shadows or frame rate. `scripts/inspect-concierge-avatar.cjs` builds the actual mesh on CPU only.
+
+Realtime voice is opt-in and disabled by default. `/api/concierge-voice` is restricted to the authenticated sandbox, requires the existing AI runtime permission, provider configuration and an explicit allocation. Keys stay server-side. A recorded two-minute deadline is dispatched to the background hangup worker; the minute reaper retries missed deadlines. Allocation reservations remain held until trusted provider usage reconciliation; they are not a certified provider charge ceiling. Each new voice turn must call the live public catalogue tool. Voice tools never navigate or mutate carts; shoppers use visible option/confirmation controls. The client handles interruptions, media cleanup, actual audio RMS and safe text/narration fallback. Production shopper voice authorization and real audio/GPU acceptance require a separate verified release.

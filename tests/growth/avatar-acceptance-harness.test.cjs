@@ -14,14 +14,14 @@ test('WebGL report exposes observed identity, shadow capability, textures, ratio
   assert.equal(report.gpu.visualQuality,'unverified');assert.equal(report.acceptance.gpu,'capability_observed_visual_unverified');
 });
 
-test('disabled WebGL preserves an explicit static fallback and leaves GPU, shadows and FPS unverified',()=>{
+test('disabled WebGL preserves an explicit animated 2-D fallback and leaves GPU, shadows and FPS unverified',()=>{
   const declarations={schema:1,source:'loaded_scene_module',textures:['Porcelain','Gold grain','Gold roughness','Iris'].map(name=>({name,kind:'fixture',width:2048,height:2048}))};
   const report=qa.buildDiagnostics({before:{mode:'fallback'},after:{mode:'fallback',visible:true,intersecting:true,reducedMotion:false,quality:{textureSize:2048,pixelRatio:2,fps:60},declarations},gl:{available:false},frameRendering:'fallback',frameHidden:false,sampleMs:750});
   assert.equal(report.webgl.status,'webgl_unavailable');assert.equal(report.webgl.vendor,null);assert.equal(report.webgl.renderer,null);
   assert.equal(report.staticFallback.active,true);assert.equal(report.staticFallback.visible,true);assert.equal(report.staticFallback.preserved,true);
   assert.equal(report.acceptance.gpu,'unverified');assert.equal(report.acceptance.shadows,'unverified');assert.equal(report.acceptance.fps,'unverified');
   assert.equal(report.textures.declaredMaps,4);assert.equal(report.textures.observedCreatedMaps,0);assert.equal(report.textures.declarationSource,'loaded_scene_module');assert.equal(report.textures.largestDeclaredSize,2048);assert.equal(report.textures.fitsObservedCapability,null);
-  assert.equal(report.shadowMap.status,'unverified_webgl_unavailable');assert.equal(report.frameSampling.status,'unverified_webgl_unavailable');assert.match(report.acceptance.message,/Static fallback is active.*unverified/i);
+  assert.equal(report.shadowMap.status,'unverified_webgl_unavailable');assert.equal(report.frameSampling.status,'unverified_webgl_unavailable');assert.match(report.acceptance.message,/Animated 2-D fallback is active.*unverified/i);
 });
 
 test('reduced motion and hidden rendering are distinguished from failed frame sampling',()=>{
@@ -53,7 +53,7 @@ test('visible pending avatar diagnostics use a bounded readiness wait and preser
 
 test('visual QA pages expose the diagnostics and explicitly prohibit fallback GPU claims',()=>{
   const root=path.join(__dirname,'../..'),studio=fs.readFileSync(path.join(root,'concierge-avatar-qa.html'),'utf8'),checklist=fs.readFileSync(path.join(root,'concierge-avatar-checklist.html'),'utf8');
-  assert.match(studio,/concierge-avatar-qa\.js/);assert.match(studio,/Static fallback confirmed\. GPU rendering, shadows and FPS were not tested\./);assert.match(studio,/BritesAvatarAcceptance\.collect/);
+  assert.match(studio,/concierge-avatar-qa\.js/);assert.match(studio,/Animated 2-D fallback confirmed\. GPU rendering, shadows and FPS were not tested\./);assert.match(studio,/BritesAvatarAcceptance\.collect/);
   for(const term of ['vendor','renderer','shadowMap','textures','pixelRatio','frameSampling','reduced-motion','contextLoss','unverified'])assert.match(checklist,new RegExp(term,'i'),term);
   assert.match(checklist,/never changes browser graphics settings or fingerprinting/i);assert.match(checklist,/never forces a context loss/i);
 });

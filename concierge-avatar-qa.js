@@ -33,8 +33,9 @@
       frameSampling:{status:frameStatus,sampleMs,framesBefore,framesAfter,frameDelta,effectiveFps,frameRenderMs:number(after.frameRenderMs),targetFps:number(after.quality?.fps)},
       motion:{visible,intersecting,reducedMotion,animated:after.animated===true},
       contextLoss:{status:contextLost?'lost_fallback_required':webglUsable?'not_observed':'unverified_no_webgl_context',reportedByScene:after.contextLost===true,reportedByWebGL:gl.contextLost===true,forcedForTest:false},
+      fallback:{kind:after.fallback?.format||'animated_svg_2d',animated:after.fallback?.animated===true,gpu:false},
       staticFallback:{active:fallbackActive,visible:fallbackActive&&input.frameHidden!==true,preserved:fallbackActive&&input.frameHidden!==true},
-      acceptance:{gpu:webglUsable?'capability_observed_visual_unverified':'unverified',shadows:shadowCapable?'capability_observed_visual_unverified':'unverified',fps:frameStatus==='sampled'?'sampled':'unverified',message:webglUsable?'WebGL capability is visible below. GPU appearance and shadow quality still require visual review.':fallbackActive?'Static fallback is active. GPU rendering, real-time shadows and FPS are unverified in this browser.':'Renderer capability is pending; GPU rendering, shadows and FPS are not yet verified.'}
+      acceptance:{gpu:webglUsable?'capability_observed_visual_unverified':'unverified',shadows:shadowCapable?'capability_observed_visual_unverified':'unverified',fps:frameStatus==='sampled'?'sampled':'unverified',message:webglUsable?'WebGL capability is visible below. GPU appearance and shadow quality still require visual review.':fallbackActive?'Animated 2-D fallback is active. GPU rendering, real-time shadows and FPS are unverified in this browser.':'Renderer capability is pending; GPU rendering, shadows and FPS are not yet verified.'}
     };
   }
   function inspectWebGL(frame){

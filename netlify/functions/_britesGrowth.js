@@ -174,11 +174,22 @@ function createGrowthService({db,env={},shopify,now=Date.now}){
     });
   }
   async function saveDossier(d){const product=await getProduct(d.productId);const v=validateDossier(d,product,now());if(!v.ok)return {validation:v};const record={...d,validation:v,status:v.status,version:hash(d),savedAt:now()};const ref=col('Research').doc(pid(d.productId));await db.runTransaction(async tx=>{const prior=await tx.get(ref);if(prior.exists&&prior.data().status==='approved'&&v.status!=='approved')throw Error('A partial draft cannot overwrite approved research.');if(prior.exists)tx.set(col('ResearchVersions').doc(pid(d.productId)+'-'+prior.data().version),prior.data());tx.set(ref,record);});if(v.status==='approved'){const q=await col('Queue').where('productId','==',d.productId).get();const b=db.batch();for(const x of q.docs)b.update(x.ref,{status:'complete',dossierVersion:record.version,completedAt:now(),leaseToken:null,leaseUntil:0});await b.commit();}return {ok:true,productId:d.productId,version:record.version,validation:v};}
-  async function research(ids){const out=[];for(const id of [...new Set(ids)].slice(0,20)){if(!validIdentity(id))continue;const s=await col('Research').doc(pid(id)).get();if(s.exists)out.push(s.data());}return out;}
-  async function productIssues(ids){const out=[];for(const id of [...new Set(ids)].slice(0,100)){if(!validIdentity(id))continue;const s=await col('ProductIssues').doc(pid(id)).get();if(s.exists)out.push(s.data());}return out;}
+  async function readProductRecords(suffix,ids,limit){
+    // These independent document reads have no write dependencies. Keep the
+    // original deduplication/limit order and wait for each bounded chunk before
+    // starting another. A failed read rejects the entire result, including holds.
+    const selected=[...new Set(ids)].slice(0,limit).filter(validIdentity),out=[];
+    for(let i=0;i<selected.length;i+=6){
+      const snapshots=await Promise.all(selected.slice(i,i+6).map(id=>col(suffix).doc(pid(id)).get()));
+      for(const snapshot of snapshots)if(snapshot.exists)out.push(snapshot.data());
+    }
+    return out;
+  }
+  async function research(ids){return readProductRecords('Research',ids,20);}
+  async function productIssues(ids){return readProductRecords('ProductIssues',ids,100);}
   async function storySupplements(ids){
     if(ns!=='Brites_Growth_Sandbox')return [];
-    const out=[];for(const id of [...new Set(ids)].slice(0,20)){if(!validIdentity(id))continue;const s=await col('StorySupplements').doc(pid(id)).get();if(s.exists)out.push(s.data());}return out;
+    return readProductRecords('StorySupplements',ids,20);
   }
   async function saveStorySupplement(value){
     if(ns!=='Brites_Growth_Sandbox')throw Error('Story supplements require the isolated sandbox namespace.');
@@ -605,8 +616,9 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(!handles.length&&currentHandle)handles.push(currentHandle);
   const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
-  await service.saveProducts(checkedProducts);
-  let issueRecords=service.productIssues?await service.productIssues(checkedProducts.map(p=>p.id)):[];
+  // Persisting a live catalogue mirror and reading independent reviewed holds
+  // can overlap, but neither may be bypassed before ranking or recommending.
+  let [,issueRecords]=await Promise.all([service.saveProducts(checkedProducts),service.productIssues?service.productIssues(checkedProducts.map(p=>p.id)):[]]);
   // An explicit exact-page reference selects that validated live product,
   // rather than letting stale discovery preferences filter it back out.
   const exactCurrentType=exactProductContext&&checkedProducts.length===1&&/\bcharms?\b/i.test(checkedProducts[0]?.type||'')?'charm':null;
@@ -620,9 +632,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     const refreshed=attempts.filter(x=>x.status==='fulfilled'&&x.value).map(x=>x.value);
     if(candidateHandles.length&&!refreshed.length&&attempts.some(x=>x.status==='rejected'))throw Error('The matching published pieces could not be checked.');
     if(refreshed.length){
-      await service.saveProducts(refreshed);
       checkedProducts=[...new Map([...checkedProducts,...refreshed].map(p=>[p.id,p])).values()];
-      issueRecords=service.productIssues?await service.productIssues(checkedProducts.map(p=>p.id)):[];
+      [,issueRecords]=await Promise.all([service.saveProducts(refreshed),service.productIssues?service.productIssues(checkedProducts.map(p=>p.id)):[]]);
       eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
       products=rankProducts(eligibleProducts,intent,at);
     }
@@ -642,7 +653,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
     }
   }
   let dossiers=[],knowledgeUnavailable=false;
-  try{const ids=products.map(p=>p.id),supplements=typeof service.storySupplements==='function'?await service.storySupplements(ids):[];dossiers=mergeStorySupplements(await service.research(ids),supplements,issueRecords,at);}catch{knowledgeUnavailable=true;}
+  try{const ids=products.map(p=>p.id),[research,supplements]=await Promise.all([service.research(ids),typeof service.storySupplements==='function'?service.storySupplements(ids):[]]);dossiers=mergeStorySupplements(research,supplements,issueRecords,at);}catch{knowledgeUnavailable=true;}
   const meanings=publicMeanings(dossiers,products.map(p=>p.id),at,issueRecords).slice(0,3);
   const recovery=!products.length&&!unavailableSelection?recoveryQuestion(eligibleProducts,intent,at):null;
   let reply=products.length?'These available pieces connect with '+(intent.query||'the preferences you’ve shared')+giftContext(intent)+'.':'I couldn’t confirm an available match for those preferences. We can adjust the selection together.';

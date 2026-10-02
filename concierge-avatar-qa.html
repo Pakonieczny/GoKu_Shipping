@@ -12,8 +12,8 @@
 <body>
 <main>
   <div class="eyebrow">BRITES JEWELRY · VISUAL STUDIO</div>
-  <h1>A thoughtful little guide.</h1>
-  <p>Original sculpted 3-D character, real lighting and expressive rig. This studio makes no shop or cart changes.</p>
+  <h1>A little light. A lot of care.</h1>
+  <p>Original digital-eye robot, physical materials and an expressive live rig. This studio makes no shop or cart changes.</p>
   <div class="layout">
     <div class="studio" id="avatar"></div>
     <aside>
@@ -30,11 +30,11 @@
 <script src="/concierge-avatar-qa.js"></script>
 <script>
   const status=document.getElementById('status'),metricsOutput=document.getElementById('metrics'),verdict=document.getElementById('verdict'),inspect=document.getElementById('inspect');
-  const avatar=BritesConciergeAvatar.create({container:document.getElementById('avatar'),assetBase:location.origin+'/',visible:true,onStatus:type=>{status.textContent=type==='ready'?'Live WebGL scene ready.':type==='fallback'?'WebGL is unavailable here; the static fallback is displayed and GPU results remain unverified.':type==='state'?'Expression updated.':'Renderer '+type;}});
+  const avatar=BritesConciergeAvatar.create({container:document.getElementById('avatar'),assetBase:location.origin+'/',visible:true,onStatus:type=>{status.textContent=type==='ready'?'Live WebGL scene ready.':type==='fallback'?'WebGL is unavailable here; the animated 2-D robot fallback is displayed and GPU results remain unverified.':type==='state'?'Expression updated.':'Renderer '+type;}});
   window.avatarQA=avatar;
   for(const state of BritesConciergeAvatar.STATES){const button=document.createElement('button');button.type='button';button.textContent=state;button.dataset.state=state;button.setAttribute('aria-pressed',state==='idle'?'true':'false');button.onclick=()=>{avatar.setState(state);document.querySelectorAll('[data-state]').forEach(node=>{if(node.tagName==='BUTTON')node.setAttribute('aria-pressed',String(node===button));});};document.getElementById('states').appendChild(button);}
   let shown=true;document.getElementById('pause').onclick=()=>{shown=!shown;avatar.setVisible(shown);document.getElementById('pause').textContent=shown?'Hide / pause rendering':'Show / resume rendering';};
-  async function metrics(){inspect.disabled=true;status.textContent='Sampling renderer capability…';try{const report=await BritesAvatarAcceptance.collect({avatar,sampleMs:750});metricsOutput.textContent=JSON.stringify(report,null,2);verdict.textContent=report.acceptance.message;status.textContent=report.mode==='webgl'?'Capability sample complete. Visual appearance still needs review.':'Static fallback confirmed. GPU rendering, shadows and FPS were not tested.';}catch(error){metricsOutput.textContent=JSON.stringify({error:'Renderer diagnostics could not be collected.',gpu:'unverified',shadows:'unverified',fps:'unverified'},null,2);verdict.textContent='Diagnostics were unavailable; GPU rendering, shadows and FPS remain unverified.';status.textContent='Renderer diagnostics unavailable.';}finally{inspect.disabled=false;}}
+  async function metrics(){inspect.disabled=true;status.textContent='Sampling renderer capability…';try{const report=await BritesAvatarAcceptance.collect({avatar,sampleMs:750});metricsOutput.textContent=JSON.stringify(report,null,2);verdict.textContent=report.acceptance.message;status.textContent=report.mode==='webgl'?'Capability sample complete. Visual appearance still needs review.':'Animated 2-D fallback confirmed. GPU rendering, shadows and FPS were not tested.';}catch(error){metricsOutput.textContent=JSON.stringify({error:'Renderer diagnostics could not be collected.',gpu:'unverified',shadows:'unverified',fps:'unverified'},null,2);verdict.textContent='Diagnostics were unavailable; GPU rendering, shadows and FPS remain unverified.';status.textContent='Renderer diagnostics unavailable.';}finally{inspect.disabled=false;}}
   inspect.onclick=metrics;avatar.ready.then(metrics);window.addEventListener('pagehide',()=>avatar.destroy(),{once:true});
 </script>
 </body>
