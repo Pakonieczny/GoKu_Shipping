@@ -1,2 +1,41 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Brites · 3D gift guide studio</title><link rel="stylesheet" href="/brites-concierge-avatar.css"><style>body{margin:0;background:#f7f2e9;color:#382f27;font:15px/1.5 system-ui,sans-serif}main{max-width:1060px;margin:35px auto;padding:24px}h1{font:500 clamp(28px,4vw,44px)/1.1 Georgia,serif;margin:8px 0 12px}.eyebrow{letter-spacing:.2em;font-size:12px;color:#836c4b}.layout{display:grid;grid-template-columns:1.2fr 1fr;gap:24px}.studio{height:min(650px,73vh);min-height:390px;border:1px solid #dfd1bb;border-radius:30px;overflow:hidden;box-shadow:0 24px 75px #6d57352b}aside{padding:12px 8px}button{font:inherit;color:#423725;background:#fffaf2;border:1px solid #d6c5aa;border-radius:22px;padding:9px 16px;cursor:pointer}button[aria-pressed=true]{background:#584933;color:#fff}.states{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}button:focus-visible{outline:3px solid #479fa6;outline-offset:3px}pre{font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;max-height:390px;overflow:auto;background:#eee5d5;border-radius:16px;padding:15px}.controls{display:flex;gap:10px;flex-wrap:wrap}.note{font-size:13px;color:#796b58}@media(max-width:720px){main{margin:8px auto;padding:18px}.layout{grid-template-columns:1fr}.studio{height:460px;min-height:320px}}</style></head><body><main><div class="eyebrow">BRITES JEWELRY · VISUAL STUDIO</div><h1>A thoughtful little guide.</h1><p>Original sculpted 3-D character, real lighting and expressive rig. This studio makes no shop or cart changes.</p><div class="layout"><div class="studio" id="avatar"></div><aside><p>Choose an expression to test the live character. “Listening” here means paying attention to a typed message. No microphone is used.</p><div class="states" id="states"></div><div class="controls"><button id="pause" type="button">Hide / pause rendering</button><button id="inspect" type="button">Inspect renderer</button></div><p class="note" id="status" role="status">Loading the 3-D guide…</p><pre id="metrics" aria-label="Renderer verification"></pre></aside></div></main><script src="/brites-concierge-avatar.js"></script><script>const avatar=BritesConciergeAvatar.create({container:document.getElementById('avatar'),assetBase:location.origin+'/',visible:true,onStatus:(type)=>{document.getElementById('status').textContent=type==='ready'?'Live WebGL scene ready.':type==='fallback'?'WebGL is unavailable here; the fallback illustration is displayed.':type==='state'?'Expression updated.':'Renderer '+type;}});window.avatarQA=avatar;for(const state of BritesConciergeAvatar.STATES){const button=document.createElement('button');button.type='button';button.textContent=state;button.dataset.state=state;button.setAttribute('aria-pressed',state==='idle'?'true':'false');button.onclick=()=>{avatar.setState(state);document.querySelectorAll('[data-state]').forEach(node=>{if(node.tagName==='BUTTON')node.setAttribute('aria-pressed',String(node===button));});};document.getElementById('states').appendChild(button);}let shown=true;document.getElementById('pause').onclick=()=>{shown=!shown;avatar.setVisible(shown);document.getElementById('pause').textContent=shown?'Hide / pause rendering':'Show / resume rendering';};function metrics(){document.getElementById('metrics').textContent=JSON.stringify(avatar.snapshot(),null,2);}document.getElementById('inspect').onclick=metrics;avatar.ready.then(metrics);window.addEventListener('pagehide',()=>avatar.destroy(),{once:true});</script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Brites · 3D gift guide studio</title>
+  <link rel="stylesheet" href="/brites-concierge-avatar.css">
+  <style>
+    body{margin:0;background:#f7f2e9;color:#382f27;font:15px/1.5 system-ui,sans-serif}main{max-width:1060px;margin:35px auto;padding:24px}h1{font:500 clamp(28px,4vw,44px)/1.1 Georgia,serif;margin:8px 0 12px}.eyebrow{letter-spacing:.2em;font-size:12px;color:#836c4b}.layout{display:grid;grid-template-columns:1.2fr 1fr;gap:24px}.studio{height:min(650px,73vh);min-height:390px;border:1px solid #dfd1bb;border-radius:30px;overflow:hidden;box-shadow:0 24px 75px #6d57352b}aside{padding:12px 8px}button{font:inherit;color:#423725;background:#fffaf2;border:1px solid #d6c5aa;border-radius:22px;padding:9px 16px;cursor:pointer}button[aria-pressed=true]{background:#584933;color:#fff}.states{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}button:focus-visible{outline:3px solid #479fa6;outline-offset:3px}pre{font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;max-height:390px;overflow:auto;background:#eee5d5;border-radius:16px;padding:15px}.controls{display:flex;gap:10px;flex-wrap:wrap}.note{font-size:13px;color:#796b58}.verdict{padding:11px 13px;border-left:4px solid #9a8157;background:#fffaf2;border-radius:4px 14px 14px 4px}@media(max-width:720px){main{margin:8px auto;padding:18px}.layout{grid-template-columns:1fr}.studio{height:460px;min-height:320px}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">BRITES JEWELRY · VISUAL STUDIO</div>
+  <h1>A thoughtful little guide.</h1>
+  <p>Original sculpted 3-D character, real lighting and expressive rig. This studio makes no shop or cart changes.</p>
+  <div class="layout">
+    <div class="studio" id="avatar"></div>
+    <aside>
+      <p>Choose an expression to test the live character. “Listening” here means paying attention to a typed message. No microphone is used.</p>
+      <div class="states" id="states"></div>
+      <div class="controls"><button id="pause" type="button">Hide / pause rendering</button><button id="inspect" type="button">Inspect renderer</button></div>
+      <p class="note" id="status" role="status">Loading the 3-D guide…</p>
+      <p class="verdict" id="verdict">Renderer capability has not been sampled yet.</p>
+      <pre id="metrics" aria-label="Renderer verification"></pre>
+    </aside>
+  </div>
+</main>
+<script src="/brites-concierge-avatar.js"></script>
+<script src="/concierge-avatar-qa.js"></script>
+<script>
+  const status=document.getElementById('status'),metricsOutput=document.getElementById('metrics'),verdict=document.getElementById('verdict'),inspect=document.getElementById('inspect');
+  const avatar=BritesConciergeAvatar.create({container:document.getElementById('avatar'),assetBase:location.origin+'/',visible:true,onStatus:type=>{status.textContent=type==='ready'?'Live WebGL scene ready.':type==='fallback'?'WebGL is unavailable here; the static fallback is displayed and GPU results remain unverified.':type==='state'?'Expression updated.':'Renderer '+type;}});
+  window.avatarQA=avatar;
+  for(const state of BritesConciergeAvatar.STATES){const button=document.createElement('button');button.type='button';button.textContent=state;button.dataset.state=state;button.setAttribute('aria-pressed',state==='idle'?'true':'false');button.onclick=()=>{avatar.setState(state);document.querySelectorAll('[data-state]').forEach(node=>{if(node.tagName==='BUTTON')node.setAttribute('aria-pressed',String(node===button));});};document.getElementById('states').appendChild(button);}
+  let shown=true;document.getElementById('pause').onclick=()=>{shown=!shown;avatar.setVisible(shown);document.getElementById('pause').textContent=shown?'Hide / pause rendering':'Show / resume rendering';};
+  async function metrics(){inspect.disabled=true;status.textContent='Sampling renderer capability…';try{const report=await BritesAvatarAcceptance.collect({avatar,sampleMs:750});metricsOutput.textContent=JSON.stringify(report,null,2);verdict.textContent=report.acceptance.message;status.textContent=report.mode==='webgl'?'Capability sample complete. Visual appearance still needs review.':'Static fallback confirmed. GPU rendering, shadows and FPS were not tested.';}catch(error){metricsOutput.textContent=JSON.stringify({error:'Renderer diagnostics could not be collected.',gpu:'unverified',shadows:'unverified',fps:'unverified'},null,2);verdict.textContent='Diagnostics were unavailable; GPU rendering, shadows and FPS remain unverified.';status.textContent='Renderer diagnostics unavailable.';}finally{inspect.disabled=false;}}
+  inspect.onclick=metrics;avatar.ready.then(metrics);window.addEventListener('pagehide',()=>avatar.destroy(),{once:true});
+</script>
+</body>
+</html>

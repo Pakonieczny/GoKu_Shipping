@@ -14,5 +14,9 @@ test('the default isolated growth build includes the protected Ads route',()=>{
     assert.equal(manifest.adsEndpoint,'/api/growth-ads');
     assert.equal(manifest.adsWrites,false);
     assert.equal(manifest.paidAiKeysRequired,false);
+    const qaScript=path.join(out,'public-site/concierge-avatar-qa.js'),qaPage=fs.readFileSync(path.join(out,'public-site/concierge-avatar-qa.html'),'utf8');
+    assert.ok(fs.existsSync(qaScript),'the browser-visible avatar diagnostics are copied into the isolated stage');
+    assert.match(fs.readFileSync(qaScript,'utf8'),/BritesAvatarAcceptance/);
+    assert.match(qaPage,/<script src="\/concierge-avatar-qa\.js"><\/script>/);
   }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
