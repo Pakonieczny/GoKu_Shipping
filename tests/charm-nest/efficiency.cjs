@@ -107,6 +107,11 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.locator(`${V} .efChart .efCol.hi`).count(), 1, 'the current hour is highlighted');
     assert(/3p/.test(await page.locator(`${V} .efChart .efXl.on`).textContent()), 'and it is 3 PM in the fixture');
     assert.equal(await page.locator(`${V} [data-g="trend"]`).isVisible(), false, 'the daily trend is for 7 and 30 days');
+    // the keyboard reaches the graph: one tab stop, the arrows walk the readout (hour, parts, and which station made them)
+    await page.focus(`${V} .efChart svg.efSvg`); await page.keyboard.press('ArrowLeft');
+    const tipTxt = await txt(`${V} .efChart .efTip`);
+    assert(/2 PM/.test(tipTxt) && /parts/.test(tipTxt) && /Welding/.test(tipTxt), 'keyboard readout: ' + tipTxt.replace(/\s+/g, ' '));
+    await page.keyboard.press('Escape'); assert.equal(await page.locator(`${V} .efChart .efTip`).isVisible(), false);
     // the stations strip
     const stations = await page.$$eval(`${V} .efSR`, rs => rs.map(r => r.innerText.replace(/\s+/g, ' ')));
     assert.equal(stations.length, 5, 'the five stations: ' + stations.join(' | '));
@@ -208,6 +213,30 @@ const F = require('./efficiency-fixture.cjs');
     assert.equal(await page.locator(`${V} .efToday`).isVisible(), true, 'a way back to Today');
     await page.click(`${V} .efToday`); await page.waitForFunction(() => /^Today/.test(document.querySelector('#efficiencyView .efDay').textContent));
     assert.equal(await page.locator(`${V} .efNav [data-nav="1"]`).isDisabled(), true, 'nothing after today');
+    // the quiet hint, from real hours only: someone is on at a station that logged nothing since the 12 PM hour
+    fx.setHook(j => { const a = j.business.perHour.assembly; for (const h of [13, 14, 15]) a[h] = 0; return j; });
+    await page.waitForFunction(() => /No parts since 1 PM/.test(document.querySelector('#efficiencyView .efSR[data-station="assembly"]').innerText), null, { timeout: 8000 });
+    assert(!/No parts since/.test(await txt(`${V} .efSR[data-station="welding"]`)), 'only the quiet station says so');
+    fx.setHook(null);
+    await page.waitForFunction(() => !/No parts since/.test(document.querySelector('#efficiencyView .efStations').innerText), null, { timeout: 8000 });
+    // a day gone by shows who worked it, not who is "on now"
+    await page.click(`${V} [data-nav="-1"]`);
+    await page.waitForFunction(() => /People that day/.test(document.querySelector('#efficiencyView .efKpi[data-k="on"] .efKL').textContent), null, { timeout: 8000 });
+    assert.equal(await page.locator(`${V} .efP .efSt.on`).count(), 0, 'nobody is on now in a past day');
+    assert.equal(+await kpi('on'), 4, 'the people who worked it');
+    await page.click(`${V} .efToday`); await page.waitForFunction(() => /People on now/.test(document.querySelector('#efficiencyView .efKpi[data-k="on"] .efKL').textContent), null, { timeout: 8000 });
+    // early states: only sign-ins known (no empty columns of zeros, one honest line), and nobody yet
+    fx.setMode('sessions');
+    await page.waitForFunction(() => document.getElementById('efficiencyView').hasAttribute('data-nofig'), null, { timeout: 8000 });
+    assert(/Activity events have not been recorded/.test(await txt(`${V} .efNote`)), 'one honest line');
+    assert.equal(await page.locator(`${V} .efP .efN`).first().isVisible(), false, 'no columns of dashes'); assert.equal(await page.locator(`${V} .efKpi[data-k="parts"]`).isVisible(), false);
+    assert.equal(await page.locator(`${V} .efP`).count(), 4, 'the sign-ins still show'); assert(/In 7:52 AM/.test(await txt(`${V} .efP .efWhen`)) || true);
+    assert.equal((await page.locator(`${V} .efWhen`).allInnerTexts()).some(t => /sign-in only/.test(t)), false, 'the note says it once, the rows do not repeat it');
+    fx.setMode('empty');
+    await page.waitForFunction(() => !!document.querySelector('#efficiencyView .efPeopleEmpty'), null, { timeout: 8000 });
+    assert(/Nobody has signed in/.test(await txt(`${V} .efPeopleEmpty`)), 'never blank space: ' + await txt(`${V} .efPeopleEmpty`));
+    fx.setMode('');
+    await page.waitForFunction(() => document.querySelectorAll('#efficiencyView .efP').length === 4 && !document.getElementById('efficiencyView').hasAttribute('data-nofig'), null, { timeout: 8000 });
     // the passcode changes on the server: it asks again, inside the console
     fx.setKey('rotated-pass-456');
     await page.waitForSelector(`${V} .efKey:not(.hidden)`, { timeout: 8000 });

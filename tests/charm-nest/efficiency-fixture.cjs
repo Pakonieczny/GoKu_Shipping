@@ -78,15 +78,22 @@ function make(opts = {}) {
     const t = days.reduce((a, d) => ({ parts: a.parts + d.parts, orders: a.orders + d.orders, signedInMin: a.signedInMin + d.signedInMin }), { parts: 0, orders: 0, signedInMin: 0 });
     return { ok: true, now: now(), name: p ? p.name : b.name, from: days[0].day, to: end, days, totals: t, sources: { events: true }, notes: [] };
   }
+  /** The early states: `empty` (nobody yet, events not started) and `sessions` (sign-ins only, no activity logged). */
+  function early(b) {
+    const full = overview(b), note = 'Activity events have not been recorded for these days yet: showing sign-in time and order seals only.';
+    const zero = { parts: 0, scanParts: 0, scans: 0, orders: 0, rejects: 0, errors: 0, activeMin: 0, idleMin: 0, rate: 0, secPerScan: 0 };
+    const ppl = st.mode === 'empty' ? [] : full.people.map(p => Object.assign({}, p, { source: 'sessions', stations: p.stations.map(x => ({ station: x.station, minutes: x.minutes, parts: 0, scanParts: 0, scans: 0, completes: 0, prints: 0, orders: 0 })), totals: Object.assign({}, zero, { signedInMin: p.totals.signedInMin }), perHour: new Array(24).fill(0), orders: [] }));
+    return Object.assign({}, full, { people: ppl, business: { totals: { parts: 0, scans: 0, orders: 0, people: ppl.length }, perHour: {}, stations: ['sorting', 'welding', 'assembly', 'shipping'].map(n => ({ station: n, parts: 0, scans: 0, orders: 0, peopleNow: ppl.filter(p => p.status === 'on' && p.nowAt.includes(n)).map(p => p.name) })), trend: full.business.trend.map(d => Object.assign({}, d, { parts: 0, orders: 0 })) }, feed: [], sources: { events: false, seals: false, sessions: true }, notes: [note], partial: true });
+  }
   /** What the harness answers to a POST body (the passcode is the only gate). */
   function answer(body, headers = {}) {
     st.calls.push({ op: body.op, key: body.key, days: body.days, day: body.day, after: body.after, name: body.name });
     if (body.key !== st.key) { st.wrong++; return { status: 401, json: { ok: false, error: 'unauthorized' } }; }
     if (st.fail > 0) { st.fail--; return { status: 503, json: { ok: false, error: 'both reads failed' } }; }
-    if (body.op === 'overview') return { status: 200, json: overview(body) };
+    if (body.op === 'overview') { const j = st.mode ? early(body) : overview(body); return { status: 200, json: st.hook ? st.hook(j, body) : j }; }
     if (body.op === 'person') return { status: 200, json: person(body) };
     return { status: 400, json: { ok: false, error: 'bad op' } };
   }
-  return { answer, state: st, setKey(k) { st.key = k; }, now, today, bump() { st.bumps++; }, KEY };
+  return { answer, state: st, setKey(k) { st.key = k; }, setMode(m) { st.mode = m || ''; }, setHook(f) { st.hook = f || null; }, now, today, bump() { st.bumps++; }, KEY };
 }
 module.exports = { make, KEY, ymd, addDays, nyAt };

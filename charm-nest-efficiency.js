@@ -65,6 +65,9 @@
     e._stop = tween(options.growMs, k => { e._cur = was + (to - was) * k; setText(e, fmt(e._cur)); }, () => { e._cur = null; setText(e, fmt(to)); });
   }
 
+  /** A figure the data does not know yet shows a dash, never a zero that would read as "nothing happened". */
+  const dash = e => { if (!e) return; if (e._stop) e._stop(); e._v = null; e._cur = null; delete e.dataset.v; setText(e, "—"); };
+  const fig = (e, v, known, fmt, from0) => (known ? setNum(e, v, fmt, from0) : dash(e));
   /* ── the answer, normalised (a missing field is zero or empty, never a crash) ── */
   function hours24(a) { const o = new Array(24).fill(0); if (Array.isArray(a)) for (let i = 0; i < 24; i++) o[i] = Math.max(0, N(a[i])); return o; }
   const sum24 = list => { const o = new Array(24).fill(0); for (const a of list) for (let i = 0; i < 24; i++) o[i] += a[i]; return o; };
@@ -76,7 +79,7 @@
       const x = { parts: N(t.parts), scanParts: N(t.scanParts), scans: N(t.scans), orders: t.orders == null ? orders.length : N(t.orders), activeMin: N(t.activeMin), idleMin: N(t.idleMin), signedInMin: N(t.signedInMin), rate: N(t.rate), secPerScan: N(t.secPerScan) };
       if (!x.rate && x.activeMin >= 1 && x.parts) x.rate = x.parts / (x.activeMin / 60);
       if (!x.secPerScan && x.activeMin >= 1 && x.scans) x.secPerScan = x.activeMin * 60 / x.scans;
-      return { name: String(p.name), on: p.status === "on", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: (Array.isArray(p.nowAt) ? p.nowAt : []).map(String), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
+      return { name: String(p.name), on: p.status === "on", inDay: p.inDay ? String(p.inDay) : "", firstIn: T(p.firstIn), lastOut: T(p.lastOut), onSince: T(p.onSince), nowAt: (Array.isArray(p.nowAt) ? p.nowAt : []).map(String), source: String(p.source || ""), stations, t: x, perHour: hours24(p.perHour), orders };
     });
     const b = r.business || {}, bt = b.totals || {};
     const stRows = new Map();
@@ -114,7 +117,7 @@
     host.classList.add("efCols");
     const tip = el("div", "efTip"); tip.hidden = true; host.appendChild(tip);
     function build(W, n) {
-      const keep = S.n === n ? S.cur : null; S.W = W; S.n = n; S.cur = keep; if (S.svg) S.svg.remove();
+      const keep = S.n === n ? S.cur : null; S.W = W; S.n = n; S.cur = keep; S.sig = ""; if (S.svg) S.svg.remove();
       const svg = S.svg = doc.createElementNS(SVG, "svg"); for (const [k, v] of Object.entries({ viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "efSvg", tabindex: "0", role: "img" })) svg.setAttribute(k, v);
       host.insertBefore(svg, tip);
       const pw = W - L - R, ph = H - T0 - B, slot = pw / n;
@@ -166,8 +169,9 @@
       if (!S.svg || S.W !== W || S.n !== n) build(W, n);
       d.labels.forEach((t, i) => { if (S.xl[i]) { setText(S.xl[i], i % S.geo.step === 0 || i === d.hi ? t : ""); S.xl[i].classList.toggle("on", i === d.hi); } });
       S.svg.setAttribute("aria-label", `${o.name}: ` + d.labels.map((t, i) => `${t} ${nf(d.values[i])}`).join(", "));
-      const max = niceMax(Math.max(0, ...d.values)), to = { vals: d.values.slice(), max };
-      if (S.stop) S.stop();
+      const max = niceMax(Math.max(0, ...d.values)), to = { vals: d.values.slice(), max }, sig = JSON.stringify([to.vals, max, d.hi, S.W]);
+      if (S.sig === sig) { if (S.idx >= 0) show(S.idx); return; }
+      S.sig = sig; if (S.stop) S.stop();
       const from = S.cur || { vals: new Array(n).fill(0), max };
       S.stop = tween(options.growMs, k => { S.cur = { vals: to.vals.map((v, i) => from.vals[i] + (v - from.vals[i]) * k), max: from.max + (max - from.max) * k }; paint(S.cur.vals, S.cur.max); }, () => { S.cur = to; paint(to.vals, to.max); });
       S.cols.forEach((c, i) => c.classList.toggle("hi", i === d.hi));
@@ -187,6 +191,7 @@
       if (last >= 0 && last < n) { dot.setAttribute("cx", x(last).toFixed(1)); dot.setAttribute("cy", y(v[last]).toFixed(1)); dot.removeAttribute("display"); } else dot.setAttribute("display", "none");
     }
     return { set(vals, last) {
+      const sig = vals.join() + "|" + last; if (S.sig === sig) return; S.sig = sig;
       if (S.stop) S.stop(); const from = S.cur && S.cur.length === vals.length ? S.cur : vals.map(() => 0);
       S.stop = tween(options.growMs, k => { S.cur = vals.map((v, i) => from[i] + (v - from[i]) * k); paint(S.cur, last); }, () => { S.cur = vals.slice(); paint(vals, last); });
     } };
@@ -206,7 +211,7 @@
     if (doc.getElementById("efStyle")) return;
     const s = doc.createElement("style"); s.id = "efStyle";
     s.textContent = `
-#efficiencyView{container-type:inline-size;container-name:ef;gap:14px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:6px}
+#efficiencyView{container-type:inline-size;container-name:ef;gap:12px;min-width:0;color:var(--ink);font-size:12.5px;padding-bottom:6px}
 .ef .hidden{display:none!important}
 .efBar{position:sticky;top:-6px;z-index:6;display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;min-height:34px;margin:-6px -10px 0;padding:5px 12px;background:rgba(243,240,234,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
 .efHead{display:flex;align-items:center;gap:6px 12px;min-width:0;flex-wrap:wrap}
@@ -235,12 +240,12 @@
 .efKeyErr{min-height:16px;color:var(--clay);font-size:11.5px}
 .efKey .btn{display:inline-flex;align-items:center;gap:7px}.efKey .btn .spin{border-color:rgba(0,0,0,.2);border-top-color:currentColor;margin:0}
 .efWait{display:flex;align-items:center;justify-content:center;gap:9px;padding:64px 0;color:var(--ink70);font-size:12.5px}
-.efBody{display:grid;gap:14px;min-width:0;transition:opacity .25s ease}.efBody.dim{opacity:.45}
+.efBody{display:grid;gap:12px;min-width:0;transition:opacity .25s ease}.efBody.dim{opacity:.45}
 .efNote{margin:0;display:grid;gap:2px;color:var(--ink70);font-size:12px;padding:0 2px}
 .efNote span:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:8px;vertical-align:1px}
 .efCard{background:var(--card);border:1px solid var(--line);border-radius:12px;min-width:0}
 .efKpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
-.efKpi{padding:18px 22px 10px;display:grid;gap:3px;min-width:0}.efKpi+.efKpi{border-left:1px solid var(--line2)}
+.efKpi{padding:14px 22px 6px;display:grid;gap:3px;min-width:0}.efKpi+.efKpi{border-left:1px solid var(--line2)}
 .efKL .s{display:none}.efKL{font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink45);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .efKV{font:600 36px/1.05 var(--sans);letter-spacing:-.025em;font-variant-numeric:proportional-nums}
 .efKS{font-size:11.5px;color:var(--ink45);min-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -258,18 +263,18 @@
 .efTipR{display:flex;justify-content:space-between;gap:16px;color:#cdc4b2}.efTipR b{color:#fff;font-weight:650}
 .efLabel{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink45);font-weight:750;display:flex;align-items:center;gap:8px;margin:0 2px 7px}
 .efLabel:after{content:"";flex:1;height:1px;background:var(--line)}.efLabel b{color:var(--ink70);letter-spacing:0;font-weight:700}
-.efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:9px 18px;min-height:40px}
+.efSR{display:grid;grid-template-columns:96px minmax(0,1fr) 72px 72px 112px;align-items:center;gap:14px;padding:6px 18px;min-height:34px}
 .efSR+.efSR{border-top:1px solid var(--line2)}
 .efSN{font-weight:700;font-size:12.5px}.efSN:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink25);margin-right:8px;vertical-align:1px;transition:background .3s}
 .efSR.on .efSN:before{background:var(--sage)}
-.efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}
+.efSW{color:var(--ink70);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efSW.none{color:var(--ink25)}.efQuiet{font-style:normal;color:var(--ink45);font-size:11px;margin-left:10px}.efQuiet:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--gold2);margin-right:6px;vertical-align:1px}
 .efSV{text-align:right;font-variant-numeric:tabular-nums;font-weight:650;white-space:nowrap}.efSV small{font-weight:500;color:var(--ink45);margin-left:4px;font-size:10.5px}
 .efSpark{display:block;overflow:visible}.efSL{fill:none;stroke:#6f6a62;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.efSA{fill:rgba(93,90,82,.08);stroke:none}.efSD{fill:var(--gold);stroke:var(--card);stroke-width:1.5}
-.efPH,.efPRow{display:grid;grid-template-columns:minmax(176px,1.1fr) minmax(150px,1.5fr) 62px 62px 70px 62px 64px 104px 96px;align-items:center;gap:0 12px}
+.efPH,.efPRow{display:grid;grid-template-columns:minmax(170px,1fr) minmax(214px,1.7fr) 56px 56px 66px 56px 66px 100px 92px;align-items:center;gap:0 12px}
 .efPH{padding:9px 18px 8px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink45);font-weight:700;border-bottom:1px solid var(--line2)}
 .efPH span:nth-child(n+3):nth-child(-n+7){text-align:right}.ef[data-range="n"] .efPHs{visibility:hidden}
-.efP+.efP{border-top:1px solid var(--line2)}
-.efPRow{padding:11px 18px}
+.efP+.efP{border-top:1px solid var(--line2)}.efP{transition:background .3s}.efP.open{background:var(--card2)}.efP.open:last-child{border-radius:0 0 12px 12px}
+.efPRow{padding:9px 18px}
 .efWho{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto;gap:1px 10px;text-align:left;border:0;background:transparent;padding:2px 0;border-radius:6px;min-width:0;align-items:center}
 .efWho:hover .efName{text-decoration:underline;text-decoration-color:var(--ink25);text-underline-offset:3px}
 .efSt{width:8px;height:8px;border-radius:50%;background:var(--ink25);grid-row:1/3;align-self:center;transition:background .3s,box-shadow .3s}
@@ -308,6 +313,11 @@
 .efFl b{color:var(--ink);font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.efFl time{color:var(--ink45);font-variant-numeric:tabular-nums;font-size:11.5px}.efFl em{font-style:normal;color:var(--ink45);margin-left:8px;font-size:11px}
 .efFl.new{animation:efIn .9s ease}@keyframes efIn{from{background:var(--goldSoft);opacity:.2}to{background:transparent;opacity:1}}
 .efPeopleEmpty{padding:26px 18px;text-align:center;color:var(--ink45);font-size:12.5px}
+/* nothing recorded yet (sign-ins only): no empty columns of dashes, just who is in and where */
+.ef[data-nofig] :is(.efPH,.efN,.efSp,.efAct,.efSV,.efGraph),.ef[data-nofig] .efKpi:not([data-k=on]){display:none}
+.ef[data-nofig] .efKpis{grid-template-columns:1fr}.ef[data-nofig] .efKpi{padding-bottom:12px}
+.ef[data-nofig] .efPRow{grid-template-columns:minmax(170px,1fr) minmax(214px,3fr)}
+.ef[data-nofig] .efSR{grid-template-columns:96px minmax(0,1fr);grid-template-areas:none}.ef[data-nofig] .efSR>*{grid-area:auto!important}
 @container ef (max-width:1060px){
  .efPH{display:none}
  .efPRow{grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 10px;padding:12px 16px}
@@ -365,7 +375,7 @@
       key: host.querySelector(".efKey"), keyIn: host.querySelector(".efKey input"), keyErr: host.querySelector(".efKeyErr"), keyBtn: host.querySelector(".efKey .btn"), wait: host.querySelector(".efWait"), waitT: host.querySelector(".efWaitT"), body: host.querySelector(".efBody"), note: host.querySelector(".efNote"),
       kpi: Object.fromEntries([...host.querySelectorAll(".efKpi")].map(k => [k.dataset.k, k])), gHours: host.querySelector('[data-g="hours"]'), gTrend: host.querySelector('[data-g="trend"]'), gp: host.querySelector(".efGP"),
       stations: host.querySelector(".efStations"), people: host.querySelector(".efPeople"), pn: host.querySelector(".efPN"), feedBtn: host.querySelector(".efFeedBtn"), feedWrap: host.querySelector(".efFeedWrap"), feed: host.querySelector(".efFeed"), fc: host.querySelector(".efFC") };
-    st.charts.hours = columns(host.querySelector(".efChart"), { height: 140, name: "Parts per hour", maxW: 24, unit: "parts", labelW: 26, thin: true });
+    st.charts.hours = columns(host.querySelector(".efChart"), { height: 124, name: "Parts per hour", maxW: 24, unit: "parts", labelW: 26, thin: true });
     st.charts.tA = columns(host.querySelector(".efChartA"), { height: 118, name: "Parts per day", maxW: 18, unit: "parts", labelW: 40 });
     st.charts.tB = columns(host.querySelector(".efChartB"), { height: 118, name: "Orders per day", maxW: 18, unit: "orders", labelW: 40 });
     host.addEventListener("click", onClick);
@@ -430,7 +440,7 @@
 
   /* ── the wire ── */
   async function call(body, key, signal) {
-    const k = key || st.key, payload = Object.assign({}, body, { key: k }); if (st.sandbox) payload.sandbox = true;
+    const k = key || st.key, payload = Object.assign({}, body, { key: k }); st.sandbox = isSandbox(); if (st.sandbox) payload.sandbox = true;
     if (payload.day === undefined) delete payload.day;
     const res = await fetch(endpoint(), { method: "POST", headers: { "Content-Type": "application/json", "X-Edit-Passcode": k }, body: JSON.stringify(payload), cache: "no-store", signal });
     const txt = await res.text(); let j = null; try { j = JSON.parse(txt); } catch (_) {}
@@ -461,7 +471,7 @@
     const M = norm(r); first = first || !st.data;
     if (r.delta && st.data && st.feed.length) { const seen = new Set(M.feed.map(f => f.id)); M.feed = M.feed.concat(st.feed.filter(f => !seen.has(f.id))).sort((a, b) => b.at - a.at).slice(0, 40); }
     st.off = M.now ? M.now - Date.now() : st.off; st.at = Date.now(); st.data = r; st.M = M; st.feed = M.feed;
-    host.removeAttribute("data-lock"); E.wait.classList.add("hidden"); E.key.classList.add("hidden"); E.body.classList.remove("hidden"); E.wait.querySelector(".spin").style.visibility = "";
+    E.flag.classList.toggle("hidden", !st.sandbox); host.removeAttribute("data-lock"); E.wait.classList.add("hidden"); E.key.classList.add("hidden"); E.body.classList.remove("hidden"); E.wait.querySelector(".spin").style.visibility = "";
     render(M, first);
   }
 
@@ -474,7 +484,9 @@
     return { lo, hi, nowH, today: td };
   }
   function render(M, first) {
-    st.win = window24(M);
+    st.win = window24(M); M.past = !!M.day && M.day < today();
+    M.nofig = M.sources.events === false && !M.sources.seals && !M.people.some(p => p.t.parts || p.t.scans || p.t.orders);
+    host.toggleAttribute("data-nofig", M.sources.events === false && !M.sources.seals && !M.people.some(p => p.t.parts || p.t.scans || p.t.orders));
     host.setAttribute("data-range", M.days > 1 ? "n" : "1"); paintDay(); paintLive();
     renderKpis(M, first); renderGraph(M); renderStations(M, first); renderPeople(M, first); renderFeed(M); renderNote(M);
   }
@@ -488,21 +500,26 @@
   }
   function renderKpis(M, first) {
     const k = E.kpi, b = M.biz;
-    setNum(k.parts.querySelector(".efKV"), b.parts, nf, first); setNum(k.orders.querySelector(".efKV"), b.orders, nf, first);
-    setNum(k.on.querySelector(".efKV"), b.on, nf, first); setNum(k.rate.querySelector(".efKV"), b.rate, rateTxt, first);
-    setText(k.parts.querySelector(".efKS"), b.scans ? `${nf(b.scans)} scanned` : "");
-    setText(k.on.querySelector(".efKS"), `of ${nf(b.people)} ${M.days > 1 ? `in ${M.days} days` : "today"}`);
+    const ev = M.sources.events !== false;
+    fig(k.parts.querySelector(".efKV"), b.parts, ev, nf, first); fig(k.orders.querySelector(".efKV"), b.orders, ev || !!M.sources.seals, nf, first);
+    // "on now" is only now: a day gone by shows who worked it
+    setText(k.on.querySelector(".efKL"), M.past ? (M.days > 1 ? "People in range" : "People that day") : "People on now");
+    setNum(k.on.querySelector(".efKV"), M.past ? b.people : b.on, nf, first); setNum(k.rate.querySelector(".efKV"), b.rate, rateTxt, first);
+    setText(k.parts.querySelector(".efKS"), ev && b.scans ? `${nf(b.scans)} scanned` : "");
+    setText(k.on.querySelector(".efKS"), M.past ? "" : `of ${nf(b.people)} ${M.days > 1 ? `in ${M.days} days` : "today"}`);
   }
   const hoursOf = (win) => { const o = []; for (let h = win.lo; h <= win.hi; h++) o.push(h); return o; };
   function renderGraph(M) {
     const trend = M.days > 1;
-    E.gHours.classList.toggle("hidden", trend); E.gTrend.classList.toggle("hidden", !trend);
+    const ev = M.sources.events !== false;
+    E.gHours.classList.toggle("hidden", trend || !ev); E.gTrend.classList.toggle("hidden", !trend || !ev);
+    if (!ev) return;
     if (!trend) {
       const w = st.win, hrs = hoursOf(w), vals = hrs.map(h => M.biz.hours[h]), sts = [...M.biz.stations.values()];
       const tips = hrs.map((h, i) => ({ t: hourLabel(h) + (h === w.nowH ? " · now" : ""), v: `${nf(vals[i])} parts`, rows: sts.filter(s => s.hours && s.hours[h] > 0).sort((a, b) => b.hours[h] - a.hours[h]).map(s => [stName(s.station), nf(s.hours[h])]) }));
       st.charts.hours.set({ labels: hrs.map(hourShort), values: vals, hi: w.today ? hrs.indexOf(w.nowH) : -1, tips });
       let pk = -1; vals.forEach((v, i) => { if (v > 0 && (pk < 0 || v > vals[pk])) pk = i; });
-      setText(E.gp, pk >= 0 ? `Busiest hour · ${hourLabel(hrs[pk])}` : "");
+      setText(E.gp, pk >= 0 ? `Busiest hour · ${hourLabel(hrs[pk])}` : M.biz.parts ? "" : "No parts recorded yet");
     } else {
       const end = M.day || today(), n = M.days, byDay = new Map(M.biz.trend.map(d => [d.day, d])), days = [];
       for (let i = n - 1; i >= 0; i--) days.push(addDays(end, -i));
@@ -531,11 +548,15 @@
         st.stRows.set(k, r);
       }
       const s = M.biz.stations.get(k) || { parts: 0, orders: 0, now: [], hours: null };
-      r.e.classList.toggle("on", s.now.length > 0);
-      const names = s.now.join(", "); setText(r.w, names || "—"); r.w.classList.toggle("none", !names); r.w.title = names;
-      setNum(r.parts, s.parts, nf, first); setNum(r.orders, s.orders, nf, first);
-      r.spEl.style.visibility = trend ? "hidden" : "";
-      if (!trend) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
+      const now = M.past ? [] : s.now, hrs = s.hours || [];
+      r.e.classList.toggle("on", now.length > 0);
+      const names = now.join(", "), w = st.win; let quiet = "";
+      if (names && !trend && w.today && w.nowH >= 2 && hrs.length) { let last = -1; for (let h = w.nowH; h >= 0; h--) if (hrs[h] > 0) { last = h; break; } if (last >= 0 && w.nowH - last >= 2) quiet = `No parts since ${hourLabel(last + 1)}`; }
+      const sig = names + "|" + quiet; if (r.sig !== sig) { r.sig = sig; r.w.textContent = names || "—"; if (quiet) r.w.appendChild(el("em", "efQuiet")).textContent = quiet; r.w.classList.toggle("none", !names); r.w.title = names + (quiet ? " · " + quiet : ""); }
+      const evS = M.sources.events !== false;
+      fig(r.parts, s.parts, evS, nf, first); fig(r.orders, s.orders, evS || !!M.sources.seals, nf, first);
+      r.spEl.style.visibility = trend || !evS ? "hidden" : "";
+      if (!trend && evS) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push((s.hours || [])[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     }
     // keep the rows in the same order, add late ones at the end, drop none that were shown
     const want = [...st.stRows.keys()].filter(k => keys.includes(k)); want.forEach((k, i) => { const e = st.stRows.get(k).e; if (E.stations.children[i] !== e) E.stations.insertBefore(e, E.stations.children[i] || null); });
@@ -557,28 +578,30 @@
     r.sp = spark(r.spEl, { w: 100, h: 22 }); setText(r.nm, name);
     return r;
   }
-  function whenText(p) {
+  function whenText(p, M) {
     if (!p.firstIn) return p.source === "sessions" || !p.source ? "No sign-in recorded" : "From sealed work";
-    let s = `In ${clock(p.firstIn)}`;
+    const pre = p.inDay && (M.days > 1 || p.inDay !== M.day) ? wdFmt.format(dayDate(p.inDay)).replace(/ \d+$/, "") + " " : "";
+    let s = `In ${pre}${clock(p.firstIn)}`;
     if (p.on) { if (p.onSince && p.onSince - p.firstIn > 90000) s += ` · back ${clock(p.onSince)}`; }
     else if (p.lastOut) s += ` · Out ${clock(p.lastOut)}`;
-    if (p.source === "seals") s += " · sealed work"; else if (p.source === "sessions") s += " · sign-in only";
+    if (p.source === "seals") s += " · sealed work"; else if (p.source === "sessions" && !M.nofig) s += " · sign-in only";
     return s;
   }
   function updatePerson(r, p, M, first) {
-    r.st.classList.toggle("on", p.on); r.st.title = p.on ? "On now" : "Locked out"; r.who.setAttribute("aria-label", `${p.name}, ${p.on ? "on now" : "locked out"}. ${whenText(p)}`);
-    setText(r.when, whenText(p));
-    const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join();
-    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && p.on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
-    const t = p.t;
-    setNum(r.parts, t.parts, nf, first); setNum(r.scans, t.scans, nf, first); setNum(r.orders, t.orders, nf, first);
-    setNum(r.rate, t.rate, rateTxt, first); setNum(r.sec, t.secPerScan, secTxt, first);
+    const on = p.on && !M.past;
+    r.st.classList.toggle("on", on); r.st.title = on ? "On now" : "Locked out"; r.who.setAttribute("aria-label", `${p.name}, ${on ? "on now" : "locked out"}. ${whenText(p, M)}`);
+    setText(r.when, whenText(p, M));
+    const chipSig = p.stations.map(s => s.station + s.minutes).join() + "|" + p.nowAt.join() + on;
+    if (chipSig !== r.chipSig) { r.chipSig = chipSig; r.chips.innerHTML = p.stations.length ? p.stations.map(s => `<span class="efChip${p.nowAt.includes(s.station) && on ? " now" : ""}"><b>${esc(stName(s.station))}</b>${esc(dur(s.minutes))}</span>`).join("") : `<span class="efMuted">—</span>`; }
+    const t = p.t, src = p.source, kParts = src !== "seals" && src !== "sessions", kOther = src !== "sessions";   // seals know orders and scans, not parts; sessions know only time
+    fig(r.parts, t.parts, kParts, nf, first); fig(r.scans, t.scans, kOther, nf, first); fig(r.orders, t.orders, kOther, nf, first);
+    fig(r.rate, t.rate, kParts && t.rate > 0, rateTxt, first); fig(r.sec, t.secPerScan, kOther && t.secPerScan > 0, secTxt, first);
     r.rate.title = t.rate ? "Parts per active hour" : ""; r.sec.title = t.secPerScan ? "Active seconds per scan" : "";
     const tot = t.activeMin + t.idleMin, pc = tot >= 1 ? Math.round(t.activeMin / tot * 100) : null;
     r.bar.style.width = pc == null ? "0%" : pc + "%"; setText(r.pct, pc == null ? "—" : pc + "%");
     r.act.title = pc == null ? "No activity timing yet" : `Active ${dur(t.activeMin)} · idle ${dur(t.idleMin)}${t.signedInMin ? ` · signed in ${dur(t.signedInMin)}` : ""}`;
-    r.spEl.style.visibility = M.days > 1 ? "hidden" : "";
-    if (M.days === 1) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
+    r.spEl.style.visibility = M.days > 1 || !kParts ? "hidden" : "";
+    if (M.days === 1 && kParts) { const w = st.win, vals = []; for (let h = w.lo; h <= w.hi; h++) vals.push(p.perHour[h] || 0); r.sp.set(vals, w.today ? Math.min(vals.length - 1, w.nowH - w.lo) : vals.length - 1); }
     if (r.built) paintPanel(r, p);
     r.p = p;
   }
