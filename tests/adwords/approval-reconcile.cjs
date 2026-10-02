@@ -64,6 +64,8 @@ const MIN=60000;let count=0;async function test(name,fn){await fn();count++;cons
     assert.match(line('approvalLand'),/closePerformanceDialog\(\);go\("approvals"\);await reload\(\);/);
     const improve=line('runCampaignImprovementAction');assert.equal((improve.match(/if\(!await approvalLand\(/g)||[]).length,2);
     assert.match(line('approvalSwap'),/approvalFocusBack\(keep\.focus\);\}$/);assert.match(line('approvalKeep'),/focus:approvalFocusMark\(list\)/);});
+  await test('"It was published" shows what the server recorded (a complete ad\'s message), else the plain line',()=>{
+    assert.match(page,/toast\(out==="published"\?\(r\.message\|\|"Recorded as published\. Nothing was sent to Google\."\):"Recorded as not published\./);});
   // Publishing polls this attempt only. The client clock (Date.now) may run ahead of the server's.
   const pub={};vm.createContext(pub);vm.runInContext(['isAdVersionApproval','publishDraft'].map(line).join('\n'),pub);
   const publish=async(statuses,{requestedAt=true,skew=0}={})=>{let clock=1e12,polls=0;const toasts=[];
