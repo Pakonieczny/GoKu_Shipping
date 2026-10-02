@@ -2,6 +2,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const html=fs.readFileSync('charm-nest-1.html','utf8');
 const settings={budgetS:180,maxFill:.8,seed:1};
 const ctx=vm.createContext({S:{settings},stockFor:()=>({wPt:30,hPt:20}),activeCharms:s=>s.charms,angleSet:()=>[0]});
+ctx.window=ctx;
 vm.runInContext(html.slice(html.indexOf('/* A big batch goes onto a sheet'),html.indexOf('/* A stopped run starts none')),ctx);
 vm.runInContext(html.slice(html.indexOf('const CAREFUL_ANGLES'),html.indexOf('function packingKey(')),ctx);
 const piece={id:'one',w:4,h:4,scale:1,bits:new Uint8Array(16).fill(1)};

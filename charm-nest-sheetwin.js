@@ -1285,7 +1285,14 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
     geometryReady(tok);
   }
   async function sourceGeom(s) {
-    if (s.pool && s.sku) {
+    // Custom uploads share the pool, but have their own saved artwork rather than a master SKU. Older sheets kept
+    // only the source id/path, so they remain readable before the explicit custom flag was added to descriptors.
+    const customPath = value => {
+      let path = String(value || ""); try { path = decodeURIComponent(path); } catch (_) {}
+      return /(?:^|\/)charmnest\/(?:sandbox\/)?custom\//i.test(path);
+    };
+    const custom = !!s.custom || /^cust:/.test(String(s.id || "")) || customPath(s.path) || customPath(s.url);
+    if (s.pool && s.sku && !custom) {
       const entry = Master.entryFor(s.sku) || await Master.fetchEntry(s.sku); if (!entry) throw new Error(`${s.sku} is no longer in the master library`);
       const size = Object.entries(entry.sizes || {}).find(([, v]) => v && v.aiPath === s.path)?.[0] || null;
       const src = await Pool.masterCharm(entry, size); return { pool: true, base: src.charms[0], src };
@@ -1299,7 +1306,10 @@ dialog.sheetWin.swBack::backdrop{animation:swFadeOut .44s ease .04s both}
       return { pool: false, charms: g.charms };
     })().catch(e => { fileGeoms.delete(key); throw e; }));
     if (fileGeoms.size > 12) fileGeoms.delete(fileGeoms.keys().next().value);
-    return fileGeoms.get(key);
+    const geom = await fileGeoms.get(key);
+    // The saved file's shapes stay shared; custom identity belongs to this descriptor, so regular file views of the
+    // same artwork do not inherit the plum tint through the cache. Preserve every outline, hole, hash and dimension.
+    return custom ? Object.assign({}, geom, { charms: geom.charms.map(c => Object.assign({}, c, { custom: true })) }) : geom;
   }
   function geometryReady(tok) {
     if (tok !== W.token) return;

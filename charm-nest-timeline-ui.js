@@ -197,7 +197,7 @@
      the lanes, not in the "recent stamps" row, not on the Overview's "where it is now" card. */
   // (engraveApproved is the Engraved step; roseCut is a rose sheet's Laser cut; etsyCompleted folds into Shipped)
   const MILESTONE_SEAL = new Set(["arrived", "placed", "engraveApproved", "laserDone", "roseCut", "sorted", "welded", "assembled", "shipped", "etsyCompleted"]);
-  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert"]);
+  const PERSON_SEAL = new Set(["cancelled", "etsyCancelled", "cancelRestored", "removed", "cancelStep", "held", "released", "restored", "cancelAlert", "designSent"]);
   const isPlainDecision = e => !!e && e.type === "engraveChanged" && !!e.data && e.data.how === "skipped";
   const sealed = e => !!e && (isPlainDecision(e) || MILESTONE_SEAL.has(e.type) || PERSON_SEAL.has(e.type) || !!opStepOf(e));
   /** The seals to draw, oldest first: one per rail step per piece. A step recorded again for the same line (a second
@@ -517,13 +517,15 @@
     : `<circle cx="60" cy="60" r="55.6" stroke-width="3.2"/><circle cx="60" cy="60" r="52" stroke-width=".9"/>`;
   let UID = 0;
   const MON = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], DAYN = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-  const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.getDate()).padStart(2, "0")} ${MON[d.getMonth()]} ${d.getFullYear()}`; };
   // one formatter each, made once: toLocale*String builds a new one per call (~0.3 ms), and a redraw formats every stamp
   const fmtOf = o => { let f = null; return d => { try { return (f = f || new Intl.DateTimeFormat("en-US", o)).format(d); } catch (_) { return ""; } }; };
-  const TIME = fmtOf({ hour: "numeric", minute: "2-digit" }), LONG = fmtOf({ weekday: "long", month: "short", day: "numeric", year: "numeric" });
+  // The same recorded achievement must show the same shop-local date/time on cards and the timeline.
+  const SEAL_ZONE = "America/Toronto", DATE_PARTS = new Intl.DateTimeFormat("en-US", { timeZone: SEAL_ZONE, day: "2-digit", month: "short", year: "numeric" });
+  const dateOf = t => { const parts = DATE_PARTS.formatToParts(new Date(+t || Date.now())), get = type => parts.find(p => p.type === type).value; return `${get("day")} ${get("month").toUpperCase()} ${get("year")}`; };
+  const TIME = fmtOf({ timeZone: SEAL_ZONE, hour: "numeric", minute: "2-digit" }), LONG = fmtOf({ timeZone: SEAL_ZONE, weekday: "long", month: "short", day: "numeric", year: "numeric" }), SHORT_DAY = fmtOf({ timeZone: SEAL_ZONE, weekday: "short" });
   const timeOf = t => TIME(new Date(+t || Date.now()));
   const longWhen = t => LONG(new Date(+t)) + " · " + timeOf(t);
-  const shortWhen = t => { const d = new Date(+t); return `${DAYN[d.getDay()]} ${timeOf(t)}`; };
+  const shortWhen = t => `${SHORT_DAY(new Date(+t)).toUpperCase()} ${timeOf(t)}`;
   function ago(t) {
     const s = (Date.now() - t) / 1000; if (!(t > 0)) return ""; if (s < 45) return "just now";
     const m = s / 60; if (m < 60) return Math.round(m) + " min ago";
@@ -573,8 +575,8 @@
     packed: "fulfilment", labelPrinted: "fulfilment", shipped: "fulfilment", etsyCompleted: "fulfilment", sealCompleted: "fulfilment",
     cancelled: "cancelled", etsyCancelled: "cancelled", cancelStep: "cancelled", cancelAlert: "cancelled"
   };
-  const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", engraveApproved: "BACK ENGRAVING", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
-  const CANONICAL_ICON = { arrived: "received", placed: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
+  const FACE_ACTION = { arrived: "ORDER RECEIVED", placed: "ON SHEET", designSent: "SENT TO SHEET", engraveApproved: "BACK ENGRAVING", laserDone: "LASER CUT", roseCut: "PARTIAL CUT", laserReady: "LASER READY", sheetCompleted: "SHEET COMPLETE", setCompleted: "SET COMPLETE", sealCompleted: "ORDER COMPLETE", etsyCompleted: "ETSY COMPLETE", cancelled: "CANCELLED", etsyCancelled: "ETSY CANCELLED", sealPrinted: "QR LABEL PRINTED" };
+  const CANONICAL_ICON = { arrived: "received", placed: "prepared", designSent: "prepared", engraveApproved: "engraving", laserDone: "laser", assembled: "finishing", shipped: "fulfilment", held: "exceptions", cancelled: "cancelled" };
   function faceModel(e) {
     const printed = !!e.print || isPrint(e), plain = isPlainDecision(e), at = +(plain ? e.data.decidedAt ?? e.at : e.at) || 0, family = printed ? "prepared" : FAMILY_BY_TYPE[e.type] || "exceptions";
     const action = plain ? "CUT PLAIN" : printed ? "QR LABEL PRINTED" : FACE_ACTION[e.type] || String((e.data && e.data.ring) || labelOf(e.type)).toUpperCase();

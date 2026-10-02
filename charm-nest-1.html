@@ -2854,8 +2854,8 @@ dialog.mdGrow{background:transparent!important;box-shadow:none!important}
 <script src="charm-nest-vector.js"></script>
 <script src="charm-nest-pdf.js?v=20260924-followup"></script>
 <script src="charm-nest-dxf.js?v=20260927-custom"></script>
-<script src="charm-nest-motion.js?v=20261001-seal-family-c"></script>
-<script src="charm-nest-timeline-ui.js?v=20261001-seal-family-c"></script>
+<script src="charm-nest-motion.js?v=20261002-custom-decisions"></script>
+<script src="charm-nest-timeline-ui.js?v=20261002-custom-decisions"></script>
 <script src="charm-nest-geom.js?v=20260921-material"></script>
 <script src="charm-nest-engrave-fit.js"></script>
 <script src="charm-nest-assets.js"></script>
@@ -4817,12 +4817,12 @@ async function persistSheet(sh, items, context) {
     stock: sh.outputs.report.stock, params: sh.solveParams, density: sh.density, freePt2: Math.round(sh.liveInfo.freePt2), usablePt2: Math.round(sh.liveInfo.usablePt2), pocket: sh.liveInfo.pocket,
     charmCount: items.length, placedCount: sh.placements.length, rejectCount: (sh.outputs.report.rejects || []).length, page: sh.page, verification: { ok: !!sh.verification.ok, minGapPt: sh.verification.minGapPt, minEdgePt: sh.verification.minEdgePt, render: sh.verification.render && { ok: sh.verification.render.ok, overlapPx: sh.verification.render.overlapPx, outsidePx: sh.verification.render.outsidePx } },
     outputs,
-    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, sku: s.sku || null } : null; }).filter(Boolean),
+    sources: [...new Set(items.map(c => c.sourceId))].map(id => { const s = sourceOf(id); return s ? { id: s.id, name: s.name, zipName: s.zipName, hash: s.hash, bytes: s.bytes ? s.bytes.length : 0, path: s.cloud && s.cloud.path, url: s.cloud && s.cloud.url, pool: !!s.pool, custom: !!s.custom, sku: s.sku || null } : null; }).filter(Boolean),
     dirty:!!sh.dirty, draft: !!sh.draft, solidIncluded:["gold10k","gold14k"].includes(sh.metal) ? !!window.Gate?.solidSelected(sh.metal, sh) : null, releaseFull: !!sh.releaseFull, topup: sh.topup || null, intakeFinalized: !!sh.intakeFinalized, intakeOptimized:!!sh.intakeOptimized, intakeOptimizedCount:sh.intakeOptimizedCount||0, missRearranged:!!sh.missRearranged, setId: sh.setId || null, setSeq: sh.seq || null, sheetIndex: sh.sheetIndex || null, runId: sh.runId || null,
     orders: [...new Set(sh.placements.map(p => { const c = byId.get(p.id); return c && c.order ? String(c.order).split("/")[0] : null; }).filter(Boolean))],
     ...(listings => listings ? { listings } : {})(listingsOf(sh.placements.map(p => byId.get(p.id)))),
     poolIds: sh.placements.map(p => byId.get(p.id) && byId.get(p.id).poolId).filter(Boolean), backPool: sh.backPool || [], backOutputs: sh.backOutputs || null, label: sh.label || null,
-    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
+    charms: items.map(c => ({ id: c.id, hash: c.hash, name: c.name, sourceId: c.sourceId, sourceName: c.sourceName, index: c.index, qty: c.qty, order: c.order || c.id, layer: c.layer || null, poolId: c.poolId || null, custom: !!c.custom, sku: c.sku || null, areaPt2: +c.areaPt2.toFixed(1), widthPt: +c.widthPt.toFixed(2), heightPt: +c.heightPt.toFixed(2), thumbUrl: c.cloud && c.cloud.png || null, aiUrl: c.cloud && c.cloud.ai || null, pngPath: c.cloud && c.cloud.pngPath || null, aiPath: c.cloud && c.cloud.aiPath || null, excluded: !!c.excluded, open: !!c.open })),
     placements: sh.outputs.report.placements, rejects: sh.outputs.report.rejects,
     names: items.map(c => c.name).filter(Boolean).join(" ")
   });
@@ -6552,8 +6552,8 @@ async function boot() {
 boot();
 </script>
 <script src="order-timeline.js?v=20260929-om"></script>
-<script src="charm-nest-bridge.js?v=20261002-approval-resilience"></script>
-<script src="charm-nest-sheetwin.js?v=20261002-approval-resilience"></script>
+<script src="charm-nest-bridge.js?v=20261002-custom-decisions"></script>
+<script src="charm-nest-sheetwin.js?v=20261002-custom-decisions"></script>
 <script src="charm-nest-tour.js?v=20260929-m11"></script>
 <script src="charm-nest-mail.js?v=20260928-ov2"></script>
 <script src="charm-nest-rose-ui.js?v=20260929-cx"></script>

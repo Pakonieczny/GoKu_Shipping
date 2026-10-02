@@ -284,7 +284,7 @@
   /* ════ Seals ════ */
   const Seal = (() => {
     const BASE_SIZE = 84, HOVER_SIZE = 168, META_INK = '#12294c';
-    const INK = { print: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
+    const INK = { print: "#65737f", sheet: "#65737f", button: "#77518a", laserReady: "#98721f", laserDone: "#98721f", engraveApproved:"#296c58", engravePlain:"#296c58" };
     // One outline drives both the ink face and the wooden/rubber head. Signatures remain record data, never a live viewer name.
     const FAMILY = {
       received:{name:'Received',ink:'#315e93',d:'M60 4A56 56 0 1 1 59.99 4Z'},
@@ -406,14 +406,14 @@
         if (+rec.prints > 1 && rec.lastPrintedAt && +rec.lastPrintedAt !== +rec.printedAt) st.push({ how: "print", at: +rec.lastPrintedAt, by: rec.lastPrintedBy || "" });
       }
       st.sort((a, b) => a.at - b.at);
-      let n = 0; for (const s of st) if (s.how !== "button") s.n = ++n;
-      const counted = +rec.prints || 0; if (counted > n) { let k = counted - n; for (const s of st) if (s.how !== "button") s.n += k; }
+      let n = 0; for (const s of st) if (kindOf(s) === "print") s.n = ++n;
+      const counted = +rec.prints || 0; if (counted > n) { let k = counted - n; for (const s of st) if (kindOf(s) === "print") s.n += k; }
       return st;
     }
     const dateOf = t => { const d = new Date(+t || Date.now()); return `${String(d.toLocaleString("en-US",{timeZone:"America/Toronto",day:"2-digit"})).padStart(2, "0")} ${d.toLocaleString("en-US", { timeZone:"America/Toronto", month: "short" }).toUpperCase()} ${d.toLocaleString("en-US",{timeZone:"America/Toronto",year:"numeric"})}`; };
     const timeOf = t => new Date(+t || Date.now()).toLocaleTimeString("en-US", { timeZone:"America/Toronto", hour: "numeric", minute: "2-digit" });
     const engravingOf=st=>st.how==='engraveApproved' || st.how==='engravePlain';
-    const processOf = st => st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st);
+    const processOf = st => st.how === 'sheet' || st.how === 'laserReady' || st.how === 'laserDone' || engravingOf(st);
     const kindOf = st => processOf(st) ? st.how : st.how === "button" ? "button" : "print";
     const green = k => k === 'button' || k === 'laserDone' || k === 'engraveApproved';
     const rotOf = st => { const h = hash(String(st.at) + (st.by || "")); return green(kindOf(st)) ? 5 + (h % 8) : -(5 + (h % 9)); };
@@ -421,14 +421,15 @@
     function modelOf(st) {
       if (st.model) return Object.assign({}, st.model);
       if (st.family) return Object.assign({}, st);
-      const action = st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? 'BACK ENGRAVING' : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
-      const icon = st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
+      const action = st.how === 'sheet' ? 'SENT TO SHEET' : st.how === 'button' ? 'ORDER COMPLETE' : st.how === 'laserReady' ? 'LASER READY' : st.how === 'laserDone' ? 'LASER CUT' : st.how === 'engraveApproved' ? 'BACK ENGRAVING' : st.how === 'engravePlain' ? 'CUT PLAIN' : 'QR LABEL PRINTED';
+      const icon = st.how === 'sheet' ? 'prepared' : st.how === 'button' ? 'complete' : st.how === 'laserReady' ? 'laserReady' : st.how === 'laserDone' ? 'laser' : st.how === 'engravePlain' ? 'plain' : st.how === 'engraveApproved' ? 'engraving' : 'qr';
       return { family:familyOf(st), action, icon, at:+st.at || 0, by:String(st.by || ''), scope:st.scope || '', n:st.n || 0 };
     }
     /** The selected hallmark family. Operator identity belongs only in the enlarged historical detail. */
     function svg(st) { return face(modelOf(st)); }
     function titleOf(st) {
       const d = new Date(+st.at || Date.now()), when = d.toLocaleString("en-US", { timeZone:"America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+      if(st.how==='sheet')return `Sent to sheet${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(engravingOf(st))return `${st.how==='engravePlain'?'Engraving waived · cut plain':'Engraving placement approved'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       if(processOf(st))return `${st.how==='laserReady'?'Laser ready':st.scope==='set'?'Set completed':'Sheet completed'}${st.by?' by '+st.by:' · operator not recorded'} · ${st.at?when:'time not recorded'}`;
       return kindOf(st) === "button" ? `Completed with the Complete Order button by ${whoOf(st)} · ${when} (no label printed then)` : `QR label printed by ${whoOf(st)} · ${when}${st.n > 1 ? ` · print ${st.n}` : ""}`;
@@ -609,7 +610,7 @@
       await Promise.allSettled([lifted,ripple.finished,...(seal.getAnimations?.() || []).filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished)]);
       } finally {anchor.stop();t.remove();}
     }
-    const hasPrint = rec => list(rec).some(s => s.how !== "button");
+    const hasPrint = rec => list(rec).some(s => kindOf(s) === "print");
     const WOOD_URL=(()=>{try{return new URL('charm-nest-stamp-walnut.png',doc.currentScript?.src || doc.baseURI).href;}catch(_){return 'charm-nest-stamp-walnut.png';}})();
     /** The rubber die and walnut head share the exact outline of the ink they leave. */
     function tool(kind, source) {

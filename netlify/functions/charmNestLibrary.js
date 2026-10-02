@@ -33,7 +33,7 @@
  *    + bridge (design doc §13): masterPutIndex · masterGet · masterGetMany · masterList · masterPatch · masterPutFile ·
  *      masterListFiles · masterRemoveFile · startMaster · poolPut · poolUpdate · poolList · poolGet · backPut · backList ·
  *      setAllocate · setUpdate · setGet · setList · runPut · runArchive · runGet · runList · bridgeLog · aliasGet · aliasPut ·
- *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customGet · customPut · customReopen
+ *      noDesignGet · noDesignPut · noDesignDelete · optionMapGet · optionMapPut · customSheetGet · customSheetPut · customGet · customPut · customReopen
  *      (customDelete: an older page's name for customReopen; nothing deletes a record)
  *  ═══════════════════════════════════════════════════════════════════════ */
 "use strict";
@@ -2211,6 +2211,116 @@ async function op_customGet(b) {
   const records = {}; snap.docs.forEach(d => { records[d.id] = customRow(d.data(), false); });
   return { records, truncated: snap.size >= 1000 };
 }
+/* Custom designs accepted by Send to Sheet are a different decision from a Custom Order completed by hand.
+   The pending record survives a close before pooling; the sent phase and each line's timeline commit together.
+   A retry uses the original files, copy mapping, signer and time. It never writes a completion, QR or engraving seal. */
+const CUSTOM_SHEET = "Charm_Custom_Sheet";
+SANDBOXED.add(CUSTOM_SHEET);
+const customSheetKeyOk = key => typeof key === "string" && key.length >= 3 && key.length <= 240 && !/[\x00-\x1f]/.test(key);
+const customSheetHash = key => require("crypto").createHash("sha256").update(key).digest("hex");
+const customSheetRef = key => col(CUSTOM_SHEET).doc("card-" + customSheetHash(key));
+const customSheetLineRef = key => col(CUSTOM_SHEET).doc("line-" + customSheetHash(key));
+const customSheetRow = d => { const r = Object.assign({}, d); delete r.updatedAt; delete r.fingerprint; return r; };
+function customSheetCanonical(v) {
+  return JSON.stringify(v, function (_, x) { return x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(k => [k, x[k]])) : x; });
+}
+function cleanCustomSheet(b) {
+  const r = b.record, phase = b.phase || r?.phase;
+  if (!r || !customSheetKeyOk(r.ck) || !/^\d{1,30}$/.test(String(r.rid || "")) || !["pending", "sent"].includes(phase)) return null;
+  const sent = r.sent, by = str(sent?.by, 80).trim(), at = num(sent?.at), id = str(sent?.id, 600);
+  if (!by || !(at > 1e12 && at <= Date.now() + 3600000) || !id || id !== String(sent.id) || !sent.lines || Array.isArray(sent.lines) || typeof sent.lines !== "object") return null;
+  if (!Array.isArray(r.files) || !r.files.length || r.files.length > 100) return null;
+  const files = [], ids = new Map();
+  for (const f of r.files) {
+    if (!f || typeof f.id !== "string" || !/^[\w.:-]{1,120}$/.test(f.id) || ids.has(f.id) || !["ai", "dxf"].includes(f.kind) || f.state !== "ready" || !isMetal(f.metal)) return null;
+    const qty = num(f.qty), pieces = num(f.pieces);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 99 || !Number.isInteger(pieces) || pieces < 1 || pieces > 10000) return null;
+    const cloud = f.cloud && typeof f.cloud === "object" ? { path: str(f.cloud.path, 400), url: str(f.cloud.url, 1600) } : null;
+    if (!cloud || !((/^charmnest\//.test(cloud.path) && !cloud.path.includes("..")) || /^https:\/\//.test(cloud.url))) return null;
+    const file = { id: f.id, name: str(f.name, 200), kind: f.kind, size: Math.max(0, num(f.size)), hash: str(f.hash, 100), cloud,
+      metal: str(f.metal, 60), qty, pieces, state: "ready" };
+    for (const key of ["wMm", "hMm", "maxPt", "minPt", "maxAreaPt2"]) file[key] = Math.max(0, num(f[key]));
+    if (typeof f.thumb === "string" && f.thumb.length <= 60000 && /^data:image\/png;base64,/.test(f.thumb)) file.thumb = f.thumb;
+    if (typeof f.units === "string") file.units = str(f.units, 60);
+    files.push(file); ids.set(file.id, file);
+  }
+  const lines = {}, keys = Object.keys(sent.lines);
+  if (!keys.length || keys.length > 100) return null;
+  let count = 0;
+  for (const key of keys) {
+    if (!lineKeyOk(key) || orderOfKey(key) !== String(r.rid) || key.length > 80 || !Array.isArray(sent.lines[key])) return null;
+    lines[key] = [];
+    for (const pc of sent.lines[key]) {
+      const f = ids.get(pc?.f), i = pc?.i;
+      if (!f || !Number.isInteger(i) || i < 0 || i >= f.pieces || ++count > 10000) return null;
+      const copy = { f: f.id, i };
+      if (pc.removed) copy.removed = typeof pc.removed === "string" ? str(pc.removed, 120) : true;
+      lines[key].push(copy);
+    }
+  }
+  if (!count) return null;
+  const doc = { ck: r.ck, rid: String(r.rid), at: num(r.at) > 0 ? num(r.at) : at, phase, files, sent: { id, at, by, lines } };
+  if (bytesOf(doc) > 800000) return null;
+  return doc;
+}
+function customSheetEvents(r) {
+  return Object.keys(r.sent.lines).map(key => Timeline.clean({ orderId: r.rid, type: "designSent", id: `${key}.${r.sent.at}`, at: r.sent.at, by: r.sent.by, station: "sorter", lineKey: key, transactionId: key.split("_")[1] || "",
+    text: `Custom design${r.files.length === 1 ? "" : "s"} sent to the sheets by ${r.sent.by}: ${r.files.map(f => `${f.name} × ${f.qty} → ${METAL_CODE[f.metal] || f.metal}`).join(", ")}`.slice(0, 200),
+    data: { decisionId: r.sent.id, card: r.ck, files: r.files.map(f => ({ name: f.name, qty: f.qty, metal: f.metal, pieces: f.pieces })).slice(0, 12), pieces: r.sent.lines[key].length }
+  }, { source: "sorter" })).filter(Boolean);
+}
+async function op_customSheetPut(b) {
+  const doc = cleanCustomSheet(b); if (!doc) return { error: "valid custom sheet files, signed decision and line copy mapping required" };
+  // Cleanup markers describe what happened to a copy later; its original assignment and signed decision stay fixed.
+  const decision = r => ({ ck: r.ck, rid: r.rid, files: r.files, sent: { id: r.sent.id, at: r.sent.at, by: r.sent.by,
+    lines: Object.fromEntries(Object.entries(r.sent.lines).map(([key, pcs]) => [key, pcs.map(pc => ({ f: pc.f, i: pc.i }))])) } });
+  const fingerprint = customSheetCanonical(decision(doc));
+  const ref = customSheetRef(doc.ck), lineRefs = Object.keys(doc.sent.lines).map(customSheetLineRef);
+  return db.runTransaction(async tx => {
+    const snap = await tx.get(ref), old = snap.exists ? snap.data() : null;
+    if (old && customSheetCanonical(decision(old)) !== fingerprint) return { error: "These custom designs were already sent with a different decision; reload the original send before retrying", status: 409 };
+    const claimed = lineRefs.length ? await tx.getAll(...lineRefs) : [];
+    if (claimed.some(s => s.exists && (s.data().ck !== doc.ck || s.data().sendId !== doc.sent.id))) return { error: "A line of this order already belongs to another custom sheet decision", status: 409 };
+    const phase = old?.phase === "sent" ? "sent" : doc.phase, next = Object.assign({}, old || doc, { phase });
+    let removalChanged = false;
+    if (old) next.sent = Object.assign({}, old.sent, { lines: Object.fromEntries(Object.entries(old.sent.lines).map(([key, pcs]) => [key, pcs.map((pc, i) => {
+      const removed = doc.sent.lines[key][i].removed;
+      if (!removed || pc.removed) return pc;
+      removalChanged = true; return Object.assign({}, pc, { removed });
+    })])) });
+    const events = phase === "sent" ? customSheetEvents(next) : [], eventRefs = events.map(e => db.collection(PREFIX + Timeline.COL).doc(e.key));
+    const recorded = eventRefs.length ? await tx.getAll(...eventRefs) : [];
+    if (!old || old.phase !== phase || removalChanged) {
+      next.history = (old?.history || []).concat(old?.phase === "sent" || phase !== "sent" ? [] : [{ phase: "sent", id: next.sent.id, at: next.sent.at, by: next.sent.by }]);
+      next.updatedAtMs = Date.now(); next.updatedAt = FV.serverTimestamp(); next.fingerprint = fingerprint;
+      tx.set(ref, next);
+    }
+    for (const [i, s] of claimed.entries()) if (!s.exists) tx.set(lineRefs[i], { ck: next.ck, rid: next.rid, sendId: next.sent.id });
+    for (const [i, e] of events.entries()) if (!recorded[i].exists) tx.set(eventRefs[i], Object.assign({}, e.doc, { createdAt: FV.serverTimestamp() }));
+    return { ok: true, record: customSheetRow(next) };
+  });
+}
+async function op_customSheetGet(b) {
+  if (!Array.isArray(b.keys) && !Array.isArray(b.lineKeys)) return { error: "known custom card keys or line keys required" };
+  const asked = [...new Set((b.keys || []).filter(customSheetKeyOk))], lines = [...new Set((b.lineKeys || []).map(String).filter(lineKeyOk))];
+  const keys = new Set(asked.slice(0, 1000));
+  for (let i = 0; i < Math.min(lines.length, 1000); i += 100) {
+    const snaps = await db.getAll(...lines.slice(i, Math.min(i + 100, 1000)).map(customSheetLineRef));
+    for (const s of snaps) if (s.exists && customSheetKeyOk(s.data().ck)) keys.add(s.data().ck);
+  }
+  const records = Object.create(null), budget = answerBudget(), list = [...keys].slice(0, 1000); let read = 0;
+  for (let i = 0; i < list.length; i += 50) {
+    const snaps = await db.getAll(...list.slice(i, i + 50).map(customSheetRef));
+    for (const [j, s] of snaps.entries()) {
+      const r = s.exists ? customSheetRow(s.data()) : null;
+      if (r && !budget.fits(r)) return { records, keys: read, truncated: true };
+      read++; if (r && r.ck === list[i + j]) records[r.ck] = r;
+      if (budget.late()) return { records, keys: read, truncated: read < list.length || keys.size > 1000 || lines.length > 1000 };
+    }
+  }
+  return { records, keys: read, truncated: keys.size > 1000 || asked.length > 1000 || lines.length > 1000 };
+}
+
 /* how: "print" (the QR label was printed, the default) or "button" (Complete Order, 27 Sep: completed with no label
    printed, so no print is counted). Either records who completed it and when (completedAt/completedBy).
    stamps (Paul, 27 Sep 20:09-20:18): one seal per press, in order: { how: "print" | "button", at, by }. Every seal is
@@ -2431,7 +2541,7 @@ const OPS = { ...RoseStock, laserDone: op_laserDone, laserDoneList: op_laserDone
   setAllocate: op_setAllocate, setUpdate: op_setUpdate, setGet: op_setGet, setList: op_setList, runPut: op_runPut, runArchive: op_runArchive, runGet: op_runGet, runList: op_runList, history: op_history, releaseGet: op_releaseGet, releasePut: op_releasePut, bridgeLog: op_bridgeLog,
   cancelPut: op_cancelPut, cancelList: op_cancelList, cancelRestore: op_cancelRestore, cancelSweep: op_cancelSweep, sandboxCancel: op_sandboxCancel, cancelFates: op_cancelFates, timelineAdd: op_timelineAdd, timelineGet: op_timelineGet, cancelCheck: op_cancelCheck,
   aliasGet: op_aliasGet, aliasPut: op_aliasPut, noDesignGet: op_noDesignGet, noDesignPut: op_noDesignPut, noDesignDelete: op_noDesignDelete, optionMapGet: op_optionMapGet, optionMapPut: op_optionMapPut,
-  customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
+  customSheetGet: op_customSheetGet, customSheetPut: op_customSheetPut, customGet: op_customGet, customPut: op_customPut, customReopen: op_customReopen, customDelete: op_customReopen };
 
 /* ── sign-in time (Paul, 28 Sep 23:53; plans/sign-in-sessions.md part L): sessionsList {since, until, limit} is the
    sorter's read of Station_Sessions, one document per sign-in, which the stations write through firebaseOrders
