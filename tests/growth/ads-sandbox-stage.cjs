@@ -4,7 +4,10 @@ const {build}=require('../../scripts/build-growth-ads-sandbox.cjs');
 const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(path.dirname(root),'growth-ads-stage-test-'));
 try{
   const result=build(out),html=fs.readFileSync(path.join(out,'public-site/brites-adwords.html'),'utf8');
-  assert.deepEqual(result.entries,['britesConcierge.js','britesGrowthAds.js','britesGrowthApi.js','britesGrowthCatalogue-background.js','britesGrowthTick.js']);
+  assert.deepEqual(result.entries,['britesConcierge.js','britesGrowthAds.js','britesGrowthApi.js','britesGrowthCatalogue-background.js','britesGrowthCorrections.js','britesGrowthTick.js']);
+  assert.ok(fs.existsSync(path.join(out,'public-site/brites-growth-corrections.js')),'the correction review UI is staged');
+  assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesGrowthCorrectionRead.js')),'the paginated read-only product reader is staged');
+  assert.ok(fs.existsSync(path.join(out,'netlify/functions/_britesGrowthCorrectionReview.js')),'the deterministic correction review contract is staged');
   const prelude=fs.readFileSync(path.join(out,'public-site/brites-growth-ad-sandbox.js'),'utf8');
   assert.match(prelude,/__GADS_ENDPOINT='\/api\/growth-ads'/);assert.match(html,/<script src="\/brites-growth-ad-sandbox.js"><\/script><\/head>/);
   const live=html.slice(html.indexOf('async function livePull(){'),html.indexOf('/* Pending budget overrides:'));

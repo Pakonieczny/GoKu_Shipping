@@ -170,6 +170,7 @@
     "britesGrowthApi.js",
     "britesConcierge.js",
     "britesGrowthCatalogue-background.js",
+    "britesGrowthCorrections.js",
     "britesGrowthTick.js"
   ],
   "modules": [
@@ -187,6 +188,8 @@
     "_britesGrowthEtsyCacheReadOnly.js",
     "_britesGrowthReceiptReleasePreview.js",
     "_britesConciergeDiagnostics.js",
+    "_britesGrowthCorrectionRead.js",
+    "_britesGrowthCorrectionReview.js",
     "_britesGrowthHistoricalLookup.js",
     "_britesConcierge.js",
     "_charmNestAgent.js",
