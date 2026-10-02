@@ -532,7 +532,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
   const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
-  const useContext=exactCurrentContext||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|this piece|that piece|this one|that one|open|cart|bag)\b/i.test(text);
+  const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
+  const useContext=exactCurrentContext||displayedReference||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
   const handles=exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&currentHandle)handles.push(currentHandle);
   const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:await shopify.search(intent.query||intent.type||'necklace');
@@ -541,7 +542,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let issueRecords=service.productIssues?await service.productIssues(checkedProducts.map(p=>p.id)):[];
   // An explicit exact-page reference selects that validated live product,
   // rather than letting stale discovery preferences filter it back out.
-  const rankingIntent=exactCurrentContext?shopperPreferences({currency:intent.currency}):intent;
+  const exactCurrentType=exactCurrentContext&&checkedProducts.length===1&&/\bcharms?\b/i.test(checkedProducts[0]?.type||'')?'charm':null;
+  const rankingIntent=exactCurrentContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):intent;
   let products=rankProducts(applyProductIssues(checkedProducts,issueRecords),rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
   if(!useContext&&boundedRecall&&!products.length&&typeof service.catalogueCandidateHandles==='function'){
