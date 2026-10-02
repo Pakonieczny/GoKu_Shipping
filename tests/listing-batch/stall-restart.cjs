@@ -2,8 +2,7 @@
 
 // OpenAI sometimes accepts a listing job and never starts it. On 2026-09-27
 // and 28 thirty such jobs held every place in the queue for most of a day.
-// The collector respects the 24-hour completion window, or an explicit
-// earlier restart request, and
+// The collector now cancels a job that has done nothing for 45 minutes and
 // queues its set again: only the images the set still lacks, never twice,
 // never while another job covers the set, and never a set a person cancelled
 // or approved.
@@ -44,7 +43,7 @@ const set = (n, setKind = null) => ({ category: "Beady_Necklace", setN: n, setKi
     source_storage_path: `listing-generator-1/Sources/${n}.png` })) });
 const job = (batchName, n, extra = {}) => ({ batchName, docId: batchName, sessionId: "sess_1",
   displayName: `lg1-Beady_Necklace-1sets-${n}`, state: "JOB_STATE_RUNNING", providerStatus: "in_progress",
-  collected: false, createdAt: at(START - 25 * HOUR), model: "gpt-image-2.5-sunburst", imageSize: "2K",
+  collected: false, createdAt: at(START - 4 * HOUR), model: "gpt-image-2.5-sunburst", imageSize: "2K",
   sets: [set(n)], ...extra });
 const openai = (status, completed = 0, failed = 0, extra = {}) =>
   ({ status, request_counts: { total: 6, completed, failed }, ...extra });
@@ -148,10 +147,10 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   // 1. What counts as never started.
   const stuck = job("batch_a", 1);
   const seen = (raw) => { const n = provider.normalizeOpenAIBatch(raw); return { providerStatus: n.providerStatus, batchStats: n.metadata.batchStats }; };
-  assert(lib.neverStarted(stuck, seen(openai("in_progress")), START), "past 24 hours, nothing done");
-  assert(lib.neverStarted(stuck, seen(openai("validating")), START), "still validating past 24 hours");
-  assert(!lib.neverStarted({...stuck, createdAt: at(START - 4 * HOUR)}, seen(openai("in_progress")), START),
-    "a four-hour provider wait is inside its advertised completion window");
+  assert(lib.neverStarted(stuck, seen(openai("in_progress")), START), "four hours, nothing done");
+  assert(lib.neverStarted(stuck, seen(openai("validating")), START), "still validating after four hours");
+  assert(!lib.neverStarted({ ...stuck, createdAt: at(START - 30 * MIN) }, seen(openai("in_progress")), START),
+    "a half-hour wait is normal");
   assert(lib.STALL_RESTART_LIMIT > 5, "sets OpenAI keeps not starting get more than five tries");
   assert(lib.neverStarted({ ...stuck, stallRestarts: lib.STALL_RESTART_LIMIT - 1 }, seen(openai("in_progress")), START),
     "the last allowed restart");
@@ -296,7 +295,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   // 5. A person asks for the restart sooner ("please restart", 2026-09-29):
   // only a job that has made nothing that long, never under half an hour, never
   // later than the usual wait.
-  assert.equal(lib.STALL_RESTART_MS, 24 * HOUR, "automatic processing respects the provider window");
+  assert.equal(lib.STALL_RESTART_MS, 45 * MIN, "the usual wait, never the provider's 24-hour window");
   const recent = () => world({
     records: [job("batch_r90", 40, { createdAt: at(START - 90 * MIN) }),
       job("batch_r90_done", 41, { createdAt: at(START - 90 * MIN) }),
@@ -308,13 +307,13 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   });
   const sweptWith = async (extra) => { const r = recent(); const res = await r.call({ kind: "batch_sweep", ...extra });
     assert.equal(res.statusCode, 200, res.error?.message); return r.cancels.slice().sort(); };
-  assert.deepEqual(await sweptWith({}), ["batch_r4h"], "the scheduled run preserves requests inside the provider window");
+  assert.deepEqual(await sweptWith({}), ["batch_r4h", "batch_r90"], "the scheduled run: jobs with nothing for the usual wait, not the one with an image done, not the younger ones");
   assert.deepEqual(await sweptWith({ restartStalledAfterMs: 60 * MIN }), ["batch_r4h", "batch_r90"],
     "asked for one hour: no later than the usual wait");
   assert.deepEqual(await sweptWith({ restartStalledAfterMs: 1 }), ["batch_r40", "batch_r4h", "batch_r90"],
     "asked for one millisecond: never under half an hour");
-  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 10 * 60 * MIN }), ["batch_r4h"], "an explicit ten-hour cutoff is respected");
-  assert.deepEqual(await sweptWith({ restartStalledAfterMs: "soon" }), ["batch_r4h"], "an unreadable request cannot force an early cancellation");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: 10 * 60 * MIN }), ["batch_r4h", "batch_r90"], "cannot be asked to wait longer than the usual wait");
+  assert.deepEqual(await sweptWith({ restartStalledAfterMs: "soon" }), ["batch_r4h", "batch_r90"], "an unreadable request is the usual wait");
   const direct = recent();
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40" })).skipped, true, "asked directly, still the usual wait");
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r40", minAgeMs: 30 * MIN })).cancelRequested, true);
@@ -324,7 +323,7 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
   // cron and a plain request never do it.
   assert.deepEqual(await sweptWith({ resetNow: true }), ["batch_r20", "batch_r40", "batch_r4h", "batch_r90"],
     "reset now: every job with nothing done, not the one with an image done");
-  assert.deepEqual(await sweptWith({ resetNow: "yes" }), ["batch_r4h"], "only a real true resets now");
+  assert.deepEqual(await sweptWith({ resetNow: "yes" }), ["batch_r4h", "batch_r90"], "only a real true resets now");
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r20", resetNow: true })).cancelRequested, true);
   assert.equal((await direct.call({ kind: "batch_stall_cancel", batchName: "batch_r90_done", resetNow: true })).skipped, true,
     "a job with an image done is never reset");
@@ -429,5 +428,5 @@ function world({ records = [], jobs = {}, files = [] } = {}) {
     files:['listing-generator-1/Generated_Listing_Sets/Approved_Listing_Sets/Beady_Necklace_Set_62/Slot_1.png']});
   assert.equal((await archived.call({kind:'batch_restart_stalled',batchName:'batch_archive'})).protected,true,
     'archived approvals are also protected from collected cancellation recovery');
-  console.log('Listing batch: provider-window timing, collected cancellation recovery, paid-output reuse, missing-only restart, explicit stops and approval protection passed');
+  console.log('Listing batch: 45-minute wait for a job OpenAI never started, collected cancellation recovery, paid-output reuse, missing-only restart, explicit stops and approval protection passed');
 })().catch((err) => { console.error(err); process.exitCode = 1; });

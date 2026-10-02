@@ -14222,8 +14222,8 @@ async function _handlerImpl(event) {
     const SWEEP_BUDGET_MS = 11 * 60 * 1000;
     const sweepStart = Date.now();
     const guardRef = db.collection("LG1_Config").doc("batchSweep");
-    // Respect the 24-hour provider completion window unless a person asks
-    // for an earlier restart ({ kind: "batch_sweep",
+    // How long a job may have done nothing before this run restarts it: 45
+    // minutes, unless a person asked for sooner ({ kind: "batch_sweep",
     // restartStalledAfterMs }), never under 30 minutes. { resetNow: true } is
     // a person saying "reset them now": every one-set job with nothing done is
     // cancelled whatever its age. Any results finished meanwhile are saved.
@@ -15544,8 +15544,8 @@ async function _handlerImpl(event) {
     }
 
     // The collector's watchdog (see neverStarted): cancel a listing job that
-    // OpenAI accepted but has returned no images. Respect its completion
-    // window unless an early reset was requested. Check the provider again so a job
+    // OpenAI accepted but has returned no images after the wait (STALL_RESTART_MS,
+    // or none when a person asked for a reset). Check the provider again so a job
     // that started meanwhile is left alone.
     if (kind === "batch_stall_cancel") {
       const batchName = String(body?.batchName || "").trim();

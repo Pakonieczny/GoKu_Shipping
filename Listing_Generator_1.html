@@ -13359,6 +13359,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
       const restartingActive = activeJobs.filter(_awaitingStallRestart).length;
       // How long the collector waits before it restarts a job OpenAI has not
       // started (STALL_RESTART_MS in listingBatchAdmission.cjs).
+      const stallMinutes = 45;
       // Sets whose job OpenAI never started, sent again, until they are saved.
       const byName = new Map(session.batches.map((b) => [b.batchName, b]));
       const leafOf = (b) => {
@@ -13548,7 +13549,7 @@ Click the button again to permanently delete eligible temporary files, or cancel
         : refilling ? (sweep.stage === "validating new job"
           ? "OpenAI is validating the next set." : "Submitting waiting sets to OpenAI.")
         : providerWaiting
-        ? `Waiting for OpenAI. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. Active requests retain their 24-hour completion window.`
+        ? `OpenAI has not returned images for the active jobs. Oldest job: ${_formatDuration(Date.now() - oldestActiveAt)}. A job OpenAI has not started after ${stallMinutes} minutes is restarted automatically.`
         : awaitingCollection ? `Saving images from ${awaitingCollection} completed job(s).`
         : running ? "Waiting for OpenAI to return the next images."
         : waitingRetries ? "Queued jobs will retry automatically when capacity is available."
