@@ -451,7 +451,32 @@ const topic = (t, type, extra = {}) => ({ topic: t, type, ...extra });
   const named3 = JSON.parse(JSON.stringify(pmax));
   named3.asset_group_listing_group_filter.push({ assetGroupListingGroupFilter: { assetGroup: ag1, type: 'UNIT_INCLUDED', caseValue: { productItemId: { value: 'shopify_US_7_8' } } } });
   r = await S.auditCampaign({ gaql: fakeGoogle(named3).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling: true });
-  check(has(r, 'note', /1 of 3 products in the product filter are not listed for this campaign yet: shopify_us_3_4/) && !has(r, 'risk', /products in the product filter/) && has(r, 'risk', /1 of 2 products cannot show.*Missing shipping information/), 'a changed product filter Google has not applied yet is a note; product issues Google reports for the included products still count');
+  check(has(r, 'note', /1 of 3 products in the product filter are not listed for this campaign yet: shopify_us_3_4/) && !has(r, 'risk', /products in the product filter/) && has(r, 'note', /1 of 2 products are not eligible right now; it was still processing this new campaign.*Missing shipping information/), 'a changed product filter Google has not applied yet is a note; product issues Google reports for the included products still count');
+  // Products Google lists as not eligible while it is still processing a new campaign: a note with Google's reason, not a block.
+  const pmaxWith = (status, products) => { const d = JSON.parse(JSON.stringify(pmax)); d.campaign[0].campaign.status = status; d.shopping_product = products; return d; };
+  const prod = (id, status, ...issues) => ({ shoppingProduct: { itemId: id, status, issues } });
+  const shipIssue = { description: 'Missing shipping settings', adsSeverity: 'ERROR' }, noCampaigns = { description: 'No campaigns advertising this product', adsSeverity: 'ERROR' };
+  const auditPmax = (data, settling) => S.auditCampaign({ gaql: fakeGoogle(data).gaql, customerId: '123', campaignId: '77', channel: 'PERFORMANCE_MAX', today: '2026-09-29', settling });
+  const allNotEligible = pmaxWith('ENABLED', ['shopify_US_1_2', 'shopify_US_3_4'].map(id => prod(id, 'NOT_ELIGIBLE', shipIssue)));
+  r = await auditPmax(allNotEligible, true);
+  check(has(r, 'note', /Google lists all 2 products as not eligible right now; it was still processing this new campaign\. Check again in a few minutes\..*Missing shipping settings \(2\).*Fix the product issues in Merchant Center/) && !r.findings.some(f => f.level === 'block') && r.counts.block === 0 && r.verdict !== 'blocked' && !/None of the 2 products can show/.test(JSON.stringify(r.findings)), 'right after a publication, every product not eligible is a note that keeps Google\'s reason and the fix, and does not block');
+  r = await auditPmax(allNotEligible, false);
+  check(has(r, 'block', /None of the 2 products can show.*Missing shipping settings \(2\).*Fix the product issues in Merchant Center/) && r.verdict === 'blocked' && !/still processing/.test(JSON.stringify(r.findings)), 'a later check still blocks when every product is not eligible, with the original wording');
+  const someNotEligible = pmaxWith('ENABLED', [prod('shopify_US_1_2', 'ELIGIBLE'), prod('shopify_US_3_4', 'NOT_ELIGIBLE', shipIssue)]);
+  r = await auditPmax(someNotEligible, true);
+  check(has(r, 'note', /1 of 2 products are not eligible right now; it was still processing this new campaign\. Check again in a few minutes\..*Missing shipping settings \(1\)/) && !has(r, 'risk', /products cannot show/), 'right after a publication, some products not eligible is a note, not a risk');
+  r = await auditPmax(someNotEligible, false);
+  check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\).*Fix the product issues in Merchant Center/) && !/still processing/.test(JSON.stringify(r.findings)), 'a later check still flags some products not eligible as a risk, with the original wording');
+  // A paused campaign has no campaign advertising its products: that Google state is expected, not a problem.
+  const pausedNoCampaigns = pmaxWith('PAUSED', ['shopify_US_1_2', 'shopify_US_3_4'].map(id => prod(id, 'NOT_ELIGIBLE', noCampaigns)));
+  for (const settling of [true, false]) {
+    r = await auditPmax(pausedNoCampaigns, settling);
+    check(!r.findings.some(f => /None of the \d+ products can show|\d+ of \d+ products cannot show|not eligible right now/.test(f.text)) && !/not eligible/.test(fact(r, 'Products')) && /2 can show once enabled/.test(fact(r, 'Products')) && has(r, 'note', /not eligible only because the campaign is paused/), `a paused campaign's "No campaigns advertising this product" rows are not counted not eligible (settling ${settling})`);
+  }
+  r = await auditPmax(pmaxWith('ENABLED', pausedNoCampaigns.shopping_product), false);
+  check(has(r, 'block', /None of the 2 products can show.*No campaigns advertising this product \(2\)/) && /2 not eligible/.test(fact(r, 'Products')), 'the same issue on an enabled campaign still counts as not eligible');
+  r = await auditPmax(pmaxWith('PAUSED', [prod('shopify_US_1_2', 'NOT_ELIGIBLE', noCampaigns, shipIssue), prod('shopify_US_3_4', 'NOT_ELIGIBLE', noCampaigns)]), false);
+  check(has(r, 'risk', /1 of 2 products cannot show.*Missing shipping settings \(1\)/) && !/No campaigns advertising/.test(JSON.stringify(r.findings)), 'on a paused campaign a real issue still counts, and the expected "No campaigns advertising" issue is left out of Google\'s reason');
   r = await S.auditCampaign({ gaql: q429.gaql, customerId: '123', campaignId: '5', isQuotaError: e => e.code === 'GADS_QUOTA_EXHAUSTED' });
   check(r.quotaExhausted === true && (await S.auditCampaign({ gaql: fakeGoogle(search).gaql, customerId: '123', campaignId: '101', channel: 'SEARCH', today: '2026-09-29' })).quotaExhausted === false, 'the result says when Google\'s request quota stopped it');
 

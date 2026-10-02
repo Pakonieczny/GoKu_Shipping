@@ -538,7 +538,8 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       const filterExcluded = scoped ? rows.filter(p => !/^ELIGIBLE/.test(String(p.status || '')) && (p.issues || []).some(exclusionIssue)) : [];
       const products = scoped ? rows.filter(p => !filterExcluded.includes(p)) : rows, truncated = scoped ? !targeted && sampleCut : sampleCut;
       const noRows = !!raw.products && !sample.length && !(targeted && targeted.length);
-      const pauseIssue = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`);
+      // While paused nothing advertises the products, so Google's "No campaigns advertising this product" is expected (same wording googleAdsAutopilot.js _pmaxIsEligible accepts).
+      const pauseIssue = i => /paus/i.test(`${i.errorCode || ''} ${i.description || ''} ${i.detail || ''}`) || /^no campaigns advertising this product\b/i.test(String(i.description || '').trim());
       const blocking = p => (p.issues || []).filter(i => !(isPaused(c.status) && pauseIssue(i)) && i.adsSeverity !== 'WARNING');
       const notEligible = products.filter(p => p.status === 'NOT_ELIGIBLE' && (!isPaused(c.status) || blocking(p).length));
       const limited = products.filter(p => p.status === 'ELIGIBLE_LIMITED');
@@ -558,8 +559,9 @@ function analyze(raw, { today = null, shippingCountries = null, apiVersion = '',
       if (filterExcluded.length) add('block', 'Products', `The campaign's product filter excludes ${filterExcluded.length} of the ${wanted.size} products it includes: ${listOf(filterExcluded.map(p => String(p.itemId)), 3)}.`, { reason: topIssues(filterExcluded) || 'excluded product or listing group', fix: 'Re-publish the campaign or fix its product filter.' });
       if (noRows && settling) add('note', 'Products', `Google has not listed products for this campaign yet (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}). Right after a publication this can take a few hours; the next check confirms it.`);
       else if (noRows) add('block', 'Products', `Google finds no products for this campaign (Merchant Center ${merchantId}${feedLabel ? ', feed ' + feedLabel : ''}), so it cannot show product ads.`, { fix: 'Check the feed label and that the products are approved in Merchant Center.' });
-      else if (products.length && notEligible.length === products.length) add('block', 'Products', `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
-      else if (notEligible.length) add('risk', 'Products', `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
+      // Right after a publication Google may still be processing a new campaign: say so, keep its reason, and do not stop the campaign for it.
+      else if (products.length && notEligible.length === products.length) add(settling ? 'note' : 'block', 'Products', settling ? `Google lists all ${products.length} products as not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `None of the ${products.length} products can show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
+      else if (notEligible.length) add(settling ? 'note' : 'risk', 'Products', settling ? `${notEligible.length} of ${products.length} products are not eligible right now; it was still processing this new campaign. Check again in a few minutes.` : `${notEligible.length} of ${products.length} products cannot show.`, { reason: topIssues(notEligible) || 'not eligible', fix: productFix(notEligible) });
       if (limited.length) add('note', 'Products', `${plural(limited.length, 'product')} can show only in some places.`, { reason: topIssues(limited) || undefined });
       if (pauseOnly && !notEligible.length) add('note', 'Products', 'Google lists the products as not eligible only because the campaign is paused.');
       if (missing.length) {
