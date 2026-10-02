@@ -39,6 +39,19 @@ test('catalogue sanitizer drops actions, URLs and malformed products',()=>{
   assert.deepEqual(value,{products:[{title:'Checked Piece',currency:'CAD',minPrice:42,why:'A thought.'}],meanings:[{text:'Personal interpretation',context:''}],question:'One or two?'});
 });
 
+test('Netlify AI Gateway bridge uses the injected key and canonical OpenAI v1 endpoint',async()=>{
+  let observed;
+  const complete=server.createGatewayTone({base:'https://gateway.test',key:'sandbox-gateway-key',fetchImpl:async(url,init)=>{
+    observed={url,init};return Response.json({choices:[{message:{content:'{"tone":"gentle"}'}}]});
+  }});
+  assert.equal(await complete({model:'gpt-4o-mini',maxTokens:40,system:'fixed',prompt:'checked'}),'{"tone":"gentle"}');
+  assert.equal(observed.url,'https://gateway.test/v1/chat/completions');
+  assert.equal(observed.init.headers.Authorization,'Bearer sandbox-gateway-key');
+  assert.equal(JSON.parse(observed.init.body).model,'gpt-4o-mini');
+  assert.equal(server.gatewayEndpoint('https://gateway.test/v1/'),'https://gateway.test/v1/chat/completions');
+  assert.equal(server.createGatewayTone({base:'http://unsafe.test',key:'x'}),null);
+});
+
 function browserFixture(){
   const states=[],transcripts=[],levels=[],errors=[],requests=[],recognitions=[],spoken=[],timers=new Set();let utterance;
   class Recognition{constructor(){recognitions.push(this);this.started=0;this.aborted=0;}start(){this.started++;}abort(){this.aborted++;}emit(text){this.onresult?.({resultIndex:0,results:Object.assign([[{transcript:text}]],{0:Object.assign([{transcript:text}],{isFinal:true}),length:1})});}}

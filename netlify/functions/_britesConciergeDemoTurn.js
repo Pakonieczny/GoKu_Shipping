@@ -15,6 +15,23 @@ const INTRO={
   practical:'Let’s make this easy.'
 };
 
+function gatewayEndpoint(raw){
+  const base=String(raw||'').replace(/\/+$/,'');
+  if(!/^https:\/\//.test(base))return null;
+  return base.endsWith('/v1')?base+'/chat/completions':base+'/v1/chat/completions';
+}
+function createGatewayTone({base,key,fetchImpl=globalThis.fetch}={}){
+  const endpoint=gatewayEndpoint(base),secret=text(key,500);
+  if(!endpoint||!secret||typeof fetchImpl!=='function')return null;
+  return async({model,maxTokens,system,prompt})=>{
+    const response=await fetchImpl(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+secret},body:JSON.stringify({model,messages:[{role:'system',content:system},{role:'user',content:prompt}],response_format:{type:'json_object'},temperature:0.1,max_tokens:maxTokens}),signal:AbortSignal.timeout(12000)});
+    if(!response.ok)throw Error('Voice language service unavailable.');
+    const value=await response.json(),content=value?.choices?.[0]?.message?.content;
+    if(typeof content!=='string'||content.length>500)throw Error('Invalid voice language response.');
+    return content;
+  };
+}
+
 function text(value,max){return typeof value==='string'?value.replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,max):'';}
 function money(value,currency){try{return new Intl.NumberFormat('en-US',{style:'currency',currency}).format(value);}catch{return String(value)+' '+currency;}}
 function sanitizeCatalogue(value){
@@ -77,4 +94,4 @@ function createHandler({env={},completeTone,rateLimit=async()=>true}={}){
   };
 }
 
-module.exports={MODEL,MAX_MESSAGE,MAX_BODY,MAX_SPEECH,sanitizeCatalogue,parseTone,buildSpeech,providerPrompt,createHandler};
+module.exports={MODEL,MAX_MESSAGE,MAX_BODY,MAX_SPEECH,gatewayEndpoint,createGatewayTone,sanitizeCatalogue,parseTone,buildSpeech,providerPrompt,createHandler};
