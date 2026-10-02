@@ -6,8 +6,8 @@ const root=path.resolve(__dirname,'../..'),responsive=require(root+'/brites-ad-r
 let checks=0;const ok=(v,m)=>{assert(v,m);checks++;};
 const LARGE=['display_300x1050','display_970x250','display_980x120','display_970x90'],DISPLAY=new Set(responsive.boards.filter(b=>b.key.startsWith('display_')).map(b=>b.width+'x'+b.height));
 const capped=b=>{const s=Math.min(1,960/Math.max(b.width,b.height));return [Math.round(b.width*s),Math.round(b.height*s)];},exact=b=>DISPLAY.has(b.width+'x'+b.height)?[b.width,b.height]:capped(b);
-// A detailed photo-like texture with hard text-like edges: the hardest case for the 150 KB limit.
-async function texture(width,height){const raw=Buffer.alloc(width*height*3);let s=7;const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*3,n=(rnd()-.5)*60,t=((x>>3)+(y>>4))%5===0?-90:0;raw[i]=Math.max(0,Math.min(255,180+n+t));raw[i+1]=Math.max(0,Math.min(255,155+n+t));raw[i+2]=Math.max(0,Math.min(255,116+n+t));}return sharp(raw,{raw:{width,height,channels:3}}).jpeg({quality:80}).toBuffer();}
+// A detailed photo-like texture with hard text-like edges: the hardest case for the 150 KB limit. More noise (amp) makes it denser.
+async function texture(width,height,amp=60){const raw=Buffer.alloc(width*height*3);let s=7;const rnd=()=>{s=(s*1103515245+12345)&0x7fffffff;return s/0x7fffffff;};for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*3,n=(rnd()-.5)*amp,t=((x>>3)+(y>>4))%5===0?-90:0;raw[i]=Math.max(0,Math.min(255,180+n+t));raw[i+1]=Math.max(0,Math.min(255,155+n+t));raw[i+2]=Math.max(0,Math.min(255,116+n+t));}return sharp(raw,{raw:{width,height,channels:3}}).jpeg({quality:80}).toBuffer();}
 (async()=>{
  // 1. Browser proofs: fixed Display boards (including an active Display artboard) keep their exact size.
  const {JSDOM}=require(process.env.BRITES_EDITOR_DOM_RUNTIME?path.join(process.env.BRITES_EDITOR_DOM_RUNTIME,'jsdom'):'jsdom');
@@ -41,19 +41,30 @@ async function texture(width,height){const raw=Buffer.alloc(width*height*3);let 
  s=await awaiting();await assert.rejects(()=>send(s,b=>b.key==='desktop_display_300x1050'?[290,1015]:exact(b)),/unexpected pixel dimensions/);ok(!saved(s),'a Display proof at any other size is refused');
  s=await awaiting();await assert.rejects(()=>send(s,b=>b.key==='desktop_landscape'?[1200,628]:exact(b)),/unexpected pixel dimensions/);ok(!saved(s),'master artwork is never accepted above its 960 px review size');
 
- // 3. Campaign Styles publish the reviewed pixels at exact size within Google's 150 KB limit.
+ // 3. Campaign Styles publish the reviewed pixels at exact size within Google's 150 KB limit, read as 150,000 bytes.
  const pub=path.join(__dirname,'design-publication.cjs'),pubSource=fs.readFileSync(pub,'utf8').split('(async()=>{')[0],pctx=vm.createContext({require:require('node:module').createRequire(pub),__dirname,process,console,Buffer,Date,URL,setTimeout,clearTimeout});
  vm.runInContext(pubSource+'\nthis.factory=engine;this.memoryFactory=memory;',pctx);
- for(const legacy of [false,true]){
+ // Saves proofs given as [board key, width, height, bytes], prepares fixed Display from them and returns each published asset with its file.
+ async function publish(proofs){
   const E=pctx.factory(),f=pctx.memoryFactory(),ws=f.db.collection('workspaces').doc('test'),images=[];
-  for(const key of LARGE){const b=responsive.boards.find(x=>x.key===key),[width,height]=legacy?capped(b):[b.width,b.height],bytes=await texture(width,height),p='Brites_GAds_Creative/test/'+key+'.jpg';f.files.set(p,bytes);images.push({key:'desktop_'+key,width:b.width,height:b.height,asset:{path:p,width,height,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))}});}
+  for(const [key,width,height,bytes] of proofs){const b=responsive.boards.find(x=>x.key===key),p='Brites_GAds_Creative/test/'+key+'.jpg';f.files.set(p,bytes);images.push({key:'desktop_'+key,width:b.width,height:b.height,asset:{path:p,width,height,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))}});}
   await ws.collection('editorAIJobs').doc('eai_test').collection('data').doc('ad_proofs_v11').set({images});
   const w={context:{itemIds:['shopify_US_1_2'],handle:'charms'},settings:{productId:'1',groupRef:'g'}};await ws.set(w);
   E.bind({fb:()=>f,_adDesignWorkspaceRef:()=>ws,_reportContext:async()=>({budgetCurrency:'CAD'}),_saveCreativeAsset:async(id,bytes,name,meta)=>{const p='Brites_GAds_Creative/test/'+name+'.jpg';f.files.set(p,bytes);return {...meta,path:p,bytes:bytes.length,hash:E.E.creativeHash(bytes.toString('base64'))};}});
   const styles=await E.get('_prepareCampaignStyles')({item:{sourceHash:'source',designReview:{workspaceId:'test',copy:{headlines:['Peach Charm'],longHeadlines:['Give a playful peach charm'],descriptions:['Shop the peach charm at Brites Jewelry.']},layoutReview:{jobId:'eai_test',reviewVersion:11}}},context:{w,product:{id:'1',title:'Peach Charm',url:'https://britesjewelry.com/products/peach'}},choice:R.selection(['fixed_display'],{fixed_display:5},['2840']),identity:'e'.repeat(64)});
-  const fixed=styles.payload.generatedAssets.filter(a=>a.fixed).map(a=>a.asset);
-  for(const key of LARGE){const b=responsive.boards.find(x=>x.key===key),a=fixed.find(a=>a.width===b.width&&a.height===b.height),m=a&&await sharp(f.files.get(a.path)).metadata();ok(a&&a.bytes<=150*1024&&m.width===b.width&&m.height===b.height,(legacy?'older ':'')+key+' publishes at '+b.width+'×'+b.height+' within 150 KB');}
+  return styles.payload.generatedAssets.filter(a=>a.fixed).map(a=>({...a.asset,file:f.files.get(a.asset.path)}));
  }
+ for(const legacy of [false,true]){
+  const proofs=[];for(const key of LARGE){const b=responsive.boards.find(x=>x.key===key),[width,height]=legacy?capped(b):[b.width,b.height];proofs.push([key,width,height,await texture(width,height)]);}
+  const fixed=await publish(proofs);
+  for(const key of LARGE){const b=responsive.boards.find(x=>x.key===key),a=fixed.find(a=>a.width===b.width&&a.height===b.height),m=a&&await sharp(a.file).metadata();ok(a&&a.bytes<=150000&&m.width===b.width&&m.height===b.height,(legacy?'older ':'')+key+' publishes at '+b.width+'×'+b.height+' within 150,000 bytes');}
+ }
+
+ // 4. A dense proof that only fits at a lower quality step publishes there instead of being refused. It is over 153,600 bytes at quality 75, where the
+ // steps used to stop, and between 150,000 and 153,600 at 70, which a 150×1024 cap would publish; 65 is the first step within 150,000 bytes.
+ const denseProof=await texture(300,1050,192),at=quality=>sharp(denseProof).resize(300,1050,{fit:'fill'}).jpeg({quality,chromaSubsampling:'4:4:4'}).toBuffer(),[q75,q70,q65]=await Promise.all([75,70,65].map(at));
+ ok(q75.length>150*1024&&q70.length>150000&&q70.length<=150*1024&&q65.length<=150000,'the dense proof straddles both readings of 150 KB ('+[q75,q70,q65].map(b=>b.length).join(', ')+' bytes at quality 75, 70, 65)');
+ const [denseAd]=await publish([['display_300x1050',300,1050,denseProof]]);ok(denseAd&&denseAd.width===300&&denseAd.height===1050&&denseAd.bytes<=150000&&denseAd.file.equals(q65),'a dense 300×1050 proof publishes at quality 65 within 150,000 bytes instead of being refused');
  console.log('PASS '+checks+' exact-size Display proof rendering, review storage and fixed publication checks');
  require('./suite-guard.cjs').done();
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
