@@ -590,9 +590,15 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   if(sharedBudgetRequest(text))return {schema:1,budgetClarification:true,reply:'I haven’t applied the overall budget as a per-item limit. I can compare individual pieces once you choose an item limit.',question:'What maximum item price should I use for each piece, before shipping and any applicable taxes?',preferences:shopperPreferences({...intent,budget:null,minBudget:null,unlimitedBudget:false,budgetCurrency:null}),products:[],meanings:[],actions:[],checkedAt:at,live:false,aiUsed:false};
   const currentHandle=/^[a-z0-9_-]{1,180}$/.test(context.currentHandle||'')?context.currentHandle:'';
   const exactCurrentContext=exactCurrentPageRequest(text,currentHandle);
+  const destination=explicitDestination(text),negatedCommand=/\b(?:do not|don'?t|not|never)\s+(?:open|take|go|view|show|add|put)\b/i.test(text);
+  // A shopper-supplied Brites product URL is an exact selection. Resolve it
+  // directly instead of letting stale cards or discovery preferences replace
+  // it with another product.
+  const destinationHandle=shopperCommand(text.toLowerCase())&&!negatedCommand&&!destination.unsafe&&destination.handles.length===1?destination.handles[0]:'';
+  const exactProductContext=exactCurrentContext||!!destinationHandle;
   const displayedReference=fieldMentions(text.toLowerCase().replace(/[’‘]/g,"'"),'this piece|that piece|this one|that one').some(hit=>!hit.negative);
-  const useContext=exactCurrentContext||displayedReference||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
-  const handles=exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
+  const useContext=exactProductContext||displayedReference||/\b(?:meaning|means|symboli[sz]\w*|history|story|stories|compare|comparison|first|second|third|fourth|fifth|sixth|open|cart|bag)\b/i.test(text);
+  const handles=destinationHandle?[destinationHandle]:exactCurrentContext?[currentHandle]:plainList(context.productHandles,6).filter(h=>/^[a-z0-9_-]{1,180}$/.test(h));
   if(!handles.length&&currentHandle)handles.push(currentHandle);
   const queried=useContext&&handles.length?{products:(await Promise.all(handles.map(h=>shopify.byHandle(h)))).filter(Boolean)}:await shopify.search(intent.query||intent.type||'necklace');
   let checkedProducts=queried.products;
@@ -600,8 +606,8 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let issueRecords=service.productIssues?await service.productIssues(checkedProducts.map(p=>p.id)):[];
   // An explicit exact-page reference selects that validated live product,
   // rather than letting stale discovery preferences filter it back out.
-  const exactCurrentType=exactCurrentContext&&checkedProducts.length===1&&/\bcharms?\b/i.test(checkedProducts[0]?.type||'')?'charm':null;
-  const rankingIntent=exactCurrentContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):intent;
+  const exactCurrentType=exactProductContext&&checkedProducts.length===1&&/\bcharms?\b/i.test(checkedProducts[0]?.type||'')?'charm':null;
+  const rankingIntent=exactProductContext?shopperPreferences({currency:intent.currency,type:exactCurrentType}):intent;
   let eligibleProducts=applyProductIssues(checkedProducts,issueRecords);
   let products=rankProducts(eligibleProducts,rankingIntent,at);
   const boundedRecall=plainList(intent.interests,4).length>0;
@@ -625,10 +631,10 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let unavailableSelection=null;
   if(shopperCommand(text.toLowerCase())&&useContext&&handles.length){
     const ordinal=/\b(first|second|third|fourth|fifth|sixth|[1-6])\b/i.exec(text),words=['first','second','third','fourth','fifth','sixth'];
-    const index=ordinal?(words.includes(ordinal[1].toLowerCase())?words.indexOf(ordinal[1].toLowerCase()):Number(ordinal[1])-1):exactCurrentContext||displayedReference?0:null;
+    const index=ordinal?(words.includes(ordinal[1].toLowerCase())?words.indexOf(ordinal[1].toLowerCase()):Number(ordinal[1])-1):exactProductContext||displayedReference?0:null;
     const targetHandle=index==null?null:handles[index],target=eligibleProducts.find(product=>product.handle===targetHandle);
-    if(target&&!products.some(product=>product.handle===targetHandle)){
-      unavailableSelection={kind:target.recommendationHold?'unconfirmed':(target.variants||[]).some(variant=>variant.available)?'option':'stock'};
+    if(index!=null&&(!targetHandle||!target||!products.some(product=>product.handle===targetHandle))){
+      unavailableSelection={kind:!targetHandle?'reference':!target?'missing':target.recommendationHold?'unconfirmed':(target.variants||[]).some(variant=>variant.available)?'option':'stock'};
       products=[];
     }
   }
@@ -640,7 +646,7 @@ async function concierge({service,shopify,message,history=[],preferences={},cont
   let question=!products.length?(recovery?.question||'Would you like to try a different symbol or jewelry type?'):!intent.query?'What does the person enjoy—an animal, hobby, profession or symbol?':!intent.type?'Would they enjoy a necklace, earrings or another jewelry style?':intent.budget==null&&!intent.unlimitedBudget?'Is there an item budget you’d like me to stay within?':!intent.metal?'Do you have a metal preference, or would you like to see both?':intent.giftDiscovery&&!intent.recipient&&!intent.recipientSkipped?'Who is the gift for?':intent.giftDiscovery&&!intent.occasion&&!intent.occasionSkipped?'Is there an occasion for the gift?':null;
   const result={schema:1,reply,question,preferences:intent,products,meanings,actions:products.map(p=>({type:'navigate',productId:p.id,url:p.url,label:'View '+p.title})),checkedAt:at,live:true,aiUsed:false};
   if(recovery)result.recoveryField=recovery.field;
-  if(unavailableSelection){result.reply=unavailableSelection.kind==='stock'?'That selected piece is not currently available, so I haven’t substituted a different item.':'I couldn’t confirm an available option for that selected piece, so I haven’t substituted a different item.';result.question='Would you like me to find a similar available piece?';result.unavailableSelection=true;}
+  if(unavailableSelection){result.reply=unavailableSelection.kind==='reference'?'I can’t identify that earlier option from the displayed pieces, so I haven’t opened or substituted a different item.':unavailableSelection.kind==='stock'?'That selected piece is not currently available, so I haven’t substituted a different item.':unavailableSelection.kind==='missing'?'I couldn’t confirm that selected piece in the live catalogue, so I haven’t substituted a different item.':'I couldn’t confirm an available option for that selected piece, so I haven’t substituted a different item.';result.question=unavailableSelection.kind==='reference'?'Which displayed piece would you like?':'Would you like me to find a similar available piece?';result.unavailableSelection=true;}
   if(knowledgeUnavailable)result.knowledgeUnavailable=true;
   const mismatchedCurrency=products.some(p=>intent.budget!=null&&intent.budgetCurrency&&intent.budgetCurrency!==p.currency);
   if(mismatchedCurrency){result.reply+=' Catalogue prices are shown in '+products[0].currency+'. I haven’t applied your '+intent.budgetCurrency+' budget to those prices.';result.question='Would you like to give an item budget in '+products[0].currency+', or check the current local price on a product page?';result.currencyMismatch=true;}

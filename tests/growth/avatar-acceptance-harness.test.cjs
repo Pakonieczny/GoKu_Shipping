@@ -36,6 +36,21 @@ test('observed context loss fails closed to fallback and cannot be reported as a
 
 test('missing canvas is reported unavailable without creating or probing a replacement context',()=>{assert.deepEqual(qa.inspectWebGL({querySelector:()=>null}),{available:false});assert.deepEqual(qa.inspectWebGL(null),{available:false});});
 
+test('hidden on-demand avatar diagnostics return immediately as deferred rather than hanging or claiming WebGL failure',async()=>{
+  const avatar={ready:new Promise(()=>{}),element:{hidden:true,dataset:{rendering:'pending'},querySelector:()=>null},snapshot:()=>({mode:'pending',visible:false,intersecting:true,loading:false,destroyed:false,frames:0})};
+  const started=Date.now(),report=await qa.collect({avatar,sampleMs:1,readyWaitMs:1000});
+  assert.ok(Date.now()-started<250,'hidden on-demand diagnostics must not wait for the unresolved ready promise');
+  assert.deepEqual(report.runtime,{readiness:'deferred_not_visible',waitMs:0,loading:false,destroyed:false,onDemandDeferred:true});
+  assert.equal(report.webgl.status,'renderer_pending');assert.equal(report.gpu.status,'unverified_renderer_pending');assert.equal(report.staticFallback.active,false);assert.equal(report.acceptance.gpu,'unverified');
+});
+
+test('visible pending avatar diagnostics use a bounded readiness wait and preserve pending truthfulness',async()=>{
+  const avatar={ready:new Promise(()=>{}),element:{hidden:false,dataset:{rendering:'loading'},querySelector:()=>null},snapshot:()=>({mode:'pending',visible:true,intersecting:true,loading:true,destroyed:false,frames:0})};
+  const report=await qa.collect({avatar,sampleMs:1,readyWaitMs:5});
+  assert.equal(report.runtime.readiness,'timed_out');assert.equal(report.runtime.loading,true);assert.equal(report.runtime.onDemandDeferred,false);
+  assert.equal(report.webgl.status,'renderer_pending');assert.equal(report.frameSampling.status,'unverified_renderer_pending');assert.equal(report.acceptance.message,'Renderer capability is pending; GPU rendering, shadows and FPS are not yet verified.');
+});
+
 test('visual QA pages expose the diagnostics and explicitly prohibit fallback GPU claims',()=>{
   const root=path.join(__dirname,'../..'),studio=fs.readFileSync(path.join(root,'concierge-avatar-qa.html'),'utf8'),checklist=fs.readFileSync(path.join(root,'concierge-avatar-checklist.html'),'utf8');
   assert.match(studio,/concierge-avatar-qa\.js/);assert.match(studio,/Static fallback confirmed\. GPU rendering, shadows and FPS were not tested\./);assert.match(studio,/BritesAvatarAcceptance\.collect/);
@@ -49,6 +64,7 @@ test('bounded export package keeps only acceptance evidence and never upgrades v
   const exported=qa.serializeAcceptancePackage({diagnostics,stateEvidence});
   assert.equal(exported.value.evidenceLevel,'webgl_runtime_observed_visual_review_required');assert.equal(exported.value.webgl.vendor,'Fixture GPU vendor');assert.equal(exported.value.webgl.renderer.length,160);
   assert.equal(exported.value.shadows.capabilityObserved,true);assert.equal(exported.value.textures.fitsObservedCapability,true);assert.equal(exported.value.frameSample.status,'sampled');
+  assert.equal(exported.value.runtime.readiness,'not_recorded');assert.equal(exported.value.runtime.onDemandDeferred,false);
   assert.equal(exported.value.expressionsAndGestures.states.length,6);assert.equal(exported.value.expressionsAndGestures.gestures.length,2);assert.equal(exported.value.claims.gestureAppearance,'unverified');
   assert.ok(exported.bytes<24576);assert.doesNotMatch(exported.json,/must-not-export|private\.invalid|privateUrl|unsafe|raw/);assert.doesNotMatch(exported.json,/\u0000/);
 });

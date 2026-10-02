@@ -17,12 +17,14 @@
     const textureFits=webglUsable&&declaredTextureSize!=null&&maxTexture!=null?declaredTextureSize<=maxTexture:null;
     const framesBefore=number(before.frames),framesAfter=number(after.frames),frameDelta=framesBefore!=null&&framesAfter!=null?Math.max(0,framesAfter-framesBefore):null,effectiveFps=frameDelta==null?null:rounded(frameDelta*1000/sampleMs);
     const reducedMotion=after.reducedMotion===true||input.reducedMotion===true,visible=after.visible===true,intersecting=after.intersecting!==false;
-    const frameStatus=!webglUsable?(contextLost?'unverified_context_lost':'unverified_webgl_unavailable'):reducedMotion?'intentionally_paused_reduced_motion':!visible||!intersecting?'paused_not_visible':frameDelta>0?'sampled':'no_frames_observed';
+    const frameStatus=!webglUsable?(contextLost?'unverified_context_lost':mode==='pending'?'unverified_renderer_pending':'unverified_webgl_unavailable'):reducedMotion?'intentionally_paused_reduced_motion':!visible||!intersecting?'paused_not_visible':frameDelta>0?'sampled':'no_frames_observed';
     const rendererRatio=number(after.pixelRatio),deviceRatio=number(display.devicePixelRatio),cssWidth=number(display.cssWidth),bufferWidth=number(display.bufferWidth),backingRatio=cssWidth>0&&bufferWidth!=null?rounded(bufferWidth/cssWidth):null;
     const fallbackActive=mode==='fallback'||input.frameRendering==='fallback';
-    const unavailableReason=contextLost?'context_lost':webglAvailable?'scene_fallback':'webgl_unavailable';
+    const unavailableReason=contextLost?'context_lost':mode==='pending'?'renderer_pending':webglAvailable?'scene_fallback':'webgl_unavailable';
+    const readiness=input.readiness||{};
     return {
       schema:1,mode,
+      runtime:{readiness:text(readiness.status)||'not_recorded',waitMs:number(readiness.waitMs),loading:after.loading===true,destroyed:after.destroyed===true,onDemandDeferred:(text(readiness.status)==='deferred_not_visible')},
       webgl:{status:webglUsable?'available':unavailableReason,contextType:text(gl.contextType),vendor:text(gl.vendor),renderer:text(gl.renderer),version:text(gl.version),shadingLanguageVersion:text(gl.shadingLanguageVersion),maxTextureSize:maxTexture,maxRenderbufferSize:number(gl.maxRenderbufferSize),depthBits:number(gl.depthBits),maxCombinedTextureUnits:number(gl.maxCombinedTextureUnits),depthTexture:gl.depthTexture===true,contextLost},
       gpu:{status:webglUsable?'capability_observed':'unverified_'+unavailableReason,visualQuality:'unverified'},
       shadowMap:{status:shadowCapable?'capability_observed_visual_unverified':webglUsable?'capability_not_confirmed':'unverified_'+unavailableReason,configured:shadow.enabled===true,casts:shadow.casts===true,receivingStage:shadow.receivingStage===true,type:text(shadow.type),requestedSize:requestedShadow,maxTextureSize:maxTexture,depthBits:number(gl.depthBits),capabilityObserved:shadowCapable,appearance:'unverified'},
@@ -45,13 +47,23 @@
     const webgl2=contextType==='webgl2',depthTexture=webgl2||(()=>{try{return!!gl.getExtension('WEBGL_depth_texture');}catch(e){return false;}})();
     return {available:true,contextType,vendor:parameter(debug?.UNMASKED_VENDOR_WEBGL)||parameter(gl.VENDOR),renderer:parameter(debug?.UNMASKED_RENDERER_WEBGL)||parameter(gl.RENDERER),version:parameter(gl.VERSION),shadingLanguageVersion:parameter(gl.SHADING_LANGUAGE_VERSION),maxTextureSize:parameter(gl.MAX_TEXTURE_SIZE),maxRenderbufferSize:parameter(gl.MAX_RENDERBUFFER_SIZE),depthBits:parameter(gl.DEPTH_BITS),maxCombinedTextureUnits:parameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS),depthTexture,contextLost:typeof gl.isContextLost==='function'&&gl.isContextLost()};
   }
-  async function collect({avatar,win=scope,sampleMs=750}={}){
+  async function collect({avatar,win=scope,sampleMs=750,readyWaitMs=2500}={}){
     if(!avatar||typeof avatar.snapshot!=='function')throw Error('Avatar diagnostics require the QA avatar instance.');
-    try{await avatar.ready;}catch(e){}
+    readyWaitMs=Math.max(0,Math.min(10000,number(readyWaitMs)??2500));
+    const initial=avatar.snapshot()||{};let readiness={status:'already_settled',waitMs:0};
+    if(initial.destroyed===true)readiness={status:'destroyed',waitMs:0};
+    else if(initial.mode==='pending'&&initial.visible===false&&initial.loading!==true)readiness={status:'deferred_not_visible',waitMs:0};
+    else if(initial.mode==='pending'&&avatar.ready&&typeof avatar.ready.then==='function'){
+      const started=Date.now();let timer=null;
+      try{
+        const result=await Promise.race([Promise.resolve(avatar.ready).then(()=> 'settled',()=> 'rejected'),new Promise(resolve=>{timer=(win?.setTimeout||setTimeout)(()=>resolve('timed_out'),readyWaitMs);})]);
+        readiness={status:result,waitMs:Math.max(0,Date.now()-started)};
+      }finally{if(timer!=null)(win?.clearTimeout||clearTimeout)(timer);}
+    }
     const before=avatar.snapshot(),frame=avatar.element,gl=inspectWebGL(frame),canvas=frame?.querySelector?.('canvas'),box=canvas?.getBoundingClientRect?.()||{};
     await new Promise(resolve=>(win?.setTimeout||setTimeout)(resolve,sampleMs));
     const after=avatar.snapshot(),media=win?.matchMedia?.('(prefers-reduced-motion: reduce)');
-    return {...buildDiagnostics({before,after,gl,sampleMs,reducedMotion:media?.matches===true,frameRendering:frame?.dataset?.rendering,frameHidden:frame?.hidden===true,display:{devicePixelRatio:number(win?.devicePixelRatio),cssWidth:number(box.width),bufferWidth:number(canvas?.width)}}),collectedAt:new Date().toISOString()};
+    return {...buildDiagnostics({before,after,gl,sampleMs,readiness,reducedMotion:media?.matches===true,frameRendering:frame?.dataset?.rendering,frameHidden:frame?.hidden===true,display:{devicePixelRatio:number(win?.devicePixelRatio),cssWidth:number(box.width),bufferWidth:number(canvas?.width)}}),collectedAt:new Date().toISOString()};
   }
   async function exerciseStates({avatar,win=scope,settleMs=120}={}){
     if(!avatar||typeof avatar.snapshot!=='function'||typeof avatar.setState!=='function')return{status:'unavailable',visualAppearance:'unverified',states:[],gestures:[]};
@@ -69,13 +81,14 @@
     return {status:allRendered?'state_pipeline_and_frames_observed_visual_unverified':allAccepted?'state_pipeline_observed_render_unverified':'state_pipeline_not_confirmed',visualAppearance:'unverified',states:rows,gestures:[{name:'speaking_arm_motion',state:'speaking',renderObserved:rows.find(row=>row.state==='speaking')?.renderObserved===true},{name:'success_arm_lift',state:'success',renderObserved:rows.find(row=>row.state==='success')?.renderObserved===true}]};
   }
   function acceptancePackage({diagnostics={},stateEvidence={}}={}){
-    const webgl=diagnostics.webgl||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
+    const webgl=diagnostics.webgl||{},runtime=diagnostics.runtime||{},shadow=diagnostics.shadowMap||{},textures=diagnostics.textures||{},frames=diagnostics.frameSampling||{},motion=diagnostics.motion||{},fallback=diagnostics.staticFallback||{},contextLoss=diagnostics.contextLoss||{},pixel=diagnostics.pixelRatio||{};
     const webglObserved=webgl.status==='available',stateRows=Array.isArray(stateEvidence.states)?stateEvidence.states.slice(0,STATES.length):[];
     const states=stateRows.map(row=>({state:state(row?.state),observedState:state(row?.observedState),mode:['webgl','fallback','pending'].includes(row?.mode)?row.mode:'pending',frameDelta:finite(row?.frameDelta,0,1000000),renderObserved:row?.renderObserved===true})).filter(row=>row.state);
     const gestures=(Array.isArray(stateEvidence.gestures)?stateEvidence.gestures:[]).slice(0,4).map(item=>({name:['speaking_arm_motion','success_arm_lift'].includes(item?.name)?item.name:null,state:state(item?.state),renderObserved:item?.renderObserved===true})).filter(item=>item.name&&item.state);
     const packageValue={
       schema:1,kind:'brites_avatar_runtime_acceptance',sanitized:true,collectedAt:boundedText(diagnostics.collectedAt,40),
       evidenceLevel:webglObserved?'webgl_runtime_observed_visual_review_required':fallback.active===true?'fallback_only_webgl_unverified':'renderer_pending_unverified',
+      runtime:{readiness:boundedText(runtime.readiness,48),waitMs:finite(runtime.waitMs,0,10000),loading:runtime.loading===true,destroyed:runtime.destroyed===true,onDemandDeferred:runtime.onDemandDeferred===true},
       webgl:{status:boundedText(webgl.status,48),contextType:boundedText(webgl.contextType,32),vendor:boundedText(webgl.vendor),renderer:boundedText(webgl.renderer),version:boundedText(webgl.version),shadingLanguageVersion:boundedText(webgl.shadingLanguageVersion),maxTextureSize:finite(webgl.maxTextureSize,0,1000000),maxRenderbufferSize:finite(webgl.maxRenderbufferSize,0,1000000),depthBits:finite(webgl.depthBits,0,128),maxCombinedTextureUnits:finite(webgl.maxCombinedTextureUnits,0,100000),depthTexture:webgl.depthTexture===true,contextLost:webgl.contextLost===true},
       shadows:{status:boundedText(shadow.status,64),configured:shadow.configured===true,casts:shadow.casts===true,receivingStage:shadow.receivingStage===true,type:boundedText(shadow.type,48),requestedSize:finite(shadow.requestedSize,0,1000000),capabilityObserved:shadow.capabilityObserved===true,appearance:'unverified'},
       textures:{status:boundedText(textures.status,64),configuredSize:finite(textures.configuredSize,0,1000000),largestDeclaredSize:finite(textures.largestDeclaredSize,0,1000000),declaredMaps:finite(textures.declaredMaps,0,64),observedCreatedMaps:finite(textures.observedCreatedMaps,0,64),declarationSource:boundedText(textures.declarationSource,48),maxTextureSize:finite(textures.maxTextureSize,0,1000000),fitsObservedCapability:textures.fitsObservedCapability===true?true:textures.fitsObservedCapability===false?false:null},
@@ -88,7 +101,7 @@
     return packageValue;
   }
   function serializeAcceptancePackage(input){
-    const value=input?.kind==='brites_avatar_runtime_acceptance'?acceptancePackage({diagnostics:{collectedAt:input.collectedAt,webgl:input.webgl,shadowMap:input.shadows,textures:input.textures,frameSampling:input.frameSample,pixelRatio:input.pixelRatio,motion:input.pauseAndFallback,staticFallback:{active:input.pauseAndFallback?.fallbackActive,visible:input.pauseAndFallback?.fallbackVisible,preserved:input.pauseAndFallback?.fallbackPreserved},contextLoss:{status:input.pauseAndFallback?.contextLossStatus}},stateEvidence:input.expressionsAndGestures}):acceptancePackage(input);
+    const value=input?.kind==='brites_avatar_runtime_acceptance'?acceptancePackage({diagnostics:{collectedAt:input.collectedAt,runtime:input.runtime,webgl:input.webgl,shadowMap:input.shadows,textures:input.textures,frameSampling:input.frameSample,pixelRatio:input.pixelRatio,motion:input.pauseAndFallback,staticFallback:{active:input.pauseAndFallback?.fallbackActive,visible:input.pauseAndFallback?.fallbackVisible,preserved:input.pauseAndFallback?.fallbackPreserved},contextLoss:{status:input.pauseAndFallback?.contextLossStatus}},stateEvidence:input.expressionsAndGestures}):acceptancePackage(input);
     const json=JSON.stringify(value,null,2),bytes=typeof TextEncoder==='function'?new TextEncoder().encode(json).length:json.length;
     if(bytes>MAX_EXPORT_BYTES)throw Error('Avatar acceptance package exceeds its safe export bound.');
     return{value,json,bytes};
