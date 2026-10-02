@@ -7,6 +7,15 @@ import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
 
 // Original Brites guide, generated as real mesh geometry. No raster character,
 // remotely hosted model, camera, microphone, tracking or external texture URL.
+export const AVATAR_SCENE_DECLARATIONS = Object.freeze({
+  schema: 1,
+  textures: Object.freeze([
+    Object.freeze({name: 'Porcelain micro-surface', kind: 'porcelain'}),
+    Object.freeze({name: 'Champagne brushed grain', kind: 'brush'}),
+    Object.freeze({name: 'Champagne roughness', kind: 'roughness'}),
+    Object.freeze({name: 'Aquamarine iris radial fibres', kind: 'color'})
+  ])
+});
 export function createAvatarScene({container, quality, onFrame, onContext, onError}) {
   const doc = container.ownerDocument, win = doc.defaultView;
   const renderer = new THREE.WebGLRenderer({alpha: true, antialias: true, powerPreference: 'high-performance'});
@@ -49,7 +58,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     texture.repeat.set(kind === 'porcelain' ? 2 : 1, kind === 'porcelain' ? 2 : 1);
     textures.add(texture); maps.push({name, width: size, height: size, kind}); return texture;
   }
-  const porcelainMap = textureMap('Porcelain micro-surface', 'porcelain'), goldMap = textureMap('Champagne brushed grain', 'brush'), roughnessMap = textureMap('Champagne roughness', 'roughness');
+  const porcelainMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[0].name, AVATAR_SCENE_DECLARATIONS.textures[0].kind), goldMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[1].name, AVATAR_SCENE_DECLARATIONS.textures[1].kind), roughnessMap = textureMap(AVATAR_SCENE_DECLARATIONS.textures[2].name, AVATAR_SCENE_DECLARATIONS.textures[2].kind);
   const ivory = material({color: '#f9f2df', roughness: .23, metalness: .03, clearcoat: .94, clearcoatRoughness: .16, bumpMap: porcelainMap, bumpScale: .006, sheen: .2, sheenColor: new THREE.Color('#fff7e3'), iridescence: .06, iridescenceIOR: 1.32, iridescenceThicknessRange: [180, 260]});
   const gold = material({color: '#dcc091', metalness: .91, roughness: .3, roughnessMap, bumpMap: goldMap, bumpScale: .0025, anisotropy: .72, anisotropyRotation: Math.PI / 2, clearcoat: .28, clearcoatRoughness: .24});
   const paleGold = material({color: '#e8d5b3', metalness: .74, roughness: .25, roughnessMap, bumpMap: goldMap, bumpScale: .002, clearcoat: .5});
@@ -71,7 +80,7 @@ export function createAvatarScene({container, quality, onFrame, onContext, onErr
     let seed = 65537; const random = () => {seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296;};
     for (let i = 0; i < 2800; i++) {const angle = random() * Math.PI * 2, start = (.29 + random() * .22) * radius, end = (.69 + random() * .27) * radius; ctx.strokeStyle = i % 4 ? 'rgba(179,255,237,' + (.04 + random() * .19) + ')' : 'rgba(9,44,69,.22)'; ctx.lineWidth = 1 + random() * 2.4; ctx.beginPath(); ctx.moveTo(mid + Math.cos(angle) * start, mid + Math.sin(angle) * start); ctx.quadraticCurveTo(mid + Math.cos(angle + .014) * radius * .62, mid + Math.sin(angle + .014) * radius * .62, mid + Math.cos(angle + .025) * end, mid + Math.sin(angle + .025) * end); ctx.stroke();}
     for (let i = 0; i < 800; i++) {const angle = random() * Math.PI * 2, distance = (.36 + random() * .45) * radius; ctx.fillStyle = 'rgba(222,255,228,' + (.18 + random() * .28) + ')'; ctx.beginPath(); ctx.arc(mid + Math.cos(angle) * distance, mid + Math.sin(angle) * distance, .6 + random() * 2.3, 0, Math.PI * 2); ctx.fill();}
-    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); textures.add(texture); maps.push({name: 'Aquamarine iris radial fibres', width: size, height: size, kind: 'color'}); return texture;
+    const texture = new THREE.CanvasTexture(canvas); texture.colorSpace = THREE.SRGBColorSpace; texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy()); textures.add(texture); maps.push({name: AVATAR_SCENE_DECLARATIONS.textures[3].name, width: size, height: size, kind: AVATAR_SCENE_DECLARATIONS.textures[3].kind}); return texture;
   }
   const irisMap = irisTexture(), irisMaterial = material({map: irisMap, color: '#d2ffff', emissive: '#2b959d', emissiveMap: irisMap, emissiveIntensity: .48, roughness: .22, metalness: .1, clearcoat: 1});
   const head = new THREE.Group(); head.position.set(0, .59, .03); avatar.add(head);

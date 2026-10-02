@@ -3,6 +3,12 @@
   const STATES = Object.freeze(['idle', 'listening', 'thinking', 'speaking', 'success', 'error']);
   const clamp = (value, low, high) => Math.max(low, Math.min(high, Number.isFinite(value) ? value : low));
   const validState = state => STATES.includes(state) ? state : 'idle';
+  function declaredScene(raw, textureSize) {
+    if (!raw || raw.schema !== 1 || !Array.isArray(raw.textures) || raw.textures.length < 1 || raw.textures.length > 16) return null;
+    const textures = raw.textures.map(value => ({name: typeof value?.name === 'string' ? value.name.slice(0, 80) : '', kind: typeof value?.kind === 'string' ? value.kind.slice(0, 32) : '', width: textureSize, height: textureSize}));
+    if (textures.some(value => !value.name || !value.kind)) return null;
+    return {schema: 1, source: 'loaded_scene_module', textures};
+  }
   function qualityFor(hints = {}) {
     const mobile = hints.mobile === true || (hints.width > 0 && hints.width < 600) || (hints.memory > 0 && hints.memory <= 4);
     return {name: mobile ? 'adaptive' : 'high', pixelRatio: Math.min(mobile ? 1.5 : 2, Math.max(1, hints.pixelRatio || 1)), shadowSize: mobile ? 1024 : 2048, textureSize: 2048, fps: mobile ? 30 : 60, geometryScale: mobile ? .8 : 1, bloom: hints.bloom !== false};
@@ -48,7 +54,7 @@
     const fallbackImage = doc.createElement('img'); fallbackImage.alt = ''; fallbackImage.setAttribute('aria-hidden', 'true'); fallbackImage.onload = () => {fallback.dataset.image = 'ready';}; fallback.appendChild(fallbackImage);
     const style = doc.createElement('link'); style.rel = 'stylesheet'; style.href = cssUrl;
     frame.append(style, surface, fallback); container.appendChild(frame);
-    let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, failed = false, level = 0, gaze = {x: 0, y: 0}, stateAt = 0;
+    let state = validState(options.initialState), visible = options.visible === true, intersecting = true, destroyed = false, loading = false, engine = null, declarations = null, failed = false, level = 0, gaze = {x: 0, y: 0}, stateAt = 0;
     const media = win.matchMedia ? win.matchMedia('(prefers-reduced-motion: reduce)') : null;
     let reducedMotion = !!media?.matches, readyResolve;
     const ready = new Promise(resolve => {readyResolve = resolve;});
@@ -56,7 +62,7 @@
     const now = () => (win.performance?.now?.() || Date.now()) / 1000;
     stateAt = now();
     function emit(type, detail) {frame.dispatchEvent(new win.CustomEvent('brites-avatar:' + type, {detail, bubbles: true, composed: true})); try {options.onStatus?.(type, detail);} catch {}}
-    function snapshot() {return {state, visible, intersecting, reducedMotion, mode: engine && !failed ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed, quality: {...quality}, ...(engine?.snapshot?.() || {})};}
+    function snapshot() {return {state, visible, intersecting, reducedMotion, mode: engine && !failed ? 'webgl' : failed ? 'fallback' : 'pending', loading, destroyed, quality: {...quality}, ...(engine?.snapshot?.() || {}), declarations: declarations ? {schema: declarations.schema, source: declarations.source, textures: declarations.textures.map(value => ({...value}))} : null};}
     function active() {return visible && intersecting && !doc.hidden && !destroyed && !failed;}
     function renderingFailure() {const old = engine; engine = null; failed = true; loading = false; frame.dataset.rendering = 'fallback'; frame.setAttribute('aria-label', 'Brites jewellery gift guide illustration'); try {old?.destroy();} catch {} emit('fallback', {reason: 'WebGL rendering is unavailable', ...snapshot()}); readyResolve(snapshot());}
     function sync() {frame.hidden = !visible; if (engine) {try {engine.setMotion({active: active(), reducedMotion}); if (active()) engine.render(poseFor({state, time: now(), elapsed: now() - stateAt, level, gaze, reducedMotion}), true);} catch {renderingFailure();}} if (active() && !engine && !loading) load();}
@@ -66,6 +72,7 @@
       try {
         const sceneModule = options.loadScene ? await options.loadScene(moduleUrl) : await import(moduleUrl);
         if (destroyed) return;
+        declarations = declaredScene(sceneModule.AVATAR_SCENE_DECLARATIONS, quality.textureSize);
         engine = sceneModule.createAvatarScene({container: surface, quality, onFrame: t => poseFor({state, time: t, elapsed: t - stateAt, level, gaze, reducedMotion}), onError: renderingFailure, onContext: lost => {failed = lost; frame.dataset.rendering = lost ? 'fallback' : 'webgl'; frame.setAttribute('aria-label', lost ? 'Brites jewellery gift guide illustration' : 'Brites jewellery gift guide'); emit(lost ? 'fallback' : 'restored', snapshot()); sync();}});
         if (destroyed) {engine.destroy(); return;}
         failed = false; loading = false; frame.dataset.rendering = 'webgl'; fallback.setAttribute('aria-hidden', 'true');

@@ -56,7 +56,7 @@ function makeAvatar(t, options = {}) {
     destroy() {calls.destroy++; if (calls.fail === 'destroy') throw Error('Synthetic cleanup failure');}
   };
   let sceneOptions;
-  const module = {createAvatarScene(value) {sceneOptions = value; return engine;}};
+  const module = {AVATAR_SCENE_DECLARATIONS:{schema:1,textures:[{name:'Porcelain micro-surface',kind:'porcelain'},{name:'Champagne brushed grain',kind:'brush'},{name:'Champagne roughness',kind:'roughness'},{name:'Aquamarine iris radial fibres',kind:'color'}]},createAvatarScene(value) {sceneOptions = value; if(options.createSceneThrows)throw Error('Synthetic WebGL renderer unavailable'); return engine;}};
   const container = env.document.createElement('div'); env.document.body.appendChild(container);
   const api = avatarFactory.create({container, assetBase: 'https://growth-sandbox.example/',
     visible: options.visible === true,
@@ -164,6 +164,14 @@ test('scene loading rejection resolves a static fallback', async t => {
   assert.equal(ready.mode, 'fallback'); assert.equal(ready.loading, false); assert.equal(h.api.element.dataset.rendering, 'fallback');
   h.api.setState('thinking'); h.api.setVisible(false); h.api.setVisible(true);
   await settle(); assert.equal(h.calls.loads.length, 1); assert.equal(h.calls.render.length, 0);
+});
+
+test('renderer failure preserves loaded texture declarations without claiming created maps', async t => {
+  const h = makeAvatar(t, {visible: true, createSceneThrows: true});
+  const ready = await h.api.ready;
+  assert.equal(ready.mode, 'fallback'); assert.equal(ready.declarations.source, 'loaded_scene_module');
+  assert.equal(ready.declarations.textures.length, 4); assert.ok(ready.declarations.textures.every(value => value.width === 2048 && value.height === 2048));
+  assert.equal(ready.textures, undefined); assert.equal(h.api.element.dataset.rendering, 'fallback');
 });
 
 test('context loss pauses rendering and restoration respects current visibility', async t => {
@@ -473,4 +481,43 @@ test('a renderer draw exception cannot block text search or sandbox cart', async
   await h.ask(); await h.add();
   assert.equal(h.errors.length, 0); assert.equal(h.root.querySelectorAll('.card').length, 1);
   assert.equal(JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart')).length, 1);
+});
+
+test('parts-only and personalized pieces hand off to the product page without a cart write', async t => {
+  for (const product of [
+    {...fixtureProduct, type: 'Charm', partsOnly: true, title: 'Bunny Necklace Charm'},
+    {...fixtureProduct, title: 'Handwriting Bunny Necklace'}
+  ]) {
+    const answer = {...fixtureAnswer, products: [product]}, h = makeWidget(t, {answer: () => response(answer)});
+    h.open(); await h.ask(); h.button('Choose options').click();
+    const handoff = h.button(product.partsOnly ? 'Review details on product page' : 'Open personalization on product page');
+    assert.ok(handoff); handoff.click(); await settle();
+    assert.equal(h.window.sessionStorage.getItem('brites-sandbox-cart'), null);
+    assert.equal(h.network.filter(request => request.url.pathname === '/api/growth/product').length, 0);
+    assert.ok(h.network.some(request => request.body?.event === 'product_opened' && request.body.productId === product.id));
+  }
+});
+
+test('sandbox cart requires explicit review and confirmation, while cancel remains non-mutating', async t => {
+  const h = makeWidget(t); h.open(); await h.ask(); h.button('Choose options').click();
+  h.button('Review adding to bag').click();
+  assert.equal(h.window.sessionStorage.getItem('brites-sandbox-cart'), null);
+  h.button('Cancel').click();
+  assert.equal(h.window.sessionStorage.getItem('brites-sandbox-cart'), null);
+  h.button('Review adding to bag').click(); h.button('Confirm add to bag').click(); await settle();
+  const cart = JSON.parse(h.window.sessionStorage.getItem('brites-sandbox-cart'));
+  assert.equal(cart.length, 1); assert.equal(cart[0].variantId, fixtureVariant.numericId);
+});
+
+test('a failed concierge turn can be retried safely without duplicating product or cart actions', async t => {
+  let attempts = 0;
+  const h = makeWidget(t, {answer: () => ++attempts === 1 ? response({error: 'Synthetic temporary outage'}, 503) : response(fixtureAnswer)});
+  h.open(); await h.ask('A bunny gift');
+  assert.equal(h.root.querySelectorAll('.card').length, 0); assert.match(h.messages.textContent, /temporary outage/);
+  assert.equal(h.button('Send').disabled, false); assert.equal(h.window.sessionStorage.getItem('brites-sandbox-cart'), null);
+  await h.ask('A bunny gift');
+  assert.equal(h.root.querySelectorAll('.card').length, 1); assert.equal(attempts, 2);
+  assert.equal(h.network.filter(request => request.body?.event === 'cart_requested').length, 0);
+  const turns = h.network.filter(request => request.body?.message);
+  assert.equal(turns.length, 2); assert.deepEqual(turns[1].body.history, [{role: 'user', content: 'A bunny gift'}]);
 });

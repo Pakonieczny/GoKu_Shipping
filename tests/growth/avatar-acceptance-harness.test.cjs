@@ -15,10 +15,12 @@ test('WebGL report exposes observed identity, shadow capability, textures, ratio
 });
 
 test('disabled WebGL preserves an explicit static fallback and leaves GPU, shadows and FPS unverified',()=>{
-  const report=qa.buildDiagnostics({before:{mode:'fallback'},after:{mode:'fallback',visible:true,intersecting:true,reducedMotion:false,quality:{textureSize:2048,pixelRatio:2,fps:60}},gl:{available:false},frameRendering:'fallback',frameHidden:false,sampleMs:750});
+  const declarations={schema:1,source:'loaded_scene_module',textures:['Porcelain','Gold grain','Gold roughness','Iris'].map(name=>({name,kind:'fixture',width:2048,height:2048}))};
+  const report=qa.buildDiagnostics({before:{mode:'fallback'},after:{mode:'fallback',visible:true,intersecting:true,reducedMotion:false,quality:{textureSize:2048,pixelRatio:2,fps:60},declarations},gl:{available:false},frameRendering:'fallback',frameHidden:false,sampleMs:750});
   assert.equal(report.webgl.status,'webgl_unavailable');assert.equal(report.webgl.vendor,null);assert.equal(report.webgl.renderer,null);
   assert.equal(report.staticFallback.active,true);assert.equal(report.staticFallback.visible,true);assert.equal(report.staticFallback.preserved,true);
   assert.equal(report.acceptance.gpu,'unverified');assert.equal(report.acceptance.shadows,'unverified');assert.equal(report.acceptance.fps,'unverified');
+  assert.equal(report.textures.declaredMaps,4);assert.equal(report.textures.observedCreatedMaps,0);assert.equal(report.textures.declarationSource,'loaded_scene_module');assert.equal(report.textures.largestDeclaredSize,2048);assert.equal(report.textures.fitsObservedCapability,null);
   assert.equal(report.shadowMap.status,'unverified_webgl_unavailable');assert.equal(report.frameSampling.status,'unverified_webgl_unavailable');assert.match(report.acceptance.message,/Static fallback is active.*unverified/i);
 });
 
