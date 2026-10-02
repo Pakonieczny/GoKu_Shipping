@@ -3834,7 +3834,8 @@ async function _discoverMerchantCenterId() {
       WHERE product_link.type = 'MERCHANT_CENTER'`);
     const ids = [...new Set(rows.map(r => r.productLink && r.productLink.merchantCenter && r.productLink.merchantCenter.merchantCenterId)
       .map(v => String(v || "").replace(/\D/g, "")).filter(Boolean))];
-    if (ids.length === 1) return await remember(ids[0]);
+    // Google's own link is recorded once in Firestore config/googleApiKeys.merchantId (only while that field is empty).
+    if (ids.length === 1) { try { await require("./_googleApiKeys").saveStoredValueIfEmpty("merchantId", ids[0]); } catch (_) { /* the run state below still remembers it */ } return await remember(ids[0]); }
   } catch (e) { if (_isGadsQuotaError(e)) throw e; attempts.push("product link: " + String(e.message || e)); }
 
   try {
@@ -11836,7 +11837,7 @@ async function saveAdDesignCopy({workspaceId,copy,expectedRevision,savedDesignId
 async function _designMerchantRequest(path,method='GET',body=null){
   const token=await mintMerchantToken();if(!token)throw new Error('Connect Merchant Center before updating its product images.');
   let response;try{response=await fetch('https://merchantapi.googleapis.com/'+path,{method,timeout:18000,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});}catch(e){if(method==='PATCH')e.writeOutcome='unknown';throw e;}
-  const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
+  const data=await response.json().catch(()=>null);if(!response.ok||!data){const error=new Error('Merchant Center '+(data&&data.error&&data.error.message||'returned HTTP '+response.status));error.status=response.status;if(method==='PATCH'&&(response.status>=500||!data))error.writeOutcome='unknown';throw error;}return data;
 }
 function _designMerchantIdentityMatches(resource,identity,kind='products'){
   const raw=[identity.contentLanguage,identity.feedLabel,identity.offerId].join('~'),prefix='accounts/'+identity.merchantId+'/'+kind+'/';
@@ -12195,7 +12196,7 @@ async function publishAdDesignSubmission(input={}){
     // applyApproval refuses budgets above the ceiling; say so now, not after approval. A paused campaign's raise is
     // checked when that campaign is enabled, as publication counts it.
     const ctrl=await control();if(Number(ctrl.maxDailyBudgetTotal)>0){const counted=Math.round((choice.totalDaily-(join&&!join.spendable?join.add:0))*100)/100,over=routing.CAMPAIGN_STYLES.budgetCeilingMessage(counted,join?join.enabledTotal:await _enabledBudgetTotal(),ctrl.maxDailyBudgetTotal,ctrl.budgetCurrency);if(over)throw Error(over);}
-    if(item.pipelinePlan?.identity===identity)return {ok:true,plan:item.pipelinePlan.summary,planHash:item.pipelinePlan.hash,cached:true,reviewHash,designReview:r,refreshed:!!refresh?.refreshed};
+    if(item.pipelinePlan?.identity===identity)return {ok:true,plan:await _merchantPlanSummary(ref,item.pipelinePlan,{w,product,choice,join}),planHash:item.pipelinePlan.hash,cached:true,reviewHash,designReview:r,refreshed:!!refresh?.refreshed};
     const plan=await _prepareCampaignStyles({item,context,choice,identity,join});
     await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),latest=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(!_submissionSourceMatches(item,latest.data())||current.data()?.status!=='PENDING'||current.data().reviewHash!==hash||current.data().applyAttempt||current.data().needsReconciliation)throw Error('Approval changed while preparing.');tx.update(ref,{...(refresh?.patch||{}),pipelinePlan:plan,payload:plan.payload,submissionPreferences:choice});});
     return {ok:true,plan:plan.summary,planHash:plan.hash,reviewHash,designReview:r,refreshed:!!refresh?.refreshed};
@@ -12207,13 +12208,16 @@ async function publishAdDesignSubmission(input={}){
     await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),live=current.data();if(live.pipelinePlan?.hash!==plan.hash||live.pipelinePlan?.validationLeaseUntil>Date.now())throw Error('A Google check is already running or cooling down. Wait one minute before checking again.');tx.update(ref,{'pipelinePlan.validationLeaseUntil':Date.now()+60000});});
     const operations=await materializeReviewedCreative({...item,pipelineReview:{hash:plan.hash}});
     await mutateAll(require('./googleAdsAdDesign').orderAssetGroupMutations(operations),{validateOnly:true,label:'Check selected campaign styles '+id});
-    const message='Google accepted the campaign structure and assets in validation mode. No campaigns were created. Policy review, billing and actual serving remain separate.';
-    await ref.update({'pipelinePlan.validation':{at:Date.now(),message}});return {ok:true,message};
+    // The plan's Merchant readiness, read again when older than ten minutes, says whether the product's offers can show.
+    const prior=plan.summary.merchant,merchant=!plan.summary.styles.includes('pmax')?null:prior&&Date.now()-prior.checkedAt<600000?prior:await _merchantPlanReadiness({w,product,choice:plan.summary,countryCodes:prior?prior.countryCodes:null});
+    const message='Google accepted the campaign structure and assets in validation mode. No campaigns were created. Policy review, billing and actual serving remain separate.'+(merchant?' '+merchant.message:'');
+    await ref.update({'pipelinePlan.validation':{at:Date.now(),message,...(merchant?{merchant:{status:merchant.status,checkedAt:merchant.checkedAt}}:{})}});return {ok:true,message,...(merchant?{merchant}:{})};
   }
   if(!confirmed||!plan||input.planHash!==plan.hash||plan.hash!==creativeHash(plan.payload))throw Error('Choose campaign styles, review their budgets and confirm the prepared plan first.');
   if(plan.summary.styles.includes('pmax')){
     const live=await merchantProducts({force:true,itemIds:plan.payload.meta.itemIds,titles:[product.title]});
-    if(plan.payload.meta.itemIds.some(id=>!live.some(p=>String(p.itemId).toLowerCase()===id.toLowerCase()&&_pmaxIsEligible(p))))throw Error('A selected Merchant product is no longer eligible. Refresh its product status before publishing.');
+    // Refused only when no offer of the product can serve in any target country; Performance Max serves the eligible ones.
+    const M=require('./_merchantHealth'),refused=M.noServableOffer(live,plan.payload.meta.itemIds,_pmaxIsEligible,plan.summary.merchant?plan.summary.merchant.countryCodes:plan.summary.pmaxTarget?[]:M.countryCodesFor(plan.summary.countries).codes);if(refused)throw Error(refused);
   }
   await fb().db.runTransaction(async tx=>{const current=await tx.get(ref),workspace=await tx.get(_adDesignWorkspaceRef(r.workspaceId));if(current.data()?.status!=='PENDING'||current.data()?.pipelinePlan?.hash!==input.planHash||!_submissionSourceMatches(item,workspace.data()))throw Error('The reviewed plan changed.');tx.update(ref,{status:'APPROVED',pipelineReview:{hash:plan.hash,at:Date.now()},approvedAt:Date.now()});});
   const result=await applyApproval(id,await control());
@@ -12225,8 +12229,30 @@ async function publishAdDesignSubmission(input={}){
 }
 // The exact Merchant offers of this design's product.
 function _designPmaxItemIds(w,product){return (product.offerIds||[product.itemId]).filter(Boolean).filter(id=>(w.context.itemIds||[]).some(x=>String(x).toLowerCase()===String(id).toLowerCase()));}
+// Merchant readiness of this product for a Performance Max plan: its exact offers in the campaign's countries (a joined
+// campaign's own), read-only, one batched read cached five minutes (_merchantHealth.offerReadiness). Never throws: an
+// unread answer is a warning, and only a complete answer that no offer can show in any target country blocks.
+async function _merchantPlanReadiness({w,product,choice,join=null,countryCodes=null}){
+  const M=require('./_merchantHealth'),offerIds=_designPmaxItemIds(w,product);if(!offerIds.length)return null;
+  const geo=(join?join.target.countries:choice&&choice.countries)||[];let place={codes:countryCodes||[],unknown:[]};
+  try{
+    if(!countryCodes){let known=null;if(geo.some(g=>!M.geoCountry(g)))try{known={};(await listCountries()).forEach(c=>{known[String(c.id)]=c.code;});}catch(_){}place=M.countryCodesFor(geo,known);}
+    if(!await mintMerchantToken())return M.readinessUnavailable({offerIds,countryCodes:place.codes,reason:'the Merchant Center connection (GMC_REFRESH_TOKEN) is not set up'});
+    return await M.offerReadiness({request:_designMerchantRequest,merchantId:await merchantCenterId(),offerIds,countries:place.codes,unmapped:place.unknown.length,feedLabel:w.context.feedLabel||null});
+  }catch(e){return M.readinessUnavailable({offerIds,countryCodes:place.codes,reason:String(e&&e.message||e)});}
+}
+// A plan prepared before Merchant readiness existed gains it once, the first time it is shown again.
+async function _merchantPlanSummary(ref,plan,{w,product,choice,join}){
+  const s=plan.summary||{};if(s.merchant||!(s.styles||[]).includes('pmax'))return s;
+  const merchant=await _merchantPlanReadiness({w,product,choice,join});if(!merchant)return s;if(merchant.block)throw Error(merchant.reason);
+  const summary={...s,merchant,note:(s.note?s.note+' ':'')+merchant.message};
+  try{await ref.update({'pipelinePlan.summary.merchant':merchant,'pipelinePlan.summary.note':summary.note});}catch(_){/* shown now; read again next time */}
+  return summary;
+}
 async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
   const routing=require('./googleAdsCampaignStyles'),design=require('./googleAdsAdDesign'),{w,product}=context,r=item.designReview,workspaceId=r.workspaceId;
+  // Merchant readiness before any work: a product none of whose offers can show in a target country is refused, with why.
+  const merchant=choice.styles.includes('pmax')?await _merchantPlanReadiness({w,product,choice,join}):null;if(merchant&&merchant.block)throw Error(merchant.reason);
   const generatedAssets=[],ops=[],summaries=[],plannedDays={},placements=design.chosenPlacements(w);let next=-900000;
   const add=async(asset,shape,fixed=false)=>{routing.validatePhoto && !fixed && routing.validatePhoto(asset,shape);const bytes=await _loadCreativeAsset(asset),meta=await require('sharp')(bytes).metadata();if(bytes.length!==asset.bytes||meta.width!==asset.width||meta.height!==asset.height)throw Error('A reviewed image changed.');const resourceName=`customers/${CID}/assets/${next--}`;generatedAssets.push({tempResourceName:resourceName,asset,fixed});return {resourceName,shape,width:asset.width,height:asset.height};};
   const photos=[];
@@ -12299,8 +12325,8 @@ async function _prepareCampaignStyles({item,context,choice,identity,join=null}){
   const used=JSON.stringify(ops),uploads=generatedAssets.filter(g=>used.includes(JSON.stringify(g.tempResourceName)));
   const payload={mutateOperations:ops,generatedAssets:uploads,...(join?{existingPmaxGuard:join.guard}:{}),meta:{budgetCurrency:currency,itemIds,adDesignWorkspaceId:workspaceId,campaignStyles:choice.styles,...(join?{existingCampaignId:join.target.id,existingCampaignName:join.target.name,brandGuidelinesEnabled:join.target.brandGuidelinesEnabled}:{}),...(films?.motion?{motion:films.motion}:{}),...(Object.keys(plannedDays).length?{plannedDays}:{})}},hash=creativeHash(payload);
   const pmaxWhere=join?'its new product group in \u201c'+join.target.name+'\u201d':'the paused Performance Max campaign';
-  const note=join?'Only \u201c'+join.target.name+'\u201d changes: it gains this product group'+(join.add>0?' and the reviewed budget':'')+(join.target.status==='ENABLED'?', and the group can serve as soon as it is published because the campaign is running':'; the group runs once you enable that campaign')+'. Other campaigns are unchanged.':'Existing campaigns are unchanged.';
-  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,videoStatus:r.includeVideos===false?'Saved videos are excluded. Google may still generate a video for Performance Max.':videoLinks.length?'Your reviewed YouTube video is included.':films?.motion?films.note.replace('the paused campaign',pmaxWhere)+(choice.styles.some(s=>s!=='pmax')?' Display campaigns start without them.':''):choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. '+(films&&!films.missing?films.note.replace('the paused campaign',pmaxWhere):'Publish this design’s animation first to use your own.'):choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note}};
+  const note=(join?'Only \u201c'+join.target.name+'\u201d changes: it gains this product group'+(join.add>0?' and the reviewed budget':'')+(join.target.status==='ENABLED'?', and the group can serve as soon as it is published because the campaign is running':'; the group runs once you enable that campaign')+'. Other campaigns are unchanged.':'Existing campaigns are unchanged.')+(merchant?' '+merchant.message:'');
+  return {identity,hash,payload,summary:{...choice,currency,campaigns:summaries,videoLinks,...(merchant?{merchant}:{}),videoStatus:r.includeVideos===false?'Saved videos are excluded. Google may still generate a video for Performance Max.':videoLinks.length?'Your reviewed YouTube video is included.':films?.motion?films.note.replace('the paused campaign',pmaxWhere)+(choice.styles.some(s=>s!=='pmax')?' Display campaigns start without them.':''):choice.styles.includes('pmax')?'No finished video is attached, so Google may make one from your images for Performance Max. '+(films&&!films.missing?films.note.replace('the paused campaign',pmaxWhere):'Publish this design’s animation first to use your own.'):choice.styles.includes('responsive_display')?'No finished video is attached; the Responsive Display ad runs without video.':'',status:'PAUSED',destination:product.url,note}};
 }
 async function publishAdDesignPublication({workspaceId,id,hash,confirmed=false}={}){
   if(!confirmed||!/^publish_[a-f0-9]{32}$/.test(String(id||'')))throw new Error('Review and confirm this exact update first.');

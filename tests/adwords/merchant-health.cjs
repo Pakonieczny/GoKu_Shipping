@@ -3,7 +3,8 @@
 // that YouTube has rejected or has not finished processing.
 const assert = require('assert/strict'), path = require('path');
 const FN = path.resolve(__dirname, '../../netlify/functions');
-const { merchantHealth } = require(path.join(FN, '_merchantHealth.js'));
+const { merchantHealth, resolveMerchantId } = require(path.join(FN, '_merchantHealth.js'));
+const keys = require(path.join(FN, '_googleApiKeys.js'));
 const { videoStatus, seconds, problemsFor } = require(path.join(FN, '_youtubeVideos.js'));
 let passed = 0;
 const check = (cond, name) => { assert.ok(cond, name); passed++; console.log('PASS', name); };
@@ -16,7 +17,9 @@ function merchantStub(overrides = {}) {
     seen.push(p);
     if (overrides[p] instanceof Error) throw overrides[p];
     if (p in overrides) return overrides[p];
-    if (/\/issues$/.test(p)) return { accountIssues: [{ title: 'Missing return policy', severity: 'ERROR', impactedDestinations: [{ impacts: [{ regionCode: 'CA' }] }] }] };
+    if (/\/issues$/.test(p)) return { accountIssues: [
+      { title: 'Missing shipping settings', severity: 'CRITICAL', impactedDestinations: [{ reportingContext: 'SHOPPING_ADS', impacts: [{ regionCode: 'CA', severity: 'CRITICAL' }] }] },
+      { title: 'Missing return policy', severity: 'ERROR', impactedDestinations: [{ impacts: [{ regionCode: 'CA' }] }] }] };
     if (/reports:search$/.test(p)) return { results: [
       { productView: { offerId: 'duck-1', title: 'Duck necklace', aggregatedReportingContextStatus: 'ELIGIBLE', itemIssues: [] } },
       { productView: { offerId: 'duck-2', title: 'Duck charm', aggregatedReportingContextStatus: 'NOT_ELIGIBLE_OR_DISAPPROVED', itemIssues: [{ type: { code: 'image_link_broken', description: 'Image cannot be fetched' }, severity: { aggregatedSeverity: 'DISAPPROVED' } }] } }
@@ -41,7 +44,10 @@ function merchantStub(overrides = {}) {
   check(health.sections.productIssues.offers[0].offerId === 'duck-2', 'the exact offer ID is named, not just a count');
   check(/Image cannot be fetched/.test(JSON.stringify(health.sections.productIssues.offers[0].issues)), 'the reason the offer cannot serve is carried through');
   check(health.sections.productIssues.scanned === 2 && !health.sections.productIssues.offers.some(o => o.offerId === 'duck-1'), 'an eligible offer is not reported as a problem');
-  check(health.sections.accountIssues.blocking === 1, 'a blocking account issue is separated from advisory ones');
+  check(health.sections.accountIssues.blocking === 1 && health.sections.accountIssues.errors === 1, 'a blocking account issue is separated from advisory ones');
+  check(health.sections.accountIssues.issues.find(i => i.title === 'Missing shipping settings').blocksServing === true && health.sections.accountIssues.issues.find(i => i.title === 'Missing return policy').blocksServing === false,
+    'only Google\'s CRITICAL severity ("causes offers to not serve") counts as stopping offers; ERROR "might affect" them');
+  check(health.summary.attention.some(a => /may affect offers/.test(a)), 'an issue that may affect offers is named beside the blockers, not counted as one');
   check(health.sections.adsLink.googleAdsLinked === false && health.sections.adsLink.shopifyLinked === true,
     'each provider relationship is judged on its own; a Shopify link is not a Google Ads link');
   check(health.sections.conversionSources.active === 0 && /not reaching Merchant Center/.test(health.sections.conversionSources.detail), 'a missing conversion source is stated plainly');
@@ -86,6 +92,38 @@ function merchantStub(overrides = {}) {
 
   await assert.rejects(() => merchantHealth({ request: stub.request, merchantId: 'abc' }), /numeric Merchant Center account ID/); passed++;
   console.log('PASS a non-numeric Merchant account is refused');
+
+  // ── Merchant account id: discovered from the Ads Merchant link, then recorded once in Firestore ──────────
+  const link = async q => /FROM product_link/.test(q) ? [{ productLink: { merchantCenter: { merchantCenterId: '5550001' } } }] : [];
+  const saves = [];
+  const discovered = await resolveMerchantId({ env: {}, readConfig: async () => null, adsQuery: link, saveConfig: async id => { saves.push(id); return true; } });
+  check(discovered.id === '5550001' && discovered.trusted === true && /product_link/.test(discovered.source), 'the Merchant id comes from the Google Ads product_link and is trusted');
+  check(discovered.saved === true && saves.length === 1 && saves[0] === '5550001' && /config\/googleApiKeys\.merchantId/.test(discovered.savedTo), 'an id found from the Merchant link is saved to Firestore config/googleApiKeys.merchantId');
+  saves.length = 0;
+  const stored = await resolveMerchantId({ env: {}, readConfig: async () => 5550001, adsQuery: async () => { throw Error('discovery must not run'); }, saveConfig: async id => { saves.push(id); return true; } });
+  check(stored.id === '5550001' && stored.trusted && /Firestore/.test(stored.source) && !saves.length, 'a saved id is read straight from Firestore: no discovery, no second save');
+  const unreadable = await resolveMerchantId({ env: {}, readConfig: async () => { throw Error('offline'); }, adsQuery: link, saveConfig: async id => { saves.push(id); return true; } });
+  check(unreadable.id === '5550001' && unreadable.saved === false && !saves.length, 'nothing is saved when the Firestore field could not be read (it may not be empty)');
+  const fromEnv = await resolveMerchantId({ env: { GMC_MERCHANT_ID: '777' }, readConfig: async () => null, adsQuery: link, saveConfig: async id => { saves.push(id); return true; } });
+  check(fromEnv.id === '777' && fromEnv.trusted && !saves.length, 'an environment value wins and is never copied');
+  const campaignOnly = await resolveMerchantId({ env: {}, readConfig: async () => null, adsQuery: async q => /FROM campaign/.test(q) ? [{ campaign: { shoppingSetting: { merchantId: '888' } } }] : [], saveConfig: async id => { saves.push(id); return true; } });
+  check(campaignOnly.id === '888' && campaignOnly.trusted === false && !saves.length, 'an id only inferred from a shopping campaign is used but not trusted or saved');
+  const failedSave = await resolveMerchantId({ env: {}, readConfig: async () => null, adsQuery: link, saveConfig: async () => { throw Error('permission denied'); } });
+  check(failedSave.id === '5550001' && failedSave.saved === false && /could not be saved.*permission denied/.test(failedSave.notes.join(' ')), 'a failed save is noted and never stops the check');
+
+  // The key store writes only the numeric merchantId, only while it is empty, merged into the document.
+  keys.resetCache();
+  const fakeDb = initial => { const doc = { exists: initial != null, value: initial || {} }, writes = [];
+    return { doc, writes, db: { doc: () => ({ get: async () => ({ exists: doc.exists, data: () => doc.value }) }),
+      runTransaction: async fn => fn({ get: async () => ({ exists: doc.exists, data: () => doc.value }), set: (ref, data, opts) => { writes.push({ data, opts }); doc.exists = true; doc.value = { ...doc.value, ...data }; } }) } }; };
+  const blankDoc = fakeDb({ youtubeApiKey: 'AIza-kept' });
+  check(await keys.saveStoredValueIfEmpty('merchantId', '5550001', blankDoc) === true && blankDoc.writes.length === 1 && JSON.stringify(blankDoc.writes[0].data) === '{"merchantId":"5550001"}' && blankDoc.writes[0].opts.merge === true && blankDoc.doc.value.youtubeApiKey === 'AIza-kept',
+    'an empty merchantId is written as that one numeric field, merged, leaving the other keys untouched');
+  const taken = fakeDb({ merchantId: '999' });
+  check(await keys.saveStoredValueIfEmpty('merchantId', '5550001', taken) === false && !taken.writes.length && taken.doc.value.merchantId === '999', 'an operator\'s own merchantId is never replaced');
+  await assert.rejects(() => keys.saveStoredValueIfEmpty('youtubeApiKey', 'AIza-x', fakeDb({})), /not a value this store records/); passed++;
+  await assert.rejects(() => keys.saveStoredValueIfEmpty('merchantId', 'abc', fakeDb({})), /numeric merchantId/); passed++;
+  console.log('PASS the key store refuses to write secrets or a non-numeric account id');
 
   // ── YouTube ───────────────────────────────────────────────────────────────
   check(seconds('PT10S') === 10 && seconds('PT1M30S') === 90 && seconds('rubbish') === null, 'ISO-8601 durations are read, and nonsense is not guessed at');

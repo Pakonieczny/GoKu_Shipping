@@ -17,6 +17,9 @@
 //   · A skipped row means a credential never reached Google. Skipped is never
 //     reported as green.
 //   · Policy approval, serving and billing are separate states from API reach.
+//   · Its one write is to this app's own Firestore, never to Google: a Merchant
+//     account id found from the Google Ads Merchant link is recorded in
+//     config/googleApiKeys.merchantId when that field is empty.
 //
 // The catalog lives in _googleConnections.js so tests can assert it stays
 // complete as the application grows.
@@ -299,6 +302,8 @@ async function merchantSection(adsToken, report) {
   const found = await resolveMerchantId({
     env: ENV,
     readConfig: () => require("./_googleApiKeys").storedValue("merchantId"),
+    // Found from the Ads account's Merchant link while the field is empty: recorded once, that numeric field only.
+    saveConfig: id => require("./_googleApiKeys").saveStoredValueIfEmpty("merchantId", id),
     adsQuery: adsReady ? async query => {
       const { res, data } = await adsPost(adsToken, "customers/" + CID + "/googleAds:search", { query });
       if (!res.ok) throw new Error(res.status + " — " + (C.adsErrorCode(data) || "no detail"));
@@ -314,8 +319,8 @@ async function merchantSection(adsToken, report) {
   });
   const account = found.id;
   if (account) {
-    if (report) report.merchantId = account;
-    rows.push(C.ok("merchant account", account + " — from " + found.source));
+    if (report) Object.assign(report, { merchantId: account, merchantSource: found.source, merchantTrusted: !!found.trusted, merchantSaved: !!found.saved });
+    rows.push(C.ok("merchant account", account + " — from " + found.source + (found.saved ? "; saved to " + found.savedTo + " so later runs read it directly" : "")));
     if (found.notes.length) rows.push(C.warn("merchant account sources", found.notes.join("; ")));
   } else {
     rows.push(C.warn("merchant account", found.reason));
@@ -330,12 +335,24 @@ async function merchantSection(adsToken, report) {
         ...(probe.body ? { body: JSON.stringify(probe.body) } : {})
       });
       const data = await res.json().catch(() => ({}));
+      if (res.ok && probe.key === "accountIssues") return accountIssueRows(data, probe);
       if (res.ok) return C.ok(probe.key, (probe.used ? "" : "available, not yet used · ") + "answered", { used: probe.used, why: probe.why });
       const detail = res.status + " — " + (((data || {}).error || {}).message || "").slice(0, 180);
       return C.row(probe.key, probe.used ? "FAIL" : "warn", detail, { used: probe.used, why: probe.why, remedy: C.remedyFor(detail) });
     } catch (e) { return C.row(probe.key, probe.used ? "FAIL" : "warn", e.message, { used: probe.used, why: probe.why }); }
   });
-  return { title: "Merchant Center", note: "Rows marked “available, not yet used” are Merchant capabilities this application does not call yet.", rows: rows.concat(probed) };
+  return { title: "Merchant Center", note: "Rows marked “available, not yet used” are Merchant capabilities this application does not call yet.", rows: rows.concat(...probed) };
+}
+
+// Google's account issues as rows: red when an issue stops offers serving (CRITICAL), yellow when one may affect
+// them (ERROR), green when Google reports none that does. Each such issue gets its own row with its countries.
+function accountIssueRows(data, probe) {
+  const M = require("./_merchantHealth"), facts = M.accountIssueFacts(data), extra = { used: probe.used, why: probe.why };
+  const summary = C.row("accountIssues", facts.blocking.length ? "FAIL" : facts.errors.length ? "warn" : "ok", M.accountIssueSummary(facts), extra);
+  const each = facts.blocking.concat(facts.errors).slice(0, 8).map(i => C.row("account issue · " + i.title.slice(0, 70), i.critical ? "FAIL" : "warn",
+    (i.critical ? "Stops offers serving" : "May affect offers") + (i.countries.length ? " in " + i.countries.slice(0, 10).map(M.countryName).join(", ") : " in every country") + (i.detail ? " — " + i.detail : ""),
+    i.documentation ? { remedy: "Google's guidance: " + i.documentation } : {}));
+  return [summary].concat(each);
 }
 
 // ── 7. Everything else Google ───────────────────────────────────────────────
@@ -462,6 +479,12 @@ async function run(options) {
     otherGoogleSection(token)
   ]));
   sections.push(formatSection());
+  // GMC_MERCHANT_ID is only one way to name the Merchant account. The row turns green when the account was resolved
+  // from Firestore config or the Ads account's own Merchant link; it stays yellow only while nothing trustworthy names it.
+  const idRow = sections[0].rows.find(r => r.name === "GMC_MERCHANT_ID");
+  if (!MERCHANT && idRow && discovered.merchantId) Object.assign(idRow, discovered.merchantTrusted
+    ? C.ok("GMC_MERCHANT_ID", "not needed — Merchant account " + discovered.merchantId + " is resolved from " + discovered.merchantSource + (discovered.merchantSaved ? " and was saved to Firestore config/googleApiKeys.merchantId" : ""))
+    : C.warn("GMC_MERCHANT_ID", "not set — Merchant account " + discovered.merchantId + " was only inferred from " + discovered.merchantSource + "; add merchantId to Firestore config/googleApiKeys to pin it"));
 
   return { checkedAt: new Date().toISOString(), apiVersion: V, customerId: CID || null, merchantId: MERCHANT || discovered.merchantId || null, summary: C.summarize(sections), sections };
 }
